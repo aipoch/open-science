@@ -59,6 +59,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { FileTypeIcon } from './file-type-icon'
 import {
   LocalFileActionErrorNotice,
   LocalFileHeaderActions,
@@ -306,19 +307,22 @@ const PreviewFileHeader = ({
       <TooltipProvider delayDuration={300}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="min-w-0 flex-1 text-[12px] font-medium text-text-000">
-              <ExtensionPreservingFileName name={item.name} className="flex-1" />
-              {item.source === 'local' ? (
-                <span
-                  data-testid="local-file-path"
-                  className="flex min-w-0 items-center gap-1 text-[10px] font-normal leading-tight text-text-100"
-                >
-                  <span className="shrink-0 rounded-full bg-muted px-1.5 py-px">
-                    {t('This computer')}
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12px] font-medium text-text-000">
+              <FileTypeIcon name={item.name} mimeType={item.mimeType} />
+              <span className="min-w-0 flex-1">
+                <ExtensionPreservingFileName name={item.name} className="flex-1" />
+                {item.source === 'local' ? (
+                  <span
+                    data-testid="local-file-path"
+                    className="flex min-w-0 items-center gap-1 text-[10px] font-normal leading-tight text-text-100"
+                  >
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 py-px">
+                      {t('This computer')}
+                    </span>
+                    <span className="truncate">{item.path}</span>
                   </span>
-                  <span className="truncate">{item.path}</span>
-                </span>
-              ) : null}
+                ) : null}
+              </span>
             </span>
           </TooltipTrigger>
           <TooltipContent className={tooltipClassName}>

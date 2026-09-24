@@ -350,6 +350,19 @@ const managedInspect = {
   textFormat: { hasUtf8Bom: false, newline: 'lf' as const, hasTrailingNewline: true }
 }
 
+describe('PreviewFileSurface header', () => {
+  it('shows the file type icon before the file name', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+    })
+
+    const fileName = container.querySelector('[data-testid="file-name-root"]')
+    expect(
+      fileName?.parentElement?.previousElementSibling?.querySelector('svg.lucide-file-image')
+    ).not.toBeNull()
+  })
+})
+
 describe('PreviewFileSurface managed text versions', () => {
   beforeEach(() => {
     window.api.managedFileVersions.inspect = vi
