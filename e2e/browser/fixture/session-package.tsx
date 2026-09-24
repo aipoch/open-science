@@ -24,6 +24,7 @@ import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import zhHans from '../../../src/shared/i18n/locales/zh-Hans.json'
 import {
+  PackageExportProgressButton,
   PackageOperationIndicator,
   SessionPackageOperation
 } from '@/components/SessionPackageOperation'
@@ -219,8 +220,18 @@ if (mode) {
 }
 const menuMode = new URLSearchParams(location.search).has('menu')
 if (menuMode) usePackageOperationStore.getState().setOpen(false)
-const backgroundMode = new URLSearchParams(location.search).has('background')
+const background = new URLSearchParams(location.search)
+const backgroundMode = background.has('background')
 if (backgroundMode) {
+  if (background.get('background') === 'running') {
+    const current = usePackageOperationStore.getState().operation!
+    usePackageOperationStore.getState().receive({
+      ...current,
+      state: 'running',
+      files: undefined,
+      progress: { phase: 'copying', completedBytes: 512, totalBytes: 1024 }
+    })
+  }
   usePackageOperationStore.getState().setOpen(false)
   Object.defineProperty(window, 'api', {
     configurable: true,
@@ -303,6 +314,12 @@ void localeReady.then(() =>
       {menuMode ? <SessionMenuFixture /> : null}
       {backgroundMode ? (
         <div className="mx-auto max-w-4xl p-4">
+          <header className="flex items-center gap-3 border-b border-border pb-3">
+            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+              Nanomaterials and tumour immunity
+            </h1>
+            <PackageExportProgressButton />
+          </header>
           <PackageOperationIndicator />
         </div>
       ) : null}

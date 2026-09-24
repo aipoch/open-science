@@ -57,6 +57,24 @@ for (const width of [1280, 414]) {
   })
 }
 
+for (const width of [1280, 320]) {
+  test(`background export stays in the header at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/session-package.html?background=running')
+    await expect(page.getByRole('region', { name: 'Package progress' })).toHaveCount(0)
+    const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+    await expect(progressButton).toBeVisible()
+    await expect(progressButton).toBeInViewport()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await progressButton.click()
+    await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
+    await expect(page.getByRole('progressbar', { name: 'Package progress' })).toHaveAttribute(
+      'value',
+      '512'
+    )
+  })
+}
+
 test('full and compact presets simplify selection while retaining evidence', async ({
   page
 }, testInfo) => {

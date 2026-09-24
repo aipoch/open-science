@@ -1,5 +1,8 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
+import {
+  PackageExportProgressButton,
+  PackageOperationIndicator
+} from '@/components/SessionPackageOperation'
 /* Hallmark · macrostructure: operational-home-dashboard · genre: modern-minimal · tone: quiet/technical · anchor: teal
  * pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · icons: pass (30)
  * slop: pass (42–49) · mobile: pass (34, 49, 50–57)
@@ -695,6 +698,7 @@ const HomePage = ({
                 </button>
               ) : null}
               <NetworkStatusIndicator variant="pill" />
+              <PackageExportProgressButton />
               <span className="hidden sm:inline-flex">
                 <GitHubStarBadge variant="home" />
               </span>

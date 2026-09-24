@@ -5,7 +5,16 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@/components/ui/dialog'
-import { Check, ChevronRight, Clock3, Info, LoaderCircle, PackageOpen, X } from 'lucide-react'
+import {
+  Check,
+  ChevronRight,
+  CircleAlert,
+  Clock3,
+  Info,
+  LoaderCircle,
+  PackageOpen,
+  X
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
@@ -164,12 +173,59 @@ const PackageProgressMeter = ({
   )
 }
 
+export const PackageExportProgressButton = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const { operation, open, dismissedId, setOpen } = usePackageOperationStore()
+  if (
+    !operation ||
+    operation.kind !== 'export' ||
+    operation.progress.phase === 'selecting' ||
+    open ||
+    dismissedId === operation.id
+  )
+    return null
+  const { status, waiting, busy } = operationStatus(operation, t)
+  const needsAttention = waiting || operation.cleanupPending
+  const Icon =
+    operation.state === 'failed'
+      ? CircleAlert
+      : needsAttention
+        ? Clock3
+        : operation.state === 'succeeded'
+          ? Check
+          : busy
+            ? LoaderCircle
+            : PackageOpen
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-8 min-w-8 max-w-40 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+      aria-label={`${status} · ${t('View progress')}`}
+      title={status}
+      onClick={() => setOpen(true)}
+    >
+      <Icon
+        className={`size-4 shrink-0 ${needsAttention ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : operation.state === 'failed' ? 'text-status-failure-foreground' : operation.state === 'succeeded' ? 'text-status-success-foreground' : 'text-primary'} ${busy && !needsAttention ? 'animate-spin motion-reduce:animate-none' : ''}`}
+        aria-hidden="true"
+      />
+      <span className="hidden truncate lg:inline">{status}</span>
+    </Button>
+  )
+}
+
 export const PackageOperationIndicator = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const { operation, open, dismissedId, setOpen, dismiss } = usePackageOperationStore()
   const [cancellingId, setCancellingId] = useState<string>()
   const [cancelError, setCancelError] = useState<{ id: string; message: string }>()
-  if (!operation || open || dismissedId === operation.id) return null
+  if (
+    !operation ||
+    open ||
+    dismissedId === operation.id ||
+    (operation.kind === 'export' && operation.progress.phase !== 'selecting')
+  )
+    return null
   const active = packageOperationActive(operation)
   const cancelling = cancellingId === operation.id || operation.state === 'cancelling'
   const configuringExport = operation.kind === 'export' && operation.state === 'awaiting-selection'

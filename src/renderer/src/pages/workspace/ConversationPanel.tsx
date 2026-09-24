@@ -1,6 +1,9 @@
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
-import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
+import {
+  PackageExportProgressButton,
+  PackageOperationIndicator
+} from '@/components/SessionPackageOperation'
 import { SessionInfoPopover } from './SessionInfoPopover'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
@@ -1262,6 +1265,7 @@ const ConversationPanel = ({
               </Tooltip>
             </TooltipProvider>
           )}
+          <PackageExportProgressButton />
           <NotificationBell className="md:hidden" />
           <button
             type="button"
