@@ -396,7 +396,10 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
       })
       .scrollIntoViewIfNeeded()
     const image = page.getByRole('img', { name: `Sanitized message figure ${index}`, exact: true })
-    await image.scrollIntoViewIfNeeded()
+    await image
+      .or(page.getByText(`Sanitized message figure ${index}`, { exact: true }))
+      .first()
+      .scrollIntoViewIfNeeded()
     await expect
       .poll(() =>
         image.evaluate((img: HTMLImageElement) => ({

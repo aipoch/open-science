@@ -289,6 +289,7 @@ test('reviews classified papers in the library table using a local fixture servi
           )
       )
       .toBe('completed')
+    await page.getByRole('button', { name: 'Back to results', exact: true }).click()
     await expect(
       page.getByText('Randomized trial of rehabilitation after stroke', { exact: true })
     ).toBeVisible()
@@ -721,6 +722,8 @@ test('reviews classified papers in the library table using a local fixture servi
     await page.getByRole('menuitem', { name: 'Re-evaluate all', exact: true }).click()
     await panel.getByRole('button', { name: 'Re-evaluate all', exact: true }).click()
     await expect(page.getByRole('progressbar', { name: 'Re-evaluate', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Pause analysis', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: 'Back to results', exact: true }).click()
     await expect(page.locator('tbody tr')).toHaveText(savedTitles)
     await expect(
       page.getByRole('tab', { name: 'Included 2', exact: true, includeHidden: true })
@@ -732,7 +735,6 @@ test('reviews classified papers in the library table using a local fixture servi
         .first()
         .getByRole('button', { name: 'Evaluation details', exact: true })
     ).toBeEnabled()
-    await expect(page.getByRole('button', { name: 'Stop analysis', exact: true })).toBeEnabled()
     expect(Math.abs((await page.locator('table').boundingBox())!.y - savedTableTop)).toBeLessThan(2)
     expect(
       Math.abs(
@@ -772,12 +774,13 @@ test('reviews classified papers in the library table using a local fixture servi
     await page.getByRole('menuitem', { name: 'Re-evaluate all', exact: true }).click()
     await panel.getByRole('button', { name: 'Re-evaluate all', exact: true }).click()
     await expect.poll(() => classifiedInputs.length).toBeGreaterThan(inputsBeforeStop)
-    await page.getByRole('button', { name: 'Stop analysis', exact: true }).click()
+    await page.getByRole('button', { name: 'Pause analysis', exact: true }).click()
     await expect(panel.getByText(/Stopping analysis…|Stopped/)).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('smart-analysis-stopping.png') })
     releaseClassification!()
     holdClassification = undefined
     await expect(page.getByRole('progressbar', { name: 'Re-evaluate', exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Back to results', exact: true }).click()
     await expect(page.getByRole('tab', { name: /^Included / })).toBeEnabled()
     failClassification = true
     await panel.getByRole('button', { name: 'Collection actions', exact: true }).click()
@@ -790,10 +793,12 @@ test('reviews classified papers in the library table using a local fixture servi
       })
     ).toBeVisible()
     await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Back to results', exact: true }).click()
     await page.getByRole('tab', { name: 'Not evaluated 4', exact: true }).click()
     await page.screenshot({ path: testInfo.outputPath('smart-failure-recovery.png') })
     failClassification = false
     await panel.getByRole('button', { name: 'Retry', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to results', exact: true }).click()
     await expect(page.getByRole('tab', { name: 'Included 2', exact: true })).toBeVisible()
     await page.evaluate(
       async ({ id, item }) => {
@@ -972,7 +977,7 @@ test('reviews classified papers in the library table using a local fixture servi
       .getByRole('dialog', { name: 'Re-evaluate selected', exact: true })
       .getByRole('button', { name: 'Re-evaluate selected', exact: true })
       .click()
-    await expect(page.getByRole('button', { name: 'Stop analysis', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Pause analysis', exact: true })).toBeEnabled()
     await expect(page.locator('tbody tr')).toHaveCount(100)
     const stableRow = await page.locator('tbody tr').first().elementHandle()
     const batchInteractionMs: number[] = []
@@ -1006,10 +1011,10 @@ test('reviews classified papers in the library table using a local fixture servi
     })
     expect(await stableRow!.evaluate((row) => row.isConnected)).toBe(true)
     await expect(page.locator('tbody tr')).toHaveCount(100)
-    await page.getByRole('button', { name: 'Stop analysis', exact: true }).click()
+    await page.getByRole('button', { name: 'Pause analysis', exact: true }).click()
     releaseClassification?.()
     holdClassification = undefined
-    await expect(page.getByRole('button', { name: 'Stop analysis', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Pause analysis', exact: true })).toHaveCount(0)
 
     // Use a separate seven-paper scope so recovery retries cannot evaluate the capacity library.
     const recovery = await page.evaluate(
@@ -1080,7 +1085,7 @@ test('reviews classified papers in the library table using a local fixture servi
       )
     await expect.poll(async () => (await readRecovery(page)).matches).toBe(2)
     // Progress remains interactive and the displayed rows do not get replaced by each checkpoint.
-    await expect(page.getByRole('button', { name: 'Stop analysis', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Pause analysis', exact: true })).toBeEnabled()
     await page.getByRole('button', { name: 'Collection rule', exact: true }).click()
     await expect(page.getByText('Original trials', { exact: true })).toBeVisible()
     const beforeCrash = await readRecovery(page)

@@ -72,7 +72,7 @@ test('tests current provider input and commits only verified configurations', as
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
     await page.reload({ waitUntil: 'domcontentloaded' })
     let settings = await openModelSettings(page)
-    await settings.getByRole('button', { name: 'Add provider', exact: true }).click()
+    await settings.locator('[data-settings-anchor="model.add-provider"]').click()
     await settings.getByRole('combobox', { name: 'Provider type', exact: true }).click()
     await page.getByRole('option', { name: 'Custom Gateway', exact: true }).click()
     await settings.getByRole('textbox', { name: 'Provider name', exact: true }).fill(PROVIDER_NAME)
@@ -140,7 +140,7 @@ test('tests current provider input and commits only verified configurations', as
       (await snapshot(page)).providers.some((provider) => provider.name === PROVIDER_NAME)
     ).toBe(false)
     await save.click()
-    await expect(settings.getByRole('button', { name: 'Add provider', exact: true })).toBeVisible()
+    await expect(settings.locator('[data-settings-anchor="model.add-provider"]')).toBeVisible()
     const saved = (await snapshot(page)).providers.find(
       (provider) => provider.name === PROVIDER_NAME
     )!
@@ -194,7 +194,7 @@ test('tests current provider input and commits only verified configurations', as
 
     acceptsConnection = true
     await editFooter.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(settings.getByRole('button', { name: 'Add provider', exact: true })).toBeVisible()
+    await expect(settings.locator('[data-settings-anchor="model.add-provider"]')).toBeVisible()
     const updated = await snapshot(page)
     expect(updated.providers.find((provider) => provider.id === saved.id)).toMatchObject({
       model: 'replacement-model',
@@ -501,9 +501,7 @@ for (const action of ['Test connection', 'Save']) {
         .locator('[data-slot="provider-form-footer"]')
         .getByRole('button', { name: 'Save', exact: true })
         .click()
-      await expect(
-        settings.getByRole('button', { name: 'Add provider', exact: true })
-      ).toBeVisible()
+      await expect(settings.locator('[data-settings-anchor="model.add-provider"]')).toBeVisible()
       await expect(row.getByLabel('Connection verified', { exact: true })).toBeVisible()
       await expect(row.getByLabel(/Test failed:/)).toHaveCount(0)
       const recovered = await snapshot(page)
