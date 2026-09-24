@@ -121,7 +121,7 @@ export function ConnectorCredentialControls({
           {embedded ? (
             <p className={cn(dialogDescriptionClassName, 'text-xs [text-wrap:pretty]')}>
               {t(
-                'This Connector call needs an OpenAlex API key. Save it once and the waiting call will continue automatically.'
+                'OpenAlex API keys are optional for basic queries. Add one after a rate limit and the waiting call will continue automatically.'
               )}
             </p>
           ) : (
@@ -129,7 +129,7 @@ export function ConnectorCredentialControls({
               className={cn(dialogDescriptionClassName, 'text-xs [text-wrap:pretty]')}
             >
               {t(
-                'This Connector call needs an OpenAlex API key. Save it once and the waiting call will continue automatically.'
+                'OpenAlex API keys are optional for basic queries. Add one after a rate limit and the waiting call will continue automatically.'
               )}
             </Dialog.Description>
           )}

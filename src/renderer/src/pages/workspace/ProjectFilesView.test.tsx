@@ -847,6 +847,7 @@ describe('ProjectFilesView', () => {
       '[aria-label="Preview generated file result.txt"]'
     )
     const metadata = previewButton?.querySelector('[data-testid="project-file-list-meta"]')
+    expect(previewButton?.querySelector('.lucide-file-text')).not.toBeNull()
     const downloadWrapper = container
       .querySelector<HTMLButtonElement>('[aria-label="Download result.txt"]')
       ?.closest('[data-testid="download-tooltip-trigger"]')

@@ -2,6 +2,7 @@ import { SMART_RULE_STORAGE_MAX_LENGTH, serializedSmartRuleSchema } from './smar
 import {
   smartCollectionCommandSchemas,
   smartHistorySchema,
+  smartRunProgressSchema,
   smartCollectionPreviewSchema,
   smartCollectionViewSchema,
   smartCollectionRowSchema,
@@ -664,6 +665,7 @@ const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
 const literatureCatalogReceiptSchema = z
   .object({
     smartHistory: smartHistorySchema.optional(),
+    smartRunProgress: smartRunProgressSchema.optional(),
     smart: smartCollectionViewSchema.optional(),
     smartPreview: smartCollectionPreviewSchema.optional(),
     smartRefreshFailed: z.boolean().optional(),
