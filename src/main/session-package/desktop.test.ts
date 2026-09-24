@@ -17,6 +17,8 @@ import * as zlib from 'node:zlib'
 import * as storageUsage from '../storage/usage'
 import * as fsPromises from 'node:fs/promises'
 import { c as createTar, x as extractTar } from 'tar'
+import { paceFileIo } from '../file-io-pacing'
+import { withPackageTransfer } from './transfer'
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:fs/promises')>())
@@ -1432,6 +1434,61 @@ it('carries a new-project draft from OS file selection through confirmation with
   } finally {
     await desktop.close()
     await service.close()
+  }
+})
+
+it('applies Auto and live fixed rate changes to Fork I/O', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] })
+  const result = { projectId: 'project', sessionId: 'child' }
+  const service = {
+    fork: vi.fn(async () =>
+      withPackageTransfer(async () => {
+        const pace = async (duration: number): Promise<void> => {
+          let finished = false
+          const pending = paceFileIo(32 * 1024 ** 2)!.then(() => {
+            finished = true
+          })
+          await vi.advanceTimersByTimeAsync(duration - 1)
+          expect(finished).toBe(false)
+          await vi.advanceTimersByTimeAsync(1)
+          await pending
+          expect(finished).toBe(true)
+        }
+        await pace(2000)
+        expect(desktop.operations.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+        expect(desktop.operations.snapshot?.ioBytesPerSecond).toBe(16 * 1024 ** 2)
+        for (const rate of [128, 256]) {
+          desktop.respond({
+            action: 'set-speed',
+            operationId: desktop.operations.snapshot!.id,
+            bytesPerSecond: rate * 1024 ** 2
+          })
+          await pace((32 / rate) * 1000)
+        }
+        desktop.respond({
+          action: 'set-speed',
+          operationId: desktop.operations.snapshot!.id,
+          bytesPerSecond: null
+        })
+        expect(desktop.operations.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+        await pace(2000)
+        expect(desktop.operations.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+        return result
+      })
+    )
+  } as unknown as SessionPackageService
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: (work) => work(),
+    afterImport: vi.fn()
+  })
+  try {
+    expect(await desktop.fork({ projectId: 'project', sessionId: 'source' })).toEqual(result)
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    await desktop.close()
+    vi.useRealTimers()
   }
 })
 
