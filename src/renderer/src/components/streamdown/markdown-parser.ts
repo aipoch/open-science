@@ -7,36 +7,100 @@ export const MARKDOWN_PARSE_BUDGET_MS = 8
 const MAX_RETAINED_BYTES = 8 * 1024 * 1024
 const MAX_QUEUED_CHARACTERS = 4 * 1024 * 1024
 const MAX_CACHE_ENTRIES = 32
+const MIN_SYNC_CACHE_CHARACTERS = 16 * 1024
+const SYNC_CACHE_IDLE_MS = 60_000
 const PARSE_TIMEOUT_MS = 5000
 const costs = new Map<string, number>()
-const trees = new Map<string, { tree: Root; bytes: number; owners: Set<ParseOwner> }>()
+const trees = new Map<
+  string,
+  { tree: Root; bytes: number; owners: Set<ParseOwner>; sync: boolean; parseCost?: number }
+>()
 let costCharacters = 0
 let retainedBytes = 0
+let syncCacheTimer: ReturnType<typeof setTimeout> | undefined
 
 export const getMarkdownParseCost = (source: string): number => costs.get(source) ?? 0
 
-// A public unified parser plugin preserves Streamdown's complete transform/render pipeline.
-// Cache by source rather than closing over a tree: Streamdown reuses processors by plugin name.
-export const reuseMarkdownParse: Plugin = function reuseMarkdownParse() {
+const rememberParseCost = (source: string, elapsed: number): void => {
+  if (source.length > MAX_QUEUED_CHARACTERS) return
+  if (costs.delete(source)) costCharacters -= source.length
+  costs.set(source, elapsed)
+  costCharacters += source.length
+  while (costs.size > MAX_CACHE_ENTRIES || costCharacters > MAX_QUEUED_CHARACTERS) {
+    const oldest = costs.keys().next().value!
+    costs.delete(oldest)
+    costCharacters -= oldest.length
+  }
+}
+
+const releaseIdleSyncTrees = (): void => {
+  syncCacheTimer = undefined
+  for (const [source, cached] of trees) {
+    if (cached.sync && cached.owners.size === 0) releaseTree(source)
+  }
+}
+
+const keepSyncTreesBriefly = (): void => {
+  clearTimeout(syncCacheTimer)
+  syncCacheTimer = setTimeout(releaseIdleSyncTrees, SYNC_CACHE_IDLE_MS)
+}
+
+// Streamdown runs remark transforms after parsing, so its returned tree must never be the cache copy.
+// The caller is exclusively AgentMarkdown's fixed GFM/CJK/math parser. Streamdown caches processors
+// by plugin name, so neither plugin may close over a component owner or a particular source tree.
+const installParseReuse: Plugin<[boolean]> = function installParseReuse(cacheSyncTree) {
   const parse = this.parser!
   this.parser = (source, file) => {
     const cached = trees.get(source)
-    if (cached) return structuredClone(cached.tree)
+    if (cached) {
+      trees.delete(source)
+      trees.set(source, cached)
+      if (cached.sync) keepSyncTreesBriefly()
+      if (cached.parseCost !== undefined) rememberParseCost(source, cached.parseCost)
+      return structuredClone(cached.tree)
+    }
     const start = performance.now()
     const tree = parse(source, file)
     const elapsed = performance.now() - start
-    if (source.length <= MAX_QUEUED_CHARACTERS) {
-      if (costs.delete(source)) costCharacters -= source.length
-      costs.set(source, elapsed)
-      costCharacters += source.length
-      while (costs.size > MAX_CACHE_ENTRIES || costCharacters > MAX_QUEUED_CHARACTERS) {
-        const oldest = costs.keys().next().value!
-        costs.delete(oldest)
-        costCharacters -= oldest.length
+    rememberParseCost(source, elapsed)
+    if (
+      cacheSyncTree &&
+      elapsed >= MARKDOWN_PARSE_BUDGET_MS &&
+      source.length >= MIN_SYNC_CACHE_CHARACTERS &&
+      source.length <= MAX_QUEUED_CHARACTERS
+    ) {
+      try {
+        const bytes = 2 * (source.length + JSON.stringify(tree).length)
+        if (bytes <= MAX_RETAINED_BYTES) {
+          // Keep an untouched copy before runSync mutates the tree returned to Streamdown.
+          const original = structuredClone(tree) as Root
+          while (trees.size >= MAX_CACHE_ENTRIES || retainedBytes + bytes > MAX_RETAINED_BYTES) {
+            releaseTree(trees.keys().next().value!)
+          }
+          trees.set(source, {
+            tree: original,
+            bytes,
+            owners: new Set(),
+            sync: true,
+            parseCost: elapsed
+          })
+          retainedBytes += bytes
+          keepSyncTreesBriefly()
+        }
+      } catch {
+        // Caching is optional; a non-cloneable parser tree still renders normally.
       }
     }
     return tree
   }
+}
+
+export const reuseMarkdownParse: Plugin = function reuseMarkdownParse() {
+  installParseReuse.call(this, false)
+}
+
+export const reuseCacheableMarkdownParse: Plugin = function reuseCacheableMarkdownParse() {
+  installParseReuse.call(this, true)
 }
 
 const releaseTree = (source: string, owner?: ParseOwner): void => {
@@ -114,7 +178,7 @@ const dispatch = (): void => {
               ) {
                 releaseTree(trees.keys().next().value!)
               }
-              cached = { tree: data.tree, bytes: data.bytes, owners: new Set() }
+              cached = { tree: data.tree, bytes: data.bytes, owners: new Set(), sync: false }
               trees.set(done.source, cached)
               retainedBytes += data.bytes
             }

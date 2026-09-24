@@ -6,6 +6,7 @@ import {
   getMarkdownParseCost,
   isMarkdownParserReady,
   MARKDOWN_PARSE_BUDGET_MS,
+  reuseCacheableMarkdownParse,
   reuseMarkdownParse
 } from './markdown-parser'
 import { StreamingBlock } from './StreamingBlock'
@@ -21,6 +22,7 @@ export const AsyncStreamingBlock = (props: BlockProps): React.JSX.Element => {
   const [state, setState] = useState({
     input: source,
     streaming: isAnimating,
+    initial: true,
     async: false,
     displayed: source
   })
@@ -35,14 +37,21 @@ export const AsyncStreamingBlock = (props: BlockProps): React.JSX.Element => {
     setState({
       input: source,
       streaming: isAnimating,
+      initial: state.initial && state.input === source,
       async,
       displayed: async ? state.displayed : source
     })
   }
   const asynchronous = state.async && isAnimating && !failed
+  // The first snapshot can be parsed twice during hydration. Later append snapshots are usually
+  // unique, so only the initial snapshot and settled content pay for synchronous tree retention.
+  const cacheSyncTree = !isAnimating || (state.initial && state.input === source)
   const remarkPlugins = useMemo(
-    () => [...(props.remarkPlugins ?? []), reuseMarkdownParse],
-    [props.remarkPlugins]
+    () => [
+      ...(props.remarkPlugins ?? []),
+      cacheSyncTree ? reuseCacheableMarkdownParse : reuseMarkdownParse
+    ],
+    [props.remarkPlugins, cacheSyncTree]
   )
   useEffect(() => () => owner.dispose(), [owner])
   useEffect(() => {
