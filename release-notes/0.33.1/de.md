@@ -1,14 +1,14 @@
 ## ✨ Highlights
 
 - **Live-Sichtung intelligenter Literatursammlungen.** Intelligente Sammlungen sichten Referenzen jetzt live, mit Steuerung zum Unterbrechen und Fortsetzen, sodass große Sichtungsläufe von Anfang bis Ende unter Ihrer Kontrolle bleiben. (#2968)
-- **Neue Konnektoren und Alignment-Werkzeuge.** HMMER kommt als Konnektor für Sequenz-Homologiesuchen gegen Profildatenbanken hinzu (#2957); InterProScan kommt als Konnektor hinzu, der den Status vorhandener Annotationsjobs prüft und deren Ergebnisse abruft (#2935); und der Genomes-Konnektor erhält Clustal-Omega-Multiple-Sequence-Alignment (#2944).
+- **Neue Konnektoren und Alignment-Werkzeuge.** HMMER kommt als Konnektor für programmspezifische EMBL-EBI-HMMER3-Homologiesuchen hinzu (#2957); InterProScan kommt als Konnektor hinzu, der den Status vorhandener Annotationsjobs prüft und deren Ergebnisse abruft (#2935); und der Genomes-Konnektor erhält Clustal-Omega-Multiple-Sequence-Alignment (#2944).
 - **Aktualisierung der Anbieterkataloge.** GPT-6 und Claude Opus 5.5 kommen in die Anbieterkataloge und lassen sich in neuen und bestehenden Konfigurationen direkt auswählen. (#2967)
 - **PDF-Evidenz reist mit der Unterhaltung mit.** Unterhaltungen im Arbeitsbereich können jetzt zusammen mit der ersten Nachricht PDF-Evidenz mitführen, sodass der Kontext ankommt, bevor der Agent mit der Arbeit beginnt. (#2941)
 
 ## 🚀 Neue Funktionen
 
 - Live-Sichtung intelligenter Literatursammlungen: Sichtungsläufe bewerten Referenzen bei Eintreffen und können jederzeit unterbrochen und fortgesetzt werden. (#2968)
-- HMMER-Konnektor: Durchsuchen Sie Protein- oder Nukleotidsequenzen gegen HMM-Profildatenbanken, um homologe Familien zu identifizieren. (#2957)
+- HMMER-Konnektor: Reichen Sie programmspezifische EMBL-EBI-HMMER3-Suchen — phmmer, hmmscan, hmmsearch oder jackhmmer — für Proteinsequenzen, Profil-HMMs und Alignments gegen passende Datenbanken ein. (#2957)
 - InterProScan-Konnektor: Prüfen Sie den Status vorhandener InterProScan-Annotationsjobs anhand der Job-ID und rufen Sie deren Ergebnisse ab. (#2935)
 - Clustal-Omega-Multiple-Sequence-Alignment kommt in den Genomes-Konnektor: Richten Sie drei oder mehr FASTA-Protein-, DNA- oder RNA-Einträge mit EMBL-EBI Clustal Omega aus und rufen Sie eine herunterladbare Alignmentsdatei ab. (#2944)
 - Die Modelle GPT-6 und Claude Opus 5.5 kommen in die Anbieterkataloge. (#2967)
@@ -31,4 +31,4 @@
 - **Fähigkeiten** – Workflows zum Zuschneiden und Überarbeiten von Abbildungen funktionieren wieder korrekt (#2936).
 - **Speicher** – Historische Datenspeicherorte bleiben über Aktualisierungen hinweg erhalten und geschützt (#2865).
 - **Pakete und Onboarding** – Token-Flags werden nicht mehr innerhalb unzusammenhängender Wörter erkannt (#2940); die DeepSeek-Markendarstellung im Onboarding ist normalisiert (#2939).
-- **Oberfläche** – Der Bearbeitungstooltip für Anmerkungen ist vereinfacht (#2966); der Windows-Installer meldet Aufräumfehler mit umsetzbaren Diagnosen (#2952).
+- **Oberfläche** – Der Bearbeitungstooltip für Anmerkungen ist vereinfacht (#2966); der Windows-Installer meldet Aufräumfehler mit umsetzbaren Diagnosen (#2952); Dateityp-Symbole werden in Tabs und Listen vergrößert (#2976); der OpenAlex-Konnektor benötigt keine Anmeldedaten mehr, sodass Literatursuchen sofort funktionieren (#2969).

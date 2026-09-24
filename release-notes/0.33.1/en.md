@@ -1,14 +1,14 @@
 ## ✨ Highlights
 
 - **Live smart Literature screening.** Smart collections now screen references live, with pause and resume controls so large screening runs stay under your control from start to finish. (#2968)
-- **New connectors and alignment tools.** HMMER joins the connector family for sequence homology searches against profile databases (#2957); InterProScan joins as a connector that checks status and retrieves results for existing annotation jobs (#2935); and the Genomes connector gains Clustal Omega multiple sequence alignment (#2944).
+- **New connectors and alignment tools.** HMMER joins the connector family for program-specific EMBL-EBI HMMER3 homology searches (#2957); InterProScan joins as a connector that checks status and retrieves results for existing annotation jobs (#2935); and the Genomes connector gains Clustal Omega multiple sequence alignment (#2944).
 - **Provider catalogs refresh.** GPT-6 and Claude Opus 5.5 join the provider catalogs, ready to pick from new and existing configurations. (#2967)
 - **PDF evidence travels with the conversation.** Workspace conversations can now carry PDF evidence alongside the first message, so context arrives before the agent starts working. (#2941)
 
 ## 🚀 New Features
 
 - Live smart Literature screening: screening runs evaluate references as they arrive, and can be paused and resumed at any point. (#2968)
-- HMMER connector: search protein or nucleotide sequences against HMM profile databases to identify homologous families. (#2957)
+- HMMER connector: submit program-specific EMBL-EBI HMMER3 searches — phmmer, hmmscan, hmmsearch, or jackhmmer — for protein sequences, profile HMMs, and alignments against matching databases. (#2957)
 - InterProScan connector: check the status of, and retrieve results for, existing InterProScan annotation jobs by job ID. (#2935)
 - Clustal Omega multiple sequence alignment arrives in the Genomes connector: align three or more FASTA protein, DNA, or RNA records with EMBL-EBI Clustal Omega and retrieve a downloadable alignment file. (#2944)
 - GPT-6 and Claude Opus 5.5 models join the provider catalogs. (#2967)
@@ -31,4 +31,4 @@
 - **Skills** — figure cropping and revision workflows behave correctly again (#2936).
 - **Storage** — historical data locations persist and are protected across upgrades (#2865).
 - **Packages and onboarding** — token flags are no longer matched inside unrelated words (#2940); DeepSeek branding in onboarding is normalized (#2939).
-- **Interface** — the annotation edit tooltip is simplified (#2966); the Windows installer reports cleanup failures with actionable diagnostics (#2952).
+- **Interface** — the annotation edit tooltip is simplified (#2966); the Windows installer reports cleanup failures with actionable diagnostics (#2952); file type icons are enlarged in tabs and lists (#2976); the OpenAlex connector no longer requires credentials, so literature searches work out of the box (#2969).

@@ -1,14 +1,14 @@
 ## ✨ Lo más destacado
 
 - **Cribado inteligente de Literature en vivo.** Las colecciones inteligentes criban ahora las referencias en vivo, con controles de pausa y reanudación que mantienen los cribados de gran tamaño bajo tu control de principio a fin. (#2968)
-- **Conectores y herramientas de alineamiento nuevos.** HMMER se incorpora a la familia de conectores para búsquedas de homología de secuencias contra bases de datos de perfiles (#2957); InterProScan se incorpora como conector que comprueba el estado y recupera resultados de trabajos de anotación existentes (#2935); y el conector Genomes incorpora el alineamiento múltiple de secuencias con Clustal Omega (#2944).
+- **Conectores y herramientas de alineamiento nuevos.** HMMER se incorpora a la familia de conectores para búsquedas de homología HMMER3 específicas de programa de EMBL-EBI (#2957); InterProScan se incorpora como conector que comprueba el estado y recupera resultados de trabajos de anotación existentes (#2935); y el conector Genomes incorpora el alineamiento múltiple de secuencias con Clustal Omega (#2944).
 - **Actualización de los catálogos de proveedores.** GPT-6 y Claude Opus 5.5 se incorporan a los catálogos de proveedores, listos para elegir en configuraciones nuevas y existentes. (#2967)
 - **La evidencia en PDF viaja con la conversación.** Las conversaciones del espacio de trabajo pueden incluir ahora evidencia en PDF junto al primer mensaje, de modo que el contexto llega antes de que el agente empiece a trabajar. (#2941)
 
 ## 🚀 Novedades
 
 - Cribado inteligente de Literature en vivo: las ejecuciones de cribado evalúan las referencias a medida que llegan y se pueden pausar y reanudar en cualquier punto. (#2968)
-- Conector HMMER: busca secuencias de proteínas o nucleótidos contra bases de datos de perfiles HMM para identificar familias homólogas. (#2957)
+- Conector HMMER: envía búsquedas específicas de programa con HMMER3 de EMBL-EBI —phmmer, hmmscan, hmmsearch o jackhmmer— sobre secuencias de proteínas, perfiles HMM y alineamientos contra bases de datos correspondientes. (#2957)
 - Conector InterProScan: comprueba el estado y recupera los resultados de trabajos de anotación de InterProScan existentes por ID de trabajo. (#2935)
 - El alineamiento múltiple de secuencias con Clustal Omega llega al conector Genomes: alinea tres o más registros FASTA de proteínas, ADN o ARN con Clustal Omega de EMBL-EBI y recupera un archivo de alineamiento descargable. (#2944)
 - Los modelos GPT-6 y Claude Opus 5.5 se incorporan a los catálogos de proveedores. (#2967)
@@ -31,4 +31,4 @@
 - **Habilidades** — los flujos de trabajo de recorte y revisión de figuras vuelven a comportarse correctamente (#2936).
 - **Almacenamiento** — las ubicaciones históricas de datos persisten y están protegidas entre actualizaciones (#2865).
 - **Paquetes y onboarding** — los indicadores de token ya no se detectan dentro de palabras no relacionadas (#2940); la marca DeepSeek en el onboarding se normaliza (#2939).
-- **Interfaz** — la información sobre herramientas de edición de anotaciones se simplifica (#2966); el instalador de Windows informa de los fallos de limpieza con diagnósticos accionables (#2952).
+- **Interfaz** — la información sobre herramientas de edición de anotaciones se simplifica (#2966); el instalador de Windows informa de los fallos de limpieza con diagnósticos accionables (#2952); los iconos de tipo de archivo se agrandan en pestañas y listas (#2976); el conector OpenAlex ya no requiere credenciales, de modo que las búsquedas de literatura funcionan desde el primer momento (#2969).

@@ -1,14 +1,14 @@
 ## ✨ Points forts
 
 - **Criblage de littérature intelligent en direct.** Les collections intelligentes criblent désormais les références en direct, avec des commandes de pause et de reprise, si bien que les campagnes de criblage de grande envergure restent sous votre contrôle du début à la fin. (#2968)
-- **Nouveaux connecteurs et outils d’alignement.** HMMER rejoint la famille des connecteurs pour des recherches d’homologie de séquences contre des bases de profils (#2957) ; InterProScan rejoint comme connecteur vérifiant l’état et récupérant les résultats de tâches d’annotation existantes (#2935) ; et le connecteur Genomes gagne l’alignement multiple de séquences Clustal Omega (#2944).
+- **Nouveaux connecteurs et outils d’alignement.** HMMER rejoint la famille des connecteurs pour des recherches d’homologie HMMER3 propres à chaque programme via EMBL-EBI (#2957) ; InterProScan rejoint comme connecteur vérifiant l’état et récupérant les résultats de tâches d’annotation existantes (#2935) ; et le connecteur Genomes gagne l’alignement multiple de séquences Clustal Omega (#2944).
 - **Catalogues de fournisseurs rafraîchis.** GPT-6 et Claude Opus 5.5 rejoignent les catalogues de fournisseurs, prêts à être sélectionnés dans les configurations nouvelles et existantes. (#2967)
 - **Les preuves PDF suivent la conversation.** Les conversations de l’espace de travail peuvent désormais transporter des preuves PDF avec le premier message, si bien que le contexte arrive avant que l’agent ne se mette au travail. (#2941)
 
 ## 🚀 Nouveautés
 
 - Criblage de littérature intelligent en direct : les campagnes de criblage évaluent les références au fur et à mesure de leur arrivée et peuvent être mises en pause et reprises à tout moment. (#2968)
-- Connecteur HMMER : recherchez des séquences protéiques ou nucléiques contre des bases de profils HMM pour identifier des familles homologues. (#2957)
+- Connecteur HMMER : soumettez des recherches HMMER3 propres à chaque programme via EMBL-EBI — phmmer, hmmscan, hmmsearch ou jackhmmer — pour des séquences protéiques, des modèles HMM de profils et des alignements contre les bases correspondantes. (#2957)
 - Connecteur InterProScan : vérifiez l’état de tâches d’annotation InterProScan existantes et récupérez leurs résultats par identifiant de tâche. (#2935)
 - L’alignement multiple de séquences Clustal Omega arrive dans le connecteur Genomes : alignez trois enregistrements FASTA protéiques, d’ADN ou d’ARN ou plus avec Clustal Omega d’EMBL-EBI et récupérez un fichier d’alignement téléchargeable. (#2944)
 - Les modèles GPT-6 et Claude Opus 5.5 rejoignent les catalogues de fournisseurs. (#2967)
@@ -31,4 +31,4 @@
 - **Compétences** — les flux de travail de rognage et de révision des figures se comportent à nouveau correctement (#2936).
 - **Stockage** — les emplacements de données historiques persistent et sont protégés au fil des mises à niveau (#2865).
 - **Paquets et intégration** — les indicateurs de jetons ne sont plus appariés à l’intérieur de mots sans rapport (#2940) ; la marque DeepSeek lors de l’intégration est normalisée (#2939).
-- **Interface** — l’infobulle d’édition des annotations est simplifiée (#2966) ; l’installateur Windows signale les échecs de nettoyage avec des diagnostics exploitables (#2952).
+- **Interface** — l’infobulle d’édition des annotations est simplifiée (#2966) ; l’installateur Windows signale les échecs de nettoyage avec des diagnostics exploitables (#2952) ; les icônes de type de fichier sont agrandies dans les onglets et les listes (#2976) ; le connecteur OpenAlex n’exige plus d’identifiants, si bien que les recherches de littérature fonctionnent dès la sortie de la boîte (#2969).
