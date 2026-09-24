@@ -75,15 +75,34 @@ for (const width of [1280, 320]) {
   })
 }
 
-test('Project home keeps background export accessible in the header', async ({ page }) => {
+test('New conversation keeps background export accessible in the workspace header', async ({
+  page
+}) => {
   await page.setViewportSize({ width: 1280, height: 800 })
-  await page.goto('/session-package.html?background=running&surface=project')
+  await page.goto('/session-package.html?background=running&surface=new-conversation')
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
   const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
   await expect(progressButton).toBeVisible()
   await progressButton.click()
   await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
 })
+
+for (const width of [1280, 414]) {
+  test(`Project index shows background export in content below the header at ${width}px`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/session-package.html?background=running&surface=home')
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
+    const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+    await expect(progressButton).toBeVisible()
+    expect(await progressButton.evaluate((element) => element.closest('header'))).toBeNull()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('project-index-progress.png') })
+    await progressButton.click()
+    await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
+  })
+}
 
 test('full and compact presets simplify selection while retaining evidence', async ({
   page

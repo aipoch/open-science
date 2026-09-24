@@ -17,7 +17,9 @@ import {
   type SessionActionId
 } from '@/pages/workspace/session-action-menu'
 import type { ChatSession } from '@/stores/session-store'
+import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
+import { HomePage } from '@/pages/home/HomePage'
 import type { PackageOperationSnapshot } from '../../../src/shared/session-package'
 import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
@@ -222,7 +224,8 @@ const menuMode = new URLSearchParams(location.search).has('menu')
 if (menuMode) usePackageOperationStore.getState().setOpen(false)
 const background = new URLSearchParams(location.search)
 const backgroundMode = background.has('background')
-const projectHome = background.get('surface') === 'project'
+const homeSurface = background.get('surface') === 'home'
+const newConversationSurface = background.get('surface') === 'new-conversation'
 if (backgroundMode) {
   if (background.get('background') === 'running') {
     const current = usePackageOperationStore.getState().operation!
@@ -237,6 +240,10 @@ if (backgroundMode) {
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
+      projectFiles: {
+        getOverview: async () => ({ artifactCount: 0, isIndexComplete: true }),
+        onChanged: () => noop
+      },
       sessions: {
         packageOperation: async (request: { action: string }) => {
           const current = usePackageOperationStore.getState().operation!
@@ -260,6 +267,22 @@ const menuSession: ChatSession = {
   updatedAt: 1
 }
 const noop = (): void => undefined
+if (homeSurface) {
+  useProjectStore.setState({
+    projects: [
+      {
+        id: 'fixture',
+        name: 'Nanomaterials research',
+        description: 'Research workspace',
+        isExample: false,
+        createdAt: 1,
+        updatedAt: Date.now()
+      }
+    ],
+    isLoaded: true
+  })
+  useSessionStore.setState({ sessions: [menuSession] })
+}
 const MenuContents = (): React.JSX.Element => {
   const menu = useActionMenuTarget<SessionActionId>()
   return (
@@ -313,11 +336,14 @@ void localeReady.then(() =>
   createRoot(document.getElementById('root')!).render(
     <>
       {menuMode ? <SessionMenuFixture /> : null}
-      {backgroundMode ? (
+      {backgroundMode && homeSurface ? (
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={noop} />
+      ) : null}
+      {backgroundMode && !homeSurface ? (
         <div className="mx-auto max-w-4xl p-4">
           <header className="flex items-center gap-3 border-b border-border pb-3">
             <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
-              {projectHome ? 'New conversation' : 'Nanomaterials and tumour immunity'}
+              {newConversationSurface ? 'New conversation' : 'Nanomaterials and tumour immunity'}
             </h1>
             <PackageExportProgressButton />
           </header>

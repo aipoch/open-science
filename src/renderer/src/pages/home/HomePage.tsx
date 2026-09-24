@@ -698,7 +698,6 @@ const HomePage = ({
                 </button>
               ) : null}
               <NetworkStatusIndicator variant="pill" />
-              <PackageExportProgressButton />
               <span className="hidden sm:inline-flex">
                 <GitHubStarBadge variant="home" />
               </span>
@@ -746,6 +745,9 @@ const HomePage = ({
             </div>
           </header>
           <PackageOperationIndicator />
+          <div className="mt-4 flex justify-end empty:hidden">
+            <PackageExportProgressButton showLabel />
+          </div>
 
           {sessionUpdates.length > 0 ? (
             <section className="mt-8 sm:mt-10" aria-label={t('Session updates')}>

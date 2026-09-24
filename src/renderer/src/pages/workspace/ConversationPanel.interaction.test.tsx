@@ -899,7 +899,7 @@ const dispatchDrag = (type: string, dataTransferTypes: string[], files: File[] =
 }
 
 describe('ConversationPanel header spacing', () => {
-  it('shows background export progress on Project home and Session workspace', () => {
+  it('shows background export progress in New conversation and Session workspace', () => {
     act(() =>
       usePackageOperationStore.setState({
         operation: {
