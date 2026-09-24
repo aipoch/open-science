@@ -171,6 +171,7 @@ export const smartRunSnapshotSchema = z
 export const smartCollectionViewSchema = z
   .object({
     automaticPauseReason: z.enum(automaticClassificationPauseReasons).optional(),
+    automaticPauseRunId: id.optional(),
     ruleRevision: z.number().int().positive().optional(),
     evidenceMode: smartEvidenceModeSchema.optional(),
     autoUpdate: z.boolean().optional(),

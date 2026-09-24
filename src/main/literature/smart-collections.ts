@@ -692,6 +692,25 @@ export class LiteratureSmartCollections {
       where: { collectionId: id },
       orderBy: { createdAt: 'desc' }
     })
+    const pauseRunCandidates =
+      definition.automaticPauseReason && !definition.automaticPauseRunId
+        ? await client.literatureSmartRun.findMany({
+            where: {
+              collectionId: id,
+              state: {
+                in:
+                  definition.automaticPauseReason === 'storage-error'
+                    ? ['interrupted', 'failed']
+                    : ['interrupted']
+              }
+            },
+            select: { id: true },
+            take: 2
+          })
+        : []
+    const automaticPauseRunId =
+      definition.automaticPauseRunId ??
+      (pauseRunCandidates.length === 1 ? pauseRunCandidates[0].id : undefined)
     if (run && ['queued', 'running'].includes(run.state) && !this.active.has(id)) {
       await client.literatureSmartRun.update({
         where: { id: run.id },
@@ -774,6 +793,8 @@ export class LiteratureSmartCollections {
         !this.active.has(id) && definition.automaticPauseReason
           ? (definition.automaticPauseReason as AutomaticClassificationPauseReason)
           : undefined,
+      automaticPauseRunId:
+        !this.active.has(id) && definition.automaticPauseReason ? automaticPauseRunId : undefined,
       sourceName,
       model: snapshot.smartCollections?.modelId,
       overrides,
@@ -1118,20 +1139,36 @@ export class LiteratureSmartCollections {
         definition.automaticPauseReason === 'storage-error'
           ? ['interrupted', 'failed']
           : ['interrupted']
+      const pauseRunCandidates = definition.automaticPauseRunId
+        ? []
+        : await client.literatureSmartRun.findMany({
+            where: { collectionId: id, state: { in: abandonableStates } },
+            select: { id: true },
+            take: 2
+          })
       const run = await client.literatureSmartRun.findFirst({
         where: { id: command.runId, collectionId: id, state: { in: abandonableStates } },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         select: { id: true }
       })
       if (run) {
+        const clearsPause =
+          definition.automaticPauseRunId === run.id ||
+          (!definition.automaticPauseRunId &&
+            pauseRunCandidates.length === 1 &&
+            pauseRunCandidates[0].id === run.id)
         await client.$transaction(async (tx) => {
           const cancelled = await tx.literatureSmartRun.updateMany({
             where: { id: run.id, state: { in: abandonableStates } },
             data: { state: 'cancelled' }
           })
-          if (cancelled.count) {
+          if (cancelled.count && clearsPause) {
             await tx.literatureSmartCollection.updateMany({
-              where: { collectionId: id, automaticPauseRunId: run.id },
+              where: {
+                collectionId: id,
+                ...(definition.automaticPauseRunId
+                  ? { automaticPauseRunId: run.id }
+                  : { automaticPauseRunId: null })
+              },
               data: { automaticPauseReason: null, automaticPauseRunId: null }
             })
           }

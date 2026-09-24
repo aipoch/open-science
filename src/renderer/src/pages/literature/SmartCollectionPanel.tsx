@@ -404,7 +404,7 @@ export function SmartCollectionPanel({
                 variant="ghost"
                 size="icon-sm"
                 aria-label={t('Abandon run')}
-                disabled={busy || decisionPending || refreshFailed}
+                disabled={busy || decisionPending || refreshFailed || !view.run?.id}
                 onClick={() => setConfirmAbandon(view.run?.id)}
               >
                 <Trash2 className="size-4" aria-hidden="true" />
@@ -628,8 +628,8 @@ export function SmartCollectionPanel({
           }}
           secondaryButton={{
             label: t('Abandon run'),
-            onClick: () => setConfirmAbandon(view.run?.id),
-            disabled: busy || decisionPending || refreshFailed
+            onClick: () => setConfirmAbandon(view.automaticPauseRunId),
+            disabled: busy || decisionPending || refreshFailed || !view.automaticPauseRunId
           }}
         />
       )}
