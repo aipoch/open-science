@@ -139,25 +139,30 @@ const closeFile = async (file: FileHandle): Promise<void> => {
 
 // Open the canonical path before using it, then re-resolve the opened path. The handle keeps the
 // file identity stable after this check; O_NOFOLLOW rejects a final symlink on POSIX, while the
-// re-resolution also covers platforms whose Node runtime ignores that flag.
+// re-resolution also covers platforms whose Node runtime ignores that flag. Node does not provide
+// portable directory-descriptor opening on Windows, so the parent-handle check is POSIX-only.
 const openAuthorizedFile = async (
   physicalPath: string,
   flags: number,
   mode?: number
 ): Promise<FileHandle> => {
   const noFollow = constants.O_NOFOLLOW ?? 0
-  const parent = await open(
-    dirname(physicalPath),
-    constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | noFollow
-  )
+  const parent =
+    process.platform === 'win32'
+      ? undefined
+      : await open(
+          dirname(physicalPath),
+          constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | noFollow
+        )
   try {
-    const parentIdentity = await parent.stat()
+    const parentIdentity = parent ? await parent.stat() : undefined
     const file = await open(physicalPath, flags | noFollow, mode)
     try {
-      const currentParent = await parent.stat()
+      const currentParent = parent ? await parent.stat() : undefined
       if (
-        currentParent.dev !== parentIdentity.dev ||
-        currentParent.ino !== parentIdentity.ino ||
+        (parent && parentIdentity && currentParent
+          ? currentParent.dev !== parentIdentity.dev || currentParent.ino !== parentIdentity.ino
+          : false) ||
         (await resolvePhysicalPath(physicalPath)) !== physicalPath
       ) {
         throw new Error('The authorized file path changed before I/O.')
@@ -168,7 +173,7 @@ const openAuthorizedFile = async (
       throw error
     }
   } finally {
-    await closeFile(parent)
+    if (parent) await closeFile(parent)
   }
 }
 
