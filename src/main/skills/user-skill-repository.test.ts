@@ -1194,9 +1194,11 @@ describe('UserSkillRepository', () => {
     await mkdir(source, { recursive: true })
     const old = '---\nname: Original Name\n---\nold'
     await writeFile(join(source, 'SKILL.md'), old)
+    await writeFile(join(source, '.gitignore'), '*.log\n')
     const ref = { source: 'agents' as const, slug: 'citation' }
     await repo.importAgentHomeSkill(source, ref)
     const installed = join(storage, 'skills', 'imported', 'citation')
+    await expect(stat(join(installed, '.gitignore'))).rejects.toMatchObject({ code: 'ENOENT' })
     await writeFile(join(installed, 'local.txt'), 'local')
     await writeFile(join(source, 'SKILL.md'), old.replace('old', 'new'))
     const preview = await repo.previewAgentHomeSkill(source, ref)

@@ -90,7 +90,10 @@ export class SkillPackagePolicyError extends Error {
   }
 }
 
-export type SkillPackageInspectionOptions = Readonly<{ storageRoot?: string }>
+export type SkillPackageInspectionOptions = Readonly<{
+  storageRoot?: string
+  rejectIgnoredPaths?: boolean
+}>
 
 export const inspectSkillPackage = async (
   root: string,
@@ -123,7 +126,12 @@ export const inspectSkillPackage = async (
         ? posix.join(relativeDirectory, entry.name)
         : entry.name
       if (!isSkillPackageBudgetedPath(relativePath)) continue
-      if (isSkillPackageIgnoredPath(relativePath)) continue
+      if (isSkillPackageIgnoredPath(relativePath)) {
+        if (options.rejectIgnoredPaths) {
+          throw new SkillPackagePolicyError('unsafePath', relativePath)
+        }
+        continue
+      }
       if (isUnsafeSkillArchivePath(relativePath)) {
         throw new SkillPackagePolicyError('unsafePath', relativePath)
       }

@@ -59,7 +59,10 @@ const collectFiles = async (
 ): Promise<Zippable> => {
   let inventory: SkillPackageFile[]
   try {
-    inventory = await inspectSkillPackage(directory, { storageRoot })
+    inventory = await inspectSkillPackage(directory, {
+      storageRoot,
+      rejectIgnoredPaths: true
+    })
   } catch (error) {
     if (!(error instanceof SkillPackagePolicyError)) throw error
     if (error.reason === 'unsafePath') throw new Error('Skill path cannot be imported safely.')

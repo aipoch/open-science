@@ -7,7 +7,11 @@ import type {
   AgentHomeSkillSource,
   SkillReplacementPreview
 } from '../../shared/settings'
-import { SKILL_IMPORT_LIMITS, isAppOwnedSkillRootFile } from '../../shared/skill-import-limits'
+import {
+  SKILL_IMPORT_LIMITS,
+  isAppOwnedSkillRootFile,
+  isSkillPackageIgnoredPath
+} from '../../shared/skill-import-limits'
 import { inspectSkillPackage } from './skill-package-inspection'
 import { parseSkillDocument } from './frontmatter'
 import type {
@@ -264,6 +268,7 @@ class AgentHomeSkillOwner {
       for (const entry of children) {
         const path = join(dir, entry.name)
         const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
+        if (isSkillPackageIgnoredPath(relativePath)) continue
         const entryStat = await lstat(path)
         if (entryStat.isSymbolicLink()) {
           throw new Error('Refusing to read an agent-home Skill containing a symbolic link.')
@@ -365,7 +370,9 @@ class AgentHomeSkillOwner {
         force: false,
         errorOnExist: true,
         filter: async (entry) => {
-          if (isAppOwnedSkillRootFile(relative(sourcePath, entry))) {
+          const relativePath = relative(sourcePath, entry).replaceAll('\\', '/')
+          if (isSkillPackageIgnoredPath(relativePath)) return false
+          if (isAppOwnedSkillRootFile(relativePath)) {
             throw new Error(
               `Skill import may not include the reserved file ${relative(sourcePath, entry)}.`
             )
