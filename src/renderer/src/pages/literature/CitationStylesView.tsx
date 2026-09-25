@@ -52,6 +52,7 @@ const CitationStylesView = ({
   >()
   const previewRequestsRef = useRef(new Set<string>())
   const [activePreviewId, setActivePreviewId] = useState<string | null>(null)
+  const [skipEntryAnimation, setSkipEntryAnimation] = useState(false)
   const activePreviewRef = useRef<string | null>(null)
   const pinnedRef = useRef(false)
   const previewTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -173,13 +174,16 @@ const CitationStylesView = ({
     (style: LiteratureCitationStyleView, trigger: HTMLButtonElement, immediate = false): void => {
       cancelPreviewTimer()
       if (pinnedRef.current && activePreviewRef.current !== style.id) return
+      if (activePreviewRef.current === style.id) return
+      const instant = immediate || activePreviewRef.current !== null || warmRef.current
       const show = (): void => {
         previewTriggerRef.current = trigger
         activePreviewRef.current = style.id
+        setSkipEntryAnimation(instant)
         setActivePreviewId(style.id)
         loadPreview(style)
       }
-      if (immediate || activePreviewRef.current || warmRef.current) show()
+      if (instant) show()
       else previewTimerRef.current = setTimeout(show, 200)
     },
     [loadPreview]
@@ -336,6 +340,7 @@ const CitationStylesView = ({
           </PopoverAnchor>
           <PopoverContent
             ref={previewContentRef}
+            data-skip-entry-animation={skipEntryAnimation}
             aria-label={`${t('Preview')}: ${style.title}`}
             tabIndex={-1}
             side="top"

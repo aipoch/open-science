@@ -5,6 +5,7 @@ import { initI18n } from '@/i18n'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SkillUsageAgents } from '@/pages/settings/SkillUsageAgents'
+import { CitationStylesView } from '@/pages/literature/CitationStylesView'
 import {
   SessionHoverPreview,
   SessionHoverPreviewProvider
@@ -19,6 +20,20 @@ const longCopy =
 
 export function Fixture(): React.JSX.Element {
   const [opened, setOpened] = useState('')
+  if (params.has('csl')) {
+    return (
+      <CitationStylesView
+        styles={['APA', 'MLA'].map((title) => ({
+          id: title,
+          title,
+          source: 'built-in',
+          preview: { styleId: title, inText: `${title} citation`, reference: `${title} reference` }
+        }))}
+        onBack={() => {}}
+        onStylesChange={() => {}}
+      />
+    )
+  }
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
       <button>Outside</button>
