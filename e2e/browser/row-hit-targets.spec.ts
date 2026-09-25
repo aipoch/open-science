@@ -55,6 +55,7 @@ test('sidebar edges open the session while the dropdown and context menu remain 
   const row = page.locator('[data-session-id="session-1"]')
   await clickEdges(page, row, 'session')
   await page.getByRole('button', { name: 'Open actions for Analysis session' }).click()
+  await expect(page.getByTestId('session-preview-content')).toBeHidden()
   await page.getByRole('menuitem', { name: /Pin/ }).click()
   await expect(page.getByTestId('actions')).toHaveText('session,session,session,session,pin')
   await row.click({ button: 'right', position: { x: 3, y: 2 } })
