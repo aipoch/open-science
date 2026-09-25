@@ -1,6 +1,6 @@
 import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
 import { SideChatWorkbenchContent } from './SideChatWorkbench'
-import { BookOpen, FolderOpen, Globe2, X } from 'lucide-react'
+import { BookOpen, Cpu, FolderOpen, Globe2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
@@ -302,7 +302,12 @@ const PreviewTab = ({
     dragHoverTimer.current = undefined
   }
   useEffect(() => () => clearTimeout(dragHoverTimer.current), [tab.id])
-  const tabTitle = tab.type === 'tool' && tab.toolKind === 'side-chat' ? t('Side chat') : tab.title
+  const tabTitle =
+    tab.type === 'tool' && tab.toolKind === 'side-chat'
+      ? t('Side chat')
+      : tab.type === 'tool' && tab.toolKind === 'library'
+        ? t('Library')
+        : tab.title
 
   return (
     <div
@@ -375,7 +380,9 @@ const PreviewTab = ({
             />
           ) : tab.toolKind === 'files' ? (
             <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
-          ) : tab.toolKind === 'notebook' ? (
+          ) : tab.toolKind === 'compute' ? (
+            <Cpu className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+          ) : tab.toolKind === 'notebook' || tab.toolKind === 'library' ? (
             <BookOpen className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
           ) : null}
           {tab.type === 'file' ? (

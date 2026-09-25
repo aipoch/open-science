@@ -140,6 +140,7 @@
     "Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.": "获取 ClinPGx 报告的变异指纹（例如 rsID）对应的群体变异频率。",
     "Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.": "使用共享 connection report 查询两个对象之间的 ClinPGx 成对关系（例如药物和基因）；为每个对象提供一个标识。对于药物—基因—变异临床注释，请使用 summary annotation。",
     "Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.": "临床基因组学知识库：ClinGen 评审、CIViC 临床证据、Open Targets 平台和 ClinPGx 药物基因组学。",
+    "This reference is too large for Preview. Open Literature to access the complete record.": "这条文献过大，无法预览。请打开文献面板访问完整记录。",
     "Remembered for this project": "在此项目中记住授权",
     "Remembered across all projects": "在所有项目中记住授权",
     "Try again when the connection is available, or close this dialog.": "连接恢复后可重试，也可以关闭此对话框。",
@@ -6313,6 +6314,24 @@
     "Open the file from your current storage location, or close this preview and continue working.": "请从当前存储位置打开文件，或关闭此预览并继续工作。",
     "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "此对话需要恢复或明确丢弃其计划后才能继续。恢复期间，您可以切换到其他对话。",
     "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "如果恢复持续失败，请检查主机上的 Open-Science 是否正在运行，以及两台设备是否均已连接。离开此页面前，请保存未发送草稿的副本。",
-    "Appearance changed elsewhere. Review the current appearance before trying again.": "外观已在其他位置更改。请先检查当前外观，再重试。"
+    "Appearance changed elsewhere. Review the current appearance before trying again.": "外观已在其他位置更改。请先检查当前外观，再重试。",
+    "Open in Literature": "在文献面板中打开",
+    "View in Literature": "在文献面板中查看",
+    "Library preview": "文献库预览",
+    "No references in this project": "此项目中暂无文献",
+    "Your library is empty": "文献库为空",
+    "No matching references": "未找到匹配的文献",
+    "Browse all references": "浏览全部文献",
+    "Browse your library, or add references to this project in Literature.": "浏览文献库，或在文献面板中为此项目添加文献。",
+    "Add or import references in Literature to start building your library.": "在文献面板中添加或导入文献，开始建立文献库。",
+    "Try another search or clear the search field.": "尝试其他关键词，或清除搜索内容。",
+    "Could not load references.": "无法加载文献。",
+    "Loading references…": "正在加载文献…",
+    "No abstract available.": "暂无摘要。",
+    "No PDF attached.": "暂无 PDF 附件。",
+    "PDF unavailable": "PDF 不可用",
+    "No references on this page": "此页暂无文献",
+    "References may have moved or been removed. Return to the first page.": "文献可能已移动或移除，请返回第一页。",
+    "First page": "第一页"
   }
 }

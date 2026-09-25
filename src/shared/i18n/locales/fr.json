@@ -142,6 +142,7 @@
     "Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.": "Récupérer les fréquences de variants dans les populations rapportées par ClinPGx pour une empreinte de variant telle qu’un rsID.",
     "Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.": "Interroger une connexion ClinPGx entre deux objets (par exemple, un médicament et un gène) à l’aide du rapport de connexions partagé ; fournir un identifiant pour chaque objet. Utiliser les annotations de synthèse pour une annotation clinique médicament-gène-variant.",
     "Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.": "Bases de connaissances en génomique clinique : curations ClinGen, données probantes cliniques CIViC, plateforme Open Targets et pharmacogénomique ClinPGx.",
+    "This reference is too large for Preview. Open Literature to access the complete record.": "Cette référence est trop volumineuse pour l’aperçu. Ouvrez Littérature pour accéder à la fiche complète.",
     "Remembered for this project": "Mémorisé pour ce projet",
     "Remembered across all projects": "Mémorisé pour tous les projets",
     "Try again when the connection is available, or close this dialog.": "Réessayez lorsque la connexion est disponible ou fermez cette boîte de dialogue.",
@@ -6637,6 +6638,24 @@
     "Open the file from your current storage location, or close this preview and continue working.": "Ouvrez le fichier depuis votre emplacement de stockage actuel, ou fermez cet aperçu et continuez à travailler.",
     "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "Cette conversation ne peut pas continuer tant que son plan n’est pas restauré ou explicitement abandonné. Vous pouvez passer à une autre conversation pendant la récupération.",
     "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "Si la récupération échoue toujours, vérifiez qu’Open-Science fonctionne sur l’ordinateur hôte et que les deux appareils sont connectés. Enregistrez une copie des brouillons non envoyés avant de quitter cette page.",
-    "Appearance changed elsewhere. Review the current appearance before trying again.": "L’apparence a été modifiée ailleurs. Vérifiez l’apparence actuelle avant de réessayer."
+    "Appearance changed elsewhere. Review the current appearance before trying again.": "L’apparence a été modifiée ailleurs. Vérifiez l’apparence actuelle avant de réessayer.",
+    "Open in Literature": "Ouvrir dans Littérature",
+    "View in Literature": "Afficher dans Littérature",
+    "Library preview": "Aperçu de la bibliothèque",
+    "No references in this project": "Aucune référence dans ce projet",
+    "Your library is empty": "Votre bibliothèque est vide",
+    "No matching references": "Aucune référence correspondante",
+    "Browse all references": "Parcourir toutes les références",
+    "Browse your library, or add references to this project in Literature.": "Parcourez votre bibliothèque ou ajoutez des références à ce projet dans Littérature.",
+    "Add or import references in Literature to start building your library.": "Ajoutez ou importez des références dans Littérature pour constituer votre bibliothèque.",
+    "Try another search or clear the search field.": "Essayez une autre recherche ou effacez le champ de recherche.",
+    "Could not load references.": "Impossible de charger les références.",
+    "Loading references…": "Chargement des références…",
+    "No abstract available.": "Aucun résumé disponible.",
+    "No PDF attached.": "Aucun PDF joint.",
+    "PDF unavailable": "PDF indisponible",
+    "No references on this page": "Aucune référence sur cette page",
+    "References may have moved or been removed. Return to the first page.": "Les références ont peut-être été déplacées ou supprimées. Revenez à la première page.",
+    "First page": "Première page"
   }
 }

@@ -150,6 +150,28 @@ describe('preview persistence projections', () => {
     expect(persisted.items[0]).not.toHaveProperty('type')
   })
 
+  it('does not persist the Library tool tab or its active identity', () => {
+    usePreviewWorkbenchStore.setState({
+      panelState: 'open',
+      activeItemId: 'tool:project:library',
+      items: [
+        {
+          type: 'tool',
+          sessionId: '__project_library__',
+          createdAt: 1,
+          updatedAt: 2,
+          id: 'tool:project:library',
+          toolKind: 'library',
+          title: 'Library'
+        }
+      ]
+    })
+    const persisted = toPersistedPreviewState(usePreviewWorkbenchStore.getState())
+    expect(persisted.items).toEqual([])
+    expect(persisted.activeItemId).toBeUndefined()
+    expect(persisted.version).toBe(PREVIEW_STATE_VERSION)
+  })
+
   it('keeps source preview URLs and identifiers out of the durable projection', () => {
     usePreviewWorkbenchStore.setState({
       panelState: 'open',

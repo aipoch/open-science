@@ -141,6 +141,7 @@
     "Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.": "Rufen Sie von ClinPGx gemeldete Populationsvariantenfrequenzen für einen Variantenfingerabdruck wie eine rsID ab.",
     "Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.": "Fragen Sie eine paarweise ClinPGx-Verbindung zwischen zwei Objekten (z. B. einem Arzneimittel und einem Gen) über den gemeinsamen Verbindungsbericht ab; geben Sie für jedes Objekt einen Bezeichner an. Verwenden Sie Summary-Annotationen für eine klinische Arzneimittel-Gen-Varianten-Annotation.",
     "Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.": "Klinische Genomik-Wissensdatenbanken: ClinGen-Kurationen, klinische CIViC-Evidenz, die Open-Targets-Plattform und ClinPGx-Pharmakogenomik.",
+    "This reference is too large for Preview. Open Literature to access the complete record.": "Dieser Eintrag ist zu groß für die Vorschau. Öffnen Sie Literatur, um auf den vollständigen Datensatz zuzugreifen.",
     "Remembered for this project": "Für dieses Projekt merken",
     "Remembered across all projects": "Für alle Projekte merken",
     "Try again when the connection is available, or close this dialog.": "Versuchen Sie es erneut, wenn die Verbindung verfügbar ist, oder schließen Sie diesen Dialog.",
@@ -6471,6 +6472,24 @@
     "Open the file from your current storage location, or close this preview and continue working.": "Öffnen Sie die Datei am aktuellen Speicherort, oder schließen Sie diese Vorschau und arbeiten Sie weiter.",
     "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "Diese Konversation kann erst fortgesetzt werden, wenn ihr Plan wiederhergestellt oder ausdrücklich verworfen wurde. Während der Wiederherstellung können Sie zu einer anderen Konversation wechseln.",
     "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "Wenn die Wiederherstellung weiterhin fehlschlägt, prüfen Sie, ob Open-Science auf dem Host-Computer läuft und beide Geräte verbunden sind. Sichern Sie ungesendete Entwürfe, bevor Sie diese Seite verlassen.",
-    "Appearance changed elsewhere. Review the current appearance before trying again.": "Das Erscheinungsbild wurde an anderer Stelle geändert. Prüfen Sie das aktuelle Erscheinungsbild, bevor Sie es erneut versuchen."
+    "Appearance changed elsewhere. Review the current appearance before trying again.": "Das Erscheinungsbild wurde an anderer Stelle geändert. Prüfen Sie das aktuelle Erscheinungsbild, bevor Sie es erneut versuchen.",
+    "Open in Literature": "In Literatur öffnen",
+    "View in Literature": "In Literatur anzeigen",
+    "Library preview": "Bibliotheksvorschau",
+    "No references in this project": "Keine Literatur in diesem Projekt",
+    "Your library is empty": "Ihre Bibliothek ist leer",
+    "No matching references": "Keine passenden Literaturangaben",
+    "Browse all references": "Alle Literaturangaben durchsuchen",
+    "Browse your library, or add references to this project in Literature.": "Durchsuchen Sie Ihre Bibliothek oder fügen Sie diesem Projekt unter Literatur Quellen hinzu.",
+    "Add or import references in Literature to start building your library.": "Fügen Sie unter Literatur Quellen hinzu oder importieren Sie sie, um Ihre Bibliothek aufzubauen.",
+    "Try another search or clear the search field.": "Versuchen Sie einen anderen Suchbegriff oder leeren Sie das Suchfeld.",
+    "Could not load references.": "Literaturangaben konnten nicht geladen werden.",
+    "Loading references…": "Literaturangaben werden geladen…",
+    "No abstract available.": "Keine Zusammenfassung verfügbar.",
+    "No PDF attached.": "Keine PDF angehängt.",
+    "PDF unavailable": "PDF nicht verfügbar",
+    "No references on this page": "Keine Literaturangaben auf dieser Seite",
+    "References may have moved or been removed. Return to the first page.": "Literaturangaben wurden möglicherweise verschoben oder entfernt. Kehren Sie zur ersten Seite zurück.",
+    "First page": "Erste Seite"
   }
 }

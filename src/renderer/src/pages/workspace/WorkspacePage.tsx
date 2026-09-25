@@ -29,8 +29,10 @@ import {
   createNotebookPreviewItem,
   createProjectComputePreviewItem,
   createProjectFilesPreviewItem,
+  createProjectLibraryPreviewItem,
   PROJECT_COMPUTE_PREVIEW_ID,
   PROJECT_FILES_PREVIEW_ID,
+  PROJECT_LIBRARY_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import {
@@ -157,7 +159,6 @@ const WorkspacePage = ({
     (state) => state.setArtifactMentionAvailability
   )
   const goHome = useNavigationStore((state) => state.goHome)
-  const openProjectLiterature = useNavigationStore((state) => state.openProjectLiterature)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const defaultPermissionProfile = useSettingsStore((state) => state.defaultPermissionProfile)
   const settingsSkills = useSettingsStore((state) => state.skills)
@@ -1215,6 +1216,14 @@ const WorkspacePage = ({
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
   }
 
+  const openLibraryPreview = (): boolean => {
+    if (!isSessionPersistenceReady) {
+      return useNavigationStore.getState().openProjectLiterature(scopedProjectId, 'user')
+    }
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectLibraryPreviewItem())
+    return usePreviewWorkbenchStore.getState().activeItemId === PROJECT_LIBRARY_PREVIEW_ID
+  }
+
   const openComputePreview = (): void => {
     if (!isSessionPersistenceReady) return
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectComputePreviewItem())
@@ -1297,7 +1306,8 @@ const WorkspacePage = ({
                 onNewConversation={openNewConversation}
                 isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
                 onOpenFiles={openFilesPreview}
-                onOpenLiterature={() => openProjectLiterature(scopedProjectId, 'user')}
+                isLibraryOpen={activePreviewItemId === PROJECT_LIBRARY_PREVIEW_ID}
+                onOpenLiterature={openLibraryPreview}
                 isComputeOpen={
                   canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
                 }
@@ -1362,8 +1372,9 @@ const WorkspacePage = ({
                   close()
                   openFilesPreview()
                 }}
+                isLibraryOpen={activePreviewItemId === PROJECT_LIBRARY_PREVIEW_ID}
                 onOpenLiterature={() => {
-                  if (openProjectLiterature(scopedProjectId, 'user')) close()
+                  if (openLibraryPreview()) close()
                 }}
                 isComputeOpen={
                   canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID

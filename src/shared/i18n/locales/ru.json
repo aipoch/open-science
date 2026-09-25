@@ -143,6 +143,7 @@
     "Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.": "Получите популяционные частоты вариантов, представленные ClinPGx для отпечатка варианта, например rsID.",
     "Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.": "Запросите парную связь ClinPGx между двумя объектами (например, лекарством и геном) с помощью общего отчёта о связях; укажите по одному идентификатору для каждого объекта. Для клинической аннотации лекарство–ген–вариант используйте сводные аннотации.",
     "Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.": "Базы знаний по клинической геномике: курируемые данные ClinGen, клинические доказательства CIViC, платформа Open Targets и фармакогеномика ClinPGx.",
+    "This reference is too large for Preview. Open Literature to access the complete record.": "Эта запись слишком велика для предпросмотра. Откройте раздел «Литература» для доступа к полной записи.",
     "Remembered for this project": "Запомнить для этого проекта",
     "Remembered across all projects": "Запомнить для всех проектов",
     "Try again when the connection is available, or close this dialog.": "Повторите попытку, когда соединение станет доступно, или закройте это окно.",
@@ -6774,6 +6775,24 @@
     "Open the file from your current storage location, or close this preview and continue working.": "Откройте файл из текущего хранилища или закройте этот предпросмотр и продолжите работу.",
     "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "Диалог нельзя продолжить, пока план не будет восстановлен или явно отменён. Во время восстановления можно переключиться на другой диалог.",
     "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "Если восстановление продолжает завершаться ошибкой, проверьте, что Open-Science запущен на основном компьютере и оба устройства подключены. Сохраните копию неотправленных черновиков перед уходом с этой страницы.",
-    "Appearance changed elsewhere. Review the current appearance before trying again.": "Оформление изменено в другом месте. Проверьте текущее оформление, прежде чем повторить попытку."
+    "Appearance changed elsewhere. Review the current appearance before trying again.": "Оформление изменено в другом месте. Проверьте текущее оформление, прежде чем повторить попытку.",
+    "Open in Literature": "Открыть в литературе",
+    "View in Literature": "Посмотреть в литературе",
+    "Library preview": "Предпросмотр библиотеки",
+    "No references in this project": "В этом проекте нет источников",
+    "Your library is empty": "Ваша библиотека пуста",
+    "No matching references": "Нет подходящих источников",
+    "Browse all references": "Просмотреть все источники",
+    "Browse your library, or add references to this project in Literature.": "Просмотрите библиотеку или добавьте источники в этот проект в разделе литературы.",
+    "Add or import references in Literature to start building your library.": "Добавьте или импортируйте источники в разделе литературы, чтобы наполнить библиотеку.",
+    "Try another search or clear the search field.": "Попробуйте другой запрос или очистите поле поиска.",
+    "Could not load references.": "Не удалось загрузить источники.",
+    "Loading references…": "Загрузка источников…",
+    "No abstract available.": "Аннотация отсутствует.",
+    "No PDF attached.": "PDF не прикреплён.",
+    "PDF unavailable": "PDF недоступен",
+    "No references on this page": "На этой странице нет источников",
+    "References may have moved or been removed. Return to the first page.": "Возможно, источники перемещены или удалены. Вернитесь на первую страницу.",
+    "First page": "Первая страница"
   }
 }

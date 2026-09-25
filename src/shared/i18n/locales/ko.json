@@ -140,6 +140,7 @@
     "Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.": "rsID와 같은 변이 지문에 대해 ClinPGx가 보고한 집단별 변이 빈도를 가져옵니다.",
     "Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.": "공유 connection report를 사용하여 두 객체(예: 약물과 유전자) 사이의 ClinPGx 쌍별 연결을 조회합니다. 각 객체에 하나의 식별자를 제공하세요. 약물-유전자-변이 임상 주석에는 summary annotation을 사용하세요.",
     "Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.": "임상 유전체학 지식 베이스: ClinGen 큐레이션, CIViC 임상 근거, Open Targets 플랫폼 및 ClinPGx 약물유전체학.",
+    "This reference is too large for Preview. Open Literature to access the complete record.": "이 문헌은 미리보기에 표시하기에 너무 큽니다. 전체 레코드에 접근하려면 문헌 패널을 여세요.",
     "Remembered for this project": "이 프로젝트에서 승인 기억",
     "Remembered across all projects": "모든 프로젝트에서 승인 기억",
     "Try again when the connection is available, or close this dialog.": "연결이 가능해지면 다시 시도하거나 이 대화 상자를 닫으세요.",
@@ -6311,6 +6312,24 @@
     "Open the file from your current storage location, or close this preview and continue working.": "현재 저장 위치에서 파일을 열거나 이 미리보기를 닫고 작업을 계속하세요.",
     "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "이 대화는 계획을 복원하거나 명시적으로 폐기할 때까지 계속할 수 없습니다. 복구가 진행되는 동안 다른 대화로 전환할 수 있습니다.",
     "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "복구가 계속 실패하면 호스트 컴퓨터에서 Open-Science가 실행 중인지, 두 장치가 모두 연결되어 있는지 확인하세요. 이 페이지를 떠나기 전에 보내지 않은 초안의 사본을 저장하세요.",
-    "Appearance changed elsewhere. Review the current appearance before trying again.": "다른 곳에서 모양이 변경되었습니다. 현재 모양을 확인한 후 다시 시도하세요."
+    "Appearance changed elsewhere. Review the current appearance before trying again.": "다른 곳에서 모양이 변경되었습니다. 현재 모양을 확인한 후 다시 시도하세요.",
+    "Open in Literature": "문헌에서 열기",
+    "View in Literature": "문헌에서 보기",
+    "Library preview": "라이브러리 미리보기",
+    "No references in this project": "이 프로젝트에 문헌이 없습니다",
+    "Your library is empty": "라이브러리가 비어 있습니다",
+    "No matching references": "일치하는 문헌이 없습니다",
+    "Browse all references": "모든 문헌 찾아보기",
+    "Browse your library, or add references to this project in Literature.": "라이브러리를 찾아보거나 문헌에서 이 프로젝트에 문헌을 추가하세요.",
+    "Add or import references in Literature to start building your library.": "문헌에서 자료를 추가하거나 가져와 라이브러리를 만들어 보세요.",
+    "Try another search or clear the search field.": "다른 검색어를 사용하거나 검색 필드를 지우세요.",
+    "Could not load references.": "문헌을 불러오지 못했습니다.",
+    "Loading references…": "문헌 불러오는 중…",
+    "No abstract available.": "초록이 없습니다.",
+    "No PDF attached.": "첨부된 PDF가 없습니다.",
+    "PDF unavailable": "PDF를 사용할 수 없습니다",
+    "No references on this page": "이 페이지에 문헌이 없습니다",
+    "References may have moved or been removed. Return to the first page.": "문헌이 이동되거나 삭제되었을 수 있습니다. 첫 페이지로 돌아가세요.",
+    "First page": "첫 페이지"
   }
 }

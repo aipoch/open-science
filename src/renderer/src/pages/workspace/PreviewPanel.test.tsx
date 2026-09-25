@@ -517,6 +517,21 @@ describe('PreviewPanel', () => {
     expect(activeContent?.textContent).toBe('file:image:artifact:file-1.png:/workspace/file-1.png')
   })
 
+  it.each([
+    ['compute', 'Compute', 'cpu'],
+    ['library', 'Library', 'book-open']
+  ] as const)('shows the sidebar icon on the %s preview tab', async (toolKind, title, icon) => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createToolItem({ toolKind, title }))
+
+    await renderPanel()
+
+    const tab = container.querySelector(`[role="tab"][title="${title}"]`)
+    expect(tab?.querySelector(`.lucide-${icon}`)?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('[data-testid="tool-content"]')?.textContent).toBe(
+      `tool:${toolKind}`
+    )
+  })
+
   it('keeps an HTTPS source webview mounted while its tab is inactive', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
     usePreviewWorkbenchStore.getState().upsertItem(createFileItem({}))

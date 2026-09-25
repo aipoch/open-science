@@ -140,6 +140,7 @@
     "Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.": "取得 ClinPGx 報告的變異指紋（例如 rsID）所對應的族群變異頻率。",
     "Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.": "使用共用 connection report 查詢兩個物件之間的 ClinPGx 成對連結（例如藥物與基因）；為每個物件提供一個識別資訊。藥物—基因—變異臨床註釋請使用 summary annotation。",
     "Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.": "臨床基因組學知識庫：ClinGen 評註、CIViC 臨床證據、Open Targets 平台和 ClinPGx 藥物基因組學。",
+    "This reference is too large for Preview. Open Literature to access the complete record.": "這筆文獻過大，無法預覽。請開啟文獻面板存取完整記錄。",
     "Remembered for this project": "在此專案中記住授權",
     "Remembered across all projects": "在所有專案中記住授權",
     "Try again when the connection is available, or close this dialog.": "連線恢復後可重試，也可以關閉此對話框。",
@@ -6313,6 +6314,24 @@
     "Open the file from your current storage location, or close this preview and continue working.": "請從目前的儲存位置開啟檔案，或關閉此預覽並繼續工作。",
     "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "此對話需要還原或明確捨棄其計畫後才能繼續。還原期間，您可以切換到其他對話。",
     "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "如果還原持續失敗，請檢查主機上的 Open-Science 是否正在執行，以及兩台裝置是否均已連線。離開此頁面前，請儲存未傳送草稿的副本。",
-    "Appearance changed elsewhere. Review the current appearance before trying again.": "外觀已在其他位置變更。請先檢查目前外觀，再重試。"
+    "Appearance changed elsewhere. Review the current appearance before trying again.": "外觀已在其他位置變更。請先檢查目前外觀，再重試。",
+    "Open in Literature": "在文獻面板中開啟",
+    "View in Literature": "在文獻面板中檢視",
+    "Library preview": "文獻庫預覽",
+    "No references in this project": "此專案中尚無文獻",
+    "Your library is empty": "文獻庫是空的",
+    "No matching references": "找不到相符的文獻",
+    "Browse all references": "瀏覽全部文獻",
+    "Browse your library, or add references to this project in Literature.": "瀏覽文獻庫，或在文獻面板中為此專案新增文獻。",
+    "Add or import references in Literature to start building your library.": "在文獻面板中新增或匯入文獻，開始建立文獻庫。",
+    "Try another search or clear the search field.": "嘗試其他關鍵字，或清除搜尋內容。",
+    "Could not load references.": "無法載入文獻。",
+    "Loading references…": "正在載入文獻…",
+    "No abstract available.": "尚無摘要。",
+    "No PDF attached.": "尚無 PDF 附件。",
+    "PDF unavailable": "PDF 無法使用",
+    "No references on this page": "此頁尚無文獻",
+    "References may have moved or been removed. Return to the first page.": "文獻可能已移動或移除，請返回第一頁。",
+    "First page": "第一頁"
   }
 }
