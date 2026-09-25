@@ -257,7 +257,7 @@ describe('independent source regression', () => {
         )
         expect(result.status).toBe(['true', 'false'].includes(selection) ? 0 : 1)
         if (selection === 'true') {
-          expect(result.stdout).toContain('--global-timeout=1800000')
+          expect(result.stdout).toContain('--global-timeout=2400000')
           expect(result.stdout).not.toContain('--grep-invert')
         }
         if (selection === 'false') {
@@ -308,7 +308,7 @@ describe('independent source regression', () => {
           'npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout="$regression_timeout" --output=test-results/regressions_macos'
         )
         expect(command.run).toContain('regression_timeout=1200000')
-        expect(command.run).toContain('true) regression_timeout=1800000')
+        expect(command.run).toContain('true) regression_timeout=2400000')
       } else {
         expect(command.run).toContain(
           'npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/delegation_macos'

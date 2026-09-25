@@ -38,7 +38,7 @@ runs:
         case "$INCLUDE_CAPACITY" in
           # Nightly capacity cases exceed the standard PR budget on macOS; keep
           # the suite together so the final tests are not cut off mid-run.
-          true) regression_timeout=1800000 ;;
+          true) regression_timeout=2400000 ;;
           false) args+=(--grep-invert '@capacity') ;;
           *) echo "Invalid capacity selection" >&2; exit 1 ;;
         esac
