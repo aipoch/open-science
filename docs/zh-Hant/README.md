@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科學家與研究人員的 AI 研究工作台，�
 
 AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.33.2 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.33.2 提供經過程式碼簽署的 Windows 安裝程式，SmartScreen 首次執行警告已成為過去。蛋白質註解連接器新增 STRING 蛋白質交互作用富集分析，即時來源的瀏覽器預覽現在會在多次造訪之間持久保留，委派功能也能在清理失敗時保住已完成的結果。Figure Composer 工作流程已重新整理，檔案圖示會出現在預覽標題中，下載也改為指向官方下載頁面。詳情請查看[最新發行說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.33.3 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。 AIPOCH Open-Science v0.33.3 升級文件預覽：Office 文件支援帶搜尋的分頁閱讀，PowerPoint 支援分頁檢閱；基因連接器新增 Enrichr 基因集富集工具；工作空間帶來緊湊的文獻庫預覽。Windows 簽署現在涵蓋所有隨附執行檔，文獻篩選新增放棄評估動作，工作階段套件能以調適性速度傳輸。詳情請查看[最新發行說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />

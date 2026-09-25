@@ -49,7 +49,7 @@ AIPOCH Open-Science는 과학자와 연구자를 위한 AI 연구 워크벤치�
 
 AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[AIPOCH Open-Science v0.33.2 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 9월 업데이트)_. AIPOCH Open-Science v0.33.2는 코드 서명된 Windows 설치 프로그램을 제공하여 첫 실행 시 SmartScreen 경고가 사라졌습니다. 단백질 주석 커넥터에 STRING PPI 농축 분석이 추가되고, 라이브 소스 브라우저 미리보기가 방문 사이에도 유지되며, 위임은 정리 작업 오류가 있어도 완료된 결과를 보존합니다. Figure Composer 워크플로가 갱신되고, 미리보기 헤더에 파일 유형 아이콘이 표시되며, 다운로드는 공식 다운로드 페이지를 가리킵니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v0.33.3 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 9월 업데이트)_. AIPOCH Open-Science v0.33.3는 문서 미리보기를 페이지 매긴 Office 읽기와 검색, 페이지 단위 PowerPoint 검토로 강화하고, 유전자 커넥터에 Enrichr 유전자 세트 농축 도구를 추가하며, 워크스페이스에 컴팩트 라이브러리 미리보기를 제공합니다. Windows 서명은 이제 모든 번들 실행 파일을 커버하고, Literature 심사에는 평가 중단 작업이 추가되며, 세션 패키지는 적응형 속도로 전송할 수 있습니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
