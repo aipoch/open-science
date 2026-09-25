@@ -943,12 +943,12 @@ const HomePage = ({
                     ({ project, sessionCount, runningCount, waitingCount, lastActivityAt }) => (
                       <div
                         key={project.id}
-                        className={rowClassName}
+                        className={cn(rowClassName, 'relative')}
                         title={project.description || project.name}
                       >
                         <button
                           type="button"
-                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left after:absolute after:inset-0 after:rounded-[inherit]"
                           onClick={() => openProject(project.id, 'user')}
                         >
                           <span className="min-w-0 truncate font-semibold text-text-000">
@@ -1018,7 +1018,7 @@ const HomePage = ({
                           <DropdownMenuTrigger asChild>
                             <button
                               type="button"
-                              className={rowActionClassName}
+                              className={cn(rowActionClassName, 'relative z-10')}
                               aria-label={t('Open actions for {{name}}', { name: project.name })}
                             >
                               <MoreVertical

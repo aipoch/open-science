@@ -995,7 +995,7 @@ const WorkspaceSidebarView = ({
                           type="button"
                           data-slot="session-open-button"
                           title={imported ? t('Read-only') : undefined}
-                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
+                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left after:absolute after:inset-0 after:rounded-[inherit]"
                           aria-current={isActive ? 'page' : undefined}
                           aria-keyshortcuts={
                             [

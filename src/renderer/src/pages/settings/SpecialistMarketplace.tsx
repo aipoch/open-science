@@ -1380,11 +1380,11 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
               return (
                 <li
                   key={marketplaceListingKey(item)}
-                  className="group flex flex-col rounded-xl border border-border bg-background p-4 text-center transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm motion-reduce:transition-none"
+                  className="group relative flex flex-col rounded-xl border border-border bg-background p-4 text-center transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm motion-reduce:transition-none"
                 >
                   <button
                     type="button"
-                    className="flex min-w-0 flex-1 cursor-pointer flex-col items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex min-w-0 flex-1 cursor-pointer flex-col items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring after:absolute after:-inset-px after:rounded-[inherit]"
                     onClick={navigate}
                   >
                     <SpecialistIdentity id={item.id} displayName={item.displayName} size="lg" />
@@ -1438,7 +1438,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="shrink-0 cursor-pointer"
+                      className="relative z-10 shrink-0 cursor-pointer"
                       onClick={navigate}
                     >
                       {opensDetails ? t('View details') : t('Manage')}
