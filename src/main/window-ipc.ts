@@ -8,7 +8,10 @@ import { isInterfaceScale } from '../shared/interface-scale'
 // The minimal window surface the close handler needs; keeps the resolver injectable for tests.
 type ClosableWindow = {
   close: () => void
-  webContents?: { setZoomFactor: (factor: number) => void }
+  webContents?: {
+    getZoomFactor?: () => number
+    setZoomFactor: (factor: number) => void
+  }
 }
 
 type WindowIpcDeps = {
@@ -37,7 +40,10 @@ const registerWindowZoomIpcHandler = (deps: WindowIpcDeps = {}): void => {
 
   ipcMainHandle('window:set-zoom-factor', (event: IpcMainInvokeEvent, factor: unknown): void => {
     if (!isInterfaceScale(factor)) return
-    resolveWindow(event.sender)?.webContents?.setZoomFactor(factor)
+    const webContents = resolveWindow(event.sender)?.webContents
+    // Avoid triggering a compositor/layout update when startup reapplies the default 100% factor.
+    if (!webContents || webContents.getZoomFactor?.() === factor) return
+    webContents.setZoomFactor(factor)
   })
 }
 

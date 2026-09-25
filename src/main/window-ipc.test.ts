@@ -50,14 +50,30 @@ describe('window IPC handler', () => {
     handlers.clear()
     const setZoomFactor = vi.fn()
     const sender = {}
-    const resolveWindow = vi
-      .fn()
-      .mockReturnValue({ close: vi.fn(), webContents: { setZoomFactor } })
+    const resolveWindow = vi.fn().mockReturnValue({
+      close: vi.fn(),
+      webContents: { getZoomFactor: () => 1, setZoomFactor }
+    })
     registerWindowIpcHandlers({ resolveWindow })
 
     handlers.get(ZOOM_CHANNEL)!({ sender }, 1.25)
 
     expect(setZoomFactor).toHaveBeenCalledWith(1.25)
+  })
+
+  it('avoids resetting an already matching zoom factor', () => {
+    handlers.clear()
+    const setZoomFactor = vi.fn()
+    registerWindowIpcHandlers({
+      resolveWindow: () => ({
+        close: vi.fn(),
+        webContents: { getZoomFactor: () => 1, setZoomFactor }
+      })
+    })
+
+    handlers.get(ZOOM_CHANNEL)!({ sender: {} }, 1)
+
+    expect(setZoomFactor).not.toHaveBeenCalled()
   })
 
   it('rejects zoom factors outside the shared allow-list', () => {
