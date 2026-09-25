@@ -329,7 +329,7 @@ ci(review): unify automated AI reviews
   merely because `main` advanced; update it for conflicts or a maintainer request.
 - PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repository
   workflow), AI review, static checks and portable tests on Ubuntu. Desktop changes run the Windows
-  `@pr-mainline` E2E subset on one test runner: project/session/file journeys, native window and WSL
+  `@pr-mainline` E2E subset on one test runner: project/session/file journeys, native window
   behavior, permissions, draft recovery and media privacy. Keep the tag in the existing test title;
   new cases enter the complete scheduled suites by default. Full Windows business/browser variants
   run in the independent Windows E2E Regression workflow; Windows core checks remain blocking.
@@ -360,7 +360,8 @@ ci(review): unify automated AI reviews
   test runners and `--fail-on-flaky-tests`. It has its own failure-tracking issue and does not run
   Windows Full Test or Notebook mutation checks. PR Gate manual `windows-e2e-mainline` reuses the
   short PR subset; `windows-e2e` and `e2e` retain complete coverage. The independent regression
-  workflow also supports manual full runs. Nightly packaging, Windows Full Test and Runtime Resource
+  workflow also supports manual full runs. The existing WSL development-preview journey remains
+  opt-in with its dedicated build and is not claimed as ordinary PR/scheduled coverage. Nightly packaging, Windows Full Test and Runtime Resource
   Soak retain their daily 23:17, 00:47 and 03:23 Singapore schedules and, like Windows E2E Regression,
   skip a head that the last successful scheduled run already covered (shared `skip-unchanged-scheduled` action); Nightly additionally requires that head to
   be published under the rolling `nightly` tag, and manual runs never count as coverage because

@@ -36,7 +36,7 @@ const step = (job: Job, name: string): Step =>
   job.steps.find((candidate) => candidate.name === name)!
 const suites = [
   ['renderer_layout', 'test:e2e:browser', 9],
-  ['e2e_functional_windows', 'test:e2e:journey', 10],
+  ['e2e_functional_windows', 'test:e2e:journey', 9],
   ['e2e_workspace_windows', 'test:e2e:workspace', 5]
 ] as const
 
