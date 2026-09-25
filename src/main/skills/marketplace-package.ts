@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { skillMarketplaceStableVersionPattern } from '../../shared/skill-marketplace'
 import {
   isAppOwnedSkillRootFile,
+  isSkillPackageIgnoredPath,
   SKILL_IMPORT_LIMITS as limits
 } from '../../shared/skill-import-limits'
 import { parseSkillDocument } from './frontmatter'
@@ -157,7 +158,13 @@ export function verifyMarketplacePackage(
     total += content.length
     if (content.length !== expanded || total > limits.maxBundleBytes) reject()
     const parts = name.split('/')
-    if (parts.length < 2 || isAppOwnedSkillRootFile(parts.slice(1).join('/'))) reject()
+    const relativePath = parts.slice(1).join('/')
+    if (
+      parts.length < 2 ||
+      isAppOwnedSkillRootFile(relativePath) ||
+      isSkillPackageIgnoredPath(relativePath)
+    )
+      reject()
     if (parts[0] === id) files.push({ relativePath: parts.slice(1).join('/'), content })
     previousEnd = start + compressed
     cursor = next

@@ -81,6 +81,7 @@ describe('Marketplace package boundary', () => {
     'dir\\file',
     'references/../bad',
     '.source.json',
+    '.github/workflows/ci.yml',
     'SKILL.MD',
     'references/skill.md',
     'references'
