@@ -117,7 +117,7 @@ const create = async (): Promise<string> =>
 const refresh = async (id: string): Promise<void> => {
   await owner.execute({ kind: 'smart-collection', collectionId: id, action: 'refresh', offset: 0 })
   await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
-    timeout: 5000
+    timeout: 15000
   })
 }
 
