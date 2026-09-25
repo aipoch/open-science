@@ -3034,6 +3034,35 @@ it('abandons a failed storage-error run and clears its durable pause', async () 
   expect(classify).toHaveBeenCalledOnce()
 })
 
+it('clears a failed automatic pause when its run has no pending work', async () => {
+  const id = await create()
+  await refresh(id)
+  const run = await db.literatureSmartRun.findFirstOrThrow({ where: { collectionId: id } })
+  await db.literatureSmartRun.update({ where: { id: run.id }, data: { state: 'failed' } })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'storage-error',
+      automaticPauseRunId: run.id
+    }
+  })
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'resume-automatic',
+    offset: 0
+  })
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: undefined,
+    matches: 1,
+    run: { id: run.id, state: 'failed', done: 1, total: 1 }
+  })
+  expect(classify).toHaveBeenCalledOnce()
+})
+
 it('clears a completed run pause without changing its classification results', async () => {
   const id = await create()
   await refresh(id)

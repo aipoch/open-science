@@ -1127,7 +1127,13 @@ export class LiteratureSmartCollections {
           ((definition.automaticPauseReason === 'storage-error' ||
             definition.automaticPauseReason === 'interrupted') &&
             latest.state === 'failed')) &&
-        definition.automaticPauseReason !== 'run-limit'
+        definition.automaticPauseReason !== 'run-limit' &&
+        Boolean(
+          await client.literatureSmartRunItem.findFirst({
+            where: { runId: latest.id, deferred: false, state: 'pending' },
+            select: { itemId: true }
+          })
+        )
       return this.execute(
         {
           ...command,

@@ -276,6 +276,7 @@ export function SmartCollectionPanel({
     Boolean(view?.automaticPauseRunId) &&
     view?.run?.id === view?.automaticPauseRunId &&
     !view?.run?.abandoned &&
+    Boolean(view?.run && view.run.done < view.run.total) &&
     (view?.run?.state === 'cancelled' ||
       view?.run?.state === 'interrupted' ||
       ((view.automaticPauseReason === 'storage-error' ||

@@ -506,6 +506,34 @@ it('continues a cancelled run-limit pause in a new automatic run', async () => {
   )
 })
 
+it('offers a fresh run when a failed automatic run has no pending work', async () => {
+  view = {
+    ...view,
+    autoUpdate: true,
+    configured: true,
+    automaticPauseReason: 'storage-error',
+    automaticPauseRunId: 'failed-run',
+    run: {
+      id: 'failed-run',
+      kind: 'refresh',
+      state: 'failed',
+      done: 1,
+      total: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      usageIncomplete: false,
+      updatedAt: 1
+    }
+  }
+  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+  const freshRun = await screen.findByRole('button', { name: 'Start a fresh automatic run' })
+  expect(screen.queryByRole('button', { name: 'Resume automatic updates' })).toBeNull()
+  fireEvent.click(freshRun)
+  await waitFor(() =>
+    expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'resume-automatic' }))
+  )
+})
+
 it('confirms and abandons a paused automatic run', async () => {
   view = {
     ...view,
