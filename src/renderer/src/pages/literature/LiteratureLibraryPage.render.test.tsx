@@ -538,8 +538,11 @@ describe('LiteratureLibraryPage', () => {
       render(<LiteratureLibraryPage />)
       if (collapsed) fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar panel' }))
       const back = screen.getByRole('button', { name: 'Back to Project' })
-      if (collapsed) expect(back.getAttribute('title')).toBe('Back to Project')
-      else expect(back.textContent).toBe('Back to Project')
+      if (collapsed) {
+        expect(back.hasAttribute('title')).toBe(false)
+        fireEvent.pointerMove(back, { pointerType: 'mouse' })
+        expect((await screen.findByRole('tooltip')).textContent).toBe('Back to Project')
+      } else expect(back.textContent).toBe('Back to Project')
       fireEvent.click(back)
       expect(useNavigationStore.getState()).toMatchObject({
         view: 'workspace',
@@ -3052,6 +3055,22 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('button', { name: 'Expand sidebar panel' })).not.toBeNull()
     expect(screen.getByRole('button', { name: 'All references' })).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Settings' })).not.toBeNull()
+    for (const label of [
+      'Expand sidebar panel',
+      'Inbox',
+      'All references',
+      'Duplicates',
+      'Trash',
+      'New collection',
+      'Settings'
+    ]) {
+      const button = screen.getByRole('button', { name: label })
+      expect(button.hasAttribute('title')).toBe(false)
+      fireEvent.pointerMove(button, { pointerType: 'mouse' })
+      await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe(label))
+      fireEvent.keyDown(button, { key: 'Escape' })
+      fireEvent.pointerLeave(button, { pointerType: 'mouse' })
+    }
     expect(
       screen.getByRole('button', { name: 'New collection' }).parentElement?.className
     ).toContain('items-center')
@@ -3174,6 +3193,15 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show fewer collections' }))
     expect(screen.getByRole('button', { name: 'Collection 8' })).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'Collection 5' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar panel' }))
+    for (const label of ['Project 1', 'Collection 8']) {
+      const button = screen.getByRole('button', { name: label })
+      fireEvent.pointerMove(button, { pointerType: 'mouse' })
+      await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe(label))
+      fireEvent.keyDown(button, { key: 'Escape' })
+      fireEvent.pointerLeave(button, { pointerType: 'mouse' })
+    }
   })
 
   it('toggles the Literature navigation with the platform sidebar shortcut', () => {
