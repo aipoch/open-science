@@ -131,6 +131,7 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Ce paquet de session nécessite une version plus récente d’Open Science. Mettez Open Science à jour, puis réessayez de l’importer."
   },
   "renderer": {
+    "Try again when the connection is available, or close this dialog.": "Réessayez lorsque la connexion est disponible ou fermez cette boîte de dialogue.",
     "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "La CLI Claude Code installée est incompatible ou sa version n’a pas pu être vérifiée. Mettez Claude Code à jour vers la version 2.1.118 ou ultérieure, puis relancez la détection dans les paramètres.",
     "Other classification tokens": "Jetons des autres classifications",
     "Literature classification tokens": "Jetons de classification bibliographique",
@@ -6615,16 +6616,10 @@
     "Continue for now": "Continuer pour le moment",
     "Your choice could not be saved. Continue for now to keep using this folder; we may ask again after restarting.": "Votre choix n’a pas pu être enregistré. Vous pouvez continuer à utiliser ce dossier pour le moment. Cette question pourra vous être posée à nouveau après le redémarrage.",
     "Could not send your response.": "Impossible d’envoyer votre réponse.",
-    "Try again when the connection is available, or finish later. The request stays pending until it is answered or expires.": "Réessayez lorsque la connexion est disponible, ou terminez plus tard. La demande reste en attente jusqu’à sa réponse ou son expiration.",
-    "Skill import awaiting approval": "Importation de compétences en attente d’approbation",
-    "This request stays pending until you respond or it expires.": "Cette demande reste en attente jusqu’à votre réponse ou son expiration.",
     "Restore the file or reconnect its drive before retrying. You can close this preview and continue working.": "Restaurez le fichier ou reconnectez son disque avant de réessayer. Vous pouvez fermer cet aperçu et continuer à travailler.",
     "Open the file from your current storage location, or close this preview and continue working.": "Ouvrez le fichier depuis votre emplacement de stockage actuel, ou fermez cet aperçu et continuez à travailler.",
     "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "Cette conversation ne peut pas continuer tant que son plan n’est pas restauré ou explicitement abandonné. Vous pouvez passer à une autre conversation pendant la récupération.",
     "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "Si la récupération échoue toujours, vérifiez qu’Open-Science fonctionne sur l’ordinateur hôte et que les deux appareils sont connectés. Enregistrez une copie des brouillons non envoyés avant de quitter cette page.",
-    "Connector approval pending": "Approbation du connecteur en attente",
-    "Compute approval pending": "Approbation du calcul en attente",
-    "Credential request pending": "Demande d’identifiants en attente",
     "Appearance changed elsewhere. Review the current appearance before trying again.": "L’apparence a été modifiée ailleurs. Vérifiez l’apparence actuelle avant de réessayer."
   }
 }

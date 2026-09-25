@@ -8,7 +8,7 @@ import {
   useComputeStore,
   type ComputeApproval
 } from '@/stores/compute-store'
-import { ComputeApprovalDialog, DeferredComputeApprovalDialogNotice } from './ComputeApprovalDialog'
+import { ComputeApprovalDialog } from './ComputeApprovalDialog'
 
 const request: Extract<ComputeApproval, { operation: 'call_command' }> = {
   id: 'approval-1',
@@ -330,54 +330,49 @@ describe('ComputeApprovalDialog', () => {
   })
 })
 
-it('allows deferring repeated response failures and reviewing the same pending request', async () => {
-  const pending = request
-  useComputeStore.setState({
-    pendingApprovals: [pending],
-    respondApproval: vi.fn().mockRejectedValue(new Error('IPC unavailable'))
-  })
-  act(() =>
-    root.render(
-      <>
-        <ComputeApprovalDialog />
-        <DeferredComputeApprovalDialogNotice />
-      </>
-    )
-  )
-  for (let i = 0; i < 3; i++) {
-    await act(async () => findButton('Deny')!.click())
-  }
-  expect(useComputeStore.getState().respondApproval).toHaveBeenCalledTimes(3)
-  act(() => findButton('Finish later')!.click())
-  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-  expect(useComputeStore.getState().pendingApprovals[0].deferred).toBe(true)
-  act(() =>
-    useComputeStore.getState().enqueueApproval({
-      id: pending.id,
-      operation: 'call_command',
-      provider_id: pending.providerId,
-      provider_name: pending.providerName,
-      shape: pending.shape,
-      intent: pending.intent,
-      command_preview: pending.commandPreview,
-      command_full: pending.commandFull,
-      willPersistUnencrypted: pending.willPersistUnencrypted
+it.each(['button', 'escape'] as const)(
+  'closes without reminders after failures via %s and ignores replay',
+  async (via) => {
+    const pending = request
+    const response = vi.fn().mockRejectedValue(new Error('IPC unavailable'))
+    useComputeStore.setState({ pendingApprovals: [pending], respondApproval: response })
+    act(() => root.render(<ComputeApprovalDialog />))
+    for (let i = 0; i < 3; i++) await act(async () => findButton('Deny')!.click())
+    await act(async () => {
+      if (via === 'button') findButton('Close')!.click()
+      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-  )
-  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-  expect(useComputeStore.getState().pendingApprovals).toHaveLength(1)
-  act(() => findButton('Review')!.click())
-  expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
-  expect(useComputeStore.getState().respondApproval).toHaveBeenCalledTimes(3)
-  act(() => findButton('Finish later')!.click())
-  act(() => useComputeStore.getState().dismissApproval(pending.id))
-  expect(findButton('Review')).toBeUndefined()
-  expect(useComputeStore.getState().pendingApprovals).toHaveLength(0)
-})
-
+    expect(response).toHaveBeenLastCalledWith(pending.id, 'deny')
+    expect(response).toHaveBeenCalledTimes(4)
+    expect(useComputeStore.getState().pendingApprovals[0].closed).toBe(true)
+    act(() => {
+      useComputeStore.getState().enqueueApproval({
+        id: pending.id,
+        operation: 'call_command',
+        provider_id: pending.providerId,
+        provider_name: pending.providerName,
+        shape: pending.shape,
+        intent: pending.intent,
+        command_preview: pending.commandPreview,
+        command_full: pending.commandFull,
+        willPersistUnencrypted: pending.willPersistUnencrypted
+      })
+      root.render(<ComputeApprovalDialog />)
+    })
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(findButton('Review')).toBeUndefined()
+    expect(useComputeStore.getState().pendingApprovals).toHaveLength(1)
+    act(() => useComputeStore.getState().closeApproval(pending.id))
+    expect(response).toHaveBeenCalledTimes(4)
+    act(() => useComputeStore.getState().dismissApproval(pending.id))
+    expect(useComputeStore.getState().pendingApprovals).toHaveLength(0)
+  }
+)
 it.each(['reject', 'settle'] as const)(
-  'keeps a hanging response guarded across deferral and remount (%s)',
+  'stays closed across an in-flight response, remount and late %s',
   async (ending) => {
+    const pending = request
     let reject!: (error: Error) => void
     const command = vi.fn(
       () =>
@@ -386,39 +381,31 @@ it.each(['reject', 'settle'] as const)(
         })
     )
     window.api = { compute: { respondApproval: command } } as unknown as Window['api']
-    useComputeStore.setState({
-      pendingApprovals: [{ ...request, id: 'hung' }],
-      respondApproval: realRespondApproval
-    })
-    const render = (): React.JSX.Element => (
-      <>
-        <ComputeApprovalDialog />
-        <DeferredComputeApprovalDialogNotice />
-      </>
-    )
-    act(() => root.render(render()))
+    useComputeStore.setState({ pendingApprovals: [pending], respondApproval: realRespondApproval })
+    act(() => root.render(<ComputeApprovalDialog />))
     act(() => findButton('Deny')!.click())
-    expect(command).toHaveBeenCalledTimes(1)
-    act(() => findButton('Finish later')!.click())
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    act(() => findButton('Close')!.click())
     act(() => root.render(null))
-    act(() => root.render(render()))
-    act(() => findButton('Review')!.click())
-    expect(findButton('Deny')!.disabled).toBe(true)
-    expect(findButton('Finish later')!.disabled).toBe(false)
-    await useComputeStore.getState().respondApproval('hung', 'once')
+    act(() => root.render(<ComputeApprovalDialog />))
+    await useComputeStore.getState().respondApproval(pending.id, 'once')
     expect(command).toHaveBeenCalledTimes(1)
-    act(() => findButton('Finish later')!.click())
-    if (ending === 'settle') act(() => useComputeStore.getState().dismissApproval('hung'))
+    if (ending === 'settle') act(() => useComputeStore.getState().dismissApproval(pending.id))
     await act(async () => reject(new Error('Late transport failure')))
-    if (ending === 'settle') {
-      expect(useComputeStore.getState().pendingApprovals).toHaveLength(0)
-      expect(findButton('Review')).toBeUndefined()
-    } else {
-      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-      act(() => findButton('Review')!.click())
-      expect(findButton('Deny')!.disabled).toBe(false)
-      expect(document.body.textContent).toContain('Could not submit this approval. Try again.')
-    }
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(findButton('Review')).toBeUndefined()
+    expect(command).toHaveBeenCalledTimes(1)
   }
 )
+
+it('closes an idle request immediately and sends one cancellation through the real store', async () => {
+  const pending = request
+  const command = vi.fn().mockResolvedValue(undefined)
+  window.api = { compute: { respondApproval: command } } as unknown as Window['api']
+  useComputeStore.setState({ pendingApprovals: [pending], respondApproval: realRespondApproval })
+  act(() => root.render(<ComputeApprovalDialog />))
+  await act(async () => findButton('Close')!.click())
+  expect(command).toHaveBeenCalledExactlyOnceWith({ id: pending.id, decision: 'deny' })
+  expect(useComputeStore.getState().pendingApprovals).toEqual([])
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+})

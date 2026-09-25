@@ -1,4 +1,3 @@
-import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { ErrorNotice } from '@/components/error-notice'
 import { ShieldAlert } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
@@ -29,7 +28,7 @@ type PendingBroadScope = Readonly<{
 
 // A modal approval card for an un-trusted connector call. A connector tool sends data to an external
 // service, so a call that isn't pre-allowed or skip-approved is held until the user decides here.
-// Requests remain pending in Main when their presentation is deferred.
+// Closing releases the UI immediately and denies idle requests through the store.
 export function ConnectorApprovalDialog({
   active = true,
   blockedSessionIds
@@ -41,14 +40,13 @@ export function ConnectorApprovalDialog({
   const request = useSettingsStore((state) =>
     state.pendingApprovals.find(
       (candidate) =>
-        !candidate.deferred &&
-        (!candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId))
+        !candidate.closed && (!candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId))
     )
   )
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const respondApproval = useSettingsStore((state) => state.respondApproval)
-  const setDeferred = useSettingsStore((state) => state.setApprovalDeferred)
+  const close = useSettingsStore((state) => state.closeApproval)
   const [pendingBroadScope, setPendingBroadScope] = useState<PendingBroadScope>()
   const [respondingRequestId, setRespondingRequestId] = useState<string>()
   const [responseErrorRequestId, setResponseErrorRequestId] = useState<string>()
@@ -102,13 +100,17 @@ export function ConnectorApprovalDialog({
   const deny = (): void => submitResponse('deny')
 
   return (
-    <Dialog.Root open={active}>
+    <Dialog.Root
+      open={active}
+      onOpenChange={(open) => {
+        if (!open) close(request.id)
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
         <Dialog.Content
           aria-busy={responding}
           onInteractOutside={(event) => event.preventDefault()}
-          onEscapeKeyDown={(event) => event.preventDefault()}
           className={dialogPanelClassName(
             'z-[60] max-h-[calc(100dvh-2rem)] w-[min(440px,calc(100vw-2rem))] overflow-y-auto overscroll-contain p-0'
           )}
@@ -217,8 +219,8 @@ export function ConnectorApprovalDialog({
           </div>
 
           <div className={cn(dialogFooterClassName, 'flex-wrap')}>
-            <Button type="button" variant="ghost" onClick={() => setDeferred(request.id, true)}>
-              {t('Finish later')}
+            <Button type="button" variant="ghost" onClick={() => close(request.id)}>
+              {t('Close')}
             </Button>
             <Button type="button" variant="destructive" disabled={responding} onClick={deny}>
               {t('Deny')}
@@ -273,21 +275,5 @@ export function ConnectorApprovalDialog({
         onConfirm={confirmBroadScope}
       />
     </Dialog.Root>
-  )
-}
-
-export function DeferredConnectorApprovalDialogNotice(): React.JSX.Element | null {
-  const { t } = useTranslation()
-  const request = useSettingsStore((state) => state.pendingApprovals.find((item) => item.deferred))
-  const setDeferred = useSettingsStore((state) => state.setApprovalDeferred)
-  if (!request) return null
-  return (
-    <SessionPersistenceAlert
-      variant="warning"
-      title={t('Connector approval pending')}
-      message={t('This request stays pending until you respond or it expires.')}
-      onAction={() => setDeferred(request.id, false)}
-      actionLabel={t('Review')}
-    />
   )
 }

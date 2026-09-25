@@ -4,10 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConnectorApprovalRequest } from '../../../../shared/settings'
 
-import {
-  ConnectorApprovalDialog,
-  DeferredConnectorApprovalDialogNotice
-} from './ConnectorApprovalDialog'
+import { ConnectorApprovalDialog } from './ConnectorApprovalDialog'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 const realRespondApproval = useSettingsStore.getState().respondApproval
@@ -339,7 +336,7 @@ describe('ConnectorApprovalDialog', () => {
 
     act(() => button('Allow once')?.click())
 
-    expect(button('Finish later')?.disabled).toBe(false)
+    expect(button('Close')?.disabled).toBe(false)
     expect(button('Deny')?.disabled).toBe(true)
     expect(button('This session')?.disabled).toBe(true)
     expect(button('Allow once')?.disabled).toBe(true)
@@ -399,42 +396,40 @@ describe('ConnectorApprovalDialog', () => {
   })
 })
 
-it('allows deferring repeated response failures and reviewing the same pending request', async () => {
-  const pending = { id: 'r1', connector: 'biomart', method: 'get_data', argsPreview: '{}' }
-  useSettingsStore.setState({
-    pendingApprovals: [pending],
-    respondApproval: vi.fn().mockRejectedValue(new Error('IPC unavailable'))
-  })
-  act(() =>
-    root.render(
-      <>
-        <ConnectorApprovalDialog />
-        <DeferredConnectorApprovalDialogNotice />
-      </>
-    )
-  )
-  for (let i = 0; i < 3; i++) {
-    await act(async () => button('Deny')!.click())
+it.each(['button', 'escape'] as const)(
+  'closes without reminders after failures via %s and ignores replay',
+  async (via) => {
+    const pending = { id: 'r1', connector: 'biomart', method: 'get_data', argsPreview: '{}' }
+    const response = vi.fn().mockRejectedValue(new Error('IPC unavailable'))
+    window.api = { settings: { respondConnectorApproval: response } } as unknown as Window['api']
+    useSettingsStore.setState({ pendingApprovals: [pending], respondApproval: realRespondApproval })
+    act(() => root.render(<ConnectorApprovalDialog />))
+    for (let i = 0; i < 3; i++) await act(async () => button('Deny')!.click())
+    await act(async () => {
+      if (via === 'button') button('Close')!.click()
+      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(response).toHaveBeenLastCalledWith({ id: pending.id, decision: 'deny' })
+    expect(response).toHaveBeenCalledTimes(4)
+    expect(useSettingsStore.getState().pendingApprovals[0].closed).toBe(true)
+    act(() => {
+      useSettingsStore.getState().enqueueApproval(pending)
+      root.render(<ConnectorApprovalDialog />)
+    })
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(button('Review')).toBeUndefined()
+    expect(useSettingsStore.getState().pendingApprovals).toHaveLength(1)
+    act(() => useSettingsStore.getState().closeApproval(pending.id))
+    expect(response).toHaveBeenCalledTimes(4)
+    act(() => useSettingsStore.getState().dismissApproval(pending.id))
+    expect(useSettingsStore.getState().pendingApprovals).toHaveLength(0)
   }
-  expect(useSettingsStore.getState().respondApproval).toHaveBeenCalledTimes(3)
-  act(() => button('Finish later')!.click())
-  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-  expect(useSettingsStore.getState().pendingApprovals[0].deferred).toBe(true)
-  act(() => useSettingsStore.getState().enqueueApproval(pending))
-  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-  expect(useSettingsStore.getState().pendingApprovals).toHaveLength(1)
-  act(() => button('Review')!.click())
-  expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
-  expect(useSettingsStore.getState().respondApproval).toHaveBeenCalledTimes(3)
-  act(() => button('Finish later')!.click())
-  act(() => useSettingsStore.getState().dismissApproval(pending.id))
-  expect(button('Review')).toBeUndefined()
-  expect(useSettingsStore.getState().pendingApprovals).toHaveLength(0)
-})
-
+)
 it.each(['reject', 'settle'] as const)(
-  'keeps a hanging response guarded across deferral and remount (%s)',
+  'stays closed across an in-flight response, remount and late %s',
   async (ending) => {
+    const pending = { id: 'r1', connector: 'biomart', method: 'get_data', argsPreview: '{}' }
     let reject!: (error: Error) => void
     const command = vi.fn(
       () =>
@@ -443,41 +438,31 @@ it.each(['reject', 'settle'] as const)(
         })
     )
     window.api = { settings: { respondConnectorApproval: command } } as unknown as Window['api']
-    useSettingsStore.setState({
-      pendingApprovals: [
-        { id: 'hung', connector: 'biomart', method: 'get_data', argsPreview: '{}' }
-      ],
-      respondApproval: realRespondApproval
-    })
-    const render = (): React.JSX.Element => (
-      <>
-        <ConnectorApprovalDialog />
-        <DeferredConnectorApprovalDialogNotice />
-      </>
-    )
-    act(() => root.render(render()))
+    useSettingsStore.setState({ pendingApprovals: [pending], respondApproval: realRespondApproval })
+    act(() => root.render(<ConnectorApprovalDialog />))
     act(() => button('Deny')!.click())
-    expect(command).toHaveBeenCalledTimes(1)
-    act(() => button('Finish later')!.click())
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    act(() => button('Close')!.click())
     act(() => root.render(null))
-    act(() => root.render(render()))
-    act(() => button('Review')!.click())
-    expect(button('Deny')!.disabled).toBe(true)
-    expect(button('Finish later')!.disabled).toBe(false)
-    await useSettingsStore.getState().respondApproval('hung', 'once')
+    act(() => root.render(<ConnectorApprovalDialog />))
+    await useSettingsStore.getState().respondApproval(pending.id, 'once')
     expect(command).toHaveBeenCalledTimes(1)
-    act(() => button('Finish later')!.click())
-    if (ending === 'settle') act(() => useSettingsStore.getState().dismissApproval('hung'))
+    if (ending === 'settle') act(() => useSettingsStore.getState().dismissApproval(pending.id))
     await act(async () => reject(new Error('Late transport failure')))
-    if (ending === 'settle') {
-      expect(useSettingsStore.getState().pendingApprovals).toHaveLength(0)
-      expect(button('Review')).toBeUndefined()
-    } else {
-      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-      act(() => button('Review')!.click())
-      expect(button('Deny')!.disabled).toBe(false)
-      expect(document.body.textContent).toContain('Could not submit this approval. Try again.')
-    }
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(button('Review')).toBeUndefined()
+    expect(command).toHaveBeenCalledTimes(1)
   }
 )
+
+it('closes an idle request immediately and sends one cancellation through the real store', async () => {
+  const pending = { id: 'close-idle', connector: 'biomart', method: 'get_data', argsPreview: '{}' }
+  const command = vi.fn().mockResolvedValue(undefined)
+  window.api = { settings: { respondConnectorApproval: command } } as unknown as Window['api']
+  useSettingsStore.setState({ pendingApprovals: [pending], respondApproval: realRespondApproval })
+  act(() => root.render(<ConnectorApprovalDialog />))
+  await act(async () => button('Close')!.click())
+  expect(command).toHaveBeenCalledExactlyOnceWith({ id: pending.id, decision: 'deny' })
+  expect(useSettingsStore.getState().pendingApprovals).toEqual([])
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+})

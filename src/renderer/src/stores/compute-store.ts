@@ -85,7 +85,7 @@ type ComputeStoreData = {
   probingIds: Set<string>
   // Pending compute approval requests, oldest first. Answered one at a time.
   pendingApprovals: (ComputeApproval & {
-    deferred?: boolean
+    closed?: boolean
     responding?: boolean
     responseFailed?: boolean
   })[]
@@ -113,7 +113,7 @@ type ComputeStore = ComputeStoreData & {
   setExecutionMode: (providerId: string, executionMode: ComputeExecutionMode) => Promise<void>
   // Queues an incoming approval request (from the main-process compute gate).
   enqueueApproval: (request: ComputeApprovalRequest) => void
-  setApprovalDeferred: (id: string, deferred: boolean) => void
+  closeApproval: (id: string) => void
   // Removes a request after Main reports response, timeout, or cancellation settlement.
   dismissApproval: (id: string) => void
   // Sends the user's approval decision back to main and removes the request from the queue.
@@ -420,12 +420,19 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     )
   },
 
-  setApprovalDeferred: (id, deferred) => {
+  closeApproval: (id) => {
+    const request = get().pendingApprovals.find((item) => item.id === id)
+    if (!request || request.closed) return
     set((state) => ({
-      pendingApprovals: state.pendingApprovals.map((request) =>
-        request.id === id ? { ...request, deferred } : request
+      pendingApprovals: state.pendingApprovals.map((item) =>
+        item.id === id ? { ...item, closed: true } : item
       )
     }))
+    // Release the UI even if Main cannot acknowledge cancellation; never race an approval.
+    if (!request.responding)
+      void get()
+        .respondApproval(id, 'deny')
+        .catch(() => undefined)
   },
   dismissApproval: (id) => {
     set((state) => ({

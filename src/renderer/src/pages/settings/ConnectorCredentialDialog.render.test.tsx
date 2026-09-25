@@ -4,11 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
-import {
-  ConnectorCredentialControls,
-  ConnectorCredentialDialog,
-  DeferredCredentialRequestNotice
-} from './ConnectorCredentialDialog'
+import { ConnectorCredentialControls, ConnectorCredentialDialog } from './ConnectorCredentialDialog'
 import { CredentialRequestBroker } from '../../../../main/connectors/credential-request-broker'
 
 const realRespondCredentialRequest = useSettingsStore.getState().respondCredentialRequest
@@ -220,45 +216,47 @@ describe('ConnectorCredentialDialog', () => {
   })
 })
 
-it('allows deferring repeated response failures and reviewing the same pending request', async () => {
-  const pending = useSettingsStore.getState().pendingCredentialRequests[0]
-  useSettingsStore.setState({
-    pendingCredentialRequests: [pending],
-    respondCredentialRequest: vi.fn().mockRejectedValue(new Error('IPC unavailable'))
-  })
-  act(() =>
-    root.render(
-      <>
-        <ConnectorCredentialDialog />
-        <DeferredCredentialRequestNotice />
-      </>
-    )
-  )
-  for (let i = 0; i < 3; i++) {
-    await act(async () => button('Not now')!.click())
+it.each(['button', 'escape'] as const)(
+  'closes without reminders after failures via %s and ignores replay',
+  async (via) => {
+    const pending = useSettingsStore.getState().pendingCredentialRequests[0]
+    const response = vi.fn().mockRejectedValue(new Error('IPC unavailable'))
+    window.api = {
+      settings: { respondConnectorCredentialRequest: response }
+    } as unknown as Window['api']
+    useSettingsStore.setState({
+      pendingCredentialRequests: [pending],
+      respondCredentialRequest: realRespondCredentialRequest
+    })
+    act(() => root.render(<ConnectorCredentialDialog />))
+    for (let i = 0; i < 3; i++) await act(async () => button('Not now')!.click())
+    await act(async () => {
+      if (via === 'button') button('Close')!.click()
+      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(response).toHaveBeenLastCalledWith({ id: pending.id, configured: false })
+    expect(response).toHaveBeenCalledTimes(4)
+    expect(useSettingsStore.getState().pendingCredentialRequests[0].closed).toBe(true)
+    act(() => {
+      useSettingsStore.getState().enqueueCredentialRequest(pending)
+      root.render(<ConnectorCredentialDialog />)
+    })
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(button('Review')).toBeUndefined()
+    expect(useSettingsStore.getState().pendingCredentialRequests).toHaveLength(1)
+    act(() => useSettingsStore.getState().closeCredentialRequest(pending.id))
+    expect(response).toHaveBeenCalledTimes(4)
+    act(() => useSettingsStore.getState().dismissCredentialRequest(pending.id))
+    expect(useSettingsStore.getState().pendingCredentialRequests).toHaveLength(0)
   }
-  expect(useSettingsStore.getState().respondCredentialRequest).toHaveBeenCalledTimes(3)
-  act(() => button('Finish later')!.click())
-  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-  expect(useSettingsStore.getState().pendingCredentialRequests[0].deferred).toBe(true)
-  act(() => useSettingsStore.getState().enqueueCredentialRequest(pending))
-  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-  expect(useSettingsStore.getState().pendingCredentialRequests).toHaveLength(1)
-  act(() => button('Review')!.click())
-  expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
-  expect(useSettingsStore.getState().respondCredentialRequest).toHaveBeenCalledTimes(3)
-  act(() => button('Finish later')!.click())
-  act(() => useSettingsStore.getState().dismissCredentialRequest(pending.id))
-  expect(button('Review')).toBeUndefined()
-  expect(useSettingsStore.getState().pendingCredentialRequests).toHaveLength(0)
-})
-
+)
 it.each([
   'validateOpenAlexCredential',
   'setOpenAlexCredential',
   'respondConnectorCredentialRequest'
 ] as const)(
-  'can hide and reopen a hanging credential %s without duplicating the operation',
+  'closes hanging credential %s without a reminder or duplicate operation',
   async (commandName) => {
     let reject!: (error: Error) => void
     const command = vi.fn(
@@ -269,35 +267,21 @@ it.each([
     )
     window.api.settings[commandName] = command
     useSettingsStore.setState({ respondCredentialRequest: realRespondCredentialRequest })
-    const render = (): React.JSX.Element => (
-      <>
-        <ConnectorCredentialDialog />
-        <DeferredCredentialRequestNotice />
-      </>
-    )
-    act(() => root.render(render()))
+    act(() => root.render(<ConnectorCredentialDialog />))
     enterKey('openalex-valid-key')
     await act(async () => button('Save key')!.click())
-    expect(command).toHaveBeenCalledTimes(1)
-    act(() => button('Finish later')!.click())
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    act(() => button('Close')!.click())
     act(() => root.render(null))
-    act(() => root.render(render()))
-    act(() => button('Review')!.click())
-    expect(button('Not now')!.disabled).toBe(true)
-    expect(button('Finish later')!.disabled).toBe(false)
+    act(() => root.render(<ConnectorCredentialDialog />))
     await useSettingsStore.getState().configureCredentialRequest('credential-1', 'another-key')
     await useSettingsStore.getState().respondCredentialRequest('credential-1', false)
     expect(command).toHaveBeenCalledTimes(1)
-    act(() => button('Finish later')!.click())
     await act(async () => reject(new Error('Late transport failure')))
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-    act(() => button('Review')!.click())
-    expect(button('Not now')!.disabled).toBe(false)
-    expect(document.body.querySelector('[role="alert"]')).not.toBeNull()
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(button('Review')).toBeUndefined()
   }
 )
-
 it('does not save credentials after their pending request settles during validation', async () => {
   let resolve!: (value: { valid: true }) => void
   window.api.settings.validateOpenAlexCredential = vi.fn(
@@ -313,4 +297,21 @@ it('does not save credentials after their pending request settles during validat
   await act(async () => resolve({ valid: true }))
   expect(window.api.settings.setOpenAlexCredential).not.toHaveBeenCalled()
   expect(useSettingsStore.getState().pendingCredentialRequests).toHaveLength(0)
+})
+
+it('closes an idle request immediately and sends one cancellation through the real store', async () => {
+  const pending = useSettingsStore.getState().pendingCredentialRequests[0]
+  const command = vi.fn().mockResolvedValue(undefined)
+  window.api = {
+    settings: { respondConnectorCredentialRequest: command }
+  } as unknown as Window['api']
+  useSettingsStore.setState({
+    pendingCredentialRequests: [pending],
+    respondCredentialRequest: realRespondCredentialRequest
+  })
+  act(() => root.render(<ConnectorCredentialDialog />))
+  await act(async () => button('Close')!.click())
+  expect(command).toHaveBeenCalledExactlyOnceWith({ id: pending.id, configured: false })
+  expect(useSettingsStore.getState().pendingCredentialRequests).toEqual([])
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
 })

@@ -1,4 +1,3 @@
-import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
@@ -43,7 +42,7 @@ export function ConnectorCredentialControls({
     state.pendingCredentialRequests.find((item) => item.id === request.id)
   )
   const respond = useSettingsStore((state) => state.respondCredentialRequest)
-  const setDeferred = useSettingsStore((state) => state.setCredentialRequestDeferred)
+  const close = useSettingsStore((state) => state.closeCredentialRequest)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const inputId = useId()
   const [draft, setDraft] = useState<{ requestId: string; value: string }>()
@@ -170,8 +169,8 @@ export function ConnectorCredentialControls({
 
       <div className={cn(dialogFooterClassName, embedded && 'sticky bottom-0 z-10 bg-card')}>
         {!embedded ? (
-          <Button type="button" variant="ghost" onClick={() => setDeferred(request.id, true)}>
-            {t('Finish later')}
+          <Button type="button" variant="ghost" onClick={() => close(request.id)}>
+            {t('Close')}
           </Button>
         ) : null}
         <Button type="button" variant="outline" disabled={busy} onClick={cancel}>
@@ -196,18 +195,24 @@ export function ConnectorCredentialDialog({
   active?: boolean
 }): React.JSX.Element | null {
   const request = useSettingsStore((state) =>
-    state.pendingCredentialRequests.find((candidate) => !candidate.sessionId && !candidate.deferred)
+    state.pendingCredentialRequests.find((candidate) => !candidate.sessionId && !candidate.closed)
   )
+
+  const close = useSettingsStore((state) => state.closeCredentialRequest)
 
   if (!request) return null
 
   return (
-    <Dialog.Root open={active}>
+    <Dialog.Root
+      open={active}
+      onOpenChange={(open) => {
+        if (!open) close(request.id)
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
         <Dialog.Content
           onInteractOutside={(event) => event.preventDefault()}
-          onEscapeKeyDown={(event) => event.preventDefault()}
           className={dialogPanelClassName(
             'z-[60] w-[min(460px,calc(100vw-2rem))] overscroll-contain p-0'
           )}
@@ -216,23 +221,5 @@ export function ConnectorCredentialDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  )
-}
-
-export function DeferredCredentialRequestNotice(): React.JSX.Element | null {
-  const { t } = useTranslation()
-  const request = useSettingsStore((state) =>
-    state.pendingCredentialRequests.find((item) => !item.sessionId && item.deferred)
-  )
-  const setDeferred = useSettingsStore((state) => state.setCredentialRequestDeferred)
-  if (!request) return null
-  return (
-    <SessionPersistenceAlert
-      variant="warning"
-      title={t('Credential request pending')}
-      message={t('This request stays pending until you respond or it expires.')}
-      onAction={() => setDeferred(request.id, false)}
-      actionLabel={t('Review')}
-    />
   )
 }

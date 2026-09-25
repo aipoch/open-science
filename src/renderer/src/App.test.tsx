@@ -40,7 +40,7 @@ const mocks = vi.hoisted(() => {
       enqueue: vi.fn(),
       dismiss: vi.fn(),
       pending: [] as unknown[],
-      deferredIds: [] as string[]
+      closedIds: [] as string[]
     },
     compute: {
       enqueueApproval: vi.fn(),
@@ -351,28 +351,24 @@ vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
   }
 }))
 vi.mock('@/pages/settings/ConnectorApprovalDialog', () => ({
-  DeferredConnectorApprovalDialogNotice: () => null,
   ConnectorApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.connectorApproval = props
     return <div data-testid="approval-dialog" />
   }
 }))
 vi.mock('@/pages/settings/ConnectorCredentialDialog', () => ({
-  DeferredCredentialRequestNotice: () => null,
   ConnectorCredentialDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.credentialRequest = props
     return <div data-testid="credential-dialog" />
   }
 }))
 vi.mock('@/pages/settings/SkillImportApprovalDialog', () => ({
-  DeferredSkillImportNotice: () => null,
   SkillImportApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.skillImportApproval = props
     return <div data-testid="skill-import-dialog" />
   }
 }))
 vi.mock('@/pages/settings/ComputeApprovalDialog', () => ({
-  DeferredComputeApprovalDialogNotice: () => null,
   ComputeApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.computeApproval = props
     return <div data-testid="compute-approval-dialog" />
@@ -518,7 +514,7 @@ describe('App startup routing', () => {
     mocks.settings.pendingCredentialRequests = []
     mocks.compute.pendingApprovals = []
     mocks.skillImport.pending = []
-    mocks.skillImport.deferredIds = []
+    mocks.skillImport.closedIds = []
     mocks.preview.fileDialogItem = undefined
     mocks.preview.expandedToolItemId = null
     mocks.preview.activeItemId = undefined
@@ -873,31 +869,34 @@ describe('App startup routing', () => {
     dialog.remove()
   })
 
-  it('releases the modal slot while a Skill approval is deferred', async () => {
+  it('releases the modal slot while a Skill approval is closed', async () => {
     mocks.settings.isLoaded = true
     mocks.settings.isSettingsOpen = true
     mocks.skillImport.pending = [{ id: 'skill', sessionId: 'skill-session' }]
-    mocks.skillImport.deferredIds = ['skill']
+    mocks.skillImport.closedIds = ['skill']
     await render()
     expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('open')
-    mocks.skillImport.deferredIds = []
+    mocks.skillImport.pending = [{ id: 'new-skill', sessionId: 'skill-session' }]
     await act(async () => root.render(<App />))
     await vi.waitFor(() => expect(mocks.presentationProps.skillImportApproval?.active).toBe(true))
     expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
   })
 
   it.each(['connector', 'compute', 'credential'] as const)(
-    'releases the modal slot for a deferred %s request',
+    'releases the modal slot for a closed %s request',
     async (kind) => {
       mocks.settings.isLoaded = true
       mocks.settings.isSettingsOpen = true
-      const request = { id: 'pending', deferred: true }
+      const request = { id: 'pending', closed: true }
       if (kind === 'connector') mocks.settings.pendingApprovals = [request]
       else if (kind === 'compute') mocks.compute.pendingApprovals = [request]
       else mocks.settings.pendingCredentialRequests = [request]
       await render()
       expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('open')
-      request.deferred = false
+      const nextRequest = { id: 'new-request' }
+      if (kind === 'connector') mocks.settings.pendingApprovals = [request, nextRequest]
+      else if (kind === 'compute') mocks.compute.pendingApprovals = [request, nextRequest]
+      else mocks.settings.pendingCredentialRequests = [request, nextRequest]
       await act(async () => root.render(<App />))
       expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
     }

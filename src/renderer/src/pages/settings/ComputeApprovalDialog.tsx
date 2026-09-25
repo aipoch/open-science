@@ -1,4 +1,3 @@
-import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { ErrorNotice } from '@/components/error-notice'
 import { useState } from 'react'
 import { ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react'
@@ -30,7 +29,7 @@ type PendingBroadScope = Readonly<{
   scope: BroadPermissionScope
 }>
 
-// A pending compute call stays held in Main when its dialog is deferred, until a response or timeout.
+// Closing releases the UI immediately and denies idle requests through the store.
 //
 // Four approval scopes; Broker persists Session/Project/Global and the compute adapter receives a
 // one-call allow decision only after that write succeeds.
@@ -49,12 +48,11 @@ export function ComputeApprovalDialog({
   const request = useComputeStore((state) =>
     state.pendingApprovals.find(
       (candidate) =>
-        !candidate.deferred &&
-        (!candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId))
+        !candidate.closed && (!candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId))
     )
   )
   const respondApproval = useComputeStore((state) => state.respondApproval)
-  const setDeferred = useComputeStore((state) => state.setApprovalDeferred)
+  const close = useComputeStore((state) => state.closeApproval)
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null)
   const [pendingBroadScope, setPendingBroadScope] = useState<PendingBroadScope>()
   const [respondingRequestId, setRespondingRequestId] = useState<string>()
@@ -116,13 +114,17 @@ export function ComputeApprovalDialog({
         : t('remote commands on {{host}}', { host: dialogRequest.providerName })
 
   return (
-    <Dialog.Root open={active && Boolean(request)}>
+    <Dialog.Root
+      open={active && Boolean(request)}
+      onOpenChange={(open) => {
+        if (!open) close(dialogRequest.id)
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
         <Dialog.Content
           aria-busy={responding}
           onInteractOutside={(event) => event.preventDefault()}
-          onEscapeKeyDown={(event) => event.preventDefault()}
           className={dialogPanelClassName(
             'z-[60] flex max-h-[calc(100svh-2rem)] w-[min(480px,calc(100vw-2rem))] flex-col overscroll-contain p-0'
           )}
@@ -279,12 +281,8 @@ export function ComputeApprovalDialog({
             </div>
           </ScrollArea>
           <div className={cn(dialogFooterClassName, 'shrink-0 flex-wrap')}>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setDeferred(dialogRequest.id, true)}
-            >
-              {t('Finish later')}
+            <Button type="button" variant="ghost" onClick={() => close(dialogRequest.id)}>
+              {t('Close')}
             </Button>
             <Button type="button" variant="destructive" disabled={responding} onClick={deny}>
               {t('Deny')}
@@ -329,21 +327,5 @@ export function ComputeApprovalDialog({
         onConfirm={confirmBroadScope}
       />
     </Dialog.Root>
-  )
-}
-
-export function DeferredComputeApprovalDialogNotice(): React.JSX.Element | null {
-  const { t } = useTranslation()
-  const request = useComputeStore((state) => state.pendingApprovals.find((item) => item.deferred))
-  const setDeferred = useComputeStore((state) => state.setApprovalDeferred)
-  if (!request) return null
-  return (
-    <SessionPersistenceAlert
-      variant="warning"
-      title={t('Compute approval pending')}
-      message={t('This request stays pending until you respond or it expires.')}
-      onAction={() => setDeferred(request.id, false)}
-      actionLabel={t('Review')}
-    />
   )
 }

@@ -73,26 +73,7 @@ const SkillImportApprovalDialog = lazy(() =>
     default: SkillImportApprovalDialog
   }))
 )
-const DeferredSkillImportNotice = lazy(() =>
-  import('@/pages/settings/SkillImportApprovalDialog').then(({ DeferredSkillImportNotice }) => ({
-    default: DeferredSkillImportNotice
-  }))
-)
-const DeferredConnectorApprovalNotice = lazy(() =>
-  import('@/pages/settings/ConnectorApprovalDialog').then((module) => ({
-    default: module.DeferredConnectorApprovalDialogNotice
-  }))
-)
-const DeferredComputeApprovalNotice = lazy(() =>
-  import('@/pages/settings/ComputeApprovalDialog').then((module) => ({
-    default: module.DeferredComputeApprovalDialogNotice
-  }))
-)
-const DeferredCredentialRequestNotice = lazy(() =>
-  import('@/pages/settings/ConnectorCredentialDialog').then((module) => ({
-    default: module.DeferredCredentialRequestNotice
-  }))
-)
+
 const GlobalSearchDialog = lazy(() =>
   import('@/components/global-search/GlobalSearchDialog').then(({ GlobalSearchDialog }) => ({
     default: GlobalSearchDialog
@@ -370,12 +351,6 @@ const ApplicationPresentationContent = ({
                   />
                 ) : null}
                 <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
-                <Suspense fallback={null}>
-                  <DeferredSkillImportNotice />
-                  <DeferredConnectorApprovalNotice />
-                  <DeferredComputeApprovalNotice />
-                  <DeferredCredentialRequestNotice />
-                </Suspense>
                 <NotificationLiveToast />
               </div>
             </BottomNoticeStack>

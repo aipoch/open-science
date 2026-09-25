@@ -129,6 +129,7 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "此會話研究套件需要較新版本的 Open Science。請更新 Open Science 後重新匯入。"
   },
   "renderer": {
+    "Try again when the connection is available, or close this dialog.": "連線恢復後可重試，也可以關閉此對話框。",
     "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "已安裝的 Claude Code CLI 不相容或無法驗證其版本。請將 Claude Code 更新至 2.1.118 或更新版本，然後在設定中重新偵測。",
     "Other classification tokens": "其他分類詞元",
     "Literature classification tokens": "文獻分類詞元",
@@ -6291,16 +6292,10 @@
     "Continue for now": "僅此次繼續",
     "Your choice could not be saved. Continue for now to keep using this folder; we may ask again after restarting.": "無法儲存您的選擇。您可以僅此次繼續使用此資料夾；重新啟動後可能會再次詢問。",
     "Could not send your response.": "無法傳送您的回應。",
-    "Try again when the connection is available, or finish later. The request stays pending until it is answered or expires.": "連線恢復後重試，或稍後處理。請求會保持待處理狀態，直到收到回應或到期。",
-    "Skill import awaiting approval": "技能匯入等待核准",
-    "This request stays pending until you respond or it expires.": "此請求會保持待處理狀態，直到您回應或請求到期。",
     "Restore the file or reconnect its drive before retrying. You can close this preview and continue working.": "請先還原檔案或重新連接其所在磁碟機，再重試。您可以關閉此預覽並繼續工作。",
     "Open the file from your current storage location, or close this preview and continue working.": "請從目前的儲存位置開啟檔案，或關閉此預覽並繼續工作。",
     "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "此對話需要還原或明確捨棄其計畫後才能繼續。還原期間，您可以切換到其他對話。",
     "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "如果還原持續失敗，請檢查主機上的 Open-Science 是否正在執行，以及兩台裝置是否均已連線。離開此頁面前，請儲存未傳送草稿的副本。",
-    "Connector approval pending": "連接器審批待處理",
-    "Compute approval pending": "運算審批待處理",
-    "Credential request pending": "憑證請求待處理",
     "Appearance changed elsewhere. Review the current appearance before trying again.": "外觀已在其他位置變更。請先檢查目前外觀，再重試。"
   }
 }

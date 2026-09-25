@@ -7,21 +7,20 @@ import type {
 
 type SkillImportStoreData = {
   pending: ConversationSkillImportApprovalRequest[]
-  deferredIds: string[]
+  closedIds: string[]
   respondingIds: string[]
 }
 
 type SkillImportStore = SkillImportStoreData & {
   enqueue: (request: ConversationSkillImportApprovalRequest) => void
   dismiss: (id: string) => void
-  defer: (id: string) => void
-  resume: (id: string) => void
+  close: (id: string) => void
   respond: (response: ConversationSkillImportApprovalResponse) => Promise<void>
 }
 
 export const createInitialSkillImportState = (): SkillImportStoreData => ({
   pending: [],
-  deferredIds: [],
+  closedIds: [],
   respondingIds: []
 })
 
@@ -35,19 +34,21 @@ export const useSkillImportStore = create<SkillImportStore>((set, get) => ({
         ? state
         : { pending: [...state.pending, request] }
     ),
-  defer: (id) =>
-    set((state) => ({
-      deferredIds:
-        state.pending.some((request) => request.id === id) && !state.deferredIds.includes(id)
-          ? [...state.deferredIds, id]
-          : state.deferredIds
-    })),
-  resume: (id) =>
-    set((state) => ({ deferredIds: state.deferredIds.filter((candidate) => candidate !== id) })),
+  close: (id) => {
+    const state = get()
+    if (!state.pending.some((request) => request.id === id) || state.closedIds.includes(id)) return
+    set({ closedIds: [...state.closedIds, id] })
+    // Keep the close marker on transport failure, without a visible reminder or retry loop.
+    if (!state.respondingIds.includes(id)) {
+      void get()
+        .respond({ id, cancelled: true })
+        .catch(() => undefined)
+    }
+  },
   dismiss: (id) =>
     set((state) => ({
       pending: state.pending.filter((request) => request.id !== id),
-      deferredIds: state.deferredIds.filter((candidate) => candidate !== id),
+      closedIds: state.closedIds.filter((candidate) => candidate !== id),
       respondingIds: state.respondingIds.filter((candidate) => candidate !== id)
     })),
   respond: async (response) => {

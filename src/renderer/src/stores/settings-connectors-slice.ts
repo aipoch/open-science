@@ -47,12 +47,12 @@ export type ConnectorAuthNotice = Readonly<{
 export type SettingsConnectorsState = NormalizedSettingsConnectorsProjection & {
   connectorsLoaded: boolean
   pendingApprovals: (ConnectorApprovalRequest & {
-    deferred?: boolean
+    closed?: boolean
     responding?: boolean
     responseFailed?: boolean
   })[]
   pendingCredentialRequests: (ConnectorCredentialRequest & {
-    deferred?: boolean
+    closed?: boolean
     responding?: boolean
     responseFailed?: boolean
     validation?: OpenAlexCredentialValidation
@@ -94,11 +94,11 @@ export type SettingsConnectorsActions = {
   removeCustomServer: (id: string) => Promise<void>
   dismissConnectorAuthNotice: () => void
   enqueueApproval: (request: ConnectorApprovalRequest) => void
-  setApprovalDeferred: (id: string, deferred: boolean) => void
+  closeApproval: (id: string) => void
   dismissApproval: (id: string) => void
   respondApproval: (id: string, decision: ApprovalDecision) => Promise<void>
   enqueueCredentialRequest: (request: ConnectorCredentialRequest) => void
-  setCredentialRequestDeferred: (id: string, deferred: boolean) => void
+  closeCredentialRequest: (id: string) => void
   dismissCredentialRequest: (id: string) => void
   respondCredentialRequest: (id: string, configured: boolean) => Promise<void>
   configureCredentialRequest: (id: string, apiKey: string) => Promise<void>
@@ -420,6 +420,29 @@ export const createSettingsConnectorsSlice = ({
     }
   }
 
+  const submitApproval = async (id: string, decision: ApprovalDecision): Promise<void> => {
+    const request = getState().pendingApprovals.find((item) => item.id === id)
+    if (!request || request.responding) return
+    const patch = (fields: { responding?: boolean; responseFailed?: boolean }): void =>
+      setState((state) => ({
+        pendingApprovals: state.pendingApprovals.map((item) =>
+          item.id === id ? { ...item, ...fields } : item
+        )
+      }))
+    patch({ responding: true, responseFailed: false })
+    try {
+      await getCommands().respondConnectorApproval({ id, decision })
+      setState((state) => ({
+        pendingApprovals: state.pendingApprovals.filter((item) => item.id !== id)
+      }))
+    } catch (error) {
+      patch({ responseFailed: true })
+      throw error
+    } finally {
+      patch({ responding: false })
+    }
+  }
+
   return {
     loadDeviceCredentials,
     createDeviceCredential: async (request) => {
@@ -628,40 +651,24 @@ export const createSettingsConnectorsSlice = ({
           : { pendingApprovals: [...state.pendingApprovals, request] }
       )
     },
-    setApprovalDeferred: (id, deferred) => {
+    closeApproval: (id) => {
+      const request = getState().pendingApprovals.find((item) => item.id === id)
+      if (!request || request.closed) return
       setState((state) => ({
-        pendingApprovals: state.pendingApprovals.map((request) =>
-          request.id === id ? { ...request, deferred } : request
+        pendingApprovals: state.pendingApprovals.map((item) =>
+          item.id === id ? { ...item, closed: true } : item
         )
       }))
+      // Closing never waits for IPC or resubmits an in-flight decision. A failed cancellation
+      // stays closed until Main settles/expires it; duplicate events retain the close marker.
+      if (!request.responding) void submitApproval(id, 'deny').catch(() => undefined)
     },
     dismissApproval: (id) => {
       setState((state) => ({
         pendingApprovals: state.pendingApprovals.filter((request) => request.id !== id)
       }))
     },
-    respondApproval: async (id, decision) => {
-      const request = getState().pendingApprovals.find((item) => item.id === id)
-      if (!request || request.responding) return
-      const patch = (fields: { responding?: boolean; responseFailed?: boolean }): void =>
-        setState((state) => ({
-          pendingApprovals: state.pendingApprovals.map((item) =>
-            item.id === id ? { ...item, ...fields } : item
-          )
-        }))
-      patch({ responding: true, responseFailed: false })
-      try {
-        await getCommands().respondConnectorApproval({ id, decision })
-        setState((state) => ({
-          pendingApprovals: state.pendingApprovals.filter((item) => item.id !== id)
-        }))
-      } catch (error) {
-        patch({ responseFailed: true })
-        throw error
-      } finally {
-        patch({ responding: false })
-      }
-    },
+    respondApproval: submitApproval,
     enqueueCredentialRequest: (request) => {
       setState((state) =>
         state.pendingCredentialRequests.some(({ id }) => id === request.id)
@@ -669,12 +676,17 @@ export const createSettingsConnectorsSlice = ({
           : { pendingCredentialRequests: [...state.pendingCredentialRequests, request] }
       )
     },
-    setCredentialRequestDeferred: (id, deferred) => {
+    closeCredentialRequest: (id) => {
+      const request = getState().pendingCredentialRequests.find((item) => item.id === id)
+      if (!request || request.closed) return
       setState((state) => ({
-        pendingCredentialRequests: state.pendingCredentialRequests.map((request) =>
-          request.id === id ? { ...request, deferred } : request
+        pendingCredentialRequests: state.pendingCredentialRequests.map((item) =>
+          item.id === id ? { ...item, closed: true } : item
         )
       }))
+      // Closing never waits for IPC or resubmits an in-flight decision. A failed cancellation
+      // stays closed until Main settles/expires it; duplicate events retain the close marker.
+      if (!request.responding) void submitCredentialRequest(id, false).catch(() => undefined)
     },
     dismissCredentialRequest: (id) => {
       setState((state) => ({
