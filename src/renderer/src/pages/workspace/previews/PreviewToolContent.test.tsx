@@ -47,12 +47,19 @@ vi.mock('@/stores/review-store', () => ({
 vi.mock('./LibraryPreview', () => ({
   default: ({
     projectId,
-    isActive
+    isActive,
+    scopeRequest
   }: {
     projectId?: string
     isActive: boolean
+    scopeRequest?: { collectionId?: string }
   }): React.JSX.Element => (
-    <div data-testid="library-preview" data-project={projectId} data-active={isActive} />
+    <div
+      data-testid="library-preview"
+      data-project={projectId}
+      data-active={isActive}
+      data-collection={scopeRequest?.collectionId}
+    />
   )
 }))
 vi.mock('../SubagentReleaseSurfaces', () => ({
@@ -126,12 +133,19 @@ describe('PreviewToolContent', () => {
     try {
       await act(async () => {
         root.render(
-          <PreviewToolContent item={createItem({ toolKind: 'library' })} isActive={false} />
+          <PreviewToolContent
+            item={createItem({
+              toolKind: 'library',
+              libraryScopeRequest: { collectionId: 'collection-1' }
+            })}
+            isActive={false}
+          />
         )
       })
       const preview = container.querySelector('[data-testid="library-preview"]')
       expect(preview?.getAttribute('data-project')).toBe('project-1')
       expect(preview?.getAttribute('data-active')).toBe('false')
+      expect(preview?.getAttribute('data-collection')).toBe('collection-1')
     } finally {
       await act(async () => root.unmount())
     }

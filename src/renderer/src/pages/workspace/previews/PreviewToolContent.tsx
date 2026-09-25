@@ -322,6 +322,7 @@ export const PreviewToolContent = ({
           key={activeProjectId ?? 'no-active-project'}
           projectId={activeProjectId}
           isActive={isActive}
+          scopeRequest={item.libraryScopeRequest}
         />
       </Suspense>
     )

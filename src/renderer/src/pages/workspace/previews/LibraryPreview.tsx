@@ -15,13 +15,16 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { cn } from '@/lib/utils'
 import {
   createLiteratureAttachmentVersionReference,
+  createLiteratureIdentifierUrl,
   type LiteratureItemView,
-  type LiteratureCatalogSearchPage
+  type LiteratureCatalogSearchPage,
+  type LiteratureItemType
 } from '../../../../../shared/literature'
 import { oversizedLiteratureReference } from '../../../../../shared/literature-export'
 import { readLiteratureDisplayPage } from '../../literature/literature-read-pages'
@@ -30,8 +33,25 @@ import { LITERATURE_PREVIEW_SESSION_ID } from '../preview-file-item'
 
 const PAGE_SIZE = 20
 const ABSTRACT_EXCERPT_LENGTH = 300
+const SKELETON_DELAY_MS = 160
+const SEARCH_DEBOUNCE_MS = 200
 
-type Selection = { query: string; all: boolean; offset: number; expanded?: string }
+type Selection = {
+  query: string
+  all: boolean
+  collectionId?: string
+  offset: number
+  expanded?: string
+}
+
+const externalUrl = (value: string): string | undefined => {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined
+  } catch {
+    return undefined
+  }
+}
 
 const pdfAttachments = (entry: LiteratureItemView): LiteratureItemView['attachments'] =>
   entry.attachments.filter(({ versions }) => {
@@ -64,6 +84,28 @@ function ReferenceRow({
     .filter(Boolean)
   const pdfs = pdfAttachments(entry)
   const abstract = entry.item.abstract
+  const typeLabels: Record<LiteratureItemType, string> = {
+    journalArticle: t('Journal article'),
+    review: t('Review'),
+    preprint: t('Preprint'),
+    conferencePaper: t('Conference paper'),
+    book: t('Book'),
+    bookSection: t('Book section'),
+    thesis: t('Thesis'),
+    report: t('Report'),
+    dataset: t('Dataset'),
+    standard: t('Standard'),
+    patent: t('Patent'),
+    webpage: t('Web page'),
+    document: t('Document')
+  }
+  const links = entry.item.identifiers.flatMap(({ scheme, value }) => {
+    const href = createLiteratureIdentifierUrl(scheme, value)
+    return href ? [{ label: scheme.toUpperCase(), value, href }] : []
+  })
+  const url = externalUrl(entry.item.url)
+  if (url && !links.some((link) => link.href === url))
+    links.unshift({ label: t('URL'), value: entry.item.url, href: url })
   const pdfButton = (
     attachment: LiteratureItemView['attachments'][number],
     compact = false
@@ -119,7 +161,7 @@ function ReferenceRow({
       >
         <span
           className={cn(
-            'block text-sm font-medium leading-relaxed [overflow-wrap:anywhere]',
+            'block min-w-0 text-sm font-medium leading-relaxed [overflow-wrap:anywhere]',
             !expanded && 'line-clamp-2'
           )}
         >
@@ -132,7 +174,7 @@ function ReferenceRow({
               !expanded ? 'truncate' : '[overflow-wrap:anywhere]'
             )}
           >
-            {expanded ? creators.join('; ') : creators[0]}
+            {creators.join('; ')}
           </span>
         )}
         <span
@@ -141,7 +183,11 @@ function ReferenceRow({
             !expanded ? 'truncate' : '[overflow-wrap:anywhere]'
           )}
         >
-          {[entry.item.containerTitle, entry.item.issuedYear ?? entry.item.issuedText]
+          {[
+            entry.item.issuedYear ?? entry.item.issuedText,
+            entry.item.containerTitle,
+            typeLabels[entry.item.itemType]
+          ]
             .filter(Boolean)
             .join(' · ')}
         </span>
@@ -180,8 +226,8 @@ function ReferenceRow({
                   (abstract.length > ABSTRACT_EXCERPT_LENGTH ? '…' : '')
               : t('No abstract available.')}
           </p>
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            {abstract.length > ABSTRACT_EXCERPT_LENGTH && (
+          {abstract.length > ABSTRACT_EXCERPT_LENGTH && (
+            <div className="mt-2">
               <Button
                 variant="ghost"
                 size="xs"
@@ -195,11 +241,28 @@ function ReferenceRow({
                   className={cn('size-3', showMore && 'rotate-180')}
                 />
               </Button>
-            )}
+            </div>
+          )}
+          {links.length > 0 && (
+            <div className="mt-3 flex min-w-0 flex-wrap gap-x-4 gap-y-2 border-t border-border pt-3">
+              {links.map(({ label, value, href }) => (
+                <ExternalTextLink
+                  key={`${label}:${value}`}
+                  href={href}
+                  aria-label={`${label}: ${value}`}
+                  className="max-w-full gap-1 text-[11px]"
+                >
+                  <span className="shrink-0">{label}</span>
+                  <span className="truncate">{value}</span>
+                </ExternalTextLink>
+              ))}
+            </div>
+          )}
+          <div className="mt-2 flex justify-end">
             <Button
               variant="ghost"
               size="xs"
-              className="-mr-2 ml-auto text-muted-foreground"
+              className="-mr-2 ml-auto text-[11px] text-muted-foreground"
               onClick={() => useNavigationStore.getState().openLiteratureItem(entry.id, 'user')}
             >
               {t('View in Literature')}
@@ -212,8 +275,8 @@ function ReferenceRow({
   )
 }
 
-// Mount only while visible. A single current page owns both reads and change subscriptions;
-// key changes discard obsolete responses and large record payloads, without an all-library cache.
+// Mount only while visible. Retain one settled page during fast selection changes; late reads
+// cannot replace the current scope or accumulate into an all-library cache.
 function LibraryResults({
   projectId,
   selection,
@@ -224,13 +287,19 @@ function LibraryResults({
   selection: Selection
   onChange: (selection: Selection) => void
   openLiterature: () => void
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const { t } = useTranslation()
-  const [page, setPage] = useState<LiteratureCatalogSearchPage>()
-  const [failure, setFailure] = useState<{ oversized: boolean }>()
+  const [page, setPage] = useState<{
+    key: string
+    result: LiteratureCatalogSearchPage
+    offset: number
+  }>()
+  const [failure, setFailure] = useState<{ key: string; oversized: boolean }>()
+  const [delayedSkeletonKey, setDelayedSkeletonKey] = useState<string>()
   const [revision, setRevision] = useState(0)
   const generation = useRef(0)
-  const { query, all, offset } = selection
+  const { query, all, collectionId, offset } = selection
+  const requestKey = JSON.stringify([projectId, collectionId, all, query, offset])
   const refresh = (): void => {
     generation.current += 1
     setFailure(undefined)
@@ -246,37 +315,45 @@ function LibraryResults({
   useEffect(() => {
     const ticket = ++generation.current
     const current = (): boolean => generation.current === ticket
-    const timer = window.setTimeout(
-      () => {
-        void readLiteratureDisplayPage(
-          {
-            scope: 'library',
-            lifecycle: 'active',
-            projectId: all ? undefined : projectId,
-            query: query.trim() || undefined,
-            sortBy: 'created',
-            sortDirection: 'desc',
-            offset,
-            limit: PAGE_SIZE
-          },
-          current
-        )
-          .then((result) => {
-            if (current()) setPage(result)
-          })
-          .catch((error: unknown) => {
-            if (current()) setFailure({ oversized: Boolean(oversizedLiteratureReference(error)) })
-          })
-      },
-      query.trim() ? 200 : 0
+    const requestDelay = query.trim() ? SEARCH_DEBOUNCE_MS : 0
+    const skeletonTimer = window.setTimeout(
+      () => setDelayedSkeletonKey(requestKey),
+      requestDelay + SKELETON_DELAY_MS
     )
+    const timer = window.setTimeout(() => {
+      void readLiteratureDisplayPage(
+        {
+          scope: 'library',
+          lifecycle: 'active',
+          projectId: all || collectionId ? undefined : projectId,
+          collectionId,
+          query: query.trim() || undefined,
+          sortBy: 'created',
+          sortDirection: 'desc',
+          offset,
+          limit: PAGE_SIZE
+        },
+        current
+      )
+        .then((result) => {
+          if (current()) setPage({ key: requestKey, result, offset })
+        })
+        .catch((error: unknown) => {
+          if (current())
+            setFailure({
+              key: requestKey,
+              oversized: Boolean(oversizedLiteratureReference(error))
+            })
+        })
+    }, requestDelay)
     return () => {
       window.clearTimeout(timer)
+      window.clearTimeout(skeletonTimer)
       generation.current += 1
     }
-  }, [all, offset, projectId, query, revision])
+  }, [all, collectionId, offset, projectId, query, requestKey, revision])
 
-  if (failure)
+  if (failure?.key === requestKey)
     return (
       <div className="p-4">
         <ErrorNotice
@@ -296,158 +373,227 @@ function LibraryResults({
         />
       </div>
     )
-  if (!page)
+  const waiting = page?.key !== requestKey
+  if (waiting && (!page || delayedSkeletonKey === requestKey))
     return (
-      <div role="status" className="space-y-3 p-4 text-sm text-muted-foreground">
-        <span>{t('Loading references…')}</span>
-        {[0, 1, 2].map((row) => (
-          <div key={row} aria-hidden="true" className="h-12 rounded-md bg-muted" />
-        ))}
+      <div role="status" aria-label={t('Loading references…')}>
+        <div className="flex h-8 items-center justify-between gap-2 px-4 pt-3 pb-1 text-xs text-muted-foreground">
+          <span aria-hidden="true" className="h-3 w-20 rounded bg-muted" />
+          <span>{t('Recently added')}</span>
+        </div>
+        <div aria-hidden="true">
+          {[0, 1, 2].map((row) => (
+            <div key={row} className="border-b border-border px-4 pt-3 pb-3 last:border-0">
+              <div className="space-y-2">
+                <div className="h-3.5 w-11/12 rounded bg-muted" />
+                <div className="h-3.5 w-8/12 rounded bg-muted" />
+                <div className="h-3 w-10/12 rounded bg-muted" />
+                <div className="h-3 w-7/12 rounded bg-muted" />
+              </div>
+              <div className="mt-4 flex items-center justify-between">
+                <div className="h-6 w-20 rounded bg-muted" />
+                <div className="h-3 w-24 rounded bg-muted" />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     )
-  const entries = page.entries.filter(
+  if (!page) return null
+  const displayedPage = page.result
+  const entries = displayedPage.entries.filter(
     (entry): entry is LiteratureItemView => 'item' in entry && 'attachments' in entry
   )
   const empty = entries.length === 0
   return (
     <>
-      {empty ? (
-        <div
-          role="status"
-          className="mx-auto flex max-w-sm flex-col items-center gap-4 px-6 pt-20 pb-8 text-center"
-        >
-          <BookOpen
-            className="size-8 text-muted-foreground"
-            strokeWidth={1.25}
-            aria-hidden="true"
-          />
-          <div className="space-y-1">
-            <h3 className="text-sm font-medium">
-              {query.trim()
-                ? t('No matching references')
-                : offset > 0
-                  ? t('No references on this page')
-                  : all
-                    ? t('Your library is empty')
-                    : t('No references in this project')}
-            </h3>
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {query.trim()
-                ? t('Try another search or clear the search field.')
-                : offset > 0
-                  ? t('References may have moved or been removed. Return to the first page.')
-                  : all
-                    ? t('Add or import references in Literature to start building your library.')
-                    : t('Browse your library, or add references to this project in Literature.')}
-            </p>
-          </div>
-          {query.trim() ? (
-            <Button
-              size="sm"
-              onClick={() => onChange({ ...selection, query: '', offset: 0, expanded: undefined })}
-            >
-              {t('Clear search')}
-            </Button>
-          ) : offset > 0 ? (
-            <Button
-              size="sm"
-              onClick={() => onChange({ ...selection, offset: 0, expanded: undefined })}
-            >
-              {t('First page')}
-            </Button>
-          ) : !all ? (
-            <Button
-              size="sm"
-              onClick={() => onChange({ ...selection, all: true, offset: 0, expanded: undefined })}
-            >
-              {t('Browse all references')}
-            </Button>
-          ) : (
-            <Button size="sm" onClick={openLiterature}>
-              {t('Open in Literature')}
-            </Button>
-          )}
-        </div>
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-1 text-xs text-muted-foreground">
-            <span>
-              {page.totalCount !== undefined
-                ? t('{{count}} references', {
-                    count: page.totalCount,
-                    defaultValue_one: '{{count}} reference'
-                  })
-                : null}
-            </span>
-            <span>{t('Recently added')}</span>
-          </div>
-          <ul aria-label={t('Library')} className="min-w-0">
-            {entries.map((entry) => (
-              <ReferenceRow
-                key={entry.id}
-                entry={entry}
-                expanded={selection.expanded === entry.id}
-                onToggle={() =>
+      {waiting && (
+        <span role="status" className="sr-only">
+          {t('Loading references…')}
+        </span>
+      )}
+      <div aria-hidden={waiting} inert={waiting} className={cn(waiting && 'opacity-45')}>
+        {empty ? (
+          <div
+            role="status"
+            className="mx-auto flex max-w-sm flex-col items-center gap-4 px-6 pt-20 pb-8 text-center"
+          >
+            <BookOpen
+              className="size-8 text-muted-foreground"
+              strokeWidth={1.25}
+              aria-hidden="true"
+            />
+            <div className="space-y-1">
+              <h3 className="text-sm font-medium">
+                {query.trim()
+                  ? t('No matching references')
+                  : offset > 0
+                    ? t('No references on this page')
+                    : collectionId
+                      ? t('No references in this collection')
+                      : all
+                        ? t('Your library is empty')
+                        : t('No references in this project')}
+              </h3>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {query.trim()
+                  ? t('Try another search or clear the search field.')
+                  : offset > 0
+                    ? t('References may have moved or been removed. Return to the first page.')
+                    : collectionId
+                      ? t(
+                          'Browse your library, or add references to this collection in Literature.'
+                        )
+                      : all
+                        ? t(
+                            'Add or import references in Literature to start building your library.'
+                          )
+                        : t(
+                            'Browse your library, or add references to this project in Literature.'
+                          )}
+              </p>
+            </div>
+            {query.trim() ? (
+              <Button
+                size="sm"
+                onClick={() =>
+                  onChange({ ...selection, query: '', offset: 0, expanded: undefined })
+                }
+              >
+                {t('Clear search')}
+              </Button>
+            ) : offset > 0 ? (
+              <Button
+                size="sm"
+                onClick={() => onChange({ ...selection, offset: 0, expanded: undefined })}
+              >
+                {t('First page')}
+              </Button>
+            ) : !all ? (
+              <Button
+                size="sm"
+                onClick={() =>
                   onChange({
                     ...selection,
-                    expanded: selection.expanded === entry.id ? undefined : entry.id
+                    all: true,
+                    collectionId: undefined,
+                    offset: 0,
+                    expanded: undefined
                   })
                 }
-              />
-            ))}
-          </ul>
-        </>
-      )}
-      {(offset > 0 || page.nextOffset !== undefined) && (
-        <div className="flex items-center justify-between gap-2 border-t border-border p-3">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t('Previous page')}
-            disabled={offset === 0}
-            onClick={() =>
-              onChange({
-                ...selection,
-                offset: Math.max(0, offset - PAGE_SIZE),
-                expanded: undefined
-              })
-            }
-          >
-            <ChevronLeft aria-hidden="true" />
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            {t('Page {{page}}', { page: Math.floor(offset / PAGE_SIZE) + 1 })}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t('Next page')}
-            disabled={page.nextOffset === undefined}
-            onClick={() =>
-              onChange({ ...selection, offset: page.nextOffset ?? offset, expanded: undefined })
-            }
-          >
-            <ChevronRight aria-hidden="true" />
-          </Button>
-        </div>
-      )}
+              >
+                {t('Browse all references')}
+              </Button>
+            ) : (
+              <Button size="sm" onClick={openLiterature}>
+                {t('Open in Literature')}
+              </Button>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-1 text-xs text-muted-foreground">
+              <span>
+                {displayedPage.totalCount !== undefined
+                  ? t('{{count}} references', {
+                      count: displayedPage.totalCount,
+                      defaultValue_one: '{{count}} reference'
+                    })
+                  : null}
+              </span>
+              <span>{t('Recently added')}</span>
+            </div>
+            <ul aria-label={t('Library')} className="min-w-0">
+              {entries.map((entry) => (
+                <ReferenceRow
+                  key={entry.id}
+                  entry={entry}
+                  expanded={selection.expanded === entry.id}
+                  onToggle={() =>
+                    onChange({
+                      ...selection,
+                      expanded: selection.expanded === entry.id ? undefined : entry.id
+                    })
+                  }
+                />
+              ))}
+            </ul>
+          </>
+        )}
+        {(page.offset > 0 || displayedPage.nextOffset !== undefined) && (
+          <div className="flex items-center justify-between gap-2 border-t border-border p-3">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('Previous page')}
+              disabled={offset === 0}
+              onClick={() =>
+                onChange({
+                  ...selection,
+                  offset: Math.max(0, offset - PAGE_SIZE),
+                  expanded: undefined
+                })
+              }
+            >
+              <ChevronLeft aria-hidden="true" />
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {t('Page {{page}}', { page: Math.floor(offset / PAGE_SIZE) + 1 })}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('Next page')}
+              disabled={displayedPage.nextOffset === undefined}
+              onClick={() =>
+                onChange({
+                  ...selection,
+                  offset: displayedPage.nextOffset ?? offset,
+                  expanded: undefined
+                })
+              }
+            >
+              <ChevronRight aria-hidden="true" />
+            </Button>
+          </div>
+        )}
+      </div>
     </>
   )
 }
 
 export default function LibraryPreview({
   projectId,
-  isActive
+  isActive,
+  scopeRequest
 }: {
   projectId?: string
   isActive: boolean
+  scopeRequest?: { collectionId?: string; collectionName?: string }
 }): React.JSX.Element {
   const { t } = useTranslation()
   const searchId = useId()
-  const [selection, setSelection] = useState<Selection>({ query: '', all: !projectId, offset: 0 })
+  const [selection, setSelection] = useState<Selection>({
+    query: '',
+    all: !projectId && !scopeRequest?.collectionId,
+    collectionId: scopeRequest?.collectionId,
+    offset: 0
+  })
+  const lastScopeRequest = useRef(scopeRequest)
+  useLayoutEffect(() => {
+    if (lastScopeRequest.current === scopeRequest) return
+    lastScopeRequest.current = scopeRequest
+    setSelection({
+      query: '',
+      all: !projectId && !scopeRequest?.collectionId,
+      collectionId: scopeRequest?.collectionId,
+      offset: 0
+    })
+  }, [projectId, scopeRequest])
   const openLiterature = (): void => {
     const navigation = useNavigationStore.getState()
-    if (!selection.all && projectId) navigation.openProjectLiterature(projectId, 'user')
+    if (selection.collectionId) navigation.openCollectionLiterature(selection.collectionId, 'user')
+    else if (!selection.all && projectId) navigation.openProjectLiterature(projectId, 'user')
     else navigation.openLibrary('user')
   }
   return (
@@ -502,18 +648,49 @@ export default function LibraryPreview({
           aria-label={t('Scope')}
           className="flex flex-wrap items-center gap-x-5 px-4"
         >
+          {scopeRequest?.collectionId && (
+            <button
+              type="button"
+              aria-pressed={selection.collectionId === scopeRequest.collectionId}
+              className={cn(
+                'h-9 max-w-[45%] truncate border-b-2 border-transparent text-xs hover:text-foreground active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]',
+                selection.collectionId === scopeRequest.collectionId
+                  ? 'border-primary font-medium text-foreground'
+                  : 'text-muted-foreground'
+              )}
+              onClick={() =>
+                setSelection({
+                  ...selection,
+                  all: false,
+                  collectionId: scopeRequest.collectionId,
+                  offset: 0,
+                  expanded: undefined
+                })
+              }
+            >
+              {scopeRequest.collectionName || t('Collection')}
+            </button>
+          )}
           {(projectId ? [false, true] : [true]).map((all) => (
             <button
               key={String(all)}
               type="button"
-              aria-pressed={selection.all === all}
+              aria-pressed={!selection.collectionId && selection.all === all}
               className={cn(
                 'h-9 border-b-2 border-transparent text-xs whitespace-nowrap hover:text-foreground active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]',
-                selection.all === all
+                !selection.collectionId && selection.all === all
                   ? 'border-primary font-medium text-foreground'
                   : 'text-muted-foreground'
               )}
-              onClick={() => setSelection({ ...selection, all, offset: 0, expanded: undefined })}
+              onClick={() =>
+                setSelection({
+                  ...selection,
+                  all,
+                  collectionId: undefined,
+                  offset: 0,
+                  expanded: undefined
+                })
+              }
             >
               {all ? t('All references') : t('Current project')}
             </button>
@@ -523,7 +700,6 @@ export default function LibraryPreview({
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
         {isActive && (
           <LibraryResults
-            key={JSON.stringify([projectId, selection.all, selection.query, selection.offset])}
             projectId={projectId}
             selection={selection}
             onChange={setSelection}

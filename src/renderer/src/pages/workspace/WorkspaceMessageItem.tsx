@@ -7,6 +7,10 @@ import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import {
+  createProjectLibraryPreviewItem,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
 import {
@@ -1285,7 +1289,9 @@ const MessagePartsContent = ({
                   'bg-accent text-accent-foreground'
                 )}
                 onClick={() =>
-                  useNavigationStore.getState().openProjectLiterature(projectId, 'user')
+                  usePreviewWorkbenchStore
+                    .getState()
+                    .upsertAndActivateItem(createProjectLibraryPreviewItem({}))
                 }
                 aria-label={t("Open this project's Library")}
                 title={name}
@@ -1305,7 +1311,12 @@ const MessagePartsContent = ({
                   'bg-accent text-accent-foreground'
                 )}
                 onClick={() =>
-                  useNavigationStore.getState().openCollectionLiterature(part.collectionId, 'user')
+                  usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+                    createProjectLibraryPreviewItem({
+                      collectionId: part.collectionId,
+                      collectionName: part.name
+                    })
+                  )
                 }
                 aria-label={t('Open {{name}}', { name })}
                 title={name}

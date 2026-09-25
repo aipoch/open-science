@@ -73,6 +73,8 @@ export type PreviewFileItem = PreviewItemBase & {
 export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
   sideChatId?: string
+  // A message chip can request a transient Library scope without changing the durable tab format.
+  libraryScopeRequest?: { collectionId?: string; collectionName?: string }
   toolKind?:
     'notebook' | 'files' | 'library' | 'compute' | 'reviewer' | 'plan' | 'subagents' | 'side-chat'
   notebook?: NotebookSessionReference
@@ -443,12 +445,15 @@ const createProjectFilesPreviewItem = (): PreviewToolItem => ({
   title: 'Files'
 })
 
-const createProjectLibraryPreviewItem = (): PreviewToolItem => ({
+const createProjectLibraryPreviewItem = (
+  libraryScopeRequest?: PreviewToolItem['libraryScopeRequest']
+): PreviewToolItem => ({
   id: PROJECT_LIBRARY_PREVIEW_ID,
   sessionId: '__project_library__',
   type: 'tool',
   toolKind: 'library',
-  title: 'Library'
+  title: 'Library',
+  ...(libraryScopeRequest ? { libraryScopeRequest } : {})
 })
 
 const createProjectComputePreviewItem = (): PreviewToolItem => ({
