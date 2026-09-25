@@ -12466,7 +12466,7 @@ describe('ACP runtime session management', () => {
 
   it('lets an ACP agent use a folder grant during a real prompt', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-runtime-'))
-    const grantedRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-granted-'))
+    const grantedRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-acp-granted-')))
     const inputPath = join(grantedRoot, 'progress.txt')
     const outputPath = join(grantedRoot, 'result.txt')
     const process = new FakeAgentProcess()

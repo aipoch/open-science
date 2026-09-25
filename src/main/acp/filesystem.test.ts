@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -172,7 +172,7 @@ describe('ACP workspace filesystem adapter', () => {
 
   it('rejects a granted root that is replaced by an external link', async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-'))
-    const grantedRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-granted-'))
+    const grantedRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-acp-granted-')))
     const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-outside-'))
     const filePath = join(grantedRoot, 'notes.txt')
     const outsideFile = join(outsideRoot, 'notes.txt')

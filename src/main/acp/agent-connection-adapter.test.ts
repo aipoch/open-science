@@ -1,7 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
@@ -578,7 +578,7 @@ describe('AcpAgentConnectionAdapter', () => {
 
   it('reads text files inside a folder granted to the agent', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'acp-connection-adapter-'))
-    const grantedRoot = await mkdtemp(join(tmpdir(), 'acp-granted-root-'))
+    const grantedRoot = await realpath(await mkdtemp(join(tmpdir(), 'acp-granted-root-')))
     const filePath = join(grantedRoot, 'progress.txt')
     await writeFile(filePath, 'authorized progress', 'utf8')
     const process = new FakeAgentProcess()
@@ -685,7 +685,7 @@ describe('AcpAgentConnectionAdapter', () => {
 
   it('writes text files inside a read-write folder granted to the agent', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'acp-connection-adapter-'))
-    const grantedRoot = await mkdtemp(join(tmpdir(), 'acp-granted-root-'))
+    const grantedRoot = await realpath(await mkdtemp(join(tmpdir(), 'acp-granted-root-')))
     const filePath = join(grantedRoot, 'results', 'summary.txt')
     const process = new FakeAgentProcess()
     const agentConnection = acp
@@ -725,7 +725,7 @@ describe('AcpAgentConnectionAdapter', () => {
 
   it('rejects writes through a read-only granted folder', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'acp-connection-adapter-'))
-    const grantedRoot = await mkdtemp(join(tmpdir(), 'acp-granted-root-'))
+    const grantedRoot = await realpath(await mkdtemp(join(tmpdir(), 'acp-granted-root-')))
     const filePath = join(grantedRoot, 'results.txt')
     const process = new FakeAgentProcess()
     const agentConnection = acp
@@ -768,7 +768,7 @@ describe('AcpAgentConnectionAdapter', () => {
   it.skipIf(process.platform === 'win32')(
     'rejects a granted-folder write through a dangling symlink to an external file',
     async () => {
-      const root = await mkdtemp(join(tmpdir(), 'acp-dangling-link-'))
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'acp-dangling-link-')))
       const workspace = join(root, 'workspace')
       const grantedRoot = join(root, 'granted')
       const externalFile = join(root, 'outside.txt')
