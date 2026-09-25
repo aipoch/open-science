@@ -65,6 +65,17 @@ function matchesDecisionSource(
   return source === 'all' || row.decisionSource === source
 }
 
+function hasManualResumeProvenance(
+  action: 'refresh' | 'recompute' | 'preview' | undefined,
+  usage: ReadonlyArray<{ scenario: string }>
+): boolean {
+  return Boolean(
+    action &&
+    !usage.some((entry) => entry.scenario === 'literature-automatic') &&
+    (action !== 'refresh' || usage.some((entry) => entry.scenario === 'literature-update'))
+  )
+}
+
 /** Owns rules, assessments, overrides and resumable work; never writes ordinary memberships. */
 export class LiteratureSmartCollections {
   private readonly active = new Map<string, AbortController>()
@@ -709,6 +720,21 @@ export class LiteratureSmartCollections {
           _sum: { inputTokens: true, outputTokens: true }
         })
       : undefined
+    const runSnapshot = (() => {
+      try {
+        return smartRunSnapshotSchema.safeParse(JSON.parse(run?.snapshotJson ?? 'null')).data
+      } catch {
+        return undefined
+      }
+    })()
+    const runUsageScenarios =
+      run && ['cancelled', 'interrupted'].includes(run.state)
+        ? await client.classificationUsage.findMany({
+            where: { runId: run.id },
+            distinct: ['scenario'],
+            select: { scenario: true }
+          })
+        : []
     const usageIncomplete = run
       ? (await client.classificationUsage.count({
           where: { runId: run.id, usageIncomplete: true }
@@ -804,17 +830,14 @@ export class LiteratureSmartCollections {
         ? {
             run: {
               id: run.id,
-              snapshot: (() => {
-                try {
-                  return smartRunSnapshotSchema.safeParse(JSON.parse(run.snapshotJson ?? 'null'))
-                    .data
-                } catch {
-                  return undefined
-                }
-              })(),
+              snapshot: runSnapshot,
               kind: run.kind as 'preview' | 'refresh',
               state: run.state as NonNullable<SmartCollectionView['run']>['state'],
               abandoned: Boolean(run.abandonedAt),
+              manualResumeAllowed: hasManualResumeProvenance(
+                runSnapshot?.action,
+                runUsageScenarios
+              ),
               done: runCounts.reduce(
                 (sum, group) => sum + (group.state === 'pending' ? 0 : Number(group.count)),
                 0
@@ -1347,11 +1370,11 @@ export class LiteratureSmartCollections {
             const hasAutomaticUsage = usage.some(
               (entry) => entry.scenario === 'literature-automatic'
             )
-            if (hasAutomaticUsage && definition.automaticPauseRunId !== previous.id)
-              throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
+            const ownsPause = definition.automaticPauseRunId === previous.id
             automatic =
-              definition.automaticPauseRunId === previous.id &&
-              (hasAutomaticUsage || (!usage.length && snapshot.action === 'refresh'))
+              ownsPause && (hasAutomaticUsage || (!usage.length && snapshot.action === 'refresh'))
+            if (ownsPause ? !automatic : !hasManualResumeProvenance(snapshot.action, usage))
+              throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
             if (
               automatic &&
               (!definition.autoUpdate ||

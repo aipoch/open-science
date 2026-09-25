@@ -457,6 +457,7 @@ it('shows a persistent automatic pause with an explicit resume action', async ()
       id: 'paused-run',
       kind: 'refresh',
       state: 'interrupted',
+      manualResumeAllowed: false,
       done: 0,
       total: 1,
       inputTokens: 0,
@@ -556,6 +557,7 @@ it('keeps clear-pause available without a model for an unattributed pause', asyn
       id: 'latest-run',
       kind: 'refresh',
       state: 'interrupted',
+      manualResumeAllowed: false,
       done: 0,
       total: 1,
       inputTokens: 0,
@@ -571,9 +573,7 @@ it('keeps clear-pause available without a model for an unattributed pause', asyn
   render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
   const freshRun = await screen.findByRole('button', { name: 'Start a fresh automatic run' })
   expect(freshRun.hasAttribute('disabled')).toBe(true)
-  expect(screen.getByRole('button', { name: 'Resume analysis' }).hasAttribute('disabled')).toBe(
-    true
-  )
+  expect(screen.queryByRole('button', { name: 'Resume analysis' })).toBeNull()
   expect(screen.getByRole('button', { name: 'Abandon run' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Clear automatic pause' }))
   await screen.findByRole('alertdialog')
@@ -582,6 +582,33 @@ it('keeps clear-pause available without a model for an unattributed pause', asyn
     expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'abandon' }))
   )
   expect(transact.mock.calls.at(-1)?.[0].runId).toBeUndefined()
+})
+
+it('starts a new run instead of resuming an ambiguous refresh', async () => {
+  view = {
+    ...view,
+    configured: true,
+    run: {
+      id: 'ambiguous-run',
+      kind: 'refresh',
+      state: 'interrupted',
+      manualResumeAllowed: false,
+      done: 0,
+      total: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      usageIncomplete: false,
+      updatedAt: 1
+    }
+  }
+  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+
+  const freshRun = await screen.findByRole('button', { name: 'Continue in a new run' })
+  expect(screen.queryByRole('button', { name: 'Resume analysis' })).toBeNull()
+  fireEvent.click(freshRun)
+  await waitFor(() =>
+    expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'refresh' }))
+  )
 })
 
 it('keeps the automatic pause notice when a newer manual run is interrupted', async () => {

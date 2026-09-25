@@ -462,6 +462,27 @@ export function SmartCollectionPanel({
               >
                 <RotateCcw className="size-4" aria-hidden="true" />
               </Button>
+            ) : view.run?.manualResumeAllowed === false ? (
+              !automaticPauseVisible && (
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={t('Continue in a new run')}
+                        disabled={disabled}
+                        onClick={() => void run('refresh')}
+                      >
+                        <RotateCcw className="size-4" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="bg-black text-white">
+                      {t('Continue in a new run')}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )
             ) : (
               <Button
                 variant="ghost"

@@ -222,6 +222,7 @@ export const smartCollectionViewSchema = z
         snapshot: smartRunSnapshotSchema.optional(),
         state: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted']),
         abandoned: z.boolean().optional(),
+        manualResumeAllowed: z.boolean().optional(),
         done: z.number().int().nonnegative(),
         total: z.number().int().nonnegative(),
         inputTokens: z.number().nonnegative(),
