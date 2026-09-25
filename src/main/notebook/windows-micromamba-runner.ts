@@ -4,11 +4,12 @@ import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
 import micromambaVersions from '../../../scripts/micromamba-versions.json'
 import { resolveMicromambaLocations, type MicromambaDeps } from './micromamba'
+import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 
 export type MicromambaRunnerCandidate = {
   id: string
@@ -51,7 +52,6 @@ const execFileAsync = promisify(execFile)
 const digestPattern = /^[0-9a-f]{64}$/
 const candidateIdPattern = /^[a-z0-9][a-z0-9.-]*$/
 const WINDOWS_PUBLISHER = 'AIPOCH PTE. LTD.'
-const WINDOWS_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
 
 const hashFile = async (path: string): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -67,9 +67,15 @@ const defaultPreflight = async (path: string): Promise<void> => {
 }
 
 const verifyWindowsAuthenticode = async (path: string): Promise<void> => {
+  const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR
+  const powershellModulePath = windowsRoot
+    ? win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules')
+    : undefined
   const script = [
     '$ErrorActionPreference = "Stop"',
-    '$env:PSModulePath = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules"',
+    ...(powershellModulePath
+      ? ['$env:PSModulePath = $env:OPEN_SCIENCE_POWERSHELL_MODULE_PATH']
+      : []),
     'Import-Module Microsoft.PowerShell.Security -ErrorAction Stop',
     '$signature = Get-AuthenticodeSignature -LiteralPath $env:OPEN_SCIENCE_AUTHENTICODE_PATH',
     'if ($signature.Status -ne "Valid") { throw "invalid Authenticode status: $($signature.Status) $($signature.StatusMessage)" }',
@@ -81,12 +87,19 @@ const verifyWindowsAuthenticode = async (path: string): Promise<void> => {
   // The app may inherit a PSModulePath from a development/runtime host. Restrict module lookup to
   // Windows PowerShell's system directory so an incompatible bundled copy cannot shadow the security
   // module that supplies Get-AuthenticodeSignature.
-  env.PSModulePath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules'
-  await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', script], {
-    timeout: 10_000,
-    windowsHide: true,
-    env
-  })
+  if (powershellModulePath) {
+    env.OPEN_SCIENCE_POWERSHELL_MODULE_PATH = powershellModulePath
+    env.PSModulePath = powershellModulePath
+  }
+  await execFileAsync(
+    resolveWindowsPowerShellExecutable(process.env),
+    ['-NoProfile', '-NonInteractive', '-Command', script],
+    {
+      timeout: 10_000,
+      windowsHide: true,
+      env
+    }
+  )
 }
 
 const errorText = (error: unknown): string => {
