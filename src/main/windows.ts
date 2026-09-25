@@ -32,6 +32,7 @@ import {
   WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,
   WINDOW_FIND_CONTENT_READY_CHANNEL,
   WINDOW_FIND_HIDE_CHANNEL,
+  WINDOW_FIND_OFFICE_CHANNEL,
   WINDOW_FIND_READY_CHANNEL,
   WINDOW_FIND_SHOW_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
@@ -42,6 +43,7 @@ import {
   type CloseConfirmChoice,
   type WindowFindAppearance
 } from '../shared/window-controls'
+import { getOfficeSearchSessionId } from '../shared/office-preview'
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const preloadEntry = join(__dirname, '../preload/index.js')
@@ -514,6 +516,11 @@ const createMainWindow = (
     if (isFindInPageChord(input, process.platform)) {
       if (windowFindListenerReady && rendererResponsive) {
         event.preventDefault()
+        const officeSessionId = getOfficeSearchSessionId(window.webContents.focusedFrame?.url ?? '')
+        if (officeSessionId) {
+          window.webContents.send(WINDOW_FIND_OFFICE_CHANNEL, officeSessionId)
+          return
+        }
         windowFindOpenPending = true
         window.webContents.send(WINDOW_FIND_SHOW_CHANNEL, windowFindAppearance)
       }

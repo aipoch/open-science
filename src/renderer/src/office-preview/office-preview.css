@@ -22,23 +22,34 @@ body {
   background: var(--bg-000);
 }
 
+.docx-review-toolbar,
+.spreadsheet-review-toolbar,
 .pptx-review {
-  --pptx-notes-height: 9rem;
-  container-type: inline-size;
-  container-name: pptx-review;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  box-sizing: border-box;
   color: var(--text-100, #1f2937);
-  background: var(--bg-000, #f8fafc);
 }
 
-.pptx-review-toolbar {
+.docx-review-toolbar {
+  position: sticky;
+  z-index: 1;
+  top: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 0.35rem;
+  min-height: 2.5rem;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background: var(--bg-100, #ffffff);
+}
+
+.spreadsheet-review-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 0.35rem;
   min-height: 2.5rem;
   padding: 0.35rem 0.6rem;
@@ -46,6 +57,62 @@ body {
   background: var(--bg-100, #ffffff);
 }
 
+.spreadsheet-review-find,
+.pptx-review-find {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.spreadsheet-review-find[hidden],
+.spreadsheet-review-find-open[hidden],
+.pptx-review-find[hidden],
+.pptx-review-find-open[hidden] {
+  display: none;
+}
+
+.spreadsheet-review-find-input,
+.pptx-review-find-input {
+  width: min(12rem, 35vw);
+  min-width: 4rem;
+  height: 2rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 0.35rem;
+  color: inherit;
+  background: var(--bg-000, #ffffff);
+  font: inherit;
+}
+
+.spreadsheet-review-find-count,
+.pptx-review-find-count {
+  min-width: 3.5rem;
+  color: var(--text-200, #64748b);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.pptx-review-find-context {
+  max-width: min(14rem, 30vw);
+  overflow: hidden;
+  color: var(--text-200, #64748b);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spreadsheet-review-find-option[aria-pressed='true'] {
+  border-color: var(--primary, #0f766e);
+  background: var(--bg-200, #f1f5f9);
+}
+
+.docx-review-outline {
+  width: min(18rem, 42vw);
+  min-width: 5rem;
+}
+
+.docx-review-button,
+.spreadsheet-review-button,
 .pptx-review-button {
   display: inline-flex;
   align-items: center;
@@ -61,6 +128,10 @@ body {
   font: inherit;
 }
 
+.docx-review-button:hover:not(:disabled),
+.docx-review-button:focus-visible,
+.spreadsheet-review-button:hover:not(:disabled),
+.spreadsheet-review-button:focus-visible,
 .pptx-review-button:hover:not(:disabled),
 .pptx-review-button:focus-visible {
   border-color: var(--border, #cbd5e1);
@@ -68,11 +139,14 @@ body {
   outline: none;
 }
 
+.docx-review-button:disabled,
+.spreadsheet-review-button:disabled,
 .pptx-review-button:disabled {
   cursor: default;
   opacity: 0.4;
 }
 
+.docx-review-counter,
 .pptx-review-counter {
   min-width: 4.5rem;
   color: var(--text-200, #64748b);
@@ -80,15 +154,50 @@ body {
   text-align: center;
 }
 
-.pptx-review-zoom {
+.docx-review-zoom {
   display: inline-flex;
   margin-left: auto;
 }
 
+.pptx-review-zoom {
+  display: inline-flex;
+}
+
+.docx-review-zoom-reset,
+.spreadsheet-review-zoom-reset,
 .pptx-review-zoom-reset {
   min-width: 3.75rem;
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
+}
+
+.pptx-review {
+  --pptx-notes-height: 9rem;
+  container-type: inline-size;
+  container-name: pptx-review;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  background: var(--bg-000, #f8fafc);
+}
+
+.pptx-review-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  min-height: 2.5rem;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background: var(--bg-100, #ffffff);
+}
+
+.pptx-review-next {
+  margin-right: auto;
 }
 
 .pptx-review-body {

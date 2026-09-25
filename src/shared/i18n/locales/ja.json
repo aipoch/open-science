@@ -2517,6 +2517,8 @@
     "Previous match": "前の一致",
     "Next match": "次の一致",
     "Close search": "検索を閉じる",
+    "Match case": "大文字と小文字を区別",
+    "Whole word": "単語全体に一致",
     "Remove PDF area": "PDF 領域を削除",
     "Expand": "展開",
     "Collapse": "折りたたむ",

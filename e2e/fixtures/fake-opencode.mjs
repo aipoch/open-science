@@ -4,6 +4,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import JSZip from 'jszip'
+import { utils as spreadsheetUtils, write as writeSpreadsheet } from 'styled-exceljs'
 import { randomUUID } from 'node:crypto'
 import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -26,6 +27,7 @@ const NOTEBOOK_REAL_ENVIRONMENT_PROMPT = 'Verify a real Notebook environment.'
 const NOTEBOOK_PACKAGE_CANCELLATION_PROMPT = 'Verify Notebook package cancellation.'
 const ARTIFACT_PROVENANCE_PROMPT = 'Create a provenance artifact.'
 const PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT = 'Create preview context menu artifacts.'
+const SPREADSHEET_SEARCH_ARTIFACT_PROMPT = 'Create spreadsheet search fixture.'
 const PREVIEW_CONTEXT_MENU_DOCX_BASE64 =
   'UEsDBAoAAAAIABQ7HF15bjPX6AAAAK0BAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbH1QyU7DMBD9FWuuKHHggBCK0wPLETiUDxjZk8SqN3nc0v49Tlt6QIXjzFv1+tXeO7GjzDYGBbdtB4KCjsaGScHn+rV5AMEFg0EXAyk4EMNq6NeHRCyqNrCCuZT0KCXrmTxyGxOFiowxeyz1zJNMqDc4kbzrunupYygUSlMWDxj6Zxpx64p42df3qUcmxyCeTsQlSwGm5KzGUnG5C+ZXSnNOaKvyyOHZJr6pBJBXExbk74Cz7r0Ok60h8YG5vKGvLPkVs5Em6q2vyvZ/mys94zhaTRf94pZy1MRcF/euvSAebfjpL49zD99QSwMECgAAAAAAFDscXQAAAAAAAAAAAAAAAAYAAABfcmVscy9QSwMECgAAAAgAFDscXZv9N+qtAAAAKQEAAAsAAABfcmVscy8ucmVsc43POw7CMAwG4KtE3mlaBoRQ0y4IqSsqB7ASN61oHkrCo7cnAwNFDIy2f3+W6/ZpZnanECdnBVRFCYysdGqyWsClP232wGJCq3B2lgQsFKFt6jPNmPJKHCcfWTZsFDCm5A+cRzmSwVg4TzZPBhcMplwGzT3KK2ri27Lc8fBpwNpknRIQOlUB6xdP/9huGCZJRydvhmz6ceIrkWUMmpKAhwuKq3e7yCzwpuarF5sXUEsDBAoAAAAAABQ7HF0AAAAAAAAAAAAAAAAFAAAAd29yZC9QSwMECgAAAAgAFDscXX5QYG+1AAAA9wAAABEAAAB3b3JkL2RvY3VtZW50LnhtbEWOO27DMAxAryJob+R2KALDdraszdAeQJHoRIBFGiQdO7ev5AxZHsHfI7vTlifzAJZE2NvPQ2MNYKCY8Nbbv9/zx9EaUY/RT4TQ2yeIPQ3d2kYKSwZUUwQo7drbu+rcOifhDtnLgWbA0huJs9eS8s2txHFmCiBS/HlyX03z7bJPaKvySvFZ41zBFTpcGB4JVhMIFTY15eRifsYxBTBj2nRh6FwdrOSd+7pA0Au7vfDyuvfPwz9QSwECFAAKAAAACAAUOxxdeW4z1+gAAACtAQAAEwAAAAAAAAAAAAAAAAAAAAAAW0NvbnRlbnRfVHlwZXNdLnhtbFBLAQIUAAoAAAAAABQ7HF0AAAAAAAAAAAAAAAAGAAAAAAAAAAAAEAAAABkBAABfcmVscy9QSwECFAAKAAAACAAUOxxdm/036q0AAAApAQAACwAAAAAAAAAAAAAAAAA9AQAAX3JlbHMvLnJlbHNQSwECFAAKAAAAAAAUOxxdAAAAAAAAAAAAAAAABQAAAAAAAAAAABAAAAATAgAAd29yZC9QSwECFAAKAAAACAAUOxxdflBgb7UAAAD3AAAAEQAAAAAAAAAAAAAAAAA2AgAAd29yZC9kb2N1bWVudC54bWxQSwUGAAAAAAUABQAgAQAAGgMAAAAA'
 
@@ -968,6 +970,64 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
   return 'Preview context menu artifacts created.'
 }
 
+const createSpreadsheetSearchArtifacts = async (sessionId) => {
+  const workbook = spreadsheetUtils.book_new()
+  const firstSheet = spreadsheetUtils.aoa_to_sheet([['Overview']])
+  spreadsheetUtils.sheet_add_aoa(firstSheet, [['CaseProbe'], ['caseprobe'], ['CaseProbeSuffix']], {
+    origin: 'A2'
+  })
+  spreadsheetUtils.sheet_add_aoa(firstSheet, [['Needle in far row']], { origin: 'A551' })
+  spreadsheetUtils.book_append_sheet(workbook, firstSheet, 'Deep')
+  spreadsheetUtils.book_append_sheet(
+    workbook,
+    spreadsheetUtils.aoa_to_sheet([['Overview'], ['Needle in another sheet']]),
+    'Other'
+  )
+  spreadsheetUtils.book_append_sheet(
+    workbook,
+    spreadsheetUtils.aoa_to_sheet([['Needle in hidden sheet']]),
+    'Hidden'
+  )
+  spreadsheetUtils.book_set_sheet_visibility(workbook, 'Hidden', 1)
+  const stored = await withMcpClient(sessionId, 'open-science-artifacts', async (client) => {
+    const versions = []
+    for (const file of [
+      {
+        filename: 'search-feasibility.xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        bookType: 'xlsx'
+      },
+      {
+        filename: 'search-feasibility.xls',
+        mimeType: 'application/vnd.ms-excel',
+        bookType: 'biff8'
+      }
+    ]) {
+      const content = Buffer.from(
+        writeSpreadsheet(workbook, { type: 'buffer', bookType: file.bookType })
+      ).toString('base64')
+      versions.push(
+        toolResult(
+          'write_artifact_file',
+          await client.callTool({
+            name: 'write_artifact_file',
+            arguments: {
+              filename: file.filename,
+              mimeType: file.mimeType,
+              content,
+              encoding: 'base64'
+            }
+          })
+        )
+      )
+    }
+    return versions
+  })
+  if (stored.some((item) => !item.artifact?.version_id))
+    throw new Error('Spreadsheet search artifacts were not finalized.')
+  return 'Spreadsheet search fixture created.'
+}
+
 const runArtifactVersionInputDelegation = async (sessionId) => {
   const produced = controlResultValue(
     await runProductionDelegationRequest(
@@ -1808,6 +1868,8 @@ if (process.argv.includes('--version')) {
           reply = await createProvenanceArtifact(context.params.sessionId)
         } else if (prompt.includes(PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT)) {
           reply = await createPreviewContextMenuArtifacts(context.params.sessionId)
+        } else if (prompt.includes(SPREADSHEET_SEARCH_ARTIFACT_PROMPT)) {
+          reply = await createSpreadsheetSearchArtifacts(context.params.sessionId)
         } else if (prompt.includes(DELEGATION_TERMINAL_PROMPT)) {
           const delegated = await runProductionDelegation(
             context.params.sessionId,

@@ -2602,6 +2602,8 @@
     "Previous match": "上一個相符項目",
     "Next match": "下一個相符項目",
     "Close search": "關閉搜尋",
+    "Match case": "區分大小寫",
+    "Whole word": "全詞比對",
     "Remove PDF area": "移除 PDF 區域",
     "Expand": "展開",
     "Collapse": "收合",

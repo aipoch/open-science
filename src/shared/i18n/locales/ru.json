@@ -2625,6 +2625,8 @@
     "Previous match": "Предыдущее совпадение",
     "Next match": "Следующее совпадение",
     "Close search": "Закрыть поиск",
+    "Match case": "Учитывать регистр",
+    "Whole word": "Слово целиком",
     "Remove PDF area": "Удалить область PDF",
     "Expand": "Развернуть",
     "Collapse": "Свернуть",

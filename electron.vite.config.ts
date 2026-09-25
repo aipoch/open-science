@@ -51,6 +51,8 @@ export default defineConfig(({ command }) => ({
   renderer: {
     // Regenerate lazy optimized chunks so a persisted Electron page cannot request stale hashes.
     optimizeDeps: { force: true },
+    // Spreadsheet parsing now splits Worker modules; Vite's default IIFE format cannot emit chunks.
+    worker: { format: 'es' },
     resolve: {
       alias: {
         // The decoder's browser entry requires document; its default/worker entry is DOM-free.

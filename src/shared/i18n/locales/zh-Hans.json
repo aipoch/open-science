@@ -2604,6 +2604,8 @@
     "Previous match": "上一个匹配项",
     "Next match": "下一个匹配项",
     "Close search": "关闭搜索",
+    "Match case": "区分大小写",
+    "Whole word": "全词匹配",
     "Remove PDF area": "移除 PDF 区域",
     "Expand": "展开",
     "Collapse": "折叠",

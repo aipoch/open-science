@@ -17,6 +17,7 @@
     "src/renderer/src/pages/workspace/previews/SourceWebview.tsx",
     "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
     "src/renderer/src/pages/workspace/previews/cached-preview-image.test-support.ts",
+    "src/renderer/src/pages/workspace/previews/docx-outline-select.tsx",
     "src/renderer/src/pages/workspace/previews/managed-pdf-document.test.ts",
     "src/renderer/src/pages/workspace/previews/managed-pdf-document.ts",
     "src/renderer/src/pages/workspace/previews/managed-preview-test-support.ts",

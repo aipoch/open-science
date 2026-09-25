@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, screen } from '@testing-library/react'
 import { strToU8, zipSync } from 'fflate'
+import {
+  registerFileViewerZoomProvider,
+  registerFileViewerSearchProvider,
+  unregisterFileViewerSearchProvider,
+  unregisterFileViewerZoomProvider,
+  type FileViewerZoomProvider,
+  type FileViewerZoomState
+} from '@file-viewer/core'
 
 import {
   BoundedBlobUrlCache,
@@ -24,6 +33,8 @@ const mocks = vi.hoisted(() => ({
   renderPptxThumbnail: vi.fn(),
   goToPptxSlide: vi.fn(),
   setPptxZoom: vi.fn(),
+  searchPptx: vi.fn(),
+  highlightPptx: vi.fn(),
   parsePptxLazy: vi.fn(),
   buildPptx: vi.fn(),
   exposePptxMediaCache: true,
@@ -71,6 +82,8 @@ vi.mock('@aiden0z/pptx-renderer', () => {
       mocks.setPptxZoom(percent)
       this.zoomPercent = percent
     }
+    searchText = mocks.searchPptx
+    highlightSearchResult = mocks.highlightPptx
     slideCount = 5
     currentSlideIndex = 0
     slideWidth = 960
@@ -202,6 +215,7 @@ describe('renderOfficeFile', () => {
     expect(materialized).toHaveLength(3)
     expect(materialized[0].childNodes).toHaveLength(0)
     expect(container.querySelectorAll('section.docx')).toHaveLength(2)
+    expect(container.querySelector('.docx-review-toolbar')).toBeNull()
     expect((await session.preparePage(2)).textContent).toBe('page 2')
     await expect(session.preparePage(1)).rejects.toThrow(/does not contain/i)
     expect(session.pageCount).toBe(3)
@@ -574,6 +588,96 @@ describe('renderOfficeFile', () => {
     expect(cancelAnimationFrame).toHaveBeenCalledWith(2)
   })
 
+  it('navigates rendered DOCX pages and retains user zoom across resize', async () => {
+    let containerWidth = 500
+    let resizeCallback: ResizeObserverCallback | undefined
+    const frames: FrameRequestCallback[] = []
+    const disconnect = vi.fn()
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback
+      }
+      observe = vi.fn()
+      disconnect = disconnect
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    Object.defineProperty(container, 'clientWidth', {
+      configurable: true,
+      get: () => containerWidth
+    })
+    Object.defineProperty(container, 'clientHeight', { configurable: true, value: 1_000 })
+    Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 1_540 })
+    Object.defineProperty(container, 'scrollTop', { configurable: true, writable: true, value: 0 })
+    Object.defineProperty(container, 'scrollTo', {
+      configurable: true,
+      value: (options: ScrollToOptions) => {
+        container.scrollTop = Math.min(options.top ?? 0, 540)
+        container.dispatchEvent(new Event('scroll'))
+      }
+    })
+    mocks.renderDocx.mockImplementation(async (_bytes, target: HTMLElement) => {
+      const wrapper = document.createElement('div')
+      wrapper.className = 'docx-wrapper'
+      for (let index = 0; index < 3; index += 1) {
+        const page = document.createElement('section')
+        page.className = 'docx'
+        page.style.width = '800px'
+        page.getBoundingClientRect = () =>
+          new DOMRect(0, 40 + index * 500 - container.scrollTop, 800, 500)
+        wrapper.appendChild(page)
+      }
+      target.appendChild(wrapper)
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'docx',
+      name: 'pages.docx',
+      container,
+      signal
+    })
+    const toolbar = container.querySelector<HTMLElement>('.docx-review-toolbar')!
+    toolbar.getBoundingClientRect = () => new DOMRect(0, 0, 500, 40)
+    const counter = toolbar.querySelector<HTMLElement>('.docx-review-counter')!
+    const wrapper = container.querySelector<HTMLElement>('.docx-wrapper')!
+    const previous = toolbar.querySelector<HTMLButtonElement>('[aria-label="Previous"]')!
+    const next = toolbar.querySelector<HTMLButtonElement>('[aria-label="Next"]')!
+    const zoomIn = toolbar.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!
+    const reset = toolbar.querySelector<HTMLButtonElement>('[aria-label="Reset zoom"]')!
+
+    expect(counter.textContent).toBe('1 / 3')
+    expect(previous.disabled).toBe(true)
+    expect(wrapper.style.getPropertyValue('--open-science-docx-scale')).toBe('0.625')
+    next.click()
+    expect(counter.textContent).toBe('2 / 3')
+    expect(container.scrollTop).toBe(500)
+    frames.shift()?.(0)
+    next.click()
+    expect(container.scrollTop).toBe(540)
+    frames.shift()?.(0)
+    expect(counter.textContent).toBe('3 / 3')
+    expect(next.disabled).toBe(true)
+
+    zoomIn.click()
+    expect(reset.textContent).toBe('125%')
+    expect(wrapper.style.getPropertyValue('--open-science-docx-scale')).toBe('0.78125')
+    containerWidth = 400
+    resizeCallback?.([], {} as ResizeObserver)
+    frames.shift()?.(0)
+    expect(wrapper.style.getPropertyValue('--open-science-docx-scale')).toBe('0.625')
+    reset.click()
+    expect(wrapper.style.getPropertyValue('--open-science-docx-scale')).toBe('0.5')
+
+    await cleanup()
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(container.childNodes).toHaveLength(0)
+  })
+
   it.each(['xls', 'xlsx'] as const)(
     'renders %s in the local spreadsheet Worker',
     async (extension) => {
@@ -601,6 +705,7 @@ describe('renderOfficeFile', () => {
           signal,
           onProgressiveRender: expect.any(Function),
           options: {
+            fit: 'actual',
             locale: 'en-US',
             messages: {
               'state.empty.title': 'This workbook has no worksheets.',
@@ -620,6 +725,192 @@ describe('renderOfficeFile', () => {
       expect(container.childNodes).toHaveLength(0)
     }
   )
+
+  it('shows only styled DOCX headings and scrolls to the selected heading', async () => {
+    document.body.append(container)
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 600 })
+    Object.defineProperty(container, 'scrollTo', {
+      configurable: true,
+      value: vi.fn((options: ScrollToOptions) => {
+        container.scrollTop = options.top ?? 0
+      })
+    })
+    mocks.renderDocx.mockImplementation(async (_bytes, target: HTMLElement) => {
+      const wrapper = document.createElement('div')
+      wrapper.className = 'docx-wrapper'
+      const page = document.createElement('section')
+      page.className = 'docx'
+      page.style.width = '800px'
+      for (const [name, text, top] of [
+        ['docx_heading1', 'Introduction', 100],
+        ['docx_normal', 'Not a heading', 150],
+        ['docx_heading2', 'Methods', 300]
+      ] as const) {
+        const paragraph = document.createElement('p')
+        paragraph.className = name
+        paragraph.textContent = text
+        paragraph.getBoundingClientRect = () => new DOMRect(0, top, 400, 20)
+        page.append(paragraph)
+      }
+      wrapper.append(page)
+      target.append(wrapper)
+      return {
+        stylesPart: {
+          styles: [
+            { id: 'Heading1', target: 'p', paragraphProps: { outlineLevel: 0 } },
+            { id: 'Heading2', target: 'p', paragraphProps: { outlineLevel: 1 } }
+          ]
+        }
+      }
+    })
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'docx',
+      name: 'headings.docx',
+      container,
+      signal
+    })
+    const outline = container.querySelector<HTMLButtonElement>(
+      '.docx-review-outline [data-slot="select-trigger"]'
+    )!
+    expect(outline.getAttribute('aria-label')).toBe('Outline')
+    expect(container.querySelector('.docx-review-outline select')).toBeNull()
+    fireEvent.keyDown(outline, { key: 'ArrowDown' })
+    expect(screen.getByRole('option', { name: 'Introduction' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: 'Not a heading' })).toBeNull()
+    fireEvent.click(screen.getByRole('option', { name: 'Methods' }))
+    expect(container.scrollTop).toBe(300)
+    await cleanup()
+  })
+
+  it('uses the spreadsheet zoom provider and releases its subscription on cleanup', async () => {
+    let scale = 1
+    const listeners = new Set<() => void>()
+    const getState = (): FileViewerZoomState => ({
+      scale,
+      label: `${Math.round(scale * 100)}%`,
+      canZoomIn: scale < 2.5,
+      canZoomOut: scale > 0.5,
+      canReset: scale !== 1
+    })
+    const setZoom = (next: number): FileViewerZoomState => {
+      scale = Math.min(2.5, Math.max(0.5, next))
+      listeners.forEach((listener) => listener())
+      return getState()
+    }
+    const provider: FileViewerZoomProvider = {
+      zoomIn: () => setZoom(scale + 0.1),
+      zoomOut: () => setZoom(scale - 0.1),
+      resetZoom: () => setZoom(1),
+      setZoom,
+      getState,
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      }
+    }
+    const wrapper = document.createElement('div')
+    wrapper.className = 'excel-wrapper'
+    const unmount = vi.fn(() => unregisterFileViewerZoomProvider(wrapper))
+    mocks.renderSpreadsheet.mockImplementation(async (_buffer, target, _type, context) => {
+      new Worker(context?.options?.spreadsheet?.workerUrl, { type: 'module' })
+      target.appendChild(wrapper)
+      registerFileViewerZoomProvider(wrapper, provider)
+      queueMicrotask(() => context?.onProgressiveRender?.())
+      return { unmount }
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'xlsx',
+      name: 'results.xlsx',
+      container,
+      signal
+    })
+    expect(mocks.renderSpreadsheet.mock.calls[0]?.[3]?.options?.fit).toBe('actual')
+    const toolbar = wrapper.querySelector<HTMLElement>('.spreadsheet-review-toolbar')!
+    const zoomIn = toolbar.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!
+    const zoomOut = toolbar.querySelector<HTMLButtonElement>('[aria-label="Zoom out"]')!
+    const reset = toolbar.querySelector<HTMLButtonElement>('[aria-label="Reset zoom"]')!
+    expect(reset.textContent).toBe('100%')
+    expect(listeners.size).toBe(1)
+
+    zoomIn.click()
+    expect(reset.textContent).toBe('110%')
+    zoomOut.click()
+    expect(reset.textContent).toBe('100%')
+    setZoom(2.5)
+    expect(reset.textContent).toBe('250%')
+    expect(zoomIn.disabled).toBe(true)
+    reset.click()
+    expect(reset.textContent).toBe('100%')
+
+    await cleanup()
+    expect(listeners.size).toBe(0)
+    expect(unmount).toHaveBeenCalledOnce()
+    expect(container.childNodes).toHaveLength(0)
+    zoomIn.click()
+    expect(scale).toBe(1)
+  })
+
+  it('passes case and whole-word find options to the workbook search provider', async () => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'excel-wrapper'
+    const state = { query: 'needle', total: 1, currentIndex: 0, current: null, matches: [] }
+    const search = vi.fn().mockResolvedValue(state)
+    mocks.renderSpreadsheet.mockImplementation(async (_buffer, target, _type, context) => {
+      new Worker(context?.options?.spreadsheet?.workerUrl, { type: 'module' })
+      target.appendChild(wrapper)
+      registerFileViewerZoomProvider(wrapper, {
+        zoomIn: vi.fn(),
+        zoomOut: vi.fn(),
+        resetZoom: vi.fn(),
+        setZoom: vi.fn(),
+        getState: () => ({
+          scale: 1,
+          label: '100%',
+          canZoomIn: true,
+          canZoomOut: true,
+          canReset: false
+        })
+      })
+      registerFileViewerSearchProvider(wrapper, { search, getState: () => state })
+      queueMicrotask(() => context?.onProgressiveRender?.())
+      return {
+        unmount: () => {
+          unregisterFileViewerSearchProvider(wrapper)
+          unregisterFileViewerZoomProvider(wrapper)
+        }
+      }
+    })
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'xlsx',
+      name: 'sheet.xlsx',
+      container,
+      signal
+    })
+    wrapper.querySelector<HTMLButtonElement>('.spreadsheet-review-find-open')!.click()
+    const input = wrapper.querySelector<HTMLInputElement>('.spreadsheet-review-find-input')!
+    input.value = 'needle'
+    input.dispatchEvent(new Event('input'))
+    await vi.waitFor(() =>
+      expect(search).toHaveBeenLastCalledWith('needle', { caseSensitive: false, wholeWord: false })
+    )
+    const matchCase = wrapper.querySelector<HTMLButtonElement>('[aria-label="Match case"]')!
+    const wholeWord = wrapper.querySelector<HTMLButtonElement>('[aria-label="Whole word"]')!
+    matchCase.click()
+    await vi.waitFor(() =>
+      expect(search).toHaveBeenLastCalledWith('needle', { caseSensitive: true, wholeWord: false })
+    )
+    wholeWord.click()
+    await vi.waitFor(() =>
+      expect(search).toHaveBeenLastCalledWith('needle', { caseSensitive: true, wholeWord: true })
+    )
+    expect(matchCase.getAttribute('aria-pressed')).toBe('true')
+    expect(wholeWord.getAttribute('aria-pressed')).toBe('true')
+    await cleanup()
+  })
 
   it('transfers spreadsheet workbook ownership to the parsing Worker', async () => {
     const unmount = vi.fn()
@@ -930,14 +1221,11 @@ describe('renderOfficeFile', () => {
     const reviewRoot = container.querySelector('.pptx-review')
     const thumbnailCountBeforeControls = mocks.renderPptxThumbnail.mock.calls.length
 
-    const toolbarButtons = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('.pptx-review-toolbar button')
-    )
     const focusStage = vi.spyOn(
       container.querySelector<HTMLElement>('.pptx-review-stage')!,
       'focus'
     )
-    toolbarButtons[2]?.click()
+    container.querySelector<HTMLButtonElement>('.pptx-review-toolbar [aria-label="Next"]')?.click()
     expect(mocks.goToPptxSlide).toHaveBeenCalledWith(1)
     const stage = container.querySelector<HTMLElement>('.pptx-review-stage')!
     expect(focusStage).toHaveBeenCalledWith({ preventScroll: true })
@@ -947,7 +1235,7 @@ describe('renderOfficeFile', () => {
     expect(mocks.goToPptxSlide).toHaveBeenCalledWith(2)
     stage.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
     expect(mocks.goToPptxSlide).toHaveBeenCalledWith(1)
-    toolbarButtons[0]?.click()
+    container.querySelector<HTMLButtonElement>('[aria-label="Hide navigation"]')?.click()
     expect(
       container.querySelector('.pptx-review')?.classList.contains('pptx-review--nav-hidden')
     ).toBe(true)
@@ -1115,6 +1403,59 @@ describe('renderOfficeFile', () => {
     const notes = container.querySelector<HTMLElement>('.pptx-review-notes')
     expect(notes?.hidden).toBe(false)
     expect(notes?.textContent).toContain('Review this chart before presenting.')
+    await cleanup()
+  })
+
+  it('finds slide text and presenter notes across slides', async () => {
+    mocks.openPptx.mockResolvedValue(undefined)
+    const bodyResult = { slideIndex: 2, snippet: 'needle on slide' }
+    const disposeHighlight = vi.fn()
+    mocks.searchPptx.mockReturnValue([bodyResult])
+    mocks.highlightPptx.mockResolvedValue({ dispose: disposeHighlight })
+    const deck = zipSync(
+      {
+        'ppt/notesSlides/notesSlide4.xml': strToU8(`
+        <p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+          xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>
+            <p:txBody><a:p><a:r><a:t>needle in notes</a:t></a:r></a:p></p:txBody></p:sp>
+        </p:notes>`)
+      },
+      { level: 0 }
+    )
+    const cleanup = await renderOfficeFile({
+      bytes: deck,
+      extension: 'pptx',
+      name: 'slides.pptx',
+      container,
+      signal
+    })
+    await vi.waitFor(() => expect(container.querySelector('.pptx-review-notes')).toBeTruthy())
+    container.querySelector<HTMLButtonElement>('.pptx-review-find-open')!.click()
+    const input = container.querySelector<HTMLInputElement>('.pptx-review-find-input')!
+    input.value = 'needle'
+    input.dispatchEvent(new Event('input'))
+    await vi.waitFor(() => expect(mocks.searchPptx).toHaveBeenCalledWith('needle'))
+    expect(container.querySelector('.pptx-review-find-count')?.textContent).toBe('1 / 2')
+    expect(mocks.goToPptxSlide).toHaveBeenCalledWith(2)
+    await vi.waitFor(() =>
+      expect(mocks.highlightPptx).toHaveBeenCalledWith(bodyResult, { scrollIntoView: false })
+    )
+    expect(container.querySelector('.pptx-review-find-context')?.textContent).toBe(
+      'needle on slide'
+    )
+    container
+      .querySelector<HTMLButtonElement>('.pptx-review-find [aria-label="Next match"]')!
+      .click()
+    expect(mocks.goToPptxSlide).toHaveBeenCalledWith(3)
+    expect(container.querySelector('.pptx-review-find-count')?.textContent).toBe('2 / 2')
+    expect(disposeHighlight).toHaveBeenCalledOnce()
+    expect(container.querySelector('.pptx-review-find-context')?.textContent).toContain('Notes:')
+    expect(container.querySelector('.pptx-review-notes-body mark')?.textContent).toBe('needle')
+    container
+      .querySelector<HTMLButtonElement>('.pptx-review-find [aria-label="Close search"]')!
+      .click()
+    expect(container.querySelector('.pptx-review-notes-body mark')).toBeNull()
     await cleanup()
   })
 

@@ -30,7 +30,7 @@ type OfficePreviewSupervisorDependencies = {
   ) => Promise<OfficePreviewRuntimeResource>
   releaseResource: (ownerId: number, resourceId: string) => void | Promise<void>
   createSessionId: () => string
-  createRuntimeUrl: (sessionId: string) => string
+  createRuntimeUrl: (sessionId: string, extension: OfficePreviewOpenRequest['extension']) => string
   resolveFrameProcess: (
     parentOwnerId: number,
     runtimeUrl: string
@@ -112,7 +112,7 @@ class OfficePreviewSupervisor {
         OFFICE_PREVIEW_MAX_FILE_BYTES
       )
       assertCurrentGeneration()
-      const runtimeUrl = this.dependencies.createRuntimeUrl(sessionId)
+      const runtimeUrl = this.dependencies.createRuntimeUrl(sessionId, request.extension)
       const start: OfficePreviewRuntimeStart = {
         sessionId,
         resource,

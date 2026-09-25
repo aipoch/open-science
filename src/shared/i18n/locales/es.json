@@ -2608,6 +2608,8 @@
     "Previous match": "Coincidencia anterior",
     "Next match": "Coincidencia siguiente",
     "Close search": "Cerrar búsqueda",
+    "Match case": "Distinguir mayúsculas y minúsculas",
+    "Whole word": "Palabra completa",
     "Remove PDF area": "Eliminar área del PDF",
     "Expand": "Expandir",
     "Collapse": "Contraer",

@@ -232,6 +232,36 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
   const officeHost = page.locator('[data-office-preview-state="ready"]')
   await expect(officeHost).toBeVisible({ timeout: 90_000 })
   const officeFrame = page.frameLocator('iframe[data-office-preview-frame]')
+  await expect(officeFrame.locator('.docx-review-counter')).toHaveText('1 / 1')
+  const docxToolbar = officeFrame.locator('.docx-review-toolbar')
+  const docxZoom = officeFrame.locator('.docx-review-zoom')
+  const docxToolbarBounds = await docxToolbar.boundingBox()
+  const docxZoomBounds = await docxZoom.boundingBox()
+  expect(docxToolbarBounds).not.toBeNull()
+  expect(docxZoomBounds).not.toBeNull()
+  expect(
+    docxToolbarBounds!.x + docxToolbarBounds!.width - docxZoomBounds!.x - docxZoomBounds!.width
+  ).toBeLessThan(20)
+  await docxToolbar.evaluate((element) => {
+    element.style.width = '480px'
+  })
+  const narrowToolbarBounds = await docxToolbar.boundingBox()
+  const narrowZoomBounds = await docxZoom.boundingBox()
+  expect(narrowToolbarBounds).not.toBeNull()
+  expect(narrowZoomBounds).not.toBeNull()
+  expect(
+    narrowToolbarBounds!.x +
+      narrowToolbarBounds!.width -
+      narrowZoomBounds!.x -
+      narrowZoomBounds!.width
+  ).toBeLessThan(20)
+  await docxToolbar.evaluate((element) => {
+    element.style.width = ''
+  })
+  await officeFrame.getByRole('button', { name: 'Zoom in' }).focus()
+  await page.keyboard.press('Enter')
+  await expect(officeFrame.getByRole('button', { name: 'Reset zoom' })).toHaveText('125%')
+  await officeFrame.getByRole('button', { name: 'Reset zoom' }).click()
   const officePassthrough = officeFrame.getByText('Office native context area', { exact: true })
   await officeFrame.locator('body').evaluate((body) => {
     const target = document.createElement('div')
@@ -253,6 +283,11 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
   const spreadsheetFrame = page.frameLocator('iframe[data-office-preview-frame]')
   const spreadsheet = spreadsheetFrame.locator('.excel-wrapper')
   await expect(spreadsheet).toBeVisible({ timeout: 90_000 })
+  await expect(spreadsheet.locator('.table-wrapper')).toBeVisible()
+  await expect(spreadsheetFrame.getByRole('button', { name: 'Reset zoom' })).toHaveText('100%')
+  await spreadsheetFrame.getByRole('button', { name: 'Zoom in' }).click()
+  await expect(spreadsheetFrame.getByRole('button', { name: 'Reset zoom' })).toHaveText('110%')
+  await spreadsheetFrame.getByRole('button', { name: 'Reset zoom' }).click()
   const spreadsheetBounds = await spreadsheet.boundingBox()
   expect(spreadsheetBounds).not.toBeNull()
   const spreadsheetClick = { x: 140, y: 90 }

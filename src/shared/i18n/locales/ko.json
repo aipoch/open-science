@@ -2524,6 +2524,8 @@
     "Previous match": "이전 일치 항목",
     "Next match": "다음 일치 항목",
     "Close search": "검색 닫기",
+    "Match case": "대소문자 구분",
+    "Whole word": "전체 단어 일치",
     "Remove PDF area": "PDF 영역 제거",
     "Expand": "펼치기",
     "Collapse": "접기",

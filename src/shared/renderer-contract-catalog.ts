@@ -2960,6 +2960,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'window.onFindInPageResult': callable<
     (listener: AcpListener<WindowFindResult>) => RemoveListener
   >()('window', ['window:find-in-page-result', ELECTRON_EVENT], { optionalMember: true }),
+  'window.onFindInOffice': callable<(listener: AcpListener<string>) => RemoveListener>()(
+    'window',
+    ['window:find-office', ELECTRON_EVENT],
+    { optionalMember: true }
+  ),
   'window.onHideWindowFind': callable<(listener: () => void) => RemoveListener>()(
     'window',
     ['window:find-hide', ELECTRON_EVENT],

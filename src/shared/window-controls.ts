@@ -37,6 +37,7 @@ export const WINDOW_FIND_RESULT_CHANNEL = 'window:find-in-page-result'
 // focus the field, and re-run the remembered query. `followsSystem` lets the separate file:// overlay
 // live-follow OS changes without trying to read the renderer's origin-scoped localStorage.
 export const WINDOW_FIND_SHOW_CHANNEL = 'window:find-show'
+export const WINDOW_FIND_OFFICE_CHANNEL = 'window:find-office'
 
 // Main -> main renderer: the find overlay was hidden, so any temporary searchable expansion can be
 // released and the transcript can return to its previous bounded window.

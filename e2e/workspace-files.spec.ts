@@ -767,6 +767,26 @@ test('reviews an uploaded PowerPoint without remounting its paged surface', asyn
   await expect(officeFrame.getByText('Speaker notes for slide 1.', { exact: true })).toBeVisible()
 
   const root = officeFrame.locator('.pptx-review')
+  const toolbar = officeFrame.locator('.pptx-review-toolbar')
+  await expect(toolbar.locator(':scope > button').first()).toHaveAttribute(
+    'aria-label',
+    'Hide navigation'
+  )
+  const navigationBounds = await toolbar
+    .getByRole('button', { name: 'Hide navigation' })
+    .boundingBox()
+  const zoomInBounds = await toolbar.getByRole('button', { name: 'Zoom in' }).boundingBox()
+  const findBounds = await toolbar.getByRole('button', { name: 'Find', exact: true }).boundingBox()
+  await expect(
+    toolbar.getByRole('button', { name: 'Find', exact: true }).locator('svg')
+  ).toBeVisible()
+  expect(navigationBounds).not.toBeNull()
+  expect(zoomInBounds).not.toBeNull()
+  expect(findBounds).not.toBeNull()
+  expect(navigationBounds!.x).toBeLessThan(findBounds!.x)
+  expect(zoomInBounds!.x).toBeLessThan(findBounds!.x)
+  expect(findBounds!.x - zoomInBounds!.x - zoomInBounds!.width).toBeLessThan(20)
+  expect(Math.abs(navigationBounds!.y - findBounds!.y)).toBeLessThan(2)
   await officeFrame.getByRole('button', { name: 'Zoom in' }).click()
   await expect(officeFrame.getByRole('button', { name: 'Reset zoom' })).toHaveText('125%')
   await expect(stage).toHaveAttribute('tabindex', '0')
@@ -789,4 +809,44 @@ test('reviews an uploaded PowerPoint without remounting its paged surface', asyn
     )
     .toBeLessThan(170)
   await expect(root).toHaveCount(1)
+  await officeFrame.getByRole('button', { name: 'Find', exact: true }).click()
+  await expect(toolbar.locator(':scope > button').first()).toHaveAttribute(
+    'aria-label',
+    'Hide navigation'
+  )
+  const find = officeFrame.getByRole('searchbox', { name: 'Find' })
+  await find.fill('Preview slide 2')
+  await toolbar.evaluate((element) => {
+    element.style.width = '480px'
+  })
+  const narrowToolbarBounds = await toolbar.boundingBox()
+  const narrowFindBounds = await toolbar.locator('.pptx-review-find').boundingBox()
+  expect(narrowToolbarBounds).not.toBeNull()
+  expect(narrowFindBounds).not.toBeNull()
+  expect(narrowFindBounds!.x + narrowFindBounds!.width).toBeGreaterThan(
+    narrowToolbarBounds!.x + narrowToolbarBounds!.width - 20
+  )
+  expect(narrowFindBounds!.x + narrowFindBounds!.width).toBeLessThanOrEqual(
+    narrowToolbarBounds!.x + narrowToolbarBounds!.width + 2
+  )
+  await toolbar.evaluate((element) => {
+    element.style.width = ''
+  })
+  await expect(counter).toHaveText('2 / 3')
+  await expect(officeFrame.locator('.pptx-search-highlight')).toBeVisible()
+  await expect(officeFrame.locator('.pptx-review-find-context')).toContainText('Preview slide 2')
+  await find.fill('Speaker notes for slide 1')
+  await expect(counter).toHaveText('1 / 3')
+  await expect(officeFrame.locator('.pptx-review-notes-body mark')).toHaveText(
+    'Speaker notes for slide 1'
+  )
+  await expect(officeFrame.locator('.pptx-search-highlight')).toHaveCount(0)
+  await officeFrame.getByRole('button', { name: 'Close search' }).click()
+  await expect(officeFrame.locator('.pptx-review-notes-body mark')).toHaveCount(0)
+  const findTrigger = officeFrame.getByRole('button', { name: 'Find', exact: true })
+  await expect(findTrigger).toBeFocused()
+  await findTrigger.press(process.platform === 'darwin' ? 'Meta+f' : 'Control+f')
+  await expect(find).toBeFocused()
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
+  await officeFrame.getByRole('button', { name: 'Close search' }).click()
 })
