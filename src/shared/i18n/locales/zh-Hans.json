@@ -3760,7 +3760,7 @@
     "These files were moved aside so you can inspect or recover them manually.": "这些文件已被移至一旁，以便您手动检查或恢复。",
     "Project: {{projectId}}": "项目：{{projectId}}",
     "Open recovery folder": "打开恢复文件夹",
-    "{{count}} damaged saved conversations were moved aside. Affected project archives stay unavailable because their state cannot be verified. You can still permanently delete the affected projects._other": "已移出 {{count}} 个损坏的已保存会话。由于无法验证其状态，受影响项目的归档仍不可用。你仍可永久删除受影响的项目。",
+    "{{count}} damaged saved conversations were moved aside. Archiving remains unavailable for affected project data because its state cannot be verified. You can still permanently delete the affected project data._other": "已移出 {{count}} 个损坏的已保存会话。由于无法验证其状态，受影响的项目数据仍无法归档。你仍可永久删除受影响的项目数据。",
     "Project index needs repair": "项目索引需要修复",
     "Saved conversations loaded, but the project index could not be rebuilt. Repair the index before archiving projects.": "已保存的会话已加载，但无法重建项目索引。请先修复索引，再归档项目。",
     "Some saved conversations could not be indexed. Repair the index before archiving projects.": "部分已保存的会话无法建立索引。请先修复索引，再归档项目。",

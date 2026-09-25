@@ -1644,7 +1644,9 @@ describe('App startup routing', () => {
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Project archive needs attention')
     expect(alert?.textContent).toContain('A damaged saved conversation was moved aside')
-    expect(alert?.textContent).toContain('You can still permanently delete the affected project')
+    expect(alert?.textContent).toContain(
+      'You can still permanently delete the affected project data'
+    )
     expect(alert?.textContent).toContain('Compute jobs in affected Sessions may remain queued')
     const recheck = container.querySelector<HTMLButtonElement>(
       '[data-testid="session-persistence-retry"]'

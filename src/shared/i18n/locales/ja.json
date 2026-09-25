@@ -3673,7 +3673,7 @@
     "These files were moved aside so you can inspect or recover them manually.": "これらのファイルは、手動で確認または復元できるように別の場所へ移動されました。",
     "Project: {{projectId}}": "プロジェクト: {{projectId}}",
     "Open recovery folder": "復旧フォルダーを開く",
-    "{{count}} damaged saved conversations were moved aside. Affected project archives stay unavailable because their state cannot be verified. You can still permanently delete the affected projects._other": "破損した保存済みの会話 {{count}} 件を隔離しました。影響を受けたプロジェクトは状態を確認できないため、引き続きアーカイブできません。影響を受けたプロジェクトを完全に削除することはできます。",
+    "{{count}} damaged saved conversations were moved aside. Archiving remains unavailable for affected project data because its state cannot be verified. You can still permanently delete the affected project data._other": "破損した保存済みの会話 {{count}} 件を隔離しました。影響を受けたプロジェクトデータは状態を確認できないため、引き続きアーカイブできません。影響を受けたプロジェクトデータを完全に削除することはできます。",
     "Project index needs repair": "プロジェクトインデックスの修復が必要",
     "Saved conversations loaded, but the project index could not be rebuilt. Repair the index before archiving projects.": "保存された会話が読み込まれましたが、プロジェクトインデックスを再構築できませんでした。プロジェクトをアーカイブする前にインデックスを修復してください。",
     "Some saved conversations could not be indexed. Repair the index before archiving projects.": "保存された会話の一部にインデックスを作成できませんでした。プロジェクトをアーカイブする前にインデックスを修復してください。",
