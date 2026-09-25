@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RuntimeSessionOwner } from '../../../../main/session-persistence/runtime-session-owner'
 import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
 import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../../../shared/acp'
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  SaveSessionOptions
+} from '../../../../shared/session-persistence'
 import {
   pendingSessionConversationCommands,
   resetSessionConversationIntentsForTests
@@ -13,7 +16,11 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
-import { createOrderedSessionPersistence } from '../session-persistence/session-persistence'
+import {
+  createOrderedSessionPersistence,
+  flushSessionPersistence,
+  saveSessionInOrder
+} from '../session-persistence/session-persistence'
 import { sendWorkspaceMessage } from './workspace-runtime-command-owner'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 
@@ -178,6 +185,35 @@ describe('workspace send while the previous Main terminal projection is queued',
     await expect(h.send()).resolves.toBeUndefined()
     expect(h.runtime.sendPrompt).not.toHaveBeenCalled()
     expect(h.flushTargets).toContain('session:session-1')
+  })
+
+  it('retries a deferred command through the production flush path after Main finishes', async () => {
+    const h = await harness()
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      cwd: '/workspace',
+      content: 'Next question',
+      agentFrameworkId: 'codex'
+    })!
+    useSessionStore.getState().finishRun('session-1')
+    const deferredCommand = pendingSessionConversationCommands('session-1')[0]
+    const saveSession = vi.fn((session: PersistedChatSession, options?: SaveSessionOptions) =>
+      h.ordered.saveSession(session, options)
+    )
+    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+
+    try {
+      await expect(
+        saveSessionInOrder(toPersistedSession(useSessionStore.getState().sessions[0]))
+      ).rejects.toMatchObject({ code: 'session-conversation-deferred' })
+      await h.terminal('stop')
+      await h.commitTerminal()
+      await expect(flushSessionPersistence('session:session-1')).resolves.toBeUndefined()
+      expect(h.durable().runtimeConversationCommandIds).toContain(deferredCommand.id)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it.each(['stop', 'error'] as const)(

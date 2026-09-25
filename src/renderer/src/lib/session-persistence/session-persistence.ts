@@ -1278,8 +1278,24 @@ class SessionPersistenceFlushConflictError extends Error {
   }
 }
 
+const retryDeferredSessionPersistence = async (target: string): Promise<void> => {
+  if (!target.startsWith('session:')) return
+  const sessionId = target.slice('session:'.length)
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === sessionId)
+  if (!session) return
+  await saveSessionInOrder(toPersistedSession(session))
+}
+
 const flushSessionPersistence = async (target?: string): Promise<void> => {
-  await liveSessionPersistence.flush(target)
+  try {
+    await liveSessionPersistence.flush(target)
+  } catch (error) {
+    if (!target || !isSessionPersistenceDeferredError(error) || error.target !== target) throw error
+    await retryDeferredSessionPersistence(target)
+    await liveSessionPersistence.flush(target)
+  }
   if (unresolvedSessionRevisionConflictTargets.size > 0) {
     throw new SessionPersistenceFlushConflictError()
   }
