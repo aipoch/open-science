@@ -1,3 +1,4 @@
+import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
@@ -7,10 +8,7 @@ import * as Dialog from '@/components/ui/dialog'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type {
-  ConnectorCredentialRequest,
-  OpenAlexCredentialValidation
-} from '../../../../shared/settings'
+import type { ConnectorCredentialRequest } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
@@ -40,48 +38,41 @@ export function ConnectorCredentialControls({
 }: ConnectorCredentialControlsProps): React.JSX.Element {
   const { t } = useTranslation()
   const fileCredentialNotice = useFileCredentialNotice()
-  const setOpenAlexCredential = useSettingsStore((state) => state.setOpenAlexCredential)
-  const validateOpenAlexCredential = useSettingsStore((state) => state.validateOpenAlexCredential)
+  const configure = useSettingsStore((state) => state.configureCredentialRequest)
+  const pending = useSettingsStore((state) =>
+    state.pendingCredentialRequests.find((item) => item.id === request.id)
+  )
   const respond = useSettingsStore((state) => state.respondCredentialRequest)
+  const setDeferred = useSettingsStore((state) => state.setCredentialRequestDeferred)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const inputId = useId()
   const [draft, setDraft] = useState<{ requestId: string; value: string }>()
-  const [busy, setBusy] = useState(false)
+  const [busyRequestId, setBusyRequestId] = useState<string>()
+  const busy = pending?.responding || busyRequestId === request.id
   const [failedRequestId, setFailedRequestId] = useState<string>()
-  const [validation, setValidation] = useState<{
-    requestId: string
-    result: OpenAlexCredentialValidation
-  }>()
   const apiKey = draft?.requestId === request.id ? draft.value : ''
   const candidate = apiKey.trim()
   const validCandidate = candidate.length > 0 && !/\s/u.test(candidate)
 
   const cancel = (): void => {
     if (busy) return
-    setBusy(true)
+    setBusyRequestId(request.id)
     void respond(request.id, false)
       .catch(() => setFailedRequestId(request.id))
-      .finally(() => setBusy(false))
+      .finally(() => setBusyRequestId((current) => (current === request.id ? undefined : current)))
   }
 
   const save = (): void => {
     if (busy || !validCandidate || !encryptionAvailable) return
     const requestId = request.id
-    setBusy(true)
+    setBusyRequestId(request.id)
     setFailedRequestId(undefined)
-    setValidation(undefined)
-    void validateOpenAlexCredential({ apiKey: candidate })
-      .then(async (result) => {
-        setValidation({ requestId, result })
-        if (!result.valid) return
-        await setOpenAlexCredential({ apiKey: candidate })
-        await respond(requestId, true)
-      })
+    void configure(requestId, candidate)
       .catch(() => setFailedRequestId(requestId))
-      .finally(() => setBusy(false))
+      .finally(() => setBusyRequestId((current) => (current === request.id ? undefined : current)))
   }
 
-  const currentValidation = validation?.requestId === request.id ? validation.result : undefined
+  const currentValidation = pending?.validation
   const validationError =
     currentValidation?.valid === false
       ? currentValidation.reason === 'invalid-format'
@@ -165,7 +156,7 @@ export function ConnectorCredentialControls({
             {t('Secure key storage is unavailable. Unlock the system keychain and try again.')}
           </InlineNotice>
         ) : null}
-        {failedRequestId === request.id ? (
+        {pending?.responseFailed || failedRequestId === request.id ? (
           <InlineNotice level="error" role="alert">
             {t('Could not save this credential. Try again.')}
           </InlineNotice>
@@ -178,6 +169,11 @@ export function ConnectorCredentialControls({
       </div>
 
       <div className={cn(dialogFooterClassName, embedded && 'sticky bottom-0 z-10 bg-card')}>
+        {!embedded ? (
+          <Button type="button" variant="ghost" onClick={() => setDeferred(request.id, true)}>
+            {t('Finish later')}
+          </Button>
+        ) : null}
         <Button type="button" variant="outline" disabled={busy} onClick={cancel}>
           {t('Not now')}
         </Button>
@@ -200,7 +196,7 @@ export function ConnectorCredentialDialog({
   active?: boolean
 }): React.JSX.Element | null {
   const request = useSettingsStore((state) =>
-    state.pendingCredentialRequests.find((candidate) => !candidate.sessionId)
+    state.pendingCredentialRequests.find((candidate) => !candidate.sessionId && !candidate.deferred)
   )
 
   if (!request) return null
@@ -220,5 +216,23 @@ export function ConnectorCredentialDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  )
+}
+
+export function DeferredCredentialRequestNotice(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const request = useSettingsStore((state) =>
+    state.pendingCredentialRequests.find((item) => !item.sessionId && item.deferred)
+  )
+  const setDeferred = useSettingsStore((state) => state.setCredentialRequestDeferred)
+  if (!request) return null
+  return (
+    <SessionPersistenceAlert
+      variant="warning"
+      title={t('Credential request pending')}
+      message={t('This request stays pending until you respond or it expires.')}
+      onAction={() => setDeferred(request.id, false)}
+      actionLabel={t('Review')}
+    />
   )
 }

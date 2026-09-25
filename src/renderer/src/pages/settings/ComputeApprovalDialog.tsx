@@ -1,3 +1,4 @@
+import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { ErrorNotice } from '@/components/error-notice'
 import { useState } from 'react'
 import { ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react'
@@ -29,8 +30,7 @@ type PendingBroadScope = Readonly<{
   scope: BroadPermissionScope
 }>
 
-// A modal approval card for a pending compute operation. The card cannot be dismissed without
-// a decision — the call is held open in main until the user responds (or a 5-minute timeout fires).
+// A pending compute call stays held in Main when its dialog is deferred, until a response or timeout.
 //
 // Four approval scopes; Broker persists Session/Project/Global and the compute adapter receives a
 // one-call allow decision only after that write succeeds.
@@ -48,26 +48,33 @@ export function ComputeApprovalDialog({
   const { t } = useTranslation()
   const request = useComputeStore((state) =>
     state.pendingApprovals.find(
-      (candidate) => !candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId)
+      (candidate) =>
+        !candidate.deferred &&
+        (!candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId))
     )
   )
   const respondApproval = useComputeStore((state) => state.respondApproval)
+  const setDeferred = useComputeStore((state) => state.setApprovalDeferred)
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null)
   const [pendingBroadScope, setPendingBroadScope] = useState<PendingBroadScope>()
-  const [responding, setResponding] = useState(false)
+  const [respondingRequestId, setRespondingRequestId] = useState<string>()
   const [responseErrorRequestId, setResponseErrorRequestId] = useState<string>()
 
   const dialogRequest = useRetainedDialogValue(request)
   if (!dialogRequest) return null
 
+  const responding = dialogRequest.responding || respondingRequestId === dialogRequest.id
+
   const submitResponse = (decision: ComputeApprovalDecision): void => {
     if (responding) return
     const requestId = dialogRequest.id
-    setResponding(true)
+    setRespondingRequestId(requestId)
     setResponseErrorRequestId(undefined)
     void respondApproval(requestId, decision)
       .catch(() => setResponseErrorRequestId(requestId))
-      .finally(() => setResponding(false))
+      .finally(() =>
+        setRespondingRequestId((current) => (current === requestId ? undefined : current))
+      )
   }
   const deny = (): void => submitResponse('deny')
   const approveOnce = (): void => submitResponse('once')
@@ -260,7 +267,7 @@ export function ComputeApprovalDialog({
                   )}
                 />
               ) : null}
-              {responseErrorRequestId === dialogRequest.id ? (
+              {dialogRequest.responseFailed || responseErrorRequestId === dialogRequest.id ? (
                 <ErrorNotice
                   inline
                   role="alert"
@@ -272,6 +279,13 @@ export function ComputeApprovalDialog({
             </div>
           </ScrollArea>
           <div className={cn(dialogFooterClassName, 'shrink-0 flex-wrap')}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setDeferred(dialogRequest.id, true)}
+            >
+              {t('Finish later')}
+            </Button>
             <Button type="button" variant="destructive" disabled={responding} onClick={deny}>
               {t('Deny')}
             </Button>
@@ -315,5 +329,21 @@ export function ComputeApprovalDialog({
         onConfirm={confirmBroadScope}
       />
     </Dialog.Root>
+  )
+}
+
+export function DeferredComputeApprovalDialogNotice(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const request = useComputeStore((state) => state.pendingApprovals.find((item) => item.deferred))
+  const setDeferred = useComputeStore((state) => state.setApprovalDeferred)
+  if (!request) return null
+  return (
+    <SessionPersistenceAlert
+      variant="warning"
+      title={t('Compute approval pending')}
+      message={t('This request stays pending until you respond or it expires.')}
+      onAction={() => setDeferred(request.id, false)}
+      actionLabel={t('Review')}
+    />
   )
 }

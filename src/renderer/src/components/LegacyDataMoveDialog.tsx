@@ -29,7 +29,7 @@ type LegacyDataMoveDialogProps = {
   currentDataRoot: string
   // Exact destination from startup status, independent of any legacy sibling under its parent.
   defaultDataRoot: string
-  // Called after the user declines and the "don't ask again" flag has been persisted.
+  // Dismisses this launch's prompt, after saving the preference or explicitly continuing for now.
   onDismiss: () => void
 }
 
@@ -69,6 +69,7 @@ const LegacyDataMoveDialog = ({
   const [operationError, setOperationError] = useState<string | undefined>(undefined)
   const [isPicking, setIsPicking] = useState(false)
   const [isDismissing, setIsDismissing] = useState(false)
+  const [dismissalFailed, setDismissalFailed] = useState(false)
 
   const requestDefaultInspection = useCallback((): void => {
     const requestId = ++defaultInspectionRequestId.current
@@ -166,10 +167,12 @@ const LegacyDataMoveDialog = ({
   const handleKeepHere = async (): Promise<void> => {
     setOperationError(undefined)
     setIsDismissing(true)
+    setDismissalFailed(false)
     try {
       await window.api.storage.dismissLegacyMovePrompt()
     } catch {
       setOperationError(t('Could not save changes.'))
+      setDismissalFailed(true)
       setIsDismissing(false)
       return
     }
@@ -270,10 +273,24 @@ const LegacyDataMoveDialog = ({
             >
               {isDismissing ? t('Saving…') : t('Keep it in the current folder')}
             </Button>
+            {dismissalFailed ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isPicking || isDismissing}
+                onClick={onDismiss}
+              >
+                {t('Continue for now')}
+              </Button>
+            ) : null}
             <p className="text-xs text-muted-foreground">
-              {t(
-                "You can always change this later in Settings → Data location. We won't ask again."
-              )}
+              {dismissalFailed
+                ? t(
+                    'Your choice could not be saved. Continue for now to keep using this folder; we may ask again after restarting.'
+                  )
+                : t(
+                    "You can always change this later in Settings → Data location. We won't ask again."
+                  )}
             </p>
           </div>
         </AlertDialog.Content>

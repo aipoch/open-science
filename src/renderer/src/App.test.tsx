@@ -36,7 +36,12 @@ const mocks = vi.hoisted(() => {
       openSettingsToPanel: vi.fn(),
       closeSettings: vi.fn()
     },
-    skillImport: { enqueue: vi.fn(), dismiss: vi.fn(), pending: [] as unknown[] },
+    skillImport: {
+      enqueue: vi.fn(),
+      dismiss: vi.fn(),
+      pending: [] as unknown[],
+      deferredIds: [] as string[]
+    },
     compute: {
       enqueueApproval: vi.fn(),
       dismissApproval: vi.fn(),
@@ -346,24 +351,28 @@ vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
   }
 }))
 vi.mock('@/pages/settings/ConnectorApprovalDialog', () => ({
+  DeferredConnectorApprovalDialogNotice: () => null,
   ConnectorApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.connectorApproval = props
     return <div data-testid="approval-dialog" />
   }
 }))
 vi.mock('@/pages/settings/ConnectorCredentialDialog', () => ({
+  DeferredCredentialRequestNotice: () => null,
   ConnectorCredentialDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.credentialRequest = props
     return <div data-testid="credential-dialog" />
   }
 }))
 vi.mock('@/pages/settings/SkillImportApprovalDialog', () => ({
+  DeferredSkillImportNotice: () => null,
   SkillImportApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.skillImportApproval = props
     return <div data-testid="skill-import-dialog" />
   }
 }))
 vi.mock('@/pages/settings/ComputeApprovalDialog', () => ({
+  DeferredComputeApprovalDialogNotice: () => null,
   ComputeApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
     mocks.presentationProps.computeApproval = props
     return <div data-testid="compute-approval-dialog" />
@@ -509,6 +518,7 @@ describe('App startup routing', () => {
     mocks.settings.pendingCredentialRequests = []
     mocks.compute.pendingApprovals = []
     mocks.skillImport.pending = []
+    mocks.skillImport.deferredIds = []
     mocks.preview.fileDialogItem = undefined
     mocks.preview.expandedToolItemId = null
     mocks.preview.activeItemId = undefined
@@ -863,6 +873,36 @@ describe('App startup routing', () => {
     dialog.remove()
   })
 
+  it('releases the modal slot while a Skill approval is deferred', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isSettingsOpen = true
+    mocks.skillImport.pending = [{ id: 'skill', sessionId: 'skill-session' }]
+    mocks.skillImport.deferredIds = ['skill']
+    await render()
+    expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('open')
+    mocks.skillImport.deferredIds = []
+    await act(async () => root.render(<App />))
+    await vi.waitFor(() => expect(mocks.presentationProps.skillImportApproval?.active).toBe(true))
+    expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
+  })
+
+  it.each(['connector', 'compute', 'credential'] as const)(
+    'releases the modal slot for a deferred %s request',
+    async (kind) => {
+      mocks.settings.isLoaded = true
+      mocks.settings.isSettingsOpen = true
+      const request = { id: 'pending', deferred: true }
+      if (kind === 'connector') mocks.settings.pendingApprovals = [request]
+      else if (kind === 'compute') mocks.compute.pendingApprovals = [request]
+      else mocks.settings.pendingCredentialRequests = [request]
+      await render()
+      expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('open')
+      request.deferred = false
+      await act(async () => root.render(<App />))
+      expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
+    }
+  )
+
   it('activates only the highest-priority pending approval and resumes the next one', async () => {
     mocks.settings.isLoaded = true
     mocks.settings.isSettingsOpen = true
@@ -871,7 +911,7 @@ describe('App startup routing', () => {
     mocks.skillImport.pending = [{ id: 'skill', sessionId: 'skill-session' }]
     await render()
 
-    expect(mocks.presentationProps.computeApproval?.active).toBe(true)
+    await vi.waitFor(() => expect(mocks.presentationProps.computeApproval?.active).toBe(true))
     expect(mocks.presentationProps.connectorApproval?.active).toBe(false)
     expect(mocks.presentationProps.skillImportApproval).toBeUndefined()
     expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
@@ -931,7 +971,7 @@ describe('App startup routing', () => {
     mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'side-chat-session' }]
     await render()
 
-    expect(mocks.presentationProps.computeApproval?.active).toBe(true)
+    await vi.waitFor(() => expect(mocks.presentationProps.computeApproval?.active).toBe(true))
     expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
     expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
       isSessionContentVisible: false
@@ -1260,7 +1300,6 @@ describe('App startup routing', () => {
 
     expect(mocks.loadProjects).toHaveBeenCalledOnce()
 
-    mocks.sessionPersistence.isHydrated = false
     mocks.sessionPersistence.isLoading = true
     await act(async () => root.render(<App />))
 
@@ -1319,6 +1358,33 @@ describe('App startup routing', () => {
     act(() => resumeNavigation?.())
 
     expect(mocks.settings.closeSettings).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a hydrated workspace visible through a retry while queuing lifecycle updates', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isReady = false
+    mocks.sessionPersistence.hasCompleteSessionCatalog = false
+    mocks.sessionPersistence.canDeleteSessionsAndProjects = false
+    mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
+    await render()
+
+    mocks.sessionPersistence.isLoading = true
+    await act(async () => root.render(<App />))
+    expect(container.querySelector('[data-testid="workspace-page"]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="session-persistence-startup-loading"]')
+    ).toBeNull()
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: false })
+
+    mocks.sessionPersistence.isLoading = false
+    mocks.sessionPersistence.loadError = 'saved conversations unavailable'
+    await act(async () => root.render(<App />))
+    expect(container.querySelector('[data-testid="workspace-page"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-persistence-startup-error"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).not.toBeNull()
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: true })
   })
 
   it('reports retained session content as hidden during retry loading and hard failure', async () => {

@@ -379,3 +379,77 @@ describe('useUpdateStore', () => {
     expect(useUpdateStore.getState().status.downloadProgress).toBeUndefined()
   })
 })
+
+it.each(['check', 'download', 'cancel', 'apply'] as const)(
+  'reports repeated rejected %s requests without inventing a phase or forcing the dialog open',
+  async (command) => {
+    const status: UpdateStatus = { state: 'ready', current: '0.2.0', latest: '0.3.0' }
+    useUpdateStore.setState({ status, isDialogOpen: true })
+    const request = vi.fn().mockRejectedValue(new Error('IPC unavailable'))
+    ;(window as unknown as { api: unknown }).api = { update: { [command]: request } }
+    for (let i = 0; i < 3; i++)
+      await expect(useUpdateStore.getState()[command]()).resolves.toBeUndefined()
+    expect(useUpdateStore.getState().status).toEqual({ ...status, error: 'IPC unavailable' })
+    useUpdateStore.getState().closeDialog()
+    expect(useUpdateStore.getState().isDialogOpen).toBe(false)
+    request.mockResolvedValue(status)
+    await useUpdateStore.getState()[command]()
+    expect(useUpdateStore.getState().status).toEqual(status)
+    expect(useUpdateStore.getState().isDialogOpen).toBe(false)
+  }
+)
+
+it('reports an apply rejection after Main rolls back to ready, preserving its latest snapshot', async () => {
+  let statusListener!: (status: UpdateStatus) => void
+  const ready: UpdateStatus = {
+    state: 'ready',
+    current: '0.2.0',
+    latest: '0.3.0',
+    localPath: '/installer'
+  }
+  ;(window as unknown as { api: unknown }).api = {
+    update: {
+      getAppInfo: async () => ({ name: 'Open-Science', version: '0.2.0', copyright: '' }),
+      getStatus: async () => ready,
+      onStatus: (listener: (status: UpdateStatus) => void) => {
+        statusListener = listener
+      },
+      onProgress: vi.fn(),
+      apply: async () => {
+        statusListener({ ...ready, state: 'applying' })
+        statusListener(ready)
+        throw new Error('Installer could not be opened')
+      }
+    }
+  }
+  const cleanup = useUpdateStore.getState().init()
+  await Promise.resolve()
+  try {
+    await useUpdateStore.getState().apply()
+    expect(useUpdateStore.getState().status).toEqual({
+      ...ready,
+      error: 'Installer could not be opened'
+    })
+  } finally {
+    cleanup()
+  }
+})
+
+it('ignores a rejected obsolete request after a newer command succeeds', async () => {
+  let rejectFirst!: (error: Error) => void
+  const ready: UpdateStatus = { state: 'ready', current: '0.2.0' }
+  ;(window as unknown as { api: unknown }).api = {
+    update: {
+      check: () =>
+        new Promise((_, reject) => {
+          rejectFirst = reject
+        }),
+      download: async () => ready
+    }
+  }
+  const first = useUpdateStore.getState().check()
+  await useUpdateStore.getState().download()
+  rejectFirst(new Error('Old request failed'))
+  await first
+  expect(useUpdateStore.getState().status).toEqual(ready)
+})

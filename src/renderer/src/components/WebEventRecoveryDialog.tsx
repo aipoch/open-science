@@ -93,6 +93,13 @@ const WebEventRecoveryDialog = ({
             <p className="mt-3 break-all text-sm text-muted-foreground">
               {t('Host')}: {window.location.host}
             </p>
+            {!authorizationRequired ? (
+              <p className="mt-3 text-sm text-muted-foreground">
+                {t(
+                  'If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.'
+                )}
+              </p>
+            ) : null}
             {drafts.count > 0 || drafts.failed ? (
               <div className="mt-3 space-y-3 text-sm">
                 <p>

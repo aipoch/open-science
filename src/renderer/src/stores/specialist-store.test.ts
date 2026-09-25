@@ -508,3 +508,19 @@ it('keeps the forced snapshot when an older initial load finishes last', async (
   await useSpecialistStore.getState().load()
   expect(list).toHaveBeenCalledTimes(2)
 })
+
+it('retains the conflict and exposes a failed catalog refresh without replaying the write', async () => {
+  const conflict = new Error('Revision conflict: expected 1, found 2.')
+  const items = [{ kind: 'reviewer' as const, id: 'reviewer' as const }]
+  const update = vi.fn().mockRejectedValue(conflict)
+  const list = vi.fn().mockRejectedValue(new Error('Offline'))
+  setSpecialistApi({ update, list })
+  useSpecialistStore.setState({ items, isLoaded: true })
+  await expect(
+    useSpecialistStore.getState().update({ id: 'researcher', revision: 1, iconKey: 'atom' })
+  ).rejects.toBe(conflict)
+  expect(update).toHaveBeenCalledOnce()
+  expect(list).toHaveBeenCalledOnce()
+  expect(useSpecialistStore.getState().items).toEqual(items)
+  expect(useSpecialistStore.getState().loadError).toBeDefined()
+})

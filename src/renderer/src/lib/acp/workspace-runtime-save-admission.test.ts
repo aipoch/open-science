@@ -164,6 +164,7 @@ describe('workspace send while the previous Main terminal projection is queued',
   afterEach(() => vi.restoreAllMocks())
 
   it('keeps a pending user intent retryable when it meets Main activeRun', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_790_000_000_000)
     const h = await harness()
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -187,34 +188,41 @@ describe('workspace send while the previous Main terminal projection is queued',
     expect(h.flushTargets).toContain('session:session-1')
   })
 
-  it('retries a deferred command through the production flush path after Main finishes', async () => {
-    const h = await harness()
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      cwd: '/workspace',
-      content: 'Next question',
-      agentFrameworkId: 'codex'
-    })!
-    useSessionStore.getState().finishRun('session-1')
-    const deferredCommand = pendingSessionConversationCommands('session-1')[0]
-    const saveSession = vi.fn((session: PersistedChatSession, options?: SaveSessionOptions) =>
-      h.ordered.saveSession(session, options)
-    )
-    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+  it.each([0, -1000])(
+    'retries a deferred command after Main finishes with a clock offset of %s ms',
+    async (offset) => {
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(1_790_000_000_000)
+      const h = await harness()
+      clock.mockReturnValue(1_790_000_000_000 + offset)
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        cwd: '/workspace',
+        content: 'Next question',
+        agentFrameworkId: 'codex'
+      })!
+      useSessionStore.getState().finishRun('session-1')
+      const deferredCommand = pendingSessionConversationCommands('session-1')[0]
+      const saveSession = vi.fn((session: PersistedChatSession, options?: SaveSessionOptions) =>
+        h.ordered.saveSession(session, options)
+      )
+      vi.stubGlobal('window', { api: { sessions: { saveSession } } })
 
-    try {
-      await expect(
-        saveSessionInOrder(toPersistedSession(useSessionStore.getState().sessions[0]))
-      ).rejects.toMatchObject({ code: 'session-conversation-deferred' })
-      await h.terminal('stop')
-      await h.commitTerminal()
-      await expect(flushSessionPersistence('session:session-1')).resolves.toBeUndefined()
-      expect(h.durable().runtimeConversationCommandIds).toContain(deferredCommand.id)
-    } finally {
-      vi.unstubAllGlobals()
+      try {
+        await expect(
+          saveSessionInOrder(toPersistedSession(useSessionStore.getState().sessions[0]))
+        ).rejects.toMatchObject({ code: 'session-conversation-deferred' })
+        // Only prompt creation is under clock skew; the terminal event follows the prior run.
+        clock.mockReturnValue(1_790_000_000_100)
+        await h.terminal('stop')
+        await h.commitTerminal()
+        await expect(flushSessionPersistence('session:session-1')).resolves.toBeUndefined()
+        expect(h.durable().runtimeConversationCommandIds).toContain(deferredCommand.id)
+      } finally {
+        vi.unstubAllGlobals()
+      }
     }
-  })
+  )
 
   it.each(['stop', 'error'] as const)(
     'does not create a storage failure when the %s event arrives before its durable projection',

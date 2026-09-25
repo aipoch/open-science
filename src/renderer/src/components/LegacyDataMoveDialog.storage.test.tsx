@@ -127,3 +127,71 @@ it.each(['absent', 'existing', 'both', 'development', 'isolated'])(
     }
   }
 )
+
+it.each(['copying', 'verified'] as const)(
+  'closes a stale %s recovery dialog after another surface discarded its copy',
+  async (recoveryStatus) => {
+    const { StorageMigrationModal } = await import('../pages/settings/StorageMigrationModal')
+    const { writeMigrationMarker } = await import('../../../main/storage/migration-marker')
+    const current = join(fixture, 'current')
+    const parent = join(fixture, 'destination')
+    const target = join(parent, 'Open-Science')
+    await mkdir(current)
+    await mkdir(target, { recursive: true })
+    initDataRoot(current)
+    await writeMigrationMarker(target, {
+      version: 1,
+      token: 'stale-dialog',
+      source: current,
+      target,
+      createdAt: Date.now(),
+      status: recoveryStatus,
+      inventory: {
+        dirs: [],
+        fileCount: 0,
+        totalBytes: 0,
+        digest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+      }
+    })
+    const owner = createStorageCommandOwner({
+      runtime: { disconnect: vi.fn(), shutdownForQuit: vi.fn() },
+      notebook: { shutdownAll: vi.fn(), dispose: vi.fn(), getActiveNotebookSessions: () => [] },
+      getActivePromptSessions: () => [],
+      getActiveSideChatSessions: () => [],
+      getActiveDelegatedSessions: () => [],
+      hasActiveReviewerWork: () => false,
+      settingsService: {
+        setDataRoot: vi.fn(),
+        dismissLegacyDataMovePrompt: vi.fn(),
+        getStoredSettings: async () => ({ dataRoot: current })
+      }
+    })
+    expect(await owner.discardMigratedCopy({ parent })).toEqual({ ok: true })
+    const discard = vi.fn((path: string) => owner.discardMigratedCopy({ parent: path }))
+    Object.assign(window, {
+      api: { storage: { detectActive: async () => [], discardMigratedCopy: discard } }
+    })
+    const close = vi.fn()
+    await act(async () =>
+      root.render(
+        <StorageMigrationModal
+          targetPath={target}
+          recoveryStatus={recoveryStatus}
+          onClose={close}
+        />
+      )
+    )
+    const button = Array.from(document.body.querySelectorAll('button')).find(
+      (b) =>
+        b.textContent ===
+        (recoveryStatus === 'copying' ? 'Discard incomplete copy' : 'Discard copy')
+    )!
+    expect(button).toBeDefined()
+    await act(async () => {
+      button.click()
+      await vi.waitFor(() => expect(close).toHaveBeenCalledOnce())
+    })
+    expect(discard).toHaveBeenCalledOnce()
+    expect(document.body.textContent).not.toContain('No matching staged data copy was found.')
+  }
+)

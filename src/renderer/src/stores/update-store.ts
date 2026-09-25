@@ -18,15 +18,26 @@ type UpdateStore = {
 
 let cleanupUpdateSubscriptions: (() => void) | undefined
 let statusRevision = 0
+let latestUpdateRequest = 0
 
 // ponytail: local observation order protects replies from newer live state. Arbitrarily reordered
 // broadcasts would require a main-process revision shared by every response and event.
 const acceptUpdateResponse = async (request: () => Promise<UpdateStatus | void>): Promise<void> => {
   const revision = statusRevision
-  const status = await request()
-  if (!status || revision !== statusRevision) return
-  statusRevision += 1
-  useUpdateStore.setState({ status })
+  const requestId = ++latestUpdateRequest
+  try {
+    const status = await request()
+    if (!status || revision !== statusRevision || requestId !== latestUpdateRequest) return
+    statusRevision += 1
+    useUpdateStore.setState({ status })
+  } catch (error) {
+    if (requestId !== latestUpdateRequest) return
+    // A failed IPC acknowledgement does not establish a new update phase. Keep the last
+    // authoritative snapshot and expose the failure through the existing error presentation.
+    useUpdateStore.setState((state) => ({
+      status: { ...state.status, error: error instanceof Error ? error.message : String(error) }
+    }))
+  }
 }
 
 // Single source of truth for update state in the renderer. The main process broadcasts every
@@ -49,6 +60,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
       .then((info) =>
         set((s) => ({ appInfo: info, status: { ...s.status, current: info.version } }))
       )
+      .catch(() => undefined)
     // Status events don't carry downloadProgress. A strategy that emits progress (with speed) then
     // immediately a status (electron-updater does on every tick) would otherwise wipe the speed the
     // progress event just set. Preserve downloadProgress across a status update while downloading so
@@ -83,6 +95,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     const cleanup = (): void => {
       if (!active) return
       active = false
+      latestUpdateRequest += 1
       statusRevision += 1
       removeStatusListener?.()
       removeProgressListener?.()

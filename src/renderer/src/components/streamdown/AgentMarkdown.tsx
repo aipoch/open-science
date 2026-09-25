@@ -111,6 +111,11 @@ type MermaidErrorPanelProps = {
 const MermaidErrorPanel = ({ chart, error, retry }: MermaidErrorPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const mediaBlocked = error.includes('MERMAID_IMAGE_BLOCKED')
+  // These are Mermaid's parser/diagram detection failures; unchanged source cannot recover.
+  const syntaxError =
+    /^(?:Parse error on line \d+:|Lexical error on line \d+\.|No diagram type detected matching given configuration for text:)/.test(
+      error
+    )
   return (
     <ErrorNotice
       className="my-2"
@@ -120,7 +125,9 @@ const MermaidErrorPanel = ({ chart, error, retry }: MermaidErrorPanelProps): Rea
           : t('Mermaid syntax could not be rendered')
       }
       description={mediaBlocked ? t('Use a separate Markdown image to load it explicitly.') : error}
-      primaryButton={!mediaBlocked ? { label: t('Retry'), onClick: retry } : undefined}
+      primaryButton={
+        !mediaBlocked && !syntaxError ? { label: t('Retry'), onClick: retry } : undefined
+      }
     >
       {!mediaBlocked && (
         <p className="text-xs leading-5 text-muted-foreground">

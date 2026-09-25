@@ -4158,6 +4158,7 @@ describe('session store', () => {
       content: 'Start a pathway analysis'
     })
 
+    const firstStartedAt = useSessionStore.getState().sessions[0].activeRun!.startedAt
     const second = useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'Add enrichment notes'
@@ -4171,7 +4172,7 @@ describe('session store', () => {
     expect(session.status).toBe('running')
     expect(session.activeRun).toEqual({
       promptMessageId: second?.messageId,
-      startedAt: Date.now()
+      startedAt: Math.max(Date.now(), firstStartedAt + 1)
     })
     expect(session.messages.map((message) => message.content)).toEqual([
       'Start a pathway analysis',

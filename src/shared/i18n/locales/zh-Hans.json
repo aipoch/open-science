@@ -6287,6 +6287,20 @@
     "Start an update to see the screening process.": "开始更新后即可查看筛选过程。",
     "Pending candidates": "待筛选论文",
     "Pause analysis": "暂停分析",
-    "Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.": "自动批准工作区编辑和支持的文献库流程。其他工具遵循各自的权限规则。"
+    "Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.": "自动批准工作区编辑和支持的文献库流程。其他工具遵循各自的权限规则。",
+    "Continue for now": "仅本次继续",
+    "Your choice could not be saved. Continue for now to keep using this folder; we may ask again after restarting.": "无法保存您的选择。您可以仅本次继续使用此文件夹；重启后可能会再次询问。",
+    "Could not send your response.": "无法发送您的响应。",
+    "Try again when the connection is available, or finish later. The request stays pending until it is answered or expires.": "连接恢复后重试，或稍后处理。请求会保持待处理状态，直到收到响应或过期。",
+    "Skill import awaiting approval": "技能导入等待审批",
+    "This request stays pending until you respond or it expires.": "此请求会保持待处理状态，直到您响应或请求过期。",
+    "Restore the file or reconnect its drive before retrying. You can close this preview and continue working.": "请先恢复文件或重新连接其所在驱动器，再重试。您可以关闭此预览并继续工作。",
+    "Open the file from your current storage location, or close this preview and continue working.": "请从当前存储位置打开文件，或关闭此预览并继续工作。",
+    "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "此对话需要恢复或明确丢弃其计划后才能继续。恢复期间，您可以切换到其他对话。",
+    "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "如果恢复持续失败，请检查主机上的 Open-Science 是否正在运行，以及两台设备是否均已连接。离开此页面前，请保存未发送草稿的副本。",
+    "Connector approval pending": "连接器审批待处理",
+    "Compute approval pending": "计算审批待处理",
+    "Credential request pending": "凭据请求待处理",
+    "Appearance changed elsewhere. Review the current appearance before trying again.": "外观已在其他位置更改。请先检查当前外观，再重试。"
   }
 }

@@ -1072,7 +1072,10 @@ describe('settings Connectors slice', () => {
     expect(store.getState().pendingApprovals).toEqual([first, second])
 
     const pending = store.getState().respondApproval('first', 'session')
-    expect(store.getState().pendingApprovals).toEqual([first, second])
+    expect(store.getState().pendingApprovals).toEqual([
+      { ...first, responding: true, responseFailed: false },
+      second
+    ])
     expect(commands.respondConnectorApproval).toHaveBeenCalledWith({
       id: 'first',
       decision: 'session'
@@ -1097,7 +1100,9 @@ describe('settings Connectors slice', () => {
       'response failed'
     )
 
-    expect(store.getState().pendingApprovals).toEqual([request])
+    expect(store.getState().pendingApprovals).toEqual([
+      { ...request, responding: false, responseFailed: true }
+    ])
   })
 
   it('dismisses a settled approval idempotently', () => {

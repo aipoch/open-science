@@ -1,3 +1,5 @@
+import { ErrorNotice } from '@/components/error-notice'
+import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useState } from 'react'
 import { PackagePlus } from 'lucide-react'
@@ -27,12 +29,14 @@ import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview
 
 type SkillImportApprovalRequestDialogProps = {
   active: boolean
+  onDefer: () => void
   request: ConversationSkillImportApprovalRequest
   respond: (response: ConversationSkillImportApprovalResponse) => Promise<void>
 }
 
 const SkillImportApprovalRequestDialog = ({
   active,
+  onDefer,
   request,
   respond
 }: SkillImportApprovalRequestDialogProps): React.JSX.Element => {
@@ -49,6 +53,17 @@ const SkillImportApprovalRequestDialog = ({
         ? new Set([request.previews[0].subPath])
         : new Set()
   )
+  const responding = useSkillImportStore((state) => state.respondingIds.includes(request.id))
+  const [responseFailed, setResponseFailed] = useState(false)
+  const submit = async (response: ConversationSkillImportApprovalResponse): Promise<void> => {
+    if (responding) return
+    setResponseFailed(false)
+    try {
+      await respond(response)
+    } catch {
+      setResponseFailed(true)
+    }
+  }
   const candidatePreview = useSkillImportCandidatePreview()
 
   const toggle = (subPath: string): void => {
@@ -79,7 +94,7 @@ const SkillImportApprovalRequestDialog = ({
         subPath: candidate.subPath,
         ...(candidate.replaceableId ? { replaceId: candidate.replaceableId } : {})
       }))
-    void respond({ id: request.id, items })
+    void submit({ id: request.id, items })
   }
   const count = selected.size
   const importLabel =
@@ -95,6 +110,7 @@ const SkillImportApprovalRequestDialog = ({
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
           <Dialog.Content
+            aria-busy={responding}
             onInteractOutside={(event) => event.preventDefault()}
             onEscapeKeyDown={(event) => event.preventDefault()}
             className={dialogPanelClassName(
@@ -228,19 +244,35 @@ const SkillImportApprovalRequestDialog = ({
               ) : null}
             </div>
 
+            {responseFailed ? (
+              <ErrorNotice
+                inline
+                tone="red"
+                className="px-5 pb-3"
+                role="alert"
+                title={t('Could not send your response.')}
+                description={t(
+                  'Try again when the connection is available, or finish later. The request stays pending until it is answered or expires.'
+                )}
+              />
+            ) : null}
             <div className={dialogFooterClassName}>
+              <Button type="button" variant="ghost" onClick={onDefer}>
+                {t('Finish later')}
+              </Button>
               <Button
                 type="button"
                 variant="ghost"
                 className={dialogCancelButtonClassName}
-                onClick={() => void respond({ id: request.id, cancelled: true })}
+                disabled={responding}
+                onClick={() => void submit({ id: request.id, cancelled: true })}
               >
                 {tCommon('Cancel')}
               </Button>
               <Button
                 type="button"
                 variant={request.source.kind === 'github' ? 'outline' : 'default'}
-                disabled={count === 0}
+                disabled={responding || count === 0}
                 onClick={confirm}
               >
                 {importLabel}
@@ -265,16 +297,40 @@ export function SkillImportApprovalDialog({
   blockedSessionIds?: ReadonlySet<string>
 }): React.JSX.Element | null {
   const request = useSkillImportStore((state) =>
-    state.pending.find((candidate) => !blockedSessionIds?.has(candidate.sessionId))
+    state.pending.find(
+      (candidate) =>
+        !state.deferredIds.includes(candidate.id) && !blockedSessionIds?.has(candidate.sessionId)
+    )
   )
   const respond = useSkillImportStore((state) => state.respond)
+  const defer = useSkillImportStore((state) => state.defer)
 
   return request ? (
     <SkillImportApprovalRequestDialog
       key={request.id}
       active={active}
+      onDefer={() => defer(request.id)}
       request={request}
       respond={respond}
     />
   ) : null
+}
+
+// Deferred approvals remain discoverable without occupying the application's modal slot.
+export function DeferredSkillImportNotice(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const request = useSkillImportStore((state) =>
+    state.pending.find((candidate) => state.deferredIds.includes(candidate.id))
+  )
+  const resume = useSkillImportStore((state) => state.resume)
+  if (!request) return null
+  return (
+    <SessionPersistenceAlert
+      variant="warning"
+      title={t('Skill import awaiting approval')}
+      message={t('This request stays pending until you respond or it expires.')}
+      onAction={() => resume(request.id)}
+      actionLabel={t('Review')}
+    />
+  )
 }

@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SkillBundlePreview } from '../../../../shared/settings'
-import { SkillImportApprovalDialog } from './SkillImportApprovalDialog'
+import { SkillImportApprovalDialog, DeferredSkillImportNotice } from './SkillImportApprovalDialog'
 import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 
 let container: HTMLDivElement
@@ -23,7 +23,7 @@ beforeEach(() => {
   window.api = {
     settings: { respondSkillImportApproval: respond, previewGitHubSkill }
   } as unknown as Window['api']
-  respond.mockClear()
+  respond.mockReset().mockResolvedValue(undefined)
   previewGitHubSkill.mockClear()
   useSkillImportStore.setState(createInitialSkillImportState())
   container = document.createElement('div')
@@ -304,5 +304,89 @@ describe('SkillImportApprovalDialog', () => {
     expect(document.body.textContent).toContain('next.skill')
     expect(document.body.textContent).toContain('Next Skill')
     expect(document.body.textContent).not.toContain('stale.skill')
+  })
+})
+
+describe('Skill import recovery', () => {
+  const enqueue = (id = 'recoverable'): void =>
+    useSkillImportStore.getState().enqueue({
+      id,
+      sessionId: 'session-1',
+      source: { kind: 'attachment', label: 'example.skill' },
+      previews: [importCandidate('example', 'Example')],
+      skipped: []
+    })
+  const renderRecovery = (): void =>
+    root.render(
+      <>
+        <SkillImportApprovalDialog />
+        <DeferredSkillImportNotice />
+      </>
+    )
+
+  it('reports repeated failures, allows deferral, and resumes without responding', async () => {
+    respond.mockRejectedValue(new Error('transport offline'))
+    enqueue()
+    await act(async () => renderRecovery())
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await act(async () => button('Cancel')!.click())
+      expect(document.body.textContent).toContain('Could not send your response.')
+    }
+    await act(async () => button('Finish later')!.click())
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useSkillImportStore.getState().pending).toHaveLength(1)
+    expect(respond).toHaveBeenCalledTimes(3)
+    // Replayed requests must not steal focus from the user again.
+    await act(async () => enqueue())
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    await act(async () => button('Review')!.click())
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    respond.mockResolvedValue(undefined)
+    await act(async () => button('Cancel')!.click())
+    expect(useSkillImportStore.getState().pending).toHaveLength(0)
+    expect(useSkillImportStore.getState().deferredIds).toEqual([])
+    expect(button('Review')).toBeUndefined()
+  })
+
+  it('keeps an in-flight response guarded across deferral and reopening', async () => {
+    let finish!: () => void
+    respond.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    enqueue()
+    await act(async () => renderRecovery())
+    await act(async () => {
+      button('Cancel')!.click()
+      button('Cancel')!.click()
+    })
+    expect(respond).toHaveBeenCalledOnce()
+    expect(button('Cancel')!.disabled).toBe(true)
+    await act(async () => button('Finish later')!.click())
+    await act(async () => button('Review')!.click())
+    expect(button('Cancel')!.disabled).toBe(true)
+    await act(async () =>
+      useSkillImportStore.getState().respond({ id: 'recoverable', cancelled: true })
+    )
+    expect(respond).toHaveBeenCalledOnce()
+    await act(async () => finish())
+    expect(useSkillImportStore.getState().respondingIds).toEqual([])
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('shows the next request and removes deferred reminders on settlement', async () => {
+    enqueue('first')
+    enqueue('second')
+    await act(async () => renderRecovery())
+    await act(async () => button('Finish later')!.click())
+    expect(useSkillImportStore.getState().deferredIds).toEqual(['first'])
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    await act(async () => button('Cancel')!.click())
+    expect(respond).toHaveBeenCalledWith({ id: 'second', cancelled: true })
+    await act(async () => useSkillImportStore.getState().dismiss('first'))
+    expect(useSkillImportStore.getState().deferredIds).toEqual([])
+    expect(button('Review')).toBeUndefined()
   })
 })

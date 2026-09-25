@@ -46,8 +46,17 @@ export type ConnectorAuthNotice = Readonly<{
 
 export type SettingsConnectorsState = NormalizedSettingsConnectorsProjection & {
   connectorsLoaded: boolean
-  pendingApprovals: ConnectorApprovalRequest[]
-  pendingCredentialRequests: ConnectorCredentialRequest[]
+  pendingApprovals: (ConnectorApprovalRequest & {
+    deferred?: boolean
+    responding?: boolean
+    responseFailed?: boolean
+  })[]
+  pendingCredentialRequests: (ConnectorCredentialRequest & {
+    deferred?: boolean
+    responding?: boolean
+    responseFailed?: boolean
+    validation?: OpenAlexCredentialValidation
+  })[]
   connectorAuthNotice?: ConnectorAuthNotice
   deviceCredentials: DeviceCredentialView[]
   deviceCredentialsLoaded: boolean
@@ -85,11 +94,14 @@ export type SettingsConnectorsActions = {
   removeCustomServer: (id: string) => Promise<void>
   dismissConnectorAuthNotice: () => void
   enqueueApproval: (request: ConnectorApprovalRequest) => void
+  setApprovalDeferred: (id: string, deferred: boolean) => void
   dismissApproval: (id: string) => void
   respondApproval: (id: string, decision: ApprovalDecision) => Promise<void>
   enqueueCredentialRequest: (request: ConnectorCredentialRequest) => void
+  setCredentialRequestDeferred: (id: string, deferred: boolean) => void
   dismissCredentialRequest: (id: string) => void
   respondCredentialRequest: (id: string, configured: boolean) => Promise<void>
+  configureCredentialRequest: (id: string, apiKey: string) => Promise<void>
 }
 
 type SettingsConnectorsCommands = Pick<
@@ -362,6 +374,52 @@ export const createSettingsConnectorsSlice = ({
     })
   }
 
+  const submitCredentialRequest = async (
+    id: string,
+    configured: boolean,
+    apiKey?: string
+  ): Promise<void> => {
+    const request = getState().pendingCredentialRequests.find((item) => item.id === id)
+    if (!request || request.responding) return
+    const patch = (fields: {
+      responding?: boolean
+      responseFailed?: boolean
+      validation?: OpenAlexCredentialValidation
+    }): void =>
+      setState((state) => ({
+        pendingCredentialRequests: state.pendingCredentialRequests.map((item) =>
+          item.id === id ? { ...item, ...fields } : item
+        )
+      }))
+    patch({ responding: true, responseFailed: false, validation: undefined })
+    try {
+      if (apiKey !== undefined) {
+        const validation = await getCommands().validateOpenAlexCredential({ apiKey })
+        patch({ validation })
+        if (
+          !validation.valid ||
+          !getState().pendingCredentialRequests.some((item) => item.id === id)
+        )
+          return
+        await reconcileMutation(() => getCommands().setOpenAlexCredential({ apiKey }))
+        if (!getState().pendingCredentialRequests.some((item) => item.id === id)) return
+      }
+      const respond = getCommands().respondConnectorCredentialRequest
+      if (!respond) return
+      await respond({ id, configured })
+      setState((state) => ({
+        pendingCredentialRequests: state.pendingCredentialRequests.filter(
+          (item) => item.id !== id && !(configured && item.credentialId === request.credentialId)
+        )
+      }))
+    } catch (error) {
+      patch({ responseFailed: true })
+      throw error
+    } finally {
+      patch({ responding: false })
+    }
+  }
+
   return {
     loadDeviceCredentials,
     createDeviceCredential: async (request) => {
@@ -570,16 +628,39 @@ export const createSettingsConnectorsSlice = ({
           : { pendingApprovals: [...state.pendingApprovals, request] }
       )
     },
+    setApprovalDeferred: (id, deferred) => {
+      setState((state) => ({
+        pendingApprovals: state.pendingApprovals.map((request) =>
+          request.id === id ? { ...request, deferred } : request
+        )
+      }))
+    },
     dismissApproval: (id) => {
       setState((state) => ({
         pendingApprovals: state.pendingApprovals.filter((request) => request.id !== id)
       }))
     },
     respondApproval: async (id, decision) => {
-      await getCommands().respondConnectorApproval({ id, decision })
-      setState((state) => ({
-        pendingApprovals: state.pendingApprovals.filter((request) => request.id !== id)
-      }))
+      const request = getState().pendingApprovals.find((item) => item.id === id)
+      if (!request || request.responding) return
+      const patch = (fields: { responding?: boolean; responseFailed?: boolean }): void =>
+        setState((state) => ({
+          pendingApprovals: state.pendingApprovals.map((item) =>
+            item.id === id ? { ...item, ...fields } : item
+          )
+        }))
+      patch({ responding: true, responseFailed: false })
+      try {
+        await getCommands().respondConnectorApproval({ id, decision })
+        setState((state) => ({
+          pendingApprovals: state.pendingApprovals.filter((item) => item.id !== id)
+        }))
+      } catch (error) {
+        patch({ responseFailed: true })
+        throw error
+      } finally {
+        patch({ responding: false })
+      }
     },
     enqueueCredentialRequest: (request) => {
       setState((state) =>
@@ -588,6 +669,13 @@ export const createSettingsConnectorsSlice = ({
           : { pendingCredentialRequests: [...state.pendingCredentialRequests, request] }
       )
     },
+    setCredentialRequestDeferred: (id, deferred) => {
+      setState((state) => ({
+        pendingCredentialRequests: state.pendingCredentialRequests.map((request) =>
+          request.id === id ? { ...request, deferred } : request
+        )
+      }))
+    },
     dismissCredentialRequest: (id) => {
       setState((state) => ({
         pendingCredentialRequests: state.pendingCredentialRequests.filter(
@@ -595,20 +683,7 @@ export const createSettingsConnectorsSlice = ({
         )
       }))
     },
-    respondCredentialRequest: async (id, configured) => {
-      const credentialId = getState().pendingCredentialRequests.find(
-        (request) => request.id === id
-      )?.credentialId
-      const respond = getCommands().respondConnectorCredentialRequest
-      if (!respond) return
-      await respond({ id, configured })
-      setState((state) => ({
-        pendingCredentialRequests: state.pendingCredentialRequests.filter(
-          (request) =>
-            request.id !== id &&
-            !(configured && credentialId && request.credentialId === credentialId)
-        )
-      }))
-    }
+    respondCredentialRequest: (id, configured) => submitCredentialRequest(id, configured),
+    configureCredentialRequest: (id, apiKey) => submitCredentialRequest(id, true, apiKey)
   }
 }

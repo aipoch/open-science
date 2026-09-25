@@ -6285,6 +6285,20 @@
     "Start an update to see the screening process.": "업데이트를 시작하면 선별 프로세스를 볼 수 있습니다.",
     "Pending candidates": "대기 중인 후보",
     "Pause analysis": "분석 일시 중지",
-    "Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.": "워크스페이스 편집과 지원되는 라이브러리 작업 흐름을 자동 승인합니다. 다른 도구는 각각의 권한 규칙을 따릅니다."
+    "Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.": "워크스페이스 편집과 지원되는 라이브러리 작업 흐름을 자동 승인합니다. 다른 도구는 각각의 권한 규칙을 따릅니다.",
+    "Continue for now": "이번에는 계속",
+    "Your choice could not be saved. Continue for now to keep using this folder; we may ask again after restarting.": "선택을 저장하지 못했습니다. 이번에는 이 폴더를 계속 사용할 수 있습니다. 다시 시작하면 다시 물어볼 수 있습니다.",
+    "Could not send your response.": "응답을 보내지 못했습니다.",
+    "Try again when the connection is available, or finish later. The request stays pending until it is answered or expires.": "연결이 가능해지면 다시 시도하거나 나중에 완료하세요. 요청은 응답하거나 만료될 때까지 대기 상태로 유지됩니다.",
+    "Skill import awaiting approval": "스킬 가져오기 승인 대기 중",
+    "This request stays pending until you respond or it expires.": "이 요청은 응답하거나 만료될 때까지 대기 상태로 유지됩니다.",
+    "Restore the file or reconnect its drive before retrying. You can close this preview and continue working.": "다시 시도하기 전에 파일을 복원하거나 드라이브를 다시 연결하세요. 이 미리보기를 닫고 작업을 계속할 수 있습니다.",
+    "Open the file from your current storage location, or close this preview and continue working.": "현재 저장 위치에서 파일을 열거나 이 미리보기를 닫고 작업을 계속하세요.",
+    "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "이 대화는 계획을 복원하거나 명시적으로 폐기할 때까지 계속할 수 없습니다. 복구가 진행되는 동안 다른 대화로 전환할 수 있습니다.",
+    "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "복구가 계속 실패하면 호스트 컴퓨터에서 Open-Science가 실행 중인지, 두 장치가 모두 연결되어 있는지 확인하세요. 이 페이지를 떠나기 전에 보내지 않은 초안의 사본을 저장하세요.",
+    "Connector approval pending": "커넥터 승인 대기 중",
+    "Compute approval pending": "컴퓨팅 승인 대기 중",
+    "Credential request pending": "자격 증명 요청 대기 중",
+    "Appearance changed elsewhere. Review the current appearance before trying again.": "다른 곳에서 모양이 변경되었습니다. 현재 모양을 확인한 후 다시 시도하세요."
   }
 }

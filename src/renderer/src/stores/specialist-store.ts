@@ -195,7 +195,16 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     if (useSpecialistStore.getState().integrity.status === 'degraded') {
       throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
     }
-    const view = await window.api.specialist.update(input)
+    let view: SpecialistView
+    try {
+      view = await window.api.specialist.update(input)
+    } catch (error) {
+      if (error instanceof Error && /revision conflict/i.test(error.message)) {
+        // Refresh the precondition, but never replay a stale edit without another user decision.
+        await refreshCatalog(set).catch(() => undefined)
+      }
+      throw error
+    }
     applySpecialistReceipt(set, view)
     // Keep derived catalog fields and ordering synchronized without making mutation completion depend
     // on the broader catalog read. Catalog-change events may race this refresh; request IDs ensure

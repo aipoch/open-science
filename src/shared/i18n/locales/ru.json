@@ -6748,6 +6748,20 @@
     "Start an update to see the screening process.": "Запустите обновление, чтобы увидеть процесс отбора.",
     "Pending candidates": "Кандидаты в ожидании",
     "Pause analysis": "Приостановить анализ",
-    "Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.": "Автоматически разрешать изменения в рабочей области и поддерживаемые операции библиотеки. Для остальных инструментов действуют их правила разрешений."
+    "Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.": "Автоматически разрешать изменения в рабочей области и поддерживаемые операции библиотеки. Для остальных инструментов действуют их правила разрешений.",
+    "Continue for now": "Пока продолжить",
+    "Your choice could not be saved. Continue for now to keep using this folder; we may ask again after restarting.": "Не удалось сохранить ваш выбор. Пока можно продолжить использовать эту папку. После перезапуска этот вопрос может появиться снова.",
+    "Could not send your response.": "Не удалось отправить ответ.",
+    "Try again when the connection is available, or finish later. The request stays pending until it is answered or expires.": "Повторите попытку после восстановления соединения или завершите позже. Запрос остаётся в ожидании ответа до истечения срока действия.",
+    "Skill import awaiting approval": "Импорт навыка ожидает утверждения",
+    "This request stays pending until you respond or it expires.": "Запрос остаётся в ожидании вашего ответа до истечения срока действия.",
+    "Restore the file or reconnect its drive before retrying. You can close this preview and continue working.": "Перед повторной попыткой восстановите файл или подключите его диск. Можно закрыть этот предпросмотр и продолжить работу.",
+    "Open the file from your current storage location, or close this preview and continue working.": "Откройте файл из текущего хранилища или закройте этот предпросмотр и продолжите работу.",
+    "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "Диалог нельзя продолжить, пока план не будет восстановлен или явно отменён. Во время восстановления можно переключиться на другой диалог.",
+    "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "Если восстановление продолжает завершаться ошибкой, проверьте, что Open-Science запущен на основном компьютере и оба устройства подключены. Сохраните копию неотправленных черновиков перед уходом с этой страницы.",
+    "Connector approval pending": "Ожидается разрешение для коннектора",
+    "Compute approval pending": "Ожидается разрешение на вычисление",
+    "Credential request pending": "Ожидается ответ на запрос учётных данных",
+    "Appearance changed elsewhere. Review the current appearance before trying again.": "Оформление изменено в другом месте. Проверьте текущее оформление, прежде чем повторить попытку."
   }
 }

@@ -111,7 +111,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     document.body.appendChild(container)
     root = createRoot(container)
     sendMessage.mockClear()
-    jobsPendingNotification.mockClear()
+    jobsPendingNotification.mockReset().mockResolvedValue([makeCompletedJob()])
     jobsMarkConsumed.mockClear()
     jobsTransitionAnalysis.mockReset().mockImplementation(async (request) => [
       makeCompletedJob({
@@ -1298,4 +1298,74 @@ describe('useJobAnalysisEffect persistence readiness', () => {
 
     expect(sendMessage).toHaveBeenCalledOnce()
   })
+
+  it('coalesces repeated manual retries and cancels the remaining backoff on disable', async () => {
+    vi.useFakeTimers()
+    let rejectScan!: (error: Error) => void
+    jobsPendingNotification.mockRejectedValueOnce(new Error('initial failure')).mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectScan = reject
+      })
+    )
+    let recovery!: ReturnType<typeof useJobAnalysisEffect>
+    const RecoveryProbe = ({ enabled }: { enabled: boolean }): null => {
+      recovery = useJobAnalysisEffect({ enabled, sendMessage })
+      return null
+    }
+    await act(async () => root.render(<RecoveryProbe enabled />))
+    expect(recovery.error).toBe('pending-scan-failed')
+    await act(async () => {
+      recovery.retry()
+      recovery.retry()
+    })
+    expect(jobsPendingNotification).toHaveBeenCalledTimes(2)
+    await act(async () => rejectScan(new Error('retry failure')))
+    expect(recovery.error).toBe('pending-scan-failed')
+    await act(async () => root.render(<RecoveryProbe enabled={false} />))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000)
+      recovery.retry()
+    })
+    expect(jobsPendingNotification).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'ignores an old scan that %ss after re-enabling',
+    async (outcome) => {
+      vi.useFakeTimers()
+      let resolveScan!: (jobs: JobSummary[]) => void
+      let rejectScan!: (error: Error) => void
+      jobsPendingNotification
+        .mockReturnValueOnce(
+          new Promise((resolve, reject) => {
+            resolveScan = resolve
+            rejectScan = reject
+          })
+        )
+        .mockRejectedValueOnce(new Error('new scan failure'))
+        .mockResolvedValueOnce([])
+      let recovery!: ReturnType<typeof useJobAnalysisEffect>
+      const RecoveryProbe = ({ enabled }: { enabled: boolean }): null => {
+        recovery = useJobAnalysisEffect({ enabled, sendMessage })
+        return null
+      }
+      await act(async () => root.render(<RecoveryProbe enabled />))
+      await act(async () => root.render(<RecoveryProbe enabled={false} />))
+      await act(async () => root.render(<RecoveryProbe enabled />))
+      expect(recovery.error).toBe('pending-scan-failed')
+      await act(async () => recovery.retry())
+      expect(recovery.error).toBeUndefined()
+      await act(async () => {
+        if (outcome === 'resolve') resolveScan([makeCompletedJob()])
+        else rejectScan(new Error('old scan failure'))
+      })
+      expect(recovery.error).toBeUndefined()
+      expect(useSessionJobStore.getState().jobsById.size).toBe(0)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(jobsPendingNotification).toHaveBeenCalledTimes(3)
+      expect(sendMessage).not.toHaveBeenCalled()
+    }
+  )
 })

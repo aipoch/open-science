@@ -1694,12 +1694,14 @@ const SESSION_SIZE_LIMIT_WRITE_ERROR =
 const loadPersistedSessions = async (
   api: SessionPersistenceApi,
   shouldHydrate: () => boolean = () => true,
-  preferredSelection?: SessionHydrationSelection
+  preferredSelection?: SessionHydrationSelection | (() => SessionHydrationSelection)
 ): Promise<LoadAllSessionsResult | ListSessionSummariesResult | undefined> => {
+  const currentSelection = (): SessionHydrationSelection | undefined =>
+    typeof preferredSelection === 'function' ? preferredSelection() : preferredSelection
   if (api.list) {
     const result = await api.list()
     if (!shouldHydrate()) return undefined
-    const retrySessionId = preferredSelection?.sessionId
+    const retrySessionId = currentSelection()?.sessionId
     const summariesToHydrate = result.sessions.filter(
       (session) => session.needsStartupRecovery || session.id === retrySessionId
     )
@@ -1717,7 +1719,6 @@ const loadPersistedSessions = async (
         )
       )
     )
-    const selected = retrySessionId ? hydratedSessions.get(retrySessionId) : undefined
     if (!shouldHydrate()) return undefined
     const missing = summariesToHydrate.find((summary) => !hydratedSessions.get(summary.id))
     if (missing) {
@@ -1725,9 +1726,13 @@ const loadPersistedSessions = async (
         'Session JSON requiring startup hydration is missing from the SQLite projection.'
       )
     }
+    // The retained workspace remains navigable during a reload. Do not replay the selection from
+    // the Retry click over a later user navigation (including an explicitly cleared selection).
+    const selection = currentSelection()
+    const selected = selection?.sessionId ? hydratedSessions.get(selection.sessionId) : undefined
     useSessionStore
       .getState()
-      .hydrateSessionSummaries(result.sessions, selected, result.manifest, preferredSelection)
+      .hydrateSessionSummaries(result.sessions, selected, result.manifest, selection)
     for (const hydrated of hydratedSessions.values()) {
       if (hydrated && hydrated.id !== selected?.id) {
         useSessionStore.getState().upsertPersistedSession(hydrated)
@@ -1743,7 +1748,7 @@ const loadPersistedSessions = async (
   // selected Session disappeared before recovery completed, do not replay a stale disk manifest or
   // fall through to the globally newest Session from another Project. Passing the selection into
   // hydration applies the sessions and selection atomically for all Zustand subscribers.
-  useSessionStore.getState().hydrateSessions(result.sessions, result.manifest, preferredSelection)
+  useSessionStore.getState().hydrateSessions(result.sessions, result.manifest, currentSelection())
   return result
 }
 
@@ -2400,11 +2405,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
     if (isHydrated) {
       retrySelection.current = { sessionId: useSessionStore.getState().selectedSessionId }
     }
-    setIsHydrated(false)
+    // A failed refresh must not hide an already loaded snapshot or its recovery actions. Mutation
+    // gates still close until an authoritative reload succeeds; first-load hydration stays false.
     setIsLoading(true)
     setIsReady(false)
     setHasCompleteSessionCatalog(false)
-    setCatalogRecovery(READY_SESSION_CATALOG_RECOVERY)
     setCanDeleteSessionsAndProjects(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
@@ -2466,7 +2471,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
         const result = await loadPersistedSessions(
           window.api.sessions,
           () => isMounted,
-          preferredSelection
+          preferredSelection === undefined
+            ? undefined
+            : () => ({ sessionId: useSessionStore.getState().selectedSessionId })
         )
         if (!result || !isMounted) return
         unresolvedSessionRevisionConflictTargets.clear()
@@ -2525,7 +2532,6 @@ const useSessionPersistence = (): SessionPersistenceState => {
         reportPersistenceError(error, 'session-load')
         if (isMounted) {
           setHasCompleteSessionCatalog(false)
-          setCatalogRecovery(READY_SESSION_CATALOG_RECOVERY)
           setCanDeleteSessionsAndProjects(false)
           setLoadError(SAFE_SESSION_LOAD_ERROR)
           setIsLoading(false)
@@ -2659,7 +2665,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
         }
       }
 
-      unsubscribe = useSessionStore.subscribe((state) => {
+      const onStoreChange = (state: ReturnType<typeof useSessionStore.getState>): void => {
         const failedTargetCount = failedWriteTargets.current.size
         const sizeLimitTargetCount = sizeLimitTargets.current.size
         pruneRemovedSessionWriteTargets(
@@ -2732,7 +2738,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
             .finally(() => loadingSessionContent.delete(selected.id))
         }
         void save(state).then(trimReadOnlyHistory).catch(reportPersistenceError)
-      })
+      }
+      unsubscribe = useSessionStore.subscribe(onStoreChange)
+      // Navigation may change while the retry hydrates another Session's body. That selection
+      // happened before this subscription, so start its lazy read without waiting for another edit.
+      if (preferredSelection !== undefined) onStoreChange(useSessionStore.getState())
 
       // Hydration intentionally uses the user's live selection instead of the older disk manifest
       // on retry. Force that tri-state selection (including an explicit empty selection) back to
