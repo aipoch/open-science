@@ -380,7 +380,7 @@ export const createSettingsConnectorsSlice = ({
     apiKey?: string
   ): Promise<void> => {
     const request = getState().pendingCredentialRequests.find((item) => item.id === id)
-    if (!request || request.responding) return
+    if (!request || request.responding || (configured && request.closed)) return
     const patch = (fields: {
       responding?: boolean
       responseFailed?: boolean
@@ -398,11 +398,12 @@ export const createSettingsConnectorsSlice = ({
         patch({ validation })
         if (
           !validation.valid ||
-          !getState().pendingCredentialRequests.some((item) => item.id === id)
+          !getState().pendingCredentialRequests.some((item) => item.id === id && !item.closed)
         )
           return
         await reconcileMutation(() => getCommands().setOpenAlexCredential({ apiKey }))
-        if (!getState().pendingCredentialRequests.some((item) => item.id === id)) return
+        if (!getState().pendingCredentialRequests.some((item) => item.id === id && !item.closed))
+          return
       }
       const respond = getCommands().respondConnectorCredentialRequest
       if (!respond) return
@@ -417,6 +418,14 @@ export const createSettingsConnectorsSlice = ({
       throw error
     } finally {
       patch({ responding: false })
+      // Close stops the remaining configuration steps. Once the in-flight step finishes,
+      // decline the parked call exactly once; a failed cancellation stays closed until expiry.
+      if (
+        configured &&
+        getState().pendingCredentialRequests.some((item) => item.id === id && item.closed)
+      ) {
+        await submitCredentialRequest(id, false).catch(() => undefined)
+      }
     }
   }
 
