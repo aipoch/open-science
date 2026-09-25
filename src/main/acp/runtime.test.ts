@@ -12464,6 +12464,78 @@ describe('ACP runtime session management', () => {
     }
   })
 
+  it('lets an ACP agent use a folder grant during a real prompt', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-runtime-'))
+    const grantedRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-granted-'))
+    const inputPath = join(grantedRoot, 'progress.txt')
+    const outputPath = join(grantedRoot, 'result.txt')
+    const process = new FakeAgentProcess()
+    let readContent = ''
+    let filesystemError: unknown
+
+    try {
+      await writeFile(inputPath, 'authorized progress', 'utf8')
+
+      acp
+        .agent({ name: 'granted-folder-agent' })
+        .onRequest(acp.methods.agent.initialize, () => ({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          agentCapabilities: {
+            loadSession: false,
+            sessionCapabilities: { close: {} }
+          },
+          authMethods: []
+        }))
+        .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'granted-folder-session' }))
+        .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+          let input: { content: string }
+          try {
+            input = await ctx.client.request(acp.methods.client.fs.readTextFile, {
+              sessionId: 'granted-folder-session',
+              path: inputPath
+            })
+          } catch (error) {
+            filesystemError = error
+            return { stopReason: 'end_turn' }
+          }
+          readContent = input.content
+          await ctx.client.request(acp.methods.client.fs.writeTextFile, {
+            sessionId: 'granted-folder-session',
+            path: outputPath,
+            content: `${input.content} (processed)`
+          })
+          return { stopReason: 'end_turn' }
+        })
+        .connect(
+          acp.ndJsonStream(
+            Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+            Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+          )
+        )
+
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: workspaceRoot,
+        spawnAgent: () => asAgentProcess(process),
+        grantedRoots: {
+          list: async () => [{ path: grantedRoot, access: 'rw' as const }],
+          resolveRoot: async () => ({ path: grantedRoot, access: 'rw' as const })
+        }
+      })
+      const session = await runtime.createSession({ cwd: workspaceRoot })
+
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Process the granted folder' })
+
+      expect(filesystemError).toBeUndefined()
+      expect(readContent).toBe('authorized progress')
+      await expect(readFile(outputPath, 'utf8')).resolves.toBe('authorized progress (processed)')
+      await runtime.disconnect()
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+      await rm(grantedRoot, { recursive: true, force: true })
+    }
+  })
+
   it('rejects permission callbacks for unknown sessions without emitting renderer prompts', async () => {
     const process = new FakeAgentProcess()
     let permissionError: string | undefined
