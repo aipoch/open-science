@@ -1,4 +1,4 @@
-import type { App, BrowserWindow, Input } from 'electron'
+import type { App, BrowserWindow, Input, WebContents } from 'electron'
 import { optimizer, type shortcutOptions } from '@electron-toolkit/utils'
 
 import {
@@ -21,6 +21,17 @@ const scaleShortcutForInput = (input: Input): InterfaceScaleShortcut | undefined
   return undefined
 }
 
+const applyInterfaceScaleShortcut = (
+  webContents: Pick<WebContents, 'getZoomFactor' | 'setZoomFactor' | 'send'>,
+  shortcut: InterfaceScaleShortcut
+): void => {
+  const factor = webContents.getZoomFactor()
+  const current = isInterfaceScale(factor) ? factor : 1
+  const next = resolveInterfaceScaleShortcut(current, shortcut)
+  webContents.setZoomFactor(next)
+  webContents.send(INTERFACE_SCALE_SHORTCUT_CHANNEL, next)
+}
+
 // Main-window shortcuts and the Settings control use the same Electron zoom factor. Other windows
 // keep their native zoom menu behavior. `zoom: true` leaves the chords available to this listener.
 const installWindowShortcuts = (
@@ -37,14 +48,9 @@ const installWindowShortcuts = (
       if (!shortcut) return
 
       event.preventDefault()
-      const webContents = window.webContents
-      const factor = webContents.getZoomFactor()
-      const current = isInterfaceScale(factor) ? factor : 1
-      const next = resolveInterfaceScaleShortcut(current, shortcut)
-      webContents.setZoomFactor(next)
-      webContents.send(INTERFACE_SCALE_SHORTCUT_CHANNEL, next)
+      applyInterfaceScaleShortcut(window.webContents, shortcut)
     })
   })
 }
 
-export { installWindowShortcuts, scaleShortcutForInput }
+export { applyInterfaceScaleShortcut, installWindowShortcuts, scaleShortcutForInput }
