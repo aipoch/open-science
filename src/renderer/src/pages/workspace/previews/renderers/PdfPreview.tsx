@@ -3000,7 +3000,7 @@ export const PdfPreviewContent = ({
               <Tooltip>
                 <Tabs.Trigger
                   value="original"
-                  className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+                  className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
                   asChild
                 >
                   <TooltipTrigger>
@@ -3014,7 +3014,7 @@ export const PdfPreviewContent = ({
                 <Tooltip>
                   <Tabs.Trigger
                     value="figures"
-                    className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+                    className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
                     asChild
                   >
                     <TooltipTrigger>
@@ -3043,7 +3043,7 @@ export const PdfPreviewContent = ({
                   value="notes"
                   ref={notesTabRef}
                   aria-controls={notebookPanelId}
-                  className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+                  className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
                   asChild
                 >
                   <TooltipTrigger>
