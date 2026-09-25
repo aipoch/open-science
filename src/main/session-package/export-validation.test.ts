@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { zipSync, gzipSync } from 'fflate'
+import { x as extractTar } from 'tar'
 import { expect, it, vi } from 'vitest'
 import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
@@ -78,6 +79,16 @@ it('handles cancellation during export validation before reaching later sensitiv
 })
 
 it.each([
+  [
+    'token count crossing a chunk boundary',
+    Buffer.from(' '.repeat(65514) + '{"estimatedTokens":71862,"tokens":88197}'),
+    true
+  ],
+  [
+    'credential after a token count',
+    Buffer.from('{"estimatedTokens":71862,"password":"synthetic-private-value"}'),
+    false
+  ],
   [
     'binary ZIP bytes under an extensionless evidence name',
     Buffer.from(zipSync({ 'token=measurements.csv': Buffer.from('year,flights\n2026,300\n') })),
@@ -304,6 +315,89 @@ it('honors cancellation after a text match while classifying the remaining file'
     expect(await readFile(destination, 'utf8')).toBe('previous export')
   } finally {
     spy.mockRestore()
+    await service.close()
+    await fixture.dispose()
+    initDataRoot(undefined)
+  }
+})
+
+it('preserves context token counts through native export and imported-package forwarding', async () => {
+  const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
+  const sessions = new SessionRepository(fixture.storageRoot)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const contextWindow = {
+    used: 88197,
+    size: 1000000,
+    breakdown: {
+      source: 'estimated' as const,
+      tokenizer: 'cl100k_base' as const,
+      model: 'MiniMax-M3',
+      estimatedTokens: 71862,
+      difference: 16335,
+      status: 'reconciled' as const,
+      categories: [
+        { key: 'system' as const, tokens: 71862, estimated: true },
+        { key: 'other' as const, tokens: 16335, estimated: true }
+      ]
+    }
+  }
+  try {
+    await fixture.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+    await sessions.saveSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Context counts',
+      cwd: '',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Research',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+          contextWindowSamples: [
+            {
+              id: 'sample-1',
+              timestamp: 2,
+              termination: { kind: 'stop', stopReason: 'end_turn' },
+              source: 'provider-response',
+              contextWindow
+            }
+          ]
+        }
+      ]
+    })
+    const request = { projectId: 'project-1', sessionId: 'session-1' }
+    const before = await sessions.loadSession(request.projectId, request.sessionId)
+    expect(before?.messages[0].contextWindowSamples?.[0].contextWindow).toEqual(contextWindow)
+    const native = join(fixture.storageRoot, 'native.science')
+    await service.exportTo(request, native)
+    const imported = await service.importFrom(native)
+    const forwarded = join(fixture.storageRoot, 'forwarded.science')
+    await service.exportTo(imported, forwarded)
+    const documents: string[] = []
+    for (const [index, archive] of [native, forwarded].entries()) {
+      const directory = join(fixture.storageRoot, `expanded-${index}`)
+      await mkdir(directory)
+      await extractTar({ file: archive, cwd: directory })
+      const document = await readFile(join(directory, 'session.json'), 'utf8')
+      expect(
+        JSON.parse(document).session.messages[0].contextWindowSamples[0].contextWindow
+      ).toEqual(contextWindow)
+      documents.push(document)
+    }
+    expect(documents[1]).toBe(documents[0])
+    expect(await sessions.loadSession(request.projectId, request.sessionId)).toEqual(before)
+  } finally {
     await service.close()
     await fixture.dispose()
     initDataRoot(undefined)
