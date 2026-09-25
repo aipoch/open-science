@@ -104,7 +104,7 @@ const PERMISSION_PROFILES: ReadonlyArray<{
     id: 'auto',
     label: 'Auto-approve edits',
     description:
-      'Auto-approve edits to workspace files. Still ask before commands, network, and MCP tools.',
+      'Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.',
     icon: ShieldCheck
   },
   {

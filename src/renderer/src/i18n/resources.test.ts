@@ -3231,8 +3231,8 @@ describe('Korean safety copy', () => {
       '워크스페이스의 파일 편집을 자동 승인합니다. 명령, 네트워크 및 MCP 작업 전에는 계속 확인합니다.'
     ],
     [
-      'Auto-approve edits to workspace files. Still ask before commands, network, and MCP tools.',
-      '워크스페이스 파일 편집을 자동 승인합니다. 명령, 네트워크 및 MCP 도구를 실행하기 전에는 계속 확인합니다.'
+      'Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.',
+      '워크스페이스 편집과 지원되는 라이브러리 작업 흐름을 자동 승인합니다. 다른 도구는 각각의 권한 규칙을 따릅니다.'
     ],
     [
       '<em>Your existing data (~{{size}}) will be moved</em> to the new location — your files come with it, and nothing is left behind in the current folder.',

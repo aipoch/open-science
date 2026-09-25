@@ -1257,6 +1257,11 @@ test('exports a CLI conversation first opened after completion', async ({ app },
     .locator('button[data-slot="session-open-button"]')
     .filter({ hasText: saved!.title })
     .click()
+  await expect(
+    page
+      .getByRole('region', { name: 'Conversation' })
+      .getByText('CLI export completed before opening.', { exact: true })
+  ).toBeVisible()
   await page.getByRole('button', { name: `Open actions for ${saved!.title}` }).click()
   await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
   await page.getByRole('menuitem', { name: 'Export conversation…' }).click()

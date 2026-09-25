@@ -200,7 +200,7 @@ describe('post-merge Windows validation', () => {
     expect(job['continue-on-error']).toBeUndefined()
     expect(smoke.if).toBe("${{ !inputs.install_only && matrix.platform == 'win' }}")
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
-    expect(smoke['timeout-minutes']).toBe(10)
+    expect(smoke['timeout-minutes']).toBe(20)
   })
 
   it('installs Electron from GitHub mirrors and exposes an install-only dry-run', () => {
@@ -329,9 +329,8 @@ describe('post-merge Windows validation', () => {
       run: './scripts/ci/verify-windows-signature.ps1 -InstallerDir dist -CheckUnpacked'
     })
     const verification = readFileSync('scripts/ci/verify-windows-signature.ps1', 'utf8')
-    expect(verification).toContain(
-      "Get-ChildItem -LiteralPath $unpacked -File -Filter '*.exe' -Recurse"
-    )
+    expect(verification).toContain('Get-ChildItem -LiteralPath $unpacked -File -Recurse')
+    expect(verification).toContain('Test-PortableExecutable $_.FullName')
     expect(verification).toContain('resources/micromamba.exe')
     expect(verification).toContain('resources/micromamba-compat.exe')
     expect(verification).toContain('notebook-appcontainer-host.exe')

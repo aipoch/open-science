@@ -201,7 +201,7 @@ export const ClassificationPanel = ({
         <>
           <SettingsSection
             title={t('Model services')}
-            description={t('Connect a service, then choose a model for each feature.')}
+            description={t('The first service is selected automatically for both features.')}
           >
             {snapshot.services.length === 0 ? (
               <div className="rounded-lg bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
@@ -388,7 +388,7 @@ const ClassificationBindingRow = ({
                 <>
                   <p>
                     {t(
-                      'Shared by all smart collections. Choose a model independently of automatic capability selection; no model is selected by default.'
+                      'Shared by all smart collections. You can choose a different model from automatic capability selection.'
                     )}
                   </p>
                   <p>

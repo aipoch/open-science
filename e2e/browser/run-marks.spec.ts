@@ -20,16 +20,16 @@ test('shows four runs, hides three, and previews the hovered message', async ({
 test('follows transcript reading at both edges with bounded spacing and no independent scrolling', async ({
   page
 }, testInfo) => {
-  await page.goto('/run-marks.html')
+  await page.goto('/run-marks.html?count=100')
   const conversation = page.getByRole('region', { name: 'Conversation' })
   const rail = page.getByRole('navigation', { name: 'Run marks' }).locator('ol')
   const marks = rail.getByRole('button')
-  expect(await marks.count()).toBeLessThanOrEqual(55)
+  expect(await marks.count()).toBeLessThanOrEqual(75)
   const pitch = (): Promise<number> =>
     marks.evaluateAll(
       (buttons) => buttons[2].getBoundingClientRect().top - buttons[1].getBoundingClientRect().top
     )
-  expect(await pitch()).toBe(12)
+  expect(await pitch()).toBe(8)
   const railTop = (): Promise<number> => rail.evaluate((el) => el.scrollTop)
   const readRun = async (index: number, extra = 0): Promise<void> => {
     await conversation.evaluate(
@@ -43,15 +43,15 @@ test('follows transcript reading at both edges with bounded spacing and no indep
   await readRun(10)
   await expect(marks.nth(10)).toHaveAttribute('aria-current', 'location')
   expect(await railTop()).toBe(0)
-  await readRun(45)
+  await readRun(75)
   await expect.poll(railTop).toBeGreaterThan(60)
   const before = await railTop()
-  await readRun(45, 60)
+  await readRun(75, 60)
   await expect.poll(railTop).toBeGreaterThan(before)
-  expect((await railTop()) - before).toBeLessThan(12)
-  expect(await pitch()).toBe(12)
-  await page.getByRole('button', { name: /^Go to run 46:/ }).hover()
-  await expect(page.getByRole('tooltip')).toContainText('46. Compare')
+  expect((await railTop()) - before).toBeLessThan(8)
+  expect(await pitch()).toBe(8)
+  await page.getByRole('button', { name: /^Go to run 76:/ }).hover()
+  await expect(page.getByRole('tooltip')).toContainText('76. Compare')
   await page.screenshot({
     animations: 'disabled',
     path: testInfo.outputPath('long-conversation-hover.png')
@@ -68,13 +68,13 @@ test('follows transcript reading at both edges with bounded spacing and no indep
   await expect(marks.last()).toBeFocused()
   await expect.poll(railTop).toBeGreaterThan(stationaryTop)
   expect(await conversation.evaluate((el) => el.scrollTop)).toBe(readingTop)
-  await readRun(59)
-  await expect.poll(railTop).toBe(240)
+  await readRun(99)
+  await expect.poll(railTop).toBe(320)
   await marks.last().focus()
   await expect(marks.last()).toBeFocused()
   await readRun(0)
   await expect.poll(railTop).toBe(0)
-  expect(await pitch()).toBe(12)
+  expect(await pitch()).toBe(8)
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await marks.nth(3).click()
   await expect(marks.nth(3)).toHaveAttribute('aria-current', 'location')
@@ -93,15 +93,15 @@ test('keeps mark spacing when the window shrinks and hides the rail on mobile', 
       .locator('li:not([role="presentation"])')
       .first()
       .evaluate((el) => el.getBoundingClientRect().height)
-  ).toBe(12)
+  ).toBe(8)
   await page.setViewportSize({ width: 600, height: 800 })
   await expect(rail).toBeHidden()
 })
 
 for (const [count, pitch] of [
-  [4, 20],
-  [30, 16],
-  [60, 12]
+  [4, 8],
+  [30, 8],
+  [60, 8]
 ]) {
   test(`uses ${pitch}px spacing for ${count} messages`, async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 820 })
@@ -117,7 +117,7 @@ for (const [count, pitch] of [
 test('keeps visible conversation segments dark without hover and updates them on scroll', async ({
   page
 }, testInfo) => {
-  await page.goto('/run-marks.html')
+  await page.goto('/run-marks.html?count=100')
   const conversation = page.getByRole('region', { name: 'Conversation' })
   const marks = page.getByRole('navigation', { name: 'Run marks' }).getByRole('button')
   const visible = page.locator('nav button[data-visible="true"]')
@@ -127,15 +127,15 @@ test('keeps visible conversation segments dark without hover and updates them on
   await expect(marks.nth(0).locator('span')).toHaveClass(/bg-text-000/)
   await expect(marks.nth(2).locator('span')).toHaveClass(/bg-text-300\/60/)
   await conversation.evaluate((el) => {
-    const reply = el.querySelector('[data-message-id="agent-45"]')!
+    const reply = el.querySelector('[data-message-id="agent-75"]')!
     el.scrollTop += reply.getBoundingClientRect().top - el.getBoundingClientRect().top + 40
   })
-  await expect(page.getByRole('button', { name: /^Go to run 46:/ })).toHaveAttribute(
+  await expect(page.getByRole('button', { name: /^Go to run 76:/ })).toHaveAttribute(
     'data-visible',
     'true'
   )
   await expect(marks.nth(0)).not.toHaveAttribute('data-visible')
-  await expect(page.getByRole('button', { name: /^Go to run 46:/ }).locator('span')).toHaveClass(
+  await expect(page.getByRole('button', { name: /^Go to run 76:/ }).locator('span')).toHaveClass(
     /bg-text-000/
   )
   const forwardTop = await page.locator('nav ol').evaluate((el) => el.scrollTop)
@@ -149,7 +149,7 @@ test('keeps visible conversation segments dark without hover and updates them on
   })
   await expect(marks.nth(0)).toHaveAttribute('data-visible', 'true')
   await expect(
-    page.getByRole('button', { name: /^Go to run 46:/ }).and(page.locator('[data-visible]'))
+    page.getByRole('button', { name: /^Go to run 76:/ }).and(page.locator('[data-visible]'))
   ).toHaveCount(0)
   await expect.poll(() => page.locator('nav ol').evaluate((el) => el.scrollTop)).toBe(0)
   await page.screenshot({
@@ -174,7 +174,7 @@ test('moves one preview card between marks and disables motion when requested', 
   await expect(preview).toContainText('4. Compare')
   await expect
     .poll(() => preview.evaluate((element) => element.getBoundingClientRect().top))
-    .toBeGreaterThan(initialTop + 40)
+    .toBeGreaterThan(initialTop + 20)
   await page.keyboard.press('Escape')
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -227,7 +227,7 @@ test('bounds mounted marks for thousands of runs while preserving sequential key
   const rail = page.getByRole('navigation', { name: 'Run marks' })
   const marks = rail.getByRole('button')
   await expect(rail).toBeVisible()
-  expect(await marks.count()).toBeLessThanOrEqual(55)
+  expect(await marks.count()).toBeLessThanOrEqual(75)
   const conversation = page.getByRole('region', { name: 'Conversation' })
   const readingTop = await conversation.evaluate((element) => element.scrollTop)
   await page.getByRole('button', { name: /^Go to run 1:/ }).focus()
@@ -237,7 +237,7 @@ test('bounds mounted marks for thousands of runs while preserving sequential key
       page.getByRole('button', { name: new RegExp(`^Go to run ${index}:`) })
     ).toBeFocused()
   }
-  expect(await marks.count()).toBeLessThanOrEqual(55)
+  expect(await marks.count()).toBeLessThanOrEqual(75)
   expect(await conversation.evaluate((element) => element.scrollTop)).toBe(readingTop)
   await page.keyboard.press('Shift+Tab')
   await expect(page.getByRole('button', { name: /^Go to run 64:/ })).toBeFocused()
@@ -293,4 +293,36 @@ test('keeps a virtualized rail and its preview on the correct side in RTL', asyn
   const railRight = (await page.getByRole('navigation', { name: 'Run marks' }).boundingBox())!
   const viewportRight = (await page.getByRole('region', { name: 'Conversation' }).boundingBox())!
   expect(railRight.x + railRight.width).toBeCloseTo(viewportRight.x + viewportRight.width + 8, 0)
+})
+
+test('moves a continuous wave within one target without changing hit geometry', async ({
+  page
+}, testInfo) => {
+  await page.goto('/run-marks.html?count=60')
+  const rail = page.getByRole('navigation', { name: 'Run marks' })
+  const marks = rail.getByRole('button')
+  const mark = marks.nth(30)
+  const before = (await mark.boundingBox())!
+  const scale = (index: number): Promise<number> =>
+    marks
+      .nth(index)
+      .locator('span')
+      .evaluate((element) => parseFloat((element as HTMLElement).style.scale))
+  await page.mouse.move(before.x + 12, before.y + 4)
+  await expect(page.getByRole('tooltip')).toContainText('31. Compare')
+  await expect.poll(() => scale(30)).toBeCloseTo(1)
+  await page.mouse.move(before.x + 12, before.y + 6)
+  await expect.poll(() => scale(30)).toBeLessThan(1)
+  expect(await scale(31)).toBeGreaterThan(await scale(29))
+  expect(await scale(30)).toBeGreaterThan(await scale(31))
+  expect(await scale(26)).toBeCloseTo(0.4)
+  await expect(page.getByRole('tooltip')).toContainText('31. Compare')
+  expect(await mark.boundingBox()).toEqual(before)
+  await page.screenshot({ path: testInfo.outputPath('dense-wave.png') })
+  await page.mouse.move(before.x + 12, before.y + 8)
+  await expect.poll(async () => Math.abs((await scale(30)) - (await scale(31)))).toBeLessThan(0.001)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(mark.locator('span')).toHaveCSS('transition-property', 'none')
+  await page.mouse.move(before.x + 100, before.y + 100)
+  await expect.poll(() => scale(30)).toBe(0.4)
 })

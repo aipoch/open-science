@@ -968,6 +968,8 @@ describe('PreviewPanel', () => {
     expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
     expect(dialog?.className).toContain('h-[90vh]')
     expect(dialog?.className).toContain('w-[90vw]')
+    expect(dialog?.className).toContain('max-w-[calc(100vw-2rem)]')
+    expect(dialog?.className).toContain('min-w-0')
     expect(dialog?.className).toContain('overscroll-contain')
     expect(dialog?.className).toContain('rounded-xl')
     expect(dialog?.className).toContain('border-border')
@@ -1295,6 +1297,8 @@ describe('PreviewPanel', () => {
     expect(dialog?.getAttribute('aria-label')).toBe('Files')
     expect(dialog?.className).toContain('h-[90vh]')
     expect(dialog?.className).toContain('w-[90vw]')
+    expect(dialog?.className).toContain('max-w-[calc(100vw-2rem)]')
+    expect(dialog?.className).toContain('min-w-0')
     expect(dialog?.querySelector('[data-testid="tool-content"]')).toBe(inlineContent)
 
     await act(async () => {

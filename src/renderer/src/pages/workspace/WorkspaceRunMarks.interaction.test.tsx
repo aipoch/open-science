@@ -339,9 +339,46 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(indicators[4]?.classList.contains('scale-x-[0.55]')).toBe(true)
 
     fireEvent.pointerLeave(buttons[2]!)
+    fireEvent.pointerLeave(screen.getByRole('list'))
     expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
       true
     )
+  })
+
+  it('coalesces fractional pointer positions and cancels a pending wave on dismissal', async () => {
+    vi.stubGlobal('PointerEvent', MouseEvent)
+    const items = Array.from({ length: 9 }, (_, index) => {
+      appendMessageTarget(viewport, `prompt-${index}`, 120 + index * 100)
+      return createMessageItem({ id: `prompt-${index}` }, index)
+    })
+    render(<WorkspaceRunMarks items={items} viewport={viewport} />)
+    const rail = screen.getByRole('list')
+    rail.getBoundingClientRect = () => createRect(100, 72, 20, 24)
+    const buttons = screen.getAllByRole('button', { name: /Go to run/u })
+    const scale = (index: number): number =>
+      parseFloat(buttons[index]!.querySelector('span')!.style.scale)
+    fireEvent.pointerEnter(buttons[4]!)
+    expect(scale(4)).toBe(1)
+    expect(scale(3)).toBeGreaterThan(scale(2))
+    expect(scale(0)).toBeCloseTo(0.4)
+    const frames = vi.spyOn(window, 'requestAnimationFrame')
+    fireEvent.pointerMove(rail, { clientY: 137 })
+    fireEvent.pointerMove(rail, { clientY: 138 })
+    expect(frames).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(scale(4)).toBeLessThan(1)
+    expect(scale(4)).toBeGreaterThan(scale(5))
+    expect(scale(5)).toBeGreaterThan(scale(3))
+    fireEvent.pointerMove(rail, { clientY: 140 })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(scale(4)).toBe(0.4)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    frames.mockRestore()
   })
 
   it('highlights all visible segments and follows replies even when their prompt is unmounted', async () => {
@@ -377,6 +414,7 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(buttons[0]?.querySelector('span')?.className).toContain('bg-text-300/60')
     fireEvent.pointerEnter(buttons[2]!)
     fireEvent.pointerLeave(buttons[2]!)
+    fireEvent.pointerLeave(screen.getByRole('list'))
     expect(buttons[2]?.querySelector('span')?.className).toContain('bg-text-000')
     expect(buttons[3]?.querySelector('span')?.className).toContain('bg-text-000')
   })
@@ -422,7 +460,7 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(rail.className).toContain('fixed')
     expect(rail.style.left).toBe('208px')
     expect(rail.style.top).toBe('440px')
-    expect(list?.style.height).toBe('100px')
+    expect(list?.style.height).toBe('40px')
     expect(list?.style.maxHeight).toBe('calc(100vh - 6rem)')
 
     fireEvent.focus(screen.getAllByRole('button', { name: /Go to run/u })[0]!)
@@ -445,7 +483,7 @@ describe('WorkspaceRunMarks interaction', () => {
   })
 
   it('bounds dense spacing and follows transcript progress only beyond the visible rail edges', async () => {
-    const items = Array.from({ length: 60 }, (_, index) => {
+    const items = Array.from({ length: 100 }, (_, index) => {
       const id = `prompt-${index}`
       appendMessageTarget(viewport, id, 100 + index * 100)
       const target = viewport.lastElementChild as HTMLElement
@@ -456,9 +494,9 @@ describe('WorkspaceRunMarks interaction', () => {
     const rail = screen.getByRole('list')
     Object.defineProperties(rail, {
       clientHeight: { value: 480 },
-      scrollHeight: { value: 720 }
+      scrollHeight: { value: 800 }
     })
-    expect(screen.getAllByRole('button').length).toBeLessThan(60)
+    expect(screen.getAllByRole('button').length).toBeLessThan(100)
     expect(rail.style.height).toBe('480px')
     expect(rail.className).toContain('overflow-hidden')
 
@@ -471,18 +509,18 @@ describe('WorkspaceRunMarks interaction', () => {
     }
     await scrollTranscript(1_000)
     expect(rail.scrollTop).toBe(0)
-    await scrollTranscript(3_900)
-    expect(rail.scrollTop).toBeCloseTo(15.84)
-    await scrollTranscript(3_950)
-    expect(rail.scrollTop).toBeCloseTo(21.84)
-    await scrollTranscript(3_900)
-    expect(rail.scrollTop).toBeCloseTo(21.84)
+    await scrollTranscript(5_900)
+    expect(rail.scrollTop).toBeCloseTo(10.56)
+    await scrollTranscript(5_950)
+    expect(rail.scrollTop).toBeCloseTo(14.56)
+    await scrollTranscript(5_900)
+    expect(rail.scrollTop).toBeCloseTo(14.56)
     await scrollTranscript(100)
-    expect(rail.scrollTop).toBeCloseTo(3.84)
+    expect(rail.scrollTop).toBeCloseTo(2.56)
     await scrollTranscript(0)
     expect(rail.scrollTop).toBe(0)
-    await scrollTranscript(5_900)
-    expect(rail.scrollTop).toBe(240)
+    await scrollTranscript(9_900)
+    expect(rail.scrollTop).toBe(320)
   })
 
   it('shows the user message and first explicitly linked Agent message on keyboard focus', async () => {

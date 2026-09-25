@@ -282,6 +282,21 @@ const isArtifactSaveTool = (
   )
 }
 
+// Deliberately bounded: new tools do not inherit Auto approval from server membership.
+const LIBRARY_AUTO_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
+  'open-science-library/search_library',
+  'open-science-library/read_library_abstract',
+  'open-science-library/read_library_pdf',
+  'open-science-library/format_references',
+  'open-science-library/format_citation_document',
+  'open-science-library/prepare_latex_bundle',
+  'open-science-library/save_to_inbox',
+  'open-science-library/acquire_pdf',
+  'open-science-literature/read_document',
+  'open-science-literature/list_pdf_elements',
+  'open-science-literature/read_pdf_element'
+])
+
 const APP_INTERACTION_TOOLS = new Set([
   'open-science-notebook/ask_user_question',
   'open-science-notebook/request_network_access'
@@ -315,6 +330,17 @@ const resolveAutomaticPermission = (
   context: PermissionPolicyContext | undefined
 ): string | undefined => {
   if (context?.profile === 'full') {
+    return resolveAllowOptionId(params)
+  }
+
+  const libraryIdentity = trustedMcpToolIdentity(params)
+  if (
+    context?.profile === 'auto' &&
+    libraryIdentity &&
+    LIBRARY_AUTO_TOOL_IDENTITIES.has(libraryIdentity) &&
+    context.mcpServerNames?.map(canonicalAppMcpServerName).includes(libraryIdentity.split('/')[0])
+  ) {
+    // Single-use provider decision only; no durable grant or resource-policy changes.
     return resolveAllowOptionId(params)
   }
 
@@ -370,6 +396,7 @@ const resolveAutomaticPermission = (
 }
 
 export {
+  LIBRARY_AUTO_TOOL_IDENTITIES,
   isNativeWebSearchCandidate,
   isNativeWebSearchPermission,
   isNativeWebFetchCandidate,

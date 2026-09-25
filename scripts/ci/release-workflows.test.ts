@@ -572,10 +572,16 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(step(job, 'Download final macOS arm64 archive').run).toContain(
       "--pattern '*-mac-arm64.zip'"
     )
+    const materialize = step(job, 'Materialize packaged application for scanning')
+    expect(materialize.run).toContain('npm ci --ignore-scripts --omit=optional')
+    expect(materialize.run).toContain('unzip -q "$ARTIFACT_PATH"')
+    expect(materialize.run).toContain('node node_modules/@electron/asar/bin/asar.js extract')
+    expect(materialize.run).toContain('mv "$RUNNER_TEMP/app-asar-content" "$asar"')
     expect(step(job, 'Generate SPDX SBOM from final archive')).toMatchObject({
       uses: 'anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610',
+      env: { SYFT_SELECT_CATALOGERS: '+javascript-package-cataloger' },
       with: {
-        file: '${{ steps.artifact.outputs.path }}',
+        path: '${{ steps.scan.outputs.path }}',
         format: 'spdx-json',
         'output-file': 'release-sbom.spdx.json',
         'dependency-snapshot': false,
@@ -586,6 +592,9 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     })
     expect(step(job, 'Validate representative packaged-component coverage').run).toContain(
       'node scripts/ci/validate-release-sbom.mjs'
+    )
+    expect(step(job, 'Validate representative packaged-component coverage').run).toContain(
+      'exit "${status:-0}"'
     )
     expect(step(job, 'Upload PoC evidence')).toMatchObject({
       if: '${{ always() }}',

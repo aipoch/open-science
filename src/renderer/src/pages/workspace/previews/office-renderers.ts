@@ -1,6 +1,8 @@
 import { i18next } from '../../../i18n'
+import type { PptxViewer } from '@aiden0z/pptx-renderer'
 
 import type { OfficeFileExtension } from './office-package'
+import { extractPptxNotes, type PptxNotesBySlide } from './pptx-notes'
 
 export type OfficeRenderCleanup = () => void | Promise<void>
 export type OfficeRenderStatus = {
@@ -164,12 +166,577 @@ const installDocxFit = (container: HTMLElement, wrapper: HTMLElement): OfficeRen
 type PptxViewerDimensions = {
   slideWidth: number
   slideHeight: number
+  zoomPercent?: number
 }
 
 type PptxFitMetrics = {
   scale: number
   displayWidth: number
   displayHeight: number
+}
+
+type PptxReviewSurface = {
+  root: HTMLDivElement
+  thumbnails: HTMLDivElement
+  stage: HTMLDivElement
+  previous: HTMLButtonElement
+  next: HTMLButtonElement
+  toggleNavigation: HTMLButtonElement
+  zoomOut: HTMLButtonElement
+  zoomReset: HTMLButtonElement
+  zoomIn: HTMLButtonElement
+  counter: HTMLSpanElement
+  notes: HTMLElement
+  notesBody: HTMLParagraphElement
+}
+
+type PptxSlideHandle = {
+  dispose: () => void
+}
+
+type PptxThumbnailHandle = PptxSlideHandle & {
+  element?: HTMLElement
+  ready: Promise<void>
+}
+
+const createPptxReviewSurface = (container: HTMLDivElement): PptxReviewSurface => {
+  const document = container.ownerDocument
+  const root = document.createElement('div')
+  root.className = 'pptx-review'
+
+  const toolbar = document.createElement('div')
+  toolbar.className = 'pptx-review-toolbar'
+
+  const toggleNavigation = document.createElement('button')
+  toggleNavigation.className = 'pptx-review-button'
+  toggleNavigation.type = 'button'
+  toggleNavigation.textContent = '☰'
+  toggleNavigation.setAttribute('aria-pressed', 'true')
+  toggleNavigation.title = i18next.t('Hide navigation')
+  toggleNavigation.setAttribute('aria-label', i18next.t('Hide navigation'))
+
+  const previous = document.createElement('button')
+  previous.className = 'pptx-review-button'
+  previous.type = 'button'
+  previous.textContent = '‹'
+  previous.title = i18next.t('Previous')
+  previous.setAttribute('aria-label', i18next.t('Previous'))
+
+  const counter = document.createElement('span')
+  counter.className = 'pptx-review-counter'
+  counter.setAttribute('aria-live', 'polite')
+
+  const next = document.createElement('button')
+  next.className = 'pptx-review-button'
+  next.type = 'button'
+  next.textContent = '›'
+  next.title = i18next.t('Next')
+  next.setAttribute('aria-label', i18next.t('Next'))
+
+  const zoomControls = document.createElement('div')
+  zoomControls.className = 'pptx-review-zoom'
+
+  const zoomOut = document.createElement('button')
+  zoomOut.className = 'pptx-review-button'
+  zoomOut.type = 'button'
+  zoomOut.textContent = '−'
+  zoomOut.title = i18next.t('Zoom out')
+  zoomOut.setAttribute('aria-label', i18next.t('Zoom out'))
+
+  const zoomReset = document.createElement('button')
+  zoomReset.className = 'pptx-review-button pptx-review-zoom-reset'
+  zoomReset.type = 'button'
+  zoomReset.title = i18next.t('Reset zoom')
+  zoomReset.setAttribute('aria-label', i18next.t('Reset zoom'))
+
+  const zoomIn = document.createElement('button')
+  zoomIn.className = 'pptx-review-button'
+  zoomIn.type = 'button'
+  zoomIn.textContent = '+'
+  zoomIn.title = i18next.t('Zoom in')
+  zoomIn.setAttribute('aria-label', i18next.t('Zoom in'))
+
+  zoomControls.append(zoomOut, zoomReset, zoomIn)
+  toolbar.append(toggleNavigation, previous, counter, next, zoomControls)
+
+  const body = document.createElement('div')
+  body.className = 'pptx-review-body'
+
+  const thumbnails = document.createElement('div')
+  thumbnails.className = 'pptx-review-thumbnails'
+  thumbnails.setAttribute('aria-label', i18next.t('Pages'))
+
+  const stage = document.createElement('div')
+  stage.className = 'pptx-review-stage'
+  stage.tabIndex = 0
+  stage.setAttribute('role', 'document')
+  stage.setAttribute('aria-label', i18next.t('Preview'))
+
+  const content = document.createElement('div')
+  content.className = 'pptx-review-content'
+
+  const notes = document.createElement('aside')
+  notes.className = 'pptx-review-notes'
+  notes.hidden = false
+  notes.setAttribute('aria-label', i18next.t('Notes'))
+  const notesHeading = document.createElement('h2')
+  notesHeading.className = 'pptx-review-notes-heading'
+  notesHeading.textContent = i18next.t('Notes')
+  const notesBody = document.createElement('p')
+  notesBody.className = 'pptx-review-notes-body'
+  notesBody.setAttribute('aria-live', 'polite')
+  notesBody.setAttribute('aria-atomic', 'true')
+  notes.append(notesHeading, notesBody)
+  content.append(stage, notes)
+
+  body.append(thumbnails, content)
+  root.append(toolbar, body)
+  container.replaceChildren(root)
+
+  return {
+    root,
+    thumbnails,
+    stage,
+    previous,
+    next,
+    toggleNavigation,
+    zoomOut,
+    zoomReset,
+    zoomIn,
+    counter,
+    notes,
+    notesBody
+  }
+}
+
+const PPTX_MIN_ZOOM = 50
+const PPTX_MAX_ZOOM = 200
+const PPTX_ZOOM_STEP = 25
+// Ctrl/Cmd + trackpad pinch arrives as a stream of wheel events. Accumulate it once per frame
+// so a single gesture produces one smooth zoom update instead of re-rendering for every event.
+const PPTX_WHEEL_ZOOM_SENSITIVITY = 0.25
+const PPTX_WHEEL_ZOOM_STEP = 5
+const PPTX_PAN_THRESHOLD = 4
+
+const installPptxReviewControls = (
+  surface: PptxReviewSurface,
+  viewer: PptxViewer,
+  onSlideSettled?: () => void,
+  notesPromise?: Promise<PptxNotesBySlide>,
+  zoomController?: { get: () => number; set: (percent: number) => void },
+  onThumbnailDisposed?: () => void
+): OfficeRenderCleanup => {
+  const document = surface.root.ownerDocument
+  let disposed = false
+  let panStart:
+    | {
+        pointerId: number
+        x: number
+        y: number
+        scrollLeft: number
+        scrollTop: number
+        dragging: boolean
+      }
+    | undefined
+  let pendingPan: { scrollLeft: number; scrollTop: number } | undefined
+  let panFrame: number | undefined
+  let pendingWheelDelta = 0
+  let wheelZoomRemainder = 0
+  let wheelZoomPercent: number | undefined
+  let wheelZoomFrame: number | undefined
+  let activeThumbnail: HTMLButtonElement | undefined
+  let thumbnailFrame: number | undefined
+  let notesBySlide: PptxNotesBySlide = new Map()
+  const thumbnailHandles = new Map<number, PptxThumbnailHandle>()
+  const thumbnailItems = new Map<number, HTMLButtonElement>()
+  const thumbnailQueue = new Set<number>()
+  const updateThumbnailLayout = (index: number): void => {
+    const handle = thumbnailHandles.get(index)
+    const item = thumbnailItems.get(index)
+    const host = item?.querySelector<HTMLElement>('.pptx-review-thumbnail-host')
+    if (!handle || !host) return
+    const width = Math.max(1, Math.floor(host.clientWidth || 142))
+    const thumbnail = handle.element ?? host.firstElementChild
+    const slide = thumbnail?.firstElementChild
+    if (thumbnail instanceof HTMLElement) {
+      thumbnail.style.width = `${width}px`
+      thumbnail.style.height = `${width * (viewer.slideHeight / viewer.slideWidth)}px`
+      thumbnail.style.flex = '0 0 auto'
+    }
+    if (slide instanceof HTMLElement && viewer.slideWidth > 0) {
+      slide.style.transform = `scale(${width / viewer.slideWidth})`
+      slide.style.transformOrigin = 'top left'
+    }
+  }
+  const disposeThumbnail = (index: number): void => {
+    thumbnailQueue.delete(index)
+    const handle = thumbnailHandles.get(index)
+    if (!handle) return
+    handle.dispose()
+    thumbnailHandles.delete(index)
+    onThumbnailDisposed?.()
+  }
+  const thumbnailObserver =
+    typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              const index = Number(entry.target.getAttribute('data-slide'))
+              if (entry.isIntersecting) scheduleThumbnail(index)
+              else if (index !== viewer.currentSlideIndex) disposeThumbnail(index)
+            }
+          },
+          { root: surface.thumbnails, rootMargin: '320px 0px' }
+        )
+      : undefined
+  const thumbnailResizeObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver(() => {
+          for (const index of thumbnailHandles.keys()) updateThumbnailLayout(index)
+        })
+      : undefined
+  thumbnailResizeObserver?.observe(surface.thumbnails)
+
+  const updateActiveSlide = (index: number): void => {
+    const count = viewer.slideCount
+    surface.counter.textContent = `${index + 1} / ${count}`
+    surface.previous.disabled = index <= 0
+    surface.next.disabled = index >= count - 1
+    const activeItem = thumbnailItems.get(index)
+    if (activeItem !== activeThumbnail) {
+      activeThumbnail?.removeAttribute('data-active')
+      activeThumbnail?.removeAttribute('aria-current')
+      activeItem?.setAttribute('data-active', 'true')
+      activeItem?.setAttribute('aria-current', 'true')
+      activeThumbnail = activeItem
+      if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+        activeItem.scrollIntoView({ block: 'nearest' })
+      }
+    }
+    scheduleThumbnail(index)
+    const note = notesBySlide.get(index) ?? ''
+    surface.notesBody.textContent = note
+    surface.notes.hidden = false
+  }
+
+  const mountThumbnail = (index: number): void => {
+    if (thumbnailHandles.has(index)) return
+    const item = thumbnailItems.get(index)
+    const host = item?.querySelector<HTMLElement>('.pptx-review-thumbnail-host')
+    if (!host) return
+    // Match the renderer's intrinsic width to the slot after padding/borders have been applied.
+    // A fixed width leaves the right edge of a thumbnail outside its host at narrow panel sizes.
+    const width = Math.max(1, Math.floor(host.clientWidth || 142))
+    const handle = viewer.renderThumbnailToContainer(index, host, {
+      width
+    }) as PptxThumbnailHandle | null
+    if (!handle) return
+
+    thumbnailHandles.set(index, handle)
+    void handle.ready.catch(() => {
+      // A retired thumbnail may finish after this page has acquired a replacement handle.
+      if (disposed || thumbnailHandles.get(index) !== handle) return
+      disposeThumbnail(index)
+      host.replaceChildren()
+    })
+    // The vendor thumbnail API owns the DOM shape, but older renderer builds can leave the
+    // returned slide at intrinsic size. Reapply the same scale to the returned slide so a
+    // narrow rail cannot expose only the left edge of the slide.
+    updateThumbnailLayout(index)
+  }
+
+  const flushThumbnailQueue = (): void => {
+    thumbnailFrame = undefined
+    const [index] = thumbnailQueue
+    if (index === undefined) return
+    thumbnailQueue.delete(index)
+    mountThumbnail(index)
+    if (thumbnailQueue.size > 0) scheduleThumbnailFrame()
+  }
+
+  const scheduleThumbnailFrame = (): void => {
+    if (thumbnailFrame !== undefined) return
+    const view = document.defaultView
+    if (!view) {
+      flushThumbnailQueue()
+      return
+    }
+    thumbnailFrame = view.requestAnimationFrame(flushThumbnailQueue)
+  }
+
+  const scheduleThumbnail = (index: number): void => {
+    if (thumbnailHandles.has(index)) return
+    thumbnailQueue.add(index)
+    scheduleThumbnailFrame()
+  }
+
+  const focusStage = (): void => {
+    if (document.activeElement !== surface.stage) surface.stage.focus({ preventScroll: true })
+  }
+
+  const goToSlide = (index: number): void => {
+    // Keep keyboard navigation on the review surface after a toolbar or thumbnail click. Without
+    // this, the clicked button retains focus and the stage intentionally ignores arrow keys.
+    focusStage()
+    void Promise.resolve(viewer.goToSlide(index)).then(() => {
+      if (!disposed) onSlideSettled?.()
+    })
+  }
+
+  const updateZoomControls = (): void => {
+    const zoom = Math.round(zoomController?.get() ?? viewer.zoomPercent)
+    surface.zoomOut.disabled = zoom <= PPTX_MIN_ZOOM
+    surface.zoomIn.disabled = zoom >= PPTX_MAX_ZOOM
+    surface.zoomReset.disabled = zoom === 100
+    surface.zoomReset.textContent = `${zoom}%`
+  }
+
+  const cancelPendingWheelZoom = (): void => {
+    pendingWheelDelta = 0
+    wheelZoomRemainder = 0
+    if (wheelZoomFrame === undefined) return
+    ;(document.defaultView ?? window).cancelAnimationFrame(wheelZoomFrame)
+    wheelZoomFrame = undefined
+  }
+
+  const setZoom = (percent: number): void => {
+    cancelPendingWheelZoom()
+    wheelZoomPercent = undefined
+    const update = zoomController ? zoomController.set(percent) : viewer.setZoom(percent)
+    void Promise.resolve(update).then(() => {
+      if (disposed) return
+      updateZoomControls()
+      onSlideSettled?.()
+    })
+  }
+
+  const changeZoom = (delta: number): void => {
+    const next = Math.min(
+      PPTX_MAX_ZOOM,
+      Math.max(
+        PPTX_MIN_ZOOM,
+        Math.round((zoomController?.get() ?? viewer.zoomPercent) / PPTX_ZOOM_STEP) *
+          PPTX_ZOOM_STEP +
+          delta
+      )
+    )
+    setZoom(next)
+  }
+
+  const onZoomOut = (): void => changeZoom(-PPTX_ZOOM_STEP)
+  const onZoomReset = (): void => setZoom(100)
+  const onZoomIn = (): void => changeZoom(PPTX_ZOOM_STEP)
+
+  const flushWheelZoom = (): void => {
+    wheelZoomFrame = undefined
+    const delta = pendingWheelDelta
+    pendingWheelDelta = 0
+    if (delta === 0) return
+    wheelZoomRemainder -= delta * PPTX_WHEEL_ZOOM_SENSITIVITY
+    const step =
+      wheelZoomRemainder >= 0
+        ? Math.floor(wheelZoomRemainder / PPTX_WHEEL_ZOOM_STEP) * PPTX_WHEEL_ZOOM_STEP
+        : Math.ceil(wheelZoomRemainder / PPTX_WHEEL_ZOOM_STEP) * PPTX_WHEEL_ZOOM_STEP
+    if (step === 0) return
+    wheelZoomRemainder -= step
+    const current = wheelZoomPercent ?? zoomController?.get() ?? viewer.zoomPercent
+    const next = Math.min(PPTX_MAX_ZOOM, Math.max(PPTX_MIN_ZOOM, current + step))
+    if (next === current) {
+      wheelZoomRemainder = 0
+      return
+    }
+    wheelZoomPercent = next
+    const update = zoomController ? zoomController.set(next) : viewer.setZoom(next)
+    void Promise.resolve(update).then(() => {
+      if (disposed || wheelZoomPercent !== next) return
+      wheelZoomPercent = undefined
+      updateZoomControls()
+      onSlideSettled?.()
+    })
+  }
+
+  const onWheel = (event: WheelEvent): void => {
+    if (!event.ctrlKey && !event.metaKey) return
+    event.preventDefault()
+    pendingWheelDelta += event.deltaY
+    wheelZoomFrame ??= (document.defaultView ?? window).requestAnimationFrame(flushWheelZoom)
+  }
+
+  const onPointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0) return
+    if (
+      event.target instanceof Element &&
+      event.target.closest(
+        'a, button, input, textarea, select, [contenteditable="true"], [role="button"], [role="link"]'
+      )
+    ) {
+      return
+    }
+    focusStage()
+    panStart = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      scrollLeft: surface.stage.scrollLeft,
+      scrollTop: surface.stage.scrollTop,
+      dragging: false
+    }
+  }
+
+  const onPointerMove = (event: PointerEvent): void => {
+    if (!panStart || event.pointerId !== panStart.pointerId) return
+    const deltaX = event.clientX - panStart.x
+    const deltaY = event.clientY - panStart.y
+    if (!panStart.dragging) {
+      if (Math.hypot(deltaX, deltaY) < PPTX_PAN_THRESHOLD) return
+      panStart.dragging = true
+      surface.stage.setPointerCapture?.(event.pointerId)
+      surface.stage.classList.add('pptx-review-stage--panning')
+    }
+    pendingPan = {
+      scrollLeft: panStart.scrollLeft - deltaX,
+      scrollTop: panStart.scrollTop - deltaY
+    }
+    if (panFrame === undefined) {
+      const view = document.defaultView
+      if (view) {
+        panFrame = view.requestAnimationFrame(() => {
+          panFrame = undefined
+          if (!pendingPan) return
+          surface.stage.scrollLeft = pendingPan.scrollLeft
+          surface.stage.scrollTop = pendingPan.scrollTop
+          pendingPan = undefined
+        })
+      }
+    }
+    event.preventDefault()
+  }
+
+  const stopPanning = (event?: PointerEvent): void => {
+    if (!panStart || (event && event.pointerId !== panStart.pointerId)) return
+    if (event && panStart.dragging) surface.stage.releasePointerCapture?.(event.pointerId)
+    if (panFrame !== undefined) {
+      document.defaultView?.cancelAnimationFrame(panFrame)
+      panFrame = undefined
+    }
+    if (pendingPan) {
+      surface.stage.scrollLeft = pendingPan.scrollLeft
+      surface.stage.scrollTop = pendingPan.scrollTop
+      pendingPan = undefined
+    }
+    panStart = undefined
+    surface.stage.classList.remove('pptx-review-stage--panning')
+  }
+
+  for (let index = 0; index < viewer.slideCount; index += 1) {
+    const item = document.createElement('button')
+    item.className = 'pptx-review-thumbnail'
+    item.type = 'button'
+    item.setAttribute('data-slide', String(index))
+    item.setAttribute('aria-label', `${i18next.t('Page')} ${index + 1}`)
+    const host = document.createElement('span')
+    host.className = 'pptx-review-thumbnail-host'
+    const label = document.createElement('span')
+    label.className = 'pptx-review-thumbnail-label'
+    label.textContent = String(index + 1)
+    item.append(host, label)
+    item.addEventListener('click', () => goToSlide(index))
+    surface.thumbnails.appendChild(item)
+    thumbnailItems.set(index, item)
+    if (thumbnailObserver) thumbnailObserver.observe(item)
+    else if (index < 12) mountThumbnail(index)
+  }
+
+  const onSlideChange = (event: Event): void => {
+    const index = (event as CustomEvent<{ index: number }>).detail.index
+    updateActiveSlide(index)
+  }
+  viewer.addEventListener('slidechange', onSlideChange)
+
+  const onPrevious = (): void => goToSlide(viewer.currentSlideIndex - 1)
+  const onNext = (): void => goToSlide(viewer.currentSlideIndex + 1)
+  const onToggleNavigation = (): void => {
+    const hidden = surface.root.classList.toggle('pptx-review--nav-hidden')
+    const label = i18next.t(hidden ? 'Show navigation' : 'Hide navigation')
+    surface.toggleNavigation.setAttribute('aria-pressed', String(!hidden))
+    surface.toggleNavigation.title = label
+    surface.toggleNavigation.setAttribute('aria-label', label)
+  }
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest('button, input, textarea, select, [contenteditable="true"]')
+    ) {
+      return
+    }
+    const last = viewer.slideCount - 1
+    const nextIndex =
+      event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'PageUp'
+        ? viewer.currentSlideIndex - 1
+        : event.key === 'ArrowRight' ||
+            event.key === 'ArrowDown' ||
+            event.key === 'PageDown' ||
+            event.key === ' '
+          ? viewer.currentSlideIndex + 1
+          : event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? last
+              : undefined
+    if (nextIndex === undefined || nextIndex < 0 || nextIndex > last) return
+    event.preventDefault()
+    goToSlide(nextIndex)
+  }
+
+  surface.previous.addEventListener('click', onPrevious)
+  surface.next.addEventListener('click', onNext)
+  surface.toggleNavigation.addEventListener('click', onToggleNavigation)
+  surface.zoomOut.addEventListener('click', onZoomOut)
+  surface.zoomReset.addEventListener('click', onZoomReset)
+  surface.zoomIn.addEventListener('click', onZoomIn)
+  surface.stage.addEventListener('keydown', onKeyDown)
+  surface.stage.addEventListener('wheel', onWheel, { passive: false })
+  surface.stage.addEventListener('pointerdown', onPointerDown)
+  surface.stage.addEventListener('pointermove', onPointerMove)
+  surface.stage.addEventListener('pointerup', stopPanning)
+  surface.stage.addEventListener('pointercancel', stopPanning)
+  updateZoomControls()
+  updateActiveSlide(viewer.currentSlideIndex)
+  void notesPromise?.then((notes) => {
+    if (disposed) return
+    notesBySlide = notes
+    updateActiveSlide(viewer.currentSlideIndex)
+  })
+
+  return () => {
+    disposed = true
+    viewer.removeEventListener('slidechange', onSlideChange)
+    surface.previous.removeEventListener('click', onPrevious)
+    surface.next.removeEventListener('click', onNext)
+    surface.toggleNavigation.removeEventListener('click', onToggleNavigation)
+    surface.zoomOut.removeEventListener('click', onZoomOut)
+    surface.zoomReset.removeEventListener('click', onZoomReset)
+    surface.zoomIn.removeEventListener('click', onZoomIn)
+    surface.stage.removeEventListener('keydown', onKeyDown)
+    surface.stage.removeEventListener('wheel', onWheel)
+    surface.stage.removeEventListener('pointerdown', onPointerDown)
+    surface.stage.removeEventListener('pointermove', onPointerMove)
+    surface.stage.removeEventListener('pointerup', stopPanning)
+    surface.stage.removeEventListener('pointercancel', stopPanning)
+    stopPanning()
+    if (panFrame !== undefined) document.defaultView?.cancelAnimationFrame(panFrame)
+    panFrame = undefined
+    pendingPan = undefined
+    cancelPendingWheelZoom()
+    if (thumbnailFrame !== undefined) document.defaultView?.cancelAnimationFrame(thumbnailFrame)
+    thumbnailFrame = undefined
+    thumbnailQueue.clear()
+    thumbnailObserver?.disconnect()
+    thumbnailResizeObserver?.disconnect()
+    thumbnailHandles.forEach((handle) => handle.dispose())
+    thumbnailHandles.clear()
+    activeThumbnail = undefined
+  }
 }
 
 const PPTX_FALLBACK_WIDTH = 960
@@ -240,6 +807,14 @@ class BoundedBlobUrlCache extends Map<string, string> {
     return this
   }
 
+  override clear(): void {
+    for (const [key, url] of this) {
+      URL.revokeObjectURL(url)
+      this.onEvict?.(key)
+    }
+    super.clear()
+  }
+
   trim(protectedUrls: ReadonlySet<string> = new Set()): void {
     while (this.size > MAX_PPTX_MEDIA_URLS) {
       const candidate = [...this.entries()].find(([, url]) => !protectedUrls.has(url))
@@ -271,9 +846,17 @@ const collectReferencedPptxMediaUrls = (
 
 const getPptxFitMetrics = (
   container: HTMLElement,
-  viewer: PptxViewerDimensions
+  viewer: PptxViewerDimensions,
+  zoomPercent = viewer.zoomPercent ?? 100
 ): PptxFitMetrics | undefined => {
-  const availableWidth = container.clientWidth
+  const view = container.ownerDocument.defaultView
+  const computedStyle = view?.getComputedStyle(container)
+  const paddingLeft = Number.parseFloat(computedStyle?.paddingLeft ?? '') || 0
+  const paddingRight = Number.parseFloat(computedStyle?.paddingRight ?? '') || 0
+  const paddingTop = Number.parseFloat(computedStyle?.paddingTop ?? '') || 0
+  const paddingBottom = Number.parseFloat(computedStyle?.paddingBottom ?? '') || 0
+  const availableWidth = container.clientWidth - paddingLeft - paddingRight
+  const availableHeight = container.clientHeight - paddingTop - paddingBottom
   const { slideWidth, slideHeight } = viewer
   if (
     !Number.isFinite(availableWidth) ||
@@ -286,7 +869,10 @@ const getPptxFitMetrics = (
     return undefined
   }
 
-  const scale = availableWidth / slideWidth
+  const zoomScale = Number.isFinite(zoomPercent) ? Math.max(0.1, zoomPercent / 100) : 1
+  const widthScale = (availableWidth / slideWidth) * zoomScale
+  const heightScale = availableHeight > 0 ? (availableHeight / slideHeight) * zoomScale : widthScale
+  const scale = Math.min(widthScale, heightScale)
   return {
     scale,
     displayWidth: slideWidth * scale,
@@ -307,12 +893,29 @@ const applyPptxSlideFit = (slide: HTMLElement, metrics: PptxFitMetrics): void =>
 // Updates the vendor-owned slide wrappers without rebuilding parsed presentation content.
 const applyPptxFit = (
   container: HTMLElement,
-  viewer: PptxViewerDimensions
+  viewer: PptxViewerDimensions,
+  zoomPercent = viewer.zoomPercent ?? 100
 ): PptxFitMetrics | undefined => {
-  const metrics = getPptxFitMetrics(container, viewer)
+  const metrics = getPptxFitMetrics(container, viewer, zoomPercent)
   if (!metrics) return undefined
 
-  for (const item of container.querySelectorAll<HTMLElement>('[data-slide-index]')) {
+  const items = container.querySelectorAll<HTMLElement>('[data-slide-index]')
+  if (items.length === 0) {
+    const wrapper = container.firstElementChild
+    if (wrapper instanceof HTMLElement) {
+      wrapper.style.width = `${metrics.displayWidth}px`
+      wrapper.style.height = `${metrics.displayHeight}px`
+      wrapper.style.flex = '0 0 auto'
+      const slide = wrapper.firstElementChild
+      if (slide instanceof HTMLElement) applyPptxSlideFit(slide, metrics)
+    }
+    return metrics
+  }
+
+  for (const item of items) {
+    item.style.width = `${metrics.displayWidth}px`
+    item.style.height = `${metrics.displayHeight}px`
+    item.style.flex = '0 0 auto'
     const wrapper = item.firstElementChild
     if (!(wrapper instanceof HTMLElement)) continue
 
@@ -329,16 +932,31 @@ const applyPptxFit = (
 const installPptxFit = (
   container: HTMLElement,
   viewer: PptxViewerDimensions,
-  onFit: (metrics: PptxFitMetrics) => void
+  onFit: (metrics: PptxFitMetrics) => void,
+  getZoomPercent: () => number = () => viewer.zoomPercent ?? 100
 ): OfficeRenderCleanup => {
   const view = container.ownerDocument.defaultView
   const applyFit = (): void => {
-    const metrics = applyPptxFit(container, viewer)
+    const metrics = applyPptxFit(container, viewer, getZoomPercent())
     if (metrics) onFit(metrics)
   }
   applyFit()
 
   let animationFrame: number | undefined
+  let initialLayoutFrames = 0
+  const settleInitialLayout = (): void => {
+    if (!view || initialLayoutFrames >= 8) return
+    initialLayoutFrames += 1
+    animationFrame = view.requestAnimationFrame(() => {
+      animationFrame = undefined
+      applyFit()
+      settleInitialLayout()
+    })
+  }
+  // The iframe can acquire its final width after the first slide mounts (scrollbars and flex
+  // parents settle asynchronously). Refit for a short burst so opening or changing slides never
+  // requires a manual panel drag to reveal the complete slide.
+  settleInitialLayout()
   const scheduleFit = (): void => {
     if (!view || animationFrame !== undefined) return
     animationFrame = view.requestAnimationFrame(() => {
@@ -349,6 +967,7 @@ const installPptxFit = (
   const ResizeObserverCtor = view?.ResizeObserver
   const resizeObserver = ResizeObserverCtor ? new ResizeObserverCtor(scheduleFit) : undefined
   resizeObserver?.observe(container)
+  if (container.parentElement) resizeObserver?.observe(container.parentElement)
 
   return () => {
     resizeObserver?.disconnect()
@@ -829,44 +1448,91 @@ export const renderOfficeFile = async ({
 
   // Construct explicitly so a failed open still leaves an instance that can be destroyed.
   const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import('@aiden0z/pptx-renderer')
+  const surface = createPptxReviewSurface(container)
   const viewerDimensionsRef: { current?: PptxViewerDimensions } = {}
   const mediaUrlCache = new BoundedBlobUrlCache()
+  const trimPptxMediaCache = (): void => {
+    mediaUrlCache.trim(collectReferencedPptxMediaUrls(container, mediaUrlCache))
+  }
+  const view = container.ownerDocument.defaultView
+  let pptxZoomPercent = 100
   let currentFit: PptxFitMetrics | undefined
+  let refitFrame: number | undefined
+  let refitPptx: () => void = () => undefined
+  let queueSlideFit: () => void = () => undefined
+  let slideFitQueued = false
+  let viewerDestroyed = false
+  let disposeReview: OfficeRenderCleanup | undefined
   let reportedRendering = false
   const reportRendering = (): void => {
     if (reportedRendering) return
     reportedRendering = true
     onStatus?.(RENDERING_STATUS)
   }
-  const viewer = new PptxViewer(container, {
-    // A fixed width disables the vendor's resize path, which clears and rebuilds every slide.
-    width: container.clientWidth || PPTX_FALLBACK_WIDTH,
+  const viewer = new PptxViewer(surface.stage, {
     zipLimits: RECOMMENDED_ZIP_LIMITS,
     lazySlides: true,
     lazyMedia: true,
-    scrollContainer: container,
+    // The review surface owns fit/zoom through CSS transforms. Disable the vendor's
+    // container-width fitting so panel layout changes do not rebuild the slide DOM.
+    fitMode: 'none',
+    scrollContainer: surface.stage,
     pdfjs: false,
     onRenderStart: reportRendering,
-    onSlideUnmounted: () =>
-      mediaUrlCache.trim(collectReferencedPptxMediaUrls(container, mediaUrlCache)),
+    onSlideUnmounted: trimPptxMediaCache,
     // Windowed slides can mount after a resize, so apply the latest fit before their next paint.
     onSlideRendered: (_index, element) => {
       const viewerDimensions = viewerDimensionsRef.current
-      const metrics = viewerDimensions ? getPptxFitMetrics(container, viewerDimensions) : currentFit
+      const metrics = viewerDimensions
+        ? getPptxFitMetrics(container, viewerDimensions, pptxZoomPercent)
+        : currentFit
       if (!metrics) return
 
       currentFit = metrics
       applyPptxSlideFit(element, metrics)
+      // The renderer dispatches before appending the slide wrapper. Refit in one microtask after
+      // the append, while coalescing bursts of slide mounts into a single layout pass.
+      queueSlideFit()
     }
   })
   viewerDimensionsRef.current = viewer
+  queueSlideFit = (): void => {
+    if (slideFitQueued) return
+    slideFitQueued = true
+    queueMicrotask(() => {
+      slideFitQueued = false
+      if (viewerDestroyed) return
+      const metrics = applyPptxFit(surface.stage, viewer, pptxZoomPercent)
+      if (metrics) currentFit = metrics
+    })
+  }
+  refitPptx = (): void => {
+    if (!view) {
+      const metrics = applyPptxFit(surface.stage, viewer, pptxZoomPercent)
+      if (metrics) currentFit = metrics
+      return
+    }
+    if (refitFrame !== undefined) return
+    refitFrame = view.requestAnimationFrame(() => {
+      refitFrame = undefined
+      const metrics = applyPptxFit(surface.stage, viewer, pptxZoomPercent)
+      if (metrics) currentFit = metrics
+    })
+  }
   let disposeFit: OfficeRenderCleanup | undefined
   const destroyViewer = (): void => {
+    viewerDestroyed = true
+    slideFitQueued = false
+    if (refitFrame !== undefined) view?.cancelAnimationFrame(refitFrame)
+    refitFrame = undefined
     disposeFit?.()
     disposeFit = undefined
+    disposeReview?.()
+    disposeReview = undefined
     try {
       viewer.destroy()
     } finally {
+      mediaUrlCache.clear()
       clearContainer(container)
     }
   }
@@ -874,18 +1540,41 @@ export const renderOfficeFile = async ({
   try {
     installPptxMediaUrlCache(viewer, mediaUrlCache)
     await viewer.open(toArrayBuffer(bytes), {
-      renderMode: 'list',
-      listOptions: { windowed: true, initialSlides: 4, batchSize: 4 },
+      renderMode: 'slide',
       lazySlides: true,
       lazyMedia: true,
       signal
     })
     reportRendering()
+    const notesPromise = extractPptxNotes(bytes, signal).catch(() => new Map())
     const resolver = requirePptxMediaResolverInternals(viewer.presentationData?.mediaResolver)
     mediaUrlCache.setEvictionHandler((mediaPath) => releaseDecodedPptxMedia(resolver, mediaPath))
-    disposeFit = installPptxFit(container, viewer, (metrics) => {
-      currentFit = metrics
-    })
+    disposeFit = installPptxFit(
+      surface.stage,
+      viewer,
+      (metrics) => {
+        currentFit = metrics
+      },
+      () => pptxZoomPercent
+    )
+    disposeReview = installPptxReviewControls(
+      surface,
+      viewer,
+      () => {
+        trimPptxMediaCache()
+        refitPptx()
+      },
+      notesPromise,
+      {
+        get: () => pptxZoomPercent,
+        set: (percent) => {
+          pptxZoomPercent = percent
+          refitPptx()
+        }
+      },
+      trimPptxMediaCache
+    )
+    trimPptxMediaCache()
   } catch (error) {
     try {
       destroyViewer()

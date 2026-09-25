@@ -187,6 +187,82 @@ describe('createMicromambaRunnerResolver', () => {
     expect(preflight).toHaveBeenCalledTimes(1)
   })
 
+  it('accepts signed bundled bytes after verifying Authenticode instead of comparing the raw digest', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-mm-runner-'))
+    const signed = {
+      ...fixture(root, 'primary', 'signed-primary', sha256('official-primary')),
+      verifySignature: true
+    }
+    const verifySignature = vi.fn(async () => undefined)
+
+    const selected = await createMicromambaRunnerResolver({
+      candidates: [signed],
+      toolsDir: join(root, 'local-tools'),
+      verifySignature,
+      preflight: async () => undefined
+    }).resolve()
+
+    expect(contentsOf(selected)).toBe('signed-primary')
+    expect(verifySignature).toHaveBeenCalledTimes(2)
+    expect(selected).toContain(sha256('signed-primary'))
+  })
+
+  it('rejects changed bundled bytes when Authenticode verification fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-mm-runner-'))
+    const signed = {
+      ...fixture(root, 'primary', 'changed-primary', sha256('official-primary')),
+      verifySignature: true
+    }
+    const compatibility = fixture(root, 'compat', 'compat')
+    const verifySignature = vi.fn(async () => {
+      throw new Error('invalid Authenticode status: NotSigned')
+    })
+    const attempted: string[] = []
+
+    const selected = await createMicromambaRunnerResolver({
+      candidates: [signed, compatibility],
+      toolsDir: join(root, 'local-tools'),
+      verifySignature,
+      preflight: async (path) => {
+        attempted.push(contentsOf(path))
+      }
+    }).resolve()
+
+    expect(contentsOf(selected)).toBe('compat')
+    expect(verifySignature).toHaveBeenCalledOnce()
+    expect(attempted).toEqual(['compat'])
+  })
+
+  it('revalidates the signature when reusing a cached signed selection', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-mm-runner-'))
+    const signed = {
+      ...fixture(root, 'primary', 'signed-primary', sha256('official-primary')),
+      verifySignature: true
+    }
+    const verifySignature = vi.fn(async () => undefined)
+    const toolsDir = join(root, 'local-tools')
+
+    await createMicromambaRunnerResolver({
+      candidates: [signed],
+      toolsDir,
+      verifySignature,
+      preflight: async () => undefined
+    }).resolve()
+    verifySignature.mockClear()
+    const preflight = vi.fn(async () => undefined)
+
+    const selected = await createMicromambaRunnerResolver({
+      candidates: [signed],
+      toolsDir,
+      verifySignature,
+      preflight
+    }).resolve()
+
+    expect(contentsOf(selected)).toBe('signed-primary')
+    expect(preflight).toHaveBeenCalledOnce()
+    expect(verifySignature).toHaveBeenCalledOnce()
+  })
+
   it('tries each candidate once and reports every bounded failure', async () => {
     const root = mkdtempSync(join(tmpdir(), 'os-mm-runner-'))
     const candidates = [fixture(root, 'primary', 'primary'), fixture(root, 'compat', 'compat')]

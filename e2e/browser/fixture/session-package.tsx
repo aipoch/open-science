@@ -17,13 +17,16 @@ import {
   type SessionActionId
 } from '@/pages/workspace/session-action-menu'
 import type { ChatSession } from '@/stores/session-store'
+import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
+import { HomePage } from '@/pages/home/HomePage'
 import type { PackageOperationSnapshot } from '../../../src/shared/session-package'
 import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import zhHans from '../../../src/shared/i18n/locales/zh-Hans.json'
 import {
+  PackageExportProgressButton,
   PackageOperationIndicator,
   SessionPackageOperation
 } from '@/components/SessionPackageOperation'
@@ -185,10 +188,10 @@ if (mode) {
           action: string
           target?: { projectId?: string; projectName?: string }
           requestId?: string
-          bytesPerSecond?: number
+          bytesPerSecond?: number | null
         }) => {
           if (request.action === 'set-speed')
-            operation.transferBytesPerSecond = request.bytesPerSecond
+            operation.transferBytesPerSecond = request.bytesPerSecond ?? undefined
           if (request.action === 'discard-import')
             operation.pendingImports = operation.pendingImports?.filter(
               (file) => file.id !== request.requestId
@@ -219,12 +222,28 @@ if (mode) {
 }
 const menuMode = new URLSearchParams(location.search).has('menu')
 if (menuMode) usePackageOperationStore.getState().setOpen(false)
-const backgroundMode = new URLSearchParams(location.search).has('background')
+const background = new URLSearchParams(location.search)
+const backgroundMode = background.has('background')
+const homeSurface = background.get('surface') === 'home'
+const newConversationSurface = background.get('surface') === 'new-conversation'
 if (backgroundMode) {
+  if (background.get('background') === 'running') {
+    const current = usePackageOperationStore.getState().operation!
+    usePackageOperationStore.getState().receive({
+      ...current,
+      state: 'running',
+      files: undefined,
+      progress: { phase: 'copying', completedBytes: 512, totalBytes: 1024 }
+    })
+  }
   usePackageOperationStore.getState().setOpen(false)
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
+      projectFiles: {
+        getOverview: async () => ({ artifactCount: 0, isIndexComplete: true }),
+        onChanged: () => noop
+      },
       sessions: {
         packageOperation: async (request: { action: string }) => {
           const current = usePackageOperationStore.getState().operation!
@@ -248,6 +267,22 @@ const menuSession: ChatSession = {
   updatedAt: 1
 }
 const noop = (): void => undefined
+if (homeSurface) {
+  useProjectStore.setState({
+    projects: [
+      {
+        id: 'fixture',
+        name: 'Nanomaterials research',
+        description: 'Research workspace',
+        isExample: false,
+        createdAt: 1,
+        updatedAt: Date.now()
+      }
+    ],
+    isLoaded: true
+  })
+  useSessionStore.setState({ sessions: [menuSession] })
+}
 const MenuContents = (): React.JSX.Element => {
   const menu = useActionMenuTarget<SessionActionId>()
   return (
@@ -301,8 +336,17 @@ void localeReady.then(() =>
   createRoot(document.getElementById('root')!).render(
     <>
       {menuMode ? <SessionMenuFixture /> : null}
-      {backgroundMode ? (
+      {backgroundMode && homeSurface ? (
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={noop} />
+      ) : null}
+      {backgroundMode && !homeSurface ? (
         <div className="mx-auto max-w-4xl p-4">
+          <header className="flex items-center gap-3 border-b border-border pb-3">
+            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+              {newConversationSurface ? 'New conversation' : 'Nanomaterials and tumour immunity'}
+            </h1>
+            <PackageExportProgressButton />
+          </header>
           <PackageOperationIndicator />
         </div>
       ) : null}

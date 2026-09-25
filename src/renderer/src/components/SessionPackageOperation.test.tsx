@@ -4,7 +4,11 @@ import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connectio
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { SessionPackageOperation, PackageOperationIndicator } from './SessionPackageOperation'
+import {
+  SessionPackageOperation,
+  PackageExportProgressButton,
+  PackageOperationIndicator
+} from './SessionPackageOperation'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import type { PackageOperationSnapshot } from '../../../shared/session-package'
 
@@ -207,12 +211,14 @@ it('keeps speed settings collapsed and changes the current operation budget', as
   expect(activity).toBeDefined()
   const select = settings.querySelector<HTMLButtonElement>('[role="combobox"]')
   expect(select, 'speed selection uses the shared in-app control').not.toBeNull()
-  expect(select!.textContent).toContain('16.0 MiB/s')
+  expect(select!.textContent).toContain('Auto')
   Element.prototype.scrollIntoView ??= () => undefined
   await act(async () => {
     settings.open = true
     select!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
   })
+  expect(document.body.textContent).toContain('128.0 MiB/s')
+  expect(document.body.textContent).toContain('256.0 MiB/s')
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
     (item) => item.textContent === '4.0 MiB/s'
   )!
@@ -550,7 +556,7 @@ it('selects file contents with a size filter and keeps selection separate from m
   expect(document.body.textContent).toContain('Selected: 0 / 3 files')
 })
 
-it('restores the operation after remount, shows byte progress in background and cancels through the owner', async () => {
+it('keeps a running export in the header and restores detailed progress on demand', async () => {
   const running = {
     ...snapshot,
     state: 'running' as const,
@@ -565,6 +571,7 @@ it('restores the operation after remount, shows byte progress in background and 
   await act(async () =>
     root.render(
       <>
+        <PackageExportProgressButton />
         <PackageOperationIndicator />
         <SessionPackageOperation />
       </>
@@ -575,17 +582,62 @@ it('restores the operation after remount, shows byte progress in background and 
   expect(progress.max).toBe(100)
   act(() => (document.querySelector('[aria-label="Hide progress"]') as HTMLButtonElement).click())
   expect(document.querySelector('[role="dialog"]')).toBeNull()
+  expect(document.querySelector('progress')).toBeNull()
+  expect(document.querySelector('[aria-label="Package progress"]')).toBeNull()
+  const headerButton = document.querySelector<HTMLButtonElement>('button[title="Copying files…"]')!
+  expect(headerButton.getAttribute('aria-label')).toContain('View progress')
+  act(() => headerButton.click())
   expect(document.querySelector('progress')?.value).toBe(50)
   expect(document.querySelector('progress')?.max).toBe(100)
-  act(() =>
-    [...document.querySelectorAll('button')]
-      .find((item) => item.textContent === 'View progress')!
-      .click()
-  )
   await act(async () => button('Cancel').click())
   expect(request).toHaveBeenLastCalledWith({ action: 'cancel', operationId: 'operation-1' })
   act(() => root.render(null))
   expect(remove).toHaveBeenCalledOnce()
+})
+
+it('keeps export input requests and failures discoverable in the header', async () => {
+  const running: PackageOperationSnapshot = {
+    ...snapshot,
+    state: 'running',
+    files: undefined,
+    progress: { phase: 'compressing' }
+  }
+  vi.stubGlobal('api', {
+    sessions: {
+      onPackageOperation: () => () => undefined,
+      packageOperation: vi.fn(async () => running)
+    }
+  })
+  usePackageOperationStore.setState({ operation: running, open: false })
+  await act(async () =>
+    root.render(
+      <>
+        <PackageExportProgressButton />
+        <PackageOperationIndicator />
+        <SessionPackageOperation />
+      </>
+    )
+  )
+  expect(document.querySelector('button[title="Compressing package…"]')).not.toBeNull()
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...running,
+      progress: { phase: 'choosing-location' }
+    })
+  )
+  expect(document.querySelector('button[title="Waiting for a save location…"]')).not.toBeNull()
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...running,
+      state: 'failed',
+      error: 'Disk full'
+    })
+  )
+  const failedButton = document.querySelector<HTMLButtonElement>(
+    'button[title="Package operation failed"]'
+  )!
+  act(() => failedButton.click())
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain('Disk full')
 })
 
 it('keeps import progress available when hidden and waits for cancellation cleanup', async () => {
@@ -614,6 +666,7 @@ it('keeps import progress available when hidden and waits for cancellation clean
   await act(async () =>
     root.render(
       <>
+        <PackageExportProgressButton />
         <PackageOperationIndicator />
         <SessionPackageOperation />
       </>
@@ -625,6 +678,7 @@ it('keeps import progress available when hidden and waits for cancellation clean
   act(() => button('Run in background').click())
   expect(document.querySelector('[role="dialog"]')).toBeNull()
   expect(document.body.textContent).toContain('Importing research…')
+  expect(document.querySelector('button[title="Importing research…"]')).toBeNull()
   act(() => button('View progress').click())
   await act(async () => button('Cancel').click())
   expect(request).toHaveBeenLastCalledWith({ action: 'cancel', operationId: 'import' })
@@ -649,6 +703,7 @@ it('dismisses a completed operation instead of leaving an undismissable floating
   await act(async () =>
     root.render(
       <>
+        <PackageExportProgressButton />
         <PackageOperationIndicator />
         <SessionPackageOperation />
       </>

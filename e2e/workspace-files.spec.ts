@@ -2,6 +2,7 @@ import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { createPreviewPptx } from './fixtures/pptx'
 import { sendPrompt } from './certification/helpers'
 
 const PROJECT_NAME = 'Project files journey'
@@ -396,7 +397,10 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
       })
       .scrollIntoViewIfNeeded()
     const image = page.getByRole('img', { name: `Sanitized message figure ${index}`, exact: true })
-    await image.scrollIntoViewIfNeeded()
+    await image
+      .or(page.getByText(`Sanitized message figure ${index}`, { exact: true }))
+      .first()
+      .evaluate((node) => node.scrollIntoView({ block: 'center' }))
     await expect
       .poll(() =>
         image.evaluate((img: HTMLImageElement) => ({
@@ -725,4 +729,59 @@ test('preserves expanded uploads after saving a file version', async ({ app }, t
   ).toEqual(previousLabels)
   await rows.last().scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath('expanded-uploads-after-save.png') })
+})
+
+test('reviews an uploaded PowerPoint without remounting its paged surface', async ({ app }) => {
+  test.setTimeout(180_000)
+  const fileName = 'preview-fixture.pptx'
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: fileName,
+    mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    buffer: createPreviewPptx()
+  })
+  await expect(page.getByRole('button', { name: `Remove attachment ${fileName}` })).toBeVisible()
+  await sendPrompt(page, 'Review the attached presentation.', 'Deterministic reply:')
+
+  // Present the window before pointer input enters the isolated Office frame. Hidden Windows
+  // BrowserWindows can expose the frame DOM before its compositor accepts mouse input.
+  await app.showMainWindow()
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await page.getByRole('button', { name: `Preview uploaded file ${fileName}`, exact: true }).click()
+  const preview = page.getByRole('dialog', { name: `Preview ${fileName}`, exact: true })
+  await expect(preview).toBeVisible()
+  const host = preview.locator('[data-office-preview-state="ready"]')
+  await expect(host).toBeVisible({ timeout: 90_000 })
+  const officeFrame = page.frameLocator('iframe[data-office-preview-frame]')
+  const counter = officeFrame.locator('.pptx-review-counter')
+  const stage = officeFrame.locator('.pptx-review-stage')
+  await expect(counter).toHaveText('1 / 3')
+  await expect(officeFrame.getByText('Speaker notes for slide 1.', { exact: true })).toBeVisible()
+
+  const root = officeFrame.locator('.pptx-review')
+  await officeFrame.getByRole('button', { name: 'Zoom in' }).click()
+  await expect(officeFrame.getByRole('button', { name: 'Reset zoom' })).toHaveText('125%')
+  await expect(stage).toHaveAttribute('tabindex', '0')
+  await stage.focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(counter).toHaveText('2 / 3')
+  await expect(officeFrame.getByText('Speaker notes for slide 2.', { exact: true })).toBeVisible()
+  await officeFrame.getByRole('button', { name: 'Page 3' }).click()
+  await expect(counter).toHaveText('3 / 3')
+  await expect(officeFrame.getByText('Speaker notes for slide 3.', { exact: true })).toBeVisible()
+
+  await expect
+    .poll(() => stage.evaluate((element) => element.scrollWidth > element.clientWidth))
+    .toBe(true)
+  await expect
+    .poll(() =>
+      officeFrame
+        .locator('.pptx-review-notes')
+        .evaluate((element) => element.getBoundingClientRect().height)
+    )
+    .toBeLessThan(170)
+  await expect(root).toHaveCount(1)
 })

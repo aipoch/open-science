@@ -49,7 +49,7 @@ AIPOCH Open-Science es un entorno de investigación con IA para científicos e i
 
 AIPOCH Open-Science respalda la investigación computacional y con uso intensivo de datos en todas las disciplinas, incluidos el aprendizaje automático, la estadística, las ciencias biológicas, la química, la ciencia de los materiales, la física y las ciencias ambientales. Acompaña todo el proceso de investigación, desde la revisión bibliográfica y el desarrollo de hipótesis hasta la ejecución de código, el análisis de datos, la simulación, la visualización y la producción de resultados rastreables.
 
-> 💡 **[AIPOCH Open-Science v0.33.1 publicado](https://github.com/aipoch/open-science/releases/latest)** _(actualizado por última vez en septiembre de 2026)_. AIPOCH Open-Science v0.33.1 incorpora cribado inteligente de literatura en vivo con pausa y reanudación, dos nuevos conectores de investigación —búsqueda de secuencias HMMER y resultados de trabajos con InterProScan—, más alineamiento múltiple con Clustal Omega en el conector Genomes, además de GPT-6 y Claude Opus 5.5 en los catálogos de proveedores. La evidencia en PDF ahora puede acompañar al primer mensaje de una conversación del workspace, y el diagnóstico de sesiones puede incluir evidencia confidencial de paquetes si lo autorizas. Los runtimes de Python administrados vuelven a funcionar en Windows, las carreras de guardado de notebook y cómputo se recuperan limpiamente, y el puente del agente se reconecta cuando cambian las capacidades de visión. Consulta las [notas de la versión](https://github.com/aipoch/open-science/releases/latest) para más detalles.
+> 💡 **[AIPOCH Open-Science v0.33.2 publicado](https://github.com/aipoch/open-science/releases/latest)** _(actualizado por última vez en septiembre de 2026)_. AIPOCH Open-Science v0.33.2 incorpora instaladores de Windows con firma de código, de modo que la advertencia de SmartScreen en el primer lanzamiento ha desaparecido. El conector de anotación de proteínas añade el análisis de enriquecimiento de interacciones de proteínas de STRING, las vistas previas de fuentes en vivo en el navegador ahora persisten entre visitas, y la delegación conserva los resultados completados aunque fallen las limpiezas. El flujo de trabajo del Figure Composer se actualiza, los iconos de tipo de archivo aparecen en las cabeceras de vista previa, y las descargas apuntan a la página oficial de descarga. Consulta las [notas de la versión más recientes](https://github.com/aipoch/open-science/releases/latest) para más detalles.
 
 <p align="center">
  <img width="1920" height="1140" alt="Banner principal de AIPOCH Open-Science: Science, Open to All — un entorno de investigación de IA científica de código abierto, independiente del modelo y autohospedado" src="../images/readme/open-science-banner.png" />
@@ -75,12 +75,12 @@ AIPOCH Open-Science respalda la investigación computacional y con uso intensivo
 
 Abra la [página oficial de descargas](https://aipoch.com/open-science/download) y elija el instalador para su equipo:
 
-| Su equipo                                 | Elija                                      |
-| ----------------------------------------- | ------------------------------------------ |
-| macOS 12+: Apple Silicon (M1 o posterior) | El DMG de macOS para Apple Silicon / ARM64 |
-| macOS 12+: Intel                          | El DMG de macOS para Intel/x64             |
-| Windows x64                               | El instalador de Windows x64               |
-| Linux x64                                 | El paquete AppImage o Debian de Linux x64  |
+| Su equipo                                 | Elija                                              |
+| ----------------------------------------- | -------------------------------------------------- |
+| macOS 12+: Apple Silicon (M1 o posterior) | El DMG de macOS para Apple Silicon / ARM64         |
+| macOS 12+: Intel                          | El DMG de macOS para Intel/x64                     |
+| Windows x64                               | El instalador de Windows x64 (con firma de código) |
+| Linux x64                                 | El paquete AppImage o Debian de Linux x64          |
 
 Descargue desde la [página oficial de descargas](https://aipoch.com/open-science/download); consulte la [verificación de descargas](../../SECURITY.md#verifying-your-download) si es necesario.
 

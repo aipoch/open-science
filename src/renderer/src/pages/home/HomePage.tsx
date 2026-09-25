@@ -1,5 +1,8 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
+import {
+  PackageExportProgressButton,
+  PackageOperationIndicator
+} from '@/components/SessionPackageOperation'
 /* Hallmark · macrostructure: operational-home-dashboard · genre: modern-minimal · tone: quiet/technical · anchor: teal
  * pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · icons: pass (30)
  * slop: pass (42–49) · mobile: pass (34, 49, 50–57)
@@ -639,7 +642,7 @@ const HomePage = ({
     <TooltipProvider delayDuration={200}>
       <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
         <div className="mx-auto max-w-[1080px] px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
-          <header className="flex items-start justify-between gap-3">
+          <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <a
@@ -695,6 +698,7 @@ const HomePage = ({
                 </button>
               ) : null}
               <NetworkStatusIndicator variant="pill" />
+              <PackageExportProgressButton iconOnly />
               <span className="hidden sm:inline-flex">
                 <GitHubStarBadge variant="home" />
               </span>

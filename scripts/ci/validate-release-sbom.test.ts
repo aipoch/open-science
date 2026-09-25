@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { formatCoverageMarkdown, validateReleaseSbom } from './validate-release-sbom.mjs'
+import { formatCoverageMarkdown, main, validateReleaseSbom } from './validate-release-sbom.mjs'
 
 const temporaryDirectories: string[] = []
 
@@ -74,6 +74,23 @@ describe('release SBOM coverage validator', () => {
     expect(formatCoverageMarkdown(result)).toContain(
       'Custom SBOM composition is required before publication or attestation.'
     )
+  })
+
+  it('fails the advisory validation step when coverage is incomplete', async () => {
+    const files = fixture(['Open-Science', '@prisma/client', 'sharp'])
+    const outputPath = join(dirname(files.sbomPath), 'coverage.json')
+    expect(
+      await main([
+        '--artifact',
+        files.artifactPath,
+        '--sbom',
+        files.sbomPath,
+        '--tag',
+        'v1.2.3',
+        '--output',
+        outputPath
+      ])
+    ).toBe(1)
   })
 
   it('rejects prerelease tags and mismatched final archives', async () => {

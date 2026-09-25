@@ -205,13 +205,19 @@ test('presents waiting, measurable work and cleanup through native progress even
   })
   await dialog.getByText('Transfer details', { exact: true }).click()
   await dialog.getByRole('button', { name: 'Run in background' }).click()
-  const inline = page.getByRole('region', { name: 'Package progress', exact: true })
-  await expect(inline.getByText('37%', { exact: true })).toBeVisible()
+  const compactProgress = page.getByRole('button', {
+    name: 'Export Session package · Copying files… · View progress',
+    exact: true
+  })
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('region', { name: 'Package progress', exact: true })).toHaveCount(0)
+  await expect(compactProgress).toBeVisible()
   await page.screenshot({
     path: testInfo.outputPath('transfer-background-fixture.png'),
     animations: 'disabled'
   })
-  await inline.getByRole('button', { name: 'View progress' }).click()
+  await compactProgress.click()
+  await expect(dialog.getByText('37%', { exact: true })).toBeVisible()
   await app.emitSessionPackageProgress({ ...operation, progress: { phase: 'compressing' } })
   await expect(dialog.getByRole('progressbar')).not.toHaveAttribute('value')
   await page.screenshot({

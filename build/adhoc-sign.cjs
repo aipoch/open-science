@@ -19,26 +19,55 @@
 // step, so the ad-hoc signature survives into the DMG/zip. If a real signing identity is
 // ever configured, electron-builder's signing step overrides this ad-hoc signature.
 const { execFileSync } = require('node:child_process')
+const { Buffer } = require('node:buffer')
 const fs = require('node:fs')
 const path = require('node:path')
+
+// NSIS includes loose native DLLs and Node addons. electron-builder signs EXEs, but does not
+// discover every PE in extraResources or sign .dll/.node files by default. Store submissions
+// require every installed PE to be signed. Preserve signatures already supplied by a vendor.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function isUnsignedPe(file) {
+  const fd = fs.openSync(file, 'r')
+  try {
+    const dos = Buffer.alloc(64)
+    if (
+      fs.readSync(fd, dos, 0, dos.length, 0) !== dos.length ||
+      dos.toString('ascii', 0, 2) !== 'MZ'
+    )
+      return false
+    const peOffset = dos.readUInt32LE(0x3c)
+    const header = Buffer.alloc(256)
+    if (fs.readSync(fd, header, 0, header.length, peOffset) !== header.length) return false
+    if (header.toString('ascii', 0, 4) !== 'PE\0\0') return false
+    const optional = 24
+    const magic = header.readUInt16LE(optional)
+    if (magic !== 0x10b && magic !== 0x20b) return false
+    const directories = optional + (magic === 0x20b ? 112 : 96)
+    const certificate = directories + 4 * 8
+    return header.readUInt32LE(certificate) === 0 || header.readUInt32LE(certificate + 4) === 0
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function* bundledPeFiles(directory) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name)
+    if (entry.isDirectory()) yield* bundledPeFiles(file)
+    else if (entry.isFile() && /\.(exe|dll|node)$/i.test(entry.name)) yield file
+  }
+}
 
 /** @param {import('electron-builder').AfterPackContext} context */
 exports.default = async function adhocSign(context) {
   if (context.electronPlatformName === 'win32') {
-    // electron-builder signs EXEs in app.asar.unpacked, but its extraResources copier skips its
-    // signing transformer for individual source files. These are the copies the installed app runs.
     if (!context.packager.platformSpecificBuildOptions.azureSignOptions) return
-    for (const relativePath of [
-      'resources/micromamba.exe',
-      'resources/micromamba-compat.exe',
-      'resources/notebook-network-sandbox/windows/x64/notebook-appcontainer-host.exe'
-    ]) {
-      const executable = path.join(context.appOutDir, relativePath)
-      if (!fs.existsSync(executable)) {
-        throw new Error(`[windows-sign] missing bundled executable: ${relativePath}`)
-      }
-      await context.packager.signIf(executable)
-      console.log(`[windows-sign] signed bundled executable: ${relativePath}`)
+    for (const file of bundledPeFiles(context.appOutDir)) {
+      if (!isUnsignedPe(file)) continue
+      await context.packager.signIf(file)
+      console.log(`[windows-sign] signed bundled PE: ${path.relative(context.appOutDir, file)}`)
     }
     return
   }

@@ -25,6 +25,11 @@ export type ToolContext = {
   postJson(url: string, body: unknown, options?: { retry?: false }): Promise<unknown>
   // Submit multipart data once and parse JSON; never retry a potentially created job.
   postForm(url: string, body: FormData): Promise<unknown>
+  // Submit multipart data once and return the raw response; useful for APIs whose JSON is
+  // technically non-standard (for example, Enrichr may emit bare Infinity values).
+  postFormText?: (url: string, body: FormData) => Promise<string>
+  // Submit URL-encoded form data once and return the raw response.
+  postUrlEncodedText?: (url: string, body: URLSearchParams) => Promise<string>
   credentials: ConnectorCredentials
 }
 

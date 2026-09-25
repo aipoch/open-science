@@ -1,6 +1,9 @@
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
-import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
+import {
+  PackageExportProgressButton,
+  PackageOperationIndicator
+} from '@/components/SessionPackageOperation'
 import { SessionInfoPopover } from './SessionInfoPopover'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
@@ -447,6 +450,30 @@ type ConversationPanelProps = {
   subagents: ConversationPanelSubagents
 }
 
+const DismissibleConversationError = ({
+  children
+}: {
+  children: React.ReactNode
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const [dismissed, setDismissed] = useState(false)
+  if (dismissed) return null
+
+  return (
+    <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        aria-label={t('Dismiss error')}
+        className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-red-900/40"
+      >
+        <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+      </button>
+      {children}
+    </div>
+  )
+}
+
 // Middle chat surface owns the visible conversation and local message composer UI.
 const ConversationPanel = ({
   view,
@@ -830,6 +857,11 @@ const ConversationPanel = ({
     localizeImageAnnotationSourceError(actionError, t) ??
     localizeVisionRunFailure(actionError, t) ??
     actionError
+  const errorKey = JSON.stringify([
+    activeSession?.id,
+    activeSession?.status === 'error' ? activeSession.error : null,
+    actionError
+  ])
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
     visionRunFailureMessage(activeSession?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
@@ -1262,6 +1294,7 @@ const ConversationPanel = ({
               </Tooltip>
             </TooltipProvider>
           )}
+          <PackageExportProgressButton />
           <NotificationBell className="md:hidden" />
           <button
             type="button"
@@ -1372,15 +1405,15 @@ const ConversationPanel = ({
                     {t('Compacting conversation to fit the context limit…')}
                   </div>
                 ) : resolvedActionError || activeSession?.status === 'error' ? (
-                  <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
+                  <DismissibleConversationError key={errorKey}>
                     {/* Transient action errors and a run failure can coexist; show each on its own row
                         so the run's report affordance is never suppressed by a transient error. */}
                     {resolvedActionError ? (
-                      <span className="min-w-0 break-words">{resolvedActionError}</span>
+                      <span className="min-w-0 break-words pr-6">{resolvedActionError}</span>
                     ) : null}
                     {activeSession?.status === 'error' ? (
                       <div className="flex flex-col items-stretch gap-2">
-                        <span className="min-w-0 break-words">{resolvedRunError}</span>
+                        <span className="min-w-0 break-words pr-6">{resolvedRunError}</span>
                         {/* Actions stay with the run's own error, so the shown and reported text are
                             always the same error. Shown only for an unknown failure — a recognized one
                             (app guidance or a known provider error) keeps its message but is not a bug
@@ -1433,7 +1466,7 @@ const ConversationPanel = ({
                         </button>
                       </div>
                     ) : null}
-                  </div>
+                  </DismissibleConversationError>
                 ) : null}
 
                 {settingsLoaded ? (

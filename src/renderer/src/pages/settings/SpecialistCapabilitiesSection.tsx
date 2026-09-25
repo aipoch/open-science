@@ -297,7 +297,7 @@ const SpecialistCapabilitiesSection = ({
         )
       })
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [connectors, customServers, selectedConnectorIds])
+  }, [connectors, customServers, selectedConnectorIds, t])
 
   const filteredAddableSkills = useMemo(() => {
     const tagged =

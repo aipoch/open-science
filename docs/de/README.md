@@ -49,7 +49,7 @@ AIPOCH Open-Science ist eine KI-Forschungsumgebung für Wissenschaftler und Fors
 
 AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlreichen Disziplinen, darunter maschinelles Lernen, Statistik, Biowissenschaften, Chemie, Materialwissenschaften, Physik und Umweltwissenschaften. Die Umgebung begleitet den Forschungsprozess von der Literaturrecherche und Hypothesenbildung über Codeausführung, Datenanalyse, Simulation und Visualisierung bis zur Erstellung nachvollziehbarer Forschungsergebnisse.
 
-> 💡 **[AIPOCH Open-Science v0.33.1 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert September 2026)_. AIPOCH Open-Science v0.33.1 bringt Live-Screening für smarte Literature-Sammlungen mit Pause und Fortsetzen, zwei neue Forschungs-Connectors – HMMER-Sequenzsuche und InterProScan-Jobergebnisse – sowie Clustal-Omega-Multiple-Sequence-Alignment im Genomes-Konnektor sowie GPT-6 und Claude Opus 5.5 in den Anbieterkatalogen. PDF-Nachweise können jetzt mit der ersten Nachricht eines Workspace-Gesprächs übermittelt werden, und Sitzungsdiagnosen können auf Wunsch vertrauliche Paketnachweise enthalten. Windows-verwaltete Python-Laufzeiten wurden wiederhergestellt, Speicherkonflikte in Notebook und Compute werden sauber aufgelöst, und die Agenten-Brücke baut sich bei geänderten Vision-Fähigkeiten neu auf. Details finden Sie in den [neuesten Release Notes](https://github.com/aipoch/open-science/releases/latest).
+> 💡 **[AIPOCH Open-Science v0.33.2 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert September 2026)_. AIPOCH Open-Science v0.33.2 liefert code-signierte Windows-Installationsprogramme, sodass die SmartScreen-Warnung beim ersten Start entfällt. Der Protein-Annotations-Konnektor erhält eine STRING-PPI-Anreicherungsanalyse, Live-Source-Browser-Vorschauen bleiben zwischen den Besuchen erhalten, und Delegation bewahrt abgeschlossene Ergebnisse über Aufräumfehler hinweg. Der Figure-Composer-Workflow wurde überarbeitet, Dateityp-Symbole erscheinen in Vorschau-Kopfzeilen, und die Downloads verweisen auf die offizielle Download-Seite. Details finden Sie in den [neuesten Release Notes](https://github.com/aipoch/open-science/releases/latest).
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
@@ -75,12 +75,12 @@ AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlrei
 
 Öffnen Sie die [offizielle Download-Seite](https://aipoch.com/open-science/download) und wählen Sie das passende Installationspaket aus:
 
-| Ihr Computer                              | Wählen Sie                                |
-| ----------------------------------------- | ----------------------------------------- |
-| macOS 12+ – Apple Silicon (M1 oder neuer) | Das macOS DMG für Apple Silicon / ARM64   |
-| macOS 12+ – Intel                         | Das macOS DMG für Intel / x64             |
-| Windows x64                               | Das Windows x64-Installationsprogramm     |
-| Linux x64                                 | Das Linux x64 AppImage- oder Debian-Paket |
+| Ihr Computer                              | Wählen Sie                                            |
+| ----------------------------------------- | ----------------------------------------------------- |
+| macOS 12+ – Apple Silicon (M1 oder neuer) | Das macOS DMG für Apple Silicon / ARM64               |
+| macOS 12+ – Intel                         | Das macOS DMG für Intel / x64                         |
+| Windows x64                               | Das Windows x64-Installationsprogramm (code-signiert) |
+| Linux x64                                 | Das Linux x64 AppImage- oder Debian-Paket             |
 
 Laden Sie das Paket von der [offiziellen Download-Seite](https://aipoch.com/open-science/download) herunter; bei Bedarf finden Sie Hinweise unter [Download überprüfen](../../SECURITY.md#verifying-your-download).
 

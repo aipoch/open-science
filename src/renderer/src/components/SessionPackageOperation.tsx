@@ -5,8 +5,18 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@/components/ui/dialog'
-import { Check, ChevronRight, Clock3, Info, LoaderCircle, PackageOpen, X } from 'lucide-react'
+import {
+  Check,
+  ChevronRight,
+  CircleAlert,
+  Clock3,
+  Info,
+  LoaderCircle,
+  PackageOpen,
+  X
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -36,7 +46,7 @@ import type {
 import { PackageFileSelection } from './PackageFileSelection'
 import {
   formatPackageBytes as bytes,
-  PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+  PACKAGE_IO_RATE_OPTIONS
 } from '../../../shared/session-package'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -164,12 +174,66 @@ const PackageProgressMeter = ({
   )
 }
 
+export const PackageExportProgressButton = ({
+  iconOnly = false
+}: {
+  iconOnly?: boolean
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const { operation, open, dismissedId, setOpen } = usePackageOperationStore()
+  if (
+    !operation ||
+    operation.kind !== 'export' ||
+    operation.progress.phase === 'selecting' ||
+    open ||
+    dismissedId === operation.id
+  )
+    return null
+  const { status, waiting, busy } = operationStatus(operation, t)
+  const needsAttention = waiting || operation.cleanupPending
+  const Icon =
+    operation.state === 'failed'
+      ? CircleAlert
+      : needsAttention
+        ? Clock3
+        : operation.state === 'succeeded'
+          ? Check
+          : busy
+            ? LoaderCircle
+            : PackageOpen
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className={cn(
+        'h-8 min-w-8 max-w-40 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground',
+        iconOnly && 'size-9 max-w-none p-0'
+      )}
+      aria-label={`${iconOnly ? `${t('Export Session package')} · ` : ''}${status} · ${t('View progress')}`}
+      title={iconOnly ? `${t('Export Session package')} · ${status}` : status}
+      onClick={() => setOpen(true)}
+    >
+      <Icon
+        className={`size-4 shrink-0 ${needsAttention ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : operation.state === 'failed' ? 'text-status-failure-foreground' : operation.state === 'succeeded' ? 'text-status-success-foreground' : 'text-primary'} ${busy && !needsAttention ? 'animate-spin motion-reduce:animate-none' : ''}`}
+        aria-hidden="true"
+      />
+      {!iconOnly ? <span className="hidden truncate lg:inline">{status}</span> : null}
+    </Button>
+  )
+}
+
 export const PackageOperationIndicator = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const { operation, open, dismissedId, setOpen, dismiss } = usePackageOperationStore()
   const [cancellingId, setCancellingId] = useState<string>()
   const [cancelError, setCancelError] = useState<{ id: string; message: string }>()
-  if (!operation || open || dismissedId === operation.id) return null
+  if (
+    !operation ||
+    open ||
+    dismissedId === operation.id ||
+    (operation.kind === 'export' && operation.progress.phase !== 'selecting')
+  )
+    return null
   const active = packageOperationActive(operation)
   const cancelling = cancellingId === operation.id || operation.state === 'cancelling'
   const configuringExport = operation.kind === 'export' && operation.state === 'awaiting-selection'
@@ -413,15 +477,17 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
               </TooltipProvider>
             </div>
             <Select
-              value={String(
-                operation.transferBytesPerSecond ?? PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
-              )}
+              value={
+                operation.transferBytesPerSecond === undefined
+                  ? 'auto'
+                  : String(operation.transferBytesPerSecond)
+              }
               disabled={operation.state === 'cancelling'}
               onValueChange={(value) =>
                 void respond({
                   action: 'set-speed',
                   operationId: operation.id,
-                  bytesPerSecond: Number(value)
+                  bytesPerSecond: value === 'auto' ? null : Number(value)
                 })
               }
             >
@@ -433,9 +499,10 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {[4, 16, 64].map((rate) => (
-                  <SelectItem key={rate} value={String(rate * 1024 ** 2)}>
-                    {t('{{speed}}/s', { speed: bytes(rate * 1024 ** 2) })}
+                <SelectItem value="auto">{t('Auto')}</SelectItem>
+                {PACKAGE_IO_RATE_OPTIONS.map((rate) => (
+                  <SelectItem key={rate} value={String(rate)}>
+                    {t('{{speed}}/s', { speed: bytes(rate) })}
                   </SelectItem>
                 ))}
               </SelectContent>

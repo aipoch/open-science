@@ -38,6 +38,8 @@ const PROCESS_TIMEOUT_MS = 120_000
 const STARTUP_TIMEOUT_MS = 60_000
 const SHUTDOWN_TIMEOUT_MS = 60_000
 const HTTP_REQUEST_TIMEOUT_MS = 15_000
+// Keep the installer smoke step's 10-minute CI budget for launch, migrations, and shutdown too.
+const NOTEBOOK_ENV_PROVISION_TIMEOUT_MS = 8 * 60_000
 const TERMINATION_TIMEOUT_MS = 10_000
 const MCP_REQUEST_TIMEOUT_MS = 30_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-'
@@ -141,6 +143,40 @@ const requestPackagedAppShutdown = async (endpoint, auth, fetchImpl = fetchWithT
     throw new Error(
       `Installed app shutdown returned HTTP ${response.status}.${body ? ` ${body}` : ''}`
     )
+  }
+}
+
+const runPackagedNotebookEnvironmentSmoke = async (
+  endpoint,
+  auth,
+  fetchImpl = fetchWithTimeout
+) => {
+  const response = await fetchImpl(
+    `${endpoint}/rpc/notebook-env:provision?${auth}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        protocolVersion: 1,
+        args: ['python', `installer-smoke-${randomUUID()}`]
+      })
+    },
+    NOTEBOOK_ENV_PROVISION_TIMEOUT_MS
+  )
+  const body = await response.text()
+  if (!response.ok) {
+    throw new Error(
+      `Packaged Notebook environment provisioning returned HTTP ${response.status}. ${body}`
+    )
+  }
+  let result
+  try {
+    result = JSON.parse(body)
+  } catch {
+    throw new Error(`Packaged Notebook environment provisioning returned invalid JSON: ${body}`)
+  }
+  if (result?.protocolVersion !== 1 || result?.ok !== true) {
+    throw new Error(`Packaged Notebook environment provisioning failed: ${body}`)
   }
 }
 
@@ -928,7 +964,8 @@ const launchAndProbe = async ({
   legacyConfigRoots,
   verifyLedger = false,
   expectedMigrationCount,
-  onSqliteVersion
+  onSqliteVersion,
+  exerciseNotebookRuntime = false
 }) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
 
@@ -970,6 +1007,7 @@ const launchAndProbe = async ({
       legacyConfigRoots
     })
 
+    if (exerciseNotebookRuntime) await runPackagedNotebookEnvironmentSmoke(endpoint, auth)
     await requestPackagedAppShutdown(endpoint, auth)
     const exitCode = await waitForShutdownExit(exit, child, output)
     if (exitCode !== 0) throw new Error(`Installed app exited with ${exitCode}.\n${output()}`)
@@ -1149,7 +1187,8 @@ const installAndProbe = async ({
     legacyConfigRoots,
     verifyLedger: phase !== 'previous',
     expectedMigrationCount,
-    onSqliteVersion
+    onSqliteVersion,
+    exerciseNotebookRuntime: phase === 'current'
   })
 }
 
@@ -1193,7 +1232,8 @@ const installOverRunningApp = async ({
     legacyConfigRoots,
     verifyLedger: true,
     expectedMigrationCount,
-    onSqliteVersion
+    onSqliteVersion,
+    exerciseNotebookRuntime: phase === 'current'
   })
 }
 
@@ -1834,6 +1874,7 @@ export {
   parsePackagedAppEndpoint,
   readPackagedAppConfigRoot,
   requestPackagedAppShutdown,
+  runPackagedNotebookEnvironmentSmoke,
   removeWslCommandTempEvidence,
   releasedMigrationCountForPhase,
   runProcess,

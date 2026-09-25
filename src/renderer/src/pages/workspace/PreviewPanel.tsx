@@ -680,7 +680,7 @@ const PreviewFilePanel = ({
         className={
           isFullScreenOpen
             ? dialogPanelClassName(
-                'z-[61] flex h-[90vh] w-[90vw] max-w-none min-h-0 flex-col overflow-hidden overscroll-contain p-0'
+                'z-[61] box-border flex h-[90vh] w-[90vw] max-h-[calc(100svh-2rem)] max-w-[calc(100vw-2rem)] min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain p-0'
               )
             : cn(
                 'flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card'
@@ -768,7 +768,7 @@ const PreviewToolPanel = ({
         className={
           isExpanded
             ? dialogPanelClassName(
-                'z-[56] flex h-[90vh] w-[90vw] max-w-none min-h-0 flex-col overflow-hidden overscroll-contain p-0'
+                'z-[56] box-border flex h-[90vh] w-[90vw] max-h-[calc(100svh-2rem)] max-w-[calc(100vw-2rem)] min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain p-0'
               )
             : 'scrollbar-auto-hide h-full min-h-0 w-full overflow-y-auto'
         }
@@ -925,7 +925,7 @@ const PreviewPanelSurface = ({
       <aside
         id="right-panel"
         className={cn(
-          'relative flex h-full w-full flex-col overflow-hidden bg-bg-10 py-[0.7px]',
+          'relative flex h-full min-w-0 w-full flex-col overflow-hidden bg-bg-10 py-[0.7px]',
           className
         )}
       >
@@ -976,7 +976,7 @@ const PreviewPanelSurface = ({
         ) : null}
         <div
           className={cn(
-            'min-h-0 flex-1',
+            'min-h-0 min-w-0 flex-1',
             (activeItem?.type === 'file' || activeItem?.type === 'source') && 'pl-2 pr-1'
           )}
         >

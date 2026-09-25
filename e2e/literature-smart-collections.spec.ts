@@ -53,10 +53,55 @@ test('creates a smart collection without a model and preserves the setup path', 
   await page.getByRole('button', { name: 'Smart collections', exact: true }).click()
   await expect(
     page.getByText(
-      'Shared by all smart collections. Choose a model independently of automatic capability selection; no model is selected by default.'
+      'Shared by all smart collections. You can choose a different model from automatic capability selection.'
     )
   ).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('smart-collection-model-help.png') })
+})
+
+test('selects the first classification model for both features after saving a provider', async ({
+  app
+}, testInfo) => {
+  const { createServer } = await import('node:http')
+  const service = createServer((_request, response) => {
+    response.setHeader('Content-Type', 'application/json')
+    response.end(
+      JSON.stringify({
+        model: 'fixture',
+        answers: { test: { type: 'noul', noul: 1 } },
+        usage: { input_tokens: 3, output_tokens: 1 }
+      })
+    )
+  })
+  await new Promise<void>((resolve) => service.listen(0, '127.0.0.1', resolve))
+  try {
+    const port = (service.address() as { port: number }).port
+    const page = await app.completeOnboarding()
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    await page.getByRole('button', { name: 'Model settings' }).click()
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    await settings.getByRole('tab', { name: 'Classification models' }).click()
+    await settings.getByText('Add service').click()
+    await settings.getByRole('combobox', { name: 'Provider' }).press('Enter')
+    await page.getByRole('option', { name: 'Custom HTTP service' }).click()
+    await settings.getByLabel('Service name').fill('Test classifier')
+    await settings.getByLabel('Endpoint URL').fill(`http://127.0.0.1:${port}`)
+    await settings.getByLabel('Model', { exact: true }).fill('fixture')
+    await settings.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(settings.getByRole('heading', { name: 'Test classifier' })).toBeVisible()
+    await expect(
+      settings.getByRole('combobox', { name: 'Automatic capability selection' })
+    ).toHaveText('Test classifier / fixture')
+    await expect(settings.getByRole('combobox', { name: 'Smart collections' })).toHaveText(
+      'Test classifier / fixture'
+    )
+    await page.screenshot({ path: testInfo.outputPath('classification-model-auto-selected.png') })
+  } finally {
+    service.closeAllConnections()
+    await new Promise<void>((resolve, reject) =>
+      service.close((error) => (error ? reject(error) : resolve()))
+    )
+  }
 })
 
 test('opens the Library table named by a smart collection scope', async ({ app }, testInfo) => {
@@ -289,6 +334,7 @@ test('reviews classified papers in the library table using a local fixture servi
           )
       )
       .toBe('completed')
+    await page.getByRole('button', { name: 'Back to results', exact: true }).click()
     await expect(
       page.getByText('Randomized trial of rehabilitation after stroke', { exact: true })
     ).toBeVisible()
@@ -721,6 +767,8 @@ test('reviews classified papers in the library table using a local fixture servi
     await page.getByRole('menuitem', { name: 'Re-evaluate all', exact: true }).click()
     await panel.getByRole('button', { name: 'Re-evaluate all', exact: true }).click()
     await expect(page.getByRole('progressbar', { name: 'Re-evaluate', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Pause analysis', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: 'Back to results', exact: true }).click()
     await expect(page.locator('tbody tr')).toHaveText(savedTitles)
     await expect(
       page.getByRole('tab', { name: 'Included 2', exact: true, includeHidden: true })
@@ -732,7 +780,6 @@ test('reviews classified papers in the library table using a local fixture servi
         .first()
         .getByRole('button', { name: 'Evaluation details', exact: true })
     ).toBeEnabled()
-    await expect(page.getByRole('button', { name: 'Stop analysis', exact: true })).toBeEnabled()
     expect(Math.abs((await page.locator('table').boundingBox())!.y - savedTableTop)).toBeLessThan(2)
     expect(
       Math.abs(
@@ -772,12 +819,13 @@ test('reviews classified papers in the library table using a local fixture servi
     await page.getByRole('menuitem', { name: 'Re-evaluate all', exact: true }).click()
     await panel.getByRole('button', { name: 'Re-evaluate all', exact: true }).click()
     await expect.poll(() => classifiedInputs.length).toBeGreaterThan(inputsBeforeStop)
-    await page.getByRole('button', { name: 'Stop analysis', exact: true }).click()
+    await page.getByRole('button', { name: 'Pause analysis', exact: true }).click()
     await expect(panel.getByText(/Stopping analysis…|Stopped/)).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('smart-analysis-stopping.png') })
     releaseClassification!()
     holdClassification = undefined
     await expect(page.getByRole('progressbar', { name: 'Re-evaluate', exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Back to results', exact: true }).click()
     await expect(page.getByRole('tab', { name: /^Included / })).toBeEnabled()
     failClassification = true
     await panel.getByRole('button', { name: 'Collection actions', exact: true }).click()
@@ -790,10 +838,12 @@ test('reviews classified papers in the library table using a local fixture servi
       })
     ).toBeVisible()
     await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Back to results', exact: true }).click()
     await page.getByRole('tab', { name: 'Not evaluated 4', exact: true }).click()
     await page.screenshot({ path: testInfo.outputPath('smart-failure-recovery.png') })
     failClassification = false
     await panel.getByRole('button', { name: 'Retry', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to results', exact: true }).click()
     await expect(page.getByRole('tab', { name: 'Included 2', exact: true })).toBeVisible()
     await page.evaluate(
       async ({ id, item }) => {
@@ -972,7 +1022,7 @@ test('reviews classified papers in the library table using a local fixture servi
       .getByRole('dialog', { name: 'Re-evaluate selected', exact: true })
       .getByRole('button', { name: 'Re-evaluate selected', exact: true })
       .click()
-    await expect(page.getByRole('button', { name: 'Stop analysis', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Pause analysis', exact: true })).toBeEnabled()
     await expect(page.locator('tbody tr')).toHaveCount(100)
     const stableRow = await page.locator('tbody tr').first().elementHandle()
     const batchInteractionMs: number[] = []
@@ -1006,10 +1056,10 @@ test('reviews classified papers in the library table using a local fixture servi
     })
     expect(await stableRow!.evaluate((row) => row.isConnected)).toBe(true)
     await expect(page.locator('tbody tr')).toHaveCount(100)
-    await page.getByRole('button', { name: 'Stop analysis', exact: true }).click()
+    await page.getByRole('button', { name: 'Pause analysis', exact: true }).click()
     releaseClassification?.()
     holdClassification = undefined
-    await expect(page.getByRole('button', { name: 'Stop analysis', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Pause analysis', exact: true })).toHaveCount(0)
 
     // Use a separate seven-paper scope so recovery retries cannot evaluate the capacity library.
     const recovery = await page.evaluate(
@@ -1080,7 +1130,7 @@ test('reviews classified papers in the library table using a local fixture servi
       )
     await expect.poll(async () => (await readRecovery(page)).matches).toBe(2)
     // Progress remains interactive and the displayed rows do not get replaced by each checkpoint.
-    await expect(page.getByRole('button', { name: 'Stop analysis', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Pause analysis', exact: true })).toBeEnabled()
     await page.getByRole('button', { name: 'Collection rule', exact: true }).click()
     await expect(page.getByText('Original trials', { exact: true })).toBeVisible()
     const beforeCrash = await readRecovery(page)

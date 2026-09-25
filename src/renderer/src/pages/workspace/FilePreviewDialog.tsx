@@ -173,7 +173,7 @@ const FilePreviewDialog = ({
               if (!open && event.target === event.currentTarget) releaseBackgroundIsolation()
             }}
             className={dialogPanelClassName(
-              'z-[60] flex h-[90vh] w-[90vw] max-w-none overflow-hidden overscroll-contain p-0'
+              'z-[60] box-border flex h-[90vh] w-[90vw] max-h-[calc(100svh-2rem)] max-w-[calc(100vw-2rem)] min-h-0 min-w-0 overflow-hidden overscroll-contain p-0'
             )}
           >
             <Dialog.Title className="sr-only">
@@ -206,7 +206,7 @@ const FilePreviewDialog = ({
                 }
               }}
             >
-              <div className="flex size-full min-h-0 min-w-0">
+              <div className="flex size-full min-h-0 min-w-0 overflow-hidden">
                 {dialogItem ? (
                   <PreviewFileSurface
                     ref={previewSurfaceRef}

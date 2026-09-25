@@ -205,6 +205,35 @@ it('does not accept a successful HTTP status without the validation answer', asy
   expect(result.validation).toMatchObject({ ok: false, category: 'unknown' })
   expect((await repository.getSettings()).classification).toBeUndefined()
 })
+it('selects the first validated service for both features without overriding later choices', async () => {
+  const first = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'typesafe',
+    name: 'First service',
+    apiKey: 'secret-api-key'
+  })
+  const binding = { serviceId, modelId: 'jev-latest' }
+  expect(first.capabilitySelection).toEqual(binding)
+  expect(first.smartCollections).toEqual(binding)
+  expect(
+    (await new ClassificationSettingsOwner(new SettingsRepository(dir)).snapshot()).smartCollections
+  ).toEqual(binding)
+
+  await owner.mutate({ revision: 1, kind: 'bind' })
+  await owner.mutate({ revision: 2, kind: 'bind', feature: 'smart-collections' })
+  const second = await owner.mutate({
+    revision: 3,
+    kind: 'save',
+    id: otherServiceId,
+    adapter: 'typesafe',
+    name: 'Second service',
+    apiKey: 'another-secret-key'
+  })
+  expect(second.capabilitySelection).toBeUndefined()
+  expect(second.smartCollections).toBeUndefined()
+})
 it('preserves historical unconfigured behavior and never registers a chat provider', async () => {
   expect(await owner.snapshot()).toEqual({ revision: 0, services: [], availableProviders: [] })
   expect(await owner.selectSkills(request())).toBeUndefined()
@@ -989,6 +1018,7 @@ const choiceResponse = (changes: Record<string, unknown> = {}): Response =>
   )
 it('does not use capability selection as authorization to classify literature', async () => {
   await configure()
+  await owner.mutate({ revision: 2, kind: 'bind', feature: 'smart-collections' })
   await expect(owner.classifyLiterature(literatureRequest())).rejects.toThrow('not configured')
   expect(fetchMock).not.toHaveBeenCalled()
 })

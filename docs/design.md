@@ -671,11 +671,12 @@ The upper-right pin toggles the current Session through the shared Session contr
   viewport use `bg-text-000`; off-screen segments remain gray. Multiple visible segments may be dark
   at once, including a visible response whose prompt has scrolled off-screen. Scrolling and content
   resizing refresh this highlight independently of pointer hover.
-  Pointer hover or keyboard focus emphasizes one mark and tapers nearby segments by distance; the
-  segments use a 20px pitch for short lists, tightening to a minimum of 12px as the list grows,
-  with 200ms transform easing and reduced-motion support. Colors
+  Pointer position drives a continuous wave across four neighboring marks on each side, using a
+  cosine falloff and 200ms transform easing. Keyboard focus centers the wave on the focused mark.
+  All lists use a dense 8px pitch with fixed hit geometry and reduced-motion support; pointer updates
+  are coalesced to one per animation frame within the rail. Colors
   update immediately. The rail clips overflow at 480px (or the available window height), never
-  compresses marks below 12px, and follows transcript reading progress only when the current mark reaches a
+  compresses marks below 8px, and follows transcript reading progress only when the current mark reaches a
   visible edge. The rail does not scroll independently on wheel or touch input; keyboard focus can
   still reveal a clipped mark. Its outer frame stays fixed at the conversation panel midpoint so
   bottom approval or permission surfaces do not shift it. The current Run remains available through
