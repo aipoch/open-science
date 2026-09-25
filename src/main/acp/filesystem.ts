@@ -54,10 +54,20 @@ const assertAuthorizedPath = async (
 
   for (const root of grantedRoots) {
     if (requiredAccess === 'rw' && root.access !== 'rw') continue
+    const configuredRoot = resolve(root.path)
     let physicalRoot: string
     try {
-      physicalRoot = await resolvePhysicalPath(resolve(root.path))
+      physicalRoot = await resolvePhysicalPath(configuredRoot)
     } catch {
+      continue
+    }
+    // The grant stores the canonical directory captured at grant time. If the directory entry is
+    // later replaced by a symlink or junction, fail closed instead of rebinding the grant to the
+    // replacement target.
+    if (
+      !isPathInsideWorkspace(configuredRoot, physicalRoot) ||
+      !isPathInsideWorkspace(physicalRoot, configuredRoot)
+    ) {
       continue
     }
     if (isPathInsideWorkspace(physicalRoot, physicalPath)) {

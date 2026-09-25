@@ -170,6 +170,31 @@ describe('ACP workspace filesystem adapter', () => {
     await expect(readFile(filePath, 'utf8')).resolves.toBe('saved')
   })
 
+  it('rejects a granted root that is replaced by an external link', async () => {
+    workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-'))
+    const grantedRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-granted-'))
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-outside-'))
+    const filePath = join(grantedRoot, 'notes.txt')
+    const outsideFile = join(outsideRoot, 'notes.txt')
+    await writeFile(outsideFile, 'outside secret', 'utf8')
+    await rm(grantedRoot, { recursive: true, force: true })
+    await symlink(outsideRoot, grantedRoot, process.platform === 'win32' ? 'junction' : 'dir')
+
+    try {
+      await expect(
+        readWorkspaceTextFile(
+          workspaceRoot,
+          { sessionId: 'session-1', path: filePath },
+          [],
+          [{ path: grantedRoot, access: 'ro' }]
+        )
+      ).rejects.toThrow(/outside the active ACP workspace/)
+    } finally {
+      await rm(grantedRoot, { recursive: true, force: true })
+      await rm(outsideRoot, { recursive: true, force: true })
+    }
+  })
+
   it.skipIf(process.platform === 'win32')(
     'rejects a read when the authorized file is replaced by an external symlink',
     async () => {
