@@ -1456,6 +1456,7 @@ export class LiteratureSmartCollections {
               release?.()
               release = undefined
               this.active.delete(id)
+              if (resumeAutomatic) this.changed(id)
               return { kind: 'collection', id }
             }
             controller.signal.throwIfAborted()

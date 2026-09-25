@@ -3077,6 +3077,7 @@ it('does not resume an older automatic run after a newer manual run completes', 
   await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
   const latestId = (await owner.view(id)).run!.id
   const calls = classify.mock.calls.length
+  const notifications = changed.mock.calls.length
 
   await owner.execute({
     kind: 'smart-collection',
@@ -3087,6 +3088,7 @@ it('does not resume an older automatic run after a newer manual run completes', 
 
   expect((await owner.view(id)).run?.id).toBe(latestId)
   expect((await owner.view(id)).automaticPauseReason).toBeUndefined()
+  expect(changed).toHaveBeenCalledTimes(notifications + 1)
   expect(classify).toHaveBeenCalledTimes(calls)
   expect(await db.literatureSmartRun.findUniqueOrThrow({ where: { id: runId } })).toMatchObject({
     state: 'cancelled'
