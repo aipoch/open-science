@@ -1,7 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
@@ -764,4 +764,53 @@ describe('AcpAgentConnectionAdapter', () => {
     await rm(workspace, { recursive: true, force: true })
     await rm(grantedRoot, { recursive: true, force: true })
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a granted-folder write through a dangling symlink to an external file',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'acp-dangling-link-'))
+      const workspace = join(root, 'workspace')
+      const grantedRoot = join(root, 'granted')
+      const externalFile = join(root, 'outside.txt')
+      const linkedFile = join(grantedRoot, 'result.txt')
+      let close: (() => Promise<void>) | undefined
+      let agentConnection: acp.AgentConnection | undefined
+      try {
+        await mkdir(workspace)
+        await mkdir(grantedRoot)
+        await symlink(externalFile, linkedFile, 'file')
+        const process = new FakeAgentProcess()
+        agentConnection = acp
+          .agent({ name: 'dangling-link-agent' })
+          .connect(
+            acp.ndJsonStream(
+              Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+              Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+            )
+          )
+        const opened = await openConnection(process, {
+          ...hooks(),
+          filesystem: {
+            resolveSessionCwd: () => workspace,
+            protectedReadRoots: () => [],
+            listGrantedRoots: async () => [{ path: grantedRoot, access: 'rw' }]
+          }
+        })
+        close = opened.close
+
+        await expect(
+          agentConnection.client.request(acp.methods.client.fs.writeTextFile, {
+            sessionId: 'provider-session',
+            path: linkedFile,
+            content: 'must not escape'
+          })
+        ).rejects.toMatchObject({ code: -32603 })
+        await expect(readFile(externalFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await close?.()
+        agentConnection?.close()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 })

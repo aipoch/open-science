@@ -5,7 +5,7 @@ import type {
   WriteTextFileResponse
 } from '@agentclientprotocol/sdk'
 import { createReadStream } from 'node:fs'
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import type { GrantedLocalRoot } from '../../shared/local-fs'
@@ -20,6 +20,17 @@ const resolvePhysicalPath = async (candidatePath: string): Promise<string> => {
     return await realpath(candidatePath)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    // A dangling symlink is an existing path whose target is missing. Do not treat it as a new
+    // file: writeFile would follow the link if its target appeared later, escaping the authorized
+    // root. A genuinely missing path still falls through to its nearest existing parent.
+    try {
+      const stats = await lstat(candidatePath)
+      if (stats.isSymbolicLink()) {
+        throw new Error(`Cannot authorize a dangling symbolic link: ${candidatePath}`)
+      }
+    } catch (lstatError) {
+      if ((lstatError as NodeJS.ErrnoException).code !== 'ENOENT') throw lstatError
+    }
     const parent = dirname(candidatePath)
     if (parent === candidatePath) return resolve(candidatePath)
     const physicalParent = await resolvePhysicalPath(parent)
