@@ -129,6 +129,8 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "此會話研究套件需要較新版本的 Open Science。請更新 Open Science 後重新匯入。"
   },
   "renderer": {
+    "Remembered for this project": "在此專案中記住授權",
+    "Remembered across all projects": "在所有專案中記住授權",
     "Try again when the connection is available, or close this dialog.": "連線恢復後可重試，也可以關閉此對話框。",
     "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "已安裝的 Claude Code CLI 不相容或無法驗證其版本。請將 Claude Code 更新至 2.1.118 或更新版本，然後在設定中重新偵測。",
     "Other classification tokens": "其他分類詞元",

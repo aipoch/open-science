@@ -1,3 +1,4 @@
+import { ApprovalBroker } from '../../../../main/connectors/approval-broker'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -12,6 +13,36 @@ const realRespondApproval = useSettingsStore.getState().respondApproval
 let container: HTMLDivElement
 let root: Root
 
+const allowAtScope = (label: string): void => {
+  if (label === 'Deny') {
+    act(() => button('Deny')!.click())
+    return
+  }
+  const menuLabel =
+    label === 'This session'
+      ? 'This conversation'
+      : label === 'Always'
+        ? 'Global'
+        : label === 'Allow once'
+          ? 'Once'
+          : label
+  const primary =
+    menuLabel === 'Once'
+      ? 'Allow once'
+      : menuLabel === 'This conversation'
+        ? 'Allow for this conversation'
+        : menuLabel === 'This project'
+          ? 'Allow for this project'
+          : 'Allow globally'
+  if (!button(primary)) {
+    act(() => button('Choose authorization scope')!.click())
+    const option = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).find((item) => item.querySelector('span')?.textContent === menuLabel)
+    act(() => option!.click())
+  }
+  act(() => button(primary)!.click())
+}
 beforeEach(() => {
   useSettingsStore.setState({
     ...createInitialSettingsState(),
@@ -131,10 +162,10 @@ describe('ConnectorApprovalDialog', () => {
     expect(document.body.querySelector('[role="dialog"]')?.className).toContain('overflow-y-auto')
     expect(button('Deny')?.getAttribute('data-slot')).toBe('button')
     expect(button('Deny')?.getAttribute('data-variant')).toBe('destructive')
-    expect(button('This session')?.getAttribute('data-variant')).toBe('outline')
-    expect(button('This project')?.getAttribute('data-variant')).toBe('outline')
-    expect(button('Global')?.getAttribute('data-variant')).toBe('outline')
-    expect(button('Allow once')?.getAttribute('data-variant')).toBe('default')
+    expect(button('Allow for this conversation')).toBeDefined()
+    expect(button('Choose authorization scope')).toBeDefined()
+    expect(button('This project')).toBeUndefined()
+    expect(button('Global')).toBeUndefined()
     expect(document.body.querySelector('[role="dialog"]')?.className).toContain(
       'overscroll-contain'
     )
@@ -214,7 +245,7 @@ describe('ConnectorApprovalDialog', () => {
     })
     act(() => root.render(<ConnectorApprovalDialog />))
 
-    act(() => button('Allow once')?.click())
+    allowAtScope('Allow once')
     expect(useSettingsStore.getState().respondApproval).toHaveBeenCalledWith('r1', 'once')
     expect(useSettingsStore.getState().setConnectorAutoAllow).not.toHaveBeenCalled()
   })
@@ -235,7 +266,7 @@ describe('ConnectorApprovalDialog', () => {
       })
       act(() => root.render(<ConnectorApprovalDialog />))
 
-      act(() => button(label)?.click())
+      allowAtScope(label)
       expect(useSettingsStore.getState().respondApproval).toHaveBeenCalledWith('r1', scope)
       expect(useSettingsStore.getState().setConnectorAutoAllow).not.toHaveBeenCalled()
     }
@@ -258,7 +289,7 @@ describe('ConnectorApprovalDialog', () => {
     })
     act(() => root.render(<ConnectorApprovalDialog />))
 
-    act(() => button(label)?.click())
+    allowAtScope(label)
 
     expect(useSettingsStore.getState().respondApproval).not.toHaveBeenCalled()
     expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(scopePhrase)
@@ -284,7 +315,7 @@ describe('ConnectorApprovalDialog', () => {
     const second = { ...first, id: 'r2' }
     useSettingsStore.setState({ pendingApprovals: [first] })
     act(() => root.render(<ConnectorApprovalDialog />))
-    act(() => button('This project')?.click())
+    allowAtScope('This project')
 
     act(() => useSettingsStore.setState({ pendingApprovals: [second] }))
 
@@ -334,11 +365,11 @@ describe('ConnectorApprovalDialog', () => {
     })
     act(() => root.render(<ConnectorApprovalDialog />))
 
-    act(() => button('Allow once')?.click())
+    allowAtScope('Allow once')
 
     expect(button('Close')?.disabled).toBe(false)
     expect(button('Deny')?.disabled).toBe(true)
-    expect(button('This session')?.disabled).toBe(true)
+    expect(button('Choose authorization scope')?.disabled).toBe(true)
     expect(button('Allow once')?.disabled).toBe(true)
     expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-busy')).toBe('true')
 
@@ -352,7 +383,7 @@ describe('ConnectorApprovalDialog', () => {
     )
     expect(button('Allow once')?.disabled).toBe(false)
 
-    act(() => button('Allow once')?.click())
+    allowAtScope('Allow once')
     expect(respondApproval).toHaveBeenCalledTimes(2)
   })
 
@@ -384,7 +415,7 @@ describe('ConnectorApprovalDialog', () => {
     })
     act(() => root.render(<ConnectorApprovalDialog />))
 
-    act(() => button('Allow once')?.click())
+    allowAtScope('Allow once')
     await act(async () => {
       rejectResponse(new Error('IPC unavailable'))
       await Promise.resolve()
@@ -465,4 +496,64 @@ it('closes an idle request immediately and sends one cancellation through the re
   expect(command).toHaveBeenCalledExactlyOnceWith({ id: pending.id, decision: 'deny' })
   expect(useSettingsStore.getState().pendingApprovals).toEqual([])
   expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+})
+
+it('resets the scope for a new agent request and changing scope does not approve', () => {
+  const first = {
+    id: 'first',
+    sessionId: 'session-a',
+    connector: 'biomart',
+    method: 'get_data',
+    argsPreview: '{}',
+    availableScopes: ['once', 'session', 'project', 'global'] as const
+  }
+  useSettingsStore.setState({
+    pendingApprovals: [{ ...first, availableScopes: [...first.availableScopes] }]
+  })
+  act(() => root.render(<ConnectorApprovalDialog />))
+  expect(button('Allow for this conversation')).toBeDefined()
+  act(() => button('Choose authorization scope')!.click())
+  const project = Array.from(
+    document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+  ).find((item) => item.querySelector('span')?.textContent === 'This project')!
+  act(() => project.click())
+  expect(button('Allow for this project')).toBeDefined()
+  expect(useSettingsStore.getState().respondApproval).not.toHaveBeenCalled()
+  act(() =>
+    useSettingsStore.setState({
+      pendingApprovals: [
+        {
+          ...first,
+          id: 'second',
+          sessionId: 'session-b',
+          availableScopes: [...first.availableScopes]
+        }
+      ]
+    })
+  )
+  expect(button('Allow for this conversation')).toBeDefined()
+  expect(button('Allow for this project')).toBeUndefined()
+})
+
+it('closing settles only the matching agent call as denied', async () => {
+  let sequence = 0
+  const broker = new ApprovalBroker({
+    generateId: () => `agent-${++sequence}`,
+    broadcast: (request) => useSettingsStore.getState().enqueueApproval(request),
+    onSettled: (id) => useSettingsStore.getState().dismissApproval(id)
+  })
+  window.api = {
+    settings: { respondConnectorApproval: async ({ id, decision }) => broker.respond(id, decision) }
+  } as Window['api']
+  useSettingsStore.setState({ respondApproval: realRespondApproval })
+  const args = { connector: 'biomart', method: 'get_data', argsPreview: '{}' }
+  const first = broker.request({ ...args, sessionId: 'session-a' })
+  const second = broker.request({ ...args, sessionId: 'session-b' })
+  act(() => root.render(<ConnectorApprovalDialog />))
+  await act(async () => button('Close')!.click())
+  await expect(first).resolves.toBe('deny')
+  expect(broker.getPending('agent-1')).toBeNull()
+  expect(broker.getPending('agent-2')?.sessionId).toBe('session-b')
+  await act(async () => button('Close')!.click())
+  await expect(second).resolves.toBe('deny')
 })

@@ -129,6 +129,8 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "このセッションパッケージには、より新しいバージョンの Open Science が必要です。Open Science を更新してから、もう一度インポートしてください。"
   },
   "renderer": {
+    "Remembered for this project": "このプロジェクトで許可を記憶",
+    "Remembered across all projects": "すべてのプロジェクトで許可を記憶",
     "Try again when the connection is available, or close this dialog.": "接続が利用可能になったら再試行するか、このダイアログを閉じてください。",
     "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "インストール済みの Claude Code CLI に互換性がないか、バージョンを確認できません。Claude Code を 2.1.118 以降に更新し、設定で再検出してください。",
     "Other classification tokens": "その他の分類のトークン",

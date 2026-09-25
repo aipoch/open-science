@@ -131,6 +131,8 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Este paquete de sesión requiere una versión más reciente de Open Science. Actualice Open Science y vuelva a importarlo."
   },
   "renderer": {
+    "Remembered for this project": "Recordar para este proyecto",
+    "Remembered across all projects": "Recordar para todos los proyectos",
     "Try again when the connection is available, or close this dialog.": "Volver a intentar cuando la conexión esté disponible o cerrar este diálogo.",
     "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "La CLI de Claude Code instalada es incompatible o no se pudo verificar su versión. Actualice Claude Code a la versión 2.1.118 o posterior y vuelva a detectarla en la configuración.",
     "Other classification tokens": "Tokens de otras clasificaciones",

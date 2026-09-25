@@ -1,3 +1,4 @@
+import { PermissionScopeButton } from '@/pages/workspace/PermissionScopeButton'
 import { ErrorNotice } from '@/components/error-notice'
 import { ShieldAlert, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
@@ -233,39 +234,12 @@ export function ConnectorApprovalDialog({
             <Button type="button" variant="destructive" disabled={responding} onClick={deny}>
               {t('Deny')}
             </Button>
-            {availableScopes.includes('session') ? (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={responding}
-                onClick={() => allow('session')}
-              >
-                {t('This session')}
-              </Button>
-            ) : null}
-            {availableScopes.includes('project') ? (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={responding}
-                onClick={() => allow('project')}
-              >
-                {t('This project')}
-              </Button>
-            ) : null}
-            {availableScopes.includes('global') ? (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={responding}
-                onClick={() => allow('global')}
-              >
-                {t('Global')}
-              </Button>
-            ) : null}
-            <Button type="button" disabled={responding} onClick={() => allow('once')}>
-              {t('Allow once')}
-            </Button>
+            <PermissionScopeButton
+              key={request.id}
+              available={availableScopes}
+              disabled={responding}
+              onAllow={allow}
+            />
           </div>
         </Dialog.Content>
       </Dialog.Portal>

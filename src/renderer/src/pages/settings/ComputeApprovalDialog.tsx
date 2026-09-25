@@ -1,3 +1,4 @@
+import { PermissionScopeButton } from '@/pages/workspace/PermissionScopeButton'
 import { ErrorNotice } from '@/components/error-notice'
 import { useState } from 'react'
 import { ShieldAlert, ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -76,8 +77,6 @@ export function ComputeApprovalDialog({
       )
   }
   const deny = (): void => submitResponse('deny')
-  const approveOnce = (): void => submitResponse('once')
-  const approveSession = (): void => submitResponse('session')
   const confirmBroadScope = (): void => {
     if (!pendingBroadScope) return
     const { requestId, scope } = pendingBroadScope
@@ -295,29 +294,16 @@ export function ComputeApprovalDialog({
             <Button type="button" variant="destructive" disabled={responding} onClick={deny}>
               {t('Deny')}
             </Button>
-            <Button type="button" variant="outline" disabled={responding} onClick={approveOnce}>
-              {t('Once')}
-            </Button>
-            <Button type="button" variant="outline" disabled={responding} onClick={approveSession}>
-              {t('This session')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
+            <PermissionScopeButton
+              key={dialogRequest.id}
+              available={['once', 'session', 'project', 'global']}
               disabled={responding}
-              onClick={() =>
-                setPendingBroadScope({ requestId: dialogRequest.id, scope: 'project' })
-              }
-            >
-              {t('This project')}
-            </Button>
-            <Button
-              type="button"
-              disabled={responding}
-              onClick={() => setPendingBroadScope({ requestId: dialogRequest.id, scope: 'global' })}
-            >
-              {t('Always')}
-            </Button>
+              onAllow={(scope) => {
+                if (scope === 'project' || scope === 'global')
+                  setPendingBroadScope({ requestId: dialogRequest.id, scope })
+                else submitResponse(scope)
+              }}
+            />
           </div>
         </Dialog.Content>
       </Dialog.Portal>

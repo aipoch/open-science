@@ -32,6 +32,36 @@ const findButton = (label: string): HTMLButtonElement | undefined =>
     (button) => (button.getAttribute('aria-label') ?? button.textContent?.trim()) === label
   )
 
+const allowAtScope = (label: string): void => {
+  if (label === 'Deny') {
+    act(() => findButton('Deny')!.click())
+    return
+  }
+  const menuLabel =
+    label === 'This session'
+      ? 'This conversation'
+      : label === 'Always'
+        ? 'Global'
+        : label === 'Allow once'
+          ? 'Once'
+          : label
+  const primary =
+    menuLabel === 'Once'
+      ? 'Allow once'
+      : menuLabel === 'This conversation'
+        ? 'Allow for this conversation'
+        : menuLabel === 'This project'
+          ? 'Allow for this project'
+          : 'Allow globally'
+  if (!findButton(primary)) {
+    act(() => findButton('Choose authorization scope')!.click())
+    const option = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).find((item) => item.querySelector('span')?.textContent === menuLabel)
+    act(() => option!.click())
+  }
+  act(() => findButton(primary)!.click())
+}
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -218,7 +248,9 @@ describe('ComputeApprovalDialog', () => {
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
       "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption."
     )
-    expect(findButton('Once')?.disabled).toBe(false)
+    expect(
+      findButton('Allow once')?.disabled ?? findButton('Allow for this conversation')?.disabled
+    ).toBe(false)
   })
 
   it('shows the full command without changing approval state', () => {
@@ -257,7 +289,7 @@ describe('ComputeApprovalDialog', () => {
     useComputeStore.setState({ pendingApprovals: [request] })
     act(() => root.render(<ComputeApprovalDialog />))
 
-    act(() => findButton(label)?.click())
+    allowAtScope(label)
 
     expect(useComputeStore.getState().respondApproval).toHaveBeenCalledWith(request.id, decision)
   })
@@ -275,9 +307,9 @@ describe('ComputeApprovalDialog', () => {
     useComputeStore.setState({ pendingApprovals: [request], respondApproval })
     act(() => root.render(<ComputeApprovalDialog />))
 
-    act(() => findButton('Once')?.click())
+    allowAtScope('Once')
 
-    for (const label of ['Deny', 'Once', 'This session', 'This project', 'Always']) {
+    for (const label of ['Deny', 'Allow once', 'Choose authorization scope']) {
       expect(findButton(label)?.disabled).toBe(true)
     }
     expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-busy')).toBe('true')
@@ -290,9 +322,11 @@ describe('ComputeApprovalDialog', () => {
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
       'Could not submit this approval. Try again.'
     )
-    expect(findButton('Once')?.disabled).toBe(false)
+    expect(
+      findButton('Allow once')?.disabled ?? findButton('Allow for this conversation')?.disabled
+    ).toBe(false)
 
-    act(() => findButton('Once')?.click())
+    allowAtScope('Once')
     expect(respondApproval).toHaveBeenCalledTimes(2)
   })
 
@@ -303,7 +337,7 @@ describe('ComputeApprovalDialog', () => {
     useComputeStore.setState({ pendingApprovals: [request] })
     act(() => root.render(<ComputeApprovalDialog />))
 
-    act(() => findButton(label)?.click())
+    allowAtScope(label)
 
     expect(useComputeStore.getState().respondApproval).not.toHaveBeenCalled()
     expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(scopePhrase)
@@ -321,7 +355,7 @@ describe('ComputeApprovalDialog', () => {
     const nextRequest = { ...request, id: 'approval-2' }
     useComputeStore.setState({ pendingApprovals: [request] })
     act(() => root.render(<ComputeApprovalDialog />))
-    act(() => findButton('This project')?.click())
+    allowAtScope('This project')
 
     act(() => useComputeStore.setState({ pendingApprovals: [nextRequest] }))
 
