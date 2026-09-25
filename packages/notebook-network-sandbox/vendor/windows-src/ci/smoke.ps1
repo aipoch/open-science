@@ -119,13 +119,15 @@ try {
   $gatewayPort = [int]$status.gatewayPort
   if ($AfterSetup) { & $AfterSetup $gatewayPort }
   # The product gateway only needs TCP. This fixture also probes UDP at the same port, which
-  # another host process may own independently. Reserve that listener before running assertions.
-  for ($attempt = 0; $attempt -lt 5; $attempt++) {
+  # another host process or a Windows excluded range may own independently. Reserve that listener
+  # before running assertions; Windows can allocate sequential ports through a reserved range.
+  $maxPortAttempts = 256
+  for ($attempt = 0; $attempt -lt $maxPortAttempts; $attempt++) {
     try {
       $gatewayUdpListener = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new([Net.IPAddress]::Loopback, $gatewayPort))
       break
     } catch [Net.Sockets.SocketException] {
-      if ($_.Exception.SocketErrorCode -notin @('AccessDenied', 'AddressAlreadyInUse') -or $attempt -eq 4) { throw }
+      if ($_.Exception.SocketErrorCode -notin @('AccessDenied', 'AddressAlreadyInUse') -or $attempt -eq ($maxPortAttempts - 1)) { throw }
       Write-Host "[windows-smoke] UDP fixture port $gatewayPort unavailable; recreate the test installation"
       Remove-SandboxResources $installationId $ownershipRoot
       Install-SandboxResources $installationId $ownershipRoot
