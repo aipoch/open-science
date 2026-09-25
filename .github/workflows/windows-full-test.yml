@@ -209,6 +209,8 @@ jobs:
           npm test --
           src/main/managed-file-versions/version-file-operator.test.ts
           src/main/settings/service.test.ts
+          src/main/compute/concurrency-integration.test.ts
+          src/main/compute/ambiguous-dispatch-recovery.integration.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
 
   notebook_sandbox:

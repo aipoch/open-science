@@ -509,11 +509,14 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       { sessionId: 'session-1', projectId: 'project-1' }
     )
 
-    await vi.waitFor(async () => {
-      await expect(dispatchingService.getJobStatus(submitted.job_id)).resolves.toMatchObject({
-        status: 'error'
-      })
-    })
+    await vi.waitFor(
+      async () => {
+        await expect(dispatchingService.getJobStatus(submitted.job_id)).resolves.toMatchObject({
+          status: 'error'
+        })
+      },
+      { timeout: 10_000 }
+    )
     await expect(jobRepository.get(submitted.job_id)).resolves.toMatchObject({
       remote_handle: undefined,
       error_code: 'dispatch_failed'
