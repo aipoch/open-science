@@ -37,6 +37,7 @@ type SessionRenameRequest = (
 
 type SessionHoverPreviewContextValue = {
   activeSessionId: string | null
+  skipEntryAnimation: boolean
   closeNow: (sessionId: string) => void
   requestOpen: (sessionId: string, immediate?: boolean) => void
   cancelOpen: (sessionId: string) => void
@@ -47,6 +48,7 @@ const SessionHoverPreviewContext = createContext<SessionHoverPreviewContextValue
 
 const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): React.JSX.Element => {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [skipEntryAnimation, setSkipEntryAnimation] = useState(false)
   const activeSessionIdRef = useRef<string | null>(null)
 
   const protectedSessionRef = useRef<string | null>(null)
@@ -63,12 +65,16 @@ const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): Rea
     if (protectedSessionRef.current && protectedSessionRef.current !== sessionId) return
     if (pendingRef.current) clearTimeout(pendingRef.current.timer)
     pendingRef.current = null
+    if (activeSessionIdRef.current === sessionId) return
+    const instant =
+      immediate || activeSessionIdRef.current !== null || Date.now() < warmUntilRef.current
     const show = (): void => {
       pendingRef.current = null
       activeSessionIdRef.current = sessionId
+      setSkipEntryAnimation(instant)
       setActiveSessionId(sessionId)
     }
-    if (immediate || activeSessionIdRef.current || Date.now() < warmUntilRef.current) show()
+    if (instant) show()
     else
       pendingRef.current = {
         id: sessionId,
@@ -104,8 +110,15 @@ const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): Rea
   )
 
   const value = useMemo(
-    () => ({ activeSessionId, closeNow, requestOpen, cancelOpen, setProtected }),
-    [activeSessionId, closeNow, requestOpen, cancelOpen, setProtected]
+    () => ({
+      activeSessionId,
+      skipEntryAnimation,
+      closeNow,
+      requestOpen,
+      cancelOpen,
+      setProtected
+    }),
+    [activeSessionId, skipEntryAnimation, closeNow, requestOpen, cancelOpen, setProtected]
   )
 
   return (
@@ -334,7 +347,8 @@ const SessionHoverPreview = ({
   const context = useContext(SessionHoverPreviewContext)
   if (!context) throw new Error('SessionHoverPreview must be inside SessionHoverPreviewProvider')
 
-  const { activeSessionId, closeNow, requestOpen, cancelOpen, setProtected } = context
+  const { activeSessionId, skipEntryAnimation, closeNow, requestOpen, cancelOpen, setProtected } =
+    context
   const open = !previewSuppressed && activeSessionId === session.id
   const onPreviewRequestRef = useRef(onPreviewRequest)
   const triggerRef = useRef<HTMLDivElement>(null)
@@ -474,6 +488,7 @@ const SessionHoverPreview = ({
         alignOffset={SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX}
         collisionPadding={8}
         data-slot="session-preview-content"
+        data-skip-entry-animation={skipEntryAnimation}
         aria-label={session.title}
         onPointerEnter={cancelClose}
         onPointerLeave={requestClose}

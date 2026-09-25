@@ -175,3 +175,51 @@ it('cancels brief hover reads and resets the delay after leaving the group', asy
   await act(() => vi.advanceTimersByTimeAsync(1))
   expect(preview).toHaveBeenCalledTimes(2)
 })
+
+it('animates cold entry only and preserves the existing warm-window boundary', async () => {
+  vi.useFakeTimers()
+  render(
+    <SessionHoverPreviewProvider>
+      {['First', 'Second'].map((name) => (
+        <SessionHoverPreview key={name} session={{ id: name, title: `${name} session` }}>
+          <button>{name} row</button>
+        </SessionHoverPreview>
+      ))}
+    </SessionHoverPreviewProvider>
+  )
+  const first = screen.getByText('First row')
+  const second = screen.getByText('Second row')
+  const enter = (row: HTMLElement): void => {
+    fireEvent.pointerEnter(row, { pointerType: 'mouse' })
+  }
+  const skipsEntry = (): string | null =>
+    screen.getByRole('dialog').getAttribute('data-skip-entry-animation')
+  const close = async (): Promise<void> => {
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  }
+
+  enter(first)
+  await act(() => vi.advanceTimersByTimeAsync(299))
+  expect(screen.queryByRole('dialog')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(1))
+  expect(skipsEntry()).toBe('false')
+  // Reentering the already-open trigger must not interrupt its initial animation.
+  enter(first)
+  expect(skipsEntry()).toBe('false')
+  enter(second)
+  expect(screen.getByRole('dialog').textContent).toBe('Second session')
+  expect(skipsEntry()).toBe('true')
+
+  await close()
+  await act(() => vi.advanceTimersByTimeAsync(299))
+  enter(first)
+  expect(skipsEntry()).toBe('true')
+  await close()
+  await act(() => vi.advanceTimersByTimeAsync(300))
+  enter(second)
+  expect(screen.queryByRole('dialog')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(300))
+  expect(skipsEntry()).toBe('false')
+})

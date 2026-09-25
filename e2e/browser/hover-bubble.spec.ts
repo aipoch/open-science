@@ -75,7 +75,9 @@ for (const side of ['top', 'right', 'bottom', 'left']) {
   })
 }
 
-test('animates warm tooltips without retaining the outgoing hint', async ({ page }) => {
+test('switches warm tooltips without entry motion or retaining the outgoing hint', async ({
+  page
+}) => {
   await page.goto('/hover-bubble.html')
   await page.getByRole('button', { name: 'top', exact: true }).hover()
   await expect(page.getByTestId('bubble-top')).toHaveAttribute('data-state', 'delayed-open')
@@ -91,7 +93,9 @@ test('animates warm tooltips without retaining the outgoing hint', async ({ page
   await page.getByRole('button', { name: 'right', exact: true }).hover()
   const next = page.getByTestId('bubble-right')
   await expect(next).toHaveAttribute('data-state', 'instant-open')
-  await sampleEntry(next)
+  await expect(next).toHaveCSS('animation-name', 'none')
+  await expect(next).toHaveCSS('transform', 'none')
+  await expect(next).toHaveCSS('opacity', '1')
   const previous = page.getByTestId('bubble-top')
   await expect(previous).toHaveCount(0)
   await page.keyboard.press('Escape')
@@ -269,8 +273,9 @@ test('shows shared hints for every Home header icon action', async ({ page }) =>
   }
 })
 
-test('shares Home hover intent across standalone header components', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' })
+test('shares Home hover intent without replaying entry motion across header components', async ({
+  page
+}) => {
   await page.goto('/button-feedback.html?home')
   const actions = [
     page.getByRole('button', { name: 'Search', exact: true }),
@@ -292,6 +297,41 @@ test('shares Home hover intent across standalone header components', async ({ pa
       'data-state',
       index === 0 ? 'delayed-open' : 'instant-open'
     )
+    await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCSS(
+      'animation-name',
+      index === 0 ? 'hover-bubble-enter' : 'none'
+    )
     await expect(action).toHaveAttribute('aria-describedby')
   }
+})
+
+test('switches session previews without entry motion and restores it after the warm window', async ({
+  page
+}) => {
+  await page.goto('/hover-bubble.html')
+  const first = page.getByRole('button', { name: 'First row', exact: true })
+  const second = page.getByRole('button', { name: 'Second row', exact: true })
+  const firstBox = (await first.boundingBox())!
+  const secondBox = (await second.boundingBox())!
+  const preview = page.locator('[data-slot="session-preview-content"][data-state="open"]')
+  await page.clock.install()
+  await page.clock.pauseAt(new Date())
+  await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2)
+  await page.clock.runFor(300)
+  await expect(preview).toHaveAttribute('aria-label', 'First session')
+  await expect(preview).toHaveCSS('animation-name', 'hover-bubble-enter')
+  await page.mouse.move(secondBox.x + secondBox.width / 2, secondBox.y + secondBox.height / 2)
+  await expect(preview).toHaveAttribute('aria-label', 'Second session')
+  await expect(preview).toHaveCSS('animation-name', 'none')
+  await expect(preview).toHaveCSS('transform', 'none')
+  await expect(preview).toHaveCSS('opacity', '1')
+
+  await page.mouse.move(0, 0)
+  // Existing 300ms leave grace, then 300ms warm window.
+  await page.clock.runFor(601)
+  await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2)
+  await page.clock.runFor(299)
+  await expect(preview).toHaveCount(0)
+  await page.clock.runFor(1)
+  await expect(preview).toHaveCSS('animation-name', 'hover-bubble-enter')
 })
