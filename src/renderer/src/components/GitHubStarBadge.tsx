@@ -50,6 +50,7 @@ export const GitHubMark = ({ className }: { className?: string }): React.JSX.Ele
 )
 
 type GitHubStarBadgeProps = {
+  withTooltipProvider?: boolean
   className?: string
   nudgeKey?: string
   variant?: 'compact' | 'home' | 'workspace'
@@ -62,7 +63,8 @@ type GitHubStarBadgeProps = {
 const GitHubStarBadge = ({
   className,
   nudgeKey,
-  variant = 'compact'
+  variant = 'compact',
+  withTooltipProvider = true
 }: GitHubStarBadgeProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [stars, setStars] = useState<number | null>(null)
@@ -198,24 +200,28 @@ const GitHubStarBadge = ({
     </Button>
   )
 
-  const badgeWithTooltip = (
-    <TooltipProvider delayDuration={800}>
-      <Tooltip>
-        <TooltipTrigger asChild>{badge}</TooltipTrigger>
-        <TooltipContent
-          side={variant === 'home' ? 'bottom' : 'top'}
-          align={variant === 'home' ? 'end' : 'center'}
-          sideOffset={6}
-          className={cn(
-            'max-w-[260px] whitespace-normal px-3 py-2 text-left text-xs leading-5',
-            variant === 'workspace' && starNudgeOpen && 'hidden'
-          )}
-        >
-          {t('Enjoying {{appName}}?', { appName: APP.name })}{' '}
-          {t('A star helps more researchers find it.')}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+  const tooltip = (
+    <Tooltip>
+      <TooltipTrigger asChild>{badge}</TooltipTrigger>
+      <TooltipContent
+        side={variant === 'home' ? 'bottom' : 'top'}
+        align={variant === 'home' ? 'end' : 'center'}
+        sideOffset={6}
+        className={cn(
+          'max-w-[260px] whitespace-normal px-3 py-2 text-left text-xs leading-5',
+          variant === 'workspace' && starNudgeOpen && 'hidden'
+        )}
+      >
+        {t('Enjoying {{appName}}?', { appName: APP.name })}{' '}
+        {t('A star helps more researchers find it.')}
+      </TooltipContent>
+    </Tooltip>
+  )
+
+  const badgeWithTooltip = withTooltipProvider ? (
+    <TooltipProvider>{tooltip}</TooltipProvider>
+  ) : (
+    tooltip
   )
 
   if (variant === 'compact') return badge
@@ -255,7 +261,7 @@ const GitHubStarBadge = ({
           <strong className="text-sm font-semibold leading-5">
             {t('Enjoying {{appName}}?', { appName: APP.name })}
           </strong>
-          <TooltipProvider delayDuration={800}>
+          <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button

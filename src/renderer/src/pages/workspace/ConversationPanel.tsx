@@ -1261,7 +1261,7 @@ const ConversationPanel = ({
             )}
           </h1>
           {activeSession && sessionTools.exportDiagnostics && (
-            <TooltipProvider delayDuration={300}>
+            <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger
                   asChild
@@ -1760,7 +1760,7 @@ const ConversationPanel = ({
 
                   {/* The ordinary composer keeps this lane's geometry while a blocking interaction
                       overlays it, so panel entry/resize/exit never resizes the transcript viewport. */}
-                  <TooltipProvider delayDuration={200}>
+                  <TooltipProvider>
                     {packageLocked ? (
                       <section
                         className="relative z-10 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 py-4 text-muted-foreground"
@@ -1943,7 +1943,7 @@ const ConversationPanel = ({
                               </>
                             )}
                             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                              <TooltipProvider delayDuration={300}>
+                              <TooltipProvider>
                                 {pdfContext.bindings.map((binding) => {
                                   const pending = pdfContext.pendingBindingId === binding.bindingId
                                   return (
@@ -2035,7 +2035,7 @@ const ConversationPanel = ({
                                 defaultValue_one: '{{count}} PDF will be linked when sent'
                               })}
                             </span>
-                            <TooltipProvider delayDuration={800}>
+                            <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <button

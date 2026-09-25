@@ -181,3 +181,82 @@ for (const dark of [false, true]) {
     expect(size.scroll).toBeLessThanOrEqual(size.width + 1)
   })
 }
+
+test('uses a 200ms cold delay and a 300ms shared skip window', async ({ page }) => {
+  await page.goto('/hover-bubble.html')
+  const first = page.getByRole('button', { name: 'top', exact: true })
+  const next = page.getByRole('button', { name: 'right', exact: true })
+  const firstBox = (await first.boundingBox())!
+  const nextBox = (await next.boundingBox())!
+  await page.clock.install()
+  await page.clock.pauseAt(new Date())
+  await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2, {
+    steps: 5
+  })
+  await page.clock.runFor(199)
+  expect(await page.getByTestId('bubble-top').count()).toBe(0)
+  await page.clock.runFor(1)
+  await expect(page.getByTestId('bubble-top')).toHaveAttribute('data-state', 'delayed-open')
+  await page.mouse.move(0, 0, { steps: 5 })
+  await page.clock.runFor(299)
+  await page.mouse.move(nextBox.x + nextBox.width / 2, nextBox.y + nextBox.height / 2, { steps: 5 })
+  await page.clock.runFor(1)
+  await expect(page.getByTestId('bubble-right')).toHaveAttribute('data-state', 'instant-open')
+  await page.mouse.move(0, 0, { steps: 5 })
+  await page.clock.runFor(301)
+  await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2, {
+    steps: 5
+  })
+  await page.clock.runFor(199)
+  expect(await page.getByTestId('bubble-top').count()).toBe(0)
+  await page.clock.runFor(1)
+  await expect(page.getByTestId('bubble-top')).toHaveAttribute('data-state', 'delayed-open')
+})
+
+test('shows shared hints for every Home header icon action', async ({ page }) => {
+  await page.goto('/button-feedback.html?home')
+  for (const [label, hint] of [
+    ['Search', 'Search (Cmd/Ctrl+K)'],
+    ['Library', 'Library'],
+    ['Messages, no unread messages', 'Message center'],
+    ['Model settings', 'Settings'],
+    ['New project', 'New project']
+  ]) {
+    const trigger = page.getByRole('button', { name: label, exact: true })
+    await expect(trigger).not.toHaveAttribute('title')
+    await trigger.hover()
+    await expect(page.getByRole('tooltip')).toHaveText(hint)
+    const bubble = page.locator('[data-slot="tooltip-content"][data-state$="open"]')
+    await expect(bubble).toHaveClass(/hover-bubble/)
+    await expect(bubble).toHaveClass(/bg-text-000/)
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
+  }
+})
+
+test('shares Home hover intent across standalone header components', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/button-feedback.html?home')
+  const actions = [
+    page.getByRole('button', { name: 'Search', exact: true }),
+    page.getByRole('link', { name: /Star Open-Science on GitHub/ }),
+    page.getByRole('button', { name: 'Library', exact: true }),
+    page.getByRole('button', { name: 'Messages, no unread messages', exact: true }),
+    page.getByRole('button', { name: 'Model settings', exact: true }),
+    page.locator('.update-reminder[data-variant="home"]'),
+    page.getByRole('button', { name: 'New project', exact: true })
+  ]
+  await expect(actions[0]).toBeVisible()
+  await page.clock.install()
+  await page.clock.pauseAt(new Date())
+  for (const [index, action] of actions.entries()) {
+    const box = (await action.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 5 })
+    await page.clock.runFor(index === 0 ? 200 : 1)
+    await expect(page.locator('[data-slot="tooltip-content"]')).toHaveAttribute(
+      'data-state',
+      index === 0 ? 'delayed-open' : 'instant-open'
+    )
+    await expect(action).toHaveAttribute('aria-describedby')
+  }
+})

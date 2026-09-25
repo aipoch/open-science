@@ -296,7 +296,7 @@ export const ResourceSelectionBar = ({
                   </div>
                 </PopoverContent>
               </Popover>
-              <TooltipProvider delayDuration={300}>
+              <TooltipProvider>
                 {actions.unlink.length > 0 ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -359,7 +359,7 @@ export const ResourceSelectionBar = ({
               ) : null}
             </>
           ) : null}
-          <TooltipProvider delayDuration={300}>
+          <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

@@ -639,7 +639,7 @@ const HomePage = ({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
         <div className="mx-auto max-w-[1080px] px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
           <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -697,52 +697,90 @@ const HomePage = ({
                   <span className="sm:hidden">{t('Environment')}</span>
                 </button>
               ) : null}
-              <NetworkStatusIndicator variant="pill" />
+              <NetworkStatusIndicator variant="pill" withTooltipProvider={false} />
               <PackageExportProgressButton iconOnly />
               <span className="hidden sm:inline-flex">
-                <GitHubStarBadge variant="home" />
+                <GitHubStarBadge variant="home" withTooltipProvider={false} />
               </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-9 rounded-lg text-text-300"
-                onClick={onOpenGlobalSearch}
-                aria-label={t('Search')}
-                title={t('Search (Cmd/Ctrl+K)')}
-              >
-                <Search className="size-4" strokeWidth={2} aria-hidden="true" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-9 rounded-lg text-text-300"
-                onClick={() => openLibrary('user')}
-                aria-label={t('Library')}
-                title={t('Library')}
-              >
-                <BookOpenText className="size-4" strokeWidth={2} aria-hidden="true" />
-              </Button>
-              <NotificationBell />
-              <button
-                type="button"
-                aria-label={t('Model settings')}
-                onClick={openSettings}
-                className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
-              >
-                <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-              </button>
-              <UpdateCapsule />
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-9 rounded-lg text-text-300"
+                    onClick={onOpenGlobalSearch}
+                    aria-label={t('Search')}
+                  >
+                    <Search className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t('Search (Cmd/Ctrl+K)')}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-9 rounded-lg text-text-300"
+                    onClick={() => openLibrary('user')}
+                    aria-label={t('Library')}
+                  >
+                    <BookOpenText className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t('Library')}</TooltipContent>
+              </Tooltip>
+              <NotificationBell withTooltipProvider={false} />
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label={t('Model settings')}
+                    onClick={openSettings}
+                    className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
+                  >
+                    <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t('Settings')}</TooltipContent>
+              </Tooltip>
+              <UpdateCapsule withTooltipProvider={false} />
               {/* Account button hidden for now; restore when the account flow lands. */}
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1 rounded-md px-3 text-xs"
-                onClick={openCreateDialog}
-                aria-label={t('New project')}
-              >
-                <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                <span className="hidden sm:inline">{t('New project')}</span>
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1 rounded-md px-3 text-xs"
+                    onClick={openCreateDialog}
+                    aria-label={t('New project')}
+                  >
+                    <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    <span className="hidden sm:inline">{t('New project')}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t('New project')}</TooltipContent>
+              </Tooltip>
             </div>
           </header>
           <PackageOperationIndicator />

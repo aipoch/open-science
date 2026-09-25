@@ -749,7 +749,7 @@ const SkillsPanel = ({
                                     ) : null}
                                     <DropdownMenuSeparator />
                                     {deleteBlockedReason ? (
-                                      <TooltipProvider delayDuration={800}>
+                                      <TooltipProvider>
                                         <Tooltip>
                                           <TooltipTrigger asChild>
                                             <DropdownMenuItem

@@ -3,7 +3,19 @@ import { Tooltip as TooltipPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
 
-const TooltipProvider = TooltipPrimitive.Provider
+function TooltipProvider({
+  delayDuration = 200,
+  skipDelayDuration = 300,
+  ...props
+}: React.ComponentProps<typeof TooltipPrimitive.Provider>): React.JSX.Element {
+  return (
+    <TooltipPrimitive.Provider
+      delayDuration={delayDuration}
+      skipDelayDuration={skipDelayDuration}
+      {...props}
+    />
+  )
+}
 const Tooltip = TooltipPrimitive.Root
 const TooltipTrigger = TooltipPrimitive.Trigger
 

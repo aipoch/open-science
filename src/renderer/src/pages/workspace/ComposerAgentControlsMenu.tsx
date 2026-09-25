@@ -711,7 +711,7 @@ const ComposerAgentControlsMenu = ({
                                   className="pointer-events-none"
                                 />
                               </DropdownMenuItem>
-                              <TooltipProvider delayDuration={300}>
+                              <TooltipProvider>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <DropdownMenuItem

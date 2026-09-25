@@ -29,6 +29,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ErrorNotice } from './error-notice'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { NotificationErrorBoundary } from './NotificationErrorBoundary'
 import { NotificationEventIcon } from './NotificationEventIcon'
 import {
@@ -49,6 +50,7 @@ import { runNotificationTask } from './notification-safety'
 
 type NotificationBellProps = Readonly<{
   className?: string
+  withTooltipProvider?: boolean
   side?: 'top' | 'right' | 'bottom' | 'left'
   align?: 'start' | 'center' | 'end'
   onOpen?: () => void
@@ -469,40 +471,50 @@ const NotificationBellContent = ({
 
   return (
     <div ref={rootRef} className="relative inline-flex shrink-0">
-      <button
-        ref={triggerRef}
-        data-notification-bell-trigger="true"
-        data-notification-bell-id={panelId}
-        type="button"
-        aria-label={
-          unreadCount > 0
-            ? t('Messages, {{count}} unread', { count: unreadCount })
-            : t('Messages, no unread messages')
-        }
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => {
-          const nextOpen = !open
-          setOpen(nextOpen)
-          if (nextOpen) {
-            window.dispatchEvent(new Event(NOTIFICATION_CENTER_OPENED_EVENT))
-            onOpen?.()
-            runNotificationTask(refresh)
-          }
-        }}
-        className={cn(
-          "relative inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out before:absolute before:-inset-1.5 before:content-[''] hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000 md:before:hidden",
-          className
-        )}
-      >
-        <Bell className="size-4" strokeWidth={2} aria-hidden="true" />
-        {unreadCount > 0 ? (
-          <span
-            className="absolute right-1.5 top-1.5 size-2 rounded-full bg-destructive ring-2 ring-bg-000"
-            aria-hidden="true"
-          />
-        ) : null}
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          asChild
+          onFocus={(event) => {
+            if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+          }}
+        >
+          <button
+            ref={triggerRef}
+            data-notification-bell-trigger="true"
+            data-notification-bell-id={panelId}
+            type="button"
+            aria-label={
+              unreadCount > 0
+                ? t('Messages, {{count}} unread', { count: unreadCount })
+                : t('Messages, no unread messages')
+            }
+            aria-expanded={open}
+            aria-controls={panelId}
+            onClick={() => {
+              const nextOpen = !open
+              setOpen(nextOpen)
+              if (nextOpen) {
+                window.dispatchEvent(new Event(NOTIFICATION_CENTER_OPENED_EVENT))
+                onOpen?.()
+                runNotificationTask(refresh)
+              }
+            }}
+            className={cn(
+              "relative inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out before:absolute before:-inset-1.5 before:content-[''] hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000 md:before:hidden",
+              className
+            )}
+          >
+            <Bell className="size-4" strokeWidth={2} aria-hidden="true" />
+            {unreadCount > 0 ? (
+              <span
+                className="absolute right-1.5 top-1.5 size-2 rounded-full bg-destructive ring-2 ring-bg-000"
+                aria-hidden="true"
+              />
+            ) : null}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side={side}>{t('Message center')}</TooltipContent>
+      </Tooltip>
       {open
         ? createPortal(
             <>
@@ -650,10 +662,16 @@ const NotificationBellContent = ({
   )
 }
 
-const NotificationBell = (props: NotificationBellProps): React.JSX.Element => (
-  <NotificationErrorBoundary surface="center" className={props.className}>
-    <NotificationBellContent {...props} />
-  </NotificationErrorBoundary>
-)
+const NotificationBell = ({
+  withTooltipProvider = true,
+  ...props
+}: NotificationBellProps): React.JSX.Element => {
+  const content = (
+    <NotificationErrorBoundary surface="center" className={props.className}>
+      <NotificationBellContent {...props} />
+    </NotificationErrorBoundary>
+  )
+  return withTooltipProvider ? <TooltipProvider>{content}</TooltipProvider> : content
+}
 
 export { NotificationBell }

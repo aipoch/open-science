@@ -431,7 +431,7 @@ export const PdfOutlineSidebar = ({
   const effectiveMode: PdfNavigationMode = items.length > 0 ? mode : 'pages'
 
   return (
-    <TooltipProvider delayDuration={250} skipDelayDuration={300}>
+    <TooltipProvider skipDelayDuration={300}>
       <aside
         id="pdf-navigation-sidebar"
         className="relative flex shrink-0 flex-col border-r border-border-200 bg-bg-000 text-text-000"

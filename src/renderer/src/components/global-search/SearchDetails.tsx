@@ -389,7 +389,7 @@ export const SearchDetails = ({
         </Button>
       )
     return (
-      <TooltipProvider delayDuration={300}>
+      <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

@@ -1486,7 +1486,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               inert={isMobile && isMobileNavOpen ? true : undefined}
               className="flex min-h-0 min-w-0 flex-1 flex-col bg-card"
             >
-              <TooltipProvider delayDuration={300}>
+              <TooltipProvider>
                 <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 md:px-3">
                   <div className="flex min-w-0 items-center gap-1">
                     <Tooltip>

@@ -556,7 +556,7 @@ const MemoryList = ({
   const adding = selectedTarget === addingTarget
 
   return (
-    <TooltipProvider delayDuration={250}>
+    <TooltipProvider>
       <div data-slot="memory-panel" className="flex h-full min-h-0 flex-col px-3 py-3 md:px-4">
         <div className="mb-3 flex min-h-8 items-center justify-end gap-3">
           <label className="flex items-center gap-2 text-sm text-muted-foreground">

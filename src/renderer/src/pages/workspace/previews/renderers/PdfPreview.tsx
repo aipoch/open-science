@@ -475,7 +475,7 @@ const PdfInteractionControls = ({
   ]
 
   return (
-    <TooltipProvider delayDuration={800} skipDelayDuration={300}>
+    <TooltipProvider skipDelayDuration={300}>
       <div
         data-pdf-controls="interaction"
         role="group"
@@ -865,7 +865,7 @@ const PdfSearchControls = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <TooltipProvider delayDuration={250} skipDelayDuration={300}>
+    <TooltipProvider skipDelayDuration={300}>
       <div className="absolute top-3 right-3 z-40 flex h-8 items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
         <Search className="ml-1 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
         <Input
@@ -977,7 +977,7 @@ const PdfZoomControls = ({
   }
 
   return (
-    <TooltipProvider delayDuration={250} skipDelayDuration={300}>
+    <TooltipProvider skipDelayDuration={300}>
       <div
         data-pdf-controls="view"
         role="group"

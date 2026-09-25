@@ -178,7 +178,7 @@ const PermissionUndoItem = ({
               : t('Undo')}
         </Button>
       ) : null}
-      <TooltipProvider delayDuration={800}>
+      <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -286,7 +286,7 @@ const ArchiveUndoItem = ({
           </kbd>
         ) : null}
       </Button>
-      <TooltipProvider delayDuration={800}>
+      <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

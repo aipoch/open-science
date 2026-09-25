@@ -1113,7 +1113,7 @@ export function SkillMarketplace({
                       </div>
                     </div>
                     {selected.evaluation ? (
-                      <TooltipProvider delayDuration={800}>
+                      <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span
@@ -1377,7 +1377,7 @@ export function SkillMarketplace({
                     })}
                   </p>
                 </div>
-                <TooltipProvider delayDuration={800} skipDelayDuration={300}>
+                <TooltipProvider skipDelayDuration={300}>
                   <div className="skill-marketplace-grid grid gap-3">
                     {matches.slice(0, visibleCount).map((item) => (
                       <article

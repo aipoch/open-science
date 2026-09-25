@@ -22,7 +22,7 @@ export function Fixture(): React.JSX.Element {
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
       <button>Outside</button>
-      <TooltipProvider delayDuration={80} skipDelayDuration={1000}>
+      <TooltipProvider>
         <section className="m-40 flex gap-8" aria-label="Tooltips">
           {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
             <Tooltip key={side}>

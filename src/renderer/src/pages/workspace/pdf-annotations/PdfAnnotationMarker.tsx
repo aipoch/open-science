@@ -48,7 +48,7 @@ export const PdfAnnotationMarker = ({
       .finally(() => setSaving(false))
   }
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <Popover
         open={open}
         onOpenChange={(next) => {
