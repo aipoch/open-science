@@ -85,6 +85,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/renderer/src/pages/settings/ConnectorApprovalDialog.render.test.tsx",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
       "src/main/acp/client-interaction-owner.test.ts",
