@@ -75,7 +75,7 @@ for (const side of ['top', 'right', 'bottom', 'left']) {
   })
 }
 
-test('animates warm tooltips and fades closed content before removing it', async ({ page }) => {
+test('animates warm tooltips without retaining the outgoing hint', async ({ page }) => {
   await page.goto('/hover-bubble.html')
   await page.getByRole('button', { name: 'top', exact: true }).hover()
   await expect(page.getByTestId('bubble-top')).toHaveAttribute('data-state', 'delayed-open')
@@ -93,13 +93,44 @@ test('animates warm tooltips and fades closed content before removing it', async
   await expect(next).toHaveAttribute('data-state', 'instant-open')
   await sampleEntry(next)
   const previous = page.getByTestId('bubble-top')
-  await expect(previous).toHaveAttribute('data-state', 'closed')
-  await expect(previous).toHaveCSS('pointer-events', 'none')
-  await previous.evaluate((el) => el.getAnimations().forEach((a) => a.finish()))
   await expect(previous).toHaveCount(0)
   await page.keyboard.press('Escape')
-  await expect(next).toHaveAttribute('data-state', 'closed')
-  const opacity = await next.evaluate((el) => {
+  await expect(next).toHaveCount(0)
+})
+
+test('releases a blurred tooltip before Escape dismisses Settings', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Model settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Open settings navigation', exact: true }).focus()
+  await expect(page.locator('[data-slot="tooltip-content"]')).toContainText('Navigation')
+  // Freeze any regression to exit retention instead of depending on the machine's frame timing.
+  await page.evaluate(() =>
+    document.addEventListener('animationstart', (event) => {
+      if (event.animationName === 'hover-bubble-exit')
+        (event.target as HTMLElement).getAnimations().forEach((a) => a.pause())
+    })
+  )
+  await page.getByRole('tab', { name: 'Conversation models', exact: true }).focus()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+})
+
+test('retains the information popover exit fade', async ({ page }) => {
+  await page.goto('/hover-bubble.html')
+  await page.getByRole('button', { name: 'View Skill availability for 2 agents' }).hover()
+  const preview = page.locator('[data-slot="skill-usage-agents-popover"]')
+  await expect(preview).toHaveCSS('transform', 'none')
+  await page.evaluate(() =>
+    document.addEventListener('animationstart', (event) => {
+      if (event.animationName === 'hover-bubble-exit')
+        (event.target as HTMLElement).getAnimations().forEach((a) => a.pause())
+    })
+  )
+  await page.keyboard.press('Escape')
+  await expect(preview).toHaveAttribute('data-state', 'closed')
+  await expect(preview).toHaveCSS('pointer-events', 'none')
+  const opacity = await preview.evaluate((el) => {
     const animation = el.getAnimations()[0]
     animation.currentTime = 45
     const opacity = Number(getComputedStyle(el).opacity)
@@ -108,7 +139,7 @@ test('animates warm tooltips and fades closed content before removing it', async
   })
   expect(opacity).toBeGreaterThan(0)
   expect(opacity).toBeLessThan(1)
-  await expect(next).toHaveCount(0)
+  await expect(preview).toHaveCount(0)
 })
 
 test('keeps keyboard tooltip focus and immediate reduced-motion dismissal', async ({ page }) => {

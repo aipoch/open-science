@@ -776,6 +776,10 @@
 
   .hover-bubble[data-state='closed'] {
     pointer-events: none;
+  }
+
+  /* Closed tooltips must release Radix's dismissable layer before the next interaction. */
+  .hover-bubble[data-state='closed']:not([data-slot='tooltip-content']) {
     animation: hover-bubble-exit 90ms ease-out;
   }
 
