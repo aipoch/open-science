@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -176,6 +176,27 @@ describe('ACP workspace filesystem adapter', () => {
       readWorkspaceTextFile(workspaceRoot, { sessionId: 'session-1', path: ok }, [protectedRoot])
     ).resolves.toEqual({ content: 'hello' })
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects reads through a symlinked protected root',
+    async () => {
+      workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-'))
+      const protectedRoot = join(workspaceRoot, 'private-real')
+      const protectedLink = join(workspaceRoot, 'private-link')
+      const secret = join(protectedRoot, 'credentials.json')
+      await mkdir(protectedRoot)
+      await writeFile(secret, 'secret', 'utf8')
+      await symlink(protectedRoot, protectedLink, 'dir')
+
+      await expect(
+        readWorkspaceTextFile(
+          workspaceRoot,
+          { sessionId: 'session-1', path: join(protectedLink, 'credentials.json') },
+          [protectedLink]
+        )
+      ).rejects.toThrow(/protected application directory/)
+    }
+  )
 
   it('rejects writes outside the workspace', async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-'))

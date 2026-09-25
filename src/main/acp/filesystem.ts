@@ -106,9 +106,17 @@ const readLineWindow = async (
 // that holds materialized skill files — so bundled skill contents can never be surfaced verbatim
 // through the Read tool. (Workspace containment already blocks most of these; this is belt-and-
 // suspenders for sessions whose cwd is unusually broad.)
-const assertNotProtected = (filePath: string, protectedRoots: string[]): void => {
+const assertNotProtected = async (filePath: string, protectedRoots: string[]): Promise<void> => {
   for (const root of protectedRoots) {
-    if (isPathInsideWorkspace(root, filePath)) {
+    let physicalRoot: string
+    try {
+      physicalRoot = await resolvePhysicalPath(resolve(root))
+    } catch {
+      // Keep lexical protection for a root that does not exist yet. A future file created there
+      // must not become readable merely because canonicalization was unavailable at this moment.
+      physicalRoot = resolve(root)
+    }
+    if (isPathInsideWorkspace(physicalRoot, filePath)) {
       throw new Error('This file belongs to a protected application directory and cannot be read.')
     }
   }
@@ -129,7 +137,7 @@ const readWorkspaceTextFile = async (
     grantedRoots,
     'ro'
   )
-  assertNotProtected(physicalPath, protectedRoots)
+  await assertNotProtected(physicalPath, protectedRoots)
   return {
     content:
       !params.line && !params.limit

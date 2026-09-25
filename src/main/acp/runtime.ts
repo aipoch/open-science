@@ -82,6 +82,7 @@ import type {
 } from '../../shared/notebook'
 import type { SkillImportRpcConnection } from '../skills/mcp-server'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
+import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -3020,7 +3021,8 @@ class AcpRuntime {
       getAppClaudeConfigDir(root),
       opencodeStorageDir(root),
       codexStorageDir(root),
-      codexSubscriptionStorageDir(root)
+      codexSubscriptionStorageDir(root),
+      codeBuddyStorageDir(root)
     ]
   }
 
