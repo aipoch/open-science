@@ -4,6 +4,7 @@ import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 
 import { validateNotebookHelperExports, type PythonCommand } from '../notebook/python-command'
+import { isSkillPackageIgnoredPath } from '../../shared/skill-import-limits'
 import {
   condaActivatedPath,
   DEFAULT_PY_ENV,
@@ -277,6 +278,9 @@ const preparePackage = async (
     digest: string
   }> = []
   for (const descriptor of helpers) {
+    if (isSkillPackageIgnoredPath(descriptor.implementation)) {
+      fail(`helper "${descriptor.id}" implementation must not be hidden package metadata`)
+    }
     const { bytes, source } = await assertContainedRegularSource(
       entry.packageRoot,
       descriptor.implementation

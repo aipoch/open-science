@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
+import { isSkillPackageIgnoredPath } from '../../shared/skill-import-limits'
 import { validateSpecialistPackageVersion } from '../../shared/specialist'
 import type { SpecialistPackageSkillPlan } from '../../shared/specialist-package'
 import type { SpecialistPackageSkillPort } from '../specialist/package/skill-port'
@@ -438,7 +439,12 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         if (skill.disposition === 'reuse-owned') {
           // Reuse preserves the current tree; only ownership metadata changes.
           await mkdir(dirname(staging), { recursive: true })
-          await cp(existingDirectory, staging, { recursive: true, errorOnExist: true })
+          await cp(existingDirectory, staging, {
+            recursive: true,
+            errorOnExist: true,
+            filter: async (entry) =>
+              !isSkillPackageIgnoredPath(relative(existingDirectory, entry).replaceAll('\\', '/'))
+          })
           if ((await directoryHash(staging)) !== skill.contentHash) {
             throw new Error(`Skill ${skill.id} changed after preview.`)
           }
@@ -536,7 +542,12 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         if (!metadata) throw new Error(`Owned Skill ${id} has no ownership metadata.`)
         const staging = join(root, 'staging', id)
         await mkdir(dirname(staging), { recursive: true })
-        await cp(live, staging, { recursive: true, errorOnExist: true })
+        await cp(live, staging, {
+          recursive: true,
+          errorOnExist: true,
+          filter: async (entry) =>
+            !isSkillPackageIgnoredPath(relative(live, entry).replaceAll('\\', '/'))
+        })
         const ownerIds = metadata.ownerIds.filter((ownerId) => ownerId !== specialistId).sort()
         await writeFile(
           join(staging, SPECIALIST_PACKAGE_SKILL_METADATA),

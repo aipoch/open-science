@@ -1,9 +1,10 @@
 import { chmod, cp, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 
 import { createLogger } from '../logger'
 import { COMPUTE_SKILL_ID } from '../compute/skill-doc'
 import type { BundledSkill } from './registry'
+import { isSkillPackageIgnoredPath } from '../../shared/skill-import-limits'
 import { hasCanonicalSkillDocumentName, normalizeSkillDocumentName } from './skill-document-name'
 import { isUsableSkillName } from './skill-name'
 
@@ -265,6 +266,9 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
       recursive: true,
       force: true,
       filter: async (entry) => {
+        if (isSkillPackageIgnoredPath(relative(skill.sourceDir, entry).replaceAll('\\', '/'))) {
+          return false
+        }
         if ((await lstat(entry)).isSymbolicLink()) {
           throw new Error(`Refusing to materialize a Skill containing a symbolic link.`)
         }

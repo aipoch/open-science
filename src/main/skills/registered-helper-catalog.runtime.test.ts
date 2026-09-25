@@ -106,4 +106,38 @@ describe('RegisteredSkillHelperCatalog managed Python validation', () => {
       })
     )
   })
+
+  it('rejects helper implementations hidden behind ignored package paths', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'hidden-helper-runtime-'))
+    const packageRoot = await mkdtemp(join(tmpdir(), 'hidden-helper-package-'))
+    roots.push(storageRoot, packageRoot)
+    await mkdir(join(packageRoot, '.hidden'), { recursive: true })
+    await writeFile(
+      join(packageRoot, '.hidden', 'kernel.py'),
+      'def public_value():\n    return 1\n'
+    )
+
+    const catalog = new RegisteredSkillHelperCatalog({
+      storageRoot,
+      packages: async () => [
+        {
+          skillId: 'hidden-helper',
+          origin: 'personal',
+          packageRoot,
+          helpers: [
+            {
+              id: 'hidden-helper-function',
+              language: 'python',
+              interfaceRevision: 1,
+              implementation: '.hidden/kernel.py',
+              exports: ['public_value'],
+              dependencies: []
+            }
+          ]
+        }
+      ]
+    })
+
+    await expect(catalog.resolve('hidden-helper-function')).rejects.toThrow('must not be hidden')
+  })
 })

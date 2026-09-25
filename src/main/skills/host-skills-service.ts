@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 
 import type { TrustedCallingSession } from '../../shared/agents-contract'
-import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
+import { isSkillPackageIgnoredPath, SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import { parseSkillDocument } from './frontmatter'
 import type { BundledSkill } from './registry'
 import {
@@ -381,6 +381,13 @@ export class HostSkillsService {
           force: false,
           errorOnExist: true,
           filter: async (entry) => {
+            if (
+              isSkillPackageIgnoredPath(
+                relative(lockedSkill.sourceDir, entry).replaceAll('\\', '/')
+              )
+            ) {
+              return false
+            }
             if ((await lstat(entry)).isSymbolicLink()) {
               throw new Error('refusing to draft a Skill containing a symbolic link')
             }

@@ -2,7 +2,10 @@ import { cp, lstat, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises
 import { dirname, join, relative } from 'node:path'
 
 import { isSafeSkillReferenceName } from '../../shared/skill-reference-name'
-import { isAppOwnedSkillRootFile } from '../../shared/skill-import-limits'
+import {
+  isAppOwnedSkillRootFile,
+  isSkillPackageIgnoredPath
+} from '../../shared/skill-import-limits'
 import type { SkillReference, SkillSource } from '../../shared/settings'
 import {
   frontmatterBlock,
@@ -330,6 +333,9 @@ export class UserSkillStore {
           force: false,
           errorOnExist: true,
           filter: async (entry) => {
+            if (isSkillPackageIgnoredPath(relative(sourcePath, entry).replaceAll('\\', '/'))) {
+              return false
+            }
             if ((await lstat(entry)).isSymbolicLink()) {
               throw new Error('Refusing to publish a Skill containing a symbolic link.')
             }
@@ -367,6 +373,9 @@ export class UserSkillStore {
           force: false,
           errorOnExist: true,
           filter: async (entry) => {
+            if (isSkillPackageIgnoredPath(relative(live, entry).replaceAll('\\', '/'))) {
+              return false
+            }
             if ((await lstat(entry)).isSymbolicLink()) {
               throw new Error('Refusing to update a Skill containing a symbolic link.')
             }
