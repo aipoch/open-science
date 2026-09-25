@@ -14,6 +14,23 @@ export const OFFICE_PREVIEW_RUNTIME_SCHEME = 'open-science-office-preview'
 export const OFFICE_PREVIEW_RUNTIME_HOST = 'runtime'
 export const OFFICE_PREVIEW_RUNTIME_ORIGIN = `${OFFICE_PREVIEW_RUNTIME_SCHEME}://${OFFICE_PREVIEW_RUNTIME_HOST}`
 
+export const getOfficeSearchSessionId = (frameUrl: string): string | undefined => {
+  try {
+    const url = new URL(frameUrl)
+    if (
+      url.protocol !== `${OFFICE_PREVIEW_RUNTIME_SCHEME}:` ||
+      url.hostname !== OFFICE_PREVIEW_RUNTIME_HOST ||
+      url.pathname !== '/office-preview.html' ||
+      !['xls', 'xlsx', 'spreadsheet', 'pptx'].includes(url.searchParams.get('extension') ?? '')
+    ) {
+      return undefined
+    }
+    return url.searchParams.get('sessionId') || undefined
+  } catch {
+    return undefined
+  }
+}
+
 const LARGE_OFFICE_PREVIEW_BYTES = 20 * 1024 * 1024
 const OFFICE_PREVIEW_TIMEOUT_MS = 30_000
 const LARGE_OFFICE_PREVIEW_TIMEOUT_MS = 120_000
@@ -109,12 +126,19 @@ export type OfficePreviewRuntimeState = {
   error?: OfficePreviewErrorCode
 }
 
-export type OfficePreviewHostMessage = {
-  channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
-  version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
-  type: 'start'
-  start: OfficePreviewRuntimeStart
-}
+export type OfficePreviewHostMessage =
+  | {
+      channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
+      version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
+      type: 'start'
+      start: OfficePreviewRuntimeStart
+    }
+  | {
+      channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
+      version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
+      type: 'find'
+      sessionId: string
+    }
 
 export type OfficePreviewRuntimeMessage =
   | {
@@ -210,8 +234,10 @@ export const isOfficePreviewHostMessage = (value: unknown): value is OfficePrevi
   return (
     message.channel === OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL &&
     message.version === OFFICE_PREVIEW_FRAME_MESSAGE_VERSION &&
-    message.type === 'start' &&
-    isOfficePreviewRuntimeStart(message.start)
+    ((message.type === 'start' &&
+      'start' in message &&
+      isOfficePreviewRuntimeStart(message.start)) ||
+      (message.type === 'find' && 'sessionId' in message && isNonEmptyString(message.sessionId)))
   )
 }
 

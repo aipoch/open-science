@@ -29,7 +29,7 @@ const ComposerComputeTargetIndicator = ({
   const targetCount = targetProviderIds.length
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <Popover>
         <Tooltip>
           <TooltipTrigger

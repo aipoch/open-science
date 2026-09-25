@@ -1,5 +1,8 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
+import {
+  PackageExportProgressButton,
+  PackageOperationIndicator
+} from '@/components/SessionPackageOperation'
 /* Hallmark · macrostructure: operational-home-dashboard · genre: modern-minimal · tone: quiet/technical · anchor: teal
  * pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · icons: pass (30)
  * slop: pass (42–49) · mobile: pass (34, 49, 50–57)
@@ -252,6 +255,12 @@ const HomePage = ({
     [activeProjects]
   )
 
+  const isProjectArchiveBlockedByCatalogRecovery = (projectId: string): boolean => {
+    if (hasCompleteSessionCatalog) return false
+    if (effectiveCatalogRecovery.kind !== 'damaged-authority') return true
+    return effectiveCatalogRecovery.affectedFiles.some((file) => file.projectId === projectId)
+  }
+
   // Non-pending sessions only; pending ones have no durable project yet.
   const persistedSessions = useMemo(
     () =>
@@ -493,7 +502,7 @@ const HomePage = ({
   }
 
   const canArchiveProject = (project: Project): boolean =>
-    hasCompleteSessionCatalog &&
+    !isProjectArchiveBlockedByCatalogRecovery(project.id) &&
     canDeleteProjects &&
     project.archivedAt === undefined &&
     !sessions.some(
@@ -508,7 +517,7 @@ const HomePage = ({
 
   const archiveUnavailableReason = (project: Project): string | undefined => {
     if (!canDeleteProjects) return t('Retry project recovery before archiving.')
-    if (!hasCompleteSessionCatalog) {
+    if (isProjectArchiveBlockedByCatalogRecovery(project.id)) {
       if (effectiveCatalogRecovery.kind === 'damaged-authority') {
         return t(
           'Project archive is unavailable because a damaged conversation cannot be verified.'
@@ -636,10 +645,10 @@ const HomePage = ({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
         <div className="mx-auto max-w-[1080px] px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
-          <header className="flex items-start justify-between gap-3">
+          <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <a
@@ -673,7 +682,7 @@ const HomePage = ({
               </div>
               <div className="mt-1 text-[11px] text-muted-foreground">{t('Beta')}</div>
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-1">
               {requiredEnvironmentFailures.length > 0 && environmentRepairPanel ? (
                 <button
                   type="button"
@@ -694,51 +703,90 @@ const HomePage = ({
                   <span className="sm:hidden">{t('Environment')}</span>
                 </button>
               ) : null}
-              <NetworkStatusIndicator variant="pill" />
+              <NetworkStatusIndicator variant="pill" withTooltipProvider={false} />
+              <PackageExportProgressButton iconOnly />
               <span className="hidden sm:inline-flex">
-                <GitHubStarBadge variant="home" />
+                <GitHubStarBadge variant="home" withTooltipProvider={false} />
               </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-9 rounded-lg text-text-300"
-                onClick={onOpenGlobalSearch}
-                aria-label={t('Search')}
-                title={t('Search (Cmd/Ctrl+K)')}
-              >
-                <Search className="size-4" strokeWidth={2} aria-hidden="true" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-9 rounded-lg text-text-300"
-                onClick={() => openLibrary('user')}
-                aria-label={t('Library')}
-                title={t('Library')}
-              >
-                <BookOpenText className="size-4" strokeWidth={2} aria-hidden="true" />
-              </Button>
-              <NotificationBell />
-              <button
-                type="button"
-                aria-label={t('Model settings')}
-                onClick={openSettings}
-                className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
-              >
-                <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-              </button>
-              <UpdateCapsule />
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-9 rounded-lg text-text-300"
+                    onClick={onOpenGlobalSearch}
+                    aria-label={t('Search')}
+                  >
+                    <Search className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t('Search (Cmd/Ctrl+K)')}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-9 rounded-lg text-text-300"
+                    onClick={() => openLibrary('user')}
+                    aria-label={t('Library')}
+                  >
+                    <BookOpenText className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t('Library')}</TooltipContent>
+              </Tooltip>
+              <NotificationBell withTooltipProvider={false} />
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label={t('Model settings')}
+                    onClick={openSettings}
+                    className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
+                  >
+                    <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t('Settings')}</TooltipContent>
+              </Tooltip>
+              <UpdateCapsule withTooltipProvider={false} />
               {/* Account button hidden for now; restore when the account flow lands. */}
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1 rounded-md px-3 text-xs"
-                onClick={openCreateDialog}
-                aria-label={t('New project')}
-              >
-                <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                <span className="hidden sm:inline">{t('New project')}</span>
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1 rounded-md px-3 text-xs"
+                    onClick={openCreateDialog}
+                    aria-label={t('New project')}
+                  >
+                    <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    <span className="hidden sm:inline">{t('New project')}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t('New project')}</TooltipContent>
+              </Tooltip>
             </div>
           </header>
           <PackageOperationIndicator />
@@ -939,12 +987,12 @@ const HomePage = ({
                     ({ project, sessionCount, runningCount, waitingCount, lastActivityAt }) => (
                       <div
                         key={project.id}
-                        className={rowClassName}
+                        className={cn(rowClassName, 'relative')}
                         title={project.description || project.name}
                       >
                         <button
                           type="button"
-                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left after:absolute after:inset-0 after:rounded-[inherit]"
                           onClick={() => openProject(project.id, 'user')}
                         >
                           <span className="min-w-0 truncate font-semibold text-text-000">
@@ -1014,7 +1062,7 @@ const HomePage = ({
                           <DropdownMenuTrigger asChild>
                             <button
                               type="button"
-                              className={rowActionClassName}
+                              className={cn(rowActionClassName, 'relative z-10')}
                               aria-label={t('Open actions for {{name}}', { name: project.name })}
                             >
                               <MoreVertical

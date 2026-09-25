@@ -82,6 +82,7 @@ import type {
 } from '../../shared/notebook'
 import type { SkillImportRpcConnection } from '../skills/mcp-server'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
+import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -252,6 +253,7 @@ type AcpRuntimeOptions = {
   // table), enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references
   // stay unavailable.
   grantedRoots?: {
+    list?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
   notebook?: AcpRuntimeNotebookOptions
@@ -1570,7 +1572,8 @@ class AcpRuntime {
       observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
       filesystem: {
         resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
-        protectedReadRoots: () => this.protectedReadRoots()
+        protectedReadRoots: () => this.protectedReadRoots(),
+        listGrantedRoots: () => this.options.grantedRoots?.list?.() ?? Promise.resolve([])
       },
       onBackendResolved: (framework) => {
         onFrameworkResolved(framework)
@@ -3018,7 +3021,8 @@ class AcpRuntime {
       getAppClaudeConfigDir(root),
       opencodeStorageDir(root),
       codexStorageDir(root),
-      codexSubscriptionStorageDir(root)
+      codexSubscriptionStorageDir(root),
+      codeBuddyStorageDir(root)
     ]
   }
 

@@ -3,7 +3,19 @@ import { Tooltip as TooltipPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
 
-const TooltipProvider = TooltipPrimitive.Provider
+function TooltipProvider({
+  delayDuration = 200,
+  skipDelayDuration = 300,
+  ...props
+}: React.ComponentProps<typeof TooltipPrimitive.Provider>): React.JSX.Element {
+  return (
+    <TooltipPrimitive.Provider
+      delayDuration={delayDuration}
+      skipDelayDuration={skipDelayDuration}
+      {...props}
+    />
+  )
+}
 const Tooltip = TooltipPrimitive.Root
 const TooltipTrigger = TooltipPrimitive.Trigger
 
@@ -19,7 +31,7 @@ function TooltipContent({
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          'z-50 max-w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-md bg-text-000 px-2 py-1 text-xs whitespace-normal break-words text-bg-000 shadow-md',
+          'hover-bubble origin-(--radix-tooltip-content-transform-origin) z-50 max-w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-md bg-text-000 px-2 py-1 text-xs whitespace-normal break-words text-bg-000 shadow-md',
           className
         )}
         {...props}

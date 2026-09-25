@@ -446,10 +446,15 @@ export class SessionPackageDesktop {
           this.options.assertCanStart?.()
           this.operations.setCleanupPending(this.pendingCleanup.size > 0)
           release = await this.options.reserveExport?.(request, signal)
-          const result = await this.options.withDataRootWrite(() =>
-            this.acceptCleanup(() =>
-              this.options.service.fork(request, signal, this.operations.report)
-            )
+          const result = await withPackageTransfer(
+            () =>
+              this.options.withDataRootWrite(() =>
+                this.acceptCleanup(() =>
+                  this.options.service.fork(request, signal, this.operations.report)
+                )
+              ),
+            () => this.operations.transferBytesPerSecond,
+            this.operations.reportIo
           )
           this.operations.completeResult({ imported: result })
           try {

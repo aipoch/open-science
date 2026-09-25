@@ -30,7 +30,9 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ErrorNotice } from '@/components/error-notice'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
 import { useSettingsStore } from '@/stores/settings-store'
 import type {
@@ -145,6 +147,8 @@ export function SmartCollectionPanel({
   const [confirmPreview, setConfirmPreview] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [confirmRecompute, setConfirmRecompute] = useState(false)
+  const [confirmAbandon, setConfirmAbandon] = useState<string>()
+  const [confirmClearPause, setConfirmClearPause] = useState(false)
   const load = useCallback(
     async () =>
       (
@@ -191,9 +195,11 @@ export function SmartCollectionPanel({
       | 'recompute'
       | 'preview'
       | 'cancel'
+      | 'abandon'
       | 'reset-overrides'
       | 'resume-automatic'
-      | 'resume'
+      | 'resume',
+    targetRunId?: string
   ): Promise<void> => {
     if (decisionPending || busy || refreshFailed) return
     setResumeUnavailable(false)
@@ -220,7 +226,8 @@ export function SmartCollectionPanel({
         kind: 'smart-collection',
         offset: 0,
         collectionId,
-        action
+        action,
+        ...(action === 'abandon' && targetRunId ? { runId: targetRunId } : {})
       })
       state.finishWrite(receipt.smart)
       setRefreshFailed(receipt.smartRefreshFailed === true)
@@ -232,6 +239,8 @@ export function SmartCollectionPanel({
       setConfirmRecompute(false)
       setConfirmPreview(false)
       setConfirmReset(false)
+      setConfirmAbandon(undefined)
+      setConfirmClearPause(false)
     } catch (failure) {
       const unavailable = String(failure).includes(SMART_COLLECTION_RESUME_UNAVAILABLE)
       setResumeUnavailable(unavailable)
@@ -258,8 +267,31 @@ export function SmartCollectionPanel({
     !view.sourceAvailable
   const empty = view && !view.run && !view.matches
   const failed = (!refreshFailed && error) || view?.run?.state === 'failed'
-  const stopped = view?.run?.state === 'cancelled' || view?.run?.state === 'interrupted'
-  const paused = view?.autoUpdate && view.automaticPauseReason && view.run?.state === 'interrupted'
+  const stopped =
+    !view?.run?.abandoned &&
+    (view?.run?.state === 'cancelled' || view?.run?.state === 'interrupted')
+  const automaticPauseVisible = view?.autoUpdate && Boolean(view.automaticPauseReason)
+  const canResumeAutomaticRun =
+    automaticPauseVisible &&
+    Boolean(view?.automaticPauseRunId) &&
+    view?.run?.id === view?.automaticPauseRunId &&
+    !view?.run?.abandoned &&
+    Boolean(view?.run && view.run.done < view.run.total) &&
+    (view?.run?.state === 'cancelled' ||
+      view?.run?.state === 'interrupted' ||
+      ((view.automaticPauseReason === 'storage-error' ||
+        view.automaticPauseReason === 'interrupted') &&
+        view?.run?.state === 'failed')) &&
+    view.automaticPauseReason !== 'run-limit'
+  const continueAutomaticRun =
+    automaticPauseVisible &&
+    view?.automaticPauseReason === 'run-limit' &&
+    view?.run?.state === 'cancelled' &&
+    view.run.id === view.automaticPauseRunId
+  const paused =
+    automaticPauseVisible &&
+    view?.run?.id === view?.automaticPauseRunId &&
+    (view?.run?.state === 'interrupted' || continueAutomaticRun)
   const snapshot = view?.run?.snapshot
   const currentRule = parseSmartRule(description)
   const savedRule = snapshot && parseSmartRule(snapshot.description)
@@ -278,7 +310,7 @@ export function SmartCollectionPanel({
   const updateControl = (
     <div
       data-slot="smart-update-control"
-      className={`relative flex h-9 shrink-0 items-center ${active && !singleReevaluation ? 'w-52' : 'w-36'}`}
+      className={`relative flex h-9 shrink-0 items-center ${active && !singleReevaluation ? 'w-52' : stopped && !singleReevaluation ? 'w-fit min-w-36 max-w-[min(24rem,calc(100vw-2rem))]' : 'w-36'}`}
     >
       {active && !singleReevaluation ? (
         <div data-slot="smart-run-progress" className="flex w-full items-center gap-1">
@@ -387,22 +419,83 @@ export function SmartCollectionPanel({
             onClick={onOpenProcess}
             className="min-w-0 flex-1 rounded-md px-1.5 py-2 text-left text-xs text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
           >
-            <span id={progressStatusId} role="status" className="block truncate">
+            <span id={progressStatusId} role="status" className="block truncate whitespace-nowrap">
               {paused ? t('Automatic updates paused') : t('Paused')} · {view.run?.done}/
               {view.run?.total}
             </span>
           </button>
-          {view.automaticPauseReason !== 'run-limit' && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t('Resume analysis')}
-              disabled={disabled}
-              onClick={() => void run('resume')}
-            >
-              <Play className="size-4" aria-hidden="true" />
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {(view.run?.state === 'interrupted' || view.run?.state === 'cancelled') && !paused && (
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Abandon run')}
+                      disabled={busy || decisionPending || refreshFailed || !view.run?.id}
+                      onClick={() => setConfirmAbandon(view.run?.id)}
+                    >
+                      <Trash2 className="size-4" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="bg-black text-white">
+                    {t(
+                      'Abandon this run. Completed results will be kept, and this run will not resume.'
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {paused ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={
+                  view.automaticPauseReason === 'run-limit'
+                    ? t('Continue in a new run')
+                    : canResumeAutomaticRun
+                      ? t('Resume automatic updates')
+                      : t('Start a fresh automatic run')
+                }
+                disabled={disabled}
+                onClick={() => void run('resume-automatic')}
+              >
+                <RotateCcw className="size-4" aria-hidden="true" />
+              </Button>
+            ) : view.run?.manualResumeAllowed === false ? (
+              !automaticPauseVisible && (
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={t('Continue in a new run')}
+                        disabled={disabled}
+                        onClick={() => void run('refresh')}
+                      >
+                        <RotateCcw className="size-4" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="bg-black text-white">
+                      {t('Continue in a new run')}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Resume analysis')}
+                disabled={disabled || (automaticPauseVisible && !view.automaticPauseRunId)}
+                onClick={() => void run('resume')}
+              >
+                <Play className="size-4" aria-hidden="true" />
+              </Button>
+            )}
+          </div>
         </div>
       ) : (
         <Button className="w-full" disabled={disabled} onClick={() => void run('refresh')}>
@@ -545,7 +638,7 @@ export function SmartCollectionPanel({
             }}
           >
             <div className="flex items-center gap-2">
-              {view?.configured && updateControl}
+              {(view?.configured || stopped) && updateControl}
               <div inert={active || undefined} className="flex items-center gap-2">
                 {(!empty || view?.configured) && searchActions}
                 <MoreActions />
@@ -568,7 +661,7 @@ export function SmartCollectionPanel({
           }}
         />
       )}
-      {view?.autoUpdate && view.automaticPauseReason && !active && (
+      {automaticPauseVisible && !active && (
         <ErrorNotice
           inline
           tone="amber"
@@ -592,10 +685,20 @@ export function SmartCollectionPanel({
             label:
               view.automaticPauseReason === 'run-limit'
                 ? t('Continue in a new run')
-                : t('Resume automatic updates'),
+                : canResumeAutomaticRun
+                  ? t('Resume automatic updates')
+                  : t('Start a fresh automatic run'),
             onClick: () => void run('resume-automatic'),
             disabled:
               busy || decisionPending || refreshFailed || !view.configured || !view.sourceAvailable
+          }}
+          secondaryButton={{
+            label: view.automaticPauseRunId ? t('Abandon run') : t('Clear automatic pause'),
+            onClick: () => {
+              if (view.automaticPauseRunId) setConfirmAbandon(view.automaticPauseRunId)
+              else setConfirmClearPause(true)
+            },
+            disabled: busy || decisionPending || refreshFailed
           }}
         />
       )}
@@ -841,6 +944,29 @@ export function SmartCollectionPanel({
           </div>
         </div>
       )}
+      <ConfirmActionDialog
+        open={Boolean(confirmAbandon)}
+        title={t('Abandon run')}
+        description={t(
+          'Abandon this run? Completed results will be kept, and this run will not resume.'
+        )}
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Abandon run')}
+        destructive
+        loading={busy}
+        onCancel={() => setConfirmAbandon(undefined)}
+        onConfirm={() => void run('abandon', confirmAbandon)}
+      />
+      <ConfirmActionDialog
+        open={confirmClearPause}
+        title={t('Clear automatic pause')}
+        description={t('Clear this automatic pause? Runs and classification results will be kept.')}
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Clear automatic pause')}
+        loading={busy}
+        onCancel={() => setConfirmClearPause(false)}
+        onConfirm={() => void run('abandon')}
+      />
     </section>
   )
 }

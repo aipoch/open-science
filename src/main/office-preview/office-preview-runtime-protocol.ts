@@ -5,7 +5,8 @@ import { createLogger, diagnosticErrorFields } from '../logger'
 import {
   OFFICE_PREVIEW_RUNTIME_HOST,
   OFFICE_PREVIEW_RUNTIME_ORIGIN,
-  OFFICE_PREVIEW_RUNTIME_SCHEME
+  OFFICE_PREVIEW_RUNTIME_SCHEME,
+  type OfficePreviewRequestedExtension
 } from '../../shared/office-preview'
 
 const log = createLogger('office-preview:protocol')
@@ -61,9 +62,13 @@ type OfficePreviewRuntimeProtocolRegistrar = {
   unhandle: (scheme: string) => void
 }
 
-const createOfficePreviewRuntimeUrl = (sessionId: string): string => {
+const createOfficePreviewRuntimeUrl = (
+  sessionId: string,
+  extension?: OfficePreviewRequestedExtension
+): string => {
   const url = new URL('/office-preview.html', OFFICE_PREVIEW_RUNTIME_ORIGIN)
   url.searchParams.set('sessionId', sessionId)
+  if (extension) url.searchParams.set('extension', extension)
   return url.toString()
 }
 

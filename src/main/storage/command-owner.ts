@@ -44,6 +44,7 @@ import {
   beginMigrationPreparation,
   clearMigrationPending,
   endMigrationCopy,
+  isMigrationPending,
   reconcileDataRootWriteAvailability,
   resumeMigrationPreparation
 } from './migration-state'
@@ -646,6 +647,13 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           : undefined
         : await recoverStagedFromMarker(target, new Set(['copying', 'verified']))
       if (!staged) {
+        // A stale dialog may retry after another surface has already resolved the copy. With no
+        // outstanding migration, discard is a no-op: do not touch an unowned or now-live target.
+        // An unrelated staged copy or pending write gate still requires its own resolution.
+        if (!activeStaged && !isMigrationPending()) {
+          logger.info('staged data root discard already resolved')
+          return { ok: true }
+        }
         logger.warn('staged data root discard ignored', { reason: 'no-matching-copy' })
         return { ok: false, error: 'No matching staged data copy was found.' }
       }

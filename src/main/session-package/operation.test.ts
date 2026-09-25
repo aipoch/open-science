@@ -1,6 +1,8 @@
 import { sessionPackageCommandContracts } from '../../shared/session-package'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SessionPackageOperation } from './operation'
+
+afterEach(() => vi.useRealTimers())
 
 const session = { projectId: 'project', sessionId: 'session' }
 const file = {
@@ -88,6 +90,30 @@ describe('SessionPackageOperation', () => {
     expect(() =>
       owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: 4 * 1024 ** 2 })
     ).toThrow('no longer active')
+  })
+
+  it('adapts the default budget to sustained disk throughput and can return to Auto', async () => {
+    vi.useFakeTimers()
+    const owner = new SessionPackageOperation()
+    const completion = deferred()
+    const run = owner.run('import', undefined, () => completion.promise)
+    expect(owner.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    owner.reportIo(16 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+
+    owner.respond({
+      action: 'set-speed',
+      operationId: owner.snapshot!.id,
+      bytesPerSecond: 64 * 1024 ** 2
+    })
+    expect(owner.transferBytesPerSecond).toBe(64 * 1024 ** 2)
+    owner.respond({ action: 'set-speed', operationId: owner.snapshot!.id, bytesPerSecond: null })
+    expect(owner.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+
+    completion.resolve()
+    await run
   })
   it('retains selection across clients and rejects stale or invalid selections', async () => {
     const changed = vi.fn()

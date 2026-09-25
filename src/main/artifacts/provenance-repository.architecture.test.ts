@@ -957,6 +957,7 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/notebook/runtime-service.rpc-retirement.test.ts',
       'src/main/literature/smart-collections.test.ts',
       'src/main/notebook/runtime-service.macos-isolation.integration.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts',
       'src/main/acp/library-auto-policy.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([

@@ -1861,6 +1861,58 @@ describe('storage IPC handlers', () => {
     expect(existsSync(target)).toBe(true)
   })
 
+  it('treats repeated discard of a resolved copy as a no-op without touching live or unowned data', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+    await expect(
+      invoke('storage:discard-migrated-copy', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+    expect(existsSync(target)).toBe(false)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await expect(
+        invoke('storage:discard-migrated-copy', { parent: targetParent })
+      ).resolves.toEqual({ ok: true })
+    }
+    // A now-live root or unrelated replacement at the old target is never removed.
+    await expect(
+      invoke('storage:discard-migrated-copy', { parent: currentParent })
+    ).resolves.toEqual({ ok: true })
+    await mkdir(target)
+    const replacement = join(target, 'user-data.txt')
+    await writeFile(replacement, 'keep')
+    await expect(
+      invoke('storage:discard-migrated-copy', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+    expect(await readFile(replacement, 'utf8')).toBe('keep')
+    expect(existsSync(dataRoot)).toBe(true)
+    expect(isMigrationPending()).toBe(false)
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('does not resolve a different staged copy or its global pending gate for a stale discard', async () => {
+    initDataRoot(dataRoot)
+    const owner = createStorageCommandOwner(fakeDeps())
+    expect((await owner.migrate({ parent: targetParent })).ok).toBe(true)
+    const otherParent = join(currentParent, 'unrelated')
+    await expect(owner.discardMigratedCopy({ parent: otherParent })).resolves.toEqual({
+      ok: false,
+      error: 'No matching staged data copy was found.'
+    })
+    // A recreated owner must also respect the process-wide gate, even without local staged state.
+    const otherOwner = createStorageCommandOwner(fakeDeps())
+    await expect(otherOwner.discardMigratedCopy({ parent: otherParent })).resolves.toEqual({
+      ok: false,
+      error: 'No matching staged data copy was found.'
+    })
+    expect(isMigrationPending()).toBe(true)
+    expect(existsSync(target)).toBe(true)
+    await expect(owner.discardMigratedCopy({ parent: targetParent })).resolves.toEqual({ ok: true })
+    expect(isMigrationPending()).toBe(false)
+  })
+
   it('serializes commit and discard so one resolved migration cannot delete both copies', async () => {
     initDataRoot(dataRoot)
     await mkdir(join(dataRoot, 'artifacts'), { recursive: true })

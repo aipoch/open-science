@@ -339,7 +339,7 @@ const PdfOutlineTree = ({
               className={cn(
                 'group relative flex min-h-7 items-center rounded-md text-xs text-text-100 hover:bg-bg-200 hover:text-text-000',
                 isActive &&
-                  'bg-primary/8 text-text-000 before:absolute before:inset-y-1 before:start-0 before:w-0.5 before:rounded-full before:bg-primary'
+                  'bg-primary/8 text-text-000 before:pointer-events-none before:absolute before:inset-y-1 before:start-0 before:w-0.5 before:rounded-full before:bg-primary'
               )}
               style={{ paddingInlineStart: `${Math.max(0, level - 1) * 16 + 2}px` }}
             >
@@ -347,7 +347,7 @@ const PdfOutlineTree = ({
                 <button
                   type="button"
                   tabIndex={-1}
-                  className="flex size-6 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  className="relative z-10 flex size-6 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   aria-label={isExpanded ? t('Collapse') : t('Expand')}
                   aria-expanded={isExpanded}
                   onClick={() => toggle(item.id)}
@@ -368,7 +368,7 @@ const PdfOutlineTree = ({
                 aria-level={level}
                 aria-selected={isActive}
                 aria-expanded={hasChildren ? isExpanded : undefined}
-                className="min-w-0 flex-1 rounded px-1.5 py-1 text-left leading-4 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                className="after:absolute after:inset-0 after:rounded-[inherit] min-w-0 flex-1 rounded px-1.5 py-1 text-left leading-4 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 title={item.title}
                 onFocus={() => setFocusedId(item.id)}
                 onClick={() =>
@@ -431,7 +431,7 @@ export const PdfOutlineSidebar = ({
   const effectiveMode: PdfNavigationMode = items.length > 0 ? mode : 'pages'
 
   return (
-    <TooltipProvider delayDuration={250} skipDelayDuration={300}>
+    <TooltipProvider skipDelayDuration={300}>
       <aside
         id="pdf-navigation-sidebar"
         className="relative flex shrink-0 flex-col border-r border-border-200 bg-bg-000 text-text-000"

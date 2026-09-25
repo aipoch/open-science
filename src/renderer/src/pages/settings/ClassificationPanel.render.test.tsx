@@ -16,7 +16,8 @@ const api = {
   getClassification: vi.fn(async () => state),
   updateClassification: vi.fn(async (request): Promise<ClassificationMutationResult> => {
     state = { ...state, revision: state.revision + 1 }
-    if (request.kind === 'save')
+    if (request.kind === 'save') {
+      const firstService = state.services.length === 0
       state.services = [
         {
           id: request.id,
@@ -27,8 +28,22 @@ const api = {
           maskedKey: '••••-key'
         }
       ]
+      if (firstService) {
+        state.capabilitySelection = {
+          serviceId: request.id,
+          modelId:
+            request.adapter === 'custom'
+              ? request.modelId
+              : request.adapter === 'openrouter'
+                ? 'typesafe/jev-1.13'
+                : 'jev-latest'
+        }
+        state.smartCollections = state.capabilitySelection
+      }
+    }
     if (request.kind === 'bind') {
-      state.capabilitySelection = request.binding
+      if (request.feature === 'smart-collections') state.smartCollections = request.binding
+      else state.capabilitySelection = request.binding
     }
     if (request.kind === 'remove')
       state = { ...state, services: [], capabilitySelection: undefined }
@@ -59,7 +74,7 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
-it('keeps classification optional, saves an account and binds the service independently', async () => {
+it('selects the first saved model for both features and allows either to be disabled', async () => {
   render(<Harness />)
   await screen.findByText('No model services added')
   expect(screen.queryByText('Chat provider fixture')).toBeNull()
@@ -76,12 +91,23 @@ it('keeps classification optional, saves an account and binds the service indepe
   expect(api.updateClassification).toHaveBeenCalledWith(
     expect.objectContaining({ kind: 'save', apiKey: 'secret-key' })
   )
-  expect(state.capabilitySelection).toBeUndefined()
+  expect(state.capabilitySelection).toEqual({
+    serviceId: state.services[0]?.id,
+    modelId: 'jev-latest'
+  })
+  expect(state.smartCollections).toEqual(state.capabilitySelection)
+  expect(screen.getByRole('combobox', { name: 'Automatic capability selection' }).textContent).toBe(
+    'Research account / Jev Latest'
+  )
+  expect(screen.getByRole('combobox', { name: 'Smart collections' }).textContent).toBe(
+    'Research account / Jev Latest'
+  )
   fireEvent.keyDown(screen.getByRole('combobox', { name: 'Automatic capability selection' }), {
     key: 'Enter'
   })
-  fireEvent.click(await screen.findByRole('option', { name: 'Research account / Jev Latest' }))
-  await waitFor(() => expect(state.capabilitySelection?.serviceId).toBeDefined())
+  fireEvent.click(await screen.findByRole('option', { name: 'Use default method' }))
+  await waitFor(() => expect(state.capabilitySelection).toBeUndefined())
+  expect(state.smartCollections?.serviceId).toBe(state.services[0]?.id)
   fireEvent.click(screen.getByRole('button', { name: 'Check model' }))
   await screen.findByText('Check passed')
   fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
@@ -216,7 +242,7 @@ it('shows the shared validation failure without saving, preserves the draft, and
   expect(screen.queryByText('Connection test failed.')).toBeNull()
   fireEvent.click(screen.getByText('Save'))
   expect(await screen.findByRole('heading', { name: 'TypeSafe AI' })).toBeTruthy()
-  expect(state.capabilitySelection).toBeUndefined()
+  expect(state.capabilitySelection?.serviceId).toBe(state.services[0]?.id)
 })
 it('shows the pending model check and actionable failure without changing the binding', async () => {
   state.services = [
@@ -295,7 +321,10 @@ it('reuses an existing OpenRouter account without displaying or resubmitting its
       })
     )
   )
-  expect(state.capabilitySelection).toBeUndefined()
+  expect(state.capabilitySelection).toEqual({
+    serviceId: state.services[0]?.id,
+    modelId: 'typesafe/jev-1.13'
+  })
   fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
   fireEvent.click(await screen.findByText('Remove service'))
   expect(await screen.findByText(/keeps the shared account and key/)).toBeTruthy()

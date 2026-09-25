@@ -626,6 +626,7 @@ import type {
   LocalePreferenceSnapshot,
   SetLocalePreferenceRequest
 } from './locale'
+import type { InterfaceScale } from './interface-scale'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -2938,6 +2939,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     optionalMember: true
   }),
   'window.close': callable<() => Promise<void>>()('window', ['window:close', MAPPED_NATIVE]),
+  'window.setZoomFactor': callable<(factor: number) => Promise<void>>()(
+    'window',
+    ['window:set-zoom-factor', ELECTRON],
+    { optionalMember: true }
+  ),
   'window.closeFind': callable<() => void>()('window', ['window:find-close', SEND], {
     optionalMember: true
   }),
@@ -2951,6 +2957,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     ['shortcut:close-active-pane', CLOSE_PANE_EVENT],
     { optionalMember: true }
   ),
+  'window.onInterfaceScaleShortcut': callable<
+    (listener: (scale: InterfaceScale) => void) => RemoveListener
+  >()('window', ['shortcut:interface-scale', ELECTRON_EVENT], { optionalMember: true }),
   'window.onCloseConfirmDismiss': callable<
     (listener: (payload: CloseConfirmDismissal) => void) => RemoveListener
   >()('window', ['window:close-confirm-dismiss', ELECTRON_EVENT], { optionalMember: true }),
@@ -2960,6 +2969,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'window.onFindInPageResult': callable<
     (listener: AcpListener<WindowFindResult>) => RemoveListener
   >()('window', ['window:find-in-page-result', ELECTRON_EVENT], { optionalMember: true }),
+  'window.onFindInOffice': callable<(listener: AcpListener<string>) => RemoveListener>()(
+    'window',
+    ['window:find-office', ELECTRON_EVENT],
+    { optionalMember: true }
+  ),
   'window.onHideWindowFind': callable<(listener: () => void) => RemoveListener>()(
     'window',
     ['window:find-hide', ELECTRON_EVENT],

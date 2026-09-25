@@ -143,6 +143,7 @@ export const useJobAnalysisEffect = ({
     if (!enabled) return
 
     let isActive = true
+    let scanInFlight = false
     let pendingScanRetry: ReturnType<typeof setTimeout> | undefined
     const turnEndUnsubscribes = new Set<() => void>()
 
@@ -294,9 +295,12 @@ export const useJobAnalysisEffect = ({
     }
 
     const scanPendingJobs = (retryDelay = 1_000): void => {
+      if (!isActive || scanInFlight) return
       if (typeof window.api?.compute?.jobsPendingNotification !== 'function') return
       clearTimeout(pendingScanRetry)
       pendingScanRetry = undefined
+      // Manual Retry and automatic backoff share one request and one retry timer.
+      scanInFlight = true
 
       void window.api.compute
         .jobsPendingNotification({ allSessions: true })
@@ -314,6 +318,9 @@ export const useJobAnalysisEffect = ({
             pendingScanRetry = undefined
             scanPendingJobs(Math.min(retryDelay * 2, 30_000))
           }, retryDelay)
+        })
+        .finally(() => {
+          scanInFlight = false
         })
     }
 

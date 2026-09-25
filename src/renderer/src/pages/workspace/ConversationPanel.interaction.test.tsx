@@ -37,6 +37,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
@@ -898,6 +899,48 @@ const dispatchDrag = (type: string, dataTransferTypes: string[], files: File[] =
 }
 
 describe('ConversationPanel header spacing', () => {
+  it('shows background export progress in New conversation and Session workspace', () => {
+    act(() =>
+      usePackageOperationStore.setState({
+        operation: {
+          id: 'background-export',
+          kind: 'export',
+          state: 'running',
+          progress: { phase: 'copying' },
+          session: { projectId: 'project-1', sessionId: 'export-session' }
+        },
+        open: false,
+        dismissedId: undefined
+      })
+    )
+    renderPanel()
+    expect(getConversationHeader().textContent).toContain('New conversation')
+    expect(
+      getConversationHeader().querySelector('[aria-label="Copying files… · View progress"]')
+    ).not.toBeNull()
+
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'workspace-session',
+          projectId: 'project-1',
+          title: 'Research Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      }
+    })
+    expect(getConversationHeader().textContent).toContain('Research Session')
+    const progress = getConversationHeader().querySelector<HTMLButtonElement>(
+      '[aria-label="Copying files… · View progress"]'
+    )!
+    act(() => progress.click())
+    expect(usePackageOperationStore.getState().open).toBe(true)
+  })
+
   it('opens diagnostics from the header even while a running Session is not hydrated', () => {
     const session: ChatSession = {
       id: 'diagnostic-session',
@@ -1191,6 +1234,7 @@ beforeEach(() => {
   respondToSessionPlanMock.mockReset().mockResolvedValue(undefined)
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   useSettingsStore.setState(createInitialSettingsState())
+  usePackageOperationStore.setState({ operation: null, open: false, dismissedId: undefined })
   useSpecialistStore.setState({ items: [], isLoaded: true })
   mockHasRunningJobs = false
   mockAllJobs = []
@@ -6716,6 +6760,88 @@ describe('ConversationPanel error box + report affordance', () => {
     })
     expect(errorBoxText()).toContain('Run failed: connection reset')
     expect(reportButton()).not.toBeNull()
+  })
+
+  it('dismisses the current error without changing the run and shows a later failure', () => {
+    renderPanel({ view: { activeSession: errorSession } })
+
+    const dismiss = container.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')
+    expect(dismiss).not.toBeNull()
+    act(() => dismiss?.click())
+    expect(errorBoxText()).toBe('')
+    expect(reportButton()).toBeNull()
+
+    renderPanel({ view: { activeSession: errorSession } })
+    expect(errorBoxText()).toBe('')
+
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          autoReviewEnabled: true,
+          updatedAt: errorSession.updatedAt + 1
+        }
+      }
+    })
+    expect(errorBoxText()).toBe('')
+
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, status: 'running', error: undefined }
+      }
+    })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          updatedAt: errorSession.updatedAt + 2
+        }
+      }
+    })
+    expect(errorBoxText()).toContain('Run failed: connection reset')
+    expect(reportButton()).not.toBeNull()
+  })
+
+  it('shows a repeated transient action error after the dismissed one clears', () => {
+    const idleSession = { ...errorSession, status: 'idle' as const, error: undefined }
+    renderPanel({
+      view: {
+        activeSession: idleSession,
+        actionError: 'Could not send message'
+      }
+    })
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')?.click())
+    expect(errorBoxText()).toBe('')
+
+    renderPanel({ view: { activeSession: idleSession, actionError: null } })
+    renderPanel({
+      view: { activeSession: idleSession, actionError: 'Could not send message' }
+    })
+    expect(errorBoxText()).toContain('Could not send message')
+  })
+
+  it('keeps the same translated action error dismissed when the language changes', async () => {
+    const { i18next } = await import('../../i18n')
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, status: 'idle', error: undefined },
+        actionError: VISION_MODEL_NOT_CONFIGURED_MESSAGE
+      }
+    })
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')?.click())
+    expect(errorBoxText()).toBe('')
+
+    try {
+      await act(async () => {
+        await i18next.changeLanguage('zh-Hans')
+      })
+      expect(errorBoxText()).toBe('')
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
   })
 
   it('renders the error box for a failed run even when it has no error text', () => {

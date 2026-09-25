@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
+  link,
   mkdir,
   mkdtemp,
   open as openFile,
@@ -11,12 +12,13 @@ import {
   rmdir,
   symlink,
   utimes,
-  writeFile
+  writeFile,
+  type FileHandle
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 let cleanupRoot: string | undefined
 
@@ -519,15 +521,39 @@ describe('NodeVersionFileOperator', () => {
     const content = Buffer.from('verified immutable content')
     const stored = await operator.publishImmutable({ ...planInput, plannedFile, content })
     const destinationPath = join(cleanupRoot, 'downloaded.md')
+    const aliasPath = join(cleanupRoot, 'alias.md')
+    await writeFile(destinationPath, 'previous download')
 
     const lease = await operator.openImmutable(stored.storageRef, stored)
+    await link(lease.localPath, aliasPath)
+    const probe = await openFile(lease.localPath, 'r')
+    const prototype = Object.getPrototypeOf(probe) as FileHandle
+    const originalStat = prototype.stat
+    await probe.close()
+    // Large Windows file IDs can collide after conversion to Number. Keep the true bigint IDs.
+    const statSpy = vi.spyOn(prototype, 'stat').mockImplementation(async function (
+      this: FileHandle,
+      options
+    ) {
+      const result = await originalStat.call(this, options)
+      if (!options?.bigint) Object.assign(result, { ino: Number(1n << 60n) })
+      return result
+    })
     expect(lease.localPath).toBe(join(cleanupRoot, ...stored.storageRef.split('/')))
     await expect(lease.readRange(9, 18)).resolves.toEqual(new Uint8Array(Buffer.from('immutable')))
-    await expect(lease.assertCanCopyTo(destinationPath)).resolves.toBeUndefined()
-    await expect(lease.assertCanCopyTo(lease.localPath)).rejects.toMatchObject({
-      code: 'INTEGRITY_FAILED'
-    })
-    await lease.copyTo(destinationPath)
+    try {
+      await expect(lease.assertCanCopyTo(destinationPath)).resolves.toBeUndefined()
+      await expect(lease.assertCanCopyTo(lease.localPath)).rejects.toMatchObject({
+        code: 'INTEGRITY_FAILED'
+      })
+      await expect(lease.assertCanCopyTo(aliasPath)).rejects.toMatchObject({
+        code: 'INTEGRITY_FAILED'
+      })
+      await lease.copyTo(destinationPath)
+      await expect(lease.copyTo(aliasPath)).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+    } finally {
+      statSpy.mockRestore()
+    }
     await expect(readFile(destinationPath)).resolves.toEqual(content)
     await lease.verifyUnchanged()
     await lease.close()

@@ -2,7 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { unzipSync } from 'fflate'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  link,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -811,27 +823,73 @@ describe('file save IPC handlers', () => {
     }
   })
 
-  it('does not truncate a managed file when Save As selects the source itself', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'open-science-save-source-'))
-    const sourcePath = join(root, 'report.csv')
-    await writeFile(sourcePath, 'source must survive')
-    showSaveDialog.mockResolvedValue({ canceled: false, filePath: sourcePath })
-    registerFileSaveHandlers({
-      resolveManagedFilePath: vi.fn().mockResolvedValue(sourcePath)
-    })
+  it.each(['new', 'existing'] as const)(
+    'distinguishes the %s destination when numeric inode values collide',
+    async (destination) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-save-inode-'))
+      const sourcePath = join(root, 'source.csv')
+      const destinationPath = join(root, 'download.csv')
+      await writeFile(sourcePath, 'source bytes')
+      if (destination === 'existing') await writeFile(destinationPath, 'previous download')
+      const probe = await open(sourcePath, 'r')
+      const prototype = Object.getPrototypeOf(probe) as FileHandle
+      const originalStat = prototype.stat
+      await probe.close()
+      // Windows file IDs can exceed Number.MAX_SAFE_INTEGER. Emulate two distinct IDs
+      // collapsing to one number while retaining real handle identities in bigint mode.
+      const statSpy = vi.spyOn(prototype, 'stat').mockImplementation(async function (
+        this: FileHandle,
+        options
+      ) {
+        const result = await originalStat.call(this, options)
+        if (!options?.bigint) Object.assign(result, { ino: Number(1n << 60n) })
+        return result
+      })
+      showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+      registerFileSaveHandlers({
+        resolveManagedFilePath: vi.fn().mockResolvedValue(sourcePath)
+      })
 
-    try {
-      await expect(
-        handlers.get('file:save-managed')!(
+      try {
+        await handlers.get('file:save-managed')!(
           { sender: {} },
           { source: 'local', path: sourcePath, suggestedName: 'report.csv' }
         )
-      ).rejects.toThrow('Cannot save a managed file over its source.')
-      await expect(readFile(sourcePath, 'utf8')).resolves.toBe('source must survive')
-    } finally {
-      await rm(root, { recursive: true, force: true })
+        await expect(readFile(destinationPath, 'utf8')).resolves.toBe('source bytes')
+        await expect(readFile(sourcePath, 'utf8')).resolves.toBe('source bytes')
+      } finally {
+        statSpy.mockRestore()
+        await rm(root, { recursive: true, force: true })
+      }
     }
-  })
+  )
+
+  it.each(['source', 'hard link'] as const)(
+    'does not truncate a managed file when Save As selects its %s',
+    async (destination) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-save-source-'))
+      const sourcePath = join(root, 'report.csv')
+      const destinationPath = destination === 'source' ? sourcePath : join(root, 'alias.csv')
+      await writeFile(sourcePath, 'source must survive')
+      if (destination === 'hard link') await link(sourcePath, destinationPath)
+      showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+      registerFileSaveHandlers({
+        resolveManagedFilePath: vi.fn().mockResolvedValue(sourcePath)
+      })
+
+      try {
+        await expect(
+          handlers.get('file:save-managed')!(
+            { sender: {} },
+            { source: 'local', path: sourcePath, suggestedName: 'report.csv' }
+          )
+        ).rejects.toThrow('Cannot save a managed file over its source.')
+        await expect(readFile(sourcePath, 'utf8')).resolves.toBe('source must survive')
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('keeps traversal-only suggested names inside Downloads', async () => {
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/source-report.csv')

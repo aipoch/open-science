@@ -7,7 +7,7 @@ import type { ManagedFileVersionService } from '../managed-file-versions/service
 import type { NotebookInputRegistry } from '../notebook/input-registry'
 import type { NamedElectronSurfaceAdapter } from '../runtime-electron-wiring'
 import { registerWindowFindIpcHandlers } from '../window-find-ipc'
-import { registerWindowIpcHandlers } from '../window-ipc'
+import { registerWindowCloseIpcHandler } from '../window-ipc'
 import { createElectronSurfaceAdapter } from './adapter'
 
 type DesktopUtilitiesOwners = {
@@ -45,6 +45,6 @@ export const createDesktopUtilitiesElectronSurface = ({
     registerLogsIpcHandlers(logs)
     registerGithubIpcHandlers({}, github)
     registerCliInstallIpcHandlers(cli)
-    registerWindowIpcHandlers()
+    registerWindowCloseIpcHandler()
     return registerWindowFindIpcHandlers()
   })

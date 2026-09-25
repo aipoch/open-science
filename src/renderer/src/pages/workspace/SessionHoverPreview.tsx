@@ -513,7 +513,7 @@ const SessionHoverPreview = ({
           }
           restoreFocusRef.current = contentRef.current?.contains(document.activeElement) ?? false
         }}
-        className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain border-0 bg-transparent p-0 text-inherit shadow-none motion-reduce:animate-none"
+        className="hover-bubble max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain border-0 bg-transparent p-0 text-inherit shadow-none motion-reduce:animate-none"
       >
         <SessionHoverPreviewCard
           session={session}

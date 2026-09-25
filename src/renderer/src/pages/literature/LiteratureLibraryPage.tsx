@@ -98,7 +98,7 @@ import {
   useState,
   useSyncExternalStore
 } from 'react'
-import type { ReactNode } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
@@ -108,7 +108,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { Button } from '@/components/ui/button'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   dialogBodyClassName,
@@ -566,6 +566,26 @@ type LiteratureSidebarGroupProps<T extends { id: string }> = Readonly<{
   renderEntry: (entry: T) => React.JSX.Element
 }>
 
+function LiteratureSidebarHint({
+  label,
+  collapsed,
+  children
+}: Readonly<{ label: string; collapsed: boolean; children: ReactElement }>): React.JSX.Element {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        asChild
+        onFocus={(event) => {
+          if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+        }}
+      >
+        {children}
+      </TooltipTrigger>
+      {collapsed ? <TooltipContent side="right">{label}</TooltipContent> : null}
+    </Tooltip>
+  )
+}
+
 function LiteratureSidebarGroup<T extends { id: string }>({
   collapsed,
   entries,
@@ -670,7 +690,11 @@ function LiteratureSidebarState({
     return () => window.removeEventListener('keydown', toggleFromShortcut)
   }, [])
 
-  return children(collapsed, () => setCollapsed((current) => !current))
+  return (
+    <TooltipProvider>
+      {children(collapsed, () => setCollapsed((current) => !current))}
+    </TooltipProvider>
+  )
 }
 
 function LiteratureAddMenu({
@@ -3510,6 +3534,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     switch (field) {
       case 'title':
         return t('Title')
+      case 'abstract':
+        return t('Abstract')
       case 'authors':
         return t('Authors')
       case 'identifiers':
@@ -4895,140 +4921,149 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       </div>
                     </>
                   ) : null}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className={cn('shrink-0', !sidebarCollapsed && 'ml-auto')}
-                    aria-label={
+                  <LiteratureSidebarHint
+                    label={
                       sidebarCollapsed ? t('Expand sidebar panel') : t('Collapse sidebar panel')
                     }
-                    aria-expanded={!sidebarCollapsed}
-                    aria-controls="literature-sidebar-navigation"
-                    aria-keyshortcuts={window.api?.platform === 'darwin' ? 'Meta+B' : 'Control+B'}
-                    title={
-                      sidebarCollapsed ? t('Expand sidebar panel') : t('Collapse sidebar panel')
-                    }
-                    onClick={toggleSidebar}
+                    collapsed
                   >
-                    <PanelLeft className="size-4" aria-hidden="true" />
-                  </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className={cn('shrink-0', !sidebarCollapsed && 'ml-auto')}
+                      aria-label={
+                        sidebarCollapsed ? t('Expand sidebar panel') : t('Collapse sidebar panel')
+                      }
+                      aria-expanded={!sidebarCollapsed}
+                      aria-controls="literature-sidebar-navigation"
+                      aria-keyshortcuts={window.api?.platform === 'darwin' ? 'Meta+B' : 'Control+B'}
+                      onClick={toggleSidebar}
+                    >
+                      <PanelLeft className="size-4" aria-hidden="true" />
+                    </Button>
+                  </LiteratureSidebarHint>
                 </div>
                 <div className="mb-3 border-b border-border-300/80 pb-3">
-                  <button
-                    type="button"
-                    className={navButtonClassName}
-                    aria-label={returnLabel}
-                    title={sidebarCollapsed ? returnLabel : undefined}
-                    onClick={() => returnFromLibrary('user')}
-                  >
-                    <ArrowLeft className="size-4" aria-hidden="true" />
-                    {!sidebarCollapsed ? <span>{returnLabel}</span> : null}
-                  </button>
+                  <LiteratureSidebarHint label={returnLabel} collapsed={sidebarCollapsed}>
+                    <button
+                      type="button"
+                      className={navButtonClassName}
+                      aria-label={returnLabel}
+                      onClick={() => returnFromLibrary('user')}
+                    >
+                      <ArrowLeft className="size-4" aria-hidden="true" />
+                      {!sidebarCollapsed ? <span>{returnLabel}</span> : null}
+                    </button>
+                  </LiteratureSidebarHint>
                 </div>
                 <nav
                   id="literature-sidebar-navigation"
                   className="space-y-1"
                   aria-label={t('Literature library')}
                 >
-                  <button
-                    type="button"
-                    className={cn(
-                      navButtonClassName,
-                      !duplicatesOpen && section === 'inbox' && 'bg-bg-300 font-medium'
-                    )}
-                    aria-current={
-                      !citationStylesOpen && !duplicatesOpen && section === 'inbox'
-                        ? 'page'
-                        : undefined
-                    }
-                    aria-label={t('Inbox')}
-                    title={sidebarCollapsed ? t('Inbox') : undefined}
-                    onClick={() => selectSection('inbox')}
-                  >
-                    <Inbox className="size-4" aria-hidden="true" />
-                    {!sidebarCollapsed ? <span>{t('Inbox')}</span> : null}
-                    {!sidebarCollapsed &&
-                    inboxPendingCount !== undefined &&
-                    inboxPendingCount > 0 ? (
-                      <span className="ml-auto rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
-                        {inboxPendingCount}
-                      </span>
-                    ) : null}
-                    {sidebarCollapsed &&
-                    inboxPendingCount !== undefined &&
-                    inboxPendingCount > 0 ? (
-                      <span
-                        className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-primary"
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(
-                      navButtonClassName,
-                      !duplicatesOpen &&
+                  <LiteratureSidebarHint label={t('Inbox')} collapsed={sidebarCollapsed}>
+                    <button
+                      type="button"
+                      className={cn(
+                        navButtonClassName,
+                        !duplicatesOpen && section === 'inbox' && 'bg-bg-300 font-medium'
+                      )}
+                      aria-current={
+                        !citationStylesOpen && !duplicatesOpen && section === 'inbox'
+                          ? 'page'
+                          : undefined
+                      }
+                      aria-label={t('Inbox')}
+                      onClick={() => selectSection('inbox')}
+                    >
+                      <Inbox className="size-4" aria-hidden="true" />
+                      {!sidebarCollapsed ? <span>{t('Inbox')}</span> : null}
+                      {!sidebarCollapsed &&
+                      inboxPendingCount !== undefined &&
+                      inboxPendingCount > 0 ? (
+                        <span className="ml-auto rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                          {inboxPendingCount}
+                        </span>
+                      ) : null}
+                      {sidebarCollapsed &&
+                      inboxPendingCount !== undefined &&
+                      inboxPendingCount > 0 ? (
+                        <span
+                          className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-primary"
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                    </button>
+                  </LiteratureSidebarHint>
+                  <LiteratureSidebarHint label={t('All references')} collapsed={sidebarCollapsed}>
+                    <button
+                      type="button"
+                      className={cn(
+                        navButtonClassName,
+                        !duplicatesOpen &&
+                          section === 'library' &&
+                          !collectionId &&
+                          !projectId &&
+                          'bg-bg-300 font-medium'
+                      )}
+                      ref={libraryEntryRef}
+                      aria-current={
+                        !citationStylesOpen &&
+                        !duplicatesOpen &&
                         section === 'library' &&
                         !collectionId &&
-                        !projectId &&
-                        'bg-bg-300 font-medium'
-                    )}
-                    ref={libraryEntryRef}
-                    aria-current={
-                      !citationStylesOpen &&
-                      !duplicatesOpen &&
-                      section === 'library' &&
-                      !collectionId &&
-                      !projectId
-                        ? 'page'
-                        : undefined
-                    }
-                    aria-label={t('All references')}
-                    title={sidebarCollapsed ? t('All references') : undefined}
-                    onClick={() => selectLibrary()}
-                  >
-                    <BookOpenText className="size-4" aria-hidden="true" />
-                    {!sidebarCollapsed ? <span>{t('All references')}</span> : null}
-                    <LiteratureLibraryCount
-                      revision={libraryCountRevision}
-                      hidden={sidebarCollapsed}
-                    />
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(navButtonClassName, duplicatesOpen && 'bg-bg-300 font-medium')}
-                    aria-current={!citationStylesOpen && duplicatesOpen ? 'page' : undefined}
-                    aria-label={t('Duplicates')}
-                    title={sidebarCollapsed ? t('Duplicates') : undefined}
-                    onClick={() => {
-                      setCitationStylesOpen(false)
-                      setDuplicatesOpen(true)
-                      clearSelection()
-                    }}
-                  >
-                    <Copy className="size-4" aria-hidden="true" />
-                    {!sidebarCollapsed ? <span>{t('Duplicates')}</span> : null}
-                    <LiteratureDuplicateCount ref={duplicateCountRef} hidden={sidebarCollapsed} />
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(
-                      navButtonClassName,
-                      !duplicatesOpen && section === 'trash' && 'bg-bg-300 font-medium'
-                    )}
-                    aria-current={
-                      !citationStylesOpen && !duplicatesOpen && section === 'trash'
-                        ? 'page'
-                        : undefined
-                    }
-                    aria-label={t('Trash')}
-                    title={sidebarCollapsed ? t('Trash') : undefined}
-                    onClick={() => selectSection('trash')}
-                  >
-                    <Trash2 className="size-4" aria-hidden="true" />
-                    {!sidebarCollapsed ? <span>{t('Trash')}</span> : null}
-                  </button>
+                        !projectId
+                          ? 'page'
+                          : undefined
+                      }
+                      aria-label={t('All references')}
+                      onClick={() => selectLibrary()}
+                    >
+                      <BookOpenText className="size-4" aria-hidden="true" />
+                      {!sidebarCollapsed ? <span>{t('All references')}</span> : null}
+                      <LiteratureLibraryCount
+                        revision={libraryCountRevision}
+                        hidden={sidebarCollapsed}
+                      />
+                    </button>
+                  </LiteratureSidebarHint>
+                  <LiteratureSidebarHint label={t('Duplicates')} collapsed={sidebarCollapsed}>
+                    <button
+                      type="button"
+                      className={cn(navButtonClassName, duplicatesOpen && 'bg-bg-300 font-medium')}
+                      aria-current={!citationStylesOpen && duplicatesOpen ? 'page' : undefined}
+                      aria-label={t('Duplicates')}
+                      onClick={() => {
+                        setCitationStylesOpen(false)
+                        setDuplicatesOpen(true)
+                        clearSelection()
+                      }}
+                    >
+                      <Copy className="size-4" aria-hidden="true" />
+                      {!sidebarCollapsed ? <span>{t('Duplicates')}</span> : null}
+                      <LiteratureDuplicateCount ref={duplicateCountRef} hidden={sidebarCollapsed} />
+                    </button>
+                  </LiteratureSidebarHint>
+                  <LiteratureSidebarHint label={t('Trash')} collapsed={sidebarCollapsed}>
+                    <button
+                      type="button"
+                      className={cn(
+                        navButtonClassName,
+                        !duplicatesOpen && section === 'trash' && 'bg-bg-300 font-medium'
+                      )}
+                      aria-current={
+                        !citationStylesOpen && !duplicatesOpen && section === 'trash'
+                          ? 'page'
+                          : undefined
+                      }
+                      aria-label={t('Trash')}
+                      onClick={() => selectSection('trash')}
+                    >
+                      <Trash2 className="size-4" aria-hidden="true" />
+                      {!sidebarCollapsed ? <span>{t('Trash')}</span> : null}
+                    </button>
+                  </LiteratureSidebarHint>
                 </nav>
                 <div
                   className={cn(
@@ -5055,35 +5090,41 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     showFewerLabel={t('Show fewer projects')}
                     showLessText={t('Show less')}
                     renderEntry={(project) => (
-                      <button
+                      <LiteratureSidebarHint
                         key={project.id}
-                        type="button"
-                        className={cn(
-                          navButtonClassName,
-                          !duplicatesOpen && projectId === project.id && 'bg-bg-300 font-medium'
-                        )}
-                        aria-current={
-                          !citationStylesOpen &&
-                          !duplicatesOpen &&
-                          section === 'library' &&
-                          projectId === project.id
-                            ? 'page'
-                            : undefined
-                        }
-                        aria-label={project.name}
-                        title={sidebarCollapsed ? project.name : undefined}
-                        onClick={() => selectProject(project.id)}
+                        label={project.name}
+                        collapsed={sidebarCollapsed}
                       >
-                        <GalleryVerticalEnd className="size-4" aria-hidden="true" />
-                        {!sidebarCollapsed ? (
-                          <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
-                        ) : null}
-                        {!sidebarCollapsed ? (
-                          <span className="text-xs tabular-nums text-muted-foreground">
-                            {projectItemCounts[project.id] ?? 0}
-                          </span>
-                        ) : null}
-                      </button>
+                        <button
+                          type="button"
+                          className={cn(
+                            navButtonClassName,
+                            !duplicatesOpen && projectId === project.id && 'bg-bg-300 font-medium'
+                          )}
+                          aria-current={
+                            !citationStylesOpen &&
+                            !duplicatesOpen &&
+                            section === 'library' &&
+                            projectId === project.id
+                              ? 'page'
+                              : undefined
+                          }
+                          aria-label={project.name}
+                          onClick={() => selectProject(project.id)}
+                        >
+                          <GalleryVerticalEnd className="size-4" aria-hidden="true" />
+                          {!sidebarCollapsed ? (
+                            <span className="min-w-0 flex-1 truncate text-left">
+                              {project.name}
+                            </span>
+                          ) : null}
+                          {!sidebarCollapsed ? (
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                              {projectItemCounts[project.id] ?? 0}
+                            </span>
+                          ) : null}
+                        </button>
+                      </LiteratureSidebarHint>
                     )}
                   />
                   <div
@@ -5100,22 +5141,23 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     groupId="literature-sidebar-collections"
                     label={t('Collections')}
                     action={
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-lg"
-                        className="text-muted-foreground hover:bg-bg-300 hover:text-foreground active:bg-bg-300 transition-none"
-                        aria-label={t('New collection')}
-                        aria-haspopup="dialog"
-                        title={t('New collection')}
-                        onClick={openCreateCollection}
-                      >
-                        {sidebarCollapsed ? (
-                          <FolderPlus className="size-4" aria-hidden="true" />
-                        ) : (
-                          <Plus className="size-4" aria-hidden="true" />
-                        )}
-                      </Button>
+                      <LiteratureSidebarHint label={t('New collection')} collapsed>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-lg"
+                          className="text-muted-foreground hover:bg-bg-300 hover:text-foreground active:bg-bg-300 transition-none"
+                          aria-label={t('New collection')}
+                          aria-haspopup="dialog"
+                          onClick={openCreateCollection}
+                        >
+                          {sidebarCollapsed ? (
+                            <FolderPlus className="size-4" aria-hidden="true" />
+                          ) : (
+                            <Plus className="size-4" aria-hidden="true" />
+                          )}
+                        </Button>
+                      </LiteratureSidebarHint>
                     }
                     navButtonClassName={navButtonClassName}
                     selectedId={duplicatesOpen ? undefined : collectionId}
@@ -5124,48 +5166,52 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     showFewerLabel={t('Show fewer collections')}
                     showLessText={t('Show less')}
                     renderEntry={(collection) => (
-                      <button
+                      <LiteratureSidebarHint
                         key={collection.id}
-                        type="button"
-                        className={cn(
-                          navButtonClassName,
-                          !duplicatesOpen &&
-                            collectionId === collection.id &&
-                            'bg-bg-300 font-medium'
-                        )}
-                        aria-current={
-                          !citationStylesOpen &&
-                          !duplicatesOpen &&
-                          section === 'library' &&
-                          collectionId === collection.id
-                            ? 'page'
-                            : undefined
-                        }
-                        aria-label={collection.name}
-                        title={sidebarCollapsed ? collection.name : undefined}
-                        onClick={() => selectLibrary(collection.id)}
+                        label={collection.name}
+                        collapsed={sidebarCollapsed}
                       >
-                        <span aria-hidden="true">
-                          {collection.smart ? (
-                            <SmartCollectionIcon
-                              className="size-4 text-primary"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <FolderOpen className="size-4" />
+                        <button
+                          type="button"
+                          className={cn(
+                            navButtonClassName,
+                            !duplicatesOpen &&
+                              collectionId === collection.id &&
+                              'bg-bg-300 font-medium'
                           )}
-                        </span>
-                        {!sidebarCollapsed ? (
-                          <span className="min-w-0 flex-1 truncate text-left">
-                            {collection.name}
+                          aria-current={
+                            !citationStylesOpen &&
+                            !duplicatesOpen &&
+                            section === 'library' &&
+                            collectionId === collection.id
+                              ? 'page'
+                              : undefined
+                          }
+                          aria-label={collection.name}
+                          onClick={() => selectLibrary(collection.id)}
+                        >
+                          <span aria-hidden="true">
+                            {collection.smart ? (
+                              <SmartCollectionIcon
+                                className="size-4 text-primary"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <FolderOpen className="size-4" />
+                            )}
                           </span>
-                        ) : null}
-                        {!sidebarCollapsed ? (
-                          <span className="text-xs tabular-nums text-muted-foreground">
-                            {collection.itemCount}
-                          </span>
-                        ) : null}
-                      </button>
+                          {!sidebarCollapsed ? (
+                            <span className="min-w-0 flex-1 truncate text-left">
+                              {collection.name}
+                            </span>
+                          ) : null}
+                          {!sidebarCollapsed ? (
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                              {collection.itemCount}
+                            </span>
+                          ) : null}
+                        </button>
+                      </LiteratureSidebarHint>
                     )}
                   />
                 </div>
@@ -5175,20 +5221,21 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     sidebarCollapsed && 'flex flex-col items-center'
                   )}
                 >
-                  <button
-                    type="button"
-                    className={cn(
-                      navButtonClassName,
-                      citationStylesOpen && 'bg-bg-300 font-medium'
-                    )}
-                    aria-current={citationStylesOpen ? 'page' : undefined}
-                    aria-label={t('Settings')}
-                    title={sidebarCollapsed ? t('Settings') : undefined}
-                    onClick={() => setCitationStylesOpen(true)}
-                  >
-                    <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-                    {!sidebarCollapsed ? <span>{t('Settings')}</span> : null}
-                  </button>
+                  <LiteratureSidebarHint label={t('Settings')} collapsed={sidebarCollapsed}>
+                    <button
+                      type="button"
+                      className={cn(
+                        navButtonClassName,
+                        citationStylesOpen && 'bg-bg-300 font-medium'
+                      )}
+                      aria-current={citationStylesOpen ? 'page' : undefined}
+                      aria-label={t('Settings')}
+                      onClick={() => setCitationStylesOpen(true)}
+                    >
+                      <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+                      {!sidebarCollapsed ? <span>{t('Settings')}</span> : null}
+                    </button>
+                  </LiteratureSidebarHint>
                 </div>
               </aside>
             )

@@ -452,7 +452,13 @@ describe('PR Gate workflow', () => {
       scripts: Record<string, string>
     }
     for (const platform of ['macos', 'windows']) {
-      const command = workflow.jobs[`${platform}_e2e`].steps?.find(
+      const source =
+        platform === 'windows'
+          ? (load(
+              readFileSync('.github/workflows/windows-e2e-regression.yml', 'utf8')
+            ) as typeof workflow)
+          : workflow
+      const command = source.jobs[`${platform}_e2e`].steps?.find(
         ({ id }) => id === `e2e_functional_${platform}`
       )?.run
       const script = command?.match(/^npm run (\S+)/)?.[1]
@@ -525,6 +531,7 @@ describe('PR Gate workflow', () => {
             'i18n',
             'runtime-bundle',
             'windows-e2e',
+            'windows-e2e-mainline',
             'windows-process',
             'e2e',
             'source-regressions',
@@ -555,7 +562,8 @@ describe('PR Gate workflow', () => {
       base: '${{ steps.revisions.outputs.base }}',
       head: '${{ steps.revisions.outputs.head }}',
       lanes: '${{ steps.classify.outputs.lanes }}',
-      plan: '${{ steps.classify.outputs.plan }}'
+      plan: '${{ steps.classify.outputs.plan }}',
+      windows_e2e_grep: '${{ steps.windows_mainline.outputs.grep }}'
     })
 
     for (const bundle of manifest.bundleOrder) {
@@ -586,11 +594,7 @@ describe('PR Gate workflow', () => {
     expect(macos?.if).toContain(
       "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos')"
     )
-    expect(windows?.if).toContain(
-      "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows')"
-    )
-    expect(windows?.if).toContain("steps.setup.outcome == 'success'")
-    expect(windows?.run).toContain('--shard=${{ matrix.shard }}/3')
+    expect(windows).toBeUndefined()
   })
 
   it('lets retries absorb flakes on PR and merge-queue business E2E while scheduled regressions stay strict', () => {
@@ -611,38 +615,28 @@ describe('PR Gate workflow', () => {
     }
   })
 
-  it('requires the Windows browser suite only when its lane is selected', () => {
-    const enforce = workflow.jobs.windows_e2e.steps?.find(
+  it('requires a nonempty Windows mainline selection and successful setup and execution', () => {
+    const enforce = workflow.jobs.windows_e2e.steps!.find(
       ({ name }) => name === 'Enforce selected Windows E2E checks'
-    )
-    expect(enforce?.env).toMatchObject({
-      E2E_BROWSER_SELECTED:
-        "${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') }}",
-      RENDERER_LAYOUT_OUTCOME: '${{ steps.renderer_layout.outcome }}'
-    })
-    expect(enforce?.run).toContain('check renderer_layout "$RENDERER_LAYOUT_OUTCOME"')
+    )!
     const baseline = {
       ...process.env,
+      E2E_GREP: '@pr-mainline-notebook',
       SETUP_OUTCOME: 'success',
-      E2E_FUNCTIONAL_OUTCOME: 'skipped',
-      E2E_WORKSPACE_OUTCOME: 'skipped'
+      MAINLINE_OUTCOME: 'success'
     }
-    for (const [selected, outcome, code] of [
-      ['true', 'success', 0],
-      ['true', 'skipped', 1],
-      ['true', 'failure', 1],
-      ['true', '', 1],
-      ['false', 'skipped', 0],
-      ['false', 'success', 0],
-      ['false', 'failure', 1],
-      ['false', 'cancelled', 1]
-    ] as const) {
-      const result = spawnSync('bash', ['-c', enforce!.run!], {
-        env: { ...baseline, E2E_BROWSER_SELECTED: selected, RENDERER_LAYOUT_OUTCOME: outcome },
-        encoding: 'utf8'
-      })
-      expect(result.status, `selected=${selected} outcome=${outcome}`).toBe(code)
+    for (const key of ['SETUP_OUTCOME', 'MAINLINE_OUTCOME']) {
+      for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {
+        const result = spawnSync('bash', ['-c', enforce.run!], {
+          encoding: 'utf8',
+          env: { ...baseline, [key]: outcome }
+        })
+        expect(result.status, `${key}=${outcome}`).toBe(outcome === 'success' ? 0 : 1)
+      }
     }
+    expect(
+      spawnSync('bash', ['-c', enforce.run!], { env: { ...baseline, E2E_GREP: '' } }).status
+    ).toBe(1)
   })
 
   it('plans with the trusted base classifier and fails closed during bootstrap', () => {
@@ -810,7 +804,8 @@ describe('PR Gate workflow', () => {
       base: '${{ steps.revisions.outputs.base }}',
       head: '${{ steps.revisions.outputs.head }}',
       lanes: '${{ steps.classify.outputs.lanes }}',
-      plan: '${{ steps.classify.outputs.plan }}'
+      plan: '${{ steps.classify.outputs.plan }}',
+      windows_e2e_grep: '${{ steps.windows_mainline.outputs.grep }}'
     })
     expect(prepare?.['continue-on-error']).toBeUndefined()
     expect(prepare?.run).toContain('scripts/ci/module-impact-authority.mjs')
@@ -1316,11 +1311,34 @@ describe('PR Gate workflow', () => {
     expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(0)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=600000',
-        'npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=900000'
+        expect.stringContaining(
+          'npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"'
+        )
       ])
     )
     expect(windowsRuns?.some((run) => run?.includes('test:e2e:accessibility'))).toBe(false)
+  })
+
+  it('selects Windows mainline groups with trusted base policy on every entry point', () => {
+    const job = workflow.jobs.windows_e2e
+    expect(job.env!.E2E_GREP).toBe('${{ needs.preflight.outputs.windows_e2e_grep }}')
+    expect(job.strategy?.matrix?.shard).toEqual([1])
+    const selector = workflow.jobs.preflight.steps!.find(({ id }) => id === 'windows_mainline')!
+    expect(selector.run).toContain('git show "$TRUSTED_BASE_SHA:$selector"')
+    expect(selector.run).toContain('node "$TRUSTED_DIR/windows-e2e-mainline.mjs"')
+    expect(selector.run).toContain('@pr-mainline-(projects|conversation|files|notebook|windows)')
+    expect(selector.run).not.toContain('grep=.*')
+    const commands = job.steps!.map(({ run }) => run ?? '').join('\n')
+    expect(commands).toContain(
+      'npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"'
+    )
+    expect(commands).not.toContain('test:e2e:browser')
+    expect(commands).not.toContain('test:e2e:workspace')
+    expect(commands).not.toContain('test:e2e:journey')
+    expect(commands).not.toContain('--pass-with-no-tests')
+    expect(commands.indexOf('[string]::IsNullOrWhiteSpace($env:E2E_GREP)')).toBeLessThan(
+      commands.indexOf('npm run test:e2e --')
+    )
   })
 
   it('budgets the complete Windows E2E path beyond dependency and build setup', () => {
@@ -1331,39 +1349,18 @@ describe('PR Gate workflow', () => {
     expect(workflow.jobs.macos_e2e['timeout-minutes']).toBe(30)
   })
 
-  it('shards every selected Windows suite without cancelling siblings or colliding artifacts', () => {
+  it('runs affected Windows mainlines on one isolated desktop with the stable aggregate gate', () => {
     const job = workflow.jobs.windows_e2e
-    expect(job.strategy?.['fail-fast']).toBe(false)
-    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3])
-    expect(job.name).toBe('Windows E2E (shard ${{ matrix.shard }}/3)')
-    expect(job.steps?.find(({ name }) => name === 'Install headless Chromium')?.if).toBeUndefined()
-    expect(job.steps?.find(({ id }) => id === 'renderer_layout')?.if).toContain(
-      "'e2e_browser_windows'"
-    )
-    expect(job.steps?.find(({ id }) => id === 'renderer_layout')?.run).toContain('--workers=1')
-    expect(job.steps?.find(({ id }) => id === 'renderer_layout')?.run).toContain(
-      '--shard=${{ matrix.shard }}/3'
-    )
-    for (const lane of ['e2e_functional_windows', 'e2e_workspace_windows']) {
-      const step = job.steps?.find(({ id }) => id === lane)
-      expect(step?.if).toContain(
-        `contains(fromJSON(needs.preflight.outputs.plan).lanes, '${lane}')`
+    expect(job.strategy?.matrix?.shard).toEqual([1])
+    expect(job.steps?.find(({ id }) => id === 'e2e_functional_windows')).toMatchObject({
+      if: "${{ steps.setup.outcome == 'success' }}",
+      run: expect.stringContaining(
+        'npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"'
       )
-      expect(step?.run).toContain('--workers=1 --fully-parallel --shard=${{ matrix.shard }}/3')
-      expect(step?.run).not.toContain('--fail-on-flaky-tests')
-    }
-    const uploads = job.steps?.filter(({ name }) =>
-      /Upload (functional|workspace)/.test(name ?? '')
-    )
-    expect(uploads).toHaveLength(2)
-    for (const upload of uploads ?? []) {
-      expect(upload.with?.name).toContain('${{ matrix.shard }}')
-    }
+    })
+    expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toBeUndefined()
+    expect(job.steps?.find(({ id }) => id === 'e2e_workspace_windows')).toBeUndefined()
     expect(workflow.jobs.gate.needs).toContain('windows_e2e')
-    expect(
-      workflow.jobs.gate.steps?.find(({ name }) => name?.startsWith('Evaluate deterministic gate'))
-        ?.env?.PR_GATE_NEEDS
-    ).toContain('"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}')
   })
 
   it.skipIf(process.platform === 'win32').each(['true', 'false'])(
@@ -1409,6 +1406,11 @@ describe('PR Gate workflow', () => {
   it.skipIf(process.platform === 'win32').each([
     [
       'windows-e2e',
+      ['policy', 'windows_e2e'],
+      ['policy', 'e2e_functional_windows', 'e2e_workspace_windows', 'e2e_browser_windows']
+    ],
+    [
+      'windows-e2e-mainline',
       ['policy', 'windows_e2e'],
       ['policy', 'e2e_functional_windows', 'e2e_workspace_windows', 'e2e_browser_windows']
     ],
@@ -1554,7 +1556,7 @@ describe('PR Gate workflow', () => {
       expect(enforce, `${bundle} must enforce collected step outcomes`).toMatchObject({
         if: '${{ always() }}'
       })
-      expect(enforce?.run).toContain('exit "$failed"')
+      expect(enforce?.run).toContain(bundle === 'windows_e2e' ? 'exit 1' : 'exit "$failed"')
     }
 
     for (const bundle of ['macos_e2e', 'windows_e2e']) {
@@ -1833,21 +1835,6 @@ describe('E2E throughput contracts', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
-  })
-
-  it('partitions native-platform browser coverage across Windows runners', () => {
-    const job = workflow.jobs.windows_e2e
-    expect(job.steps?.find(({ id }) => id === 'renderer_layout')?.if).toContain(
-      "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows')"
-    )
-    expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toMatchObject({
-      run: 'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3'
-    })
-    expect(
-      job.steps?.find(({ name }) => name === 'Enforce selected Windows E2E checks')?.run
-    ).toContain(
-      '[[ "${E2E_BROWSER_SELECTED:-}" == "true" && "$RENDERER_LAYOUT_OUTCOME" != "success" ]]'
-    )
   })
 
   it('partitions macOS groups while preserving the stable aggregate gate', () => {

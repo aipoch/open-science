@@ -83,7 +83,9 @@ jobs:
     if: ${{ needs.setup.result == 'success' && !inputs.setup_only }}
     runs-on: ${{ matrix.os }}
     environment: ${{ inputs.require_windows_signing && matrix.platform == 'win' && 'windows-signing' || '' }}
-    timeout-minutes: 15
+    # Windows Notebook provisioning now runs through the installed app; leave headroom for that
+    # operation in addition to install, migration, launch, and shutdown probes.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
@@ -116,7 +118,7 @@ jobs:
 
       - name: Smoke test Windows installer
         if: ${{ !inputs.install_only && matrix.platform == 'win' }}
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: node scripts/windows-installer-smoke.mjs --installer-dir dist
 
       - name: Verify Windows Authenticode signature

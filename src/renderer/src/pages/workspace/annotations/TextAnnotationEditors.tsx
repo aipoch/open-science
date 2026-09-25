@@ -225,7 +225,7 @@ const PdfMarkColorControls = ({
             ? t('Pink')
             : t('Purple')
   return (
-    <TooltipProvider delayDuration={800}>
+    <TooltipProvider>
       <fieldset className="space-y-2">
         <legend className="text-xs font-medium">{t('Color')}</legend>
         <div className="flex gap-2" role="group" aria-label={t('Color')}>
@@ -286,7 +286,7 @@ const PdfTextMarkControls = ({
           ? t('Wavy underline')
           : t('Strikethrough')
   return (
-    <TooltipProvider delayDuration={800}>
+    <TooltipProvider>
       <fieldset className="space-y-2">
         <legend className="text-xs font-medium">{t('Mark style')}</legend>
         <div className="flex gap-2" role="group" aria-label={t('Mark style')}>

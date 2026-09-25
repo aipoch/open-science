@@ -246,7 +246,7 @@ export const LiteratureRecordImportDialog = ({
                   <span className="inline-flex items-center justify-center gap-0.5 text-xs text-muted-foreground">
                     {t('Skipped')}
                     {skippedImportCount > 0 ? (
-                      <TooltipProvider delayDuration={800}>
+                      <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button

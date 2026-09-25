@@ -231,3 +231,12 @@ describe('AppVersionSection', () => {
     expect(checkButton?.disabled).toBe(disabled)
   })
 })
+
+it('shows a rejected update action while preserving the ready installer action', () => {
+  useUpdateStore.setState({
+    status: { state: 'ready', current: '0.2.0', latest: '0.3.0', error: 'IPC unavailable' }
+  })
+  act(() => root.render(<AppVersionSection />))
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain('IPC unavailable')
+  expect(useUpdateStore.getState().status.state).toBe('ready')
+})

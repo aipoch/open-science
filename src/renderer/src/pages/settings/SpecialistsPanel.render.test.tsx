@@ -1670,20 +1670,18 @@ describe('SpecialistsPanel', () => {
     expect(scroller!.className).toContain('[scrollbar-width:none]')
   })
 
-  it('rolls back a failed appearance update and retries it inline', async () => {
+  it('refreshes a conflicting appearance before an explicit retry', async () => {
     const current = specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>
-    const updated = { ...current, iconKey: 'atom', revision: 2 }
+    const refreshed = { ...current, iconKey: 'flask', revision: 2 }
+    const updated = { ...refreshed, iconKey: 'atom', revision: 3 }
     window.api.specialist.update = vi
       .fn()
       .mockRejectedValueOnce(new Error('revision conflict'))
       .mockResolvedValueOnce(updated)
-    window.api.specialist.list = vi
-      .fn()
-      .mockResolvedValueOnce({ items: specialistItems, integrity: { status: 'ok' } })
-      .mockResolvedValue({
-        items: [updated, ...specialistItems.slice(1)],
-        integrity: { status: 'ok' }
-      })
+    window.api.specialist.list = vi.fn().mockResolvedValue({
+      items: [refreshed, ...specialistItems.slice(1)],
+      integrity: { status: 'ok' }
+    })
 
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
@@ -1699,8 +1697,11 @@ describe('SpecialistsPanel', () => {
       document.body.querySelector<HTMLButtonElement>('[aria-label="Atom"]')?.click()
     )
     await vi.waitFor(() =>
-      expect(document.body.textContent).toContain('Appearance wasn’t saved. Try again.')
+      expect(document.body.textContent).toContain(
+        'Appearance changed elsewhere. Review the current appearance before trying again.'
+      )
     )
+    expect(window.api.specialist.update).toHaveBeenCalledTimes(1)
     expect(
       document.body
         .querySelector('[aria-label="Change appearance for RNA Reviewer"]')
@@ -1715,7 +1716,7 @@ describe('SpecialistsPanel', () => {
     await vi.waitFor(() => expect(window.api.specialist.update).toHaveBeenCalledTimes(2))
     expect(window.api.specialist.update).toHaveBeenLastCalledWith({
       id: 'rna-reviewer',
-      revision: 1,
+      revision: 2,
       iconKey: 'atom'
     })
     expect(document.body.textContent).toContain('Saved')
@@ -2520,7 +2521,7 @@ describe('S04 explicit Specialist refresh controls', () => {
     }
     await click('Save changes')
     await click('Reload')
-    expect(window.api.specialist.list).toHaveBeenCalledOnce()
+    expect(window.api.specialist.list).toHaveBeenCalledTimes(2)
     expect(container.querySelector<HTMLInputElement>('#sp-description')!.value).toBe(
       'Fresh server description'
     )

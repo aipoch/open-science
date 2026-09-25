@@ -77,6 +77,7 @@ const LITERATURE_IMPORT_WARNINGS = [
 ] as const
 const LITERATURE_METADATA_FIELDS = [
   'title',
+  'abstract',
   'authors',
   'identifiers',
   'publicationDate',

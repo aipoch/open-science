@@ -123,7 +123,10 @@ export class ClassificationUsageRecorder {
                 if (pause) {
                   await tx.literatureSmartCollection.update({
                     where: { collectionId: context.collectionId },
-                    data: { automaticPauseReason: pause }
+                    data: {
+                      automaticPauseReason: pause,
+                      automaticPauseRunId: context.runId
+                    }
                   })
                   return pause
                 }

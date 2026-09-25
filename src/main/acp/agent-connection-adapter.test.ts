@@ -1,7 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
@@ -576,6 +576,45 @@ describe('AcpAgentConnectionAdapter', () => {
     await rm(workspace, { recursive: true, force: true })
   })
 
+  it('reads text files inside a folder granted to the agent', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'acp-connection-adapter-'))
+    const grantedRoot = await realpath(await mkdtemp(join(tmpdir(), 'acp-granted-root-')))
+    const filePath = join(grantedRoot, 'progress.txt')
+    await writeFile(filePath, 'authorized progress', 'utf8')
+    const process = new FakeAgentProcess()
+    const agentConnection = acp
+      .agent({ name: 'test-agent' })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const connectionHooks = {
+      ...hooks(),
+      filesystem: {
+        ...hooks().filesystem,
+        resolveSessionCwd: vi.fn(() => workspace),
+        listGrantedRoots: vi.fn(async () => [
+          { id: 'granted-root', path: grantedRoot, name: 'Granted', access: 'rw' as const }
+        ])
+      }
+    } as AcpAgentConnectionHooks
+    const { close } = await openConnection(process, connectionHooks)
+
+    await expect(
+      agentConnection.client.request(acp.methods.client.fs.readTextFile, {
+        sessionId: 'provider-session',
+        path: filePath
+      })
+    ).resolves.toEqual({ content: 'authorized progress' })
+
+    await close()
+    agentConnection.close()
+    await rm(workspace, { recursive: true, force: true })
+    await rm(grantedRoot, { recursive: true, force: true })
+  })
+
   it('rejects reads from protected application roots', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'acp-connection-adapter-'))
     const protectedRoot = join(workspace, '.provider-config')
@@ -643,4 +682,135 @@ describe('AcpAgentConnectionAdapter', () => {
     agentConnection.close()
     await rm(workspace, { recursive: true, force: true })
   })
+
+  it('writes text files inside a read-write folder granted to the agent', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'acp-connection-adapter-'))
+    const grantedRoot = await realpath(await mkdtemp(join(tmpdir(), 'acp-granted-root-')))
+    const filePath = join(grantedRoot, 'results', 'summary.txt')
+    const process = new FakeAgentProcess()
+    const agentConnection = acp
+      .agent({ name: 'test-agent' })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const connectionHooks = {
+      ...hooks(),
+      filesystem: {
+        ...hooks().filesystem,
+        resolveSessionCwd: vi.fn(() => workspace),
+        listGrantedRoots: vi.fn(async () => [
+          { id: 'granted-root', path: grantedRoot, name: 'Granted', access: 'rw' as const }
+        ])
+      }
+    } as AcpAgentConnectionHooks
+    const { close } = await openConnection(process, connectionHooks)
+
+    await expect(
+      agentConnection.client.request(acp.methods.client.fs.writeTextFile, {
+        sessionId: 'provider-session',
+        path: filePath,
+        content: 'written through granted folder'
+      })
+    ).resolves.toEqual({})
+    await expect(readFile(filePath, 'utf8')).resolves.toBe('written through granted folder')
+
+    await close()
+    agentConnection.close()
+    await rm(workspace, { recursive: true, force: true })
+    await rm(grantedRoot, { recursive: true, force: true })
+  })
+
+  it('rejects writes through a read-only granted folder', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'acp-connection-adapter-'))
+    const grantedRoot = await realpath(await mkdtemp(join(tmpdir(), 'acp-granted-root-')))
+    const filePath = join(grantedRoot, 'results.txt')
+    const process = new FakeAgentProcess()
+    const agentConnection = acp
+      .agent({ name: 'test-agent' })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const connectionHooks = {
+      ...hooks(),
+      filesystem: {
+        ...hooks().filesystem,
+        resolveSessionCwd: vi.fn(() => workspace),
+        listGrantedRoots: vi.fn(async () => [
+          { id: 'granted-root', path: grantedRoot, name: 'Granted', access: 'ro' as const }
+        ])
+      }
+    } as AcpAgentConnectionHooks
+    const { close } = await openConnection(process, connectionHooks)
+
+    await expect(
+      agentConnection.client.request(acp.methods.client.fs.writeTextFile, {
+        sessionId: 'provider-session',
+        path: filePath,
+        content: 'must not write'
+      })
+    ).rejects.toMatchObject({
+      code: -32603,
+      data: { details: expect.stringContaining('outside the active ACP workspace') }
+    })
+
+    await close()
+    agentConnection.close()
+    await rm(workspace, { recursive: true, force: true })
+    await rm(grantedRoot, { recursive: true, force: true })
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a granted-folder write through a dangling symlink to an external file',
+    async () => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'acp-dangling-link-')))
+      const workspace = join(root, 'workspace')
+      const grantedRoot = join(root, 'granted')
+      const externalFile = join(root, 'outside.txt')
+      const linkedFile = join(grantedRoot, 'result.txt')
+      let close: (() => Promise<void>) | undefined
+      let agentConnection: acp.AgentConnection | undefined
+      try {
+        await mkdir(workspace)
+        await mkdir(grantedRoot)
+        await symlink(externalFile, linkedFile, 'file')
+        const process = new FakeAgentProcess()
+        agentConnection = acp
+          .agent({ name: 'dangling-link-agent' })
+          .connect(
+            acp.ndJsonStream(
+              Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+              Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+            )
+          )
+        const opened = await openConnection(process, {
+          ...hooks(),
+          filesystem: {
+            resolveSessionCwd: () => workspace,
+            protectedReadRoots: () => [],
+            listGrantedRoots: async () => [{ path: grantedRoot, access: 'rw' }]
+          }
+        })
+        close = opened.close
+
+        await expect(
+          agentConnection.client.request(acp.methods.client.fs.writeTextFile, {
+            sessionId: 'provider-session',
+            path: linkedFile,
+            content: 'must not escape'
+          })
+        ).rejects.toMatchObject({ code: -32603 })
+        await expect(readFile(externalFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await close?.()
+        agentConnection?.close()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 })

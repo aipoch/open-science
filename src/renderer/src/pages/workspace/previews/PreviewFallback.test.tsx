@@ -8,6 +8,7 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { FileWarning } from 'lucide-react'
 import {
   PreviewFallbackCard,
+  PreviewErrorCard,
   PreviewLoadingContent,
   PreviewUnsupportedContent
 } from './PreviewFallback'
@@ -107,6 +108,28 @@ describe('PreviewFallback', () => {
     )
     expect(container.querySelectorAll('[data-preview-activity-dot]')).toHaveLength(3)
     expect(container.querySelectorAll('[data-preview-progress]')).toHaveLength(1)
+  })
+
+  it.each([
+    ['ENOENT: no such file', true, 'Restore the file or reconnect its drive'],
+    [
+      'File is outside artifact storage.',
+      false,
+      'Open the file from your current storage location'
+    ],
+    ['Temporary read failure', true, 'Read failed']
+  ])('classifies recovery for %s', async (error, retryable, guidance) => {
+    await act(async () =>
+      root.render(
+        <PreviewRuntimeBoundary item={item}>
+          <PreviewErrorCard name={item.name} error={error} fallbackMessage="Read failed" />
+        </PreviewRuntimeBoundary>
+      )
+    )
+    expect(container.textContent).toContain(guidance)
+    expect(
+      [...container.querySelectorAll('button')].some((button) => button.textContent === 'Retry')
+    ).toBe(retryable)
   })
 
   it('remounts status content on Retry and exposes the incremented attempt', async () => {

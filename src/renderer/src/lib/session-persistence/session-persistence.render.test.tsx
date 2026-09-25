@@ -1009,6 +1009,77 @@ describe('session persistence startup', () => {
     expect(saveSession).not.toHaveBeenCalled()
   })
 
+  it.each([
+    { kind: 'unreadable', recovery: 'repairable' },
+    { kind: 'unsupported-version', recovery: 'unsupported-version' }
+  ] as const)(
+    'retains the loaded snapshot and $recovery guidance across failed list retries',
+    async ({ kind, recovery }) => {
+      const persisted = createPersistedSession({ number: 1 })
+      installHistory([persisted])
+      const list = vi.mocked(window.api.sessions.list!)
+      const complete = await list()
+      let rejectPending: (error: Error) => void = () => {}
+      const pending = new Promise<typeof complete>((_resolve, reject) => {
+        rejectPending = reject
+      })
+      list
+        .mockReset()
+        .mockResolvedValueOnce({
+          ...complete,
+          diagnostics: {
+            isComplete: false,
+            isProjectDeletionRecoveryComplete: true,
+            warnings: [{ kind, projectId: 'project-a', fileName: 'other.json', recovered: false }]
+          }
+        })
+        .mockReturnValueOnce(pending)
+        .mockRejectedValue(new Error('EACCES'))
+      await act(async () => root.render(<Probe />))
+      act(() => useSessionStore.getState().selectSession(persisted.id))
+      const snapshot = useSessionStore.getState().sessions
+      const retry = async (): Promise<void> => {
+        await act(async () =>
+          container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')!.click()
+        )
+      }
+      const expectReadOnlySnapshot = (): void => {
+        expect(container.querySelector('div')?.dataset.hydrated).toBe('true')
+        expect(container.querySelector('div')?.dataset.ready).toBe('false')
+        expect(container.querySelector('div')?.dataset.catalogComplete).toBe('false')
+        expect(container.querySelector('div')?.dataset.deletionReady).toBe('false')
+        expect(container.querySelector('div')?.dataset.catalogRecovery).toBe(recovery)
+        expect(useSessionStore.getState().sessions).toBe(snapshot)
+        expect(useSessionStore.getState().selectedSessionId).toBe(persisted.id)
+        expect(saveSession).not.toHaveBeenCalled()
+        expect(saveManifest).not.toHaveBeenCalled()
+        expect(window.api.sessions.deleteSession).not.toHaveBeenCalled()
+      }
+      await retry()
+      expect(container.querySelector('div')?.dataset.loading).toBe('true')
+      expectReadOnlySnapshot()
+      await act(async () => rejectPending(new Error('EACCES')))
+      expectReadOnlySnapshot()
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await retry()
+        expectReadOnlySnapshot()
+      }
+      expect(list).toHaveBeenCalledTimes(4)
+      expect(container.querySelector('div')?.dataset.loading).toBe('false')
+      expect(container.querySelector('[data-testid="load-error"]')?.textContent).not.toBe(
+        'sessions available'
+      )
+
+      list.mockResolvedValueOnce(complete)
+      await retry()
+      expect(container.querySelector('div')?.dataset.hydrated).toBe('true')
+      expect(container.querySelector('div')?.dataset.ready).toBe('true')
+      expect(container.querySelector('div')?.dataset.catalogRecovery).toBe('ready')
+      expect(container.querySelector('div')?.dataset.deletionReady).toBe('true')
+      expect(useSessionStore.getState().selectedSessionId).toBe(persisted.id)
+    }
+  )
+
   it('preserves a live session selection when retrying a partial recovery', async () => {
     const manifestSession = createPersistedSession({ id: 'manifest-session' })
     const selectedSession = createPersistedSession({
@@ -1062,6 +1133,42 @@ describe('session persistence startup', () => {
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
     expect(container.querySelector('div')?.dataset.loading).toBe('false')
   })
+
+  it.each(['switch', 'clear'] as const)(
+    'preserves a user selection %s while the retry is pending',
+    async (navigation) => {
+      const first = createPersistedSession({ number: 1 })
+      const second = createPersistedSession({ id: 'session-2', number: 2 })
+      installHistory([first, second])
+      const list = vi.mocked(window.api.sessions.list!)
+      const complete = await list()
+      let finish: (result: typeof complete) => void = () => {}
+      const pending = new Promise<typeof complete>((resolve) => {
+        finish = resolve
+      })
+      list
+        .mockReset()
+        .mockResolvedValueOnce({
+          ...complete,
+          diagnostics: { isComplete: false, warnings: [] }
+        })
+        .mockReturnValueOnce(pending)
+      await act(async () => root.render(<Probe />))
+      act(() => useSessionStore.getState().selectSession(first.id))
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')!.click()
+      )
+      act(() => {
+        if (navigation === 'switch') useSessionStore.getState().selectSession(second.id)
+        else useSessionStore.getState().clearSelection()
+      })
+      await act(async () => finish(complete))
+      const expectedId = navigation === 'switch' ? second.id : undefined
+      expect(useSessionStore.getState().selectedSessionId).toBe(expectedId)
+      expect(saveManifest).toHaveBeenCalledWith({ lastSessionId: expectedId })
+      expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    }
+  )
 
   it('preserves an explicitly empty selection when retrying a partial recovery', async () => {
     const manifestSession = createPersistedSession({ id: 'manifest-session' })
@@ -1312,5 +1419,57 @@ describe('session persistence startup', () => {
     expect(container.querySelector('[data-testid="load-warning"]')?.textContent).toContain(
       'Conversation selection data was damaged and could not be moved aside'
     )
+  })
+
+  it('loads the selected transcript when navigation changes during loadOne', async () => {
+    const first = createPersistedSession({ number: 1 })
+    const second = createPersistedSession({
+      id: 'session-2',
+      number: 2,
+      messages: [
+        {
+          id: 'm2',
+          role: 'user',
+          content: 'Retain visible history',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const loadOne = installHistory([first, second])
+    const list = vi.mocked(window.api.sessions.list!)
+    const complete = await list()
+    list
+      .mockReset()
+      .mockResolvedValueOnce({ ...complete, diagnostics: { isComplete: false, warnings: [] } })
+      .mockResolvedValue(complete)
+    let release: (session: PersistedChatSession) => void = () => {}
+    loadOne.mockImplementationOnce(
+      () =>
+        new Promise<PersistedChatSession>((resolve) => {
+          release = resolve
+        })
+    )
+    await act(async () => root.render(<Probe />))
+    act(() => useSessionStore.getState().selectSession(first.id))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')!.click()
+    )
+    expect(loadOne).toHaveBeenCalledWith({ projectId: first.projectId, sessionId: first.id })
+    act(() => useSessionStore.getState().selectSession(second.id))
+    await act(async () => release(first))
+    expect(useSessionStore.getState().selectedSessionId).toBe(second.id)
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(
+      useSessionStore.getState().sessions.find((s) => s.id === second.id)?.contentLoaded
+    ).not.toBe(false)
+    expect(
+      useSessionStore.getState().sessions.find((s) => s.id === second.id)?.messages[0]?.content
+    ).toBe('Retain visible history')
+    expect(loadOne).toHaveBeenCalledTimes(2)
+    expect(saveSession).not.toHaveBeenCalled()
+    expect(saveManifest).toHaveBeenCalledWith({ lastSessionId: second.id })
   })
 })

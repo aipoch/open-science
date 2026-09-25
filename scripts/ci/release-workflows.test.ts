@@ -79,7 +79,7 @@ describe('release and scheduled workflow topology', () => {
     const sandboxSmoke = step(sandbox, 'Test AppContainer ownership and removal lifecycle')
 
     expect(job.strategy?.matrix?.shard).toBe(
-      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
+      "${{ fromJSON((inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes') && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
     )
     expect(dependencies).toMatchObject({
       needs: 'plan',
@@ -103,7 +103,7 @@ describe('release and scheduled workflow topology', () => {
     expect(schedule).toEqual([{ cron: '47 16 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
+      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions', 'scheduled-fixes']
     })
     expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(plan).toMatchObject({
@@ -116,7 +116,7 @@ describe('release and scheduled workflow topology', () => {
     })
     expect(job).toMatchObject({
       needs: ['plan', 'windows_dependencies'],
-      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes')) }}",
       'timeout-minutes': 60
     })
     expect(sandbox).toMatchObject({
@@ -139,6 +139,15 @@ describe('release and scheduled workflow topology', () => {
     expect(regressions.env?.TEST_NAME_PATTERN).toBe("${{ inputs.test_name_pattern || '.*' }}")
     expect(regressions.run).toContain('--testNamePattern="$TEST_NAME_PATTERN"')
     expect(regressions.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
+    const scheduledFixes = step(job, 'Test scheduled Windows fixes')
+    expect(scheduledFixes.if).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'scheduled-fixes' }}"
+    )
+    expect(scheduledFixes.run).toContain(
+      'src/main/managed-file-versions/version-file-operator.test.ts'
+    )
+    expect(scheduledFixes.run).toContain('src/main/settings/service.test.ts')
+    expect(scheduledFixes.run).not.toContain('--shard')
     for (const file of [
       'cli/locate-app.test.ts',
       'scripts/credential-helper-signing.test.ts',
@@ -572,10 +581,16 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(step(job, 'Download final macOS arm64 archive').run).toContain(
       "--pattern '*-mac-arm64.zip'"
     )
+    const materialize = step(job, 'Materialize packaged application for scanning')
+    expect(materialize.run).toContain('npm ci --ignore-scripts --omit=optional')
+    expect(materialize.run).toContain('unzip -q "$ARTIFACT_PATH"')
+    expect(materialize.run).toContain('node node_modules/@electron/asar/bin/asar.js extract')
+    expect(materialize.run).toContain('mv "$RUNNER_TEMP/app-asar-content" "$asar"')
     expect(step(job, 'Generate SPDX SBOM from final archive')).toMatchObject({
       uses: 'anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610',
+      env: { SYFT_SELECT_CATALOGERS: '+javascript-package-cataloger' },
       with: {
-        file: '${{ steps.artifact.outputs.path }}',
+        path: '${{ steps.scan.outputs.path }}',
         format: 'spdx-json',
         'output-file': 'release-sbom.spdx.json',
         'dependency-snapshot': false,
@@ -586,6 +601,9 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     })
     expect(step(job, 'Validate representative packaged-component coverage').run).toContain(
       'node scripts/ci/validate-release-sbom.mjs'
+    )
+    expect(step(job, 'Validate representative packaged-component coverage').run).toContain(
+      'exit "${status:-0}"'
     )
     expect(step(job, 'Upload PoC evidence')).toMatchObject({
       if: '${{ always() }}',

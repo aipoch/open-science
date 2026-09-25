@@ -84,7 +84,8 @@
     "src/main/database/pdf-annotations-migration.test.ts",
     "src/main/database/migrations/0043-pdf-annotations.ts",
     "src/main/database/literature-smart-collections-migration.test.ts",
-    "src/main/database/migrations/0044-literature-smart-collections.ts"
+    "src/main/database/migrations/0044-literature-smart-collections.ts",
+    "src/main/database/migrations/0045-literature-smart-pause-run.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",

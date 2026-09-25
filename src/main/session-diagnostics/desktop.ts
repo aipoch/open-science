@@ -1,7 +1,7 @@
 import { constants } from 'node:fs'
 import { copyFile, link, lstat, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Worker, WorkerOptions } from 'node:worker_threads'
 import type {
   SessionDiagnosticExportRequest,
@@ -29,6 +29,7 @@ type Options = {
   timeoutMs?: number
 }
 type Operation = { controller: AbortController; settled: Promise<void>; finish: () => void }
+const DIAGNOSTIC_ARCHIVE_SUFFIX = '.tar.gz'
 export type SessionDiagnosticsDesktop = {
   inspect(request: SessionDiagnosticRequest): Promise<SessionDiagnosticInspection>
   export(request: SessionDiagnosticExportRequest): Promise<SessionDiagnosticExportResult>
@@ -99,8 +100,13 @@ const assertOutsideSources = async (path: string, sources: Sources): Promise<voi
   }
 }
 
+const normalizeDestination = (path: string): string => {
+  if (!path || path.toLowerCase().endsWith(DIAGNOSTIC_ARCHIVE_SUFFIX)) return path
+  return extname(path) === '' ? `${path}${DIAGNOSTIC_ARCHIVE_SUFFIX}` : path
+}
+
 const assertNewDestination = async (path: string, sources: Sources): Promise<void> => {
-  if (!isAbsolute(path) || !path.endsWith('.tar.gz'))
+  if (!isAbsolute(path) || !path.toLowerCase().endsWith(DIAGNOSTIC_ARCHIVE_SUFFIX))
     throw new DiagnosticError('Choose a new .tar.gz file.')
   await assertOutsideSources(path, sources)
   const parent = await lstat(await realpath(dirname(path)))
@@ -250,6 +256,7 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
         target = await abortableDestination(options.chooseDestination(filename(request)), signal)
         signal.throwIfAborted()
         if (!target) return { status: 'cancelled' }
+        target = normalizeDestination(target)
         await assertNewDestination(target, sources)
       }
       const temporaryRoot = options.temporaryRoot ?? tmpdir()

@@ -376,6 +376,20 @@ const RemoteOfficePreviewContent = ({
     }
   }, [frame, frameLoadGeneration, i18n])
 
+  useEffect(() => {
+    if (!frame || !['xls', 'xlsx', 'spreadsheet', 'pptx'].includes(extension)) return
+    return window.api.window?.onFindInOffice?.((sessionId) => {
+      if (sessionId !== frame.sessionId || state.kind !== 'ready') return
+      const message: OfficePreviewHostMessage = {
+        channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+        version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+        type: 'find',
+        sessionId
+      }
+      frameRef.current?.contentWindow?.postMessage(message, OFFICE_PREVIEW_RUNTIME_ORIGIN)
+    })
+  }, [extension, frame, state.kind])
+
   const visibleState: OfficeHostState =
     ownsLease && !hasSourceIdentity ? { kind: 'error', error: 'FILE_READ_FAILED' } : state
 

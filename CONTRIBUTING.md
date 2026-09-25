@@ -328,9 +328,19 @@ ci(review): unify automated AI reviews
   its squash subject must retain the PR title's Conventional Commit format. Do not update a branch
   merely because `main` advanced; update it for conflicts or a maintainer request.
 - PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repository
-  workflow), AI review, static checks and portable tests on Ubuntu. Desktop changes run Windows
-  business E2E, including the Windows renderer browser suite. Automatic PR checks do not allocate
-  Mac runners, including for platform-sensitive changes; Mac validation happens in merge queue.
+  workflow), AI review, static checks and portable tests on Ubuntu. Desktop changes run the Windows
+  mainline E2E journeys on one test runner, selected from the changed modules and their declared
+  consumers: projects/sessions, conversation/approval, files/previews, Notebook analysis, and native
+  Windows behavior. The Notebook journey uploads CSV data, runs real Python through the Agent/MCP
+  path, previews the generated report, and resumes the saved research after relaunch. Only the Agent
+  responses are deterministic; computation and persistence use the production application.
+  Keep `@pr-mainline-<group>` tags in existing test titles; untagged variants stay scheduled.
+  Selection uses the trusted base module owners and consumer graph and explains every chosen group
+  in the preflight summary. Unknown/shared/build changes select all mainline groups, never complete
+  E2E suites. Windows core checks remain blocking. Complete Windows business/browser variants run
+  in the independent Windows E2E Regression workflow.
+  Automatic PR checks do not allocate Mac runners, including for platform-sensitive changes;
+  Mac validation happens in merge queue.
   PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
   merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
   `--fail-on-flaky-tests`.
@@ -351,14 +361,21 @@ ci(review): unify automated AI reviews
 - Complete Mac Source Regression runs twice daily on `main`, at **01:37 and 13:37 Singapore time**
   (Asia/Singapore, UTC+8), including when main is unchanged. Each round uses one build and one Mac
   runner for functional/workspace journeys, browser/visual/accessibility and supplemental suites.
-  Nightly packaging, Windows Full Test and Runtime Resource Soak retain their daily 23:17, 00:47
-  and 03:23 Singapore schedules and skip a head that the last successful scheduled run already
-  covered (shared `skip-unchanged-scheduled` action); Nightly additionally requires that head to
+  Windows E2E Regression runs daily at **02:17 Singapore time**
+  (Asia/Singapore, UTC+8), with the complete functional/workspace/browser suites on three Windows
+  test runners and `--fail-on-flaky-tests`. It has its own failure-tracking issue and does not run
+  Windows Full Test or Notebook mutation checks. PR Gate manual `windows-e2e-mainline`, `windows-e2e` and the Windows part of `e2e` run all
+  mainline groups. The independent regression workflow is the manual entry point for complete
+  Windows E2E. PR Gate never expands Windows E2E to the full suites. The existing WSL development-preview journey remains
+  opt-in with its dedicated build and is not claimed as ordinary PR/scheduled coverage. Nightly packaging, Windows Full Test and Runtime Resource
+  Soak retain their daily 23:17, 00:47 and 03:23 Singapore schedules and, like Windows E2E Regression,
+  skip a head that the last successful scheduled run already covered (shared `skip-unchanged-scheduled` action); Nightly additionally requires that head to
   be published under the rolling `nightly` tag, and manual runs never count as coverage because
   the runs API cannot report which dispatch mode they selected. Manual runs always execute.
   Formal release certification and post-release Windows Upgrade Smoke retain their existing gates.
   Scheduled failures cannot retroactively block an already merged PR; Mac-only failures may first
-  be discovered in queue or scheduled validation. A failing scheduled run opens or refreshes one
+  be discovered in queue or scheduled validation, and non-mainline Windows failures may first be
+  discovered in Windows E2E Regression. A failing scheduled run opens or refreshes one
   tracking issue labelled `ci-scheduled-failure` and closes it once a later scheduled run passes.
   Nightly publication additionally requires the advisory runtime-certification and regression
   jobs of the source run to have succeeded.
@@ -409,7 +426,7 @@ By contributing, you agree that your contributions will be licensed under the
 ### Supplemental desktop coverage
 
 Complete Mac regression and Delegation suites run in Source Regression at 01:37 and 13:37
-Asia/Singapore, as well as focused manual validation. Automatic PRs use Windows business coverage;
+Asia/Singapore, as well as focused manual validation. Automatic PRs use the affected Windows mainline groups;
 queue uses short Mac core plus focused native checks for sensitive changes. Full Mac presentation,
 regression and Delegation matrices are not repeated in the queue. Capacity profiling remains in
 Source Regression; manual callers without an explicit capacity input retain complete coverage.

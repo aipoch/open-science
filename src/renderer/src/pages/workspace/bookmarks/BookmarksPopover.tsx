@@ -153,11 +153,8 @@ const BookmarksPopover = (): React.JSX.Element | null => {
                   bookmark.target.kind !== 'pdf' ||
                   bookmark.target.selector.kind !== 'document-note'
                 return (
-                  <li
-                    key={bookmark.id}
-                    className="group rounded-md px-1.5 py-1 hover:bg-muted/50 focus-within:bg-muted/50"
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
+                  <li key={bookmark.id}>
+                    <div className="group relative flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 hover:bg-muted/50 focus-within:bg-muted/50">
                       <BookmarkIcon
                         className="size-3 shrink-0 text-status-warning-foreground/65"
                         strokeWidth={1.5}
@@ -168,7 +165,7 @@ const BookmarksPopover = (): React.JSX.Element | null => {
                         title={sourceLabel(bookmark, t('Agent message'), t('Session activity'))}
                         disabled={!canReveal || pendingId === bookmark.id}
                         onClick={canReveal ? () => void revealBookmark(bookmark) : undefined}
-                        className="flex min-w-0 flex-1 items-baseline gap-2 rounded-sm text-left text-[11px] leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="after:absolute after:inset-0 after:rounded-[inherit] disabled:after:hidden flex min-w-0 flex-1 items-baseline gap-2 rounded-sm text-left text-[11px] leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <span className="max-w-[55%] truncate font-mono text-muted-foreground">
                           {bookmarkQuote(
@@ -186,7 +183,7 @@ const BookmarksPopover = (): React.JSX.Element | null => {
                           </>
                         ) : null}
                       </button>
-                      <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground/65">
+                      <div className="relative z-10 flex shrink-0 items-center gap-0.5 text-muted-foreground/65">
                         <button
                           type="button"
                           aria-label={t('Show bookmark source')}

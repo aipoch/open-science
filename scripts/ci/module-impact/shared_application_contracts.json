@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/shared/interface-scale.ts",
     "src/shared/__fixtures__/skill-marketplace.ts",
     "src/shared/activity-groups.test.ts",
     "src/shared/activity-groups.ts",
@@ -133,6 +134,7 @@
     "src/shared/smart-collection-rule.ts"
   ],
   "interfacePaths": [
+    "src/shared/interface-scale.ts",
     "src/shared/__fixtures__/skill-marketplace.ts",
     "src/shared/activity-groups.ts",
     "src/shared/annotations.ts",

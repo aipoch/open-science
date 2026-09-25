@@ -1613,3 +1613,72 @@ describe('workspace conversation controller', () => {
     expect(input.session.actions.confirmDelete).toHaveBeenCalledOnce()
   })
 })
+
+it('keeps persistent Plan read failures in one background retry chain and stops on unmount', async () => {
+  vi.useFakeTimers()
+  const activeSession = session({ status: 'waiting-plan-approval' })
+  const ports = {
+    getProjection: vi.fn().mockRejectedValue(new Error('Offline')),
+    getSession: () => activeSession,
+    setProjection: vi.fn(),
+    finishRun: vi.fn()
+  }
+  const input = options({ activeSession, planProjectionRecovery: ports })
+  const hook = renderController(input)
+  try {
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(hook.result.current.planProjectionRecoveryError).toBe(true)
+    for (const delay of [1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
+      expect(vi.getTimerCount()).toBe(1)
+      await act(async () => vi.advanceTimersByTimeAsync(delay))
+    }
+    expect(ports.getProjection).toHaveBeenCalledTimes(8)
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(input.composer.actions.setError).not.toHaveBeenCalled()
+    expect(ports.finishRun).not.toHaveBeenCalled()
+    hook.unmount()
+    await act(async () => vi.advanceTimersByTimeAsync(120000))
+    expect(ports.getProjection).toHaveBeenCalledTimes(8)
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    hook.unmount()
+    vi.useRealTimers()
+  }
+})
+
+it('does not overlap a hanging Plan read or apply its result after leaving the Session', async () => {
+  vi.useFakeTimers()
+  let reject!: (error: Error) => void
+  const activeSession = session({ status: 'waiting-plan-approval' })
+  const ports = {
+    getProjection: vi.fn(
+      () =>
+        new Promise<null>((_, fail) => {
+          reject = fail
+        })
+    ),
+    getSession: () => activeSession,
+    setProjection: vi.fn(),
+    finishRun: vi.fn()
+  }
+  const input = options({ activeSession, planProjectionRecovery: ports })
+  const hook = renderController(input)
+  try {
+    await act(async () => vi.advanceTimersByTimeAsync(120000))
+    expect(ports.getProjection).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+    hook.rerender(
+      options({ activeSession: session({ id: 'other-session' }), planProjectionRecovery: ports })
+    )
+    await act(async () => reject(new Error('Late failure')))
+    expect(hook.result.current.planProjectionRecoveryError).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(ports.setProjection).not.toHaveBeenCalled()
+    expect(ports.finishRun).not.toHaveBeenCalled()
+  } finally {
+    hook.unmount()
+    vi.useRealTimers()
+  }
+})

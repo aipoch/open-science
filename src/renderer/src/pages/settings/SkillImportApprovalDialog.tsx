@@ -1,6 +1,7 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useState } from 'react'
-import { PackagePlus } from 'lucide-react'
+import { PackagePlus, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
 
@@ -12,6 +13,7 @@ import type {
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
+  dialogCloseButtonClassName,
   dialogCancelButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
@@ -27,12 +29,14 @@ import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview
 
 type SkillImportApprovalRequestDialogProps = {
   active: boolean
+  onClose: () => void
   request: ConversationSkillImportApprovalRequest
   respond: (response: ConversationSkillImportApprovalResponse) => Promise<void>
 }
 
 const SkillImportApprovalRequestDialog = ({
   active,
+  onClose,
   request,
   respond
 }: SkillImportApprovalRequestDialogProps): React.JSX.Element => {
@@ -49,6 +53,17 @@ const SkillImportApprovalRequestDialog = ({
         ? new Set([request.previews[0].subPath])
         : new Set()
   )
+  const responding = useSkillImportStore((state) => state.respondingIds.includes(request.id))
+  const [responseFailed, setResponseFailed] = useState(false)
+  const submit = async (response: ConversationSkillImportApprovalResponse): Promise<void> => {
+    if (responding) return
+    setResponseFailed(false)
+    try {
+      await respond(response)
+    } catch {
+      setResponseFailed(true)
+    }
+  }
   const candidatePreview = useSkillImportCandidatePreview()
 
   const toggle = (subPath: string): void => {
@@ -79,7 +94,7 @@ const SkillImportApprovalRequestDialog = ({
         subPath: candidate.subPath,
         ...(candidate.replaceableId ? { replaceId: candidate.replaceableId } : {})
       }))
-    void respond({ id: request.id, items })
+    void submit({ id: request.id, items })
   }
   const count = selected.size
   const importLabel =
@@ -91,19 +106,24 @@ const SkillImportApprovalRequestDialog = ({
 
   return (
     <>
-      <Dialog.Root open={active}>
+      <Dialog.Root
+        open={active}
+        onOpenChange={(open) => {
+          if (!open) onClose()
+        }}
+      >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
           <Dialog.Content
+            aria-busy={responding}
             onInteractOutside={(event) => event.preventDefault()}
-            onEscapeKeyDown={(event) => event.preventDefault()}
             className={dialogPanelClassName(
               'flex max-h-[min(88vh,760px)] w-[min(620px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
             )}
           >
             <div className={cn(dialogHeaderClassName, 'items-start justify-start')}>
               <PackagePlus className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <Dialog.Title className={dialogTitleClassName}>
                   {request.source.kind === 'github'
                     ? t('Import Skills from GitHub?')
@@ -120,6 +140,16 @@ const SkillImportApprovalRequestDialog = ({
                   />
                 </Dialog.Description>
               </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Close')}
+                className={cn(dialogCloseButtonClassName, 'shrink-0')}
+                onClick={onClose}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
             </div>
 
             <div className={cn(dialogBodyClassName, 'min-h-0 flex-1 overflow-y-auto py-3')}>
@@ -228,19 +258,30 @@ const SkillImportApprovalRequestDialog = ({
               ) : null}
             </div>
 
+            {responseFailed ? (
+              <ErrorNotice
+                inline
+                tone="red"
+                className="px-5 pb-3"
+                role="alert"
+                title={t('Could not send your response.')}
+                description={t('Try again when the connection is available, or close this dialog.')}
+              />
+            ) : null}
             <div className={dialogFooterClassName}>
               <Button
                 type="button"
                 variant="ghost"
                 className={dialogCancelButtonClassName}
-                onClick={() => void respond({ id: request.id, cancelled: true })}
+                disabled={responding}
+                onClick={() => void submit({ id: request.id, cancelled: true })}
               >
                 {tCommon('Cancel')}
               </Button>
               <Button
                 type="button"
                 variant={request.source.kind === 'github' ? 'outline' : 'default'}
-                disabled={count === 0}
+                disabled={responding || count === 0}
                 onClick={confirm}
               >
                 {importLabel}
@@ -265,14 +306,19 @@ export function SkillImportApprovalDialog({
   blockedSessionIds?: ReadonlySet<string>
 }): React.JSX.Element | null {
   const request = useSkillImportStore((state) =>
-    state.pending.find((candidate) => !blockedSessionIds?.has(candidate.sessionId))
+    state.pending.find(
+      (candidate) =>
+        !state.closedIds.includes(candidate.id) && !blockedSessionIds?.has(candidate.sessionId)
+    )
   )
   const respond = useSkillImportStore((state) => state.respond)
+  const close = useSkillImportStore((state) => state.close)
 
   return request ? (
     <SkillImportApprovalRequestDialog
       key={request.id}
       active={active}
+      onClose={() => close(request.id)}
       request={request}
       respond={respond}
     />

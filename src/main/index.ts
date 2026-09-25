@@ -42,6 +42,14 @@ import {
   createRendererFailureReporter,
   registerRendererDiagnosticsIpc
 } from './renderer-diagnostics'
+import type {
+  BaseWindow,
+  BrowserWindow,
+  Menu,
+  MenuItem,
+  MenuItemConstructorOptions
+} from 'electron'
+import type { InterfaceScaleShortcut } from '../shared/interface-scale'
 
 const APP_NAME = 'Open-Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
@@ -58,6 +66,86 @@ let preparingLocations = false
 let bootstrapPhase = 'electron-bootstrap'
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush: import('./diagnostics/flush').DiagnosticFlush = flushLogs
+
+const shortcutForZoomMenuRole = (role: string | undefined): InterfaceScaleShortcut | undefined => {
+  switch (role?.toLowerCase()) {
+    case 'zoomin':
+      return 'increase'
+    case 'zoomout':
+      return 'decrease'
+    case 'resetzoom':
+      return 'reset'
+    default:
+      return undefined
+  }
+}
+
+const menuItemToConstructorOptions = (item: MenuItem): MenuItemConstructorOptions => ({
+  ...(item.role ? { role: item.role as MenuItemConstructorOptions['role'] } : { type: item.type }),
+  ...(item.type !== 'separator' ? { label: item.label } : {}),
+  ...(item.accelerator ? { accelerator: item.accelerator } : {}),
+  enabled: item.enabled,
+  visible: item.visible,
+  ...(item.type === 'checkbox' || item.type === 'radio' ? { checked: item.checked } : {}),
+  registerAccelerator: item.registerAccelerator,
+  ...(item.submenu ? { submenu: item.submenu.items.map(menuItemToConstructorOptions) } : {}),
+  ...(item.click && !item.role ? { click: item.click as MenuItemConstructorOptions['click'] } : {})
+})
+
+const buildZoomSafeApplicationMenu = (
+  applicationMenu: Menu | null,
+  MenuConstructor: typeof import('electron').Menu,
+  isMainWindow: (window: BrowserWindow) => boolean,
+  applyInterfaceScaleShortcut: (
+    webContents: Pick<BrowserWindow['webContents'], 'getZoomFactor' | 'setZoomFactor' | 'send'>,
+    shortcut: InterfaceScaleShortcut
+  ) => void
+): Menu | undefined => {
+  if (!applicationMenu) return undefined
+
+  const template: MenuItemConstructorOptions[] = applicationMenu.items.map((item) => {
+    if (item.role?.toLowerCase() !== 'viewmenu' || !item.submenu)
+      return menuItemToConstructorOptions(item)
+
+    const submenu = MenuConstructor.buildFromTemplate(
+      item.submenu.items.map((viewItem) => {
+        const shortcut = shortcutForZoomMenuRole(viewItem.role)
+        if (!shortcut) return menuItemToConstructorOptions(viewItem)
+
+        return {
+          label: viewItem.label,
+          accelerator: viewItem.accelerator ?? undefined,
+          click: (_menuItem: MenuItem, focusedWindow?: BaseWindow) => {
+            if (!focusedWindow) return
+            const browserWindow = focusedWindow as BrowserWindow
+
+            if (isMainWindow(browserWindow)) {
+              applyInterfaceScaleShortcut(browserWindow.webContents, shortcut)
+              return
+            }
+
+            const webContents = browserWindow.webContents
+            if (shortcut === 'reset') {
+              webContents.setZoomLevel(0)
+            } else {
+              // Electron's zoomIn/zoomOut roles advance by 10%, which is half a Chromium
+              // zoom level. Keep secondary windows aligned with their native menu behavior.
+              const direction = shortcut === 'increase' ? 0.5 : -0.5
+              webContents.setZoomLevel(webContents.getZoomLevel() + direction)
+            }
+          }
+        }
+      })
+    )
+
+    return {
+      label: item.label,
+      submenu
+    }
+  })
+
+  return MenuConstructor.buildFromTemplate(template)
+}
 
 if (shouldRunArtifactMcpServer) {
   // Reuse the packaged entry point as a Node stdio MCP server; import it only in this mode.
@@ -418,28 +506,18 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       await app.whenReady()
       app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
       // Electron created its default menu before ready using the selected credential identity.
-      // Rebuild standard roles now so About/Hide/app-menu labels use the display brand as well.
+      // Rebuild standard roles after the display brand is known.
       const { Menu } = createRequire(import.meta.url)('electron') as typeof import('electron')
-      if (process.platform === 'darwin')
-        Menu.setApplicationMenu(
-          Menu.buildFromTemplate([
-            { role: 'appMenu' },
-            { role: 'fileMenu' },
-            { role: 'editMenu' },
-            { role: 'viewMenu' },
-            { role: 'windowMenu' },
-            { role: 'help', submenu: [] }
-          ])
-        )
       installPowerMonitorListeners()
 
       startupDiagnostics?.phase('load-startup-shell-modules')
       const [
         { createManagedPreviewProtocolBridge },
-        { configureMainWindow, createMainWindow },
+        { configureMainWindow, createMainWindow, isMainWindow },
         { LocalePreferenceOwner },
         { registerLocalePreferenceIpc },
-        { installWindowShortcuts },
+        { applyInterfaceScaleShortcut, installWindowShortcuts },
+        { registerWindowZoomIpcHandler },
         { registerNetworkIpcHandlers },
         { createDatabaseStartupLogging },
         { createDatabaseStartupOwner },
@@ -454,6 +532,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./locale/owner'),
         import('./locale/ipc'),
         import('./window-shortcuts'),
+        import('./window-ipc'),
         import('./network-ipc'),
         import('./database/database-startup-logging'),
         import('./database/database-startup-owner'),
@@ -463,6 +542,27 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./storage-root'),
         import('./storage/initialize-location')
       ])
+
+      if (process.platform === 'darwin') {
+        Menu.setApplicationMenu(
+          Menu.buildFromTemplate([
+            { role: 'appMenu' },
+            { role: 'fileMenu' },
+            { role: 'editMenu' },
+            { role: 'viewMenu' },
+            { role: 'windowMenu' },
+            { role: 'help', submenu: [] }
+          ])
+        )
+      }
+
+      const zoomSafeApplicationMenu = buildZoomSafeApplicationMenu(
+        Menu.getApplicationMenu?.() ?? null,
+        Menu,
+        isMainWindow,
+        applyInterfaceScaleShortcut
+      )
+      if (zoomSafeApplicationMenu) Menu.setApplicationMenu(zoomSafeApplicationMenu)
 
       startupDiagnostics?.phase('prepare-shell')
       // The bridge is lightweight, but its protocol handler must exist before the first BrowserWindow
@@ -487,12 +587,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Set app user model id for windows
       electronApp.setAppUserModelId(APP_USER_MODEL_ID)
 
-      // Forward F12 / Cmd-R blocking from `@electron-toolkit/utils`' `optimizer.watchWindowShortcuts`
-      // to every window (main + future preview windows). The helper is invoked with `zoom: true` so
-      // Cmd/Ctrl+=, Cmd/Ctrl+-, and Cmd/Ctrl+0 reach Electron's built-in zoomIn / zoomOut /
-      // resetZoom menu accelerators — without that, its before-input-event listener calls
-      // preventDefault() on Cmd+- and Cmd+= and silently disables zoom out / reset (issue #336).
-      installWindowShortcuts(app)
+      // Main-window zoom shortcuts share Settings' Electron zoom factor; secondary windows retain
+      // their native menu accelerators. The optimizer still handles its other standard shortcuts.
+      installWindowShortcuts(app, undefined, isMainWindow)
+      // The renderer applies its persisted interface scale before the full application runtime is
+      // composed. Install this small handler before creating the first BrowserWindow so that the
+      // initial renderer call cannot race the desktop utility surface.
+      registerWindowZoomIpcHandler()
 
       const databaseStartupLogging = createDatabaseStartupLogging(log, app.getVersion())
       const databaseStartupOwner = createDatabaseStartupOwner({

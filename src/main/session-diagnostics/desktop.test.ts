@@ -182,6 +182,26 @@ describe('isolated diagnostic desktop lifecycle', () => {
     expect(workers[0].terminate).toHaveBeenCalledOnce()
   })
 
+  it('adds the archive suffix when a renamed export omits it', async () => {
+    const target = join(root, 'output', 'renamed-diagnostics')
+    const { owner } = setup({ target })
+
+    const result = await owner.export({ ...request, selectedItems: ['session'] })
+
+    expect(result).toEqual({ status: 'exported', path: `${target}.tar.gz` })
+    expect(await readFile(`${target}.tar.gz`, 'utf8')).toBe('completed archive')
+    await expect(readFile(target)).rejects.toThrow()
+  })
+
+  it('continues to reject a renamed export with a different extension', async () => {
+    const { owner } = setup({ target: join(root, 'output', 'renamed.zip') })
+
+    const result = await owner.export({ ...request, selectedItems: ['session'] })
+
+    expect(result.status).toBe('failed')
+    expect(result.error).toBe('Choose a new .tar.gz file.')
+  })
+
   it('refuses destinations inside source roots including symlink aliases', async () => {
     await symlink(join(root, 'data'), join(root, 'alias'), 'dir')
     const { owner, createWorker } = setup({ target: join(root, 'alias', 'result.tar.gz') })

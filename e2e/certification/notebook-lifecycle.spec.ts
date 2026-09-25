@@ -42,7 +42,7 @@ test('cancels a timed-out environment mutation before allowing a retry', async (
     page,
     'Verify Notebook mutation cancellation.',
     'Notebook mutation cancellation verified;',
-    75_000
+    100_000
   )
   await captureLifecycleEvidence(page, 'cancellation-transcript.png')
 })

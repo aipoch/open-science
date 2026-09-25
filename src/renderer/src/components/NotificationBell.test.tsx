@@ -139,6 +139,119 @@ describe('NotificationBell', () => {
     ).toBe(true)
   })
 
+  it('rings for fresh unread arrivals without replaying hydration or existing-item updates', async () => {
+    const first = useNotificationInboxStore.getState().items[0]!
+    useNotificationInboxStore.setState({
+      status: 'loading',
+      unreadCount: 0,
+      latestSequence: 0,
+      items: []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      useNotificationInboxStore.setState({
+        status: 'ready',
+        unreadCount: 1,
+        latestSequence: 7,
+        items: [first]
+      })
+    )
+    const initialBell = container.querySelector('svg')
+    expect(initialBell?.classList.contains('message-bell-ring')).toBe(false)
+    expect(container.querySelector('.message-bell-dot-pop')).toBeNull()
+
+    const second = { ...first, id: 'message-2', sequence: 8 }
+    await act(async () =>
+      useNotificationInboxStore.setState({
+        unreadCount: 2,
+        latestSequence: 8,
+        items: [first, second]
+      })
+    )
+    const ringingBell = container.querySelector('svg')
+    expect(ringingBell).not.toBe(initialBell)
+    expect(ringingBell?.classList.contains('message-bell-ring')).toBe(true)
+    expect(container.querySelector('.message-bell-dot-pop')).toBeNull()
+
+    await act(async () =>
+      useNotificationInboxStore.setState({
+        items: [{ ...first, actionState: 'resolved' }, second]
+      })
+    )
+    expect(container.querySelector('svg')).toBe(ringingBell)
+
+    await act(async () =>
+      useNotificationInboxStore.setState({
+        latestSequence: 9,
+        items: [
+          { ...first, actionState: 'resolved' },
+          second,
+          { ...second, id: 'read', sequence: 9, readAt: Date.now() }
+        ]
+      })
+    )
+    expect(container.querySelector('svg')).toBe(ringingBell)
+
+    await act(async () =>
+      useNotificationInboxStore.setState({
+        unreadCount: 3,
+        latestSequence: 10,
+        items: [first, second, { ...second, id: 'message-3', sequence: 10 }]
+      })
+    )
+    expect(container.querySelector('svg')).not.toBe(ringingBell)
+    expect(container.querySelector('.message-bell-ring')).not.toBeNull()
+  })
+
+  it('pops the dot when a fresh unread arrival changes the count from zero', async () => {
+    await act(async () => root.render(<NotificationBell />))
+    const first = useNotificationInboxStore.getState().items[0]!
+    await act(async () =>
+      useNotificationInboxStore.setState({
+        unreadCount: 0,
+        items: [{ ...first, readAt: Date.now() }]
+      })
+    )
+    expect(container.querySelector('.bg-destructive')).toBeNull()
+
+    await act(async () =>
+      useNotificationInboxStore.setState({
+        unreadCount: 1,
+        latestSequence: 8,
+        items: [
+          { ...first, readAt: Date.now() },
+          { ...first, id: 'message-2', sequence: 8 }
+        ]
+      })
+    )
+    expect(container.querySelector('.message-bell-ring')).not.toBeNull()
+    expect(container.querySelector('.message-bell-dot-pop')).not.toBeNull()
+  })
+
+  it('keeps fresh arrivals still when reduced motion is requested', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query === '(prefers-reduced-motion: reduce)',
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn()
+      }))
+    )
+    await act(async () => root.render(<NotificationBell />))
+    const first = useNotificationInboxStore.getState().items[0]!
+    await act(async () =>
+      useNotificationInboxStore.setState({
+        latestSequence: 8,
+        unreadCount: 2,
+        items: [first, { ...first, id: 'message-2', sequence: 8 }]
+      })
+    )
+    expect(container.querySelector('.message-bell-ring')).toBeNull()
+    expect(container.querySelector('.message-bell-dot-pop')).toBeNull()
+  })
+
   it('keeps the subtle background and red-dot treatment on unread rows only', async () => {
     await act(async () => root.render(<NotificationBell />))
     await act(async () =>

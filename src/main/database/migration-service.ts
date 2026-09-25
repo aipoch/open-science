@@ -1,4 +1,5 @@
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
+import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
@@ -428,6 +429,12 @@ const COMPUTE_JOB_OPERATION_CHECKSUM = checksumMigrationPayload(
   computeJobOperationMigration.statements,
   computeJobOperationMigration.verifiers,
   computeJobOperationMigration.operations
+)
+const LITERATURE_SMART_PAUSE_RUN_CHECKSUM = checksumMigrationPayload(
+  literatureSmartPauseRunMigration.id,
+  literatureSmartPauseRunMigration.statements,
+  literatureSmartPauseRunMigration.verifiers,
+  literatureSmartPauseRunMigration.operations
 )
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
@@ -859,6 +866,12 @@ const MIGRATION_MANIFEST = [
       literatureSmartCollectionsMigration.verifiers,
       literatureSmartCollectionsMigration.operations
     ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureSmartPauseRunMigration,
+    checksum: LITERATURE_SMART_PAUSE_RUN_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }

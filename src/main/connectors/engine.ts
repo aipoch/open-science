@@ -268,6 +268,29 @@ export class ParserEngine {
         throw new ConnectorHttpError(res.status, url, retryHint)
       }
     }
+    const postFormText = async (url: string, body: FormData): Promise<string> => {
+      // Native fetch supplies the multipart boundary. Do not resubmit a job after a lost reply.
+      const { response, bodyText } = await doFetch(
+        url,
+        'application/json',
+        { method: 'POST', body },
+        0
+      )
+      return bodyText === undefined ? response.text() : bodyText
+    }
+    const postUrlEncodedText = async (url: string, body: URLSearchParams): Promise<string> => {
+      const { response, bodyText } = await doFetch(
+        url,
+        'application/json',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body
+        },
+        0
+      )
+      return bodyText === undefined ? response.text() : bodyText
+    }
     return {
       ...(signal ? { signal } : {}),
       credentials,
@@ -298,8 +321,9 @@ export class ParserEngine {
         )
         return bodyText === undefined ? response.text() : bodyText
       },
+      postFormText,
+      postUrlEncodedText,
       postForm: async (url, body) => {
-        // Native fetch supplies the multipart boundary. Do not resubmit a job after a lost reply.
         const { response, bodyText } = await doFetch(
           url,
           'application/json',

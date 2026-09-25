@@ -4,16 +4,20 @@ import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
 import micromambaVersions from '../../../scripts/micromamba-versions.json'
 import { resolveMicromambaLocations, type MicromambaDeps } from './micromamba'
+import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 
 export type MicromambaRunnerCandidate = {
   id: string
   path: string
+  // SHA-256 of the extracted upstream executable before an optional release signature is added.
   expectedSha256?: string
+  // Bundled Windows candidates may be Authenticode-signed after this digest was recorded.
+  verifySignature?: boolean
   selectionTier?: 'explicit' | 'pinned-primary' | 'compatibility' | 'fallback'
 }
 
@@ -26,6 +30,7 @@ export type MicromambaRunnerResolverOptions = {
   candidates: MicromambaRunnerCandidate[]
   toolsDir: string
   preflight?: (path: string) => Promise<void>
+  verifySignature?: (path: string) => Promise<void>
 }
 
 export type MicromambaRunnerDeps = MicromambaDeps & {
@@ -34,6 +39,7 @@ export type MicromambaRunnerDeps = MicromambaDeps & {
   configHome?: string
   localToolsDir?: string
   preflight?: (path: string) => Promise<void>
+  verifySignature?: (path: string) => Promise<void>
 }
 
 type SelectionReceipt = {
@@ -45,6 +51,7 @@ type SelectionReceipt = {
 const execFileAsync = promisify(execFile)
 const digestPattern = /^[0-9a-f]{64}$/
 const candidateIdPattern = /^[a-z0-9][a-z0-9.-]*$/
+const WINDOWS_PUBLISHER = 'AIPOCH PTE. LTD.'
 
 const hashFile = async (path: string): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -57,6 +64,42 @@ const hashFile = async (path: string): Promise<string> =>
 
 const defaultPreflight = async (path: string): Promise<void> => {
   await execFileAsync(path, ['--version'], { timeout: 10_000, windowsHide: true })
+}
+
+const verifyWindowsAuthenticode = async (path: string): Promise<void> => {
+  const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR
+  const powershellModulePath = windowsRoot
+    ? win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules')
+    : undefined
+  const script = [
+    '$ErrorActionPreference = "Stop"',
+    ...(powershellModulePath
+      ? ['$env:PSModulePath = $env:OPEN_SCIENCE_POWERSHELL_MODULE_PATH']
+      : []),
+    'Import-Module Microsoft.PowerShell.Security -ErrorAction Stop',
+    '$signature = Get-AuthenticodeSignature -LiteralPath $env:OPEN_SCIENCE_AUTHENTICODE_PATH',
+    'if ($signature.Status -ne "Valid") { throw "invalid Authenticode status: $($signature.Status) $($signature.StatusMessage)" }',
+    '$publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)',
+    `if ($publisher -ne '${WINDOWS_PUBLISHER}') { throw "unexpected Authenticode publisher: $publisher" }`,
+    'if ($null -eq $signature.TimeStamperCertificate) { throw "missing Authenticode timestamp" }'
+  ].join('; ')
+  const env: NodeJS.ProcessEnv = { ...process.env, OPEN_SCIENCE_AUTHENTICODE_PATH: path }
+  // The app may inherit a PSModulePath from a development/runtime host. Restrict module lookup to
+  // Windows PowerShell's system directory so an incompatible bundled copy cannot shadow the security
+  // module that supplies Get-AuthenticodeSignature.
+  if (powershellModulePath) {
+    env.OPEN_SCIENCE_POWERSHELL_MODULE_PATH = powershellModulePath
+    env.PSModulePath = powershellModulePath
+  }
+  await execFileAsync(
+    resolveWindowsPowerShellExecutable(process.env),
+    ['-NoProfile', '-NonInteractive', '-Command', script],
+    {
+      timeout: 10_000,
+      windowsHide: true,
+      env
+    }
+  )
 }
 
 const errorText = (error: unknown): string => {
@@ -108,7 +151,8 @@ const isFile = (path: string): boolean => {
 
 const materializeCandidate = async (
   candidate: MicromambaRunnerCandidate,
-  toolsDir: string
+  toolsDir: string,
+  verifySignature?: (path: string) => Promise<void>
 ): Promise<{ path: string; sha256: string }> => {
   if (!candidateIdPattern.test(candidate.id)) {
     throw new Error(`invalid runner candidate id: ${candidate.id}`)
@@ -116,12 +160,21 @@ const materializeCandidate = async (
 
   const sourceDigest = await hashFile(candidate.path)
   const expected = candidate.expectedSha256?.toLowerCase()
-  if (expected && sourceDigest !== expected) {
+  const signedSource = Boolean(expected && sourceDigest !== expected && candidate.verifySignature)
+  if (expected && sourceDigest !== expected && !signedSource) {
     throw new Error(`sha256 mismatch: expected ${expected}, got ${sourceDigest}`)
+  }
+  if (signedSource) {
+    if (!verifySignature) throw new Error('signed runner requires Authenticode verification')
+    await verifySignature(candidate.path)
   }
 
   const destination = targetPath(toolsDir, candidate.id, sourceDigest)
   if (await existingFileMatches(destination, sourceDigest)) {
+    if (signedSource) {
+      if (!verifySignature) throw new Error('signed runner requires Authenticode verification')
+      await verifySignature(destination)
+    }
     return { path: destination, sha256: sourceDigest }
   }
 
@@ -131,6 +184,10 @@ const materializeCandidate = async (
     await copyFile(candidate.path, staging)
     if (!(await existingFileMatches(staging, sourceDigest))) {
       throw new Error('copied runner failed sha256 verification')
+    }
+    if (signedSource) {
+      if (!verifySignature) throw new Error('signed runner requires Authenticode verification')
+      await verifySignature(staging)
     }
     await rm(destination, { force: true })
     await rename(staging, destination)
@@ -154,7 +211,11 @@ const resolveRunner = async (opts: MicromambaRunnerResolverOptions): Promise<str
     if (attempted.has(candidate.id)) return undefined
     attempted.add(candidate.id)
     try {
-      const materialized = await materializeCandidate(candidate, opts.toolsDir)
+      const materialized = await materializeCandidate(
+        candidate,
+        opts.toolsDir,
+        opts.verifySignature
+      )
       await preflight(materialized.path)
       await mkdir(opts.toolsDir, { recursive: true })
       await writeFile(
@@ -189,18 +250,41 @@ const resolveRunner = async (opts: MicromambaRunnerResolverOptions): Promise<str
   if (receipt) {
     const cached = receiptCandidate
     const expected = cached?.expectedSha256?.toLowerCase()
-    const sourceStillMatches =
-      cached && !expected ? await existingFileMatches(cached.path, receipt.sha256) : true
-    if (cached && sourceStillMatches && (!expected || expected === receipt.sha256)) {
-      const path = targetPath(opts.toolsDir, cached.id, receipt.sha256)
-      if (await existingFileMatches(path, receipt.sha256)) {
-        attempted.add(cached.id)
+    let sourceStillMatches = false
+    if (cached) {
+      const sourceDigest = await hashFile(cached.path).catch(() => undefined)
+      sourceStillMatches = sourceDigest === receipt.sha256 || sourceDigest === expected
+      if (!sourceStillMatches && cached.verifySignature && sourceDigest && opts.verifySignature) {
         try {
+          await opts.verifySignature(cached.path)
+          sourceStillMatches = true
+        } catch (error) {
+          failures.push(`${cached.id} cached signature: ${errorText(error)}`)
+        }
+      }
+    }
+    const receiptMatchesInstalled =
+      cached &&
+      (await existingFileMatches(
+        targetPath(opts.toolsDir, cached.id, receipt.sha256),
+        receipt.sha256
+      ))
+    if (cached && sourceStillMatches && receiptMatchesInstalled) {
+      const path = targetPath(opts.toolsDir, cached.id, receipt.sha256)
+      try {
+        if (cached.verifySignature && expected !== receipt.sha256) {
+          if (!opts.verifySignature) {
+            throw new Error('signed runner requires Authenticode verification')
+          }
+          await opts.verifySignature(path)
+        }
+        if (await existingFileMatches(path, receipt.sha256)) {
+          attempted.add(cached.id)
           await preflight(path)
           return path
-        } catch (error) {
-          failures.push(`${cached.id} cached preflight: ${errorText(error)}`)
         }
+      } catch (error) {
+        failures.push(`${cached.id} cached preflight: ${errorText(error)}`)
       }
     }
   }
@@ -268,6 +352,7 @@ export const createProductionMicromambaRunner = (
   const primaryDigest = micromambaVersions.binarySha256['win-64']
   const primaryId = `primary-${micromambaVersions.releaseTag}`
   const candidates: MicromambaRunnerCandidate[] = []
+  const verifySignature = deps.verifySignature ?? verifyWindowsAuthenticode
   let pathIndex = 0
   const add = (location: (typeof locations)[number]): void => {
     const id =
@@ -280,6 +365,7 @@ export const createProductionMicromambaRunner = (
       id,
       path: location.path,
       expectedSha256: location.kind === 'bundled' ? primaryDigest : undefined,
+      verifySignature: location.kind === 'bundled',
       selectionTier:
         location.kind === 'override'
           ? 'explicit'
@@ -298,6 +384,7 @@ export const createProductionMicromambaRunner = (
         id: primaryId,
         path: cachedPrimary,
         expectedSha256: primaryDigest,
+        verifySignature: true,
         selectionTier: 'pinned-primary'
       })
     }
@@ -310,6 +397,7 @@ export const createProductionMicromambaRunner = (
       id: `compat-${micromambaVersions.compatibility.releaseTag}`,
       path: compatibilityPath,
       expectedSha256: micromambaVersions.compatibility.binarySha256['win-64'],
+      verifySignature: true,
       selectionTier: 'compatibility'
     })
   }
@@ -321,5 +409,10 @@ export const createProductionMicromambaRunner = (
   }
   if (candidates.length === 0) return undefined
 
-  return createMicromambaRunnerResolver({ candidates, toolsDir, preflight: deps.preflight })
+  return createMicromambaRunnerResolver({
+    candidates,
+    toolsDir,
+    preflight: deps.preflight,
+    verifySignature
+  })
 }

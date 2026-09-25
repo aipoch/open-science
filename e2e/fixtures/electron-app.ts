@@ -988,8 +988,7 @@ class ElectronAppHarness implements ElectronApp {
         const contents = (view as Electron.WebContentsView).webContents
         if (!contents || contents.isDestroyed() || !contents.getURL().includes('/find-overlay/'))
           return false
-        const bounds = view.getBounds()
-        return bounds.width > 0 && bounds.height > 0
+        return view.getVisible()
       })
     })
   }
@@ -1551,8 +1550,15 @@ class ElectronAppHarness implements ElectronApp {
       {
         close: async () => {
           if (requireGraceful && page) {
-            const window = await application.browserWindow(page)
-            const windowId = await window.evaluate((window) => window.id)
+            const readWindowId = async (): Promise<number> =>
+              (await application.browserWindow(page)).evaluate((window) => window.id)
+            let windowId: number
+            try {
+              windowId = await readWindowId()
+            } catch (error) {
+              if (!String(error).includes('Resulting promise was garbage collected')) throw error
+              windowId = await readWindowId()
+            }
             await installRestartPersistenceRetry(application, windowId, 5_000)
           }
           await application.close()

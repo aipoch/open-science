@@ -32,7 +32,21 @@ test('keyboard reaches a read pending approval beside a broken row without retry
   await expect(approval).toBeVisible()
   await approval.getByRole('button', { name: 'Show full arguments' }).press('Enter')
   await expect(approval).toContainText('/long/path/')
-  await approval.getByRole('button', { name: 'Global', exact: true }).click()
+  await expect(approval.getByRole('button', { name: 'Allow once', exact: true })).toBeVisible()
+  await approval.getByRole('button', { name: 'Choose authorization scope' }).press('Enter')
+  await page
+    .getByRole('menu', { name: 'Authorization scope' })
+    .getByRole('menuitemradio', { name: /^Global/ })
+    .press('Enter')
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { notificationQuality: { responses: number } }).notificationQuality
+          .responses
+    )
+  ).toBe(0)
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  await approval.getByRole('button', { name: 'Allow globally', exact: true }).press('Enter')
   const confirmation = page.getByRole('alertdialog')
   await expect(confirmation).toBeVisible()
   await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()

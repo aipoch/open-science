@@ -282,27 +282,32 @@ it('does not restart for stale NetLog evidence', async () => {
   expect(records()).not.toContainEqual(expect.objectContaining({ status: 'retry' }))
 })
 
-it('wraps only the Windows layout shell and preserves its original command', () => {
-  const workflow = load(readFileSync('.github/workflows/pr-gate.yml', 'utf8')) as {
-    jobs: Record<string, { steps?: Array<{ id?: string; shell?: string; run?: string }> }>
+it.each([
+  [
+    'windows-e2e-regression.yml',
+    'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests'
+  ]
+])(
+  'wraps only the Windows layout shell in %s and preserves its selected command',
+  (file, command) => {
+    const workflow = load(readFileSync(`.github/workflows/${file}`, 'utf8')) as {
+      jobs: Record<string, { steps?: Array<{ id?: string; shell?: string; run?: string }> }>
+    }
+    const wrapped = Object.entries(workflow.jobs).flatMap(([job, value]) =>
+      (value.steps ?? [])
+        .filter((step) => step.shell?.includes('run-windows-browser-diagnostics.mjs'))
+        .map((step) => ({ job, ...step }))
+    )
+    expect(wrapped).toEqual([
+      expect.objectContaining({
+        job: 'windows_e2e',
+        id: 'renderer_layout',
+        shell: 'node scripts/ci/run-windows-browser-diagnostics.mjs {0}',
+        run: command
+      })
+    ])
   }
-  const wrapped = Object.entries(workflow.jobs).flatMap(([job, value]) =>
-    (value.steps ?? [])
-      .filter((step) => step.shell?.includes('run-windows-browser-diagnostics.mjs'))
-      .map((step) => ({ job, ...step }))
-  )
-  expect(wrapped).toEqual([
-    expect.objectContaining({
-      job: 'windows_e2e',
-      id: 'renderer_layout',
-      shell: 'node scripts/ci/run-windows-browser-diagnostics.mjs {0}',
-      run: 'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3'
-    })
-  ])
-  expect(
-    workflow.jobs.windows_core.steps?.find((step) => step.id === 'windows_runtime')?.run
-  ).toContain('scripts/ci/run-windows-browser-diagnostics.test.ts')
-})
+)
 
 it.skipIf(process.platform !== 'win32').each([0, 7])(
   'preserves native exit %i through the real PowerShell shell',

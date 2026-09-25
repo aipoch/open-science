@@ -44,7 +44,10 @@ const UnavailablePlanNotice = ({ session }: { session: ChatSession }): React.JSX
         icon={AlertTriangle}
         tone="amber"
         title={t('Unable to restore plan state. Retrying…')}
-        description={error}
+        description={t(
+          'This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.'
+        )}
+        content={error ? <p>{error}</p> : undefined}
         primaryButton={
           canDiscard
             ? {

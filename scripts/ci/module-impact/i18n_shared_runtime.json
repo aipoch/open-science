@@ -643,6 +643,7 @@
       "src/main/settings/provider-transport-owner.test.ts",
       "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
       "src/main/literature/smart-collections.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
       "src/main/acp/library-auto-policy.test.ts"
     ]
   },

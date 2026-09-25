@@ -92,20 +92,26 @@ const useApplicationEventBindings = ({
   const openSettings = useSettingsStore((state) => state.openSettings)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
-  const hasConnectorApproval = useSettingsStore((state) => state.pendingApprovals.length > 0)
+  const hasConnectorApproval = useSettingsStore((state) =>
+    state.pendingApprovals.some((request) => !request.closed)
+  )
   const enqueueConnectorApproval = useSettingsStore((state) => state.enqueueApproval)
   const dismissConnectorApproval = useSettingsStore((state) => state.dismissApproval)
   const hasSessionlessCredentialRequest = useSettingsStore((state) =>
-    state.pendingCredentialRequests.some((request) => !request.sessionId)
+    state.pendingCredentialRequests.some((request) => !request.sessionId && !request.closed)
   )
   const enqueueCredentialRequest = useSettingsStore((state) => state.enqueueCredentialRequest)
   const dismissCredentialRequest = useSettingsStore((state) => state.dismissCredentialRequest)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
   const dismissComputeApproval = useComputeStore((state) => state.dismissApproval)
-  const hasComputeApproval = useComputeStore((state) => state.pendingApprovals.length > 0)
+  const hasComputeApproval = useComputeStore((state) =>
+    state.pendingApprovals.some((request) => !request.closed)
+  )
   const enqueueSkillImport = useSkillImportStore((state) => state.enqueue)
   const dismissSkillImport = useSkillImportStore((state) => state.dismiss)
-  const hasSkillImportApproval = useSkillImportStore((state) => state.pending.length > 0)
+  const hasSkillImportApproval = useSkillImportStore((state) =>
+    state.pending.some((request) => !state.closedIds.includes(request.id))
+  )
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const hydrateNonTerminalJobs = useSessionJobStore((state) => state.hydrateNonTerminal)
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
@@ -130,7 +136,8 @@ const useApplicationEventBindings = ({
     userNavigationRevision: useNavigationStore.getState().userNavigationRevision
   })
   const lifecycle = useLifecycleSync({
-    isSessionPersistenceHydrated: sessionPersistence.isHydrated
+    // Keep incoming changes queued while a catalog reload can still replace the store snapshot.
+    isSessionPersistenceHydrated: sessionPersistence.isHydrated && !sessionPersistence.isLoading
   })
   useWindowFindAppearanceSync()
 

@@ -17,6 +17,7 @@ import { Readable, Writable } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
 
 import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { terminateProcessTree } from '../process-tree'
 import type {
   AcpBackendGenerationAttempt,
@@ -56,6 +57,7 @@ type AcpAgentConnectionHooks = Readonly<{
   filesystem: Readonly<{
     resolveSessionCwd: (sessionId: string) => string
     protectedReadRoots: () => readonly string[]
+    listGrantedRoots?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
   }>
   onBackendResolved: (framework: AgentFramework['id']) => void
   onProcessSpawned: (framework: AgentFramework['id']) => void
@@ -303,17 +305,19 @@ class AcpAgentConnectionAdapter {
         (params) => params as Record<string, unknown>,
         (context) => hooks.observeClaudeSdkMessage(context.params)
       )
-      .onRequest(acp.methods.client.fs.readTextFile, (context) =>
+      .onRequest(acp.methods.client.fs.readTextFile, async (context) =>
         readWorkspaceTextFile(
           hooks.filesystem.resolveSessionCwd(context.params.sessionId),
           context.params,
-          [...hooks.filesystem.protectedReadRoots()]
+          [...hooks.filesystem.protectedReadRoots()],
+          (await hooks.filesystem.listGrantedRoots?.()) ?? []
         )
       )
-      .onRequest(acp.methods.client.fs.writeTextFile, (context) =>
+      .onRequest(acp.methods.client.fs.writeTextFile, async (context) =>
         writeWorkspaceTextFile(
           hooks.filesystem.resolveSessionCwd(context.params.sessionId),
-          context.params
+          context.params,
+          (await hooks.filesystem.listGrantedRoots?.()) ?? []
         )
       )
       .connect(stream)

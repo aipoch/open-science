@@ -314,7 +314,8 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
-      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx"
+      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -204,8 +204,9 @@ const openManagedFile = async (sourcePath: string): Promise<ManagedFileHandle> =
       throw error
     }
     try {
-      const sourceStat = await sourceHandle.stat()
-      const destinationStat = await destinationHandle.stat()
+      // Windows file IDs can exceed the integer precision of number-based Stats.
+      const sourceStat = await sourceHandle.stat({ bigint: true })
+      const destinationStat = await destinationHandle.stat({ bigint: true })
       if (destinationStat.dev === sourceStat.dev && destinationStat.ino === sourceStat.ino) {
         throw new Error('Cannot save a managed file over its source.')
       }
@@ -225,8 +226,8 @@ const openManagedFile = async (sourcePath: string): Promise<ManagedFileHandle> =
       )
 
       try {
-        const sourceStat = await sourceHandle.stat()
-        const destinationStat = await destinationHandle.stat()
+        const sourceStat = await sourceHandle.stat({ bigint: true })
+        const destinationStat = await destinationHandle.stat({ bigint: true })
         if (destinationStat.dev === sourceStat.dev && destinationStat.ino === sourceStat.ino) {
           throw new Error('Cannot save a managed file over its source.')
         }

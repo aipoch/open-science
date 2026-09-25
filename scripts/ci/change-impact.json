@@ -157,6 +157,7 @@
         "src/main/acp/restricted-runtime-profile.ts",
         "src/main/acp/runtime.ts",
         "src/main/acp/session-capability-owner.ts",
+        "src/main/acp/filesystem.ts",
         "src/main/agent-framework/codebuddy.ts",
         "src/main/agent-framework/codex.ts",
         "src/main/agent-framework/opencode.ts",

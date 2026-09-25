@@ -70,6 +70,10 @@ import {
 import type { LiteratureCatalogReceipt, LiteratureItemView } from '../../shared/literature'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { ResolvedAgentBackend } from '../agent-framework'
+import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
+import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
+import { opencodeStorageDir } from '../agent-framework/opencode'
+import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { projectRegistrySessionGrants } from './permission-broker'
@@ -193,6 +197,9 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     ReturnType<NonNullable<AcpSettingsCapabilities['prepareDelegatedSkills']>>
   >
   delegatedNotebookConnection?: NotebookRpcConnection
+  // Disposable delegated framework homes contain copied authentication and Skill material.
+  // Keep the per-attempt home protected even when a parent data directory is granted.
+  delegatedRuntimeHome?: string
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
   hasPendingCredentialRequest?: AcpRuntimeOptions['hasPendingCredentialRequest']
@@ -272,6 +279,7 @@ const createAcpRuntime = ({
   runtimeCallbacks,
   preparedSkills,
   delegatedNotebookConnection,
+  delegatedRuntimeHome,
   delegatedArtifactCurrentRunFile,
   spawnAgent,
   sideChatRelays,
@@ -296,6 +304,14 @@ const createAcpRuntime = ({
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
   const defaultCwd = homedir()
+  const delegatedProtectedReadRoots = [
+    delegatedRuntimeHome,
+    getAppClaudeConfigDir(configRoot),
+    opencodeStorageDir(configRoot),
+    codexStorageDir(configRoot),
+    codexSubscriptionStorageDir(configRoot),
+    codeBuddyStorageDir(configRoot)
+  ].filter((path): path is string => Boolean(path))
   const runtimeCoordinatorRef: { current?: AcpRuntimeCoordinator } = {}
   // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
   const projectRepository = new ProjectRepository(
@@ -411,6 +427,7 @@ const createAcpRuntime = ({
         ...(delegatedNotebookConnection && fixedBackend?.framework.id === 'opencode'
           ? {
               additionalProtectedReadRoots: [
+                ...delegatedProtectedReadRoots,
                 fixedBackend.env.XDG_CONFIG_HOME,
                 fixedBackend.env.XDG_DATA_HOME,
                 fixedBackend.env.XDG_CACHE_HOME,
@@ -418,6 +435,9 @@ const createAcpRuntime = ({
                 fixedBackend.env.OPENCODE_TEST_HOME
               ].filter((path): path is string => Boolean(path))
             }
+          : {}),
+        ...(delegatedNotebookConnection && fixedBackend?.framework.id !== 'opencode'
+          ? { additionalProtectedReadRoots: delegatedProtectedReadRoots }
           : {}),
         resolveBackend: async (context) =>
           fixedBackend ??
@@ -731,6 +751,7 @@ const createAcpRuntime = ({
         ...(delegatedNotebookConnection ? {} : { uploads: { repository: uploadRepository } }),
         grantedRoots: grantedRootsRepository
           ? {
+              list: () => grantedRootsRepository.list(),
               // Read fresh so revocation and access changes govern every subsequent resolution.
               resolveRoot: async (rootId) =>
                 (await grantedRootsRepository.list()).find((root) => root.id === rootId)

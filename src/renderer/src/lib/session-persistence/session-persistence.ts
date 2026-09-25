@@ -177,8 +177,23 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
   releaseAcknowledgedSessionBody: (sessionId: string) => boolean
   clearWriteFailure: (target: string) => void
   clearWriteFailures: () => void
-  flush: () => Promise<void>
+  pruneDeferredConversationCommands: (sessions: readonly Pick<ChatSession, 'id'>[]) => void
+  hasDeferredConversationCommands: (target: string) => boolean
+  flush: (target?: string) => Promise<void>
 }
+
+export class SessionPersistenceDeferredError extends Error {
+  readonly code = 'session-conversation-deferred' as const
+
+  constructor(readonly target: string) {
+    super('Session conversation changes are waiting for the active run to finish.')
+    this.name = 'SessionPersistenceDeferredError'
+  }
+}
+
+export const isSessionPersistenceDeferredError = (
+  error: unknown
+): error is SessionPersistenceDeferredError => error instanceof SessionPersistenceDeferredError
 
 const SESSION_CONFLICT_REBASE_FIELDS = [
   'title',
@@ -870,6 +885,7 @@ const createOrderedSessionPersistence = (
   const acknowledgedRevisions = new Map<string, number>()
   const acknowledgedSessions = new Map<string, PersistedChatSession>()
   const pendingLatestByTarget = new Map<string, PendingLatestSessionSave>()
+  const deferredConversationCommandTargets = new Set<string>()
   // The queue swallows rejections to stay usable; retain terminal failures until that target heals.
   const failedWritesByTarget = new Map<string, unknown>()
   let hydrationGeneration = 0
@@ -919,6 +935,19 @@ const createOrderedSessionPersistence = (
       Math.max(acknowledgedRevisions.get(session.id) ?? 0, revision)
     )
     acknowledgedSessions.set(session.id, structuredClone(session))
+  }
+
+  const trackConversationCommandOutcome = (
+    target: string,
+    options: SaveSessionOptions | undefined,
+    durable: PersistedChatSession
+  ): void => {
+    const commands = options?.conversationCommands
+    if (!commands || commands.length === 0) return
+    const acknowledged = new Set(durable.runtimeConversationCommandIds ?? [])
+    if (commands.some(({ id }) => !acknowledged.has(id)))
+      deferredConversationCommandTargets.add(target)
+    else deferredConversationCommandTargets.delete(target)
   }
 
   const releasePendingLatestCadence = (): void => {
@@ -1001,6 +1030,7 @@ const createOrderedSessionPersistence = (
       : await api.saveSession(submitted)
     acknowledgeSession(durable)
     acknowledgeSessionConversationCommands(durable)
+    trackConversationCommandOutcome(`session:${submitted.id}`, options, durable)
     return durable
   }
 
@@ -1046,6 +1076,7 @@ const createOrderedSessionPersistence = (
       }
       const durable = await entry.task(entry.options)
       acknowledgeSession(durable)
+      trackConversationCommandOutcome(entry.target, entry.options, durable)
       return durable
     }
     const run = schedule(target, runTask)
@@ -1066,6 +1097,11 @@ const createOrderedSessionPersistence = (
       for (const target of failedWritesByTarget.keys()) {
         if (target.startsWith('session:')) failedWritesByTarget.delete(target)
       }
+      const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
+      for (const target of deferredConversationCommandTargets) {
+        if (target.startsWith('session:') && !activeSessionTargets.has(target))
+          deferredConversationCommandTargets.delete(target)
+      }
       for (const session of sessions) {
         acknowledgedRevisions.set(session.id, sessionRevision(session))
         acknowledgedSessions.set(session.id, structuredClone(session))
@@ -1081,8 +1117,22 @@ const createOrderedSessionPersistence = (
       // Keep the small revision watermark: later explicit writes must not regress their revision.
       return true
     },
-    clearWriteFailure: (target) => failedWritesByTarget.delete(target),
-    clearWriteFailures: () => failedWritesByTarget.clear(),
+    clearWriteFailure: (target) => {
+      failedWritesByTarget.delete(target)
+      deferredConversationCommandTargets.delete(target)
+    },
+    clearWriteFailures: () => {
+      failedWritesByTarget.clear()
+      deferredConversationCommandTargets.clear()
+    },
+    pruneDeferredConversationCommands: (sessions) => {
+      const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
+      for (const target of deferredConversationCommandTargets) {
+        if (target.startsWith('session:') && !activeSessionTargets.has(target))
+          deferredConversationCommandTargets.delete(target)
+      }
+    },
+    hasDeferredConversationCommands: (target) => deferredConversationCommandTargets.has(target),
     saveSession: (session, options) => {
       // Commands must be paired with the snapshot visible when the save is admitted. Reading the
       // pending buffer after an older save waits in the queue can attach a newer Message command.
@@ -1110,7 +1160,7 @@ const createOrderedSessionPersistence = (
       })
     },
     saveManifest: (request) => enqueue('manifest', () => api.saveManifest(request)),
-    flush: async () => {
+    flush: async (target?: string) => {
       // Runtime/store updates can admit new snapshots while earlier writes are in flight.
       // Keep cadence disabled until every overlapping flush has finished.
       activeFlushes += 1
@@ -1124,6 +1174,12 @@ const createOrderedSessionPersistence = (
         }
         const failure = failedWritesByTarget.values().next()
         if (!failure.done) throw failure.value
+        const deferredTarget = target
+          ? deferredConversationCommandTargets.has(target)
+            ? target
+            : undefined
+          : deferredConversationCommandTargets.values().next().value
+        if (deferredTarget) throw new SessionPersistenceDeferredError(deferredTarget)
       } finally {
         activeFlushes -= 1
       }
@@ -1179,6 +1235,9 @@ const saveSessionInOrder = async (
         )
       }
     )
+    if (persistence.hasDeferredConversationCommands(target)) {
+      throw new SessionPersistenceDeferredError(target)
+    }
     acknowledgeSessionConversationCommands(durable)
     unresolvedSessionRevisionConflictTargets.delete(target)
     return durable
@@ -1219,8 +1278,24 @@ class SessionPersistenceFlushConflictError extends Error {
   }
 }
 
-const flushSessionPersistence = async (): Promise<void> => {
-  await liveSessionPersistence.flush()
+const retryDeferredSessionPersistence = async (target: string): Promise<void> => {
+  if (!target.startsWith('session:')) return
+  const sessionId = target.slice('session:'.length)
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === sessionId)
+  if (!session) return
+  await saveSessionInOrder(toPersistedSession(session))
+}
+
+const flushSessionPersistence = async (target?: string): Promise<void> => {
+  try {
+    await liveSessionPersistence.flush(target)
+  } catch (error) {
+    if (!target || !isSessionPersistenceDeferredError(error) || error.target !== target) throw error
+    await retryDeferredSessionPersistence(target)
+    await liveSessionPersistence.flush(target)
+  }
   if (unresolvedSessionRevisionConflictTargets.size > 0) {
     throw new SessionPersistenceFlushConflictError()
   }
@@ -1539,6 +1614,7 @@ const pruneRemovedSessionWriteTargets = (
   ...relatedTargets: Set<string>[]
 ): void => {
   const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
+  liveSessionPersistence.pruneDeferredConversationCommands(sessions)
   for (const target of targets) {
     if (target.startsWith('session:') && !activeSessionTargets.has(target)) {
       targets.delete(target)
@@ -1618,12 +1694,14 @@ const SESSION_SIZE_LIMIT_WRITE_ERROR =
 const loadPersistedSessions = async (
   api: SessionPersistenceApi,
   shouldHydrate: () => boolean = () => true,
-  preferredSelection?: SessionHydrationSelection
+  preferredSelection?: SessionHydrationSelection | (() => SessionHydrationSelection)
 ): Promise<LoadAllSessionsResult | ListSessionSummariesResult | undefined> => {
+  const currentSelection = (): SessionHydrationSelection | undefined =>
+    typeof preferredSelection === 'function' ? preferredSelection() : preferredSelection
   if (api.list) {
     const result = await api.list()
     if (!shouldHydrate()) return undefined
-    const retrySessionId = preferredSelection?.sessionId
+    const retrySessionId = currentSelection()?.sessionId
     const summariesToHydrate = result.sessions.filter(
       (session) => session.needsStartupRecovery || session.id === retrySessionId
     )
@@ -1641,7 +1719,6 @@ const loadPersistedSessions = async (
         )
       )
     )
-    const selected = retrySessionId ? hydratedSessions.get(retrySessionId) : undefined
     if (!shouldHydrate()) return undefined
     const missing = summariesToHydrate.find((summary) => !hydratedSessions.get(summary.id))
     if (missing) {
@@ -1649,9 +1726,13 @@ const loadPersistedSessions = async (
         'Session JSON requiring startup hydration is missing from the SQLite projection.'
       )
     }
+    // The retained workspace remains navigable during a reload. Do not replay the selection from
+    // the Retry click over a later user navigation (including an explicitly cleared selection).
+    const selection = currentSelection()
+    const selected = selection?.sessionId ? hydratedSessions.get(selection.sessionId) : undefined
     useSessionStore
       .getState()
-      .hydrateSessionSummaries(result.sessions, selected, result.manifest, preferredSelection)
+      .hydrateSessionSummaries(result.sessions, selected, result.manifest, selection)
     for (const hydrated of hydratedSessions.values()) {
       if (hydrated && hydrated.id !== selected?.id) {
         useSessionStore.getState().upsertPersistedSession(hydrated)
@@ -1667,7 +1748,7 @@ const loadPersistedSessions = async (
   // selected Session disappeared before recovery completed, do not replay a stale disk manifest or
   // fall through to the globally newest Session from another Project. Passing the selection into
   // hydration applies the sessions and selection atomically for all Zustand subscribers.
-  useSessionStore.getState().hydrateSessions(result.sessions, result.manifest, preferredSelection)
+  useSessionStore.getState().hydrateSessions(result.sessions, result.manifest, currentSelection())
   return result
 }
 
@@ -2324,11 +2405,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
     if (isHydrated) {
       retrySelection.current = { sessionId: useSessionStore.getState().selectedSessionId }
     }
-    setIsHydrated(false)
+    // A failed refresh must not hide an already loaded snapshot or its recovery actions. Mutation
+    // gates still close until an authoritative reload succeeds; first-load hydration stays false.
     setIsLoading(true)
     setIsReady(false)
     setHasCompleteSessionCatalog(false)
-    setCatalogRecovery(READY_SESSION_CATALOG_RECOVERY)
     setCanDeleteSessionsAndProjects(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
@@ -2390,7 +2471,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
         const result = await loadPersistedSessions(
           window.api.sessions,
           () => isMounted,
-          preferredSelection
+          preferredSelection === undefined
+            ? undefined
+            : () => ({ sessionId: useSessionStore.getState().selectedSessionId })
         )
         if (!result || !isMounted) return
         unresolvedSessionRevisionConflictTargets.clear()
@@ -2449,7 +2532,6 @@ const useSessionPersistence = (): SessionPersistenceState => {
         reportPersistenceError(error, 'session-load')
         if (isMounted) {
           setHasCompleteSessionCatalog(false)
-          setCatalogRecovery(READY_SESSION_CATALOG_RECOVERY)
           setCanDeleteSessionsAndProjects(false)
           setLoadError(SAFE_SESSION_LOAD_ERROR)
           setIsLoading(false)
@@ -2583,7 +2665,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
         }
       }
 
-      unsubscribe = useSessionStore.subscribe((state) => {
+      const onStoreChange = (state: ReturnType<typeof useSessionStore.getState>): void => {
         const failedTargetCount = failedWriteTargets.current.size
         const sizeLimitTargetCount = sizeLimitTargets.current.size
         pruneRemovedSessionWriteTargets(
@@ -2656,7 +2738,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
             .finally(() => loadingSessionContent.delete(selected.id))
         }
         void save(state).then(trimReadOnlyHistory).catch(reportPersistenceError)
-      })
+      }
+      unsubscribe = useSessionStore.subscribe(onStoreChange)
+      // Navigation may change while the retry hydrates another Session's body. That selection
+      // happened before this subscription, so start its lazy read without waiting for another edit.
+      if (preferredSelection !== undefined) onStoreChange(useSessionStore.getState())
 
       // Hydration intentionally uses the user's live selection instead of the older disk manifest
       // on retry. Force that tri-state selection (including an explicit empty selection) back to

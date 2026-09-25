@@ -21,12 +21,21 @@ const checksum = z.string().regex(/^[a-f0-9]{64}$/)
 export const PACKAGE_RO_CRATE_METADATA = 'ro-crate-metadata.json'
 export const PACKAGE_MAX_FILE_BYTES = 32 * 1024 ** 3
 export const PACKAGE_MAX_BYTES = 256 * 1024 ** 3
+export const PACKAGE_MIN_IO_BYTES_PER_SECOND = 1024 ** 2
 export const PACKAGE_DEFAULT_IO_BYTES_PER_SECOND = 16 * 1024 ** 2
+export const PACKAGE_MAX_IO_BYTES_PER_SECOND = 256 * 1024 ** 2
+export const PACKAGE_IO_RATE_OPTIONS = [
+  4 * 1024 ** 2,
+  16 * 1024 ** 2,
+  64 * 1024 ** 2,
+  128 * 1024 ** 2,
+  256 * 1024 ** 2
+] as const
 const transferRateSchema = z
   .number()
   .int()
-  .min(1024 ** 2)
-  .max(64 * 1024 ** 2)
+  .min(PACKAGE_MIN_IO_BYTES_PER_SECOND)
+  .max(PACKAGE_MAX_IO_BYTES_PER_SECOND)
 
 export const sessionPackageImportRequestSchema = z
   .object({
@@ -137,7 +146,7 @@ export const packageOperationRequestSchema = z.discriminatedUnion('action', [
     .object({
       action: z.literal('set-speed'),
       operationId: identity,
-      bytesPerSecond: transferRateSchema
+      bytesPerSecond: transferRateSchema.nullable()
     })
     .strict(),
   z

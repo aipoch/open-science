@@ -16,7 +16,7 @@ test.describe('Windows window system', () => {
   test.skip(process.platform !== 'win32', 'Windows window behavior requires a Windows host.')
   test.use({ windowMode: 'normal' })
 
-  test('zooms with Windows plus aliases and preserves native zoom shortcuts', async ({
+  test('uses interface scale steps for Windows plus aliases and reset shortcuts @pr-mainline-windows', async ({
     app
   }, testInfo) => {
     const page = await app.completeOnboarding()
@@ -29,11 +29,9 @@ test.describe('Windows window system', () => {
     })
 
     for (const key of ['=', 'numadd']) {
-      for (let step = 1; step <= 3; step++) {
+      for (const expectedScale of [1.1, 1.25, 1.25]) {
         await app.pressMainWindowShortcut(key, ['control'])
-        await expect
-          .poll(async () => (await pixelRatio()) / baseline)
-          .toBeCloseTo(1.2 ** (step * 0.5), 4)
+        await expect.poll(async () => (await pixelRatio()) / baseline).toBeCloseTo(expectedScale, 4)
       }
       await testInfo.attach(`zoom-after-${key === '=' ? 'equal' : 'numpad'}`, {
         body: await page.screenshot(),
@@ -44,12 +42,14 @@ test.describe('Windows window system', () => {
     }
 
     await app.pressMainWindowShortcut('+', ['control', 'shift'])
-    await expect.poll(async () => (await pixelRatio()) / baseline).toBeCloseTo(1.2 ** 0.5, 4)
+    await expect.poll(async () => (await pixelRatio()) / baseline).toBeCloseTo(1.1, 4)
     await app.pressMainWindowShortcut('-', ['control'])
     await expect.poll(pixelRatio).toBeCloseTo(baseline, 4)
   })
 
-  test('persists minimize-to-tray across titlebar close, relaunch, and Ctrl+W', async ({ app }) => {
+  test('persists minimize-to-tray across titlebar close, relaunch, and Ctrl+W @pr-mainline-windows', async ({
+    app
+  }) => {
     let page = await app.completeOnboarding()
     let settings = await openGeneralSettings(page)
     const closeAction = settings.getByRole('combobox', { name: 'When closing the window' })

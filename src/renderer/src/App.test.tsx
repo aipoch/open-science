@@ -36,7 +36,12 @@ const mocks = vi.hoisted(() => {
       openSettingsToPanel: vi.fn(),
       closeSettings: vi.fn()
     },
-    skillImport: { enqueue: vi.fn(), dismiss: vi.fn(), pending: [] as unknown[] },
+    skillImport: {
+      enqueue: vi.fn(),
+      dismiss: vi.fn(),
+      pending: [] as unknown[],
+      closedIds: [] as string[]
+    },
     compute: {
       enqueueApproval: vi.fn(),
       dismissApproval: vi.fn(),
@@ -509,6 +514,7 @@ describe('App startup routing', () => {
     mocks.settings.pendingCredentialRequests = []
     mocks.compute.pendingApprovals = []
     mocks.skillImport.pending = []
+    mocks.skillImport.closedIds = []
     mocks.preview.fileDialogItem = undefined
     mocks.preview.expandedToolItemId = null
     mocks.preview.activeItemId = undefined
@@ -863,6 +869,39 @@ describe('App startup routing', () => {
     dialog.remove()
   })
 
+  it('releases the modal slot while a Skill approval is closed', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isSettingsOpen = true
+    mocks.skillImport.pending = [{ id: 'skill', sessionId: 'skill-session' }]
+    mocks.skillImport.closedIds = ['skill']
+    await render()
+    expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('open')
+    mocks.skillImport.pending = [{ id: 'new-skill', sessionId: 'skill-session' }]
+    await act(async () => root.render(<App />))
+    await vi.waitFor(() => expect(mocks.presentationProps.skillImportApproval?.active).toBe(true))
+    expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
+  })
+
+  it.each(['connector', 'compute', 'credential'] as const)(
+    'releases the modal slot for a closed %s request',
+    async (kind) => {
+      mocks.settings.isLoaded = true
+      mocks.settings.isSettingsOpen = true
+      const request = { id: 'pending', closed: true }
+      if (kind === 'connector') mocks.settings.pendingApprovals = [request]
+      else if (kind === 'compute') mocks.compute.pendingApprovals = [request]
+      else mocks.settings.pendingCredentialRequests = [request]
+      await render()
+      expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('open')
+      const nextRequest = { id: 'new-request' }
+      if (kind === 'connector') mocks.settings.pendingApprovals = [request, nextRequest]
+      else if (kind === 'compute') mocks.compute.pendingApprovals = [request, nextRequest]
+      else mocks.settings.pendingCredentialRequests = [request, nextRequest]
+      await act(async () => root.render(<App />))
+      expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
+    }
+  )
+
   it('activates only the highest-priority pending approval and resumes the next one', async () => {
     mocks.settings.isLoaded = true
     mocks.settings.isSettingsOpen = true
@@ -871,7 +910,7 @@ describe('App startup routing', () => {
     mocks.skillImport.pending = [{ id: 'skill', sessionId: 'skill-session' }]
     await render()
 
-    expect(mocks.presentationProps.computeApproval?.active).toBe(true)
+    await vi.waitFor(() => expect(mocks.presentationProps.computeApproval?.active).toBe(true))
     expect(mocks.presentationProps.connectorApproval?.active).toBe(false)
     expect(mocks.presentationProps.skillImportApproval).toBeUndefined()
     expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
@@ -931,7 +970,7 @@ describe('App startup routing', () => {
     mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'side-chat-session' }]
     await render()
 
-    expect(mocks.presentationProps.computeApproval?.active).toBe(true)
+    await vi.waitFor(() => expect(mocks.presentationProps.computeApproval?.active).toBe(true))
     expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
     expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
       isSessionContentVisible: false
@@ -1260,7 +1299,6 @@ describe('App startup routing', () => {
 
     expect(mocks.loadProjects).toHaveBeenCalledOnce()
 
-    mocks.sessionPersistence.isHydrated = false
     mocks.sessionPersistence.isLoading = true
     await act(async () => root.render(<App />))
 
@@ -1319,6 +1357,33 @@ describe('App startup routing', () => {
     act(() => resumeNavigation?.())
 
     expect(mocks.settings.closeSettings).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a hydrated workspace visible through a retry while queuing lifecycle updates', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isReady = false
+    mocks.sessionPersistence.hasCompleteSessionCatalog = false
+    mocks.sessionPersistence.canDeleteSessionsAndProjects = false
+    mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
+    await render()
+
+    mocks.sessionPersistence.isLoading = true
+    await act(async () => root.render(<App />))
+    expect(container.querySelector('[data-testid="workspace-page"]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="session-persistence-startup-loading"]')
+    ).toBeNull()
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: false })
+
+    mocks.sessionPersistence.isLoading = false
+    mocks.sessionPersistence.loadError = 'saved conversations unavailable'
+    await act(async () => root.render(<App />))
+    expect(container.querySelector('[data-testid="workspace-page"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-persistence-startup-error"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).not.toBeNull()
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: true })
   })
 
   it('reports retained session content as hidden during retry loading and hard failure', async () => {
@@ -1644,7 +1709,9 @@ describe('App startup routing', () => {
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Project archive needs attention')
     expect(alert?.textContent).toContain('A damaged saved conversation was moved aside')
-    expect(alert?.textContent).toContain('You can still permanently delete the project')
+    expect(alert?.textContent).toContain(
+      'You can still permanently delete the affected project data'
+    )
     expect(alert?.textContent).toContain('Compute jobs in affected Sessions may remain queued')
     const recheck = container.querySelector<HTMLButtonElement>(
       '[data-testid="session-persistence-retry"]'

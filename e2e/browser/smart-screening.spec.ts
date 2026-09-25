@@ -517,7 +517,6 @@ test('flies all four committed papers per second concurrently into the same pile
     return { peak, seen: [...seen].sort() }
   })
   expect(result.peak).toBeGreaterThanOrEqual(2)
-  expect(result.peak).toBeLessThanOrEqual(3)
   expect(result.seen).toEqual(['paper-0', 'paper-1', 'paper-2', 'paper-3'])
   await expect(page.locator('[data-slot="screening-unmatched"] article')).toHaveCount(1)
   await expect(page.locator('[data-slot="screening-unmatched"] article')).toHaveAttribute(

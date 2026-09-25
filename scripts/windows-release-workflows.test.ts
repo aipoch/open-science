@@ -127,7 +127,7 @@ describe('post-merge Windows validation', () => {
     expect(workflow.on?.schedule).toEqual([{ cron: '47 16 * * *' }])
     expect(dispatch?.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
+      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions', 'scheduled-fixes']
     })
     expect(workflow.on).not.toHaveProperty('workflow_call')
     expect(findStep(plan, 'Check for untested main changes')).toMatchObject({
@@ -136,7 +136,7 @@ describe('post-merge Windows validation', () => {
     })
     expect(job).toMatchObject({
       needs: ['plan', 'windows_dependencies'],
-      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes')) }}",
       env: { VITEST_WINDOWS_FULL_TEST: '1' },
       'runs-on': 'windows-latest',
       'timeout-minutes': 60
@@ -157,7 +157,8 @@ describe('post-merge Windows validation', () => {
     expect(findStep(workflow.jobs.notebook_mutation, 'Restore dependencies').shell).toBe('bash')
     expect(job['continue-on-error']).toBeUndefined()
     expect(job.strategy?.matrix).toEqual({
-      shard: "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
+      shard:
+        "${{ fromJSON((inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes') && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
     })
     expect(findStep(job, 'Test complete suite shard').run).toBe(
       'npm test -- --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions'
@@ -171,6 +172,15 @@ describe('post-merge Windows validation', () => {
     )
     expect(regressions.run).toContain('scripts/windows-release-workflows.test.ts')
     expect(regressions.run).not.toContain('--shard')
+    const scheduledFixes = findStep(job, 'Test scheduled Windows fixes')
+    expect(scheduledFixes.if).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'scheduled-fixes' }}"
+    )
+    expect(scheduledFixes.run).toContain(
+      'src/main/managed-file-versions/version-file-operator.test.ts'
+    )
+    expect(scheduledFixes.run).toContain('src/main/settings/service.test.ts')
+    expect(scheduledFixes.run).not.toContain('--shard')
     expect(sandbox).toMatchObject({
       needs: 'plan',
       if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'notebook-sandbox')) }}",
@@ -200,7 +210,7 @@ describe('post-merge Windows validation', () => {
     expect(job['continue-on-error']).toBeUndefined()
     expect(smoke.if).toBe("${{ !inputs.install_only && matrix.platform == 'win' }}")
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
-    expect(smoke['timeout-minutes']).toBe(10)
+    expect(smoke['timeout-minutes']).toBe(20)
   })
 
   it('installs Electron from GitHub mirrors and exposes an install-only dry-run', () => {
@@ -329,9 +339,8 @@ describe('post-merge Windows validation', () => {
       run: './scripts/ci/verify-windows-signature.ps1 -InstallerDir dist -CheckUnpacked'
     })
     const verification = readFileSync('scripts/ci/verify-windows-signature.ps1', 'utf8')
-    expect(verification).toContain(
-      "Get-ChildItem -LiteralPath $unpacked -File -Filter '*.exe' -Recurse"
-    )
+    expect(verification).toContain('Get-ChildItem -LiteralPath $unpacked -File -Recurse')
+    expect(verification).toContain('Test-PortableExecutable $_.FullName')
     expect(verification).toContain('resources/micromamba.exe')
     expect(verification).toContain('resources/micromamba-compat.exe')
     expect(verification).toContain('notebook-appcontainer-host.exe')

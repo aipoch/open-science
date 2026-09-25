@@ -1042,6 +1042,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 );`,
   `CREATE TABLE IF NOT EXISTS "LiteratureSmartCollection" (
     "automaticPauseReason" TEXT,
+    "automaticPauseRunId" TEXT,
     "evidenceMode" TEXT NOT NULL DEFAULT 'abstract',
     "autoUpdate" BOOLEAN NOT NULL DEFAULT false,
     "collectionId" TEXT NOT NULL PRIMARY KEY,
@@ -1081,6 +1082,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "LiteratureSmartOverride_decision_check" CHECK ("decision" IN ('include', 'exclude'))
 );`,
   `CREATE TABLE IF NOT EXISTS "LiteratureSmartRun" (
+    "abandonedAt" DATETIME,
     "snapshotJson" TEXT,
     "id" TEXT NOT NULL PRIMARY KEY,
     "collectionId" TEXT NOT NULL,

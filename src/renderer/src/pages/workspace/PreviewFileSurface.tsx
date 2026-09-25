@@ -168,7 +168,7 @@ const PreviewProvenanceButton = ({
   const { t } = useTranslation()
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <Tooltip>
         {/* The preview dialog auto-focuses this first header button on open, and Radix opens
             tooltips on any focus — only real keyboard focus (":focus-visible") may open it. */}
@@ -211,7 +211,7 @@ const PreviewViewInContextButton = ({
   const { t } = useTranslation()
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="inline-flex">
@@ -304,7 +304,7 @@ const PreviewFileHeader = ({
           tooltipClassName={tooltipClassName}
         />
       ) : null}
-      <TooltipProvider delayDuration={300}>
+      <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12px] font-medium text-text-000">
@@ -358,7 +358,7 @@ const PreviewFileHeader = ({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : (
-          <TooltipProvider delayDuration={300}>
+          <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="inline-flex">
@@ -476,7 +476,7 @@ const PreviewFileHeader = ({
         </>
       )}
       {!managedControlsOnly && onOpenFullScreen ? (
-        <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -497,7 +497,7 @@ const PreviewFileHeader = ({
         </TooltipProvider>
       ) : null}
       {!managedControlsOnly ? (
-        <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -1570,7 +1570,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   ) : managedWorkflow.showTextTools && managedControlsInspect ? (
                     <>
                       {managedInspect?.canEdit ? (
-                        <TooltipProvider delayDuration={200}>
+                        <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
@@ -1592,7 +1592,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                           </Tooltip>
                         </TooltipProvider>
                       ) : null}
-                      <TooltipProvider delayDuration={200}>
+                      <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button

@@ -62,6 +62,7 @@ const AppVersionSection = ({
           : ''
 
   const statusLine = ((): string => {
+    if (status.error) return status.error
     switch (status.state) {
       case 'checking':
         return t('Checking for updates…')
@@ -96,7 +97,7 @@ const AppVersionSection = ({
               </p>
               <p className="mt-0.5 text-xs font-normal text-muted-foreground">{APP.copyright}</p>
               {statusLine ? (
-                status.state !== 'error' ? (
+                !status.error && status.state !== 'error' ? (
                   <p className="mt-1 text-xs text-muted-foreground" role="status">
                     {statusLine}
                   </p>

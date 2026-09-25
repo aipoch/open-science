@@ -2,18 +2,16 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useFileCredentialNotice } from './use-file-credential-notice'
-import { KeyRound } from 'lucide-react'
+import { KeyRound, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type {
-  ConnectorCredentialRequest,
-  OpenAlexCredentialValidation
-} from '../../../../shared/settings'
+import type { ConnectorCredentialRequest } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
@@ -40,48 +38,41 @@ export function ConnectorCredentialControls({
 }: ConnectorCredentialControlsProps): React.JSX.Element {
   const { t } = useTranslation()
   const fileCredentialNotice = useFileCredentialNotice()
-  const setOpenAlexCredential = useSettingsStore((state) => state.setOpenAlexCredential)
-  const validateOpenAlexCredential = useSettingsStore((state) => state.validateOpenAlexCredential)
+  const configure = useSettingsStore((state) => state.configureCredentialRequest)
+  const pending = useSettingsStore((state) =>
+    state.pendingCredentialRequests.find((item) => item.id === request.id)
+  )
   const respond = useSettingsStore((state) => state.respondCredentialRequest)
+  const close = useSettingsStore((state) => state.closeCredentialRequest)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const inputId = useId()
   const [draft, setDraft] = useState<{ requestId: string; value: string }>()
-  const [busy, setBusy] = useState(false)
+  const [busyRequestId, setBusyRequestId] = useState<string>()
+  const busy = pending?.responding || busyRequestId === request.id
   const [failedRequestId, setFailedRequestId] = useState<string>()
-  const [validation, setValidation] = useState<{
-    requestId: string
-    result: OpenAlexCredentialValidation
-  }>()
   const apiKey = draft?.requestId === request.id ? draft.value : ''
   const candidate = apiKey.trim()
   const validCandidate = candidate.length > 0 && !/\s/u.test(candidate)
 
   const cancel = (): void => {
     if (busy) return
-    setBusy(true)
+    setBusyRequestId(request.id)
     void respond(request.id, false)
       .catch(() => setFailedRequestId(request.id))
-      .finally(() => setBusy(false))
+      .finally(() => setBusyRequestId((current) => (current === request.id ? undefined : current)))
   }
 
   const save = (): void => {
     if (busy || !validCandidate || !encryptionAvailable) return
     const requestId = request.id
-    setBusy(true)
+    setBusyRequestId(request.id)
     setFailedRequestId(undefined)
-    setValidation(undefined)
-    void validateOpenAlexCredential({ apiKey: candidate })
-      .then(async (result) => {
-        setValidation({ requestId, result })
-        if (!result.valid) return
-        await setOpenAlexCredential({ apiKey: candidate })
-        await respond(requestId, true)
-      })
+    void configure(requestId, candidate)
       .catch(() => setFailedRequestId(requestId))
-      .finally(() => setBusy(false))
+      .finally(() => setBusyRequestId((current) => (current === request.id ? undefined : current)))
   }
 
-  const currentValidation = validation?.requestId === request.id ? validation.result : undefined
+  const currentValidation = pending?.validation
   const validationError =
     currentValidation?.valid === false
       ? currentValidation.reason === 'invalid-format'
@@ -110,7 +101,7 @@ export function ConnectorCredentialControls({
           className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
           aria-hidden="true"
         />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           {embedded ? (
             <h2 className={dialogTitleClassName}>{t('Add your OpenAlex API key')}</h2>
           ) : (
@@ -134,6 +125,18 @@ export function ConnectorCredentialControls({
             </Dialog.Description>
           )}
         </div>
+        {!embedded ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t('Close')}
+            className={cn(dialogCloseButtonClassName, 'shrink-0')}
+            onClick={() => close(request.id)}
+          >
+            <X className="size-4" aria-hidden="true" />
+          </Button>
+        ) : null}
       </div>
 
       <div className={cn(dialogBodyClassName, 'space-y-2')}>
@@ -165,7 +168,7 @@ export function ConnectorCredentialControls({
             {t('Secure key storage is unavailable. Unlock the system keychain and try again.')}
           </InlineNotice>
         ) : null}
-        {failedRequestId === request.id ? (
+        {pending?.responseFailed || failedRequestId === request.id ? (
           <InlineNotice level="error" role="alert">
             {t('Could not save this credential. Try again.')}
           </InlineNotice>
@@ -200,18 +203,24 @@ export function ConnectorCredentialDialog({
   active?: boolean
 }): React.JSX.Element | null {
   const request = useSettingsStore((state) =>
-    state.pendingCredentialRequests.find((candidate) => !candidate.sessionId)
+    state.pendingCredentialRequests.find((candidate) => !candidate.sessionId && !candidate.closed)
   )
+
+  const close = useSettingsStore((state) => state.closeCredentialRequest)
 
   if (!request) return null
 
   return (
-    <Dialog.Root open={active}>
+    <Dialog.Root
+      open={active}
+      onOpenChange={(open) => {
+        if (!open) close(request.id)
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
         <Dialog.Content
           onInteractOutside={(event) => event.preventDefault()}
-          onEscapeKeyDown={(event) => event.preventDefault()}
           className={dialogPanelClassName(
             'z-[60] w-[min(460px,calc(100vw-2rem))] overscroll-contain p-0'
           )}

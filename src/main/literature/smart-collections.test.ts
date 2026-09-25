@@ -403,7 +403,8 @@ it('rejects a late result after cancellation and releases the worker', async () 
 })
 
 const pauseAfterOneResult = async (
-  automatic = false
+  automatic = false,
+  manualAction: 'refresh' | 'recompute' = 'recompute'
 ): Promise<{ id: string; runId: string; doneId: string }> => {
   await db.literatureItem.createMany({
     data: Array.from({ length: 7 }, (_, i) => ({
@@ -438,7 +439,7 @@ const pauseAfterOneResult = async (
     {
       kind: 'smart-collection',
       collectionId: id,
-      action: automatic ? 'refresh' : 'recompute',
+      action: automatic ? 'refresh' : manualAction,
       offset: 0
     },
     automatic
@@ -477,6 +478,95 @@ it('resumes the same stopped run once and preserves completed outcomes', async (
       where: { runId_itemId: { runId, itemId: doneId } }
     })
   ).toEqual(before)
+})
+
+it('resumes a manual refresh with recorded manual usage', async () => {
+  const { id, runId } = await pauseAfterOneResult(false, 'refresh')
+  await db.literatureSmartRun.create({
+    data: {
+      id: 'other-automatic-run',
+      collectionId: id,
+      kind: 'refresh',
+      state: 'interrupted',
+      ruleRevision: 1,
+      policyKey: 'fixture',
+      createdAt: new Date(0)
+    }
+  })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'interrupted',
+      automaticPauseRunId: 'other-automatic-run'
+    }
+  })
+  expect((await owner.view(id)).run).toMatchObject({ manualResumeAllowed: true })
+  classify.mockResolvedValue({
+    verdict: 'match',
+    model: 'jev-1.13.0',
+    confidence: 1,
+    probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
+  })
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'resume',
+    runId,
+    offset: 0
+  })
+
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  expect((await owner.view(id)).run?.id).toBe(runId)
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: 'interrupted',
+    automaticPauseRunId: 'other-automatic-run'
+  })
+})
+
+it('does not resume an ambiguous refresh or change another automatic pause', async () => {
+  const { id, runId } = await pauseAfterOneResult(false, 'refresh')
+  await db.classificationUsage.deleteMany({ where: { runId } })
+  await db.literatureSmartRun.create({
+    data: {
+      id: 'other-automatic-run',
+      collectionId: id,
+      kind: 'refresh',
+      state: 'interrupted',
+      ruleRevision: 1,
+      policyKey: 'fixture',
+      createdAt: new Date(0)
+    }
+  })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'interrupted',
+      automaticPauseRunId: 'other-automatic-run'
+    }
+  })
+  const calls = classify.mock.calls.length
+  expect((await owner.view(id)).run).toMatchObject({ manualResumeAllowed: false })
+  await expect(
+    owner.execute({
+      kind: 'smart-collection',
+      collectionId: id,
+      action: 'resume',
+      runId,
+      offset: 0
+    })
+  ).rejects.toThrow(SMART_COLLECTION_RESUME_UNAVAILABLE)
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: 'interrupted',
+    automaticPauseRunId: 'other-automatic-run'
+  })
+  expect(classify).toHaveBeenCalledTimes(calls)
+  expect(
+    await db.classificationUsage.findMany({ where: { runId }, select: { scenario: true } })
+  ).not.toEqual(expect.arrayContaining([{ scenario: 'literature-automatic' }]))
 })
 
 it('rejects resuming an automatic run after automatic updates are disabled', async () => {
@@ -2877,6 +2967,351 @@ it.each(['run-limit', 'daily-limit', 'storage-error'] as const)(
     expect((await owner.view(id)).automaticPauseReason).toBeUndefined()
     expect(classify).toHaveBeenCalledTimes(2)
     if (reason !== 'run-limit') expect((await owner.view(id)).run?.id).toBe(pausedRunId)
+  }
+)
+
+it('abandons a paused automatic run without resuming it', async () => {
+  const id = await create()
+  await refresh(id)
+  const run = await db.literatureSmartRun.findFirstOrThrow({
+    where: { collectionId: id },
+    orderBy: { createdAt: 'desc' }
+  })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'run-limit',
+      automaticPauseRunId: run.id
+    }
+  })
+  await db.literatureSmartRun.update({ where: { id: run.id }, data: { state: 'cancelled' } })
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    runId: run.id,
+    offset: 0
+  })
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: undefined,
+    matches: 1,
+    run: { id: run.id, state: 'cancelled', done: 1 }
+  })
+  expect(classify).toHaveBeenCalledOnce()
+})
+
+it('abandons a failed storage-error run and clears its durable pause', async () => {
+  const id = await create()
+  await refresh(id)
+  const run = await db.literatureSmartRun.findFirstOrThrow({
+    where: { collectionId: id },
+    orderBy: { createdAt: 'desc' }
+  })
+  await db.literatureSmartRun.update({ where: { id: run.id }, data: { state: 'failed' } })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'storage-error',
+      automaticPauseRunId: run.id
+    }
+  })
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    runId: run.id,
+    offset: 0
+  })
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: undefined,
+    matches: 1,
+    run: { id: run.id, state: 'cancelled', done: 1 }
+  })
+  expect(classify).toHaveBeenCalledOnce()
+})
+
+it('clears a failed automatic pause when its run has no pending work', async () => {
+  const id = await create()
+  await refresh(id)
+  const run = await db.literatureSmartRun.findFirstOrThrow({ where: { collectionId: id } })
+  await db.literatureSmartRun.update({ where: { id: run.id }, data: { state: 'failed' } })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'storage-error',
+      automaticPauseRunId: run.id
+    }
+  })
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'resume-automatic',
+    offset: 0
+  })
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: undefined,
+    matches: 1,
+    run: { id: run.id, state: 'failed', done: 1, total: 1 }
+  })
+  expect(classify).toHaveBeenCalledOnce()
+})
+
+it('clears a completed run pause without changing its classification results', async () => {
+  const id = await create()
+  await refresh(id)
+  const run = await db.literatureSmartRun.findFirstOrThrow({ where: { collectionId: id } })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: { autoUpdate: true, automaticPauseReason: 'interrupted', automaticPauseRunId: run.id }
+  })
+  configured = false
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    runId: run.id,
+    offset: 0
+  })
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: undefined,
+    matches: 1,
+    run: { id: run.id, state: 'completed', abandoned: true }
+  })
+  expect(classify).toHaveBeenCalledOnce()
+})
+
+it('does not resume an older automatic run after a newer manual run completes', async () => {
+  const { id, runId } = await pauseAfterOneResult(true)
+  classify.mockResolvedValue({
+    verdict: 'no-match',
+    model: 'jev-1.13.0',
+    confidence: 1,
+    probabilities: { match: 0, 'no-match': 1, uncertain: 0 }
+  })
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'recompute',
+    offset: 0
+  })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  const latestId = (await owner.view(id)).run!.id
+  const calls = classify.mock.calls.length
+  const notifications = changed.mock.calls.length
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'resume-automatic',
+    offset: 0
+  })
+
+  expect((await owner.view(id)).run?.id).toBe(latestId)
+  expect((await owner.view(id)).automaticPauseReason).toBeUndefined()
+  expect(changed).toHaveBeenCalledTimes(notifications + 1)
+  expect(classify).toHaveBeenCalledTimes(calls)
+  expect(await db.literatureSmartRun.findUniqueOrThrow({ where: { id: runId } })).toMatchObject({
+    state: 'cancelled'
+  })
+  expect(
+    await db.literatureSmartAssessment.count({ where: { collectionId: id, verdict: 'no-match' } })
+  ).toBe(8)
+})
+
+it('re-evaluates abandoned checkpoints on the next automatic refresh', async () => {
+  const id = await create()
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: { autoUpdate: true }
+  })
+  classify.mockRejectedValueOnce(new AutomaticClassificationPausedError('run-limit'))
+  owner.schedule()
+  await vi.waitFor(async () => {
+    expect((await owner.view(id)).automaticPauseReason).toBe('run-limit')
+  })
+  const pausedRunId = (await owner.view(id)).run!.id
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    runId: pausedRunId,
+    offset: 0
+  })
+  expect(
+    await db.literatureSmartRun.findUniqueOrThrow({ where: { id: pausedRunId } })
+  ).toMatchObject({ state: 'cancelled', abandonedAt: expect.any(Date) })
+
+  owner.schedule()
+  await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(2))
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  expect((await owner.view(id)).run?.id).not.toBe(pausedRunId)
+})
+
+it('does not clear an automatic pause when abandoning a newer manual run', async () => {
+  const id = await create()
+  await refresh(id)
+  const automaticRun = await db.literatureSmartRun.findFirstOrThrow({
+    where: { collectionId: id },
+    orderBy: { createdAt: 'desc' }
+  })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'run-limit',
+      automaticPauseRunId: automaticRun.id
+    }
+  })
+  await db.literatureSmartRun.update({
+    where: { id: automaticRun.id },
+    data: { state: 'interrupted' }
+  })
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'recompute',
+    offset: 0
+  })
+  const manualRun = await db.literatureSmartRun.findFirstOrThrow({
+    where: { collectionId: id },
+    orderBy: { createdAt: 'desc' }
+  })
+  await db.literatureSmartRun.update({
+    where: { id: manualRun.id },
+    data: { state: 'interrupted' }
+  })
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    runId: manualRun.id,
+    offset: 0
+  })
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: 'run-limit',
+    run: { id: manualRun.id, state: 'cancelled' }
+  })
+  expect(
+    await db.literatureSmartRun.findUniqueOrThrow({ where: { id: automaticRun.id } })
+  ).toMatchObject({ state: 'interrupted' })
+})
+
+it('keeps a newer manual run when clearing an unattributed automatic pause', async () => {
+  const id = await create()
+  await refresh(id)
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'recompute',
+    offset: 0
+  })
+  const runs = await db.literatureSmartRun.findMany({
+    where: { collectionId: id },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true }
+  })
+  await db.literatureSmartRun.updateMany({
+    where: { collectionId: id },
+    data: { state: 'interrupted' }
+  })
+  await db.literatureSmartRun.update({ where: { id: runs[0].id }, data: { state: 'cancelled' } })
+  await db.literatureSmartRunItem.update({
+    where: { runId_itemId: { runId: runs[1].id, itemId: 'paper' } },
+    data: { state: 'pending', resultJson: null, evaluatedAt: null, deferred: false }
+  })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: { autoUpdate: true, automaticPauseReason: 'interrupted', automaticPauseRunId: null }
+  })
+
+  expect((await owner.view(id)).automaticPauseRunId).toBeUndefined()
+  expect((await owner.view(id)).rows[0].verdict).toBe('pending')
+  classify.mockClear()
+  configured = false
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    offset: 0
+  })
+
+  expect((await owner.view(id)).automaticPauseReason).toBeUndefined()
+  expect(classify).not.toHaveBeenCalled()
+  expect(
+    await db.literatureSmartRun.findUniqueOrThrow({ where: { id: runs[1].id } })
+  ).toMatchObject({ state: 'interrupted', abandonedAt: null })
+  expect((await owner.view(id)).run).toMatchObject({ manualResumeAllowed: true })
+  configured = true
+  owner.schedule()
+  await new Promise((resolve) => setTimeout(resolve, 850))
+  expect(classify).not.toHaveBeenCalled()
+  expect(await owner.view(id)).toMatchObject({ automaticPauseReason: undefined, matches: 0 })
+  expect((await owner.view(id)).run?.id).toBe(runs[1].id)
+  expect(
+    await db.literatureSmartRun.findMany({
+      where: { id: { in: runs.map((run) => run.id) } },
+      orderBy: { createdAt: 'asc' },
+      select: { abandonedAt: true }
+    })
+  ).toEqual([{ abandonedAt: null }, { abandonedAt: null }])
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'resume',
+    runId: runs[1].id,
+    offset: 0
+  })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  expect(classify).toHaveBeenCalledTimes(1)
+})
+
+it.each([false, true])(
+  'does not resume a legacy automatic refresh after clearing an unattributed pause (usage recorded: %s)',
+  async (usageRecorded) => {
+    const { id, runId } = await pauseAfterOneResult(true)
+    if (!usageRecorded) await db.classificationUsage.deleteMany({ where: { runId } })
+    await db.literatureSmartCollection.update({
+      where: { collectionId: id },
+      data: { automaticPauseReason: 'interrupted', automaticPauseRunId: null }
+    })
+
+    expect((await owner.view(id)).run).toMatchObject({ manualResumeAllowed: false })
+    await owner.execute({
+      kind: 'smart-collection',
+      collectionId: id,
+      action: 'abandon',
+      offset: 0
+    })
+    const calls = classify.mock.calls.length
+    await expect(
+      owner.execute({
+        kind: 'smart-collection',
+        collectionId: id,
+        action: 'resume',
+        runId,
+        offset: 0
+      })
+    ).rejects.toThrow(SMART_COLLECTION_RESUME_UNAVAILABLE)
+    expect((await owner.view(id)).run).toMatchObject({
+      id: runId,
+      state: 'cancelled',
+      manualResumeAllowed: false
+    })
+    expect(classify).toHaveBeenCalledTimes(calls)
   }
 )
 

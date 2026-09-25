@@ -23,7 +23,7 @@ beforeEach(() => {
   window.api = {
     settings: { respondSkillImportApproval: respond, previewGitHubSkill }
   } as unknown as Window['api']
-  respond.mockClear()
+  respond.mockReset().mockResolvedValue(undefined)
   previewGitHubSkill.mockClear()
   useSkillImportStore.setState(createInitialSkillImportState())
   container = document.createElement('div')
@@ -39,7 +39,7 @@ afterEach(() => {
 
 const button = (text: string): HTMLButtonElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-    (candidate) => candidate.textContent?.trim() === text
+    (candidate) => (candidate.getAttribute('aria-label') ?? candidate.textContent?.trim()) === text
   )
 
 const importCandidate = (subPath: string, name: string): SkillBundlePreview => ({
@@ -304,5 +304,81 @@ describe('SkillImportApprovalDialog', () => {
     expect(document.body.textContent).toContain('next.skill')
     expect(document.body.textContent).toContain('Next Skill')
     expect(document.body.textContent).not.toContain('stale.skill')
+  })
+})
+
+describe('Skill import recovery', () => {
+  const enqueue = (id = 'recoverable'): void =>
+    useSkillImportStore.getState().enqueue({
+      id,
+      sessionId: 'session-1',
+      source: { kind: 'attachment', label: 'example.skill' },
+      previews: [importCandidate('example', 'Example')],
+      skipped: []
+    })
+  const renderRecovery = (): void => root.render(<SkillImportApprovalDialog />)
+
+  it.each(['button', 'escape'] as const)(
+    'closes via %s after repeated failures without reminders or replay',
+    async (via) => {
+      respond.mockRejectedValue(new Error('transport offline'))
+      enqueue()
+      await act(async () => renderRecovery())
+      for (let attempt = 0; attempt < 3; attempt++) await act(async () => button('Cancel')!.click())
+      await act(async () => {
+        if (via === 'button') button('Close')!.click()
+        else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      expect(respond).toHaveBeenCalledTimes(4)
+      expect(respond).toHaveBeenLastCalledWith({ id: 'recoverable', cancelled: true })
+      await act(async () => enqueue())
+      expect(useSkillImportStore.getState().closedIds).toEqual(['recoverable'])
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.body.querySelector('[role="alert"]')).toBeNull()
+      expect(button('Review')).toBeUndefined()
+      await act(async () => useSkillImportStore.getState().dismiss('recoverable'))
+      expect(useSkillImportStore.getState().closedIds).toEqual([])
+    }
+  )
+
+  it.each(['resolve', 'reject'] as const)(
+    'keeps a closed in-flight response closed after remount and %s',
+    async (ending) => {
+      let finish!: () => void
+      let reject!: (error: Error) => void
+      respond.mockImplementation(
+        () =>
+          new Promise<void>((done, fail) => {
+            finish = done
+            reject = fail
+          })
+      )
+      enqueue()
+      await act(async () => renderRecovery())
+      await act(async () => button('Cancel')!.click())
+      await act(async () => button('Close')!.click())
+      await act(async () => root.render(null))
+      await act(async () => renderRecovery())
+      expect(respond).toHaveBeenCalledOnce()
+      await act(async () => {
+        if (ending === 'resolve') finish()
+        else reject(new Error('offline'))
+      })
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.body.querySelector('[role="alert"]')).toBeNull()
+      expect(button('Review')).toBeUndefined()
+    }
+  )
+
+  it('cancels an idle request on close and keeps the next request available', async () => {
+    enqueue('first')
+    enqueue('second')
+    await act(async () => renderRecovery())
+    await act(async () => button('Close')!.click())
+    expect(respond).toHaveBeenCalledWith({ id: 'first', cancelled: true })
+    expect(useSkillImportStore.getState().pending.map(({ id }) => id)).toEqual(['second'])
+    await act(async () => button('Close')!.click())
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useSkillImportStore.getState().pending).toEqual([])
   })
 })

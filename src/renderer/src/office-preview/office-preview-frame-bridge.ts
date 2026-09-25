@@ -31,6 +31,7 @@ type CreateOfficePreviewFrameBridgeOptions = {
 
 type OfficePreviewFrameBridge = {
   onStart: (listener: (start: OfficePreviewRuntimeStart) => void) => () => void
+  onFind: (listener: () => void) => () => void
   reportState: (state: OfficePreviewRuntimeState) => void
   dispose: () => void
 }
@@ -39,6 +40,7 @@ const createOfficePreviewFrameBridge = (
   options: CreateOfficePreviewFrameBridgeOptions
 ): OfficePreviewFrameBridge => {
   const listeners = new Set<(start: OfficePreviewRuntimeStart) => void>()
+  const findListeners = new Set<() => void>()
   let disposed = false
 
   // The direct parent window is the only accepted sender; session validation rejects stale frames.
@@ -47,11 +49,14 @@ const createOfficePreviewFrameBridge = (
       disposed ||
       event.source !== options.runtimeWindow.parent ||
       !isOfficePreviewHostMessage(event.data) ||
-      event.data.start.sessionId !== options.sessionId
+      (event.data.type === 'start'
+        ? event.data.start.sessionId !== options.sessionId
+        : event.data.sessionId !== options.sessionId)
     ) {
       return
     }
-    listeners.forEach((listener) => listener(event.data.start))
+    if (event.data.type === 'find') findListeners.forEach((listener) => listener())
+    else listeners.forEach((listener) => listener(event.data.start))
   }
   options.runtimeWindow.addEventListener('message', handleMessage)
 
@@ -83,6 +88,10 @@ const createOfficePreviewFrameBridge = (
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
+    onFind: (listener) => {
+      findListeners.add(listener)
+      return () => findListeners.delete(listener)
+    },
     reportState: (state) => {
       if (disposed || state.sessionId !== options.sessionId) return
       options.runtimeWindow.parent.postMessage(
@@ -99,6 +108,7 @@ const createOfficePreviewFrameBridge = (
       if (disposed) return
       disposed = true
       listeners.clear()
+      findListeners.clear()
       options.runtimeWindow.removeEventListener('message', handleMessage)
       options.runtimeWindow.removeEventListener('contextmenu', handleContextMenu, true)
     }

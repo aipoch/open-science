@@ -288,7 +288,7 @@ test('explains disabled revision navigation while a turn is running', async ({ a
   await page.screenshot({ path: testInfo.outputPath('revision-navigation-idle.png') })
 })
 
-test('edits and navigates message revisions that persist after relaunch', async ({
+test('edits and navigates message revisions that persist after relaunch @pr-mainline-conversation', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
@@ -422,7 +422,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
     })
 })
 
-test('resolves Agent permission requests through both Allow and Deny decisions', async ({
+test('resolves Agent permission requests through both Allow and Deny decisions @pr-mainline-conversation', async ({
   app
 }) => {
   await app.completeOnboarding()
@@ -1257,6 +1257,11 @@ test('exports a CLI conversation first opened after completion', async ({ app },
     .locator('button[data-slot="session-open-button"]')
     .filter({ hasText: saved!.title })
     .click()
+  await expect(
+    page
+      .getByRole('region', { name: 'Conversation' })
+      .getByText('CLI export completed before opening.', { exact: true })
+  ).toBeVisible()
   await page.getByRole('button', { name: `Open actions for ${saved!.title}` }).click()
   await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
   await page.getByRole('menuitem', { name: 'Export conversation…' }).click()

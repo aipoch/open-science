@@ -316,7 +316,11 @@ export const createSessionMessageGraphOwner = <
         return undefined
       }
       if (rearmExisting && existingSession) {
-        const now = Date.now()
+        const now = Math.max(
+          Date.now(),
+          (existingSession?.runtimeTranscriptLastRun?.startedAt ?? 0) + 1,
+          (existingSession?.activeRun?.startedAt ?? 0) + 1
+        )
         const activeRun: ActiveRun = {
           promptMessageId: existingMessage.id,
           startedAt: now
@@ -356,7 +360,11 @@ export const createSessionMessageGraphOwner = <
       }
       return { sessionId, messageId: existingMessage.id }
     }
-    const now = Date.now()
+    const now = Math.max(
+      Date.now(),
+      (existingSession?.runtimeTranscriptLastRun?.startedAt ?? 0) + 1,
+      (existingSession?.activeRun?.startedAt ?? 0) + 1
+    )
     const userMessage: ChatMessage = {
       ...buildUserMessage({
         id: stableMessageId ?? createMessageId(),

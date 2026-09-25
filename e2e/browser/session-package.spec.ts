@@ -57,6 +57,57 @@ for (const width of [1280, 414]) {
   })
 }
 
+for (const width of [1280, 320]) {
+  test(`background export stays in the header at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/session-package.html?background=running')
+    await expect(page.getByRole('region', { name: 'Package progress' })).toHaveCount(0)
+    const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+    await expect(progressButton).toBeVisible()
+    await expect(progressButton).toBeInViewport()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await progressButton.click()
+    await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
+    await expect(page.getByRole('progressbar', { name: 'Package progress' })).toHaveAttribute(
+      'value',
+      '512'
+    )
+  })
+}
+
+test('New conversation keeps background export accessible in the workspace header', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto('/session-package.html?background=running&surface=new-conversation')
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+  const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+  await expect(progressButton).toBeVisible()
+  await progressButton.click()
+  await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
+})
+
+for (const width of [1280, 414, 320]) {
+  test(`Project index shows background export before GitHub at ${width}px`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/session-package.html?background=running&surface=home')
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
+    const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+    await expect(progressButton).toBeVisible()
+    expect(
+      await progressButton.evaluate((element) =>
+        element.nextElementSibling?.textContent?.includes('Star on GitHub')
+      )
+    ).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('project-index-progress.png') })
+    await progressButton.click()
+    await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
+  })
+}
+
 test('full and compact presets simplify selection while retaining evidence', async ({
   page
 }, testInfo) => {
@@ -361,10 +412,18 @@ for (const width of [1280, 414]) {
     await expect(help).toContainText('Lower speeds reduce disk activity')
     await page.screenshot({ path: testInfo.outputPath('transfer-speed-help.png') })
     const speed = dialog.getByRole('combobox', { name: 'Disk activity limit', exact: true })
+    await expect(speed).toHaveText('Auto')
     await speed.click()
     const options = page.getByRole('listbox')
     await expect(options).toBeVisible()
-    await expect(options.getByRole('option')).toHaveCount(3)
+    await expect(options.getByRole('option')).toHaveText([
+      'Auto',
+      '4.0 MiB/s',
+      '16.0 MiB/s',
+      '64.0 MiB/s',
+      '128.0 MiB/s',
+      '256.0 MiB/s'
+    ])
     await page.screenshot({ path: testInfo.outputPath('transfer-speed-menu.png') })
     await page.getByRole('option', { name: '4.0 MiB/s', exact: true }).click()
     await expect(speed).toHaveText('4.0 MiB/s')
@@ -372,6 +431,14 @@ for (const width of [1280, 414]) {
     await expect(speed).toBeFocused()
     await speed.press('Enter')
     await expect(options).toBeVisible()
+    await page.getByRole('option', { name: 'Auto', exact: true }).click()
+    await expect(speed).toHaveText('Auto')
+    await expect(speed).toBeFocused()
+    await speed.press('Enter')
+    await expect(page.getByRole('option', { name: 'Auto', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
     await page.keyboard.press('Escape')
     await expect(options).toHaveCount(0)
     await expect(dialog).toBeVisible()

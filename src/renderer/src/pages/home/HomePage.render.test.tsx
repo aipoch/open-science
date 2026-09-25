@@ -11,6 +11,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import { EMPTY_SNAPSHOT, useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
 import {
   createInitialSessionState,
@@ -374,6 +375,7 @@ beforeEach(() => {
     status: 'idle',
     error: undefined
   })
+  usePackageOperationStore.setState({ operation: null, open: false, dismissedId: undefined })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -383,6 +385,35 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+})
+
+describe('HomePage package export progress', () => {
+  it('shows background progress before the GitHub action and reopens its detail', () => {
+    usePackageOperationStore.setState({
+      operation: {
+        id: 'export-1',
+        kind: 'export',
+        state: 'running',
+        session: { projectId: 'project-1', sessionId: 'session-1' },
+        progress: { phase: 'copying', completedBytes: 512, totalBytes: 1024 }
+      },
+      open: false
+    })
+    act(() => {
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label*="Copying files…"]'
+    )
+    expect(button).not.toBeNull()
+    expect(button?.closest('header')).not.toBeNull()
+    expect(button?.nextElementSibling?.classList.contains('sm:inline-flex')).toBe(true)
+    act(() => button?.click())
+    expect(usePackageOperationStore.getState().open).toBe(true)
+  })
 })
 
 describe('HomePage environment repair notice', () => {

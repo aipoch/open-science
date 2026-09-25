@@ -32,6 +32,7 @@ import {
   WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,
   WINDOW_FIND_CONTENT_READY_CHANNEL,
   WINDOW_FIND_HIDE_CHANNEL,
+  WINDOW_FIND_OFFICE_CHANNEL,
   WINDOW_FIND_READY_CHANNEL,
   WINDOW_FIND_SHOW_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
@@ -42,6 +43,7 @@ import {
   type CloseConfirmChoice,
   type WindowFindAppearance
 } from '../shared/window-controls'
+import { getOfficeSearchSessionId } from '../shared/office-preview'
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const preloadEntry = join(__dirname, '../preload/index.js')
@@ -199,6 +201,9 @@ type MainWindowCloseOptions = {
 }
 
 const mainWindowCloseOptions = new WeakMap<BrowserWindow, MainWindowCloseOptions>()
+const mainWindows = new WeakSet<BrowserWindow>()
+
+const isMainWindow = (window: BrowserWindow): boolean => mainWindows.has(window)
 
 const configureMainWindow = (window: BrowserWindow, opts: MainWindowCloseOptions): void => {
   mainWindowCloseOptions.set(window, opts)
@@ -219,6 +224,7 @@ const createMainWindow = (
     title: 'Open-Science',
     webPreferences: { webviewTag: true }
   })
+  mainWindows.add(window)
   installSourcePreviewWebviews(window)
   if (opts) configureMainWindow(window, opts)
 
@@ -514,6 +520,11 @@ const createMainWindow = (
     if (isFindInPageChord(input, process.platform)) {
       if (windowFindListenerReady && rendererResponsive) {
         event.preventDefault()
+        const officeSessionId = getOfficeSearchSessionId(window.webContents.focusedFrame?.url ?? '')
+        if (officeSessionId) {
+          window.webContents.send(WINDOW_FIND_OFFICE_CHANNEL, officeSessionId)
+          return
+        }
         windowFindOpenPending = true
         window.webContents.send(WINDOW_FIND_SHOW_CHANNEL, windowFindAppearance)
       }
@@ -606,5 +617,5 @@ const createMainWindow = (
   return window
 }
 
-export { configureMainWindow, createMainWindow }
+export { configureMainWindow, createMainWindow, isMainWindow }
 export type { MainWindowCloseOptions }

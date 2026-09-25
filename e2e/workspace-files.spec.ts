@@ -2,6 +2,7 @@ import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { createPreviewPptx } from './fixtures/pptx'
 import { sendPrompt } from './certification/helpers'
 
 const PROJECT_NAME = 'Project files journey'
@@ -93,7 +94,9 @@ const reconstructedDiffText = async (
     }
   })
 
-test('edits uploaded Markdown versions and keeps diff navigation coherent', async ({ app }) => {
+test('edits uploaded Markdown versions and keeps diff navigation coherent @pr-mainline-files', async ({
+  app
+}) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
@@ -212,7 +215,9 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent', asyn
   await expect(preview).toBeHidden()
 })
 
-test('links a multi-page PDF upload as Reading context in a new project', async ({ app }) => {
+test('links a multi-page PDF upload as Reading context in a new project @pr-mainline-files', async ({
+  app
+}) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
@@ -395,15 +400,23 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
         exact: true
       })
       .scrollIntoViewIfNeeded()
-    const image = page.getByRole('img', { name: `Sanitized message figure ${index}`, exact: true })
-    await image.scrollIntoViewIfNeeded()
+    const alt = `Sanitized message figure ${index}`
     await expect
       .poll(() =>
-        image.evaluate((img: HTMLImageElement) => ({
-          complete: img.complete,
-          width: img.naturalWidth,
-          height: img.naturalHeight
-        }))
+        page.evaluate((label) => {
+          // The placeholder is replaced by <img> while loading. Resolve it fresh on each poll,
+          // then scroll the image itself so native lazy loading can begin below the caption.
+          const figure = [
+            ...document.querySelectorAll<HTMLElement>(
+              '[data-slot="message-scroller-content"] [data-session-artifact-image], [data-slot="message-scroller-content"] [data-session-artifact-image-status]'
+            )
+          ].find((node) => node.querySelector('img')?.alt === label || node.textContent === label)
+          figure?.scrollIntoView({ block: 'center' })
+          const img = figure?.querySelector('img')
+          return img
+            ? { complete: img.complete, width: img.naturalWidth, height: img.naturalHeight }
+            : undefined
+        }, alt)
       )
       .toEqual({ complete: true, width: 1024, height: 1024 })
   }
@@ -725,4 +738,119 @@ test('preserves expanded uploads after saving a file version', async ({ app }, t
   ).toEqual(previousLabels)
   await rows.last().scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath('expanded-uploads-after-save.png') })
+})
+
+test('reviews an uploaded PowerPoint without remounting its paged surface', async ({ app }) => {
+  test.setTimeout(180_000)
+  const fileName = 'preview-fixture.pptx'
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: fileName,
+    mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    buffer: createPreviewPptx()
+  })
+  await expect(page.getByRole('button', { name: `Remove attachment ${fileName}` })).toBeVisible()
+  await sendPrompt(page, 'Review the attached presentation.', 'Deterministic reply:')
+
+  // Present the window before pointer input enters the isolated Office frame. Hidden Windows
+  // BrowserWindows can expose the frame DOM before its compositor accepts mouse input.
+  await app.showMainWindow()
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await page.getByRole('button', { name: `Preview uploaded file ${fileName}`, exact: true }).click()
+  const preview = page.getByRole('dialog', { name: `Preview ${fileName}`, exact: true })
+  await expect(preview).toBeVisible()
+  const host = preview.locator('[data-office-preview-state="ready"]')
+  await expect(host).toBeVisible({ timeout: 90_000 })
+  const officeFrame = page.frameLocator('iframe[data-office-preview-frame]')
+  const counter = officeFrame.locator('.pptx-review-counter')
+  const stage = officeFrame.locator('.pptx-review-stage')
+  await expect(counter).toHaveText('1 / 3')
+  await expect(officeFrame.getByText('Speaker notes for slide 1.', { exact: true })).toBeVisible()
+
+  const root = officeFrame.locator('.pptx-review')
+  const toolbar = officeFrame.locator('.pptx-review-toolbar')
+  await expect(toolbar.locator(':scope > button').first()).toHaveAttribute(
+    'aria-label',
+    'Hide navigation'
+  )
+  const navigationBounds = await toolbar
+    .getByRole('button', { name: 'Hide navigation' })
+    .boundingBox()
+  const zoomInBounds = await toolbar.getByRole('button', { name: 'Zoom in' }).boundingBox()
+  const findBounds = await toolbar.getByRole('button', { name: 'Find', exact: true }).boundingBox()
+  await expect(
+    toolbar.getByRole('button', { name: 'Find', exact: true }).locator('svg')
+  ).toBeVisible()
+  expect(navigationBounds).not.toBeNull()
+  expect(zoomInBounds).not.toBeNull()
+  expect(findBounds).not.toBeNull()
+  expect(navigationBounds!.x).toBeLessThan(findBounds!.x)
+  expect(zoomInBounds!.x).toBeLessThan(findBounds!.x)
+  expect(findBounds!.x - zoomInBounds!.x - zoomInBounds!.width).toBeLessThan(20)
+  expect(Math.abs(navigationBounds!.y - findBounds!.y)).toBeLessThan(2)
+  await officeFrame.getByRole('button', { name: 'Zoom in' }).click()
+  await expect(officeFrame.getByRole('button', { name: 'Reset zoom' })).toHaveText('125%')
+  await expect(stage).toHaveAttribute('tabindex', '0')
+  await stage.focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(counter).toHaveText('2 / 3')
+  await expect(officeFrame.getByText('Speaker notes for slide 2.', { exact: true })).toBeVisible()
+  await officeFrame.getByRole('button', { name: 'Page 3' }).click()
+  await expect(counter).toHaveText('3 / 3')
+  await expect(officeFrame.getByText('Speaker notes for slide 3.', { exact: true })).toBeVisible()
+
+  await expect
+    .poll(() => stage.evaluate((element) => element.scrollWidth > element.clientWidth))
+    .toBe(true)
+  await expect
+    .poll(() =>
+      officeFrame
+        .locator('.pptx-review-notes')
+        .evaluate((element) => element.getBoundingClientRect().height)
+    )
+    .toBeLessThan(170)
+  await expect(root).toHaveCount(1)
+  await officeFrame.getByRole('button', { name: 'Find', exact: true }).click()
+  await expect(toolbar.locator(':scope > button').first()).toHaveAttribute(
+    'aria-label',
+    'Hide navigation'
+  )
+  const find = officeFrame.getByRole('searchbox', { name: 'Find' })
+  await find.fill('Preview slide 2')
+  await toolbar.evaluate((element) => {
+    element.style.width = '480px'
+  })
+  const narrowToolbarBounds = await toolbar.boundingBox()
+  const narrowFindBounds = await toolbar.locator('.pptx-review-find').boundingBox()
+  expect(narrowToolbarBounds).not.toBeNull()
+  expect(narrowFindBounds).not.toBeNull()
+  expect(narrowFindBounds!.x + narrowFindBounds!.width).toBeGreaterThan(
+    narrowToolbarBounds!.x + narrowToolbarBounds!.width - 20
+  )
+  expect(narrowFindBounds!.x + narrowFindBounds!.width).toBeLessThanOrEqual(
+    narrowToolbarBounds!.x + narrowToolbarBounds!.width + 2
+  )
+  await toolbar.evaluate((element) => {
+    element.style.width = ''
+  })
+  await expect(counter).toHaveText('2 / 3')
+  await expect(officeFrame.locator('.pptx-search-highlight')).toBeVisible()
+  await expect(officeFrame.locator('.pptx-review-find-context')).toContainText('Preview slide 2')
+  await find.fill('Speaker notes for slide 1')
+  await expect(counter).toHaveText('1 / 3')
+  await expect(officeFrame.locator('.pptx-review-notes-body mark')).toHaveText(
+    'Speaker notes for slide 1'
+  )
+  await expect(officeFrame.locator('.pptx-search-highlight')).toHaveCount(0)
+  await officeFrame.getByRole('button', { name: 'Close search' }).click()
+  await expect(officeFrame.locator('.pptx-review-notes-body mark')).toHaveCount(0)
+  const findTrigger = officeFrame.getByRole('button', { name: 'Find', exact: true })
+  await expect(findTrigger).toBeFocused()
+  await findTrigger.press(process.platform === 'darwin' ? 'Meta+f' : 'Control+f')
+  await expect(find).toBeFocused()
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
+  await officeFrame.getByRole('button', { name: 'Close search' }).click()
 })

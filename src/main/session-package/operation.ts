@@ -7,6 +7,8 @@ import {
 } from '../diagnostics/operation'
 import {
   PACKAGE_DEFAULT_IO_BYTES_PER_SECOND,
+  PACKAGE_MAX_IO_BYTES_PER_SECOND,
+  PACKAGE_MIN_IO_BYTES_PER_SECOND,
   PACKAGE_MAX_FILE_BYTES,
   formatPackageBytes
 } from '../../shared/session-package'
@@ -35,6 +37,8 @@ export class SessionPackageOperation {
   private importQueueFull = false
   private selection?: (keys: readonly string[]) => void
   private lastProgressAt = 0
+  private autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+  private autoAdjustedAt = 0
   private completion: Promise<unknown> = Promise.resolve()
   async close(): Promise<void> {
     this.cancel()
@@ -58,11 +62,21 @@ export class SessionPackageOperation {
   }
 
   get transferBytesPerSecond(): number {
-    return this.current?.transferBytesPerSecond ?? PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+    return this.current?.transferBytesPerSecond ?? this.autoRate
   }
 
   reportIo = (ioBytesPerSecond: number): void => {
     if (!this.current || !this.controller) return
+    if (this.current.transferBytesPerSecond === undefined && ioBytesPerSecond > 0) {
+      const now = Date.now()
+      if (now - this.autoAdjustedAt >= 2_000) {
+        if (ioBytesPerSecond >= this.autoRate * 0.85)
+          this.autoRate = Math.min(PACKAGE_MAX_IO_BYTES_PER_SECOND, this.autoRate * 2)
+        else if (ioBytesPerSecond < this.autoRate * 0.6)
+          this.autoRate = Math.max(PACKAGE_DEFAULT_IO_BYTES_PER_SECOND, this.autoRate / 2)
+        this.autoAdjustedAt = now
+      }
+    }
     this.current = { ...this.current, ioBytesPerSecond }
     if (Date.now() - this.lastProgressAt >= 150) {
       this.lastProgressAt = Date.now()
@@ -257,12 +271,22 @@ export class SessionPackageOperation {
       throw new Error('The package operation is no longer active.')
     if (request.action === 'set-speed') {
       if (
-        !Number.isInteger(request.bytesPerSecond) ||
-        request.bytesPerSecond < 1024 ** 2 ||
-        request.bytesPerSecond > 64 * 1024 ** 2
+        request.bytesPerSecond !== null &&
+        (!Number.isInteger(request.bytesPerSecond) ||
+          request.bytesPerSecond < PACKAGE_MIN_IO_BYTES_PER_SECOND ||
+          request.bytesPerSecond > PACKAGE_MAX_IO_BYTES_PER_SECOND)
       )
         throw new Error('Invalid package transfer rate.')
-      this.current = { ...this.current, transferBytesPerSecond: request.bytesPerSecond }
+      if (request.bytesPerSecond === null) {
+        this.autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+        this.autoAdjustedAt = Date.now()
+      }
+      this.current = {
+        ...this.current,
+        ...(request.bytesPerSecond === null
+          ? { transferBytesPerSecond: undefined }
+          : { transferBytesPerSecond: request.bytesPerSecond })
+      }
       this.publish()
     } else if (request.action === 'cancel') {
       this.current = { ...this.current, state: 'cancelling' }
@@ -377,6 +401,8 @@ export class SessionPackageOperation {
     if (this.controller) throw new Error('A Session package operation is already in progress.')
     const controller = new AbortController()
     this.controller = controller
+    this.autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+    this.autoAdjustedAt = Date.now()
     this.current = {
       id: randomUUID(),
       kind,

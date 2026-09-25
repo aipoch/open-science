@@ -7,12 +7,14 @@ import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-
 import { ConnectorCredentialControls, ConnectorCredentialDialog } from './ConnectorCredentialDialog'
 import { CredentialRequestBroker } from '../../../../main/connectors/credential-request-broker'
 
+const realRespondCredentialRequest = useSettingsStore.getState().respondCredentialRequest
+
 let container: HTMLDivElement
 let root: Root
 
 const button = (label: string): HTMLButtonElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-    (candidate) => candidate.textContent?.trim() === label
+    (candidate) => (candidate.getAttribute('aria-label') ?? candidate.textContent?.trim()) === label
   )
 
 const enterKey = (value: string): void => {
@@ -34,6 +36,19 @@ const flush = async (): Promise<void> => {
 }
 
 beforeEach(() => {
+  window.api = {
+    settings: {
+      validateOpenAlexCredential: vi.fn().mockResolvedValue({ valid: true }),
+      setOpenAlexCredential: vi.fn().mockResolvedValue({
+        connectors: [],
+        customServers: [],
+        ncbi: { hasApiKey: false },
+        openAlex: { hasApiKey: true }
+      }),
+      respondConnectorCredentialRequest: vi.fn().mockResolvedValue(undefined)
+    }
+  } as unknown as Window['api']
+
   useSettingsStore.setState({
     ...createInitialSettingsState(),
     pendingCredentialRequests: [
@@ -82,7 +97,7 @@ describe('ConnectorCredentialDialog', () => {
       link.addEventListener('click', (event) => event.preventDefault())
       act(() => link.click())
       expect(useSettingsStore.getState().respondCredentialRequest).not.toHaveBeenCalled()
-      expect(useSettingsStore.getState().setOpenAlexCredential).not.toHaveBeenCalled()
+      expect(window.api.settings.setOpenAlexCredential).not.toHaveBeenCalled()
       expect(
         document.body.querySelector('[data-testid="connector-credential-controls"]')
       ).not.toBeNull()
@@ -172,24 +187,22 @@ describe('ConnectorCredentialDialog', () => {
     await act(async () => button('Save key')?.click())
     await flush()
 
-    expect(useSettingsStore.getState().validateOpenAlexCredential).toHaveBeenCalledWith({
+    expect(window.api.settings.validateOpenAlexCredential).toHaveBeenCalledWith({
       apiKey: 'openalex-valid-key'
     })
-    expect(useSettingsStore.getState().setOpenAlexCredential).toHaveBeenCalledWith({
+    expect(window.api.settings.setOpenAlexCredential).toHaveBeenCalledWith({
       apiKey: 'openalex-valid-key'
     })
-    expect(useSettingsStore.getState().respondCredentialRequest).toHaveBeenCalledWith(
-      'credential-1',
-      true
-    )
+    expect(window.api.settings.respondConnectorCredentialRequest).toHaveBeenCalledWith({
+      id: 'credential-1',
+      configured: true
+    })
   })
 
   it('keeps the call parked when OpenAlex rejects the candidate', async () => {
-    useSettingsStore.setState({
-      validateOpenAlexCredential: vi.fn().mockResolvedValue({
-        valid: false,
-        reason: 'rejected'
-      })
+    vi.mocked(window.api.settings.validateOpenAlexCredential).mockResolvedValue({
+      valid: false,
+      reason: 'rejected'
     })
     act(() => root.render(<ConnectorCredentialDialog />))
     enterKey('openalex-rejected-key')
@@ -198,7 +211,178 @@ describe('ConnectorCredentialDialog', () => {
     await flush()
 
     expect(document.body.textContent).toContain('OpenAlex rejected this API key.')
-    expect(useSettingsStore.getState().setOpenAlexCredential).not.toHaveBeenCalled()
+    expect(window.api.settings.setOpenAlexCredential).not.toHaveBeenCalled()
     expect(useSettingsStore.getState().respondCredentialRequest).not.toHaveBeenCalled()
   })
+})
+
+it.each(['button', 'escape'] as const)(
+  'closes without reminders after failures via %s and ignores replay',
+  async (via) => {
+    const pending = useSettingsStore.getState().pendingCredentialRequests[0]
+    const response = vi.fn().mockRejectedValue(new Error('IPC unavailable'))
+    window.api = {
+      settings: { respondConnectorCredentialRequest: response }
+    } as unknown as Window['api']
+    useSettingsStore.setState({
+      pendingCredentialRequests: [pending],
+      respondCredentialRequest: realRespondCredentialRequest
+    })
+    act(() => root.render(<ConnectorCredentialDialog />))
+    for (let i = 0; i < 3; i++) await act(async () => button('Not now')!.click())
+    await act(async () => {
+      if (via === 'button') button('Close')!.click()
+      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(response).toHaveBeenLastCalledWith({ id: pending.id, configured: false })
+    expect(response).toHaveBeenCalledTimes(4)
+    expect(useSettingsStore.getState().pendingCredentialRequests[0].closed).toBe(true)
+    act(() => {
+      useSettingsStore.getState().enqueueCredentialRequest(pending)
+      root.render(<ConnectorCredentialDialog />)
+    })
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(button('Review')).toBeUndefined()
+    expect(useSettingsStore.getState().pendingCredentialRequests).toHaveLength(1)
+    act(() => useSettingsStore.getState().closeCredentialRequest(pending.id))
+    expect(response).toHaveBeenCalledTimes(4)
+    act(() => useSettingsStore.getState().dismissCredentialRequest(pending.id))
+    expect(useSettingsStore.getState().pendingCredentialRequests).toHaveLength(0)
+  }
+)
+it.each([
+  'validateOpenAlexCredential',
+  'setOpenAlexCredential',
+  'respondConnectorCredentialRequest'
+] as const)(
+  'closes hanging credential %s without a reminder or duplicate operation',
+  async (commandName) => {
+    let reject!: (error: Error) => void
+    const command = vi.fn(
+      () =>
+        new Promise<never>((_, fail) => {
+          reject = fail
+        })
+    )
+    window.api.settings[commandName] = command
+    useSettingsStore.setState({ respondCredentialRequest: realRespondCredentialRequest })
+    act(() => root.render(<ConnectorCredentialDialog />))
+    enterKey('openalex-valid-key')
+    await act(async () => button('Save key')!.click())
+    act(() => button('Close')!.click())
+    act(() => root.render(null))
+    act(() => root.render(<ConnectorCredentialDialog />))
+    await useSettingsStore.getState().configureCredentialRequest('credential-1', 'another-key')
+    await useSettingsStore.getState().respondCredentialRequest('credential-1', false)
+    expect(command).toHaveBeenCalledTimes(1)
+    await act(async () => reject(new Error('Late transport failure')))
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(button('Review')).toBeUndefined()
+  }
+)
+it('does not save credentials after their pending request settles during validation', async () => {
+  let resolve!: (value: { valid: true }) => void
+  window.api.settings.validateOpenAlexCredential = vi.fn(
+    () =>
+      new Promise<{ valid: true }>((done) => {
+        resolve = done
+      })
+  )
+  act(() => root.render(<ConnectorCredentialDialog />))
+  enterKey('openalex-valid-key')
+  act(() => button('Save key')!.click())
+  act(() => useSettingsStore.getState().dismissCredentialRequest('credential-1'))
+  await act(async () => resolve({ valid: true }))
+  expect(window.api.settings.setOpenAlexCredential).not.toHaveBeenCalled()
+  expect(useSettingsStore.getState().pendingCredentialRequests).toHaveLength(0)
+})
+
+it('closes an idle request immediately and sends one cancellation through the real store', async () => {
+  const pending = useSettingsStore.getState().pendingCredentialRequests[0]
+  const command = vi.fn().mockResolvedValue(undefined)
+  window.api = {
+    settings: { respondConnectorCredentialRequest: command }
+  } as unknown as Window['api']
+  useSettingsStore.setState({
+    pendingCredentialRequests: [pending],
+    respondCredentialRequest: realRespondCredentialRequest
+  })
+  act(() => root.render(<ConnectorCredentialDialog />))
+  await act(async () => button('Close')!.click())
+  expect(command).toHaveBeenCalledExactlyOnceWith({ id: pending.id, configured: false })
+  expect(useSettingsStore.getState().pendingCredentialRequests).toEqual([])
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+})
+
+it.each(['validation', 'storage'] as const)(
+  'closing during %s stops later configuration and declines the agent request',
+  async (stage) => {
+    let finish!: () => void
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    if (stage === 'validation') {
+      window.api.settings.validateOpenAlexCredential = vi.fn(async () => {
+        await gate
+        return { valid: true as const }
+      })
+    } else {
+      const snapshot = {
+        connectors: [],
+        customServers: [],
+        ncbi: { hasApiKey: false },
+        openAlex: { hasApiKey: true }
+      }
+      window.api.settings.setOpenAlexCredential = vi.fn(async () => {
+        await gate
+        return snapshot
+      })
+    }
+    useSettingsStore.setState({ respondCredentialRequest: realRespondCredentialRequest })
+    act(() => root.render(<ConnectorCredentialDialog />))
+    enterKey('openalex-valid-key')
+    await act(async () => button('Save key')!.click())
+    act(() => button('Close')!.click())
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    await act(async () => finish())
+    expect(window.api.settings.setOpenAlexCredential).toHaveBeenCalledTimes(
+      stage === 'validation' ? 0 : 1
+    )
+    expect(window.api.settings.respondConnectorCredentialRequest).toHaveBeenCalledExactlyOnceWith({
+      id: 'credential-1',
+      configured: false
+    })
+    expect(useSettingsStore.getState().pendingCredentialRequests).toEqual([])
+  }
+)
+
+it('does not retry a failed cancellation or restart configuration after close', async () => {
+  let finish!: () => void
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  window.api.settings.validateOpenAlexCredential = vi.fn(async () => {
+    await gate
+    return { valid: true as const }
+  })
+  window.api.settings.respondConnectorCredentialRequest = vi
+    .fn()
+    .mockRejectedValue(new Error('offline'))
+  useSettingsStore.setState({ respondCredentialRequest: realRespondCredentialRequest })
+  act(() => root.render(<ConnectorCredentialDialog />))
+  enterKey('openalex-valid-key')
+  await act(async () => button('Save key')!.click())
+  act(() => button('Close')!.click())
+  await act(async () => finish())
+  await useSettingsStore.getState().configureCredentialRequest('credential-1', 'another-key')
+  expect(window.api.settings.validateOpenAlexCredential).toHaveBeenCalledTimes(1)
+  expect(window.api.settings.setOpenAlexCredential).not.toHaveBeenCalled()
+  expect(window.api.settings.respondConnectorCredentialRequest).toHaveBeenCalledExactlyOnceWith({
+    id: 'credential-1',
+    configured: false
+  })
+  expect(useSettingsStore.getState().pendingCredentialRequests[0].closed).toBe(true)
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
 })

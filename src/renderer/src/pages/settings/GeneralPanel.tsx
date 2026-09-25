@@ -19,10 +19,22 @@ import { LanguageSelect } from '@/components/LanguageControls'
 import { ThemeSegmentedControl } from '@/components/ThemeControls'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { errorDetail } from '@/lib/error-detail'
+import {
+  INTERFACE_SCALE_OPTIONS,
+  isDesktopRenderer,
+  type InterfaceScale
+} from '@/lib/interface-scale'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useInterfaceScaleStore } from '@/stores/interface-scale-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
 import type { LogFileStatus, LogWriteFailureCategory } from '../../../../shared/logs'
@@ -145,6 +157,9 @@ const GeneralPanel = (): React.JSX.Element => {
   const setShowNotificationContent = useSettingsStore((state) => state.setShowNotificationContent)
   const closePreference = useSettingsStore((state) => state.closePreference)
   const setClosePreference = useSettingsStore((state) => state.setClosePreference)
+  const interfaceScale = useInterfaceScaleStore((state) => state.scale)
+  const setInterfaceScale = useInterfaceScaleStore((state) => state.setScale)
+  const showInterfaceScale = isDesktopRenderer()
 
   const checkCliStatus = async (): Promise<void> => {
     setIsUpdatingCli(true)
@@ -266,6 +281,36 @@ const GeneralPanel = (): React.JSX.Element => {
         >
           <ThemeSegmentedControl />
         </SettingsRow>
+
+        {showInterfaceScale ? (
+          <SettingsRow
+            label={t('Interface scale')}
+            description={t(
+              'Adjust the size of text and controls across the app. Changes apply immediately.'
+            )}
+          >
+            <Select
+              value={String(interfaceScale)}
+              onValueChange={(value) => {
+                const nextScale = Number(value)
+                if (INTERFACE_SCALE_OPTIONS.includes(nextScale as InterfaceScale)) {
+                  setInterfaceScale(nextScale as InterfaceScale)
+                }
+              }}
+            >
+              <SelectTrigger className="w-28" aria-label={t('Interface scale')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {INTERFACE_SCALE_OPTIONS.map((scale) => (
+                  <SelectItem key={scale} value={String(scale)}>
+                    {Math.round(scale * 100)}%
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingsRow>
+        ) : null}
 
         <SettingsRow
           data-settings-anchor="general.language"

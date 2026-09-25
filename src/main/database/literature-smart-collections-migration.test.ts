@@ -34,7 +34,7 @@ it('adds empty smart storage while preserving ordinary collections, membership a
     ])
       await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
     await client.$executeRawUnsafe(
-      'DELETE FROM "_open_science_migrations" WHERE id IN (\'0044_literature_smart_collections\')'
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0044_literature_smart_collections', '0045_literature_smart_pause_run')"
     )
     await client.sessionAuxiliaryTurnUsage.create({
       data: {
@@ -51,7 +51,7 @@ it('adds empty smart storage while preserving ordinary collections, membership a
       }
     })
     expect(await migrateApplicationDatabase(client)).toMatchObject({
-      applied: ['0044_literature_smart_collections']
+      applied: ['0044_literature_smart_collections', '0045_literature_smart_pause_run']
     })
     expect(await client.literatureCollection.findMany({ include: { items: true } })).toEqual(before)
     expect(await client.literatureSmartCollection.count()).toBe(0)
@@ -161,6 +161,76 @@ it('adds empty smart storage while preserving ordinary collections, membership a
         expect.objectContaining({ name: 'usageIncomplete' })
       ])
     )
+  } finally {
+    await client.$disconnect()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('leaves pre-0045 automatic pause ownership unknown', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'smart-pause-migration-'))
+  const client = createProjectDbClient(root)
+  try {
+    await migrateApplicationDatabase(client)
+    await client.literatureCollection.create({
+      data: {
+        id: 'paused',
+        name: 'Paused',
+        nameKey: 'paused',
+        smart: {
+          create: {
+            scopeKind: 'library',
+            autoUpdate: true,
+            automaticPauseReason: 'daily-limit'
+          }
+        }
+      }
+    })
+    await client.literatureSmartRuleRevision.create({
+      data: {
+        collectionId: 'paused',
+        revision: 1,
+        description: '',
+        inclusionCriteria: 'Trials',
+        exclusionCriteria: '',
+        scopeKind: 'library',
+        evidenceMode: 'abstract'
+      }
+    })
+    await client.literatureSmartRun.create({
+      data: {
+        id: 'automatic-run',
+        collectionId: 'paused',
+        kind: 'refresh',
+        state: 'interrupted',
+        ruleRevision: 1,
+        policyKey: 'fixture'
+      }
+    })
+    await client.classificationUsage.create({
+      data: {
+        eventId: 'automatic-usage',
+        collectionId: 'paused',
+        runId: 'automatic-run',
+        scenario: 'literature-automatic',
+        providerId: 'fixture',
+        model: 'fixture',
+        occurredAt: new Date(),
+        status: 'completed',
+        inputTokens: 1n,
+        outputTokens: 1n,
+        usageIncomplete: false
+      }
+    })
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE id = '0045_literature_smart_pause_run'`
+    )
+
+    await migrateApplicationDatabase(client)
+
+    await expect(
+      client.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: 'paused' } })
+    ).resolves.toMatchObject({ automaticPauseRunId: null })
   } finally {
     await client.$disconnect()
     await rm(root, { recursive: true, force: true })

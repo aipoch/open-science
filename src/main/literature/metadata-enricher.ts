@@ -1,5 +1,6 @@
 import { LiteratureProviderError } from './provider-error'
 import { z } from 'zod'
+import { SaxesParser } from 'saxes'
 import { randomUUID } from 'node:crypto'
 
 import {
@@ -32,6 +33,7 @@ const crossrefMessageSchema = z
     URL: z.string().optional(),
     type: z.string().optional(),
     title: z.array(z.string()).optional(),
+    abstract: z.string().optional(),
     'short-title': z.array(z.string()).optional(),
     'container-title': z.array(z.string()).optional(),
     publisher: z.string().optional(),
@@ -90,6 +92,61 @@ const pubmedResponseSchema = z.object({ result: z.record(z.string(), z.unknown()
 
 const firstText = (values: readonly string[] | undefined): string => values?.[0]?.trim() ?? ''
 const comparable = (value: string): string => value.normalize('NFKC').trim().toLowerCase()
+
+const crossrefAbstract = (raw: string | undefined): string => {
+  const value = raw?.trim()
+  if (!value) return ''
+  // Crossref returns either plain text or a JATS XML fragment in this JSON field.
+  if (!/^<(?:[\w.-]+:)?(?:abstract|p|sec|title)\b/iu.test(value)) return value.replace(/\s+/gu, ' ')
+
+  const parser = new SaxesParser({ fragment: true })
+  let text = ''
+  let title: string | undefined
+  let invalid = false
+  const boundary = (): void => {
+    text += '\n\n'
+  }
+  parser.on('error', () => {
+    invalid = true
+  })
+  parser.on('doctype', () => {
+    invalid = true
+  })
+  parser.on('opentag', ({ name }) => {
+    const tag = name.split(':').pop()
+    if (tag === 'title') title = ''
+    if (tag === 'p' || tag === 'sec' || tag === 'list-item') boundary()
+  })
+  const appendText = (part: string): void => {
+    if (title !== undefined) title += part.replace(/\s+/gu, ' ')
+    else text += part.replace(/\s+/gu, ' ')
+  }
+  parser.on('text', appendText)
+  parser.on('cdata', appendText)
+  parser.on('closetag', ({ name }) => {
+    const tag = name.split(':').pop()
+    if (tag === 'title') {
+      if (title?.trim().toLowerCase() !== 'abstract' && title?.trim()) {
+        boundary()
+        text += title.trim()
+        boundary()
+      }
+      title = undefined
+    }
+    if (tag === 'p' || tag === 'sec' || tag === 'list-item') boundary()
+  })
+  try {
+    parser.write(value).close()
+  } catch {
+    return ''
+  }
+  return invalid
+    ? ''
+    : text
+        .replace(/[^\S\n]+/gu, ' ')
+        .replace(/ *\n\s*\n */gu, '\n\n')
+        .trim()
+}
 
 const dateParts = (message: z.infer<typeof crossrefMessageSchema>): readonly number[] | undefined =>
   (message['published-print'] ??
@@ -178,7 +235,7 @@ const mergeCrossrefMetadata = (
   const conflicts: LiteratureMetadataConflict[] = []
 
   const mergeString = (
-    key: 'containerTitle' | 'issuedText' | 'language' | 'shortTitle' | 'title' | 'url',
+    key: 'abstract' | 'containerTitle' | 'issuedText' | 'language' | 'shortTitle' | 'title' | 'url',
     field: LiteratureMetadataField,
     incoming: string
   ): void => {
@@ -218,6 +275,7 @@ const mergeCrossrefMetadata = (
   const parts = dateParts(message)
   const incomingYear = parts?.[0]
   mergeString('title', 'title', firstText(message.title))
+  mergeString('abstract', 'abstract', crossrefAbstract(message.abstract))
   mergeString('containerTitle', 'journal', firstText(message['container-title']))
   mergeString('shortTitle', 'shortTitle', firstText(message['short-title']))
   mergeString('language', 'language', message.language ?? '')

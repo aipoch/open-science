@@ -155,6 +155,35 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(content)
   })
 
+  it.each([
+    ['Parse error on line 2: unexpected token', false],
+    ['Lexical error on line 3. Unrecognized text.', false],
+    ['No diagram type detected matching given configuration for text: invalid', false],
+    ['Failed to fetch dynamically imported module', true]
+  ])('offers retry only when the rendering error may recover: %s', async (error, retryable) => {
+    streamdownHarness.shouldThrow = false
+    await act(async () =>
+      root.render(<AgentMarkdown content={'```mermaid\ngraph TD; A-->B\n```'} />)
+    )
+    const Panel = (
+      streamdownHarness.mermaidOptions as {
+        errorComponent: React.ComponentType<{ chart: string; error: string; retry: () => void }>
+      }
+    ).errorComponent
+    const retry = vi.fn()
+    act(() => root.render(<Panel chart="invalid source" error={error} retry={retry} />))
+    expect(container.textContent).toContain('View source')
+    expect(container.textContent).toContain('invalid source')
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Retry'
+    )
+    expect(Boolean(button)).toBe(retryable)
+    if (button) {
+      act(() => button.click())
+      expect(retry).toHaveBeenCalledOnce()
+    }
+  })
+
   it('loads plugins for code and Mermaid fences nested in Markdown containers', async () => {
     streamdownHarness.shouldThrow = false
 

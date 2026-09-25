@@ -103,10 +103,12 @@ export const smartCollectionCommandSchemas = [
         'recompute',
         'preview',
         'cancel',
+        'abandon',
         'override',
         'reset-overrides'
       ]),
       itemId: id.optional(),
+      runId: id.optional(),
       summaryOnly: z.boolean().optional(),
       itemIds: z.array(id).min(1).max(10000).optional(),
       decision: z.enum(['include', 'exclude', 'automatic']).optional(),
@@ -169,6 +171,7 @@ export const smartRunSnapshotSchema = z
 export const smartCollectionViewSchema = z
   .object({
     automaticPauseReason: z.enum(automaticClassificationPauseReasons).optional(),
+    automaticPauseRunId: id.optional(),
     ruleRevision: z.number().int().positive().optional(),
     evidenceMode: smartEvidenceModeSchema.optional(),
     autoUpdate: z.boolean().optional(),
@@ -218,6 +221,8 @@ export const smartCollectionViewSchema = z
         kind: z.enum(['preview', 'refresh']),
         snapshot: smartRunSnapshotSchema.optional(),
         state: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted']),
+        abandoned: z.boolean().optional(),
+        manualResumeAllowed: z.boolean().optional(),
         done: z.number().int().nonnegative(),
         total: z.number().int().nonnegative(),
         inputTokens: z.number().nonnegative(),

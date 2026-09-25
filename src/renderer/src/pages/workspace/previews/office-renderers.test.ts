@@ -1,5 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, screen } from '@testing-library/react'
+import { strToU8, zipSync } from 'fflate'
+import {
+  registerFileViewerZoomProvider,
+  registerFileViewerSearchProvider,
+  unregisterFileViewerSearchProvider,
+  unregisterFileViewerZoomProvider,
+  type FileViewerZoomProvider,
+  type FileViewerZoomState
+} from '@file-viewer/core'
 
 import {
   BoundedBlobUrlCache,
@@ -20,6 +30,11 @@ const mocks = vi.hoisted(() => ({
   destroyPptx: vi.fn(),
   loadPptx: vi.fn(),
   renderPptxSlide: vi.fn(),
+  renderPptxThumbnail: vi.fn(),
+  goToPptxSlide: vi.fn(),
+  setPptxZoom: vi.fn(),
+  searchPptx: vi.fn(),
+  highlightPptx: vi.fn(),
   parsePptxLazy: vi.fn(),
   buildPptx: vi.fn(),
   exposePptxMediaCache: true,
@@ -48,14 +63,29 @@ vi.mock('@file-viewer/renderer-spreadsheet/worker/sheetjs/sheet.worker?worker&ur
   default: 'local-sheet-worker.js'
 }))
 vi.mock('@aiden0z/pptx-renderer', () => {
-  class MockPptxViewer {
+  class MockPptxViewer extends EventTarget {
     static open = mocks.openPptx
 
     open = mocks.openPptx
     destroy = mocks.destroyPptx
     load = mocks.loadPptx
     renderSlide = mocks.renderPptxSlide
+    renderThumbnailToContainer = mocks.renderPptxThumbnail
+    goToSlide = async (index: number): Promise<void> => {
+      mocks.goToPptxSlide(index)
+      this.currentSlideIndex = index
+      this.dispatchEvent(new CustomEvent('slidechange', { detail: { index } }))
+    }
+    zoomPercent = 100
+
+    setZoom = async (percent: number): Promise<void> => {
+      mocks.setPptxZoom(percent)
+      this.zoomPercent = percent
+    }
+    searchText = mocks.searchPptx
+    highlightSearchResult = mocks.highlightPptx
     slideCount = 5
+    currentSlideIndex = 0
     slideWidth = 960
     slideHeight = 540
     mediaUrlCache = mocks.exposePptxMediaCache ? new Map<string, string>() : undefined
@@ -69,6 +99,7 @@ vi.mock('@aiden0z/pptx-renderer', () => {
       : { mediaResolver: {} }
 
     constructor(container: HTMLElement, options: unknown) {
+      super()
       mocks.constructPptx(container, options)
     }
   }
@@ -107,6 +138,10 @@ describe('renderOfficeFile', () => {
     vi.clearAllMocks()
     mocks.exposePptxMediaCache = true
     mocks.exposePptxMediaResolver = true
+    mocks.renderPptxThumbnail.mockImplementation((_index: number, target: HTMLElement) => {
+      target.appendChild(document.createElement('div'))
+      return { ready: Promise.resolve(), dispose: vi.fn() }
+    })
     ReadyWorker.instances = []
     vi.stubGlobal('Worker', ReadyWorker)
     container = document.createElement('div')
@@ -180,6 +215,7 @@ describe('renderOfficeFile', () => {
     expect(materialized).toHaveLength(3)
     expect(materialized[0].childNodes).toHaveLength(0)
     expect(container.querySelectorAll('section.docx')).toHaveLength(2)
+    expect(container.querySelector('.docx-review-toolbar')).toBeNull()
     expect((await session.preparePage(2)).textContent).toBe('page 2')
     await expect(session.preparePage(1)).rejects.toThrow(/does not contain/i)
     expect(session.pageCount).toBe(3)
@@ -211,6 +247,23 @@ describe('renderOfficeFile', () => {
     cache.trim(new Set(cache.values()))
     expect(cache.size).toBe(MAX_PPTX_MEDIA_URLS + 1)
     expect(revokeObjectUrl).not.toHaveBeenCalledWith('blob:media-0')
+  })
+
+  it('revokes every PPTX media URL when the preview session is disposed', () => {
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    const cache = new BoundedBlobUrlCache()
+    const onEvict = vi.fn()
+    cache.setEvictionHandler(onEvict)
+    cache.set('image-1', 'blob:image-1')
+    cache.set('image-2', 'blob:image-2')
+
+    cache.clear()
+
+    expect(cache.size).toBe(0)
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:image-1')
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:image-2')
+    expect(onEvict).toHaveBeenCalledWith('image-1')
+    expect(onEvict).toHaveBeenCalledWith('image-2')
   })
 
   it('releases every decoded resolver alias when a PPTX media URL is evicted', () => {
@@ -535,6 +588,96 @@ describe('renderOfficeFile', () => {
     expect(cancelAnimationFrame).toHaveBeenCalledWith(2)
   })
 
+  it('navigates rendered DOCX pages and retains user zoom across resize', async () => {
+    let containerWidth = 500
+    let resizeCallback: ResizeObserverCallback | undefined
+    const frames: FrameRequestCallback[] = []
+    const disconnect = vi.fn()
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback
+      }
+      observe = vi.fn()
+      disconnect = disconnect
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    Object.defineProperty(container, 'clientWidth', {
+      configurable: true,
+      get: () => containerWidth
+    })
+    Object.defineProperty(container, 'clientHeight', { configurable: true, value: 1_000 })
+    Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 1_540 })
+    Object.defineProperty(container, 'scrollTop', { configurable: true, writable: true, value: 0 })
+    Object.defineProperty(container, 'scrollTo', {
+      configurable: true,
+      value: (options: ScrollToOptions) => {
+        container.scrollTop = Math.min(options.top ?? 0, 540)
+        container.dispatchEvent(new Event('scroll'))
+      }
+    })
+    mocks.renderDocx.mockImplementation(async (_bytes, target: HTMLElement) => {
+      const wrapper = document.createElement('div')
+      wrapper.className = 'docx-wrapper'
+      for (let index = 0; index < 3; index += 1) {
+        const page = document.createElement('section')
+        page.className = 'docx'
+        page.style.width = '800px'
+        page.getBoundingClientRect = () =>
+          new DOMRect(0, 40 + index * 500 - container.scrollTop, 800, 500)
+        wrapper.appendChild(page)
+      }
+      target.appendChild(wrapper)
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'docx',
+      name: 'pages.docx',
+      container,
+      signal
+    })
+    const toolbar = container.querySelector<HTMLElement>('.docx-review-toolbar')!
+    toolbar.getBoundingClientRect = () => new DOMRect(0, 0, 500, 40)
+    const counter = toolbar.querySelector<HTMLElement>('.docx-review-counter')!
+    const wrapper = container.querySelector<HTMLElement>('.docx-wrapper')!
+    const previous = toolbar.querySelector<HTMLButtonElement>('[aria-label="Previous"]')!
+    const next = toolbar.querySelector<HTMLButtonElement>('[aria-label="Next"]')!
+    const zoomIn = toolbar.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!
+    const reset = toolbar.querySelector<HTMLButtonElement>('[aria-label="Reset zoom"]')!
+
+    expect(counter.textContent).toBe('1 / 3')
+    expect(previous.disabled).toBe(true)
+    expect(wrapper.style.getPropertyValue('--open-science-docx-scale')).toBe('0.625')
+    next.click()
+    expect(counter.textContent).toBe('2 / 3')
+    expect(container.scrollTop).toBe(500)
+    frames.shift()?.(0)
+    next.click()
+    expect(container.scrollTop).toBe(540)
+    frames.shift()?.(0)
+    expect(counter.textContent).toBe('3 / 3')
+    expect(next.disabled).toBe(true)
+
+    zoomIn.click()
+    expect(reset.textContent).toBe('125%')
+    expect(wrapper.style.getPropertyValue('--open-science-docx-scale')).toBe('0.78125')
+    containerWidth = 400
+    resizeCallback?.([], {} as ResizeObserver)
+    frames.shift()?.(0)
+    expect(wrapper.style.getPropertyValue('--open-science-docx-scale')).toBe('0.625')
+    reset.click()
+    expect(wrapper.style.getPropertyValue('--open-science-docx-scale')).toBe('0.5')
+
+    await cleanup()
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(container.childNodes).toHaveLength(0)
+  })
+
   it.each(['xls', 'xlsx'] as const)(
     'renders %s in the local spreadsheet Worker',
     async (extension) => {
@@ -562,6 +705,7 @@ describe('renderOfficeFile', () => {
           signal,
           onProgressiveRender: expect.any(Function),
           options: {
+            fit: 'actual',
             locale: 'en-US',
             messages: {
               'state.empty.title': 'This workbook has no worksheets.',
@@ -581,6 +725,192 @@ describe('renderOfficeFile', () => {
       expect(container.childNodes).toHaveLength(0)
     }
   )
+
+  it('shows only styled DOCX headings and scrolls to the selected heading', async () => {
+    document.body.append(container)
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 600 })
+    Object.defineProperty(container, 'scrollTo', {
+      configurable: true,
+      value: vi.fn((options: ScrollToOptions) => {
+        container.scrollTop = options.top ?? 0
+      })
+    })
+    mocks.renderDocx.mockImplementation(async (_bytes, target: HTMLElement) => {
+      const wrapper = document.createElement('div')
+      wrapper.className = 'docx-wrapper'
+      const page = document.createElement('section')
+      page.className = 'docx'
+      page.style.width = '800px'
+      for (const [name, text, top] of [
+        ['docx_heading1', 'Introduction', 100],
+        ['docx_normal', 'Not a heading', 150],
+        ['docx_heading2', 'Methods', 300]
+      ] as const) {
+        const paragraph = document.createElement('p')
+        paragraph.className = name
+        paragraph.textContent = text
+        paragraph.getBoundingClientRect = () => new DOMRect(0, top, 400, 20)
+        page.append(paragraph)
+      }
+      wrapper.append(page)
+      target.append(wrapper)
+      return {
+        stylesPart: {
+          styles: [
+            { id: 'Heading1', target: 'p', paragraphProps: { outlineLevel: 0 } },
+            { id: 'Heading2', target: 'p', paragraphProps: { outlineLevel: 1 } }
+          ]
+        }
+      }
+    })
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'docx',
+      name: 'headings.docx',
+      container,
+      signal
+    })
+    const outline = container.querySelector<HTMLButtonElement>(
+      '.docx-review-outline [data-slot="select-trigger"]'
+    )!
+    expect(outline.getAttribute('aria-label')).toBe('Outline')
+    expect(container.querySelector('.docx-review-outline select')).toBeNull()
+    fireEvent.keyDown(outline, { key: 'ArrowDown' })
+    expect(screen.getByRole('option', { name: 'Introduction' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: 'Not a heading' })).toBeNull()
+    fireEvent.click(screen.getByRole('option', { name: 'Methods' }))
+    expect(container.scrollTop).toBe(300)
+    await cleanup()
+  })
+
+  it('uses the spreadsheet zoom provider and releases its subscription on cleanup', async () => {
+    let scale = 1
+    const listeners = new Set<() => void>()
+    const getState = (): FileViewerZoomState => ({
+      scale,
+      label: `${Math.round(scale * 100)}%`,
+      canZoomIn: scale < 2.5,
+      canZoomOut: scale > 0.5,
+      canReset: scale !== 1
+    })
+    const setZoom = (next: number): FileViewerZoomState => {
+      scale = Math.min(2.5, Math.max(0.5, next))
+      listeners.forEach((listener) => listener())
+      return getState()
+    }
+    const provider: FileViewerZoomProvider = {
+      zoomIn: () => setZoom(scale + 0.1),
+      zoomOut: () => setZoom(scale - 0.1),
+      resetZoom: () => setZoom(1),
+      setZoom,
+      getState,
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      }
+    }
+    const wrapper = document.createElement('div')
+    wrapper.className = 'excel-wrapper'
+    const unmount = vi.fn(() => unregisterFileViewerZoomProvider(wrapper))
+    mocks.renderSpreadsheet.mockImplementation(async (_buffer, target, _type, context) => {
+      new Worker(context?.options?.spreadsheet?.workerUrl, { type: 'module' })
+      target.appendChild(wrapper)
+      registerFileViewerZoomProvider(wrapper, provider)
+      queueMicrotask(() => context?.onProgressiveRender?.())
+      return { unmount }
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'xlsx',
+      name: 'results.xlsx',
+      container,
+      signal
+    })
+    expect(mocks.renderSpreadsheet.mock.calls[0]?.[3]?.options?.fit).toBe('actual')
+    const toolbar = wrapper.querySelector<HTMLElement>('.spreadsheet-review-toolbar')!
+    const zoomIn = toolbar.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!
+    const zoomOut = toolbar.querySelector<HTMLButtonElement>('[aria-label="Zoom out"]')!
+    const reset = toolbar.querySelector<HTMLButtonElement>('[aria-label="Reset zoom"]')!
+    expect(reset.textContent).toBe('100%')
+    expect(listeners.size).toBe(1)
+
+    zoomIn.click()
+    expect(reset.textContent).toBe('110%')
+    zoomOut.click()
+    expect(reset.textContent).toBe('100%')
+    setZoom(2.5)
+    expect(reset.textContent).toBe('250%')
+    expect(zoomIn.disabled).toBe(true)
+    reset.click()
+    expect(reset.textContent).toBe('100%')
+
+    await cleanup()
+    expect(listeners.size).toBe(0)
+    expect(unmount).toHaveBeenCalledOnce()
+    expect(container.childNodes).toHaveLength(0)
+    zoomIn.click()
+    expect(scale).toBe(1)
+  })
+
+  it('passes case and whole-word find options to the workbook search provider', async () => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'excel-wrapper'
+    const state = { query: 'needle', total: 1, currentIndex: 0, current: null, matches: [] }
+    const search = vi.fn().mockResolvedValue(state)
+    mocks.renderSpreadsheet.mockImplementation(async (_buffer, target, _type, context) => {
+      new Worker(context?.options?.spreadsheet?.workerUrl, { type: 'module' })
+      target.appendChild(wrapper)
+      registerFileViewerZoomProvider(wrapper, {
+        zoomIn: vi.fn(),
+        zoomOut: vi.fn(),
+        resetZoom: vi.fn(),
+        setZoom: vi.fn(),
+        getState: () => ({
+          scale: 1,
+          label: '100%',
+          canZoomIn: true,
+          canZoomOut: true,
+          canReset: false
+        })
+      })
+      registerFileViewerSearchProvider(wrapper, { search, getState: () => state })
+      queueMicrotask(() => context?.onProgressiveRender?.())
+      return {
+        unmount: () => {
+          unregisterFileViewerSearchProvider(wrapper)
+          unregisterFileViewerZoomProvider(wrapper)
+        }
+      }
+    })
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'xlsx',
+      name: 'sheet.xlsx',
+      container,
+      signal
+    })
+    wrapper.querySelector<HTMLButtonElement>('.spreadsheet-review-find-open')!.click()
+    const input = wrapper.querySelector<HTMLInputElement>('.spreadsheet-review-find-input')!
+    input.value = 'needle'
+    input.dispatchEvent(new Event('input'))
+    await vi.waitFor(() =>
+      expect(search).toHaveBeenLastCalledWith('needle', { caseSensitive: false, wholeWord: false })
+    )
+    const matchCase = wrapper.querySelector<HTMLButtonElement>('[aria-label="Match case"]')!
+    const wholeWord = wrapper.querySelector<HTMLButtonElement>('[aria-label="Whole word"]')!
+    matchCase.click()
+    await vi.waitFor(() =>
+      expect(search).toHaveBeenLastCalledWith('needle', { caseSensitive: true, wholeWord: false })
+    )
+    wholeWord.click()
+    await vi.waitFor(() =>
+      expect(search).toHaveBeenLastCalledWith('needle', { caseSensitive: true, wholeWord: true })
+    )
+    expect(matchCase.getAttribute('aria-pressed')).toBe('true')
+    expect(wholeWord.getAttribute('aria-pressed')).toBe('true')
+    await cleanup()
+  })
 
   it('transfers spreadsheet workbook ownership to the parsing Worker', async () => {
     const unmount = vi.fn()
@@ -850,7 +1180,7 @@ describe('renderOfficeFile', () => {
     expect(mocks.renderSpreadsheet).not.toHaveBeenCalled()
   })
 
-  it('renders PPTX with upstream ZIP limits and lazy windowing', async () => {
+  it('renders PPTX with upstream ZIP limits and paged review controls', async () => {
     mocks.openPptx.mockResolvedValue(undefined)
     Object.defineProperty(container, 'clientWidth', { configurable: true, value: 800 })
 
@@ -862,28 +1192,271 @@ describe('renderOfficeFile', () => {
       signal
     })
 
-    expect(mocks.constructPptx).toHaveBeenCalledWith(container, {
-      width: 800,
+    const pptxStage = mocks.constructPptx.mock.calls[0]?.[0] as HTMLElement
+    expect(pptxStage.classList.contains('pptx-review-stage')).toBe(true)
+    expect(mocks.constructPptx).toHaveBeenCalledWith(pptxStage, {
       zipLimits: mocks.zipLimits,
       lazySlides: true,
       lazyMedia: true,
-      scrollContainer: container,
+      fitMode: 'none',
+      scrollContainer: pptxStage,
       pdfjs: false,
       onRenderStart: expect.any(Function),
       onSlideUnmounted: expect.any(Function),
       onSlideRendered: expect.any(Function)
     })
     expect(mocks.openPptx).toHaveBeenCalledWith(expect.any(ArrayBuffer), {
-      renderMode: 'list',
-      listOptions: { windowed: true, initialSlides: 4, batchSize: 4 },
+      renderMode: 'slide',
       lazySlides: true,
       lazyMedia: true,
       signal
     })
+    expect(container.querySelectorAll('.pptx-review-thumbnail')).toHaveLength(5)
+    expect(mocks.renderPptxThumbnail).toHaveBeenCalledTimes(5)
+    expect(container.querySelector<HTMLElement>('.pptx-review-notes')?.hidden).toBe(false)
+    expect(container.querySelector<HTMLElement>('.pptx-review-notes-body')).toMatchObject({
+      ariaLive: 'polite',
+      ariaAtomic: 'true'
+    })
+    const reviewRoot = container.querySelector('.pptx-review')
+    const thumbnailCountBeforeControls = mocks.renderPptxThumbnail.mock.calls.length
+
+    const focusStage = vi.spyOn(
+      container.querySelector<HTMLElement>('.pptx-review-stage')!,
+      'focus'
+    )
+    container.querySelector<HTMLButtonElement>('.pptx-review-toolbar [aria-label="Next"]')?.click()
+    expect(mocks.goToPptxSlide).toHaveBeenCalledWith(1)
+    const stage = container.querySelector<HTMLElement>('.pptx-review-stage')!
+    expect(focusStage).toHaveBeenCalledWith({ preventScroll: true })
+    stage.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    expect(mocks.goToPptxSlide).toHaveBeenCalledWith(1)
+    stage.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    expect(mocks.goToPptxSlide).toHaveBeenCalledWith(2)
+    stage.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    expect(mocks.goToPptxSlide).toHaveBeenCalledWith(1)
+    container.querySelector<HTMLButtonElement>('[aria-label="Hide navigation"]')?.click()
+    expect(
+      container.querySelector('.pptx-review')?.classList.contains('pptx-review--nav-hidden')
+    ).toBe(true)
+
+    const zoomIn = container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')
+    const zoomOut = container.querySelector<HTMLButtonElement>('[aria-label="Zoom out"]')
+    const zoomReset = container.querySelector<HTMLButtonElement>('[aria-label="Reset zoom"]')
+    expect(zoomReset?.textContent).toBe('100%')
+    zoomIn?.click()
+    await Promise.resolve()
+    expect(mocks.setPptxZoom).not.toHaveBeenCalled()
+    expect(zoomReset?.textContent).toBe('125%')
+    zoomOut?.click()
+    await Promise.resolve()
+    expect(mocks.setPptxZoom).not.toHaveBeenCalled()
+    expect(container.querySelector('.pptx-review')).toBe(reviewRoot)
+    expect(mocks.renderPptxThumbnail).toHaveBeenCalledTimes(thumbnailCountBeforeControls)
+
+    const wheelEvent = new WheelEvent('wheel', {
+      deltaY: -100,
+      ctrlKey: true,
+      cancelable: true
+    })
+    stage.dispatchEvent(wheelEvent)
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    await Promise.resolve()
+    expect(wheelEvent.defaultPrevented).toBe(true)
+    expect(mocks.setPptxZoom).not.toHaveBeenCalled()
+    expect(zoomReset?.textContent).toBe('125%')
+
+    const pointer = (type: string, x: number, y: number): PointerEvent => {
+      const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent
+      Object.defineProperties(event, {
+        button: { value: 0 },
+        clientX: { value: x },
+        clientY: { value: y },
+        pointerId: { value: 1 }
+      })
+      return event
+    }
+    stage.dispatchEvent(pointer('pointerdown', 100, 100))
+    expect(stage.classList.contains('pptx-review-stage--panning')).toBe(false)
+    stage.dispatchEvent(pointer('pointermove', 80, 75))
+    expect(stage.classList.contains('pptx-review-stage--panning')).toBe(true)
+    stage.dispatchEvent(pointer('pointerup', 80, 75))
+    expect(stage.classList.contains('pptx-review-stage--panning')).toBe(false)
+
+    const link = document.createElement('a')
+    link.href = '#slide-link'
+    stage.appendChild(link)
+    const linkDown = pointer('pointerdown', 100, 100)
+    link.dispatchEvent(linkDown)
+    link.dispatchEvent(pointer('pointermove', 80, 75))
+    link.dispatchEvent(pointer('pointerup', 80, 75))
+    expect(linkDown.defaultPrevented).toBe(false)
+    expect(stage.classList.contains('pptx-review-stage--panning')).toBe(false)
+
+    const focusCallsBeforePageThree = focusStage.mock.calls.length
+    const pageThree = container.querySelector<HTMLButtonElement>('[aria-label="Page 3"]')
+    pageThree?.click()
+    expect(focusStage.mock.calls.length).toBeGreaterThan(focusCallsBeforePageThree)
 
     await cleanup()
     expect(mocks.destroyPptx).toHaveBeenCalledOnce()
     expect(container.childNodes).toHaveLength(0)
+  })
+
+  it('fits the vendor thumbnail slide inside its rail slot', async () => {
+    mocks.renderPptxThumbnail.mockImplementation((_index: number, target: HTMLElement) => {
+      const thumbnail = document.createElement('div')
+      const slide = document.createElement('div')
+      thumbnail.appendChild(slide)
+      target.appendChild(thumbnail)
+      return { element: thumbnail, ready: Promise.resolve(), dispose: vi.fn() }
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'pptx',
+      name: 'thumbnail-fit.pptx',
+      container,
+      signal
+    })
+
+    const host = container.querySelector<HTMLElement>('.pptx-review-thumbnail-host')
+    const thumbnail = host?.firstElementChild as HTMLElement | null
+    const slide = thumbnail?.firstElementChild as HTMLElement | null
+    expect(thumbnail?.style.width).toBe('142px')
+    expect(thumbnail?.style.height).toBe('79.875px')
+    expect(slide?.style.transform).toBe('scale(0.14791666666666667)')
+    await cleanup()
+  })
+
+  it.each([false, true])(
+    'handles thumbnail readiness rejection without breaking navigation (preview replaced: %s)',
+    async (replacePreview) => {
+      let rejectReady!: (error: Error) => void
+      const dispose = vi.fn()
+      mocks.renderPptxThumbnail.mockImplementationOnce((_index: number, target: HTMLElement) => {
+        target.appendChild(document.createElement('div'))
+        return {
+          ready: new Promise<void>((_resolve, reject) => {
+            rejectReady = reject
+          }),
+          dispose
+        }
+      })
+      const options = {
+        bytes,
+        extension: 'pptx' as const,
+        name: 'thumbnail-error.pptx',
+        container,
+        signal
+      }
+      let cleanup = await renderOfficeFile(options)
+      if (replacePreview) {
+        await cleanup()
+        cleanup = await renderOfficeFile(options)
+      }
+      const host = container.querySelector('.pptx-review-thumbnail-host')!
+      const currentThumbnail = host.firstChild
+      rejectReady(new Error('Embedded media failed to render'))
+      await Promise.resolve()
+
+      expect(dispose).toHaveBeenCalledOnce()
+      if (replacePreview) expect(host.firstChild).toBe(currentThumbnail)
+      else expect(host.childNodes).toHaveLength(0)
+      container.querySelector<HTMLButtonElement>('[aria-label="Page 3"]')!.click()
+      expect(container.querySelector('.pptx-review-counter')?.textContent).toBe('3 / 5')
+      await cleanup()
+      expect(dispose).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('shows presenter notes for the active slide when the optional notes part is available', async () => {
+    mocks.openPptx.mockResolvedValue(undefined)
+    const notesBytes = zipSync(
+      {
+        'ppt/notesSlides/notesSlide1.xml': strToU8(`
+          <p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+            xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+            <p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>
+              <p:txBody><a:p><a:r><a:t>Review this chart before presenting.</a:t></a:r></a:p></p:txBody>
+            </p:sp>
+          </p:notes>
+        `),
+        'ppt/notesSlides/_rels/notesSlide1.xml.rels': strToU8(`
+          <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="../slides/slide1.xml"/>
+          </Relationships>
+        `)
+      },
+      { level: 0 }
+    )
+
+    const cleanup = await renderOfficeFile({
+      bytes: notesBytes,
+      extension: 'pptx',
+      name: 'notes.pptx',
+      container,
+      signal
+    })
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    const notes = container.querySelector<HTMLElement>('.pptx-review-notes')
+    expect(notes?.hidden).toBe(false)
+    expect(notes?.textContent).toContain('Review this chart before presenting.')
+    await cleanup()
+  })
+
+  it('finds slide text and presenter notes across slides', async () => {
+    mocks.openPptx.mockResolvedValue(undefined)
+    const bodyResult = { slideIndex: 2, snippet: 'needle on slide' }
+    const disposeHighlight = vi.fn()
+    mocks.searchPptx.mockReturnValue([bodyResult])
+    mocks.highlightPptx.mockResolvedValue({ dispose: disposeHighlight })
+    const deck = zipSync(
+      {
+        'ppt/notesSlides/notesSlide4.xml': strToU8(`
+        <p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+          xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>
+            <p:txBody><a:p><a:r><a:t>needle in notes</a:t></a:r></a:p></p:txBody></p:sp>
+        </p:notes>`)
+      },
+      { level: 0 }
+    )
+    const cleanup = await renderOfficeFile({
+      bytes: deck,
+      extension: 'pptx',
+      name: 'slides.pptx',
+      container,
+      signal
+    })
+    await vi.waitFor(() => expect(container.querySelector('.pptx-review-notes')).toBeTruthy())
+    container.querySelector<HTMLButtonElement>('.pptx-review-find-open')!.click()
+    const input = container.querySelector<HTMLInputElement>('.pptx-review-find-input')!
+    input.value = 'needle'
+    input.dispatchEvent(new Event('input'))
+    await vi.waitFor(() => expect(mocks.searchPptx).toHaveBeenCalledWith('needle'))
+    expect(container.querySelector('.pptx-review-find-count')?.textContent).toBe('1 / 2')
+    expect(mocks.goToPptxSlide).toHaveBeenCalledWith(2)
+    await vi.waitFor(() =>
+      expect(mocks.highlightPptx).toHaveBeenCalledWith(bodyResult, { scrollIntoView: false })
+    )
+    expect(container.querySelector('.pptx-review-find-context')?.textContent).toBe(
+      'needle on slide'
+    )
+    container
+      .querySelector<HTMLButtonElement>('.pptx-review-find [aria-label="Next match"]')!
+      .click()
+    expect(mocks.goToPptxSlide).toHaveBeenCalledWith(3)
+    expect(container.querySelector('.pptx-review-find-count')?.textContent).toBe('2 / 2')
+    expect(disposeHighlight).toHaveBeenCalledOnce()
+    expect(container.querySelector('.pptx-review-find-context')?.textContent).toContain('Notes:')
+    expect(container.querySelector('.pptx-review-notes-body mark')?.textContent).toBe('needle')
+    container
+      .querySelector<HTMLButtonElement>('.pptx-review-find [aria-label="Close search"]')!
+      .click()
+    expect(container.querySelector('.pptx-review-notes-body mark')).toBeNull()
+    await cleanup()
   })
 
   it('rejects an incompatible PPTX media-cache contract before opening the file', async () => {
@@ -957,13 +1530,16 @@ describe('renderOfficeFile', () => {
     let initialWrapper: HTMLDivElement | undefined
     let initialSlide: HTMLDivElement | undefined
     mocks.openPptx.mockImplementation(async () => {
-      initialItem = document.createElement('div')
-      initialItem.dataset.slideIndex = '0'
+      const pptxStage = mocks.constructPptx.mock.calls.at(-1)?.[0] as HTMLElement
+      Object.defineProperty(pptxStage, 'clientWidth', {
+        configurable: true,
+        get: () => containerWidth
+      })
       initialWrapper = document.createElement('div')
       initialSlide = document.createElement('div')
       initialWrapper.appendChild(initialSlide)
-      initialItem.appendChild(initialWrapper)
-      container.appendChild(initialItem)
+      initialItem = initialWrapper
+      pptxStage.appendChild(initialItem)
     })
 
     const cleanup = await renderOfficeFile({
@@ -990,7 +1566,8 @@ describe('renderOfficeFile', () => {
     resizeTask?.(0)
 
     expect(mocks.openPptx).toHaveBeenCalledOnce()
-    expect(container.querySelector('[data-slide-index="0"]')).toBe(initialItem)
+    const pptxStage = mocks.constructPptx.mock.calls.at(-1)?.[0] as HTMLElement
+    expect(pptxStage.firstElementChild).toBe(initialItem)
     expect(initialWrapper?.style.width).toBe('480px')
     expect(initialWrapper?.style.height).toBe('270px')
     expect(initialSlide?.style.transform).toBe('scale(0.5)')
@@ -1002,7 +1579,7 @@ describe('renderOfficeFile', () => {
     const lateSlide = document.createElement('div')
     lateWrapper.appendChild(lateSlide)
     lateItem.appendChild(lateWrapper)
-    container.appendChild(lateItem)
+    pptxStage.appendChild(lateItem)
     const viewerOptions = mocks.constructPptx.mock.calls[0]?.[1] as {
       onSlideRendered?: (index: number, element: HTMLElement) => void
     }
@@ -1022,7 +1599,7 @@ describe('renderOfficeFile', () => {
     const pendingSlide = document.createElement('div')
     pendingWrapper.appendChild(pendingSlide)
     pendingItem.appendChild(pendingWrapper)
-    container.appendChild(pendingItem)
+    pptxStage.appendChild(pendingItem)
     viewerOptions.onSlideRendered?.(2, pendingSlide)
 
     expect(pendingWrapper.style.width).toBe('360px')
@@ -1031,10 +1608,41 @@ describe('renderOfficeFile', () => {
 
     await cleanup()
 
-    expect(disconnect).toHaveBeenCalledOnce()
+    expect(disconnect).toHaveBeenCalledTimes(2)
     expect(cancelAnimationFrame).toHaveBeenCalledWith(2)
     expect(scheduledFrames.size).toBe(0)
     expect(mocks.destroyPptx).toHaveBeenCalledOnce()
+  })
+
+  it('fits PPTX slides against the available height when the expanded panel is wide', async () => {
+    let wrapper: HTMLDivElement | undefined
+    mocks.openPptx.mockImplementation(async () => {
+      const stage = mocks.constructPptx.mock.calls.at(-1)?.[0] as HTMLElement
+      Object.defineProperties(stage, {
+        clientWidth: { configurable: true, value: 800 },
+        clientHeight: { configurable: true, value: 300 }
+      })
+      wrapper = document.createElement('div')
+      const slide = document.createElement('div')
+      wrapper.appendChild(slide)
+      stage.appendChild(wrapper)
+    })
+
+    const cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'pptx',
+      name: 'wide-slides.pptx',
+      container,
+      signal
+    })
+
+    expect(wrapper?.style.width).toBe('533.3333333333334px')
+    expect(wrapper?.style.height).toBe('300px')
+    expect((wrapper?.firstElementChild as HTMLElement | null)?.style.transform).toBe(
+      'scale(0.5555555555555556)'
+    )
+
+    await cleanup()
   })
 
   it('destroys a PPTX viewer when opening the presentation fails', async () => {

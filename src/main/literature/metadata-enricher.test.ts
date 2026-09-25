@@ -465,6 +465,88 @@ const regressionEnricher = (
 const crossref = (message: Record<string, unknown>): Response =>
   new Response(JSON.stringify({ message }))
 
+it('fills and commits the reported DOI structured JATS abstract as readable text', async () => {
+  const doi = '10.1007/s11914-026-00956-3'
+  const abstract =
+    '<jats:abstract><jats:title>Abstract</jats:title>\n' +
+    '<jats:sec><jats:title>Purpose of Review</jats:title><jats:p>This review highlights recent studies.</jats:p></jats:sec>\n' +
+    '<jats:sec><jats:title>Recent Findings</jats:title><jats:p>Cancer cells alter metabolism.</jats:p></jats:sec></jats:abstract>'
+  const current = {
+    ...item,
+    identifiers: [{ scheme: 'doi' as const, value: doi, isPrimary: true }]
+  }
+  const { enricher, applyMetadata } = regressionEnricher(current, crossref({ DOI: doi, abstract }))
+  const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+  const expected =
+    'Purpose of Review\n\nThis review highlights recent studies.\n\n' +
+    'Recent Findings\n\nCancer cells alter metabolism.'
+  expect(review.item.item.abstract).toBe(expected)
+  expect(review.filled).toContainEqual({ field: 'abstract', value: expected })
+  expect(review.source?.rawMetadata.abstract).toBe(abstract)
+  await enricher.complete({
+    mode: 'commit',
+    itemId: view.id,
+    reviewToken: review.reviewToken,
+    expectedMetadataRevision: 2,
+    overwriteFields: []
+  })
+  expect(applyMetadata.mock.calls[0]![0].item.abstract).toBe(expected)
+})
+
+it.each([
+  ['plain text', '  Plain   evidence\nsummary. ', 'Plain evidence summary.'],
+  [
+    'inline JATS and entities',
+    '<jats:p>Life &amp; health include <jats:italic>bone</jats:italic> loss.</jats:p><jats:p>Second paragraph.</jats:p>',
+    'Life & health include bone loss.\n\nSecond paragraph.'
+  ],
+  [
+    'MathML and subscripts',
+    '<jats:p>PGJ<jats:sub>2</jats:sub> and <mml:math><mml:mi>β</mml:mi></mml:math> &gt; control.</jats:p>',
+    'PGJ2 and β > control.'
+  ]
+])('reads Crossref %s abstracts', async (_case, abstract, expected) => {
+  const { enricher } = regressionEnricher(item, crossref({ abstract }))
+  const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+  expect(review.item.item.abstract).toBe(expected)
+  expect(review.filled).toContainEqual({ field: 'abstract', value: expected })
+})
+
+it.each([undefined, '  ', '<jats:p>Incomplete'])(
+  'ignores missing, empty or malformed Crossref abstract: %s',
+  async (abstract) => {
+    const { enricher } = regressionEnricher(item, crossref({ abstract }))
+    const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+    expect(review.item.item.abstract).toBe('')
+    expect(review.filled).toEqual([])
+  }
+)
+
+it.each([false, true])('replaces an existing abstract only when selected: %s', async (selected) => {
+  const current = { ...item, abstract: 'Local abstract' }
+  const { enricher, applyMetadata } = regressionEnricher(
+    current,
+    crossref({ abstract: '<jats:p>Publisher abstract.</jats:p>' })
+  )
+  const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+  expect(review.item.item.abstract).toBe('Local abstract')
+  expect(review.conflicts).toContainEqual({
+    field: 'abstract',
+    currentValue: 'Local abstract',
+    value: 'Publisher abstract.'
+  })
+  await enricher.complete({
+    mode: 'commit',
+    itemId: view.id,
+    reviewToken: review.reviewToken,
+    expectedMetadataRevision: 2,
+    overwriteFields: selected ? ['abstract'] : []
+  })
+  expect(applyMetadata.mock.calls[0]![0].item.abstract).toBe(
+    selected ? 'Publisher abstract.' : 'Local abstract'
+  )
+})
+
 it('retains editors and translators in the author-only commit payload and citation', async () => {
   const { toCslItem } = await import('../../shared/literature-csl')
   const creators = ['editor', 'author', 'translator', 'editor'].map((creatorType, index) => ({

@@ -73,6 +73,7 @@ const SkillImportApprovalDialog = lazy(() =>
     default: SkillImportApprovalDialog
   }))
 )
+
 const GlobalSearchDialog = lazy(() =>
   import('@/components/global-search/GlobalSearchDialog').then(({ GlobalSearchDialog }) => ({
     default: GlobalSearchDialog
@@ -379,7 +380,11 @@ const ApplicationPresentationContent = ({
           active={activePresentation === 'connectorApproval'}
           blockedSessionIds={events.blockedApprovalSessionIds}
         />
+      </Suspense>
+      <Suspense fallback={null}>
         <ConnectorCredentialDialog active={activePresentation === 'credentialRequest'} />
+      </Suspense>
+      <Suspense fallback={null}>
         <ComputeApprovalDialog
           active={activePresentation === 'computeApproval'}
           blockedSessionIds={events.blockedApprovalSessionIds}

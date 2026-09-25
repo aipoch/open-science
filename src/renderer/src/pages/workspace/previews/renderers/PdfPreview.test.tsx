@@ -2200,8 +2200,8 @@ describe('PdfPreviewContent', () => {
   })
 
   it.each([
-    ['interaction', 'Show navigation', 'Hand', 800],
-    ['view', 'Page 1 of 2', 'Zoom in', 250]
+    ['interaction', 'Show navigation', 'Hand', 200],
+    ['view', 'Page 1 of 2', 'Zoom in', 200]
   ])(
     'delays the first hint and shares a 300ms skip window in the %s toolbar',
     async (_, firstLabel, nextLabel, delay) => {

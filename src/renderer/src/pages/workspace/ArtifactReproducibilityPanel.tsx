@@ -430,7 +430,7 @@ const prefersReducedMotion = (): boolean =>
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 
 const PanelTooltip = ({ children }: { children: ReactNode }): React.JSX.Element => (
-  <TooltipProvider delayDuration={350} skipDelayDuration={100}>
+  <TooltipProvider>
     <Tooltip>{children}</Tooltip>
   </TooltipProvider>
 )

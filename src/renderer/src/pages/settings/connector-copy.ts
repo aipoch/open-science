@@ -13,7 +13,7 @@ export function connectorDescription(
   }
   if (connector.id === 'genes') {
     return t(
-      'Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways and g:Profiler.'
+      'Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.'
     )
   }
   if (connector.id === 'genomes') {
@@ -101,6 +101,10 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('List available g:Profiler enrichment sources for an organism.')
     case 'genes/enrich_gene_set':
       return t('Run g:Profiler gene-set enrichment with multiple-testing correction.')
+    case 'genes/list_enrichr_libraries':
+      return t('List Enrichr gene-set libraries and their coverage statistics for an organism.')
+    case 'genes/enrich_gene_set_enrichr':
+      return t('Run Enrichr enrichment for gene symbols or identifiers.')
     case 'omics-archives/ena_query_runs':
       return t('Discover ENA sequencing runs with metadata filters.')
     case 'omics-archives/ena_get_submitted_files':

@@ -222,6 +222,8 @@ const registerWithFakes = (overrides?: {
   customMcpServers?: Array<{ id: string; name: string }>
   memory?: AcpTestOptions['memory']
   delegatedNotebookConnection?: AcpTestOptions['delegatedNotebookConnection']
+  delegatedRuntimeHome?: AcpTestOptions['delegatedRuntimeHome']
+  fixedBackend?: AcpTestOptions['fixedBackend']
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
   interruptedTurnSessions?: Parameters<typeof createAcpHandlerWorkflows>[4]
   resolveMemoryEnabled?: Parameters<typeof installAcpIpcHandlers>[3]
@@ -263,7 +265,9 @@ const registerWithFakes = (overrides?: {
     initializationBarrier: overrides?.initializationBarrier,
     specialistService: overrides?.specialistService as never,
     memory: overrides?.memory,
-    delegatedNotebookConnection: overrides?.delegatedNotebookConnection
+    delegatedNotebookConnection: overrides?.delegatedNotebookConnection,
+    delegatedRuntimeHome: overrides?.delegatedRuntimeHome,
+    fixedBackend: overrides?.fixedBackend
   }
 
   const runtime = createAcpRuntime(options)
@@ -307,6 +311,18 @@ afterEach(() => {
   fallbackBegin.mockClear()
   fallbackEnd.mockClear()
   AcpRuntimeMock.mockClear()
+})
+
+it('protects each delegated attempt runtime home from native file reads', () => {
+  const delegatedRuntimeHome = '/tmp/data/delegation/project-1/session-1/runtime/attempt-1'
+  registerWithFakes({
+    delegatedNotebookConnection: {} as never,
+    delegatedRuntimeHome,
+    fixedBackend: { framework: { id: 'codex' } } as never
+  })
+
+  const options = AcpRuntimeMock.mock.calls.at(-1)?.[0] as AcpRuntimeOptions
+  expect(options.additionalProtectedReadRoots).toContain(delegatedRuntimeHome)
 })
 
 it('rejects direct ACP policy mutations before runtime work when Session admission is closed', async () => {

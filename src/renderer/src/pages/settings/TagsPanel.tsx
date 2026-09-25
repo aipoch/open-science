@@ -1040,12 +1040,12 @@ const TagsList = ({
                                 return (
                                   <li
                                     key={key}
-                                    className="group -mx-2 flex items-center gap-1 rounded-lg px-2 hover:bg-muted/50 focus-within:bg-muted/50"
+                                    className="group relative -mx-2 flex items-center gap-1 rounded-lg px-2 hover:bg-muted/50 focus-within:bg-muted/50"
                                   >
                                     <button
                                       type="button"
                                       data-slot="tag-resource-row"
-                                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left hover:text-primary"
+                                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left hover:text-primary after:absolute after:inset-0 after:rounded-[inherit]"
                                       onClick={() => {
                                         if (resource.literatureReference) {
                                           setSelectedLiteratureReference(
@@ -1077,7 +1077,7 @@ const TagsList = ({
                                       })}
                                       icon={X}
                                       disabled={removingResourceKey === key}
-                                      className="pointer-events-auto shrink-0 opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                      className="relative z-10 pointer-events-auto disabled:pointer-events-auto shrink-0 opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
                                       onClick={() => void removeResource(resource)}
                                     />
                                   </li>
