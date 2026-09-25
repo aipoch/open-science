@@ -9,7 +9,7 @@ import { test } from './fixtures/electron-app'
 test.describe('WSL setup conversation', () => {
   test.skip(process.platform !== 'win32' || process.env.OPEN_SCIENCE_E2E_WSL_SETUP !== '1')
 
-  test('manual command grants setup tools only to its conversation and survives restart', async ({
+  test('manual command grants setup tools only to its conversation and survives restart @pr-mainline', async ({
     app
   }) => {
     test.setTimeout(240_000)

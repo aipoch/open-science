@@ -20,6 +20,7 @@ on:
           - i18n
           - runtime-bundle
           - windows-e2e
+          - windows-e2e-mainline
           - windows-process
           - e2e
           - source-regressions
@@ -274,7 +275,7 @@ jobs:
             printf '%s\n' '## PR Gate preflight' '' '- Focused dry-run: delegated Windows process ownership' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "windows-e2e" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && ( "$DRY_RUN_MODE" == "windows-e2e" || "$DRY_RUN_MODE" == "windows-e2e-mainline" ) ]]; then
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:windows-e2e"],"lanes":["policy","e2e_functional_windows","e2e_workspace_windows","e2e_browser_windows"],"bundles":["policy","windows_e2e"],"reasonChains":["workflow_dispatch windows-e2e -> focused dry-run"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
             echo 'lanes=["policy","e2e_functional_windows","e2e_workspace_windows","e2e_browser_windows"]' >> "$GITHUB_OUTPUT"
@@ -1276,15 +1277,17 @@ jobs:
           exit "$failed"
 
   windows_e2e:
-    name: Windows E2E (shard ${{ matrix.shard }}/3)
+    name: Windows E2E (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     needs: [preflight, windows_e2e_setup]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') && needs.windows_e2e_setup.result == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 35
+    env:
+      E2E_GREP: ${{ (github.event_name == 'pull_request' || inputs.dry_run == 'windows-e2e-mainline') && '@pr-mainline' || '.*' }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: ${{ fromJSON((github.event_name == 'pull_request' || inputs.dry_run == 'windows-e2e-mainline') && '[1]' || '[1,2,3]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1319,7 +1322,7 @@ jobs:
         # NetLog traced blank fixtures to Windows WSAENOBUFS after hundreds of asset reloads.
         # Keep each browser process serialized and cap its loopback socket churn with runner shards.
         shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
-        run: npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3
+        run: npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/${{ strategy.job-total }} --grep "$env:E2E_GREP"
       - name: Run functional journeys
         id: e2e_functional_windows
         if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
@@ -1328,7 +1331,7 @@ jobs:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
         # Isolate Electron desktops: parallelize across runners, never within one runner.
-        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=600000
+        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/${{ strategy.job-total }} --global-timeout=600000 --grep "$env:E2E_GREP"
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -1347,7 +1350,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace_windows.json
-        run: npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=900000
+        run: npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/${{ strategy.job-total }} --global-timeout=900000 --grep "$env:E2E_GREP"
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -1378,7 +1381,9 @@ jobs:
           E2E_BROWSER_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') }}
           RENDERER_LAYOUT_OUTCOME: ${{ steps.renderer_layout.outcome }}
           SETUP_OUTCOME: ${{ steps.setup.outcome }}
+          E2E_FUNCTIONAL_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
+          E2E_WORKSPACE_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
           E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_windows.outcome }}
         run: |
           set -euo pipefail
@@ -1392,6 +1397,14 @@ jobs:
           # The browser suite is selected per plan; when selected, skipped is not success.
           if [[ "${E2E_BROWSER_SELECTED:-}" == "true" && "$RENDERER_LAYOUT_OUTCOME" != "success" ]]; then
             echo "Required Windows browser suite ended with ${RENDERER_LAYOUT_OUTCOME:-no outcome}" >&2
+            failed=1
+          fi
+          if [[ "${E2E_FUNCTIONAL_SELECTED:-}" == "true" && "$E2E_FUNCTIONAL_OUTCOME" != "success" ]]; then
+            echo "Required Windows functional suite ended with ${E2E_FUNCTIONAL_OUTCOME:-no outcome}" >&2
+            failed=1
+          fi
+          if [[ "${E2E_WORKSPACE_SELECTED:-}" == "true" && "$E2E_WORKSPACE_OUTCOME" != "success" ]]; then
+            echo "Required Windows workspace suite ended with ${E2E_WORKSPACE_OUTCOME:-no outcome}" >&2
             failed=1
           fi
           check renderer_layout "$RENDERER_LAYOUT_OUTCOME"

@@ -94,7 +94,9 @@ const reconstructedDiffText = async (
     }
   })
 
-test('edits uploaded Markdown versions and keeps diff navigation coherent', async ({ app }) => {
+test('edits uploaded Markdown versions and keeps diff navigation coherent @pr-mainline', async ({
+  app
+}) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
@@ -213,7 +215,9 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent', asyn
   await expect(preview).toBeHidden()
 })
 
-test('links a multi-page PDF upload as Reading context in a new project', async ({ app }) => {
+test('links a multi-page PDF upload as Reading context in a new project @pr-mainline', async ({
+  app
+}) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)

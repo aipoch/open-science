@@ -55,7 +55,7 @@ const openProjectActions = async (page: Page, name: string): Promise<void> => {
   await projects.getByRole('button', { name: `Open actions for ${name}` }).click()
 }
 
-test('creates a project through the desktop stack and reloads it after relaunch', async ({
+test('creates a project through the desktop stack and reloads it after relaunch @pr-mainline', async ({
   app
 }) => {
   await app.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
@@ -78,7 +78,7 @@ test('creates a project through the desktop stack and reloads it after relaunch'
   await expect(projects.getByRole('button', { name: PROJECT_NAME, exact: true })).toBeVisible()
 })
 
-test('renames a project through the home actions and keeps the change after relaunch', async ({
+test('renames a project through the home actions and keeps the change after relaunch @pr-mainline', async ({
   app
 }) => {
   const renamedProject = 'Renamed Electron project'
@@ -105,7 +105,7 @@ test('renames a project through the home actions and keeps the change after rela
   ).toBeVisible()
 })
 
-test('deletes a project through confirmation and keeps it absent after relaunch', async ({
+test('deletes a project through confirmation and keeps it absent after relaunch @pr-mainline', async ({
   app
 }) => {
   let page = await app.completeOnboarding()

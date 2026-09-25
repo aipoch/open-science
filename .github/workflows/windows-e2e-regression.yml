@@ -1,0 +1,252 @@
+name: Windows E2E Regression
+
+# Complete business E2E is independent of portable Windows Full Test and PR mainline selection.
+# Scheduled failures share the Mac regression tracking-issue lifecycle, with their own identity.
+on:
+  schedule:
+    - cron: '17 18 * * *' # UTC; 02:17 Asia/Singapore
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: windows-e2e-regression-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Check for untested main changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_test: ${{ steps.decide.outputs.should_run }}
+    steps:
+      - name: Checkout skip check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/skip-unchanged-scheduled
+          sparse-checkout-cone-mode: false
+      - name: Check for untested main changes
+        id: decide
+        uses: ./.github/actions/skip-unchanged-scheduled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          workflow-file: windows-e2e-regression.yml
+
+  windows_e2e_setup:
+    name: Prepare Windows E2E
+    needs: plan
+    if: ${{ needs.plan.outputs.should_test == 'true' }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      node_version: ${{ steps.node.outputs.node-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
+      - name: Build Electron application
+        run: npm run build:e2e
+      - name: Test snapshot transport
+        run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
+      - name: Pack E2E setup
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs pack "$RUNNER_TEMP/e2e-setup"
+      - name: Upload E2E setup
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-setup-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-setup/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  windows_e2e:
+    name: Windows E2E regression (shard ${{ matrix.shard }}/3)
+    needs: [plan, windows_e2e_setup]
+    if: ${{ !cancelled() && needs.plan.outputs.should_test == 'true' && needs.windows_e2e_setup.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ needs.windows_e2e_setup.outputs.node_version }}
+          package-manager-cache: false
+      - name: Download E2E setup
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_e2e_setup.outputs.artifact_id }}
+          path: ${{ runner.temp }}/e2e-setup/
+          merge-multiple: true
+      - name: Restore E2E setup
+        id: setup
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
+      - name: Install headless Chromium
+        run: npx playwright install chromium --only-shell
+      # Scheduled coverage reports retry-passed flakes as failures, like Mac Source Regression.
+      - name: Run renderer layout pilot
+        id: renderer_layout
+        if: ${{ steps.setup.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
+        # NetLog traced blank fixtures to Windows WSAENOBUFS after hundreds of asset reloads.
+        # Keep each browser process serialized and cap its loopback socket churn with runner shards.
+        shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
+        run: npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests
+      - name: Run functional journeys
+        id: e2e_functional_windows
+        if: ${{ steps.setup.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
+        # Isolate Electron desktops: parallelize across runners, never within one runner.
+        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=600000 --fail-on-flaky-tests
+      - name: Upload functional failure artifacts
+        if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: functional-e2e-windows-failure-${{ matrix.shard }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+      - name: Run workspace journeys
+        id: e2e_workspace_windows
+        if: ${{ steps.setup.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_windows
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace_windows.json
+        run: npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=900000 --fail-on-flaky-tests
+      - name: Upload workspace failure artifacts
+        if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: workspace-e2e-windows-failure-${{ matrix.shard }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+      - name: Upload E2E timing and blob reports
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-reports-windows-${{ matrix.shard }}
+          overwrite: true
+          path: |
+            blob-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+      - name: Enforce complete Windows E2E suites
+        if: ${{ always() }}
+        shell: bash
+        env:
+          SETUP: ${{ steps.setup.outcome }}
+          BROWSER: ${{ steps.renderer_layout.outcome }}
+          FUNCTIONAL: ${{ steps.e2e_functional_windows.outcome }}
+          WORKSPACE: ${{ steps.e2e_workspace_windows.outcome }}
+        run: |
+          [[ "$SETUP" == "success" && "$BROWSER" == "success" && "$FUNCTIONAL" == "success" && "$WORKSPACE" == "success" ]]
+
+  e2e_reports:
+    name: E2E timing and merged report
+    needs: [windows_e2e]
+    if: ${{ !cancelled() && needs.windows_e2e.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install report tools
+        run: npm ci --ignore-scripts --no-audit --fund=false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: e2e-reports-*
+          path: test-results/downloaded-e2e
+      - name: Summarize timing and merge reports
+        run: node scripts/ci/merge-e2e-reports.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ always() }}
+        with:
+          name: e2e-combined-report
+          overwrite: true
+          path: |
+            playwright-report/
+            test-results/e2e-timing.md
+          retention-days: 5
+
+  # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
+  report:
+    name: Report scheduled outcome
+    needs: [plan, windows_e2e_setup, windows_e2e, e2e_reports]
+    if: ${{ always() && github.event_name == 'schedule' && (needs.plan.result != 'success' || needs.plan.outputs.should_test == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci/report-scheduled-failure.mjs
+          sparse-checkout-cone-mode: false
+      - name: Open, refresh, or close the tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CONCLUSION: ${{ needs.plan.result == 'success' && needs.windows_e2e_setup.result == 'success' && needs.windows_e2e.result == 'success' && needs.e2e_reports.result == 'success' && 'success' || 'failure' }}
+        with:
+          script: |
+            const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)
+            await reportScheduledOutcome({
+              github,
+              repo: context.repo,
+              workflowFile: 'windows-e2e-regression.yml',
+              workflowName: context.workflow,
+              runId: context.runId,
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              headSha: context.sha,
+              conclusion: process.env.CONCLUSION,
+              log: core.info
+            })
