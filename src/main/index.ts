@@ -116,7 +116,9 @@ const buildZoomSafeApplicationMenu = (
               if (shortcut === 'reset') {
                 webContents.setZoomLevel(0)
               } else {
-                const direction = shortcut === 'increase' ? 1 : -1
+                // Electron's zoomIn/zoomOut roles advance by 10%, which is half a Chromium
+                // zoom level. Keep secondary windows aligned with their native menu behavior.
+                const direction = shortcut === 'increase' ? 0.5 : -0.5
                 webContents.setZoomLevel(webContents.getZoomLevel() + direction)
               }
             }
