@@ -25,7 +25,7 @@
 
 ## 🐛 Corrections
 
-- **Aperçu et interface** — la taille de police de l’onglet de lecture PDF correspond à celle de l’en-tête du fichier (#3036) ; des infobulles apparaissent sur les icônes de la barre latérale réduite (#3017) ; les zones cliquables des lignes s’alignent avec leurs surfaces de survol (#3013) ; le mouvement d’entrée des bulles est ignoré lors des changements de survol à chaud (#3032).
+- **Aperçu et interface** — la taille de police de l’onglet de lecture PDF correspond à celle de l’en-tête du fichier (#3036) ; des infobulles apparaissent sur les icônes de la barre latérale réduite (#3017) ; les zones cliquables des lignes s’alignent avec leurs surfaces de survol (#3013) ; le mouvement d’entrée des bulles est ignoré lors des changements de survol à chaud (#3032) ; le mouvement d’entrée est ignoré lors du basculement entre aperçus de citations (#3038).
 - **Notebook** — les barrières de récupération des noyaux sont isolées par voie, si bien que la récupération d’un noyau ne bloque jamais un autre (#3031).
 - **Sessions et récupération** — les sauvegardes de conversation sont différées pendant l’exécution des tâches (#3012) ; les nouvelles tentatives échouées restent récupérables et fermables (#3019) ; les notifications d’erreur d’exécution peuvent être fermées (#3002) ; la barrière de récupération des archives est limitée aux projets concernés (#3023) ; les exports de diagnostics renommés reçoivent un suffixe d’archive (#3022).
 - **Connecteurs et literature** — l’accès natif aux fichiers honore les dossiers autorisés (#3021) ; les résumés Crossref sont importés lors de la complétion des métadonnées (#3020) ; la classification sélectionne le premier modèle pour les deux fonctionnalités (#3006).

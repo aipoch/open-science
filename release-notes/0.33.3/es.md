@@ -25,7 +25,7 @@
 
 ## 🐛 Correcciones
 
-- **Vista previa e interfaz** — el tamaño de fuente de la pestaña de lectura de PDF coincide con la cabecera del archivo (#3036); aparecen tooltips en los iconos de la barra lateral contraída (#3017); las zonas de interacción de las filas se alinean con sus superficies de hover (#3013); el movimiento de entrada de las burbujas se omite durante los cambios de hover cálidos (#3032).
+- **Vista previa e interfaz** — el tamaño de fuente de la pestaña de lectura de PDF coincide con la cabecera del archivo (#3036); aparecen tooltips en los iconos de la barra lateral contraída (#3017); las zonas de interacción de las filas se alinean con sus superficies de hover (#3013); el movimiento de entrada de las burbujas se omite durante los cambios de hover cálidos (#3032); el movimiento de entrada se omite al cambiar entre vistas previas de citas (#3038).
 - **Notebook** — las barreras de recuperación de kernel se aíslan por carril, de modo que la recuperación de un kernel nunca bloquea a otro (#3031).
 - **Sesiones y recuperación** — los guardados de conversación se posponen mientras las ejecuciones están activas (#3012); los reintentos fallidos siguen siendo recuperables y descartables (#3019); los avisos de error de ejecución se pueden descartar (#3002); la puerta de recuperación del archivo se limita a los proyectos afectados (#3023); las exportaciones de diagnóstico renombradas reciben un sufijo de archivo (#3022).
 - **Conectores y literature** — el acceso nativo a archivos respeta las carpetas concedidas (#3021); los resúmenes de Crossref se importan durante la finalización de metadatos (#3020); la clasificación selecciona el primer modelo para ambas funciones (#3006).

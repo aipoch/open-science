@@ -25,7 +25,7 @@
 
 ## 🐛 Bug Fixes
 
-- **Preview and interface** — the PDF reading tab font size matches the file header (#3036); tooltips appear on collapsed sidebar icons (#3017); row hit targets align with their hover surfaces (#3013); bubble entry motion is skipped during warm hover switches (#3032).
+- **Preview and interface** — the PDF reading tab font size matches the file header (#3036); tooltips appear on collapsed sidebar icons (#3017); row hit targets align with their hover surfaces (#3013); bubble entry motion is skipped during warm hover switches (#3032); entry motion is skipped when switching citation previews (#3038).
 - **Notebook** — kernel recovery fences are isolated by lane so one kernel's recovery never blocks another (#3031).
 - **Sessions and recovery** — conversation saves defer while runs are active (#3012); failed retries stay recoverable and dismissible (#3019); run error notices can be dismissed (#3002); the archive recovery gate is scoped to affected projects (#3023); renamed diagnostic exports receive an archive suffix (#3022).
 - **Connectors and literature** — native file access honors granted folders (#3021); Crossref abstracts import during metadata completion (#3020); classification selects the first model for both features (#3006).

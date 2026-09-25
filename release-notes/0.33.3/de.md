@@ -25,7 +25,7 @@
 
 ## 🐛 Fehlerbehebungen
 
-- **Vorschau und Oberfläche** — Die Schriftgröße der PDF-Leseansicht stimmt mit der Datei-Kopfzeile überein (#3036); Tooltips erscheinen auf eingeklappten Seitenleisten-Symbolen (#3017); Zeilen-Klickflächen stimmen mit ihren Hover-Flächen überein (#3013); die Bubble-Einblendbewegung wird bei warmen Hover-Wechseln übersprungen (#3032).
+- **Vorschau und Oberfläche** — Die Schriftgröße der PDF-Leseansicht stimmt mit der Datei-Kopfzeile überein (#3036); Tooltips erscheinen auf eingeklappten Seitenleisten-Symbolen (#3017); Zeilen-Klickflächen stimmen mit ihren Hover-Flächen überein (#3013); die Bubble-Einblendbewegung wird bei warmen Hover-Wechseln übersprungen (#3032); die Einblendbewegung wird beim Wechsel der Zitier-Vorschau übersprungen (#3038).
 - **Notebook** — Kernel-Wiederherstellungen werden nach Lane isoliert, sodass die Wiederherstellung eines Kernels niemals einen anderen blockiert (#3031).
 - **Sitzungen und Wiederherstellung** — Gesprächsspeicherungen werden während aktiver Läufe verschoben (#3012); fehlgeschlagene Wiederholungen bleiben wiederherstellbar und schließbar (#3019); Fehlermeldungen zu Läufen können geschlossen werden (#3002); die Archiv-Wiederherstellungssperre gilt nur für betroffene Projekte (#3023); umbenannte Diagnose-Exporte erhalten ein Archiv-Suffix (#3022).
 - **Konnektoren und Literature** — Der native Dateizugriff respektiert gewährte Ordner (#3021); Crossref-Abstracts werden beim Vervollständigen der Metadaten importiert (#3020); die Klassifikation wählt für beide Funktionen das erste Modell (#3006).
