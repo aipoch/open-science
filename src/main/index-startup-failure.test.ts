@@ -252,6 +252,7 @@ vi.mock('./managed-preview-protocol', () => ({
 }))
 vi.mock('./windows', () => ({
   configureMainWindow: vi.fn(),
+  isMainWindow: vi.fn(() => true),
   createMainWindow: () => {
     queueMicrotask(() => startupWindow.emit('ready-to-show'))
     return startupWindow
@@ -265,6 +266,7 @@ vi.mock('./locale/owner', () => ({
 }))
 vi.mock('./locale/ipc', () => ({ registerLocalePreferenceIpc: () => fixture.disposeLocaleIpc }))
 vi.mock('./window-shortcuts', () => ({ installWindowShortcuts: vi.fn() }))
+vi.mock('./window-ipc', () => ({ registerWindowZoomIpcHandler: vi.fn() }))
 vi.mock('./network-ipc', () => ({ registerNetworkIpcHandlers: vi.fn() }))
 vi.mock('./database/database-startup-logging', () => ({
   createDatabaseStartupLogging: () => ({ migrationOptions: vi.fn(), reportBlocked: vi.fn() })

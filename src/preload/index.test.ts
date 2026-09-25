@@ -821,9 +821,11 @@ describe('preload bridge — public surface inventory', () => {
       'window.onCloseConfirmRequest',
       'window.onFindInPageResult',
       'window.onHideWindowFind',
+      'window.onInterfaceScaleShortcut',
       'window.onShowWindowFind',
       'window.onWindowFindAppearance',
-      'window.sendCloseConfirmResponse'
+      'window.sendCloseConfirmResponse',
+      'window.setZoomFactor'
     ])
   })
 })
