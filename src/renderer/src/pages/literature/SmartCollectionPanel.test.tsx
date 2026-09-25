@@ -546,11 +546,11 @@ it('confirms and abandons a paused automatic run', async () => {
   )
 })
 
-it('offers fresh-run recovery for an ambiguous automatic pause', async () => {
+it('keeps clear-pause available without a model for an unattributed pause', async () => {
   view = {
     ...view,
     autoUpdate: true,
-    configured: true,
+    configured: false,
     automaticPauseReason: 'daily-limit',
     run: {
       id: 'latest-run',
@@ -570,14 +570,14 @@ it('offers fresh-run recovery for an ambiguous automatic pause', async () => {
   })
   render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
   const freshRun = await screen.findByRole('button', { name: 'Start a fresh automatic run' })
-  expect(screen.getByRole('button', { name: 'Resume analysis' })).toBeTruthy()
+  expect(freshRun.hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: 'Resume analysis' }).hasAttribute('disabled')).toBe(
+    true
+  )
   expect(screen.getByRole('button', { name: 'Abandon run' })).toBeTruthy()
-  expect(
-    screen.getByRole('button', { name: 'Resume automatic updates' }).hasAttribute('disabled')
-  ).toBe(true)
-  fireEvent.click(freshRun)
+  fireEvent.click(screen.getByRole('button', { name: 'Clear automatic pause' }))
   await screen.findByRole('alertdialog')
-  fireEvent.click(screen.getAllByRole('button', { name: 'Start a fresh automatic run' }).at(-1)!)
+  fireEvent.click(screen.getAllByRole('button', { name: 'Clear automatic pause' }).at(-1)!)
   await waitFor(() =>
     expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'abandon' }))
   )
@@ -607,6 +607,37 @@ it('keeps the automatic pause notice when a newer manual run is interrupted', as
   expect(await screen.findByText('Automatic updates paused')).toBeTruthy()
   expect(screen.getAllByRole('button', { name: 'Abandon run' })).toHaveLength(2)
   expect(screen.getByRole('button', { name: 'Resume analysis' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Continue in a new run' })).toBeTruthy()
+})
+
+it('offers abandon for a completed run with a residual owned pause', async () => {
+  view = {
+    ...view,
+    autoUpdate: true,
+    configured: false,
+    automaticPauseReason: 'interrupted',
+    automaticPauseRunId: 'completed-run',
+    run: {
+      id: 'completed-run',
+      kind: 'refresh',
+      state: 'completed',
+      done: 1,
+      total: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      usageIncomplete: false,
+      updatedAt: 1
+    }
+  }
+  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Abandon run' }))
+  await screen.findByRole('alertdialog')
+  fireEvent.click(screen.getAllByRole('button', { name: 'Abandon run' }).at(-1)!)
+  await waitFor(() =>
+    expect(transact).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'abandon', runId: 'completed-run' })
+    )
+  )
 })
 
 it.each(['interrupted', 'cancelled'] as const)(

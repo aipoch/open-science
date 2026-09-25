@@ -1,8 +1,5 @@
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
-import {
-  literatureSmartPauseRunBackfillStatement,
-  literatureSmartPauseRunMigration
-} from './migrations/0045-literature-smart-pause-run'
+import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
@@ -1950,13 +1947,6 @@ const applyManifestMigration = async (
           )
         ) {
           await migrationSqlExecutor.execute(transaction, literatureDiscoveryBackfillStatement)
-        }
-        if (
-          contractAlreadySatisfied &&
-          migration.id === literatureSmartPauseRunMigration.id &&
-          migration.checksum === LITERATURE_SMART_PAUSE_RUN_CHECKSUM
-        ) {
-          await migrationSqlExecutor.execute(transaction, literatureSmartPauseRunBackfillStatement)
         }
         if (!contractAlreadySatisfied) {
           if (canVerifyAsCurrentSchema && migration.id === projectPreviewStateOwnerFkMigration.id) {

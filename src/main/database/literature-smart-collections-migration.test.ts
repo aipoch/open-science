@@ -167,128 +167,72 @@ it('adds empty smart storage while preserving ordinary collections, membership a
   }
 })
 
-it.each([
-  {
-    label: 'older failed automatic run',
-    runState: 'failed',
-    pauseReason: 'interrupted',
-    automaticDay: 1,
-    otherDay: 2,
-    expectedRunId: null
-  },
-  {
-    label: 'older cancelled automatic run at the daily limit',
-    runState: 'cancelled',
-    pauseReason: 'daily-limit',
-    automaticDay: 1,
-    otherDay: 2,
-    expectedRunId: null
-  },
-  {
-    label: 'latest failed automatic run',
-    runState: 'failed',
-    pauseReason: 'interrupted',
-    automaticDay: 2,
-    otherDay: 1,
-    expectedRunId: 'automatic-run'
-  },
-  {
-    label: 'latest cancelled automatic run',
-    runState: 'cancelled',
-    pauseReason: 'daily-limit',
-    automaticDay: 2,
-    otherDay: 1,
-    expectedRunId: 'automatic-run'
-  },
-  {
-    label: 'runs with identical creation times',
-    runState: 'cancelled',
-    pauseReason: 'daily-limit',
-    automaticDay: 1,
-    otherDay: 1,
-    expectedRunId: null
-  }
-] as const)(
-  'keeps pause ownership conservative for $label while adopting the current schema',
-  async ({ runState, pauseReason, automaticDay, otherDay, expectedRunId }) => {
-    const root = await mkdtemp(join(tmpdir(), 'smart-pause-migration-'))
-    const client = createProjectDbClient(root)
-    try {
-      await migrateApplicationDatabase(client)
-      await client.literatureCollection.create({
-        data: {
-          id: 'paused',
-          name: 'Paused',
-          nameKey: 'paused',
-          smart: {
-            create: {
-              scopeKind: 'library',
-              autoUpdate: true,
-              automaticPauseReason: pauseReason
-            }
+it('leaves pre-0045 automatic pause ownership unknown', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'smart-pause-migration-'))
+  const client = createProjectDbClient(root)
+  try {
+    await migrateApplicationDatabase(client)
+    await client.literatureCollection.create({
+      data: {
+        id: 'paused',
+        name: 'Paused',
+        nameKey: 'paused',
+        smart: {
+          create: {
+            scopeKind: 'library',
+            autoUpdate: true,
+            automaticPauseReason: 'daily-limit'
           }
         }
-      })
-      await client.literatureSmartRuleRevision.create({
-        data: {
-          collectionId: 'paused',
-          revision: 1,
-          description: '',
-          inclusionCriteria: 'Trials',
-          exclusionCriteria: '',
-          scopeKind: 'library',
-          evidenceMode: 'abstract'
-        }
-      })
-      await client.literatureSmartRun.createMany({
-        data: [
-          {
-            id: 'automatic-run',
-            collectionId: 'paused',
-            kind: 'refresh',
-            state: runState,
-            ruleRevision: 1,
-            policyKey: 'fixture',
-            createdAt: new Date(`2025-01-0${automaticDay}T00:00:00.000Z`)
-          },
-          {
-            id: 'unattributed-run',
-            collectionId: 'paused',
-            kind: 'refresh',
-            state: 'interrupted',
-            ruleRevision: 1,
-            policyKey: 'fixture',
-            createdAt: new Date(`2025-01-0${otherDay}T00:00:00.000Z`)
-          }
-        ]
-      })
-      await client.classificationUsage.create({
-        data: {
-          eventId: 'automatic-usage',
-          collectionId: 'paused',
-          runId: 'automatic-run',
-          scenario: 'literature-automatic',
-          providerId: 'fixture',
-          model: 'fixture',
-          occurredAt: new Date(),
-          status: 'completed',
-          inputTokens: 1n,
-          outputTokens: 1n,
-          usageIncomplete: false
-        }
-      })
-      await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE id = '0045_literature_smart_pause_run'`
-      )
+      }
+    })
+    await client.literatureSmartRuleRevision.create({
+      data: {
+        collectionId: 'paused',
+        revision: 1,
+        description: '',
+        inclusionCriteria: 'Trials',
+        exclusionCriteria: '',
+        scopeKind: 'library',
+        evidenceMode: 'abstract'
+      }
+    })
+    await client.literatureSmartRun.create({
+      data: {
+        id: 'automatic-run',
+        collectionId: 'paused',
+        kind: 'refresh',
+        state: 'interrupted',
+        ruleRevision: 1,
+        policyKey: 'fixture'
+      }
+    })
+    await client.classificationUsage.create({
+      data: {
+        eventId: 'automatic-usage',
+        collectionId: 'paused',
+        runId: 'automatic-run',
+        scenario: 'literature-automatic',
+        providerId: 'fixture',
+        model: 'fixture',
+        occurredAt: new Date(),
+        status: 'completed',
+        inputTokens: 1n,
+        outputTokens: 1n,
+        usageIncomplete: false
+      }
+    })
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE id = '0045_literature_smart_pause_run'`
+    )
 
-      await migrateApplicationDatabase(client)
+    await migrateApplicationDatabase(client)
 
-      await expect(
-        client.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: 'paused' } })
-      ).resolves.toMatchObject({ automaticPauseRunId: expectedRunId })
-    } finally {
-      await client.$disconnect()
-      await rm(root, { recursive: true, force: true })
-    }
+    await expect(
+      client.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: 'paused' } })
+    ).resolves.toMatchObject({ automaticPauseRunId: null })
+  } finally {
+    await client.$disconnect()
+    await rm(root, { recursive: true, force: true })
   }
-)
+})

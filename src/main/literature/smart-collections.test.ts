@@ -2992,6 +2992,68 @@ it('abandons a failed storage-error run and clears its durable pause', async () 
   expect(classify).toHaveBeenCalledOnce()
 })
 
+it('clears a completed run pause without changing its classification results', async () => {
+  const id = await create()
+  await refresh(id)
+  const run = await db.literatureSmartRun.findFirstOrThrow({ where: { collectionId: id } })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: { autoUpdate: true, automaticPauseReason: 'interrupted', automaticPauseRunId: run.id }
+  })
+  configured = false
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    runId: run.id,
+    offset: 0
+  })
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: undefined,
+    matches: 1,
+    run: { id: run.id, state: 'completed', abandoned: true }
+  })
+  expect(classify).toHaveBeenCalledOnce()
+})
+
+it('does not resume an older automatic run after a newer manual run completes', async () => {
+  const { id, runId } = await pauseAfterOneResult(true)
+  classify.mockResolvedValue({
+    verdict: 'no-match',
+    model: 'jev-1.13.0',
+    confidence: 1,
+    probabilities: { match: 0, 'no-match': 1, uncertain: 0 }
+  })
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'recompute',
+    offset: 0
+  })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  const latestId = (await owner.view(id)).run!.id
+  const calls = classify.mock.calls.length
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'resume-automatic',
+    offset: 0
+  })
+
+  expect((await owner.view(id)).run?.id).toBe(latestId)
+  expect((await owner.view(id)).automaticPauseReason).toBeUndefined()
+  expect(classify).toHaveBeenCalledTimes(calls)
+  expect(await db.literatureSmartRun.findUniqueOrThrow({ where: { id: runId } })).toMatchObject({
+    state: 'cancelled'
+  })
+  expect(
+    await db.literatureSmartAssessment.count({ where: { collectionId: id, verdict: 'no-match' } })
+  ).toBe(8)
+})
+
 it('re-evaluates abandoned checkpoints on the next automatic refresh', async () => {
   const id = await create()
   await db.literatureSmartCollection.update({
@@ -3073,7 +3135,7 @@ it('does not clear an automatic pause when abandoning a newer manual run', async
   ).toMatchObject({ state: 'interrupted' })
 })
 
-it('re-evaluates pending references when starting a fresh run from an ambiguous pause', async () => {
+it('discards unfinished progress when clearing an unattributed pause', async () => {
   const id = await create()
   await refresh(id)
   await owner.execute({
@@ -3104,6 +3166,7 @@ it('re-evaluates pending references when starting a fresh run from an ambiguous 
   expect((await owner.view(id)).automaticPauseRunId).toBeUndefined()
   expect((await owner.view(id)).rows[0].verdict).toBe('pending')
   classify.mockClear()
+  configured = false
   await owner.execute({
     kind: 'smart-collection',
     collectionId: id,
@@ -3111,17 +3174,24 @@ it('re-evaluates pending references when starting a fresh run from an ambiguous 
     offset: 0
   })
 
-  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
-  expect(classify).toHaveBeenCalledOnce()
+  expect((await owner.view(id)).automaticPauseReason).toBeUndefined()
+  expect(classify).not.toHaveBeenCalled()
+  expect(
+    await db.literatureSmartRun.findUniqueOrThrow({ where: { id: runs[1].id } })
+  ).toMatchObject({ abandonedAt: expect.any(Date) })
+  configured = true
+  owner.schedule()
+  await new Promise((resolve) => setTimeout(resolve, 850))
+  expect(classify).not.toHaveBeenCalled()
   expect(await owner.view(id)).toMatchObject({ automaticPauseReason: undefined, matches: 1 })
-  expect((await owner.view(id)).run?.id).not.toBe(runs[1].id)
+  expect((await owner.view(id)).run?.id).toBe(runs[1].id)
   expect(
     await db.literatureSmartRun.findMany({
       where: { id: { in: runs.map((run) => run.id) } },
       orderBy: { createdAt: 'asc' },
       select: { abandonedAt: true }
     })
-  ).toEqual([{ abandonedAt: null }, { abandonedAt: null }])
+  ).toEqual([{ abandonedAt: null }, { abandonedAt: expect.any(Date) }])
 })
 
 it('drains paid requests and retains a durable pause when both result and failure writes fail', async () => {

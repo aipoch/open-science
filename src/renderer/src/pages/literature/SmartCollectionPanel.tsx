@@ -271,6 +271,17 @@ export function SmartCollectionPanel({
     !view?.run?.abandoned &&
     (view?.run?.state === 'cancelled' || view?.run?.state === 'interrupted')
   const automaticPauseVisible = view?.autoUpdate && Boolean(view.automaticPauseReason)
+  const canResumeAutomaticRun =
+    automaticPauseVisible &&
+    Boolean(view?.automaticPauseRunId) &&
+    view?.run?.id === view?.automaticPauseRunId &&
+    !view?.run?.abandoned &&
+    (view?.run?.state === 'cancelled' ||
+      view?.run?.state === 'interrupted' ||
+      ((view.automaticPauseReason === 'storage-error' ||
+        view.automaticPauseReason === 'interrupted') &&
+        view?.run?.state === 'failed')) &&
+    view.automaticPauseReason !== 'run-limit'
   const continueAutomaticRun =
     automaticPauseVisible &&
     view?.automaticPauseReason === 'run-limit' &&
@@ -442,7 +453,9 @@ export function SmartCollectionPanel({
                 aria-label={
                   view.automaticPauseReason === 'run-limit'
                     ? t('Continue in a new run')
-                    : t('Resume automatic updates')
+                    : canResumeAutomaticRun
+                      ? t('Resume automatic updates')
+                      : t('Start a fresh automatic run')
                 }
                 disabled={disabled}
                 onClick={() => void run('resume-automatic')}
@@ -454,7 +467,7 @@ export function SmartCollectionPanel({
                 variant="ghost"
                 size="icon-sm"
                 aria-label={t('Resume analysis')}
-                disabled={disabled}
+                disabled={disabled || (automaticPauseVisible && !view.automaticPauseRunId)}
                 onClick={() => void run('resume')}
               >
                 <Play className="size-4" aria-hidden="true" />
@@ -650,18 +663,15 @@ export function SmartCollectionPanel({
             label:
               view.automaticPauseReason === 'run-limit'
                 ? t('Continue in a new run')
-                : t('Resume automatic updates'),
+                : canResumeAutomaticRun
+                  ? t('Resume automatic updates')
+                  : t('Start a fresh automatic run'),
             onClick: () => void run('resume-automatic'),
             disabled:
-              busy ||
-              decisionPending ||
-              refreshFailed ||
-              !view.configured ||
-              !view.sourceAvailable ||
-              (!view.automaticPauseRunId && view.automaticPauseReason !== 'run-limit')
+              busy || decisionPending || refreshFailed || !view.configured || !view.sourceAvailable
           }}
           secondaryButton={{
-            label: view.automaticPauseRunId ? t('Abandon run') : t('Start a fresh automatic run'),
+            label: view.automaticPauseRunId ? t('Abandon run') : t('Clear automatic pause'),
             onClick: () => {
               if (view.automaticPauseRunId) setConfirmAbandon(view.automaticPauseRunId)
               else setConfirmClearPause(true)
@@ -927,12 +937,12 @@ export function SmartCollectionPanel({
       />
       <ConfirmActionDialog
         open={confirmClearPause}
-        title={t('Start a fresh automatic run')}
+        title={t('Clear automatic pause')}
         description={t(
-          'Clear this ambiguous pause and start a fresh automatic run? Existing results and interrupted runs will be kept.'
+          'Clear this pause and discard unfinished run progress? Completed classification results will be kept.'
         )}
         cancelLabel={t('Cancel')}
-        confirmLabel={t('Start a fresh automatic run')}
+        confirmLabel={t('Clear automatic pause')}
         destructive
         loading={busy}
         onCancel={() => setConfirmClearPause(false)}
