@@ -207,7 +207,8 @@ class SkillCatalogModule {
   private async validatePromotedRegisteredHelpers(user: readonly BundledSkill[]): Promise<void> {
     const featured = await this.skillRegistry.list()
     await validateRegisteredSkillPackages(
-      await this.registeredHelperPackagesFromCatalog(this.mergeCatalog(featured, user))
+      await this.registeredHelperPackagesFromCatalog(this.mergeCatalog(featured, user)),
+      this.options.storageRoot
     )
   }
 
@@ -590,7 +591,9 @@ class SkillCatalogModule {
     if ((await this.skillRegistry.list()).some((entry) => entry.id === id)) {
       throw new Error('Built-in Skills cannot be exported.')
     }
-    const archive = await this.userSkills.withSkillReadLock(id, buildSkillExportArchive)
+    const archive = await this.userSkills.withSkillReadLock(id, (skill) =>
+      buildSkillExportArchive(skill, this.options.storageRoot)
+    )
     if (!archive) throw new Error(`Unknown skill: ${id}`)
     return archive
   }

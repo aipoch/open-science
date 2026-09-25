@@ -264,7 +264,9 @@ export class HostSkillsService {
   ): Promise<HostSkillReadResult> {
     const files =
       relativePath === 'SKILL.md'
-        ? (await inspectSkillPackage(root)).map(({ relativePath: path }) => path)
+        ? (await inspectSkillPackage(root, { storageRoot: this.options.storageRoot })).map(
+            ({ relativePath: path }) => path
+          )
         : undefined
     return {
       name,
@@ -309,7 +311,9 @@ export class HostSkillsService {
     origin: HostSkillOrigin,
     expectedName?: string
   ): Promise<HostSkillValidationResult> {
-    const report = await validateSkillPackage(sourceDir, name, expectedName)
+    const report = await validateSkillPackage(sourceDir, name, expectedName, {
+      storageRoot: this.options.storageRoot
+    })
     return {
       valid: report.errors.length === 0,
       name: report.name,
@@ -399,7 +403,7 @@ export class HostSkillsService {
     target: string,
     nextBytes: number
   ): Promise<void> {
-    const inventory = await inspectSkillPackage(root)
+    const inventory = await inspectSkillPackage(root, { storageRoot: this.options.storageRoot })
     let count = inventory.length
     const total = inventory.reduce((sum, file) => sum + file.size, 0)
     const replacedBytes =

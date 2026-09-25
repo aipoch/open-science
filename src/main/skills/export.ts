@@ -52,10 +52,14 @@ type SkillExportDialog = {
   publishUserFile?: typeof publishUserFile
 }
 
-const collectFiles = async (directory: string, skillName: string): Promise<Zippable> => {
+const collectFiles = async (
+  directory: string,
+  skillName: string,
+  storageRoot?: string
+): Promise<Zippable> => {
   let inventory: SkillPackageFile[]
   try {
-    inventory = await inspectSkillPackage(directory)
+    inventory = await inspectSkillPackage(directory, { storageRoot })
   } catch (error) {
     if (!(error instanceof SkillPackagePolicyError)) throw error
     if (error.reason === 'unsafePath') throw new Error('Skill path cannot be imported safely.')
@@ -102,10 +106,11 @@ const collectFiles = async (directory: string, skillName: string): Promise<Zippa
 }
 
 export const buildSkillExportArchive = async (
-  skill: BundledSkill
+  skill: BundledSkill,
+  storageRoot?: string
 ): Promise<SkillExportArchive> => ({
   fileName: skillExportFileName(skill.displayName, basename(skill.sourceDir) || skill.id),
-  archiveBytes: zipSync(await collectFiles(skill.sourceDir, skill.name), { level: 6 })
+  archiveBytes: zipSync(await collectFiles(skill.sourceDir, skill.name, storageRoot), { level: 6 })
 })
 
 export const saveSkillExport = async (

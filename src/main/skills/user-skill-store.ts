@@ -131,6 +131,10 @@ export class UserSkillStore {
     return join(this.storageRoot, 'skills', source)
   }
 
+  runtimeStorageRoot(): string {
+    return this.storageRoot
+  }
+
   skillDirectory(source: UserSkillSource, directoryName: string): string {
     return join(this.sourceDir(source), directoryName)
   }
@@ -289,7 +293,7 @@ export class UserSkillStore {
       const staged = await this.transactions.stage('personal', name, async (staging) => {
         await mkdir(staging, { recursive: true })
         await this.writeSkillDirectory(staging, prepared)
-        await inspectSkillPackage(staging)
+        await inspectSkillPackage(staging, { storageRoot: this.storageRoot })
       })
       await this.transactions.promote(staged)
       return `personal-${name}`
@@ -385,7 +389,7 @@ export class UserSkillStore {
         )
         const prepared = prepareSkillWrite(input, existingReferences)
         await this.writeSkillDirectory(staging, prepared)
-        await inspectSkillPackage(staging)
+        await inspectSkillPackage(staging, { storageRoot: this.storageRoot })
       })
       await this.transactions.promote(staged)
     }, ['personal'])

@@ -494,7 +494,8 @@ class AgentHomeSkillOwner {
       }
       try {
         const installed = await inspectSkillPackage(
-          this.store.skillDirectory('imported', directoryName)
+          this.store.skillDirectory('imported', directoryName),
+          { storageRoot: this.store.runtimeStorageRoot() }
         )
         const byPath = new Map(installed.map((file) => [file.relativePath, file]))
         for (const file of files) {

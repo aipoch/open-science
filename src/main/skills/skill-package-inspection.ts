@@ -90,7 +90,12 @@ export class SkillPackagePolicyError extends Error {
   }
 }
 
-export const inspectSkillPackage = async (root: string): Promise<SkillPackageFile[]> => {
+export type SkillPackageInspectionOptions = Readonly<{ storageRoot?: string }>
+
+export const inspectSkillPackage = async (
+  root: string,
+  options: SkillPackageInspectionOptions = {}
+): Promise<SkillPackageFile[]> => {
   const files: SkillPackageFile[] = []
   let totalBytes = 0
 
@@ -154,7 +159,7 @@ export const inspectSkillPackage = async (root: string): Promise<SkillPackageFil
   await visit(root, '', 0)
   // Helper descriptors are executable package metadata. Validate the staged bytes before Personal
   // or Imported transaction owners promote them into the live catalog.
-  await validateSkillHelperPackage(root)
+  await validateSkillHelperPackage(root, options.storageRoot)
   return files.sort((left, right) => compareText(left.relativePath, right.relativePath))
 }
 
@@ -252,11 +257,12 @@ export type SkillPackageValidation = Readonly<{
 export const validateSkillPackage = async (
   root: string,
   packageName: string,
-  expectedName?: string
+  expectedName?: string,
+  options: SkillPackageInspectionOptions = {}
 ): Promise<SkillPackageValidation> => {
   let inventory: SkillPackageFile[]
   try {
-    inventory = await inspectSkillPackage(root)
+    inventory = await inspectSkillPackage(root, options)
   } catch (error) {
     if (!(error instanceof SkillPackagePolicyError)) throw error
     return { name: packageName, files: [], errors: [error.toIssue()], warnings: [] }

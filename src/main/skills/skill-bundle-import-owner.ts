@@ -523,10 +523,12 @@ export class SkillBundleImportOwner {
       }
     }
     const files = await Promise.all(
-      (await inspectSkillPackage(dir)).map(async (file) => ({
-        relativePath: file.relativePath,
-        content: await readFile(file.absolutePath)
-      }))
+      (await inspectSkillPackage(dir, { storageRoot: this.store.runtimeStorageRoot() })).map(
+        async (file) => ({
+          relativePath: file.relativePath,
+          content: await readFile(file.absolutePath)
+        })
+      )
     )
     const digest = marketplaceContentDigest(files)
     const supplied = readImpact
@@ -774,7 +776,9 @@ export class SkillBundleImportOwner {
   }
 
   private async installedDigest(id: string): Promise<string> {
-    const files = await inspectSkillPackage(this.store.skillDirectory('imported', id))
+    const files = await inspectSkillPackage(this.store.skillDirectory('imported', id), {
+      storageRoot: this.store.runtimeStorageRoot()
+    })
     return marketplaceContentDigest(
       await Promise.all(
         files.map(async (file) => ({
@@ -947,7 +951,8 @@ export class SkillBundleImportOwner {
   ): Promise<boolean> {
     try {
       const installed = await inspectSkillPackage(
-        this.store.skillDirectory('imported', directoryName)
+        this.store.skillDirectory('imported', directoryName),
+        { storageRoot: this.store.runtimeStorageRoot() }
       )
       if (installed.length !== files.length) return false
       const byPath = new Map(installed.map((file) => [file.relativePath, file]))
@@ -989,7 +994,8 @@ export class SkillBundleImportOwner {
     }
     try {
       const installed = await inspectSkillPackage(
-        this.store.skillDirectory('imported', directoryName)
+        this.store.skillDirectory('imported', directoryName),
+        { storageRoot: this.store.runtimeStorageRoot() }
       )
       const byPath = new Map(installed.map((file) => [file.relativePath, file]))
       for (const file of files) {

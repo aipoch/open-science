@@ -1,8 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 
-import { validateNotebookHelperExports } from '../notebook/python-command'
+import { validateNotebookHelperExports, type PythonCommand } from '../notebook/python-command'
+import {
+  condaActivatedPath,
+  DEFAULT_PY_ENV,
+  envPrefix,
+  pythonBin,
+  runtimeRoot
+} from '../notebook/runtime-paths'
 
 const HELPER_MANIFEST_FILE = 'open-science.json'
 const HELPER_MANIFEST_SCHEMA_VERSION = 1
@@ -63,6 +71,20 @@ type RegisteredSkillHelperCatalogOptions = {
 
 type PreparedHelper = Omit<RegisteredSkillHelper, 'source'> & { sourceBytes: Buffer }
 type BoundHelper = Omit<RegisteredSkillHelper, 'source'>
+type HelperValidationOptions = Readonly<{ storageRoot?: string }>
+
+const managedPythonValidation = (
+  storageRoot: string | undefined
+): { python: PythonCommand; env: NodeJS.ProcessEnv } | undefined => {
+  if (!storageRoot) return undefined
+  const prefix = envPrefix(runtimeRoot(storageRoot), DEFAULT_PY_ENV)
+  const command = pythonBin(prefix)
+  if (!existsSync(command)) return undefined
+  return {
+    python: { command, baseArgs: [] },
+    env: { ...process.env, PATH: condaActivatedPath(prefix, process.env.PATH) }
+  }
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -238,7 +260,10 @@ const generationDigest = (
     )
     .digest('hex')}`
 
-const preparePackage = async (entry: RegisteredSkillPackage): Promise<PreparedHelper[]> => {
+const preparePackage = async (
+  entry: RegisteredSkillPackage,
+  validation: HelperValidationOptions = {}
+): Promise<PreparedHelper[]> => {
   const skillId = assertStableId(entry.skillId, 'Skill identity')
   if (!['builtin', 'personal', 'imported'].includes(entry.origin)) {
     fail(`Skill "${skillId}" has an invalid origin`)
@@ -257,7 +282,12 @@ const preparePackage = async (entry: RegisteredSkillPackage): Promise<PreparedHe
       descriptor.implementation
     )
     if (entry.origin !== 'builtin') {
-      await validateNotebookHelperExports(descriptor.id, source, descriptor.exports)
+      const runtime = managedPythonValidation(validation.storageRoot)
+      if (runtime) {
+        await validateNotebookHelperExports(descriptor.id, source, descriptor.exports, runtime)
+      } else {
+        await validateNotebookHelperExports(descriptor.id, source, descriptor.exports)
+      }
     }
     loaded.push({ descriptor, bytes, digest: sourceDigest(bytes) })
   }
@@ -299,18 +329,25 @@ const assertDependencyGraph = (
   for (const id of helpers.keys()) visit(id)
 }
 
-const validateSkillHelperPackage = async (packageRoot: string): Promise<void> => {
+const validateSkillHelperPackage = async (
+  packageRoot: string,
+  storageRoot?: string
+): Promise<void> => {
   const helpers = await readSkillHelperDescriptors(packageRoot)
-  await preparePackage({ skillId: 'staged-skill', origin: 'personal', packageRoot, helpers })
+  await preparePackage(
+    { skillId: 'staged-skill', origin: 'personal', packageRoot, helpers },
+    { storageRoot }
+  )
 }
 
 const prepareRegisteredSkillPackages = async (
-  packages: readonly RegisteredSkillPackage[]
+  packages: readonly RegisteredSkillPackage[],
+  validation: HelperValidationOptions = {}
 ): Promise<Map<string, PreparedHelper>> => {
   const prepared = new Map<string, PreparedHelper>()
   let totalBytes = 0
   for (const entry of packages) {
-    for (const helper of await preparePackage(entry)) {
+    for (const helper of await preparePackage(entry, validation)) {
       if (prepared.has(helper.id)) fail(`duplicate helper ID "${helper.id}" in registered catalog`)
       totalBytes += helper.sourceBytes.byteLength
       if (totalBytes > HELPER_SOURCE_TOTAL_MAX_BYTES) {
@@ -324,9 +361,10 @@ const prepareRegisteredSkillPackages = async (
 }
 
 const validateRegisteredSkillPackages = async (
-  packages: readonly RegisteredSkillPackage[]
+  packages: readonly RegisteredSkillPackage[],
+  storageRoot?: string
 ): Promise<void> => {
-  await prepareRegisteredSkillPackages(packages)
+  await prepareRegisteredSkillPackages(packages, { storageRoot })
 }
 
 class RegisteredSkillHelperCatalog {
@@ -553,7 +591,9 @@ class RegisteredSkillHelperCatalog {
   }
 
   private async buildSnapshotFromPackages(): Promise<ReadonlyMap<string, RegisteredSkillHelper>> {
-    const prepared = await prepareRegisteredSkillPackages(await this.options.packages())
+    const prepared = await prepareRegisteredSkillPackages(await this.options.packages(), {
+      storageRoot: this.options.storageRoot
+    })
 
     const snapshot = new Map<string, RegisteredSkillHelper>()
     for (const helper of prepared.values()) {
