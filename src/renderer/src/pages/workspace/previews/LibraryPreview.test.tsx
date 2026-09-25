@@ -142,6 +142,21 @@ describe('LibraryPreview', () => {
     expect(screen.getByText('No references in this project')).toBeTruthy()
   })
 
+  it('offers full Literature recovery for a record beyond the display budget', async () => {
+    search.mockRejectedValueOnce(new Error('Literature reference exceeds the display budget: huge'))
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+    expect(
+      screen.getByText(
+        'This reference is too large for Preview. Open Literature to access the complete record.'
+      )
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open in Literature' })[1])
+    expect(navigation.openProjectLiterature).toHaveBeenCalledWith('project-a', 'user')
+    expect(search).toHaveBeenCalledTimes(1)
+  })
+
   it('revalidates once for a burst of change events and rejects the replaced read', async () => {
     const old = deferred()
     search.mockReturnValueOnce(old.promise)
@@ -171,14 +186,14 @@ describe('LibraryPreview', () => {
     })
     render(<LibraryPreview projectId="project-a" isActive />)
     await settle()
-    expect(screen.queryByText('Abstract')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Abstract' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /A reference/ }))
-    expect(screen.getByText('No PDF attached.')).toBeTruthy()
+    expect(screen.getAllByText('No PDF attached.')).toHaveLength(20)
     expect(screen.queryByText(/end of abstract/)).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
     expect(screen.getByText(/end of abstract/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /Second reference/ }))
-    expect(screen.getAllByText('Abstract')).toHaveLength(1)
+    expect(screen.getAllByRole('heading', { name: 'Abstract' })).toHaveLength(1)
     expect(screen.getByText('No abstract available.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'View in Literature' }))
     expect(navigation.openLiteratureItem).toHaveBeenCalledWith('two', 'user')
@@ -194,7 +209,7 @@ describe('LibraryPreview', () => {
     expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 0 }))
   })
 
-  it('opens the selected PDF version in the workbench, including single-page PDFs', async () => {
+  it('opens a collapsed reference PDF directly without expanding or fetching extra data', async () => {
     const entry = reference()
     entry.attachments = [
       {
@@ -221,8 +236,8 @@ describe('LibraryPreview', () => {
     search.mockResolvedValueOnce({ entries: [entry] })
     render(<LibraryPreview projectId="project-a" isActive />)
     await settle()
-    fireEvent.click(screen.getByRole('button', { name: /A reference/ }))
     fireEvent.click(screen.getByRole('button', { name: 'paper.pdf' }))
+    expect(screen.queryByRole('heading', { name: 'Abstract' })).toBeNull()
     expect(openPreview).toHaveBeenCalledWith(
       expect.objectContaining({
         source: 'literature',

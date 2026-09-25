@@ -131,6 +131,7 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Ce paquet de session nécessite une version plus récente d’Open Science. Mettez Open Science à jour, puis réessayez de l’importer."
   },
   "renderer": {
+    "This reference is too large for Preview. Open Literature to access the complete record.": "Cette référence est trop volumineuse pour l’aperçu. Ouvrez Littérature pour accéder à la fiche complète.",
     "Remembered for this project": "Mémorisé pour ce projet",
     "Remembered across all projects": "Mémorisé pour tous les projets",
     "Try again when the connection is available, or close this dialog.": "Réessayez lorsque la connexion est disponible ou fermez cette boîte de dialogue.",

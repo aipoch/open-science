@@ -2,12 +2,12 @@
  * Pre-emit critique: P5 H4 E4 S5 R5 V4. Preserve project tokens and native control states.
  */
 import {
+  ArrowUpRight,
   BookOpen,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   FileText,
-  Maximize2,
   Search
 } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
@@ -23,6 +23,7 @@ import {
   type LiteratureItemView,
   type LiteratureCatalogSearchPage
 } from '../../../../../shared/literature'
+import { oversizedLiteratureReference } from '../../../../../shared/literature-export'
 import { readLiteratureDisplayPage } from '../../literature/literature-read-pages'
 import { useLiteratureChanges } from '../../literature/useLiteratureChanges'
 import { LITERATURE_PREVIEW_SESSION_ID } from '../preview-file-item'
@@ -63,142 +64,148 @@ function ReferenceRow({
     .filter(Boolean)
   const pdfs = pdfAttachments(entry)
   const abstract = entry.item.abstract
+  const pdfButton = (
+    attachment: LiteratureItemView['attachments'][number],
+    compact = false
+  ): React.JSX.Element => {
+    const version = attachment.versions[0]
+    return (
+      <Button
+        key={attachment.id}
+        variant="outline"
+        size="xs"
+        className={cn('min-w-0 max-w-full', !compact && 'w-full justify-start')}
+        aria-label={version.filename}
+        disabled={version.availability === 'unavailable'}
+        title={version.availability === 'unavailable' ? t('PDF unavailable') : version.filename}
+        onClick={() =>
+          usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+            id: `literature:${version.id}`,
+            sessionId: LITERATURE_PREVIEW_SESSION_ID,
+            title: version.filename,
+            type: 'file',
+            source: 'literature',
+            format: 'pdf',
+            managedFileId: attachment.id,
+            selectedVersionId: version.id,
+            path: createLiteratureAttachmentVersionReference(version.id),
+            name: version.filename,
+            mimeType: version.contentType,
+            size: version.sizeBytes,
+            versionNumber: version.versionNumber
+          })
+        }
+      >
+        <FileText aria-hidden="true" />
+        <span className="truncate">{compact ? t('PDF') : version.filename}</span>
+        {compact && <ArrowUpRight aria-hidden="true" />}
+      </Button>
+    )
+  }
   return (
-    <li className="min-w-0 border-b border-border last:border-0">
+    <li
+      className={cn(
+        'relative min-w-0 border-b border-border px-4 last:border-0',
+        expanded &&
+          'bg-primary/5 before:absolute before:inset-y-3 before:left-0 before:w-0.5 before:bg-primary'
+      )}
+    >
       <button
         type="button"
         aria-expanded={expanded}
         aria-controls={detailId}
         onClick={onToggle}
-        className="flex w-full min-w-0 items-start gap-2 rounded-md px-3 py-3 text-left hover:bg-muted active:bg-muted focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]"
+        className="block w-full min-w-0 rounded-sm pt-3 pb-2 text-left hover:text-primary active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
       >
-        <ChevronDown
-          aria-hidden="true"
-          className={cn('mt-0.5 size-4 shrink-0 text-muted-foreground', !expanded && '-rotate-90')}
-        />
-        <span className="min-w-0 flex-1 space-y-1">
-          <span
-            className={cn(
-              'block text-sm font-medium [overflow-wrap:anywhere]',
-              !expanded && 'line-clamp-2'
-            )}
-          >
-            {entry.item.title}
-          </span>
-          <span
-            className={cn(
-              'block text-xs text-muted-foreground',
-              !expanded && 'truncate',
-              expanded && '[overflow-wrap:anywhere]'
-            )}
-          >
-            {[
-              expanded ? creators.join('; ') : creators[0],
-              entry.item.issuedYear ?? entry.item.issuedText
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </span>
-          {entry.item.containerTitle && (
-            <span
-              className={cn(
-                'block text-xs text-muted-foreground',
-                !expanded && 'truncate',
-                expanded && '[overflow-wrap:anywhere]'
-              )}
-            >
-              {entry.item.containerTitle}
-            </span>
+        <span
+          className={cn(
+            'block text-sm font-medium leading-relaxed [overflow-wrap:anywhere]',
+            !expanded && 'line-clamp-2'
           )}
-        </span>
-        {pdfs.length > 0 && (
-          <FileText
-            className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-            aria-label={
-              pdfs.some(({ versions }) => versions[0].availability !== 'unavailable')
-                ? t('PDF available')
-                : t('PDF unavailable')
-            }
-          />
-        )}
-      </button>
-      {expanded && (
-        <div
-          id={detailId}
-          className="min-w-0 space-y-3 px-3 pb-4 pl-9 text-xs [overflow-wrap:anywhere]"
         >
-          <div className="space-y-1">
-            <h3 className="font-medium">{t('Abstract')}</h3>
-            <p className="whitespace-pre-wrap leading-relaxed text-muted-foreground">
-              {abstract
-                ? showMore
-                  ? abstract
-                  : abstract.slice(0, ABSTRACT_EXCERPT_LENGTH) +
-                    (abstract.length > ABSTRACT_EXCERPT_LENGTH ? '…' : '')
-                : t('No abstract available.')}
-            </p>
+          {entry.item.title}
+        </span>
+        {creators.length > 0 && (
+          <span
+            className={cn(
+              'mt-1 block text-xs text-muted-foreground',
+              !expanded ? 'truncate' : '[overflow-wrap:anywhere]'
+            )}
+          >
+            {expanded ? creators.join('; ') : creators[0]}
+          </span>
+        )}
+        <span
+          className={cn(
+            'mt-1 block text-xs text-muted-foreground',
+            !expanded ? 'truncate' : '[overflow-wrap:anywhere]'
+          )}
+        >
+          {[entry.item.containerTitle, entry.item.issuedYear ?? entry.item.issuedText]
+            .filter(Boolean)
+            .join(' · ')}
+        </span>
+      </button>
+      <div className="flex min-w-0 items-center justify-between gap-2 pb-3">
+        <Button
+          variant="ghost"
+          size="xs"
+          className="-ml-2 text-muted-foreground"
+          aria-expanded={expanded}
+          aria-controls={detailId}
+          onClick={onToggle}
+        >
+          {t('Abstract')}
+          <ChevronDown aria-hidden="true" className={cn('size-3', !expanded && '-rotate-90')} />
+        </Button>
+        {pdfs[0] ? (
+          pdfButton(pdfs[0], true)
+        ) : (
+          <span className="text-xs text-muted-foreground">{t('No PDF attached.')}</span>
+        )}
+      </div>
+      {expanded && (
+        <div id={detailId} className="min-w-0 pb-3 text-xs [overflow-wrap:anywhere]">
+          {pdfs.length > 1 && (
+            <div className="mb-3 space-y-1">
+              {pdfs.slice(1).map((attachment) => pdfButton(attachment))}
+            </div>
+          )}
+          <h3 className="mb-2 font-medium">{t('Abstract')}</h3>
+          <p className="whitespace-pre-wrap leading-relaxed text-muted-foreground">
+            {abstract
+              ? showMore
+                ? abstract
+                : abstract.slice(0, ABSTRACT_EXCERPT_LENGTH) +
+                  (abstract.length > ABSTRACT_EXCERPT_LENGTH ? '…' : '')
+              : t('No abstract available.')}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             {abstract.length > ABSTRACT_EXCERPT_LENGTH && (
               <Button
                 variant="ghost"
-                size="sm"
+                size="xs"
+                className="-ml-2 text-primary"
                 onClick={() => setShowMore(!showMore)}
                 aria-expanded={showMore}
               >
                 {showMore ? t('Show less') : t('Show more')}
+                <ChevronDown
+                  aria-hidden="true"
+                  className={cn('size-3', showMore && 'rotate-180')}
+                />
               </Button>
             )}
+            <Button
+              variant="ghost"
+              size="xs"
+              className="-mr-2 ml-auto text-muted-foreground"
+              onClick={() => useNavigationStore.getState().openLiteratureItem(entry.id, 'user')}
+            >
+              {t('View in Literature')}
+              <ArrowUpRight aria-hidden="true" />
+            </Button>
           </div>
-          {pdfs.length ? (
-            <div className="space-y-1">
-              {pdfs.map((attachment) => {
-                const version = attachment.versions[0]
-                return (
-                  <Button
-                    key={attachment.id}
-                    variant="outline"
-                    size="sm"
-                    className="w-full min-w-0 justify-start"
-                    disabled={version.availability === 'unavailable'}
-                    title={
-                      version.availability === 'unavailable'
-                        ? t('PDF unavailable')
-                        : version.filename
-                    }
-                    onClick={() =>
-                      usePreviewWorkbenchStore.getState().upsertAndActivateItem({
-                        id: `literature:${version.id}`,
-                        sessionId: LITERATURE_PREVIEW_SESSION_ID,
-                        title: version.filename,
-                        type: 'file',
-                        source: 'literature',
-                        format: 'pdf',
-                        managedFileId: attachment.id,
-                        selectedVersionId: version.id,
-                        path: createLiteratureAttachmentVersionReference(version.id),
-                        name: version.filename,
-                        mimeType: version.contentType,
-                        size: version.sizeBytes,
-                        versionNumber: version.versionNumber
-                      })
-                    }
-                  >
-                    <FileText aria-hidden="true" />
-                    <span className="truncate">{version.filename}</span>
-                  </Button>
-                )
-              })}
-            </div>
-          ) : (
-            <p className="text-muted-foreground">{t('No PDF attached.')}</p>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => useNavigationStore.getState().openLiteratureItem(entry.id, 'user')}
-          >
-            <Maximize2 aria-hidden="true" />
-            {t('View in Literature')}
-          </Button>
         </div>
       )}
     </li>
@@ -220,13 +227,13 @@ function LibraryResults({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [page, setPage] = useState<LiteratureCatalogSearchPage>()
-  const [failed, setFailed] = useState(false)
+  const [failure, setFailure] = useState<{ oversized: boolean }>()
   const [revision, setRevision] = useState(0)
   const generation = useRef(0)
   const { query, all, offset } = selection
   const refresh = (): void => {
     generation.current += 1
-    setFailed(false)
+    setFailure(undefined)
     setRevision((value) => value + 1)
   }
   useLiteratureChanges(refresh)
@@ -257,8 +264,8 @@ function LibraryResults({
           .then((result) => {
             if (current()) setPage(result)
           })
-          .catch(() => {
-            if (current()) setFailed(true)
+          .catch((error: unknown) => {
+            if (current()) setFailure({ oversized: Boolean(oversizedLiteratureReference(error)) })
           })
       },
       query.trim() ? 200 : 0
@@ -269,12 +276,23 @@ function LibraryResults({
     }
   }, [all, offset, projectId, query, revision])
 
-  if (failed)
+  if (failure)
     return (
       <div className="p-4">
         <ErrorNotice
           title={t('Could not load references.')}
-          primaryButton={{ label: t('Retry'), onClick: refresh }}
+          description={
+            failure.oversized
+              ? t(
+                  'This reference is too large for Preview. Open Literature to access the complete record.'
+                )
+              : undefined
+          }
+          primaryButton={
+            failure.oversized
+              ? { label: t('Open in Literature'), onClick: openLiterature }
+              : { label: t('Retry'), onClick: refresh }
+          }
         />
       </div>
     )
@@ -294,8 +312,15 @@ function LibraryResults({
   return (
     <>
       {empty ? (
-        <div role="status" className="flex flex-col items-start gap-3 px-4 py-8">
-          <BookOpen className="size-6 text-muted-foreground" aria-hidden="true" />
+        <div
+          role="status"
+          className="mx-auto flex max-w-sm flex-col items-center gap-4 px-6 pt-20 pb-8 text-center"
+        >
+          <BookOpen
+            className="size-8 text-muted-foreground"
+            strokeWidth={1.25}
+            aria-hidden="true"
+          />
           <div className="space-y-1">
             <h3 className="text-sm font-medium">
               {query.trim()
@@ -306,7 +331,7 @@ function LibraryResults({
                     ? t('Your library is empty')
                     : t('No references in this project')}
             </h3>
-            <p className="text-sm leading-relaxed text-muted-foreground">
+            <p className="text-xs leading-relaxed text-muted-foreground">
               {query.trim()
                 ? t('Try another search or clear the search field.')
                 : offset > 0
@@ -318,7 +343,6 @@ function LibraryResults({
           </div>
           {query.trim() ? (
             <Button
-              variant="outline"
               size="sm"
               onClick={() => onChange({ ...selection, query: '', offset: 0, expanded: undefined })}
             >
@@ -326,7 +350,6 @@ function LibraryResults({
             </Button>
           ) : offset > 0 ? (
             <Button
-              variant="outline"
               size="sm"
               onClick={() => onChange({ ...selection, offset: 0, expanded: undefined })}
             >
@@ -334,34 +357,46 @@ function LibraryResults({
             </Button>
           ) : !all ? (
             <Button
-              variant="outline"
               size="sm"
               onClick={() => onChange({ ...selection, all: true, offset: 0, expanded: undefined })}
             >
               {t('Browse all references')}
             </Button>
           ) : (
-            <Button variant="outline" size="sm" onClick={openLiterature}>
+            <Button size="sm" onClick={openLiterature}>
               {t('Open in Literature')}
             </Button>
           )}
         </div>
       ) : (
-        <ul aria-label={t('Library')} className="min-w-0 px-1">
-          {entries.map((entry) => (
-            <ReferenceRow
-              key={entry.id}
-              entry={entry}
-              expanded={selection.expanded === entry.id}
-              onToggle={() =>
-                onChange({
-                  ...selection,
-                  expanded: selection.expanded === entry.id ? undefined : entry.id
-                })
-              }
-            />
-          ))}
-        </ul>
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-1 text-xs text-muted-foreground">
+            <span>
+              {page.totalCount !== undefined
+                ? t('{{count}} references', {
+                    count: page.totalCount,
+                    defaultValue_one: '{{count}} reference'
+                  })
+                : null}
+            </span>
+            <span>{t('Recently added')}</span>
+          </div>
+          <ul aria-label={t('Library')} className="min-w-0">
+            {entries.map((entry) => (
+              <ReferenceRow
+                key={entry.id}
+                entry={entry}
+                expanded={selection.expanded === entry.id}
+                onToggle={() =>
+                  onChange({
+                    ...selection,
+                    expanded: selection.expanded === entry.id ? undefined : entry.id
+                  })
+                }
+              />
+            ))}
+          </ul>
+        </>
       )}
       {(offset > 0 || page.nextOffset !== undefined) && (
         <div className="flex items-center justify-between gap-2 border-t border-border p-3">
@@ -409,7 +444,6 @@ export default function LibraryPreview({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const searchId = useId()
-  const scopeId = useId()
   const [selection, setSelection] = useState<Selection>({ query: '', all: !projectId, offset: 0 })
   const openLiterature = (): void => {
     const navigation = useNavigationStore.getState()
@@ -421,57 +455,69 @@ export default function LibraryPreview({
       aria-label={t('Library preview')}
       className="flex size-full min-h-0 min-w-0 flex-col text-foreground"
     >
-      <header className="shrink-0 space-y-3 border-b border-border p-4">
-        <h2 className="text-base font-semibold">{t('Library')}</h2>
-        <Button variant="outline" size="sm" className="w-full" onClick={openLiterature}>
-          <Maximize2 aria-hidden="true" />
-          {t('Open in Literature')}
-        </Button>
-        <div className="space-y-1">
-          <label htmlFor={searchId} className="text-xs text-muted-foreground">
+      <header className="shrink-0 border-b border-border">
+        <div className="flex h-12 items-center justify-between gap-2 px-4">
+          <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+            <BookOpen aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            {t('Library')}
+          </h2>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="-mr-2 text-muted-foreground"
+            onClick={openLiterature}
+            aria-label={t('Open in Literature')}
+            title={t('Open in Literature')}
+          >
+            {t('Literature')}
+            <ArrowUpRight aria-hidden="true" />
+          </Button>
+        </div>
+        <div className="relative mx-4 mb-2">
+          <label htmlFor={searchId} className="sr-only">
             {t('Search references')}
           </label>
-          <div className="relative">
-            <Search
-              className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <Input
-              id={searchId}
-              type="search"
-              className="pl-8"
-              value={selection.query}
-              onChange={(event) =>
-                setSelection({
-                  ...selection,
-                  query: event.target.value,
-                  offset: 0,
-                  expanded: undefined
-                })
-              }
-            />
-          </div>
-        </div>
-        <div className="space-y-1">
-          <label htmlFor={scopeId} className="block text-xs text-muted-foreground">
-            {t('Scope')}
-          </label>
-          <select
-            id={scopeId}
-            className="h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            value={selection.all ? 'all' : 'project'}
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <Input
+            id={searchId}
+            type="search"
+            placeholder={t('Search references')}
+            className="h-8 pl-8 text-xs"
+            value={selection.query}
             onChange={(event) =>
               setSelection({
                 ...selection,
-                all: event.target.value === 'all',
+                query: event.target.value,
                 offset: 0,
                 expanded: undefined
               })
             }
-          >
-            {projectId && <option value="project">{t('Current project')}</option>}
-            <option value="all">{t('All references')}</option>
-          </select>
+          />
+        </div>
+        <div
+          role="group"
+          aria-label={t('Scope')}
+          className="flex flex-wrap items-center gap-x-5 px-4"
+        >
+          {(projectId ? [false, true] : [true]).map((all) => (
+            <button
+              key={String(all)}
+              type="button"
+              aria-pressed={selection.all === all}
+              className={cn(
+                'h-9 border-b-2 border-transparent text-xs whitespace-nowrap hover:text-foreground active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]',
+                selection.all === all
+                  ? 'border-primary font-medium text-foreground'
+                  : 'text-muted-foreground'
+              )}
+              onClick={() => setSelection({ ...selection, all, offset: 0, expanded: undefined })}
+            >
+              {all ? t('All references') : t('Current project')}
+            </button>
+          ))}
         </div>
       </header>
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">

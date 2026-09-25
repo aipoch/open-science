@@ -132,6 +132,7 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Для этого пакета сессии требуется более новая версия Open Science. Обновите Open Science и повторите импорт."
   },
   "renderer": {
+    "This reference is too large for Preview. Open Literature to access the complete record.": "Эта запись слишком велика для предпросмотра. Откройте раздел «Литература» для доступа к полной записи.",
     "Remembered for this project": "Запомнить для этого проекта",
     "Remembered across all projects": "Запомнить для всех проектов",
     "Try again when the connection is available, or close this dialog.": "Повторите попытку, когда соединение станет доступно, или закройте это окно.",

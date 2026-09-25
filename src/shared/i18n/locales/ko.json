@@ -129,6 +129,7 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "이 세션 패키지에는 더 최신 버전의 Open Science가 필요합니다. Open Science를 업데이트한 후 다시 가져오세요."
   },
   "renderer": {
+    "This reference is too large for Preview. Open Literature to access the complete record.": "이 문헌은 미리보기에 표시하기에 너무 큽니다. 전체 레코드에 접근하려면 문헌 패널을 여세요.",
     "Remembered for this project": "이 프로젝트에서 승인 기억",
     "Remembered across all projects": "모든 프로젝트에서 승인 기억",
     "Try again when the connection is available, or close this dialog.": "연결이 가능해지면 다시 시도하거나 이 대화 상자를 닫으세요.",

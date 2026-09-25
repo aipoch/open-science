@@ -129,6 +129,7 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "此會話研究套件需要較新版本的 Open Science。請更新 Open Science 後重新匯入。"
   },
   "renderer": {
+    "This reference is too large for Preview. Open Literature to access the complete record.": "這筆文獻過大，無法預覽。請開啟文獻面板存取完整記錄。",
     "Remembered for this project": "在此專案中記住授權",
     "Remembered across all projects": "在所有專案中記住授權",
     "Try again when the connection is available, or close this dialog.": "連線恢復後可重試，也可以關閉此對話框。",

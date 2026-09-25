@@ -10,6 +10,7 @@ import {
   PROJECT_LIBRARY_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import { previewLeaveGuards, workbenchPreviewGuardScope } from '@/stores/preview-leave-guard'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
@@ -33,7 +34,7 @@ let sidebarProps: {
   canDeleteConversations: boolean
   onOpenSession: (id: string) => void
   onNewConversation: () => void
-  onOpenLiterature?: () => void
+  onOpenLiterature?: () => boolean
   onDownloadArtifacts: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
 }
@@ -1049,6 +1050,39 @@ describe('WorkspacePage draft preservation', () => {
     expect(useNavigationStore.getState().view).toBe('workspace')
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(PROJECT_LIBRARY_PREVIEW_ID)
     expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
+  })
+
+  it('reports blocked Library activation so the mobile sidebar stays open', async () => {
+    await renderPage()
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+        id: 'edited-file',
+        type: 'file',
+        sessionId: 'sess-a',
+        title: 'notes.txt',
+        source: 'artifact',
+        format: 'text',
+        name: 'notes.txt',
+        path: '/notes.txt'
+      })
+    })
+    const state = usePreviewWorkbenchStore.getState()
+    const unregister = previewLeaveGuards.register(
+      workbenchPreviewGuardScope(state.activeProjectId, state.activeItemId)!,
+      () => false
+    )
+    try {
+      await act(async () => {
+        expect(sidebarProps.onOpenLiterature!()).toBe(false)
+      })
+      expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('edited-file')
+    } finally {
+      unregister()
+    }
+    await act(async () => {
+      expect(sidebarProps.onOpenLiterature!()).toBe(true)
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(PROJECT_LIBRARY_PREVIEW_ID)
   })
 
   it('allows target-validated session deletion while other persistence is recovering', async () => {

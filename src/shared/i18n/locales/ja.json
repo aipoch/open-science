@@ -129,6 +129,7 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "このセッションパッケージには、より新しいバージョンの Open Science が必要です。Open Science を更新してから、もう一度インポートしてください。"
   },
   "renderer": {
+    "This reference is too large for Preview. Open Literature to access the complete record.": "この文献はプレビューで表示するには大きすぎます。文献パネルを開くと完全なレコードにアクセスできます。",
     "Remembered for this project": "このプロジェクトで許可を記憶",
     "Remembered across all projects": "すべてのプロジェクトで許可を記憶",
     "Try again when the connection is available, or close this dialog.": "接続が利用可能になったら再試行するか、このダイアログを閉じてください。",

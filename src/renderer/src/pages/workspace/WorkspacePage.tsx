@@ -1221,7 +1221,7 @@ const WorkspacePage = ({
       return useNavigationStore.getState().openProjectLiterature(scopedProjectId, 'user')
     }
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectLibraryPreviewItem())
-    return true
+    return usePreviewWorkbenchStore.getState().activeItemId === PROJECT_LIBRARY_PREVIEW_ID
   }
 
   const openComputePreview = (): void => {

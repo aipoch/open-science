@@ -14,7 +14,15 @@ for (const width of [320, 375, 414, 768]) {
       await row.focus()
       await page.keyboard.press('Enter')
       await expect(row).toHaveAttribute('aria-expanded', 'true')
-      const expand = page.locator('section button[aria-expanded]').nth(1)
+      const expand = page.getByRole('button', { name: /^(Show more|Show less|展开|收起)$/ })
+      const literature = page.getByRole('button', {
+        name: /^(View in Literature|在文献面板中查看)$/
+      })
+      const expandBounds = await expand.boundingBox()
+      const literatureBounds = await literature.boundingBox()
+      expect(expandBounds).not.toBeNull()
+      expect(literatureBounds).not.toBeNull()
+      expect(Math.abs(expandBounds!.y - literatureBounds!.y)).toBeLessThanOrEqual(1)
       await expand.click()
       await expect(expand).toHaveAttribute('aria-expanded', 'true')
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
