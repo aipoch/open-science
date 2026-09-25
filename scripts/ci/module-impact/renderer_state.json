@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/renderer/src/stores/interface-scale-store.ts",
     "src/renderer/src/stores/archive-undo-store.test.ts",
     "src/renderer/src/stores/archive-undo-store.ts",
     "src/renderer/src/stores/compute-store.test.ts",
@@ -76,6 +77,7 @@
     "src/renderer/src/stores/update-store.ts"
   ],
   "interfacePaths": [
+    "src/renderer/src/stores/interface-scale-store.ts",
     "src/renderer/src/stores/archive-undo-store.ts",
     "src/renderer/src/stores/compute-store.ts",
     "src/renderer/src/stores/granted-folders-store.ts",

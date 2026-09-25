@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/renderer/src/lib/interface-scale.test.ts",
+    "src/renderer/src/lib/interface-scale.ts",
     "src/renderer/src/lib/active-session-display.test.ts",
     "src/renderer/src/lib/active-session-display.ts",
     "src/renderer/src/lib/customize-chat.test.ts",
@@ -41,6 +43,7 @@
     "src/renderer/src/lib/storage-error.ts"
   ],
   "interfacePaths": [
+    "src/renderer/src/lib/interface-scale.ts",
     "src/renderer/src/lib/active-session-display.ts",
     "src/renderer/src/lib/customize-chat.ts",
     "src/renderer/src/lib/deep-link.ts",
@@ -68,6 +71,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/renderer/src/lib/interface-scale.test.ts",
       "src/renderer/src/lib/active-session-display.test.ts",
       "src/renderer/src/lib/customize-chat.test.ts",
       "src/renderer/src/lib/deep-link.navigation.test.tsx",
