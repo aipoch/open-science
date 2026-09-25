@@ -288,7 +288,7 @@ test('explains disabled revision navigation while a turn is running', async ({ a
   await page.screenshot({ path: testInfo.outputPath('revision-navigation-idle.png') })
 })
 
-test('edits and navigates message revisions that persist after relaunch @pr-mainline', async ({
+test('edits and navigates message revisions that persist after relaunch @pr-mainline-conversation', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
@@ -422,7 +422,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
     })
 })
 
-test('resolves Agent permission requests through both Allow and Deny decisions @pr-mainline', async ({
+test('resolves Agent permission requests through both Allow and Deny decisions @pr-mainline-conversation', async ({
   app
 }) => {
   await app.completeOnboarding()

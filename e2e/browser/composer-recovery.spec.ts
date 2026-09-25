@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('reload recovery keeps active text, verifies completed uploads and exposes interrupted uploads @pr-mainline', async ({
+test('reload recovery keeps active text, verifies completed uploads and exposes interrupted uploads', async ({
   page
 }) => {
   await page.goto('/composer-recovery.html')
@@ -24,7 +24,7 @@ test('reload recovery keeps active text, verifies completed uploads and exposes 
   await expect(page.getByTestId('transfers')).toContainText('select the file again')
 })
 
-test('a cleared draft is not resurrected after a browser reload @pr-mainline', async ({ page }) => {
+test('a cleared draft is not resurrected after a browser reload', async ({ page }) => {
   await page.goto('/composer-recovery.html')
   await page.getByRole('textbox', { name: 'Draft', exact: true }).fill('sent text')
   await page.getByRole('button', { name: 'Send', exact: true }).click()
@@ -32,7 +32,7 @@ test('a cleared draft is not resurrected after a browser reload @pr-mainline', a
   await expect(page.getByRole('textbox', { name: 'Draft', exact: true })).toHaveValue('')
 })
 
-test('multiple project drafts return to their own identities after recovery reload @pr-mainline', async ({
+test('multiple project drafts return to their own identities after recovery reload', async ({
   page
 }) => {
   await page.goto('/composer-recovery.html')
@@ -56,7 +56,7 @@ test('multiple project drafts return to their own identities after recovery relo
   )
 })
 
-test('failed storage requires a saved copy and pairing failure identifies the connection @pr-mainline', async ({
+test('failed storage requires a saved copy and pairing failure identifies the connection', async ({
   page
 }) => {
   await page.setViewportSize({ width: 700, height: 500 })

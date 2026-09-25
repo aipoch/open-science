@@ -3,7 +3,7 @@ import { test } from './fixtures/electron-app'
 
 test.use({ windowMode: 'normal' })
 
-test('forks local and imported research and immediately continues through the real desktop lifecycle @pr-mainline', async ({
+test('forks local and imported research and immediately continues through the real desktop lifecycle', async ({
   app
 }, testInfo) => {
   test.setTimeout(240_000)

@@ -146,10 +146,13 @@ describe('trusted supplemental selection', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
-    'requires the selected Windows browser suite on every runner shard',
+    'requires the complete Windows browser regression on every scheduled shard',
     () => {
-      const enforce = pr.jobs.windows_e2e.steps.find(
-        ({ name }) => name === 'Enforce selected Windows E2E checks'
+      const regression = load(
+        readFileSync('.github/workflows/windows-e2e-regression.yml', 'utf8')
+      ) as Workflow
+      const enforce = regression.jobs.windows_e2e.steps.find(
+        ({ name }) => name === 'Enforce complete Windows E2E suites'
       )!
       expect(enforce.env?.E2E_SHARD).toBeUndefined()
       for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {
@@ -157,11 +160,10 @@ describe('trusted supplemental selection', () => {
           encoding: 'utf8',
           env: {
             ...process.env,
-            E2E_BROWSER_SELECTED: 'true',
-            RENDERER_LAYOUT_OUTCOME: outcome,
-            SETUP_OUTCOME: 'success',
-            E2E_FUNCTIONAL_OUTCOME: 'skipped',
-            E2E_WORKSPACE_OUTCOME: 'skipped'
+            BROWSER: outcome,
+            SETUP: 'success',
+            FUNCTIONAL: 'success',
+            WORKSPACE: 'success'
           }
         })
         expect(result.status, result.stderr).toBe(outcome === 'success' ? 0 : 1)

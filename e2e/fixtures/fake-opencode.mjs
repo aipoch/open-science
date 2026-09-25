@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
+import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
 
 const VERSION = '1.0.0'
 const WSL_SETUP_DIAGNOSTICS_PROMPT = 'Verify WSL setup diagnostic tools.'
@@ -1806,6 +1807,13 @@ if (process.argv.includes('--version')) {
           )
           if (!run.runId) throw new Error('Background admission has no runId')
           reply = 'Background execution submitted.'
+        } else if (prompt.includes(researchPrompt)) {
+          reply = await runResearchAnalysis(
+            context.params.sessionId,
+            prompt,
+            withMcpClient,
+            toolResult
+          )
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
         } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {

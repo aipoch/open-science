@@ -284,10 +284,6 @@ it('does not restart for stale NetLog evidence', async () => {
 
 it.each([
   [
-    'pr-gate.yml',
-    'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/${{ strategy.job-total }} --grep "$env:E2E_GREP"'
-  ],
-  [
     'windows-e2e-regression.yml',
     'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests'
   ]
@@ -310,11 +306,6 @@ it.each([
         run: command
       })
     ])
-    if (file === 'pr-gate.yml') {
-      expect(
-        workflow.jobs.windows_core.steps?.find((step) => step.id === 'windows_runtime')?.run
-      ).toContain('scripts/ci/run-windows-browser-diagnostics.test.ts')
-    }
   }
 )
 

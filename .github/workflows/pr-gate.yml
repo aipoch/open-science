@@ -50,6 +50,7 @@ jobs:
       head: ${{ steps.revisions.outputs.head }}
       lanes: ${{ steps.classify.outputs.lanes }}
       plan: ${{ steps.classify.outputs.plan }}
+      windows_e2e_grep: ${{ steps.windows_mainline.outputs.grep }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -352,6 +353,29 @@ jobs:
             )
           }
           NODE
+
+      - name: Select Windows mainline journeys
+        id: windows_mainline
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.revisions.outputs.base }}
+          HEAD_SHA: ${{ steps.revisions.outputs.head }}
+          TRUSTED_BASE_SHA: ${{ steps.revisions.outputs.trusted-base }}
+          TRUSTED_DIR: ${{ steps.trusted_classifier.outputs.dir }}
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN_MODE: ${{ inputs.dry_run || 'classified' }}
+        run: |
+          set -euo pipefail
+          selector=scripts/ci/windows-e2e-mainline.mjs
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" != "classified" ]] || ! git cat-file -e "$TRUSTED_BASE_SHA:$selector" 2>/dev/null; then
+            # The introducing PR cannot execute its own untrusted selection policy.
+            # Conservatively run every mainline group, never complete regression suites.
+            echo 'grep=@pr-mainline-(projects|conversation|files|notebook|windows)(\s|$)' >> "$GITHUB_OUTPUT"
+            echo 'Windows E2E: all mainline groups (manual run or trusted selector not yet available).' >> "$GITHUB_STEP_SUMMARY"
+          else
+            git show "$TRUSTED_BASE_SHA:$selector" > "$TRUSTED_DIR/windows-e2e-mainline.mjs"
+            node "$TRUSTED_DIR/windows-e2e-mainline.mjs"
+          fi
 
   policy:
     name: PR policy
@@ -1283,11 +1307,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     env:
-      E2E_GREP: ${{ (github.event_name == 'pull_request' || inputs.dry_run == 'windows-e2e-mainline') && '@pr-mainline' || '.*' }}
+      E2E_GREP: ${{ needs.preflight.outputs.windows_e2e_grep }}
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON((github.event_name == 'pull_request' || inputs.dry_run == 'windows-e2e-mainline') && '[1]' || '[1,2,3]') }}
+        shard: [1]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1308,55 +1332,23 @@ jobs:
         id: setup
         shell: bash
         run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
-      - name: Install headless Chromium
-        run: npx playwright install chromium --only-shell
-      # PR/queue business E2E relies on Playwright retries to absorb single-attempt flakes;
-      # strict --fail-on-flaky-tests stays in the scheduled Source Regression paths.
-      - name: Run renderer layout pilot
-        id: renderer_layout
-        if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') }}
-        continue-on-error: true
-        env:
-          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
-          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
-        # NetLog traced blank fixtures to Windows WSAENOBUFS after hundreds of asset reloads.
-        # Keep each browser process serialized and cap its loopback socket churn with runner shards.
-        shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
-        run: npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/${{ strategy.job-total }} --grep "$env:E2E_GREP"
-      - name: Run functional journeys
+      - name: Run mainline journeys
         id: e2e_functional_windows
-        if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
+        if: ${{ steps.setup.outcome == 'success' }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
-        # Isolate Electron desktops: parallelize across runners, never within one runner.
-        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/${{ strategy.job-total }} --global-timeout=600000 --grep "$env:E2E_GREP"
+        # Mainline-only on every PR Gate entry point. Complete suites live in regression.
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:E2E_GREP)) { throw 'Windows mainline selection is empty' }
+          npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: functional-e2e-windows-failure-${{ matrix.shard }}
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 5
-          if-no-files-found: warn
-      - name: Run workspace journeys
-        id: e2e_workspace_windows
-        if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
-        continue-on-error: true
-        env:
-          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_windows
-          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace_windows.json
-        run: npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/${{ strategy.job-total }} --global-timeout=900000 --grep "$env:E2E_GREP"
-      - name: Upload workspace failure artifacts
-        if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: workspace-e2e-windows-failure-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
@@ -1378,40 +1370,14 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
-          E2E_BROWSER_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') }}
-          RENDERER_LAYOUT_OUTCOME: ${{ steps.renderer_layout.outcome }}
           SETUP_OUTCOME: ${{ steps.setup.outcome }}
-          E2E_FUNCTIONAL_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
-          E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
-          E2E_WORKSPACE_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
-          E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_windows.outcome }}
+          MAINLINE_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
         run: |
           set -euo pipefail
-          failed=0
-          check() {
-            if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
-              echo "$1 ended with $2" >&2
-              failed=1
-            fi
-          }
-          # The browser suite is selected per plan; when selected, skipped is not success.
-          if [[ "${E2E_BROWSER_SELECTED:-}" == "true" && "$RENDERER_LAYOUT_OUTCOME" != "success" ]]; then
-            echo "Required Windows browser suite ended with ${RENDERER_LAYOUT_OUTCOME:-no outcome}" >&2
-            failed=1
+          if [[ -z "$E2E_GREP" || "$SETUP_OUTCOME" != "success" || "$MAINLINE_OUTCOME" != "success" ]]; then
+            echo "Required Windows mainline E2E did not succeed" >&2
+            exit 1
           fi
-          if [[ "${E2E_FUNCTIONAL_SELECTED:-}" == "true" && "$E2E_FUNCTIONAL_OUTCOME" != "success" ]]; then
-            echo "Required Windows functional suite ended with ${E2E_FUNCTIONAL_OUTCOME:-no outcome}" >&2
-            failed=1
-          fi
-          if [[ "${E2E_WORKSPACE_SELECTED:-}" == "true" && "$E2E_WORKSPACE_OUTCOME" != "success" ]]; then
-            echo "Required Windows workspace suite ended with ${E2E_WORKSPACE_OUTCOME:-no outcome}" >&2
-            failed=1
-          fi
-          check renderer_layout "$RENDERER_LAYOUT_OUTCOME"
-          check setup "$SETUP_OUTCOME"
-          check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
-          check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"
-          exit "$failed"
 
   e2e_reports:
     name: E2E timing and merged report

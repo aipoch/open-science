@@ -1,9 +1,67 @@
 import { readFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { openRecentSession, sendPrompt } from './certification/helpers'
 
 const PROJECT_NAME = 'Electron E2E project'
+
+test('analyzes uploaded data in Python and reopens the saved research @pr-mainline-notebook', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(180_000)
+  const prompt = 'Analyze the attached measurements and save a research report.'
+  const pythonPath = execFileSync(
+    process.platform === 'win32' ? 'python' : 'python3',
+    ['-c', 'import sys; print(sys.executable)'],
+    { encoding: 'utf8' }
+  ).trim()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  // Enable an existing interpreter; the journey never provisions environments or installs packages.
+  await page.evaluate(async (path) => {
+    await window.api.runtime.registerInterpreter('python', path)
+    const { python } = await window.api.runtime.listEnvironments()
+    const runtime = python.find((entry) => entry.envId === path || entry.interpreterPath === path)
+    if (!runtime) throw new Error('The research interpreter was not registered.')
+    await window.api.runtime.setEnvironmentEnabled('python', runtime.envId, true)
+  }, pythonPath)
+  await createProject(page, 'Measurements research')
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: 'measurements.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('sample,value\nA,2\nB,4\nC,6\n')
+  })
+  await expect(
+    page.getByRole('button', { name: 'Remove attachment measurements.csv' })
+  ).toBeVisible()
+  await sendPrompt(page, prompt, 'Research analysis complete.', 100_000)
+  await expect(page.getByRole('region', { name: 'Conversation' })).toContainText('Mean: 4.00')
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
+
+  const reviewResult = async (): Promise<void> => {
+    await page
+      .getByRole('region', { name: 'Conversation' })
+      .getByRole('button', { name: 'Preview generated file research-results.md', exact: true })
+      .click()
+    const preview = page.getByRole('tabpanel').filter({
+      has: page.getByRole('button', { name: 'Close preview of research-results.md' })
+    })
+    await expect(preview).toContainText('Samples: 3')
+    await expect(preview).toContainText('Mean: 4.00')
+    await page.screenshot({ path: testInfo.outputPath('research-results.png') })
+    await preview.getByRole('button', { name: 'Close preview of research-results.md' }).click()
+  }
+  await reviewResult()
+  page = await app.restart()
+  await openRecentSession(page, prompt)
+  await expect(page.getByRole('region', { name: 'Conversation' })).toContainText(
+    'Research analysis complete.'
+  )
+  await reviewResult()
+  await sendPrompt(page, 'Continue this research.', 'Deterministic reply:')
+})
 
 test('localizes CSL validation failures across the desktop bridge', async ({ app }, testInfo) => {
   const page = await app.completeOnboarding()
@@ -55,7 +113,7 @@ const openProjectActions = async (page: Page, name: string): Promise<void> => {
   await projects.getByRole('button', { name: `Open actions for ${name}` }).click()
 }
 
-test('creates a project through the desktop stack and reloads it after relaunch @pr-mainline', async ({
+test('creates a project through the desktop stack and reloads it after relaunch @pr-mainline-projects', async ({
   app
 }) => {
   await app.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
@@ -78,7 +136,7 @@ test('creates a project through the desktop stack and reloads it after relaunch 
   await expect(projects.getByRole('button', { name: PROJECT_NAME, exact: true })).toBeVisible()
 })
 
-test('renames a project through the home actions and keeps the change after relaunch @pr-mainline', async ({
+test('renames a project through the home actions and keeps the change after relaunch', async ({
   app
 }) => {
   const renamedProject = 'Renamed Electron project'
@@ -105,7 +163,7 @@ test('renames a project through the home actions and keeps the change after rela
   ).toBeVisible()
 })
 
-test('deletes a project through confirmation and keeps it absent after relaunch @pr-mainline', async ({
+test('deletes a project through confirmation and keeps it absent after relaunch', async ({
   app
 }) => {
   let page = await app.completeOnboarding()

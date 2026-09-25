@@ -5,7 +5,7 @@ const imageBytes = Buffer.from(
   'base64'
 )
 
-test('message image requests wait for activation, including after reopening history @pr-mainline', async ({
+test('message image requests wait for activation, including after reopening history', async ({
   page
 }) => {
   const requests: string[] = []
@@ -34,9 +34,7 @@ test('message image requests wait for activation, including after reopening hist
 })
 
 for (const mode of ['enabled', 'disabled']) {
-  test(`Mermaid image nodes cannot issue hidden requests with media ${mode} @pr-mainline`, async ({
-    page
-  }) => {
+  test(`Mermaid image nodes cannot issue hidden requests with media ${mode}`, async ({ page }) => {
     const requests: string[] = []
     await page.route('https://privacy-canary.invalid/**', async (route) => {
       requests.push(route.request().url())
@@ -56,7 +54,7 @@ for (const mode of ['enabled', 'disabled']) {
   })
 }
 
-test('ordinary Mermaid charts retain shape metadata and render without image requests @pr-mainline', async ({
+test('ordinary Mermaid charts retain shape metadata and render without image requests', async ({
   page
 }) => {
   await page.goto('/media-privacy.html?mermaid=ordinary')
@@ -64,7 +62,7 @@ test('ordinary Mermaid charts retain shape metadata and render without image req
   await expect(page.getByText('Images in Mermaid diagrams are blocked')).toHaveCount(0)
 })
 
-test('approved images retain the native download action @pr-mainline', async ({ page }) => {
+test('approved images retain the native download action', async ({ page }) => {
   await page.route('https://privacy-canary.invalid/**', (route) =>
     route.fulfill({ contentType: 'image/png', body: imageBytes })
   )

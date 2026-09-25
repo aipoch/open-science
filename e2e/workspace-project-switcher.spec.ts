@@ -61,7 +61,7 @@ const reloadAndOpenProject = async (page: Page, name: string): Promise<void> => 
   await expect(page.locator(`button[title="${name}"]`)).toBeVisible()
 }
 
-test('switches projects from the Workspace project menu and expands remaining projects locally @pr-mainline', async ({
+test('switches projects from the Workspace project menu and expands remaining projects locally', async ({
   app
 }) => {
   await app.completeOnboarding()

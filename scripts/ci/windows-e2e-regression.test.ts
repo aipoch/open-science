@@ -35,9 +35,9 @@ const pr = readWorkflow('pr-gate.yml')
 const step = (job: Job, name: string): Step =>
   job.steps.find((candidate) => candidate.name === name)!
 const suites = [
-  ['renderer_layout', 'test:e2e:browser', 9],
-  ['e2e_functional_windows', 'test:e2e:journey', 9],
-  ['e2e_workspace_windows', 'test:e2e:workspace', 5]
+  ['renderer_layout', 'test:e2e:browser', 0],
+  ['e2e_functional_windows', 'test:e2e:journey', 4],
+  ['e2e_workspace_windows', 'test:e2e:workspace', 4]
 ] as const
 
 it('schedules independent complete Windows E2E and keeps the manual full entry point', () => {
@@ -157,11 +157,20 @@ it('discovers the reviewed mainline subset and retains every other case in the f
       ])
     return visit((JSON.parse(result.stdout) as JSONReport).suites).sort()
   }
+  for (const [group, count] of Object.entries({
+    projects: 1,
+    conversation: 2,
+    files: 2,
+    notebook: 1,
+    windows: 2
+  })) {
+    expect(collect('test:e2e', `@pr-mainline-${group}(?:\\s|$)`)).toHaveLength(count)
+  }
   for (const [, command, count] of suites) {
     const full = collect(command)
-    const mainline = collect(command, '@pr-mainline')
+    const mainline = count ? collect(command, '@pr-mainline-') : []
     expect(mainline).toHaveLength(count)
-    expect(mainline).toEqual(full.filter((title) => title.endsWith(' @pr-mainline')))
+    expect(mainline).toEqual(full.filter((title) => title.includes(' @pr-mainline-')))
     expect(full.length).toBeGreaterThan(mainline.length)
     expect(new Set(mainline).size).toBe(mainline.length)
   }

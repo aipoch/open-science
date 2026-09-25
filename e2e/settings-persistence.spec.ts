@@ -44,9 +44,7 @@ const selectLanguage = async (page: Page, label: string): Promise<void> => {
   await expect(page.getByRole('dialog')).toBeHidden()
 }
 
-test('persists the selected theme after closing settings and relaunching @pr-mainline', async ({
-  app
-}) => {
+test('persists the selected theme after closing settings and relaunching', async ({ app }) => {
   let page = await app.completeOnboarding()
 
   await setTheme(page, 'Dark')

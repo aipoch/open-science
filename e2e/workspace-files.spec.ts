@@ -94,7 +94,7 @@ const reconstructedDiffText = async (
     }
   })
 
-test('edits uploaded Markdown versions and keeps diff navigation coherent @pr-mainline', async ({
+test('edits uploaded Markdown versions and keeps diff navigation coherent @pr-mainline-files', async ({
   app
 }) => {
   await app.completeOnboarding()
@@ -215,7 +215,7 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent @pr-ma
   await expect(preview).toBeHidden()
 })
 
-test('links a multi-page PDF upload as Reading context in a new project @pr-mainline', async ({
+test('links a multi-page PDF upload as Reading context in a new project @pr-mainline-files', async ({
   app
 }) => {
   await app.completeOnboarding()
