@@ -470,7 +470,13 @@
       "src/renderer/src/pages/workspace/artifact-preview-tiff.test.tsx",
       "src/renderer/src/pages/workspace/artifact-preview.interaction.test.tsx",
       "src/renderer/src/pages/workspace/artifact-preview.test.tsx",
-      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
+      "src/renderer/src/office-preview/office-preview-runtime.test.ts",
+      "src/renderer/src/pages/workspace/previews/office-behavior-regressions.test.ts",
+      "src/renderer/src/pages/workspace/previews/office-renderers.test.ts",
+      "src/renderer/src/pages/workspace/previews/pptx-renderer-contract.test.ts",
+      "src/renderer/src/reviewer-paged-preview/main.test.ts",
+      "src/renderer/src/office-preview/office-preview-controller.test.ts"
     ]
   },
   "capabilityOverlays": [],

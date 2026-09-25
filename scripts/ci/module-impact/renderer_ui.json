@@ -410,7 +410,13 @@
       "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
       "src/renderer/src/pages/literature/SmartCollectionCells.test.tsx",
       "src/renderer/src/pages/literature/SmartCollectionDecision.test.tsx",
-      "src/renderer/src/pages/literature/SmartCollectionDraftPreview.test.tsx"
+      "src/renderer/src/pages/literature/SmartCollectionDraftPreview.test.tsx",
+      "src/renderer/src/office-preview/office-preview-runtime.test.ts",
+      "src/renderer/src/pages/workspace/previews/office-behavior-regressions.test.ts",
+      "src/renderer/src/pages/workspace/previews/office-renderers.test.ts",
+      "src/renderer/src/pages/workspace/previews/pptx-renderer-contract.test.ts",
+      "src/renderer/src/reviewer-paged-preview/main.test.ts",
+      "src/renderer/src/office-preview/office-preview-controller.test.ts"
     ]
   },
   "capabilityOverlays": [],
