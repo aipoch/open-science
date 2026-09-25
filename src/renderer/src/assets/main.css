@@ -835,6 +835,55 @@
     }
   }
 
+  .message-bell-ring {
+    transform-origin: 50% 15%;
+    animation: message-bell-ring 620ms ease-out;
+  }
+
+  @keyframes message-bell-ring {
+    0%,
+    100% {
+      transform: rotate(0);
+    }
+    18% {
+      transform: rotate(-16deg);
+    }
+    38% {
+      transform: rotate(12deg);
+    }
+    58% {
+      transform: rotate(-7deg);
+    }
+    76% {
+      transform: rotate(3deg);
+    }
+  }
+
+  .message-bell-dot-pop {
+    animation: message-bell-dot-pop 300ms ease-out;
+  }
+
+  @keyframes message-bell-dot-pop {
+    0% {
+      opacity: 0.5;
+      transform: scale(0.4);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.25);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .message-bell-ring,
+    .message-bell-dot-pop {
+      animation: none;
+    }
+  }
+
   /* A label reveal is presentation, not a second activation or a disclosure. */
   .update-action-label {
     display: grid;

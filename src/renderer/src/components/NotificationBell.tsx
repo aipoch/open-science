@@ -90,6 +90,7 @@ const VIEWPORT_MARGIN = 8
 const PANEL_GAP = 8
 const PANEL_MAX_WIDTH = 440
 const MOBILE_MESSAGE_CENTER_QUERY = '(max-width: 47.999rem)'
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(Math.max(value, minimum), maximum)
@@ -260,6 +261,49 @@ const NotificationBellContent = ({
   const sessions = useSessionStore((state) => state.sessions)
   const projects = useProjectStore((state) => state.projects)
   const groups = presentNotificationInbox(items, sessions, projects)
+  const [ringSequence, setRingSequence] = useState<number>()
+  const [dotPopSequence, setDotPopSequence] = useState<number>()
+
+  useEffect(() => {
+    const initial = useNotificationInboxStore.getState()
+    let previousSequence = initial.status === 'ready' ? initial.latestSequence : undefined
+    let previousUnreadCount = initial.unreadCount
+    const reducedMotion = window.matchMedia?.(REDUCED_MOTION_QUERY)
+    const unsubscribe = useNotificationInboxStore.subscribe((snapshot) => {
+      if (snapshot.status !== 'ready') return
+      const priorSequence = previousSequence
+      const priorCount = previousUnreadCount
+      previousSequence = Math.max(previousSequence ?? 0, snapshot.latestSequence)
+      previousUnreadCount = snapshot.unreadCount
+      if (
+        priorSequence === undefined ||
+        snapshot.latestSequence <= priorSequence ||
+        reducedMotion?.matches ||
+        !snapshot.items.some(
+          (item) =>
+            item.sequence > priorSequence &&
+            item.readAt === undefined &&
+            item.targetInvalidatedAt === undefined
+        )
+      ) {
+        return
+      }
+      setRingSequence(snapshot.latestSequence)
+      setDotPopSequence(
+        priorCount === 0 && snapshot.unreadCount > 0 ? snapshot.latestSequence : undefined
+      )
+    })
+    const stopForReducedMotion = (): void => {
+      if (!reducedMotion?.matches) return
+      setRingSequence(undefined)
+      setDotPopSequence(undefined)
+    }
+    reducedMotion?.addEventListener('change', stopForReducedMotion)
+    return () => {
+      unsubscribe()
+      reducedMotion?.removeEventListener('change', stopForReducedMotion)
+    }
+  }, [])
 
   const updatePanelPosition = useCallback((): void => {
     if (isMobile) return
@@ -504,11 +548,22 @@ const NotificationBellContent = ({
               className
             )}
           >
-            <Bell className="size-4" strokeWidth={2} aria-hidden="true" />
+            <Bell
+              key={`bell-${ringSequence ?? 'idle'}`}
+              className={cn('size-4', ringSequence !== undefined && 'message-bell-ring')}
+              strokeWidth={2}
+              aria-hidden="true"
+              onAnimationEnd={() => setRingSequence(undefined)}
+            />
             {unreadCount > 0 ? (
               <span
-                className="absolute right-1.5 top-1.5 size-2 rounded-full bg-destructive ring-2 ring-bg-000"
+                key={`dot-${dotPopSequence ?? 'idle'}`}
+                className={cn(
+                  'absolute right-1.5 top-1.5 size-2 rounded-full bg-destructive ring-2 ring-bg-000',
+                  dotPopSequence !== undefined && 'message-bell-dot-pop'
+                )}
                 aria-hidden="true"
+                onAnimationEnd={() => setDotPopSequence(undefined)}
               />
             ) : null}
           </button>
