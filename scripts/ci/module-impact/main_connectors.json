@@ -85,6 +85,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/connectors/descriptors/clinpgx.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
       "src/main/acp/client-interaction-owner.test.ts",

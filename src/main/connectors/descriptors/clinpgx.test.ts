@@ -1,10 +1,19 @@
+import Ajv2020 from 'ajv/dist/2020.js'
 import { describe, expect, it, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { CLINPGX_TOOLS } from './clinpgx'
-import { validateToolArguments } from '../registry'
 import type { ToolDescriptor } from '../types'
 
 const tool = (id: string): ToolDescriptor => CLINPGX_TOOLS.find((candidate) => candidate.id === id)!
+const ajv = new Ajv2020({ strict: true })
+const validators = new Map(
+  CLINPGX_TOOLS.map((candidate) => [candidate.id, ajv.compile(candidate.input)])
+)
+
+const validateToolArguments = (descriptor: ToolDescriptor, args: Record<string, unknown>): void => {
+  if (validators.get(descriptor.id)?.(args)) return
+  throw new Error('invalid_arguments')
+}
 const json = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
