@@ -1,7 +1,7 @@
 import { ErrorNotice } from '@/components/error-notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useState } from 'react'
-import { PackagePlus } from 'lucide-react'
+import { PackagePlus, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
 
@@ -13,6 +13,7 @@ import type {
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
+  dialogCloseButtonClassName,
   dialogCancelButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
@@ -122,7 +123,7 @@ const SkillImportApprovalRequestDialog = ({
           >
             <div className={cn(dialogHeaderClassName, 'items-start justify-start')}>
               <PackagePlus className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <Dialog.Title className={dialogTitleClassName}>
                   {request.source.kind === 'github'
                     ? t('Import Skills from GitHub?')
@@ -139,6 +140,16 @@ const SkillImportApprovalRequestDialog = ({
                   />
                 </Dialog.Description>
               </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Close')}
+                className={cn(dialogCloseButtonClassName, 'shrink-0')}
+                onClick={onClose}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
             </div>
 
             <div className={cn(dialogBodyClassName, 'min-h-0 flex-1 overflow-y-auto py-3')}>
@@ -258,9 +269,6 @@ const SkillImportApprovalRequestDialog = ({
               />
             ) : null}
             <div className={dialogFooterClassName}>
-              <Button type="button" variant="ghost" onClick={onClose}>
-                {t('Close')}
-              </Button>
               <Button
                 type="button"
                 variant="ghost"

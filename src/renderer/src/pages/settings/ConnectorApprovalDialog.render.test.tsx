@@ -44,7 +44,7 @@ afterEach(() => {
 
 const button = (text: string): HTMLButtonElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-    (b) => b.textContent?.trim() === text
+    (b) => (b.getAttribute('aria-label') ?? b.textContent?.trim()) === text
   )
 
 describe('ConnectorApprovalDialog', () => {

@@ -29,7 +29,7 @@ let root: Root
 
 const findButton = (label: string): HTMLButtonElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-    (button) => button.textContent?.trim() === label
+    (button) => (button.getAttribute('aria-label') ?? button.textContent?.trim()) === label
   )
 
 beforeEach(() => {

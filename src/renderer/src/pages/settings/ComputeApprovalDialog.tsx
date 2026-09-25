@@ -1,6 +1,6 @@
 import { ErrorNotice } from '@/components/error-notice'
 import { useState } from 'react'
-import { ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react'
+import { ShieldAlert, ChevronDown, ChevronUp, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   dialogBodyClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
@@ -134,7 +135,7 @@ export function ComputeApprovalDialog({
               className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
               aria-hidden="true"
             />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <Dialog.Title className={dialogTitleClassName}>{title}</Dialog.Title>
               <Dialog.Description
                 className={cn(dialogDescriptionClassName, 'text-xs [text-wrap:pretty]')}
@@ -142,6 +143,16 @@ export function ComputeApprovalDialog({
                 {description}
               </Dialog.Description>
             </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('Close')}
+              className={cn(dialogCloseButtonClassName, 'shrink-0')}
+              onClick={() => close(dialogRequest.id)}
+            >
+              <X className="size-4" aria-hidden="true" />
+            </Button>
           </div>
 
           <ScrollArea
@@ -281,9 +292,6 @@ export function ComputeApprovalDialog({
             </div>
           </ScrollArea>
           <div className={cn(dialogFooterClassName, 'shrink-0 flex-wrap')}>
-            <Button type="button" variant="ghost" onClick={() => close(dialogRequest.id)}>
-              {t('Close')}
-            </Button>
             <Button type="button" variant="destructive" disabled={responding} onClick={deny}>
               {t('Deny')}
             </Button>

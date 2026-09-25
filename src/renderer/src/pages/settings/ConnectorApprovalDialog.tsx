@@ -1,5 +1,5 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { ShieldAlert } from 'lucide-react'
+import { ShieldAlert, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
@@ -120,7 +121,7 @@ export function ConnectorApprovalDialog({
               className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
               aria-hidden="true"
             />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <Dialog.Title className={dialogTitleClassName}>
                 {t('Allow external request?')}
               </Dialog.Title>
@@ -132,6 +133,16 @@ export function ConnectorApprovalDialog({
                 )}
               </Dialog.Description>
             </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('Close')}
+              className={cn(dialogCloseButtonClassName, 'shrink-0')}
+              onClick={() => close(request.id)}
+            >
+              <X className="size-4" aria-hidden="true" />
+            </Button>
           </div>
 
           <div className={dialogBodyClassName}>
@@ -219,9 +230,6 @@ export function ConnectorApprovalDialog({
           </div>
 
           <div className={cn(dialogFooterClassName, 'flex-wrap')}>
-            <Button type="button" variant="ghost" onClick={() => close(request.id)}>
-              {t('Close')}
-            </Button>
             <Button type="button" variant="destructive" disabled={responding} onClick={deny}>
               {t('Deny')}
             </Button>

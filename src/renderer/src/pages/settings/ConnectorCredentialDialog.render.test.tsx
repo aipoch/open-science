@@ -14,7 +14,7 @@ let root: Root
 
 const button = (label: string): HTMLButtonElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-    (candidate) => candidate.textContent?.trim() === label
+    (candidate) => (candidate.getAttribute('aria-label') ?? candidate.textContent?.trim()) === label
   )
 
 const enterKey = (value: string): void => {

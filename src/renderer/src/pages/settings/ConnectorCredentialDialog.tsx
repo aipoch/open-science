@@ -2,7 +2,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useFileCredentialNotice } from './use-file-credential-notice'
-import { KeyRound } from 'lucide-react'
+import { KeyRound, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -11,6 +11,7 @@ import type { ConnectorCredentialRequest } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
@@ -100,7 +101,7 @@ export function ConnectorCredentialControls({
           className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
           aria-hidden="true"
         />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           {embedded ? (
             <h2 className={dialogTitleClassName}>{t('Add your OpenAlex API key')}</h2>
           ) : (
@@ -124,6 +125,18 @@ export function ConnectorCredentialControls({
             </Dialog.Description>
           )}
         </div>
+        {!embedded ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t('Close')}
+            className={cn(dialogCloseButtonClassName, 'shrink-0')}
+            onClick={() => close(request.id)}
+          >
+            <X className="size-4" aria-hidden="true" />
+          </Button>
+        ) : null}
       </div>
 
       <div className={cn(dialogBodyClassName, 'space-y-2')}>
@@ -168,11 +181,6 @@ export function ConnectorCredentialControls({
       </div>
 
       <div className={cn(dialogFooterClassName, embedded && 'sticky bottom-0 z-10 bg-card')}>
-        {!embedded ? (
-          <Button type="button" variant="ghost" onClick={() => close(request.id)}>
-            {t('Close')}
-          </Button>
-        ) : null}
         <Button type="button" variant="outline" disabled={busy} onClick={cancel}>
           {t('Not now')}
         </Button>

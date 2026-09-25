@@ -39,7 +39,7 @@ afterEach(() => {
 
 const button = (text: string): HTMLButtonElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-    (candidate) => candidate.textContent?.trim() === text
+    (candidate) => (candidate.getAttribute('aria-label') ?? candidate.textContent?.trim()) === text
   )
 
 const importCandidate = (subPath: string, name: string): SkillBundlePreview => ({
