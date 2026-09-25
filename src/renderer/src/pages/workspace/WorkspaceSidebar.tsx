@@ -78,6 +78,7 @@ type WorkspaceSidebarProps = {
   onNewConversation: () => void
   isFilesOpen: boolean
   onOpenFiles: () => void
+  isLibraryOpen?: boolean
   onOpenLiterature?: () => void
   isComputeOpen?: boolean
   onOpenCompute?: () => void
@@ -415,6 +416,7 @@ const WorkspaceSidebarView = ({
   onNewConversation,
   isFilesOpen,
   onOpenFiles,
+  isLibraryOpen = false,
   onOpenLiterature,
   isComputeOpen = false,
   onOpenCompute,
@@ -896,8 +898,11 @@ const WorkspaceSidebarView = ({
               type="button"
               className={cn(
                 'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                isLibraryOpen && 'bg-bg-300',
                 sidebarInteractiveTransitionClassName
               )}
+              aria-controls="right-panel"
+              aria-pressed={isLibraryOpen}
               disabled={!onOpenLiterature}
               onClick={onOpenLiterature}
             >

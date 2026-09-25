@@ -42,6 +42,7 @@ export type PreviewFileFormat =
 // their path is an absolute filesystem path read via window.api.localFs.
 export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input' | 'literature' | 'local'
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
+export const PROJECT_LIBRARY_PREVIEW_ID = 'tool:project:library'
 export const PROJECT_COMPUTE_PREVIEW_ID = 'tool:project:compute'
 export const sideChatTabId = (sessionId: string): string => `tool:side-chat:${sessionId}`
 
@@ -72,7 +73,8 @@ export type PreviewFileItem = PreviewItemBase & {
 export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
   sideChatId?: string
-  toolKind?: 'notebook' | 'files' | 'compute' | 'reviewer' | 'plan' | 'subagents' | 'side-chat'
+  toolKind?:
+    'notebook' | 'files' | 'library' | 'compute' | 'reviewer' | 'plan' | 'subagents' | 'side-chat'
   notebook?: NotebookSessionReference
   notebookRunId?: string
   notebookRunFocusRequest?: number
@@ -439,6 +441,14 @@ const createProjectFilesPreviewItem = (): PreviewToolItem => ({
   type: 'tool',
   toolKind: 'files',
   title: 'Files'
+})
+
+const createProjectLibraryPreviewItem = (): PreviewToolItem => ({
+  id: PROJECT_LIBRARY_PREVIEW_ID,
+  sessionId: '__project_library__',
+  type: 'tool',
+  toolKind: 'library',
+  title: 'Library'
 })
 
 const createProjectComputePreviewItem = (): PreviewToolItem => ({
@@ -1007,6 +1017,7 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 export {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
+  createProjectLibraryPreviewItem,
   createProjectComputePreviewItem,
   createSessionPlanPreviewItem,
   createSessionSubagentsPreviewItem,

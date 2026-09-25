@@ -1,6 +1,6 @@
 import { ErrorNotice } from '@/components/error-notice'
 import { LoaderCircle } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -27,6 +27,8 @@ import { SessionReviewerPanel } from '../SessionReviewerPanel'
 import { SubagentPreview } from '../SubagentReleaseSurfaces'
 import { respondToSessionPlan } from '../session-plan/respond-to-session-plan'
 import { PlanPreviewSurface, type RestoredPlanResponder } from '../session-plan/SessionPlanSurfaces'
+
+const LibraryPreview = lazy(() => import('./LibraryPreview'))
 
 const isNotebookPreviewItem = (item: PreviewToolItem): item is NotebookPreviewItem =>
   item.toolKind === 'notebook' && Boolean(item.notebook)
@@ -311,6 +313,18 @@ export const PreviewToolContent = ({
   // Remount the Files tool per project so its transient dialog cannot outlive the project it opened.
   if (item.toolKind === 'files') {
     return <ProjectFilesView key={activeProjectId ?? 'no-active-project'} />
+  }
+
+  if (item.toolKind === 'library') {
+    return (
+      <Suspense fallback={null}>
+        <LibraryPreview
+          key={activeProjectId ?? 'no-active-project'}
+          projectId={activeProjectId}
+          isActive={isActive}
+        />
+      </Suspense>
+    )
   }
 
   if (item.toolKind === 'compute') {

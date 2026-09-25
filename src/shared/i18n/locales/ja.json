@@ -6302,6 +6302,24 @@
     "Open the file from your current storage location, or close this preview and continue working.": "現在の保存先からファイルを開くか、このプレビューを閉じて作業を続けてください。",
     "This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.": "この会話は、プランが復元されるか明示的に破棄されるまで続行できません。復旧中は別の会話に切り替えられます。",
     "If recovery keeps failing, check that Open-Science is running on the host computer and that both devices are connected. Save a copy of unsent drafts before leaving this page.": "復旧に失敗し続ける場合は、ホストコンピューターでOpen-Scienceが実行されていることと、両方のデバイスが接続されていることを確認してください。このページを離れる前に、未送信の下書きのコピーを保存してください。",
-    "Appearance changed elsewhere. Review the current appearance before trying again.": "外観が別の場所で変更されました。現在の外観を確認してから、もう一度お試しください。"
+    "Appearance changed elsewhere. Review the current appearance before trying again.": "外観が別の場所で変更されました。現在の外観を確認してから、もう一度お試しください。",
+    "Open in Literature": "文献で開く",
+    "View in Literature": "文献で表示",
+    "Library preview": "ライブラリのプレビュー",
+    "No references in this project": "このプロジェクトに文献はありません",
+    "Your library is empty": "ライブラリは空です",
+    "No matching references": "一致する文献がありません",
+    "Browse all references": "すべての文献を見る",
+    "Browse your library, or add references to this project in Literature.": "ライブラリを参照するか、文献でこのプロジェクトに文献を追加してください。",
+    "Add or import references in Literature to start building your library.": "文献で文献を追加またはインポートして、ライブラリを作成してください。",
+    "Try another search or clear the search field.": "別のキーワードで検索するか、検索欄をクリアしてください。",
+    "Could not load references.": "文献を読み込めませんでした。",
+    "Loading references…": "文献を読み込み中…",
+    "No abstract available.": "要旨はありません。",
+    "No PDF attached.": "PDFは添付されていません。",
+    "PDF unavailable": "PDFを利用できません",
+    "No references on this page": "このページに文献はありません",
+    "References may have moved or been removed. Return to the first page.": "文献が移動または削除された可能性があります。最初のページに戻ってください。",
+    "First page": "最初のページ"
   }
 }

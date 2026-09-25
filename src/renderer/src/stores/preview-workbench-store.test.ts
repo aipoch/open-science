@@ -7,6 +7,7 @@ import { useSessionStore } from './session-store'
 import {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
+  createProjectLibraryPreviewItem,
   createInitialPreviewWorkbenchState,
   PROJECT_FILES_PREVIEW_ID,
   usePreviewWorkbenchStore
@@ -349,6 +350,21 @@ describe('preview workbench store', () => {
         }
       ]
     })
+  })
+
+  it('reuses the Library tab and keeps it scoped to its project', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-a')
+    store.upsertAndActivateItem(createProjectLibraryPreviewItem())
+    store.upsertAndActivateItem(createProjectLibraryPreviewItem())
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      toolKind: 'library'
+    })
+    store.activateProject('project-b')
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
+    store.activateProject('project-a')
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
   })
 
   it('collapses the panel when the last preview item is removed', () => {

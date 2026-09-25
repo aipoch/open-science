@@ -44,6 +44,17 @@ vi.mock('@/stores/review-store', () => ({
       loadReviewsForSession: mocks.loadReviewsForSession
     })
 }))
+vi.mock('./LibraryPreview', () => ({
+  default: ({
+    projectId,
+    isActive
+  }: {
+    projectId?: string
+    isActive: boolean
+  }): React.JSX.Element => (
+    <div data-testid="library-preview" data-project={projectId} data-active={isActive} />
+  )
+}))
 vi.mock('../SubagentReleaseSurfaces', () => ({
   SubagentPreview: ({ isActive }: { isActive: boolean }): React.JSX.Element => (
     <div data-testid="subagent-preview" data-active={isActive} />
@@ -107,6 +118,23 @@ describe('PreviewToolContent', () => {
 
   it('routes project file tools through a project-scoped remount boundary', () => {
     expect(render(createItem({ toolKind: 'files' }))).toContain('data-testid="project-files"')
+  })
+
+  it('passes the project and inactive state through the lazy Library boundary', async () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      await act(async () => {
+        root.render(
+          <PreviewToolContent item={createItem({ toolKind: 'library' })} isActive={false} />
+        )
+      })
+      const preview = container.querySelector('[data-testid="library-preview"]')
+      expect(preview?.getAttribute('data-project')).toBe('project-1')
+      expect(preview?.getAttribute('data-active')).toBe('false')
+    } finally {
+      await act(async () => root.unmount())
+    }
   })
 
   it('routes Project Compute through a project-scoped remount boundary', () => {

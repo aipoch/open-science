@@ -2425,6 +2425,7 @@ describe('WorkspaceSidebar accessible render', () => {
       isFilesOpen: true,
       onOpenFiles,
       onOpenLiterature,
+      isLibraryOpen: true,
       isComputeOpen: false,
       onOpenCompute,
       onOpenSession: vi.fn(),
@@ -2469,6 +2470,8 @@ describe('WorkspaceSidebar accessible render', () => {
     ;(computeButton?.props.onClick as () => void)()
     expect(onOpenCompute).toHaveBeenCalledTimes(1)
 
+    expect(literatureButton?.props['aria-controls']).toBe('right-panel')
+    expect(literatureButton?.props['aria-pressed']).toBe(true)
     expect(literatureButton?.props.onClick).toBeTypeOf('function')
     ;(literatureButton?.props.onClick as () => void)()
     expect(onOpenLiterature).toHaveBeenCalledTimes(1)
