@@ -3534,6 +3534,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     switch (field) {
       case 'title':
         return t('Title')
+      case 'abstract':
+        return t('Abstract')
       case 'authors':
         return t('Authors')
       case 'identifiers':

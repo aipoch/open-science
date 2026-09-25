@@ -27,6 +27,7 @@ describe('LiteratureReferenceResolver', () => {
             DOI: '10.1007/s11914-026-00956-3',
             type: 'journal-article',
             title: ['Metabolism in Tumour-Induced Bone Disease'],
+            abstract: '<jats:p>Bone cells adapt to tumour metabolism.</jats:p>',
             'container-title': ['Current Osteoporosis Reports'],
             published: { 'date-parts': [[2026, 2, 16]] },
             volume: '24',
@@ -45,6 +46,7 @@ describe('LiteratureReferenceResolver', () => {
     ])
     expect(result.item).toMatchObject({
       title: 'Metabolism in Tumour-Induced Bone Disease',
+      abstract: 'Bone cells adapt to tumour metabolism.',
       containerTitle: 'Current Osteoporosis Reports',
       issuedYear: 2026,
       issuedText: '2026-02-16',

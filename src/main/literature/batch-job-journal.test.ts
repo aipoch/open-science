@@ -174,7 +174,7 @@ it('retries reviews atomically while retaining completed payloads and item snaps
     provider: 'crossref',
     sourceUrl: 'https://crossref.org',
     item: job.rows[0].item!,
-    filled: [{ field: 'title', value: 'new title' }],
+    filled: [{ field: 'abstract', value: 'Publisher abstract' }],
     conflicts: []
   }
   job.rows.push({ ...structuredClone(job.rows[0]), id: 'done', status: 'done' })
@@ -205,4 +205,7 @@ it('retries reviews atomically while retaining completed payloads and item snaps
   expect(restored.rows[0].item).toEqual(job.rows[0].item)
   expect(restored.rows[0].metadata).toBeUndefined()
   expect(restored.rows[1]).toEqual(job.rows[1])
+  expect(restored.rows[1].metadata?.filled).toEqual([
+    { field: 'abstract', value: 'Publisher abstract' }
+  ])
 })
