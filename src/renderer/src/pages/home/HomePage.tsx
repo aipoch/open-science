@@ -255,6 +255,12 @@ const HomePage = ({
     [activeProjects]
   )
 
+  const isProjectArchiveBlockedByCatalogRecovery = (projectId: string): boolean => {
+    if (hasCompleteSessionCatalog) return false
+    if (effectiveCatalogRecovery.kind !== 'damaged-authority') return true
+    return effectiveCatalogRecovery.affectedFiles.some((file) => file.projectId === projectId)
+  }
+
   // Non-pending sessions only; pending ones have no durable project yet.
   const persistedSessions = useMemo(
     () =>
@@ -496,7 +502,7 @@ const HomePage = ({
   }
 
   const canArchiveProject = (project: Project): boolean =>
-    hasCompleteSessionCatalog &&
+    !isProjectArchiveBlockedByCatalogRecovery(project.id) &&
     canDeleteProjects &&
     project.archivedAt === undefined &&
     !sessions.some(
@@ -511,7 +517,7 @@ const HomePage = ({
 
   const archiveUnavailableReason = (project: Project): string | undefined => {
     if (!canDeleteProjects) return t('Retry project recovery before archiving.')
-    if (!hasCompleteSessionCatalog) {
+    if (isProjectArchiveBlockedByCatalogRecovery(project.id)) {
       if (effectiveCatalogRecovery.kind === 'damaged-authority') {
         return t(
           'Project archive is unavailable because a damaged conversation cannot be verified.'

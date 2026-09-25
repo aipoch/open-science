@@ -60,7 +60,7 @@ describe('SessionCatalogRecoveryAlert', () => {
 
     expect(container.textContent).toContain('Project archive needs attention')
     expect(container.textContent).toContain('A damaged saved conversation was moved aside')
-    expect(container.textContent).toContain('You can still permanently delete the project')
+    expect(container.textContent).toContain('You can still permanently delete the affected project')
     expect(container.textContent).toContain('Compute jobs in affected Sessions may remain queued')
     const retry = container.querySelector<HTMLButtonElement>(
       '[data-testid="session-persistence-retry"]'
