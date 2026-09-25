@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk'
 import type { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   createPermissionGrantRegistry,
@@ -787,83 +787,97 @@ describe('ACP permission broker with durable grants', () => {
     expect(emitted).toHaveLength(1)
   })
 
-  it.each([
-    ['posix', 'python upload.py --token secret', ['python', 'upload.py']],
-    ['posix', 'curl --auth-token secret https://example.com', ['curl']],
-    ['posix', 'curl --bearer secret https://example.com', ['curl']],
-    ['posix', 'curl --oauth2-bearer secret https://example.com', ['curl']],
-    ['posix', 'curl --cookie session=secret https://example.com', ['curl']],
-    ['posix', 'curl -uuser:secret https://example.com', ['curl']],
-    ['posix', 'curl -b session=secret https://example.com', ['curl']],
-    ['posix', 'curl -bsession=secret https://example.com', ['curl']],
-    ['powershell', 'CURL.EXE -bsession=secret https://example.com', ['CURL.EXE']],
-    ['posix', 'docker login -p secret', ['docker', 'login']],
-    ['posix', 'docker login -psecret', ['docker', 'login']],
-    ['powershell', 'Docker login -psecret', ['Docker', 'login']],
-    ['posix', 'sshpass -psecret ssh user@example.com', ['sshpass']],
-    ['posix', 'redis-cli -asecret ping', ['redis-cli']],
-    ['posix', 'mysql -psecret app', ['mysql']],
-    ['posix', 'mysqldump -psecret app', ['mysqldump']],
-    ['posix', 'npm config set //registry.npmjs.org/:_authToken=secret', ['npm', 'config', 'set']],
-    ['posix', 'aws configure set aws_secret_access_key secret', ['aws', 'configure', 'set']],
-    ['posix', 'gpg --passphrase secret --decrypt payload.gpg', ['gpg']],
-    ['posix', 'gpg --passphrase-file=credentials.txt --decrypt payload.gpg', ['gpg']],
-    [
-      'posix',
-      'gcloud auth activate-service-account --key-file credentials.json',
-      ['gcloud', 'auth', 'activate-service-account']
-    ],
-    ['posix', 'oauth login --client-secret secret', ['oauth', 'login']],
-    ['posix', 'deploy --github-token secret', ['deploy']],
-    ['posix', 'deploy --client_secret=secret', ['deploy']],
-    ['posix', 'deploy --x-api-key secret', ['deploy']],
-    ['posix', 'deploy --aws-secret-access-key secret', ['deploy']],
-    ['posix', 'deploy --credentials credentials.json', ['deploy']],
-    ['powershell', 'Invoke-RestMethod -Credential secret', ['Invoke-RestMethod']],
-    ['powershell', 'Invoke-RestMethod -ClientSecret:secret', ['Invoke-RestMethod']]
-  ] as const)(
-    'offers only provider Once for a credential-bearing Codex %s command group: %s',
-    async (shellDialect, command, commandPrefix) => {
-      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
-      client = createProjectDbClient(storageRoot)
-      await migrateApplicationDatabase(client)
-      await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
-      const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
-      const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
-      const broker = new AcpPermissionBroker(
-        (request) => emitted.push(request),
-        undefined,
-        registry
-      )
-      const request = shellRequest('session-1')
-      request.toolCall.rawInput = { command }
-      request.options.splice(2, 0, {
-        optionId: 'accept_execpolicy_amendment',
-        name: `Allow Commands Starting With \`${commandPrefix.join(' ')}\``,
-        kind: 'allow_always',
-        _meta: {
-          codex: {
-            execpolicyAmendment: [...commandPrefix]
+  describe('credential-bearing Codex command groups', () => {
+    let secretRoot: string | undefined
+    let secretClient: PrismaClient | undefined
+    let secretRegistry: PermissionGrantRegistry
+
+    beforeAll(async () => {
+      secretRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
+      secretClient = createProjectDbClient(secretRoot)
+      await migrateApplicationDatabase(secretClient)
+      await secretClient.project.create({ data: { id: 'project-1', name: 'Project one' } })
+      secretRegistry = await createPermissionGrantRegistry({ getClient: async () => secretClient! })
+    })
+
+    afterAll(async () => {
+      await secretClient?.$disconnect()
+      if (secretRoot) await rm(secretRoot, { recursive: true, force: true })
+    })
+
+    it.each([
+      ['posix', 'python upload.py --token secret', ['python', 'upload.py']],
+      ['posix', 'curl --auth-token secret https://example.com', ['curl']],
+      ['posix', 'curl --bearer secret https://example.com', ['curl']],
+      ['posix', 'curl --oauth2-bearer secret https://example.com', ['curl']],
+      ['posix', 'curl --cookie session=secret https://example.com', ['curl']],
+      ['posix', 'curl -uuser:secret https://example.com', ['curl']],
+      ['posix', 'curl -b session=secret https://example.com', ['curl']],
+      ['posix', 'curl -bsession=secret https://example.com', ['curl']],
+      ['powershell', 'CURL.EXE -bsession=secret https://example.com', ['CURL.EXE']],
+      ['posix', 'docker login -p secret', ['docker', 'login']],
+      ['posix', 'docker login -psecret', ['docker', 'login']],
+      ['powershell', 'Docker login -psecret', ['Docker', 'login']],
+      ['posix', 'sshpass -psecret ssh user@example.com', ['sshpass']],
+      ['posix', 'redis-cli -asecret ping', ['redis-cli']],
+      ['posix', 'mysql -psecret app', ['mysql']],
+      ['posix', 'mysqldump -psecret app', ['mysqldump']],
+      ['posix', 'npm config set //registry.npmjs.org/:_authToken=secret', ['npm', 'config', 'set']],
+      ['posix', 'aws configure set aws_secret_access_key secret', ['aws', 'configure', 'set']],
+      ['posix', 'gpg --passphrase secret --decrypt payload.gpg', ['gpg']],
+      ['posix', 'gpg --passphrase-file=credentials.txt --decrypt payload.gpg', ['gpg']],
+      [
+        'posix',
+        'gcloud auth activate-service-account --key-file credentials.json',
+        ['gcloud', 'auth', 'activate-service-account']
+      ],
+      ['posix', 'oauth login --client-secret secret', ['oauth', 'login']],
+      ['posix', 'deploy --github-token secret', ['deploy']],
+      ['posix', 'deploy --client_secret=secret', ['deploy']],
+      ['posix', 'deploy --x-api-key secret', ['deploy']],
+      ['posix', 'deploy --aws-secret-access-key secret', ['deploy']],
+      ['posix', 'deploy --credentials credentials.json', ['deploy']],
+      ['powershell', 'Invoke-RestMethod -Credential secret', ['Invoke-RestMethod']],
+      ['powershell', 'Invoke-RestMethod -ClientSecret:secret', ['Invoke-RestMethod']]
+    ] as const)(
+      'offers only provider Once for a credential-bearing Codex %s command group: %s',
+      async (shellDialect, command, commandPrefix) => {
+        const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+        const broker = new AcpPermissionBroker(
+          (request) => emitted.push(request),
+          undefined,
+          secretRegistry
+        )
+        const request = shellRequest('session-1')
+        request.toolCall.rawInput = { command }
+        request.options.splice(2, 0, {
+          optionId: 'accept_execpolicy_amendment',
+          name: `Allow Commands Starting With \`${commandPrefix.join(' ')}\``,
+          kind: 'allow_always',
+          _meta: {
+            codex: {
+              execpolicyAmendment: [...commandPrefix]
+            }
           }
-        }
-      })
+        })
 
-      const pending = broker.requestPermission(request, {
-        profile: 'ask',
-        frameworkId: 'codex',
-        shellDialect,
-        projectId: 'project-1'
-      })
-      await new Promise<void>((resolve) => setImmediate(resolve))
+        const pending = broker.requestPermission(request, {
+          profile: 'ask',
+          frameworkId: 'codex',
+          shellDialect,
+          projectId: 'project-1'
+        })
+        await new Promise<void>((resolve) => setImmediate(resolve))
 
-      expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
-      broker.respond({ requestId: emitted[0].requestId, optionId: 'provider-allow-once' })
-      await expect(pending).resolves.toEqual({
-        outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
-      })
-      await expect(registry.list()).resolves.toEqual([])
-    }
-  )
+        expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
+        broker.respond({ requestId: emitted[0].requestId, optionId: 'provider-allow-once' })
+        await expect(pending).resolves.toEqual({
+          outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+        })
+        await expect(secretRegistry.list()).resolves.toEqual([])
+      }
+    )
+  })
 
   it('offers only provider Once for a command that executes a mutable script', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mutable-script-'))

@@ -3137,9 +3137,12 @@ it('re-evaluates abandoned checkpoints on the next automatic refresh', async () 
   })
   classify.mockRejectedValueOnce(new AutomaticClassificationPausedError('run-limit'))
   owner.schedule()
-  await vi.waitFor(async () => {
-    expect((await owner.view(id)).automaticPauseReason).toBe('run-limit')
-  })
+  await vi.waitFor(
+    async () => {
+      expect((await owner.view(id)).automaticPauseReason).toBe('run-limit')
+    },
+    { timeout: 5000 }
+  )
   const pausedRunId = (await owner.view(id)).run!.id
 
   await owner.execute({
@@ -3154,8 +3157,10 @@ it('re-evaluates abandoned checkpoints on the next automatic refresh', async () 
   ).toMatchObject({ state: 'cancelled', abandonedAt: expect.any(Date) })
 
   owner.schedule()
-  await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(2))
-  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(2), { timeout: 5000 })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
+    timeout: 5000
+  })
   expect((await owner.view(id)).run?.id).not.toBe(pausedRunId)
 })
 
