@@ -2856,6 +2856,7 @@ const createApplicationModules = async (
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
       settingsService,
       permissionGrantRegistry,
+      grantedRootsRepository,
       specialistService,
       sessionPersistenceCoordinator,
       getShellRuntimeBinding: getAvailableShellRuntimeBinding

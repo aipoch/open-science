@@ -252,6 +252,7 @@ type AcpRuntimeOptions = {
   // table), enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references
   // stay unavailable.
   grantedRoots?: {
+    list?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
   notebook?: AcpRuntimeNotebookOptions
@@ -1570,7 +1571,8 @@ class AcpRuntime {
       observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
       filesystem: {
         resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
-        protectedReadRoots: () => this.protectedReadRoots()
+        protectedReadRoots: () => this.protectedReadRoots(),
+        listGrantedRoots: () => this.options.grantedRoots?.list?.() ?? Promise.resolve([])
       },
       onBackendResolved: (framework) => {
         onFrameworkResolved(framework)

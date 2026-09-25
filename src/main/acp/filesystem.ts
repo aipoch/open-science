@@ -5,10 +5,57 @@ import type {
   WriteTextFileResponse
 } from '@agentclientprotocol/sdk'
 import { createReadStream } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 
-import { assertWorkspacePath, isPathInsideWorkspace } from './workspace-path'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { isPathInsideWorkspace } from './workspace-path'
+
+type GrantedRoot = Pick<GrantedLocalRoot, 'path' | 'access'>
+
+// Resolve the existing portion of a path so a symlink inside an authorized root cannot escape
+// that root. Writes may target a new file, so walk up to the nearest existing parent first.
+const resolvePhysicalPath = async (candidatePath: string): Promise<string> => {
+  try {
+    return await realpath(candidatePath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    const parent = dirname(candidatePath)
+    if (parent === candidatePath) return resolve(candidatePath)
+    const physicalParent = await resolvePhysicalPath(parent)
+    return resolve(physicalParent, candidatePath.slice(parent.length + 1))
+  }
+}
+
+const assertAuthorizedPath = async (
+  workspaceRoot: string,
+  candidatePath: string,
+  grantedRoots: readonly GrantedRoot[],
+  requiredAccess: GrantedLocalRoot['access']
+): Promise<{ path: string; physicalPath: string }> => {
+  const path = resolve(candidatePath)
+  const physicalPath = await resolvePhysicalPath(path)
+  const physicalWorkspaceRoot = await resolvePhysicalPath(resolve(workspaceRoot))
+
+  if (isPathInsideWorkspace(physicalWorkspaceRoot, physicalPath)) {
+    return { path, physicalPath }
+  }
+
+  for (const root of grantedRoots) {
+    if (requiredAccess === 'rw' && root.access !== 'rw') continue
+    let physicalRoot: string
+    try {
+      physicalRoot = await resolvePhysicalPath(resolve(root.path))
+    } catch {
+      continue
+    }
+    if (isPathInsideWorkspace(physicalRoot, physicalPath)) {
+      return { path, physicalPath }
+    }
+  }
+
+  throw new Error(`Path is outside the active ACP workspace: ${candidatePath}`)
+}
 
 // Scan only through the requested window. String decoding handles UTF-8 split across chunks;
 // split on LF explicitly so a bare CR retains the existing text-file semantics.
@@ -61,11 +108,17 @@ const assertNotProtected = (filePath: string, protectedRoots: string[]): void =>
 const readWorkspaceTextFile = async (
   workspaceRoot: string,
   params: ReadTextFileRequest,
-  protectedRoots: string[] = []
+  protectedRoots: string[] = [],
+  grantedRoots: readonly GrantedRoot[] = []
 ): Promise<ReadTextFileResponse> => {
   // ACP paths are absolute, but resolve again here so path traversal is checked in one place.
-  const filePath = assertWorkspacePath(workspaceRoot, params.path)
-  assertNotProtected(filePath, protectedRoots)
+  const { path: filePath, physicalPath } = await assertAuthorizedPath(
+    workspaceRoot,
+    params.path,
+    grantedRoots,
+    'ro'
+  )
+  assertNotProtected(physicalPath, protectedRoots)
   return {
     content:
       !params.line && !params.limit
@@ -77,9 +130,15 @@ const readWorkspaceTextFile = async (
 // Writes a text file after creating parent directories inside the active workspace.
 const writeWorkspaceTextFile = async (
   workspaceRoot: string,
-  params: WriteTextFileRequest
+  params: WriteTextFileRequest,
+  grantedRoots: readonly GrantedRoot[] = []
 ): Promise<WriteTextFileResponse> => {
-  const filePath = assertWorkspacePath(workspaceRoot, params.path)
+  const { path: filePath } = await assertAuthorizedPath(
+    workspaceRoot,
+    params.path,
+    grantedRoots,
+    'rw'
+  )
 
   await mkdir(dirname(filePath), { recursive: true })
   await writeFile(filePath, params.content, 'utf8')
