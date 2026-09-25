@@ -80,6 +80,18 @@ const shortcutForZoomMenuRole = (role: string | undefined): InterfaceScaleShortc
   }
 }
 
+const menuItemToConstructorOptions = (item: MenuItem): MenuItemConstructorOptions => ({
+  ...(item.role ? { role: item.role as MenuItemConstructorOptions['role'] } : { type: item.type }),
+  ...(item.type !== 'separator' ? { label: item.label } : {}),
+  ...(item.accelerator ? { accelerator: item.accelerator } : {}),
+  enabled: item.enabled,
+  visible: item.visible,
+  ...(item.type === 'checkbox' || item.type === 'radio' ? { checked: item.checked } : {}),
+  registerAccelerator: item.registerAccelerator,
+  ...(item.submenu ? { submenu: item.submenu.items.map(menuItemToConstructorOptions) } : {}),
+  ...(item.click && !item.role ? { click: item.click as MenuItemConstructorOptions['click'] } : {})
+})
+
 const buildZoomSafeApplicationMenu = (
   applicationMenu: Menu | null,
   MenuConstructor: typeof import('electron').Menu,
@@ -91,47 +103,46 @@ const buildZoomSafeApplicationMenu = (
 ): Menu | undefined => {
   if (!applicationMenu) return undefined
 
-  const template: Array<MenuItem | MenuItemConstructorOptions> = applicationMenu.items.map(
-    (item) => {
-      if (item.role?.toLowerCase() !== 'viewmenu' || !item.submenu) return item
+  const template: MenuItemConstructorOptions[] = applicationMenu.items.map((item) => {
+    if (item.role?.toLowerCase() !== 'viewmenu' || !item.submenu)
+      return menuItemToConstructorOptions(item)
 
-      const submenu = MenuConstructor.buildFromTemplate(
-        item.submenu.items.map((viewItem) => {
-          const shortcut = shortcutForZoomMenuRole(viewItem.role)
-          if (!shortcut) return viewItem
+    const submenu = MenuConstructor.buildFromTemplate(
+      item.submenu.items.map((viewItem) => {
+        const shortcut = shortcutForZoomMenuRole(viewItem.role)
+        if (!shortcut) return menuItemToConstructorOptions(viewItem)
 
-          return {
-            label: viewItem.label,
-            accelerator: viewItem.accelerator ?? undefined,
-            click: (_menuItem: MenuItem, focusedWindow?: BaseWindow) => {
-              if (!focusedWindow) return
-              const browserWindow = focusedWindow as BrowserWindow
+        return {
+          label: viewItem.label,
+          accelerator: viewItem.accelerator ?? undefined,
+          click: (_menuItem: MenuItem, focusedWindow?: BaseWindow) => {
+            if (!focusedWindow) return
+            const browserWindow = focusedWindow as BrowserWindow
 
-              if (isMainWindow(browserWindow)) {
-                applyInterfaceScaleShortcut(browserWindow.webContents, shortcut)
-                return
-              }
+            if (isMainWindow(browserWindow)) {
+              applyInterfaceScaleShortcut(browserWindow.webContents, shortcut)
+              return
+            }
 
-              const webContents = browserWindow.webContents
-              if (shortcut === 'reset') {
-                webContents.setZoomLevel(0)
-              } else {
-                // Electron's zoomIn/zoomOut roles advance by 10%, which is half a Chromium
-                // zoom level. Keep secondary windows aligned with their native menu behavior.
-                const direction = shortcut === 'increase' ? 0.5 : -0.5
-                webContents.setZoomLevel(webContents.getZoomLevel() + direction)
-              }
+            const webContents = browserWindow.webContents
+            if (shortcut === 'reset') {
+              webContents.setZoomLevel(0)
+            } else {
+              // Electron's zoomIn/zoomOut roles advance by 10%, which is half a Chromium
+              // zoom level. Keep secondary windows aligned with their native menu behavior.
+              const direction = shortcut === 'increase' ? 0.5 : -0.5
+              webContents.setZoomLevel(webContents.getZoomLevel() + direction)
             }
           }
-        })
-      )
+        }
+      })
+    )
 
-      return {
-        label: item.label,
-        submenu
-      }
+    return {
+      label: item.label,
+      submenu
     }
-  )
+  })
 
   return MenuConstructor.buildFromTemplate(template)
 }
