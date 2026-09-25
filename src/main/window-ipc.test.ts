@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 // Capture ipcMain.handle registrations so the handler can be invoked directly.
-const handlers = new Map<string, (event: unknown) => unknown>()
+const handlers = new Map<string, (...args: unknown[]) => unknown>()
 
 vi.mock('electron', () => ({
   ipcMain: {
-    handle: (channel: string, handler: (event: unknown) => unknown) => {
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
       handlers.set(channel, handler)
     }
   },
@@ -14,6 +14,7 @@ vi.mock('electron', () => ({
 
 const { registerWindowIpcHandlers } = await import('./window-ipc')
 const { WINDOW_CLOSE_CHANNEL } = await import('../shared/window-controls')
+const ZOOM_CHANNEL = 'window:set-zoom-factor'
 
 const invoke = (sender: unknown): unknown => handlers.get(WINDOW_CLOSE_CHANNEL)!({ sender })
 
@@ -22,6 +23,7 @@ describe('window IPC handler', () => {
     handlers.clear()
     registerWindowIpcHandlers()
     expect(handlers.has(WINDOW_CLOSE_CHANNEL)).toBe(true)
+    expect(handlers.has(ZOOM_CHANNEL)).toBe(true)
   })
 
   it('closes the window that owns the invoking web contents', () => {
@@ -42,5 +44,31 @@ describe('window IPC handler', () => {
     registerWindowIpcHandlers({ resolveWindow: () => null })
 
     expect(() => invoke({})).not.toThrow()
+  })
+
+  it('sets an allowed zoom factor on the owning window', () => {
+    handlers.clear()
+    const setZoomFactor = vi.fn()
+    const sender = {}
+    const resolveWindow = vi
+      .fn()
+      .mockReturnValue({ close: vi.fn(), webContents: { setZoomFactor } })
+    registerWindowIpcHandlers({ resolveWindow })
+
+    handlers.get(ZOOM_CHANNEL)!({ sender }, 1.25)
+
+    expect(setZoomFactor).toHaveBeenCalledWith(1.25)
+  })
+
+  it('rejects zoom factors outside the shared allow-list', () => {
+    handlers.clear()
+    const setZoomFactor = vi.fn()
+    registerWindowIpcHandlers({
+      resolveWindow: () => ({ close: vi.fn(), webContents: { setZoomFactor } })
+    })
+
+    handlers.get(ZOOM_CHANNEL)!({ sender: {} }, 1.2)
+
+    expect(setZoomFactor).not.toHaveBeenCalled()
   })
 })

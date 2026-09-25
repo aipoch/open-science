@@ -1685,6 +1685,8 @@
     "Reconstructed directly from the immutable Execution Log · see <logLink>Execution Log</logLink> for the raw record": "Reconstruit directement à partir de l’Execution Log immuable · voir <logLink>Execution Log</logLink> pour l’enregistrement brut",
     "Reconstructing directly from recorded helper and execution evidence.": "Reconstruction directe à partir des preuves enregistrées du code auxiliaire et de l’exécution.",
     "This script can be reconstructed directly from the immutable Execution Log.": "Ce script peut être reconstruit directement à partir de l’Execution Log immuable.",
+    "Interface scale": "Échelle de l’interface",
+    "Adjust the size of text and controls across the app. Changes apply immediately.": "Ajustez la taille du texte et des contrôles dans toute l’application. Les changements s’appliquent immédiatement.",
     "Language": "Langue",
     "Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.": "Les fichiers volumineux (artefacts, Notebooks, environnements) vont ici. Vos paramètres et votre historique restent toujours à l'emplacement par défaut. Vous pourrez modifier cela ultérieurement dans Paramètres.",
     "Last checked {{time}}": "Dernière vérification : {{time}}",

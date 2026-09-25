@@ -1619,6 +1619,8 @@
     "Reconstructed directly from the immutable Execution Log · see <logLink>Execution Log</logLink> for the raw record": "不変の実行ログから直接再構築 · 生のレコードについては<logLink>実行ログ</logLink>を参照してください",
     "Reconstructing directly from recorded helper and execution evidence.": "記録されたヘルパーと実行のエビデンスから直接再構築しています。",
     "This script can be reconstructed directly from the immutable Execution Log.": "このスクリプトは不変の実行ログから直接再構築できます。",
+    "Interface scale": "インターフェースの拡大率",
+    "Adjust the size of text and controls across the app. Changes apply immediately.": "アプリ全体のテキストとコントロールのサイズを調整します。変更はすぐに反映されます。",
     "Language": "言語",
     "Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.": "大きなファイル (アーティファクト、Notebook、環境) はここに移動します。設定と履歴は常にデフォルトの場所に残ります。これは後から「設定」で変更できます。",
     "Last checked {{time}}": "最終チェック：{{time}}",

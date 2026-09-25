@@ -1557,6 +1557,8 @@
     "Key needs re-entry": "Der Schlüssel muss erneut eingegeben werden",
     "Key: {{masked}}": "Schlüssel: {{masked}}",
     "LLM-generated reconstruction · see <logLink>Execution Log</logLink> for the raw record": "LLM-generierte Rekonstruktion · siehe <logLink>Execution Log</logLink> für den Rohdatensatz",
+    "Interface scale": "Oberflächenskalierung",
+    "Adjust the size of text and controls across the app. Changes apply immediately.": "Größe von Text und Bedienelementen in der gesamten App anpassen. Änderungen werden sofort angewendet.",
     "Language": "Sprache",
     "Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.": "Große Dateien wie Artefakte, Notebooks und Umgebungen werden hier gespeichert. Einstellungen und Verlauf bleiben immer am Standardspeicherort. Sie können dies später in den Einstellungen ändern.",
     "Last checked {{time}}": "Zuletzt überprüft {{time}}",

@@ -3,9 +3,13 @@ import { BrowserWindow, type IpcMainInvokeEvent, type WebContents } from 'electr
 import { ipcMainHandle } from './ipc-handler-registry'
 
 import { WINDOW_CLOSE_CHANNEL } from '../shared/window-controls'
+import { isInterfaceScale } from '../shared/interface-scale'
 
 // The minimal window surface the close handler needs; keeps the resolver injectable for tests.
-type ClosableWindow = { close: () => void }
+type ClosableWindow = {
+  close: () => void
+  webContents?: { setZoomFactor: (factor: number) => void }
+}
 
 type WindowIpcDeps = {
   // Maps the invoking web contents back to its window. Defaults to Electron's own lookup.
@@ -20,6 +24,11 @@ const registerWindowIpcHandlers = (deps: WindowIpcDeps = {}): void => {
 
   ipcMainHandle(WINDOW_CLOSE_CHANNEL, (event: IpcMainInvokeEvent): void => {
     resolveWindow(event.sender)?.close()
+  })
+
+  ipcMainHandle('window:set-zoom-factor', (event: IpcMainInvokeEvent, factor: unknown): void => {
+    if (!isInterfaceScale(factor)) return
+    resolveWindow(event.sender)?.webContents?.setZoomFactor(factor)
   })
 }
 

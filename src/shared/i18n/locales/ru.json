@@ -1683,6 +1683,8 @@
     "Reconstructed directly from the immutable Execution Log · see <logLink>Execution Log</logLink> for the raw record": "Восстановлено непосредственно из неизменяемого журнала выполнения · исходную запись см. в <logLink>Журнале выполнения</logLink>",
     "Reconstructing directly from recorded helper and execution evidence.": "Восстановление непосредственно по зафиксированным данным вспомогательного кода и выполнения.",
     "This script can be reconstructed directly from the immutable Execution Log.": "Этот скрипт можно восстановить непосредственно из неизменяемого журнала выполнения.",
+    "Interface scale": "Масштаб интерфейса",
+    "Adjust the size of text and controls across the app. Changes apply immediately.": "Настройте размер текста и элементов управления во всём приложении. Изменения применяются сразу.",
     "Language": "Язык",
     "Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.": "Здесь хранятся большие файлы: артефакты, Notebook и среды. Настройки и история всегда остаются в расположении по умолчанию. Позже его можно изменить в настройках.",
     "Last checked {{time}}": "Последняя проверка: {{time}}",

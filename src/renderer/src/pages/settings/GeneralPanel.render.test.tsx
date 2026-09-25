@@ -634,3 +634,21 @@ describe('GeneralPanel app icon', () => {
     expect(document.activeElement).toBe(tiles[1])
   })
 })
+
+describe('GeneralPanel appearance scale', () => {
+  it('renders the interface scale control in Appearance', async () => {
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[data-slot="select-trigger"][aria-label="Interface scale"]'
+    )
+    expect(trigger).toBeDefined()
+    expect(trigger?.textContent).toContain('100%')
+    expect(container.textContent).toContain(
+      'Adjust the size of text and controls across the app. Changes apply immediately.'
+    )
+  })
+})

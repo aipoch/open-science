@@ -1,36 +1,50 @@
-import type { App, BrowserWindow } from 'electron'
+import type { App, BrowserWindow, Input } from 'electron'
 import { optimizer, type shortcutOptions } from '@electron-toolkit/utils'
 
-// Wraps `@electron-toolkit/utils`' `optimizer.watchWindowShortcuts` so it (a) tests cleanly with a
-// mocked `app`, and (b) gets `zoom: true` baked in — without that the helper `preventDefault`s
-// `Cmd/Ctrl+=` and `Cmd/Ctrl+-` in its `before-input-event` listener, silently disabling Electron's
-// built-in zoomIn/zoomOut menu accelerators (issue #336). Default DevTools / reload behavior from
-// electron-toolkit is preserved unchanged.
-const installWindowShortcuts = (app: App, options?: Omit<shortcutOptions, 'zoom'>): void => {
+import {
+  INTERFACE_SCALE_SHORTCUT_CHANNEL,
+  isInterfaceScale,
+  resolveInterfaceScaleShortcut,
+  type InterfaceScaleShortcut
+} from '../shared/interface-scale'
+
+const scaleShortcutForInput = (input: Input): InterfaceScaleShortcut | undefined => {
+  if (input.type !== 'keyDown' || input.alt || (!input.control && !input.meta)) return undefined
+
+  if (
+    (input.code === 'Equal' && (input.key === '=' || input.key === '+')) ||
+    input.code === 'NumpadAdd'
+  )
+    return 'increase'
+  if (input.code === 'Minus' && input.key === '-') return 'decrease'
+  if ((input.code === 'Digit0' || input.code === 'Numpad0') && input.key === '0') return 'reset'
+  return undefined
+}
+
+// Main-window shortcuts and the Settings control use the same Electron zoom factor. Other windows
+// keep their native zoom menu behavior. `zoom: true` leaves the chords available to this listener.
+const installWindowShortcuts = (
+  app: App,
+  options?: Omit<shortcutOptions, 'zoom'>,
+  isMainWindow: (window: BrowserWindow) => boolean = () => true
+): void => {
   app.on('browser-window-created', (_event: unknown, window: BrowserWindow) => {
     optimizer.watchWindowShortcuts(window, { ...options, zoom: true })
 
-    if (process.platform !== 'win32') return
     window.webContents.on('before-input-event', (event, input) => {
-      if (
-        input.type !== 'keyDown' ||
-        !input.control ||
-        input.shift ||
-        input.alt ||
-        input.meta ||
-        !(
-          (input.key === '=' && input.code === 'Equal') ||
-          (input.key === '+' && input.code === 'NumpadAdd')
-        )
-      )
-        return
+      if (!isMainWindow(window)) return
+      const shortcut = scaleShortcutForInput(input)
+      if (!shortcut) return
 
-      // Windows' native Plus accelerator covers Ctrl+Shift+=, but not these aliases.
-      // Match Electron's zoomIn role step and suppress a second renderer/menu action.
       event.preventDefault()
-      window.webContents.setZoomLevel(window.webContents.getZoomLevel() + 0.5)
+      const webContents = window.webContents
+      const factor = webContents.getZoomFactor()
+      const current = isInterfaceScale(factor) ? factor : 1
+      const next = resolveInterfaceScaleShortcut(current, shortcut)
+      webContents.setZoomFactor(next)
+      webContents.send(INTERFACE_SCALE_SHORTCUT_CHANNEL, next)
     })
   })
 }
 
-export { installWindowShortcuts }
+export { installWindowShortcuts, scaleShortcutForInput }

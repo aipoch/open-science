@@ -40,6 +40,7 @@ export const WEB_RPC_UNAVAILABLE_CHANNELS = [
   'file:save-project-artifacts',
   'uploads:stage-local-file',
   'window:close',
+  'window:set-zoom-factor',
   'settings:list-agent-home-skills',
   'settings:import-agent-home-skills'
 ] as const

@@ -157,6 +157,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'window.onCloseConfirmRequest',
   'window.onFindInPageResult',
   'window.onHideWindowFind',
+  'window.onInterfaceScaleShortcut',
   'window.onShowWindowFind',
   'window.onWindowFindAppearance',
   'window.sendCloseConfirmResponse'
@@ -166,7 +167,8 @@ const BROWSER_NATIVE_CALLABLE_PATHS = [
   'getRuntimeVersions',
   'saveBlobFile',
   'saveManagedFile',
-  'window.close'
+  'window.close',
+  'window.setZoomFactor'
 ] as const
 
 const WEB_UNAVAILABLE_CHANNELS = [
@@ -186,7 +188,8 @@ const WEB_UNAVAILABLE_CHANNELS = [
   'settings:import-agent-home-skills',
   'settings:list-agent-home-skills',
   'uploads:stage-local-file',
-  'window:close'
+  'window:close',
+  'window:set-zoom-factor'
 ] as const
 
 const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {

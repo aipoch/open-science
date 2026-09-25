@@ -13,10 +13,6 @@ vi.mock('@electron-toolkit/utils', () => ({
 import type { App, Input } from 'electron'
 import { installWindowShortcuts } from './window-shortcuts'
 
-// Regression guard for issue #336: without `zoom: true`, electron-toolkit's helper calls
-// `event.preventDefault()` on `Cmd+-` and `Cmd+=` in its `before-input-event` listener, which
-// silently blocks Electron's built-in zoomOut / zoomIn menu accelerators and leaves the user
-// stuck at whatever zoom level they last chose — no zoom out, no actual size.
 describe('installWindowShortcuts', () => {
   let appOnSpy: ReturnType<typeof vi.fn>
 
@@ -53,14 +49,20 @@ describe('installWindowShortcuts', () => {
   })
 
   const createShortcut = (
-    platform: NodeJS.Platform = 'win32'
+    platform: NodeJS.Platform = 'win32',
+    isMainWindow: (window: unknown) => boolean = () => true
   ): {
-    webContents: Record<'on' | 'getZoomLevel' | 'setZoomLevel', ReturnType<typeof vi.fn>>
+    webContents: Record<'on' | 'getZoomFactor' | 'setZoomFactor' | 'send', ReturnType<typeof vi.fn>>
     dispatch: (overrides?: Partial<Input>) => { preventDefault: ReturnType<typeof vi.fn> }
   } => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
-    installWindowShortcuts({ on: appOnSpy } as unknown as App)
-    const webContents = { on: vi.fn(), getZoomLevel: vi.fn(() => 1), setZoomLevel: vi.fn() }
+    installWindowShortcuts({ on: appOnSpy } as unknown as App, undefined, isMainWindow)
+    const webContents = {
+      on: vi.fn(),
+      getZoomFactor: vi.fn(() => 1),
+      setZoomFactor: vi.fn(),
+      send: vi.fn()
+    }
     appOnSpy.mock.calls[0]![1](null, { webContents })
     const dispatch = (
       overrides: Partial<Input> = {}
@@ -84,29 +86,47 @@ describe('installWindowShortcuts', () => {
   it.each([
     { key: '=', code: 'Equal' },
     { key: '+', code: 'NumpadAdd' }
-  ])('zooms once for the Windows alias $code', (input) => {
+  ])('uses the shared scale for the Windows alias $code', (input) => {
     const { webContents, dispatch } = createShortcut()
     expect(dispatch(input).preventDefault).toHaveBeenCalledOnce()
-    expect(webContents.setZoomLevel).toHaveBeenCalledExactlyOnceWith(1.5)
+    expect(webContents.setZoomFactor).toHaveBeenCalledExactlyOnceWith(1.1)
+    expect(webContents.send).toHaveBeenCalledExactlyOnceWith('shortcut:interface-scale', 1.1)
+  })
+
+  it('uses the shared scale for decrease and reset', () => {
+    const { webContents, dispatch } = createShortcut()
+    webContents.getZoomFactor.mockReturnValueOnce(1.1).mockReturnValueOnce(1.25)
+
+    expect(dispatch({ key: '-', code: 'Minus' }).preventDefault).toHaveBeenCalledOnce()
+    expect(webContents.setZoomFactor).toHaveBeenCalledWith(1)
+    expect(webContents.send).toHaveBeenCalledWith('shortcut:interface-scale', 1)
+
+    expect(dispatch({ key: '0', code: 'Digit0' }).preventDefault).toHaveBeenCalledOnce()
+    expect(webContents.setZoomFactor).toHaveBeenLastCalledWith(1)
+    expect(webContents.send).toHaveBeenLastCalledWith('shortcut:interface-scale', 1)
   })
 
   it.each([
     { type: 'keyUp' },
     { control: false },
     { alt: true },
-    { meta: true },
-    { key: '+', shift: true },
     { key: '-' },
-    { key: '0' },
+    { key: '0', code: 'Key0' },
     { key: 'Process' }
   ] satisfies Partial<Input>[])('leaves native chords and unrelated input alone: %j', (input) => {
     const { webContents, dispatch } = createShortcut()
     expect(dispatch(input).preventDefault).not.toHaveBeenCalled()
-    expect(webContents.setZoomLevel).not.toHaveBeenCalled()
+    expect(webContents.setZoomFactor).not.toHaveBeenCalled()
   })
 
-  it.each(['darwin', 'linux'] as const)('preserves native shortcuts on %s', (platform) => {
+  it.each(['darwin', 'linux'] as const)('handles shared shortcuts on %s', (platform) => {
     const { webContents } = createShortcut(platform)
-    expect(webContents.on).not.toHaveBeenCalled()
+    expect(webContents.on).toHaveBeenCalledWith('before-input-event', expect.any(Function))
+  })
+
+  it('leaves secondary windows on native zoom behavior', () => {
+    const { webContents, dispatch } = createShortcut('win32', () => false)
+    expect(dispatch({ key: '=', code: 'Equal' }).preventDefault).not.toHaveBeenCalled()
+    expect(webContents.setZoomFactor).not.toHaveBeenCalled()
   })
 })

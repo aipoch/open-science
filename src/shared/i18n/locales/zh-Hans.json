@@ -1706,6 +1706,8 @@
     "Reconstructed directly from the immutable Execution Log · see <logLink>Execution Log</logLink> for the raw record": "直接根据不可变执行日志重建 · 原始记录见<logLink>执行日志</logLink>",
     "Reconstructing directly from recorded helper and execution evidence.": "正在直接根据已记录的辅助代码和执行证据重建。",
     "This script can be reconstructed directly from the immutable Execution Log.": "此脚本可直接根据不可变执行日志重建。",
+    "Interface scale": "界面缩放",
+    "Adjust the size of text and controls across the app. Changes apply immediately.": "调整整个应用中的文字和控件大小。更改会立即生效。",
     "Language": "语言",
     "Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.": "大文件（产物、Notebook、环境）存放在这里。你的设置和历史记录始终保留在默认位置。之后可以在「设置」中修改。",
     "Last checked {{time}}": "上次检测于 {{time}}",

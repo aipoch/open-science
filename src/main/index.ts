@@ -436,7 +436,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       startupDiagnostics?.phase('load-startup-shell-modules')
       const [
         { createManagedPreviewProtocolBridge },
-        { configureMainWindow, createMainWindow },
+        { configureMainWindow, createMainWindow, isMainWindow },
         { LocalePreferenceOwner },
         { registerLocalePreferenceIpc },
         { installWindowShortcuts },
@@ -487,12 +487,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Set app user model id for windows
       electronApp.setAppUserModelId(APP_USER_MODEL_ID)
 
-      // Forward F12 / Cmd-R blocking from `@electron-toolkit/utils`' `optimizer.watchWindowShortcuts`
-      // to every window (main + future preview windows). The helper is invoked with `zoom: true` so
-      // Cmd/Ctrl+=, Cmd/Ctrl+-, and Cmd/Ctrl+0 reach Electron's built-in zoomIn / zoomOut /
-      // resetZoom menu accelerators — without that, its before-input-event listener calls
-      // preventDefault() on Cmd+- and Cmd+= and silently disables zoom out / reset (issue #336).
-      installWindowShortcuts(app)
+      // Main-window zoom shortcuts share Settings' Electron zoom factor; secondary windows retain
+      // their native menu accelerators. The optimizer still handles its other standard shortcuts.
+      installWindowShortcuts(app, undefined, isMainWindow)
 
       const databaseStartupLogging = createDatabaseStartupLogging(log, app.getVersion())
       const databaseStartupOwner = createDatabaseStartupOwner({

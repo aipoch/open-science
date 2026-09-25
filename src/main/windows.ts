@@ -199,6 +199,9 @@ type MainWindowCloseOptions = {
 }
 
 const mainWindowCloseOptions = new WeakMap<BrowserWindow, MainWindowCloseOptions>()
+const mainWindows = new WeakSet<BrowserWindow>()
+
+const isMainWindow = (window: BrowserWindow): boolean => mainWindows.has(window)
 
 const configureMainWindow = (window: BrowserWindow, opts: MainWindowCloseOptions): void => {
   mainWindowCloseOptions.set(window, opts)
@@ -219,6 +222,7 @@ const createMainWindow = (
     title: 'Open-Science',
     webPreferences: { webviewTag: true }
   })
+  mainWindows.add(window)
   installSourcePreviewWebviews(window)
   if (opts) configureMainWindow(window, opts)
 
@@ -606,5 +610,5 @@ const createMainWindow = (
   return window
 }
 
-export { configureMainWindow, createMainWindow }
+export { configureMainWindow, createMainWindow, isMainWindow }
 export type { MainWindowCloseOptions }
