@@ -258,7 +258,8 @@
       "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
       "src/renderer/src/components/streamdown/install-streamdown.lazy-table.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
-      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx"
+      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts"
     ]
   },
   "capabilityOverlays": ["i18n_catalog"],

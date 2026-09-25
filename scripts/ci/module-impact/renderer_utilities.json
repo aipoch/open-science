@@ -469,7 +469,8 @@
       "src/renderer/src/pages/workspace/file-type-icon.test.ts",
       "src/renderer/src/pages/workspace/artifact-preview-tiff.test.tsx",
       "src/renderer/src/pages/workspace/artifact-preview.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/artifact-preview.test.tsx"
+      "src/renderer/src/pages/workspace/artifact-preview.test.tsx",
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -555,7 +555,8 @@
       "src/main/session-package/ro-crate.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/literature/smart-collections.test.ts",
-      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
+      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts"
     ]
   },
   "capabilityOverlays": [],

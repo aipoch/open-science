@@ -5175,7 +5175,15 @@ describe('renderer session persistence bridge', () => {
       kind: 'append-user' as const,
       timestamp: 2,
       branchId: 'branch-1',
-      message: { id: 'message-2', role: 'user' as const }
+      message: {
+        id: 'message-2',
+        role: 'user' as const,
+        content: 'Deferred prompt',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2
+      }
     }
     const saveSession = vi.fn(async (session: PersistedChatSession) => ({
       ...session,
@@ -5200,7 +5208,15 @@ describe('renderer session persistence bridge', () => {
       kind: 'append-user' as const,
       timestamp: 2,
       branchId: 'branch-1',
-      message: { id: 'message-2', role: 'user' as const }
+      message: {
+        id: 'message-2',
+        role: 'user' as const,
+        content: 'Deferred prompt',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2
+      }
     }
     const persistence = createOrderedSessionPersistence(
       createApi({ saveSession: vi.fn(async (session) => session) })
