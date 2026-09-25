@@ -3,16 +3,30 @@ import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const fileReadProbe = vi.hoisted(() => ({ path: '', bytes: 0, closed: Promise.resolve() }))
+const fileReadProbe = vi.hoisted(() => ({
+  path: '',
+  bytes: 0,
+  closed: Promise.resolve(),
+  beforeIo: undefined as (() => Promise<void>) | undefined
+}))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...original,
+    open: async (...args: Parameters<typeof original.open>) => {
+      await fileReadProbe.beforeIo?.()
+      return original.open(...args)
+    },
     readFile: async (...args: Parameters<typeof original.readFile>) => {
+      await fileReadProbe.beforeIo?.()
       const contents = await original.readFile(...args)
       if (args[0] === fileReadProbe.path) fileReadProbe.bytes += Buffer.byteLength(contents)
       return contents
+    },
+    writeFile: async (...args: Parameters<typeof original.writeFile>) => {
+      await fileReadProbe.beforeIo?.()
+      return original.writeFile(...args)
     }
   }
 })
@@ -46,6 +60,7 @@ afterEach(async () => {
     await rm(workspaceRoot, { recursive: true, force: true })
     workspaceRoot = undefined
   }
+  fileReadProbe.beforeIo = undefined
 })
 
 describe('ACP workspace filesystem adapter', () => {
@@ -153,6 +168,64 @@ describe('ACP workspace filesystem adapter', () => {
     })
 
     await expect(readFile(filePath, 'utf8')).resolves.toBe('saved')
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a read when the authorized file is replaced by an external symlink',
+    async () => {
+      workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-'))
+      const filePath = join(workspaceRoot, 'notes.txt')
+      const outsideFile = join(tmpdir(), `open-science-acp-outside-${Date.now()}.txt`)
+      await writeFile(filePath, 'workspace content', 'utf8')
+      await writeFile(outsideFile, 'outside secret', 'utf8')
+      let swapped = false
+      fileReadProbe.beforeIo = async () => {
+        if (swapped) return
+        swapped = true
+        await rm(filePath)
+        await symlink(outsideFile, filePath, 'file')
+      }
+
+      try {
+        await expect(
+          readWorkspaceTextFile(workspaceRoot, { sessionId: 'session-1', path: filePath })
+        ).rejects.toThrow()
+        expect(swapped).toBe(true)
+      } finally {
+        await rm(outsideFile, { force: true })
+      }
+    }
+  )
+
+  it('rejects a write when an authorized parent is replaced by an external link', async () => {
+    workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-'))
+    const parent = join(workspaceRoot, 'output')
+    const filePath = join(parent, 'result.txt')
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-outside-'))
+    const outsideFile = join(outsideRoot, 'result.txt')
+    await mkdir(parent)
+    await writeFile(outsideFile, 'outside content', 'utf8')
+    let swapped = false
+    fileReadProbe.beforeIo = async () => {
+      if (swapped) return
+      swapped = true
+      await rm(parent, { recursive: true, force: true })
+      await symlink(outsideRoot, parent, process.platform === 'win32' ? 'junction' : 'dir')
+    }
+
+    try {
+      await expect(
+        writeWorkspaceTextFile(workspaceRoot, {
+          sessionId: 'session-1',
+          path: filePath,
+          content: 'should stay in workspace'
+        })
+      ).rejects.toThrow()
+      expect(swapped).toBe(true)
+      await expect(readFile(outsideFile, 'utf8')).resolves.toBe('outside content')
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true })
+    }
   })
 
   it('rejects reads inside a protected directory even when within the workspace', async () => {

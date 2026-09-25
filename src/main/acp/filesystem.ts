@@ -4,8 +4,8 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse
 } from '@agentclientprotocol/sdk'
-import { createReadStream } from 'node:fs'
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { constants, createReadStream } from 'node:fs'
+import { lstat, mkdir, open, realpath, type FileHandle } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import type { GrantedLocalRoot } from '../../shared/local-fs'
@@ -71,6 +71,7 @@ const assertAuthorizedPath = async (
 // Scan only through the requested window. String decoding handles UTF-8 split across chunks;
 // split on LF explicitly so a bare CR retains the existing text-file semantics.
 const readLineWindow = async (
+  file: FileHandle,
   filePath: string,
   line?: number | null,
   limit?: number | null
@@ -81,25 +82,35 @@ const readLineWindow = async (
   let index = 0
   let pending = ''
   let scanned = 0
-  const stream = createReadStream(filePath, { encoding: 'utf8', highWaterMark: 16 * 1024 })
-  for await (const chunk of stream) {
-    pending += chunk
-    let newline: number
-    while ((newline = pending.indexOf('\n', scanned)) !== -1) {
-      if (index >= startIndex && index < endIndex) {
-        const text = pending.slice(0, newline)
-        selected.push(text.endsWith('\r') ? text.slice(0, -1) : text)
+  const stream = createReadStream(filePath, {
+    fd: file.fd,
+    autoClose: false,
+    encoding: 'utf8',
+    highWaterMark: 16 * 1024
+  })
+  try {
+    for await (const chunk of stream) {
+      pending += chunk
+      let newline: number
+      while ((newline = pending.indexOf('\n', scanned)) !== -1) {
+        if (index >= startIndex && index < endIndex) {
+          const text = pending.slice(0, newline)
+          selected.push(text.endsWith('\r') ? text.slice(0, -1) : text)
+        }
+        index += 1
+        if (index >= endIndex) return selected.join('\n')
+        pending = pending.slice(newline + 1)
+        scanned = 0
       }
-      index += 1
-      if (index >= endIndex) return selected.join('\n')
-      pending = pending.slice(newline + 1)
-      scanned = 0
+      scanned = pending.length
     }
-    scanned = pending.length
+    // split(/\r?\n/) includes the final empty line when the file ends with LF.
+    if (index >= startIndex && index < endIndex) selected.push(pending)
+    return selected.join('\n')
+  } finally {
+    if (!stream.destroyed) stream.destroy()
+    if (!stream.closed) await new Promise<void>((resolve) => stream.once('close', resolve))
   }
-  // split(/\r?\n/) includes the final empty line when the file ends with LF.
-  if (index >= startIndex && index < endIndex) selected.push(pending)
-  return selected.join('\n')
 }
 
 // Rejects reads that resolve inside an app-owned protected directory — e.g. the CLAUDE_CONFIG_DIR
@@ -122,6 +133,45 @@ const assertNotProtected = async (filePath: string, protectedRoots: string[]): P
   }
 }
 
+const closeFile = async (file: FileHandle): Promise<void> => {
+  await file.close().catch(() => undefined)
+}
+
+// Open the canonical path before using it, then re-resolve the opened path. The handle keeps the
+// file identity stable after this check; O_NOFOLLOW rejects a final symlink on POSIX, while the
+// re-resolution also covers platforms whose Node runtime ignores that flag.
+const openAuthorizedFile = async (
+  physicalPath: string,
+  flags: number,
+  mode?: number
+): Promise<FileHandle> => {
+  const noFollow = constants.O_NOFOLLOW ?? 0
+  const parent = await open(
+    dirname(physicalPath),
+    constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | noFollow
+  )
+  try {
+    const parentIdentity = await parent.stat()
+    const file = await open(physicalPath, flags | noFollow, mode)
+    try {
+      const currentParent = await parent.stat()
+      if (
+        currentParent.dev !== parentIdentity.dev ||
+        currentParent.ino !== parentIdentity.ino ||
+        (await resolvePhysicalPath(physicalPath)) !== physicalPath
+      ) {
+        throw new Error('The authorized file path changed before I/O.')
+      }
+      return file
+    } catch (error) {
+      await closeFile(file)
+      throw error
+    }
+  } finally {
+    await closeFile(parent)
+  }
+}
+
 // Reads a text file after constraining the requested path to the active workspace and rejecting
 // app-owned protected directories.
 const readWorkspaceTextFile = async (
@@ -138,11 +188,16 @@ const readWorkspaceTextFile = async (
     'ro'
   )
   await assertNotProtected(physicalPath, protectedRoots)
-  return {
-    content:
-      !params.line && !params.limit
-        ? await readFile(filePath, 'utf8')
-        : await readLineWindow(filePath, params.line, params.limit)
+  const file = await openAuthorizedFile(physicalPath, constants.O_RDONLY)
+  try {
+    return {
+      content:
+        !params.line && !params.limit
+          ? await file.readFile('utf8')
+          : await readLineWindow(file, filePath, params.line, params.limit)
+    }
+  } finally {
+    await closeFile(file)
   }
 }
 
@@ -152,15 +207,25 @@ const writeWorkspaceTextFile = async (
   params: WriteTextFileRequest,
   grantedRoots: readonly GrantedRoot[] = []
 ): Promise<WriteTextFileResponse> => {
-  const { path: filePath } = await assertAuthorizedPath(
-    workspaceRoot,
-    params.path,
-    grantedRoots,
-    'rw'
-  )
+  const authorized = await assertAuthorizedPath(workspaceRoot, params.path, grantedRoots, 'rw')
 
-  await mkdir(dirname(filePath), { recursive: true })
-  await writeFile(filePath, params.content, 'utf8')
+  await mkdir(dirname(authorized.physicalPath), { recursive: true })
+  const reopened = await assertAuthorizedPath(workspaceRoot, params.path, grantedRoots, 'rw')
+  const existing = await lstat(reopened.physicalPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+  if (existing?.isSymbolicLink()) {
+    throw new Error(`Cannot authorize a symbolic link: ${params.path}`)
+  }
+  const flags = constants.O_WRONLY | (existing ? 0 : constants.O_CREAT | constants.O_EXCL)
+  const file = await openAuthorizedFile(reopened.physicalPath, flags, 0o666)
+  try {
+    await file.truncate(0)
+    await file.writeFile(params.content, 'utf8')
+  } finally {
+    await closeFile(file)
+  }
 
   return {}
 }
