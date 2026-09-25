@@ -1,6 +1,6 @@
 import { inflateRawSync } from 'node:zlib'
 
-import { SKILL_IMPORT_LIMITS } from './import-limits'
+import { isSkillPackageIgnoredPath, SKILL_IMPORT_LIMITS } from './import-limits'
 
 // A dependency-free ZIP reader: parses the central directory + each local file header and inflates the
 // entries with node:zlib. Supports the two methods a skill bundle ever uses — STORE (0) and DEFLATE
@@ -87,7 +87,7 @@ const extractZip = (buffer: Buffer): ExtractedZipFile[] => {
     pointer += 46 + nameLength + extraLength + commentLength
 
     if (name.endsWith('/')) continue
-    if (isUnsafeSkillArchivePath(name)) continue
+    if (isUnsafeSkillArchivePath(name) || isSkillPackageIgnoredPath(name)) continue
     if (method !== 0 && method !== 8) continue
 
     // Bound directory nesting the same way the GitHub walk does. Depth counts directory levels, not
@@ -173,6 +173,7 @@ const extractZipLenient = (buffer: Buffer, limits: LenientExtractLimits): Lenien
       }
       continue
     }
+    if (isSkillPackageIgnoredPath(name)) continue
     if (method !== 0 && method !== 8) {
       skipped.push({ path: name, reason: 'unsupported compression method' })
       continue

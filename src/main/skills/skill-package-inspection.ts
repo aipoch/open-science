@@ -3,7 +3,11 @@ import { join, posix } from 'node:path'
 
 import { marked } from 'marked'
 
-import { isSkillPackageBudgetedPath, SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
+import {
+  isSkillPackageBudgetedPath,
+  isSkillPackageIgnoredPath,
+  SKILL_IMPORT_LIMITS
+} from '../../shared/skill-import-limits'
 import { frontmatterFieldNames, parseSkillDocument } from './frontmatter'
 import { isUnsafeSkillArchivePath } from './zip-extract'
 import { validateSkillHelperPackage } from './registered-helper-catalog'
@@ -114,6 +118,7 @@ export const inspectSkillPackage = async (root: string): Promise<SkillPackageFil
         ? posix.join(relativeDirectory, entry.name)
         : entry.name
       if (!isSkillPackageBudgetedPath(relativePath)) continue
+      if (isSkillPackageIgnoredPath(relativePath)) continue
       if (isUnsafeSkillArchivePath(relativePath)) {
         throw new SkillPackagePolicyError('unsafePath', relativePath)
       }

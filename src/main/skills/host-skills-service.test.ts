@@ -214,6 +214,20 @@ describe('HostSkillsService', () => {
     })
   })
 
+  it('reads a Skill package that contains an internal VCS metadata file', async () => {
+    const { service, root } = await makeFixture()
+    await writeFile(join(root, 'featured', 'literature-review', '.gitignore'), '*.log\n')
+
+    await expect(
+      service.dispatch({ op: 'read', params: { name: 'literature-review' } })
+    ).resolves.toMatchObject({
+      name: 'literature-review',
+      path: 'SKILL.md',
+      content: expect.stringContaining('Featured body.'),
+      files: ['SKILL.md']
+    })
+  })
+
   it.skipIf(process.platform === 'win32')(
     'fails closed when SKILL.md inventory contains a symbolic link',
     async () => {

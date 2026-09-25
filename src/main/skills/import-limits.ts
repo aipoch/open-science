@@ -1,8 +1,12 @@
-import { isSkillPackageBudgetedPath, SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
+import {
+  isSkillPackageBudgetedPath,
+  isSkillPackageIgnoredPath,
+  SKILL_IMPORT_LIMITS
+} from '../../shared/skill-import-limits'
 
 // Re-export the shared caps so main-process modules keep importing them from one place; the renderer
 // imports the same constants directly from shared/ to guard the upload picker.
-export { isSkillPackageBudgetedPath, SKILL_IMPORT_LIMITS }
+export { isSkillPackageBudgetedPath, isSkillPackageIgnoredPath, SKILL_IMPORT_LIMITS }
 
 // Matches a well-formed base64 body: alphabet chars followed by at most two `=` pad chars, and
 // nothing else. This enforces that padding appears only at the end (not mid-string) and that no

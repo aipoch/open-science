@@ -8,6 +8,17 @@ export const isAppOwnedSkillRootFile = (relativePath: string): boolean =>
 export const isSkillPackageBudgetedPath = (relativePath: string): boolean =>
   !isAppOwnedSkillRootFile(relativePath)
 
+// VCS and archive metadata are not runtime Skill content. Ignore any path segment beginning with a
+// dot while preserving the two app-owned root metadata files above for their dedicated consumers.
+// This is deliberately separate from path traversal validation: dot-prefixed names are safe paths,
+// but importing them would make a package unreadable on the inspection boundary and adds no runtime
+// capability.
+export const isSkillPackageIgnoredPath = (relativePath: string): boolean =>
+  !isAppOwnedSkillRootFile(relativePath) &&
+  relativePath
+    .split('/')
+    .some((segment) => segment.startsWith('.') && segment !== '.' && segment !== '..')
+
 // Resource caps that bound a skill import from any source (a .zip/.skill bundle or a recursive
 // GitHub download). Without them a zip bomb or a very large repository could exhaust memory or freeze
 // the app while the user imports a skill from settings. Lives in shared/ so the renderer can enforce

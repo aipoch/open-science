@@ -203,6 +203,32 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
     await expect(repo.delete(result.id)).resolves.toBeUndefined()
   })
 
+  it('ignores internal VCS metadata when importing a GitHub Skill', async () => {
+    const { root, repo } = await fixture()
+    const fetch = githubFetch('a'.repeat(40), 'github body', {
+      '.gitignore': '*.log\n',
+      '.github/workflows/ci.yml': 'name: ci\n'
+    })
+
+    await expect(
+      repo.importFromGitHub('https://github.com/acme/skills/tree/main/demo', fetch)
+    ).resolves.toEqual({
+      status: 'imported',
+      id: 'imported-demo'
+    })
+    await expect(
+      readFile(join(root, 'skills', 'imported', 'demo', '.gitignore'))
+    ).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(
+      readFile(join(root, 'skills', 'imported', 'demo', '.github', 'workflows', 'ci.yml'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      readFile(join(root, 'skills', 'imported', 'demo', 'data.csv'), 'utf8')
+    ).resolves.toBe('a,b\n1,2\n')
+  })
+
   it('preserves local identity when the same GitHub source advances to another pinned commit', async () => {
     const { repo } = await fixture()
     const firstFetch = githubFetch('a'.repeat(40), 'revision A')

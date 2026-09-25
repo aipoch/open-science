@@ -1,5 +1,5 @@
 import { createLogger } from '../logger'
-import { SKILL_IMPORT_LIMITS } from './import-limits'
+import { isSkillPackageIgnoredPath, SKILL_IMPORT_LIMITS } from './import-limits'
 import {
   GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE,
   type GitHubRepositorySearchView
@@ -252,6 +252,10 @@ const fetchSkillPreview = async (
     const payload = (await response.json()) as ContentsEntry | ContentsEntry[]
     const entries = Array.isArray(payload) ? payload : [payload]
     for (const entry of entries) {
+      const relativePath = entry.path.startsWith(rootPrefix)
+        ? entry.path.slice(rootPrefix.length)
+        : entry.name
+      if (isSkillPackageIgnoredPath(relativePath)) continue
       if (entry.type === 'dir') {
         await walk(entry.path, depth + 1)
         continue
@@ -261,9 +265,6 @@ const fetchSkillPreview = async (
         throw new Error(`Skill has too many files (limit ${SKILL_IMPORT_LIMITS.maxFiles}).`)
       }
 
-      const relativePath = entry.path.startsWith(rootPrefix)
-        ? entry.path.slice(rootPrefix.length)
-        : entry.name
       files.push(relativePath)
 
       if (relativePath.toLowerCase() !== 'skill.md' || !entry.download_url) continue
@@ -330,6 +331,10 @@ const fetchSkillFiles = async (
     const files: FetchedSkillFile[] = []
 
     for (const entry of entries) {
+      const relativePath = entry.path.startsWith(rootPrefix)
+        ? entry.path.slice(rootPrefix.length)
+        : entry.name
+      if (isSkillPackageIgnoredPath(relativePath)) continue
       if (entry.type === 'dir') {
         files.push(...(await walk(entry.path, depth + 1)))
       } else if (entry.type === 'file' && entry.download_url) {
@@ -363,9 +368,6 @@ const fetchSkillFiles = async (
         const content = await readBounded(raw, perFileLimit, tooLarge)
         totalBytes += content.length
         fileCount += 1
-        const relativePath = entry.path.startsWith(rootPrefix)
-          ? entry.path.slice(rootPrefix.length)
-          : entry.name
         files.push({ relativePath, content })
       }
     }
