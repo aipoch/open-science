@@ -81,9 +81,15 @@ const managedPythonValidation = (
   const prefix = envPrefix(runtimeRoot(storageRoot), DEFAULT_PY_ENV)
   const command = pythonBin(prefix)
   if (!existsSync(command)) return undefined
+  const env: NodeJS.ProcessEnv = {
+    PATH: condaActivatedPath(prefix, process.env.PATH),
+    ...(process.platform === 'win32'
+      ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR }
+      : {})
+  }
   return {
     python: { command, baseArgs: [] },
-    env: { ...process.env, PATH: condaActivatedPath(prefix, process.env.PATH) }
+    env
   }
 }
 

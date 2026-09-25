@@ -22,11 +22,13 @@ const roots: string[] = []
 
 afterEach(async () => {
   validateNotebookHelperExports.mockClear()
+  vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 describe('RegisteredSkillHelperCatalog managed Python validation', () => {
   it('uses the app-managed Python runtime when validating a non-built-in helper', async () => {
+    vi.stubEnv('OPEN_SCIENCE_HELPER_VALIDATION_SECRET', 'must-not-reach-helper')
     const storageRoot = await mkdtemp(join(tmpdir(), 'managed-helper-runtime-'))
     const packageRoot = await mkdtemp(join(tmpdir(), 'managed-helper-package-'))
     roots.push(storageRoot, packageRoot)
@@ -66,6 +68,9 @@ describe('RegisteredSkillHelperCatalog managed Python validation', () => {
         python: { command: managedPython, baseArgs: [] }
       })
     )
+    const validation = validateNotebookHelperExports.mock.calls[0]?.[3]
+    expect(validation?.env).toHaveProperty('PATH')
+    expect(validation?.env).not.toHaveProperty('OPEN_SCIENCE_HELPER_VALIDATION_SECRET')
   })
 
   it('uses the managed runtime when inspecting a staged helper package', async () => {
