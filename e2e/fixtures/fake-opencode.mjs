@@ -641,11 +641,21 @@ const verifyNotebookMutationCancellation = async (sessionId) =>
     await waitForProcessesToExit([started.pid, started.descendantPid])
 
     const retryRequest = { ...request, arguments: { ...request.arguments, packages: [] } }
-    const retry = toolResult(
-      'manage_environments',
-      await client.callTool(retryRequest, undefined, { timeout: 15_000 })
-    )
-    if (retry.created?.name !== 'e2e-cxl' || retry.created?.runnable !== true) {
+    const retryDeadline = Date.now() + 15_000
+    let retry
+    while (Date.now() < retryDeadline) {
+      try {
+        retry = toolResult(
+          'manage_environments',
+          await client.callTool(retryRequest, undefined, { timeout: 5_000 })
+        )
+        break
+      } catch (error) {
+        if (!String(error).includes('ENVIRONMENT_MUTATION_ALREADY_PENDING')) throw error
+        await delay(100)
+      }
+    }
+    if (retry?.created?.name !== 'e2e-cxl' || retry.created?.runnable !== true) {
       throw new Error(`Mutation retry did not succeed: ${JSON.stringify(retry)}`)
     }
     return `Notebook mutation cancellation verified; stopped PIDs ${started.pid} and ${started.descendantPid}.`
