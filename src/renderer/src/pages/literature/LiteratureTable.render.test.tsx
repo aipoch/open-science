@@ -28,7 +28,7 @@ it('opens subsequent hints immediately and restores the initial delay after leav
   const first = screen.getByRole('button', { name: 'First' })
   const second = screen.getByRole('button', { name: 'Second' })
   fireEvent.pointerMove(first, { pointerType: 'mouse' })
-  await act(() => vi.advanceTimersByTimeAsync(300))
+  await act(() => vi.advanceTimersByTimeAsync(200))
   fireEvent.keyDown(first, { key: 'Escape' })
   fireEvent.pointerLeave(first, { pointerType: 'mouse' })
   fireEvent.pointerMove(second, { pointerType: 'mouse' })
@@ -38,7 +38,7 @@ it('opens subsequent hints immediately and restores the initial delay after leav
   await act(() => vi.advanceTimersByTimeAsync(301))
   fireEvent.pointerMove(first, { pointerType: 'mouse' })
   expect(screen.queryByRole('tooltip')).toBeNull()
-  await act(() => vi.advanceTimersByTimeAsync(300))
+  await act(() => vi.advanceTimersByTimeAsync(200))
   expect(screen.getByRole('tooltip').textContent).toBe('First full text')
 })
 
@@ -61,7 +61,7 @@ it('uses a consistent short delay and white-on-black contrast for long text hint
   expect(trigger.hasAttribute('title')).toBe(false)
   fireEvent.pointerMove(trigger, { pointerType: 'mouse' })
   await act(async () => {
-    vi.advanceTimersByTime(299)
+    vi.advanceTimersByTime(199)
   })
   expect(screen.queryByRole('tooltip')).toBeNull()
   await act(async () => {
