@@ -440,6 +440,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { LocalePreferenceOwner },
         { registerLocalePreferenceIpc },
         { installWindowShortcuts },
+        { registerWindowZoomIpcHandler },
         { registerNetworkIpcHandlers },
         { createDatabaseStartupLogging },
         { createDatabaseStartupOwner },
@@ -454,6 +455,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./locale/owner'),
         import('./locale/ipc'),
         import('./window-shortcuts'),
+        import('./window-ipc'),
         import('./network-ipc'),
         import('./database/database-startup-logging'),
         import('./database/database-startup-owner'),
@@ -490,6 +492,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Main-window zoom shortcuts share Settings' Electron zoom factor; secondary windows retain
       // their native menu accelerators. The optimizer still handles its other standard shortcuts.
       installWindowShortcuts(app, undefined, isMainWindow)
+      // The renderer applies its persisted interface scale before the full application runtime is
+      // composed. Install this small handler before creating the first BrowserWindow so that the
+      // initial renderer call cannot race the desktop utility surface.
+      registerWindowZoomIpcHandler()
 
       const databaseStartupLogging = createDatabaseStartupLogging(log, app.getVersion())
       const databaseStartupOwner = createDatabaseStartupOwner({

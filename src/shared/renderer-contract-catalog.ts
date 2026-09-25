@@ -2941,7 +2941,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'window.close': callable<() => Promise<void>>()('window', ['window:close', MAPPED_NATIVE]),
   'window.setZoomFactor': callable<(factor: number) => Promise<void>>()(
     'window',
-    ['window:set-zoom-factor', MAPPED_NATIVE],
+    ['window:set-zoom-factor', ELECTRON],
     { optionalMember: true }
   ),
   'window.closeFind': callable<() => void>()('window', ['window:find-close', SEND], {

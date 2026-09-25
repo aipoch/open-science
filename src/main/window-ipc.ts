@@ -20,11 +20,20 @@ type WindowIpcDeps = {
 // window that owns it. Closing defers to that window's own 'close' handling (e.g. hide-to-tray), so
 // this stays a thin bridge rather than a second place that decides window lifecycle.
 const registerWindowIpcHandlers = (deps: WindowIpcDeps = {}): void => {
+  registerWindowCloseIpcHandler(deps)
+  registerWindowZoomIpcHandler(deps)
+}
+
+const registerWindowCloseIpcHandler = (deps: WindowIpcDeps = {}): void => {
   const resolveWindow = deps.resolveWindow ?? ((sender) => BrowserWindow.fromWebContents(sender))
 
   ipcMainHandle(WINDOW_CLOSE_CHANNEL, (event: IpcMainInvokeEvent): void => {
     resolveWindow(event.sender)?.close()
   })
+}
+
+const registerWindowZoomIpcHandler = (deps: WindowIpcDeps = {}): void => {
+  const resolveWindow = deps.resolveWindow ?? ((sender) => BrowserWindow.fromWebContents(sender))
 
   ipcMainHandle('window:set-zoom-factor', (event: IpcMainInvokeEvent, factor: unknown): void => {
     if (!isInterfaceScale(factor)) return
@@ -32,4 +41,4 @@ const registerWindowIpcHandlers = (deps: WindowIpcDeps = {}): void => {
   })
 }
 
-export { registerWindowIpcHandlers }
+export { registerWindowCloseIpcHandler, registerWindowIpcHandlers, registerWindowZoomIpcHandler }

@@ -410,8 +410,7 @@ export const WEB_INVOKE_CHANNELS = {
   'uploads.recoverDraft': 'uploads:recover-draft',
   'uploads.stageLocalFile': 'uploads:stage-local-file',
   'uploads.stageLocalPath': 'uploads:stage-local-path',
-  'window.close': 'window:close',
-  'window.setZoomFactor': 'window:set-zoom-factor'
+  'window.close': 'window:close'
 } as const
 
 export const WEB_EVENT_CHANNELS = {
