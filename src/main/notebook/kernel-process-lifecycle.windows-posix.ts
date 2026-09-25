@@ -381,6 +381,13 @@ class KernelProcessLifecycleOwner {
     for (const name of names) {
       const path = join(this.directory, name)
       if (name.includes('.pending.')) {
+        if (options.allowUnverifiedReceipts) {
+          // Tolerant lane recovery can run while another lane is between beginSpawn() and the
+          // atomic pending-to-active promotion. Do not claim a pending intent here: the host may
+          // still be live and able to publish it. Strict recovery remains responsible for
+          // cancelling pending intents left by an interrupted owner.
+          continue
+        }
         // The process host and recovery race through an atomic rename. Recovery winning this claim
         // guarantees the host can no longer activate or execute the kernel; a host that won first
         // has already published an active filename containing its PID.

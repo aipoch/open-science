@@ -254,6 +254,31 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(() => restarted.beginSpawn(scope)).toThrow('KERNEL_STARTUP_FENCE')
   })
 
+  it('does not cancel a pending startup while tolerant recovery scans another lane', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-pending-recovery-'))
+    const owner = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-a'
+    })
+    const intent = owner.beginSpawn({
+      laneKey: '["project-1","session-1","root",null,null]',
+      processKey: 'r:default-r',
+      kernelEpochId: 'epoch-r'
+    })
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-b'
+    })
+
+    await restarted.ensureReadyForLane('["project-2","session-2","root",null,null]')
+    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toContain(
+      intent.path.split(/[\\/]/).pop()!
+    )
+
+    const receipt = owner.recordSpawned(intent, { pid: 5252 })
+    owner.complete(receipt, true)
+  })
+
   it('keeps tolerant recovery fail-closed for a receipt whose scope cannot be trusted', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-invalid-receipt-'))
     const directory = join(root, 'runtime', 'kernel-processes')
