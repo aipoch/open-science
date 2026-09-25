@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { formatCoverageMarkdown, main, validateReleaseSbom } from './validate-release-sbom.mjs'
 
@@ -32,6 +32,7 @@ const fixture = (packageNames: string[]): { artifactPath: string; sbomPath: stri
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true })
   }
@@ -79,6 +80,7 @@ describe('release SBOM coverage validator', () => {
   it('fails the advisory validation step when coverage is incomplete', async () => {
     const files = fixture(['Open-Science', '@prisma/client', 'sharp'])
     const outputPath = join(dirname(files.sbomPath), 'coverage.json')
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
     expect(
       await main([
         '--artifact',
@@ -91,6 +93,11 @@ describe('release SBOM coverage validator', () => {
         outputPath
       ])
     ).toBe(1)
+    expect(stdout).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '**PoC result:** representative final-package coverage is incomplete.'
+      )
+    )
   })
 
   it('rejects prerelease tags and mismatched final archives', async () => {
