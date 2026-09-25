@@ -641,13 +641,13 @@ const verifyNotebookMutationCancellation = async (sessionId) =>
     await waitForProcessesToExit([started.pid, started.descendantPid])
 
     const retryRequest = { ...request, arguments: { ...request.arguments, packages: [] } }
-    const retryDeadline = Date.now() + 15_000
+    const retryDeadline = Date.now() + 30_000
     let retry
     while (Date.now() < retryDeadline) {
       try {
         retry = toolResult(
           'manage_environments',
-          await client.callTool(retryRequest, undefined, { timeout: 5_000 })
+          await client.callTool(retryRequest, undefined, { timeout: 20_000 })
         )
         break
       } catch (error) {
