@@ -19,7 +19,7 @@ function TooltipContent({
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          'z-50 max-w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-md bg-text-000 px-2 py-1 text-xs whitespace-normal break-words text-bg-000 shadow-md',
+          'hover-bubble origin-(--radix-tooltip-content-transform-origin) z-50 max-w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-md bg-text-000 px-2 py-1 text-xs whitespace-normal break-words text-bg-000 shadow-md',
           className
         )}
         {...props}

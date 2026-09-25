@@ -341,7 +341,7 @@ const CitationStylesView = ({
             side="top"
             align="end"
             collisionPadding={8}
-            className="max-h-[min(24rem,var(--radix-popover-content-available-height))] min-h-0 w-80 max-w-[calc(100vw-1rem)] space-y-2.5 overflow-y-auto overscroll-contain break-words p-3 select-text"
+            className="hover-bubble max-h-[min(24rem,var(--radix-popover-content-available-height))] min-h-0 w-80 max-w-[calc(100vw-1rem)] space-y-2.5 overflow-y-auto overscroll-contain break-words p-3 select-text"
             onPointerEnter={cancelPreviewTimer}
             onPointerLeave={scheduleClosePreview}
             onFocusCapture={() => {

@@ -239,7 +239,7 @@ export function SmartCollectionAssessment({
           collisionPadding={8}
           sticky="always"
           hideWhenDetached
-          className="w-80 max-w-[var(--radix-popover-content-available-width)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto space-y-3 rounded-xl border border-border bg-bg-000 p-4 text-sm text-foreground shadow-lg"
+          className="hover-bubble w-80 max-w-[var(--radix-popover-content-available-width)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto space-y-3 rounded-xl border border-border bg-bg-000 p-4 text-sm text-foreground shadow-lg"
         >
           <h3 className="flex items-center gap-2 font-medium">
             <ClipboardList className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

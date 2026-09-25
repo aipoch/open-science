@@ -765,6 +765,46 @@
     }
   }
 
+  /* Radix owns positioning and presence; animate only the anchored content. Popovers opt in. */
+  .hover-bubble {
+    transform-origin: var(--radix-popover-content-transform-origin);
+  }
+
+  .hover-bubble:is([data-state='open'], [data-state='delayed-open'], [data-state='instant-open']) {
+    animation: hover-bubble-enter 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .hover-bubble[data-state='closed'] {
+    pointer-events: none;
+    animation: hover-bubble-exit 90ms ease-out;
+  }
+
+  @keyframes hover-bubble-enter {
+    from {
+      opacity: 0;
+      transform: scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes hover-bubble-exit {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hover-bubble:is([data-state]) {
+      animation: none;
+    }
+  }
+
   /* Key only the content to its owner's phase: focus and the button hit target survive swaps. */
   .button-feedback {
     display: inline-flex;
