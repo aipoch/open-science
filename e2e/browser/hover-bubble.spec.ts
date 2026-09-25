@@ -16,7 +16,7 @@ async function sampleEntry(content: Locator): Promise<void> {
       .getAnimations()
       .find((a) => a instanceof CSSAnimation && a.animationName === 'hover-bubble-enter')!
     animation.pause()
-    const samples = [0, 80, 160].map((time) => {
+    const samples = [0, 72, 144, 192, 240].map((time) => {
       animation.currentTime = time
       const style = getComputedStyle(el)
       return { opacity: Number(style.opacity), scale: new DOMMatrixReadOnly(style.transform).a }
@@ -24,13 +24,17 @@ async function sampleEntry(content: Locator): Promise<void> {
     animation.finish()
     return samples
   })
-  expect(samples[0].scale).toBeCloseTo(0.94)
+  expect(samples[0].scale).toBeCloseTo(0.9)
   expect(samples[0].opacity).toBe(0)
   expect(samples[1].scale).toBeGreaterThan(samples[0].scale)
-  expect(samples[1].scale).toBeLessThan(1)
+  expect(samples[1].scale).toBeLessThan(samples[2].scale)
   expect(samples[1].opacity).toBeGreaterThan(0)
   expect(samples[1].opacity).toBeLessThan(1)
-  expect(samples[2]).toEqual({ opacity: 1, scale: 1 })
+  expect(samples[2]).toEqual({ opacity: 1, scale: 1.02 })
+  expect(samples[3].scale).toBeGreaterThan(1)
+  expect(samples[3].scale).toBeLessThan(samples[2].scale)
+  expect(samples[3].opacity).toBe(1)
+  expect(samples[4]).toEqual({ opacity: 1, scale: 1 })
 }
 
 for (const side of ['top', 'right', 'bottom', 'left']) {

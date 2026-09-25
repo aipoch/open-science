@@ -771,7 +771,7 @@
   }
 
   .hover-bubble:is([data-state='open'], [data-state='delayed-open'], [data-state='instant-open']) {
-    animation: hover-bubble-enter 160ms cubic-bezier(0.16, 1, 0.3, 1);
+    animation: hover-bubble-enter 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
   .hover-bubble[data-state='closed'] {
@@ -782,7 +782,11 @@
   @keyframes hover-bubble-enter {
     from {
       opacity: 0;
-      transform: scale(0.94);
+      transform: scale(0.9);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.02);
     }
     to {
       opacity: 1;
