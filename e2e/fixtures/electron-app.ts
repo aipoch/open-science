@@ -988,8 +988,7 @@ class ElectronAppHarness implements ElectronApp {
         const contents = (view as Electron.WebContentsView).webContents
         if (!contents || contents.isDestroyed() || !contents.getURL().includes('/find-overlay/'))
           return false
-        const bounds = view.getBounds()
-        return bounds.width > 0 && bounds.height > 0
+        return view.getVisible()
       })
     })
   }

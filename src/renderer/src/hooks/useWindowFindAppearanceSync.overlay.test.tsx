@@ -80,6 +80,7 @@ it('localizes the standalone page on open and on a live app language change', as
     createView: () => ({
       setBounds: vi.fn(),
       setBackgroundColor: vi.fn(),
+      setVisible: vi.fn(),
       webContents: {
         loadFile: async () => {},
         focus,
