@@ -553,7 +553,7 @@ class NotebookRuntimeService {
       sessions: this.sessions,
       runtimeBindings: this.runtimeBindingOwner,
       waitForRevocationDrains: () => this.environmentOperations.waitForRevocationDrains(),
-      ensureProcessRecovery: () => this.kernelProcessLifecycle.ensureReady(),
+      ensureProcessRecovery: (laneKey) => this.kernelProcessLifecycle.ensureReadyForLane(laneKey),
       processLifecycle: this.kernelProcessLifecycle,
       executorFactory: options.executorFactory,
       defaultExecutorOptions: () => ({
@@ -662,7 +662,7 @@ class NotebookRuntimeService {
       runtimeRoot: getRuntimeRoot(options.dataRoot),
       environmentOperations: this.environmentOperations,
       recovery: this.recoveryCoordinator,
-      ensureRecovered: () => this.ensureRecovered(),
+      ensureRecovered: (laneKey) => this.ensureRecovered(laneKey),
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
       isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled,
       repairPolicy: this.repairPolicy,
@@ -2174,7 +2174,9 @@ class NotebookRuntimeService {
     this.runLifecycleRecovery ??= (async () => {
       // Publish every startup recovery before yielding so new work cannot race any owner.
       const runRecovery = this.repository.recoverAllRunLifecycles()
-      const kernelRecovery = this.kernelProcessLifecycle.recover()
+      const kernelRecovery = this.kernelProcessLifecycle.recover({
+        allowUnverifiedReceipts: true
+      })
       const operationRecovery = this.recoveryCoordinator.recover()
       const shellRecovery = this.shellProcessOwnership.recover()
       const recoveries = [shellRecovery, runRecovery, kernelRecovery, operationRecovery] as const
@@ -2216,9 +2218,10 @@ class NotebookRuntimeService {
     return this.recoveryCoordinator.status()
   }
 
-  async ensureRecovered(): Promise<void> {
+  async ensureRecovered(laneKey?: string): Promise<void> {
     if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
-    await this.kernelProcessLifecycle.ensureReady()
+    if (laneKey) await this.kernelProcessLifecycle.ensureReadyForLane(laneKey)
+    else await this.kernelProcessLifecycle.ensureReady()
     await this.recoveryCoordinator.ensureReady()
   }
 

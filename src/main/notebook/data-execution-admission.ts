@@ -20,6 +20,7 @@ import type {
   NotebookSessionResolvedInterpreter,
   NotebookSessionRuntimeBinding
 } from './session-aggregate'
+import { notebookLaneKey } from './lane-identity'
 
 type NotebookDataExecutionRoute = Readonly<{
   environment: string
@@ -44,7 +45,7 @@ type NotebookDataExecutionAdmissionOwnerOptions = {
     NotebookRecoveryCoordinator,
     'isGloballyBlocked' | 'isPrefixBlocked' | 'isRuntimeIdBlocked'
   >
-  ensureRecovered: () => Promise<void>
+  ensureRecovered: (laneKey?: string) => Promise<void>
   resolveRuntimeEnablement: (language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>
   isAgentEnvironmentCreationEnabled: () => Promise<boolean>
   repairPolicy: Pick<NotebookRuntimeRepairPolicy, 'blockKey' | 'requirement'>
@@ -127,7 +128,7 @@ class NotebookDataExecutionAdmissionOwner {
   ): Promise<NotebookDataExecutionAdmission> {
     const route = this.route(session, cell.language)
     const runtimeRoot = this.options.runtimeRoot
-    await this.options.ensureRecovered()
+    await this.options.ensureRecovered(notebookLaneKey(session.lane))
     const binding = session.runtimeBinding(cell.language)
     const repair = this.options.repairPolicy.requirement(cell.language, route.environment, binding)
     let resolvedInterpreter: NotebookSessionResolvedInterpreter | undefined

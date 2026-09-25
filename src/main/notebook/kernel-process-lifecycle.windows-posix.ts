@@ -62,6 +62,13 @@ type KernelProcessRecoveryController = Readonly<{
   terminate(record: Readonly<KernelProcessRecord>): Promise<ProcessTreeKillResult>
 }>
 
+type KernelProcessRecoveryOptions = Readonly<{
+  // A valid receipt identifies its exact lane/process. When this is enabled, an unverified receipt
+  // remains an exact process fence but does not stop unrelated kernel admission. Invalid receipts
+  // are still global failures because their owner cannot be determined safely.
+  allowUnverifiedReceipts?: boolean
+}>
+
 type KernelProcessLifecycleOwnerOptions = Readonly<{
   storageRoot: string
   ownerInstanceId?: string
@@ -240,6 +247,8 @@ class KernelProcessLifecycleOwner {
   private readonly controller: KernelProcessRecoveryController
   private readonly readBootToken: () => string | undefined
   private recovery: Promise<void> | undefined
+  private scopedRecoveryTail: Promise<void> = Promise.resolve()
+  private readonly scopedRecoveries = new Map<string, Promise<void>>()
 
   constructor(options: KernelProcessLifecycleOwnerOptions) {
     this.ownerInstanceId = options.ownerInstanceId ?? randomUUID()
@@ -254,9 +263,29 @@ class KernelProcessLifecycleOwner {
     return this.recovery
   }
 
-  async recover(): Promise<void> {
-    const recovery = this.recoverRecords()
-    this.recovery = recovery
+  ensureReadyForLane(laneKey: string): Promise<void> {
+    const existing = this.scopedRecoveries.get(laneKey)
+    if (existing) return existing
+    // Session admission may happen concurrently for several lanes. Serialize the filesystem scan,
+    // while sharing duplicate callers for the same lane.
+    const queued = this.scopedRecoveryTail.then(() =>
+      this.recoverRecords({ allowUnverifiedReceipts: true })
+    )
+    this.scopedRecoveryTail = queued.catch(() => undefined)
+    this.scopedRecoveries.set(laneKey, queued)
+    void queued
+      .finally(() => {
+        if (this.scopedRecoveries.get(laneKey) === queued) this.scopedRecoveries.delete(laneKey)
+      })
+      .catch(() => undefined)
+    return queued
+  }
+
+  async recover(options: KernelProcessRecoveryOptions = {}): Promise<void> {
+    const recovery = this.recoverRecords(options)
+    // Tolerant startup recovery must not satisfy a later strict ensureReady() call used by
+    // environment mutation. Exact process admission remains fenced by beginSpawn().
+    if (!options.allowUnverifiedReceipts) this.recovery = recovery
     await recovery
   }
 
@@ -338,7 +367,7 @@ class KernelProcessLifecycleOwner {
     return { [OWNER_TOKEN_ENV]: ownerToken }
   }
 
-  private async recoverRecords(): Promise<void> {
+  private async recoverRecords(options: KernelProcessRecoveryOptions = {}): Promise<void> {
     let names: string[]
     try {
       names = readdirSync(this.directory)
@@ -374,6 +403,12 @@ class KernelProcessLifecycleOwner {
         blocked.push(name)
         continue
       }
+      if (!name.startsWith(`${recordFilePrefix(record)}.`)) {
+        // A valid payload under the wrong filename cannot be matched by beginSpawn(), so retain the
+        // global fail-closed behavior instead of treating its scope as trustworthy.
+        blocked.push(name)
+        continue
+      }
       if (record.ownerInstanceId === this.ownerInstanceId) continue
       if (!record.pid) {
         const encodedPid = name.match(/\.active\.(\d+)\./)?.[1]
@@ -391,7 +426,7 @@ class KernelProcessLifecycleOwner {
           continue
         }
       }
-      blocked.push(`${record.laneKey}:${record.processKey}`)
+      if (!options.allowUnverifiedReceipts) blocked.push(`${record.laneKey}:${record.processKey}`)
     }
     if (blocked.length > 0) {
       throw new Error(
@@ -431,6 +466,7 @@ class KernelProcessLifecycleOwner {
 
 export { KernelProcessLifecycleOwner, OWNER_TOKEN_ENV, defaultController }
 export type {
+  KernelProcessRecoveryOptions,
   KernelProcessLifecycleOwnerOptions,
   KernelProcessProbe,
   KernelProcessReceipt,

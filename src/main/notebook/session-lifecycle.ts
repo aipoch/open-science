@@ -71,7 +71,7 @@ type NotebookSessionLifecycleOptions = {
   sessions: NotebookSessionRegistry<RuntimeSession>
   runtimeBindings: NotebookRuntimeBindingOwner
   waitForRevocationDrains: () => Promise<void>
-  ensureProcessRecovery: () => Promise<void>
+  ensureProcessRecovery: (laneKey: string) => Promise<void>
   processLifecycle: KernelProcessLifecycleOwner
   executorFactory?: (
     sessionId: string,
@@ -156,7 +156,7 @@ class NotebookSessionLifecycleOwner {
       return Promise.reject(error)
     }
     const ensuring = this.options.sessions.getOrCreate(lane, async () => {
-      await this.options.ensureProcessRecovery()
+      await this.options.ensureProcessRecovery(notebookLaneKey(lane))
       this.assertDeletionAvailable(projectId, request.sessionId)
       await assertResearchSessionWritable(this.options.storageRoot, projectId, request.sessionId)
       let document = await this.options.repository.loadOrCreate({

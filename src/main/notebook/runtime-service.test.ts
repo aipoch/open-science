@@ -16470,6 +16470,60 @@ it('retries Notebook lifecycle recovery after a transient repository failure', a
   }
 })
 
+it('does not let an unverified R receipt in one lane block a new REPL lane', async () => {
+  const root = await createStorageRoot()
+  const ledger = join(getRuntimeRoot(root), 'kernel-processes')
+  const oldLaneKey = '["project-a","old-session","root",null,null]'
+  const oldProcessKey = 'r:default-r'
+  const receiptPrefix = createHash('sha256').update(`${oldLaneKey}\0${oldProcessKey}`).digest('hex')
+  await mkdir(ledger, { recursive: true })
+  await writeFile(
+    join(ledger, `${receiptPrefix}.old-receipt.json`),
+    `${JSON.stringify({
+      version: 1,
+      receiptId: 'old-receipt',
+      ownerInstanceId: 'old-app',
+      ownerToken: 'old-owner',
+      platform: process.platform,
+      spawnedAt: Date.now(),
+      laneKey: oldLaneKey,
+      processKey: oldProcessKey,
+      kernelEpochId: 'old-r-epoch'
+    })}\n`
+  )
+  const service = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'project-a',
+    repository: new NotebookRunRepository(root),
+    executorFactory: () => ({
+      execute: async (request): Promise<NotebookExecutionResult> => ({
+        status: 'completed',
+        stdout: request.code,
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      }),
+      shutdown: async () => ({ reaped: true })
+    })
+  })
+
+  try {
+    await expect(service.recoverInterruptedOperations()).resolves.toBeUndefined()
+    await expect(
+      service.executeControl({
+        projectId: 'project-a',
+        sessionId: 'new-session',
+        workspaceCwd: root,
+        code: 'repl-isolated'
+      })
+    ).resolves.toMatchObject({ status: 'completed', stdout: 'repl-isolated' })
+  } finally {
+    await service.dispose()
+  }
+})
+
 it('keeps a failed recovery round joined until its other owners finish', async () => {
   const root = await createStorageRoot()
   const runtimeRoot = getRuntimeRoot(root)

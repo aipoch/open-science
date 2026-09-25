@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -214,6 +214,56 @@ describe('KernelProcessLifecycleOwner', () => {
       processKey: 'repl',
       pid: 5252
     })
+  })
+
+  it('keeps an exact process fence while tolerant recovery admits unrelated kernels', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-scoped-recovery-'))
+    const scope = {
+      laneKey: '["project-1","session-1","root",null,null]',
+      processKey: 'r:default-r',
+      kernelEpochId: 'epoch-r'
+    }
+    const first = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-a',
+      controller: {
+        probe: vi.fn(async () => 'unknown' as const),
+        terminate: vi.fn(async () => ({ reaped: false }))
+      }
+    })
+    await first.ensureReady()
+    const intent = first.beginSpawn(scope)
+    first.recordSpawned(intent, { pid: 5252 })
+
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-b',
+      controller: {
+        probe: vi.fn(async () => 'unknown' as const),
+        terminate: vi.fn(async () => ({ reaped: false }))
+      }
+    })
+
+    await expect(restarted.recover({ allowUnverifiedReceipts: true })).resolves.toBeUndefined()
+    const unrelated = restarted.beginSpawn({
+      ...scope,
+      processKey: 'repl',
+      kernelEpochId: 'epoch-repl'
+    })
+    restarted.abandonSpawn(unrelated)
+    expect(() => restarted.beginSpawn(scope)).toThrow('KERNEL_STARTUP_FENCE')
+  })
+
+  it('keeps tolerant recovery fail-closed for a receipt whose scope cannot be trusted', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-invalid-receipt-'))
+    const directory = join(root, 'runtime', 'kernel-processes')
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'unparseable.json'), '{"processKey":"r:default-r"}')
+    const restarted = new KernelProcessLifecycleOwner({ storageRoot: root })
+
+    await expect(restarted.recover({ allowUnverifiedReceipts: true })).rejects.toThrow(
+      'KERNEL_STARTUP_FENCE'
+    )
   })
 
   it('drops a reboot-stale POSIX group receipt without terminating its recycled numeric id', async () => {
