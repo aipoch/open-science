@@ -200,7 +200,7 @@ describe('post-merge Windows validation', () => {
     expect(job['continue-on-error']).toBeUndefined()
     expect(smoke.if).toBe("${{ !inputs.install_only && matrix.platform == 'win' }}")
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
-    expect(smoke['timeout-minutes']).toBe(10)
+    expect(smoke['timeout-minutes']).toBe(20)
   })
 
   it('installs Electron from GitHub mirrors and exposes an install-only dry-run', () => {
