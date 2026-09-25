@@ -938,12 +938,9 @@ export function SmartCollectionPanel({
       <ConfirmActionDialog
         open={confirmClearPause}
         title={t('Clear automatic pause')}
-        description={t(
-          'Clear this pause and discard unfinished run progress? Completed classification results will be kept.'
-        )}
+        description={t('Clear this automatic pause? Runs and classification results will be kept.')}
         cancelLabel={t('Cancel')}
         confirmLabel={t('Clear automatic pause')}
-        destructive
         loading={busy}
         onCancel={() => setConfirmClearPause(false)}
         onConfirm={() => void run('abandon')}

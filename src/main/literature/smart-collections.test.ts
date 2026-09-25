@@ -3135,7 +3135,7 @@ it('does not clear an automatic pause when abandoning a newer manual run', async
   ).toMatchObject({ state: 'interrupted' })
 })
 
-it('discards unfinished progress when clearing an unattributed pause', async () => {
+it('keeps a newer manual run when clearing an unattributed automatic pause', async () => {
   const id = await create()
   await refresh(id)
   await owner.execute({
@@ -3178,12 +3178,12 @@ it('discards unfinished progress when clearing an unattributed pause', async () 
   expect(classify).not.toHaveBeenCalled()
   expect(
     await db.literatureSmartRun.findUniqueOrThrow({ where: { id: runs[1].id } })
-  ).toMatchObject({ abandonedAt: expect.any(Date) })
+  ).toMatchObject({ state: 'interrupted', abandonedAt: null })
   configured = true
   owner.schedule()
   await new Promise((resolve) => setTimeout(resolve, 850))
   expect(classify).not.toHaveBeenCalled()
-  expect(await owner.view(id)).toMatchObject({ automaticPauseReason: undefined, matches: 1 })
+  expect(await owner.view(id)).toMatchObject({ automaticPauseReason: undefined, matches: 0 })
   expect((await owner.view(id)).run?.id).toBe(runs[1].id)
   expect(
     await db.literatureSmartRun.findMany({
@@ -3191,7 +3191,16 @@ it('discards unfinished progress when clearing an unattributed pause', async () 
       orderBy: { createdAt: 'asc' },
       select: { abandonedAt: true }
     })
-  ).toEqual([{ abandonedAt: null }, { abandonedAt: expect.any(Date) }])
+  ).toEqual([{ abandonedAt: null }, { abandonedAt: null }])
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'resume',
+    runId: runs[1].id,
+    offset: 0
+  })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  expect(classify).toHaveBeenCalledTimes(1)
 })
 
 it('drains paid requests and retains a durable pause when both result and failure writes fail', async () => {

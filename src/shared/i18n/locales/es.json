@@ -6542,7 +6542,7 @@
     "Abandon run": "Abandonar ejecución",
     "Start a fresh automatic run": "Iniciar una ejecución automática nueva",
     "Clear automatic pause": "Borrar pausa automática",
-    "Clear this pause and discard unfinished run progress? Completed classification results will be kept.": "¿Borrar esta pausa y descartar el progreso de la ejecución incompleta? Se conservarán los resultados de clasificación completados.",
+    "Clear this automatic pause? Runs and classification results will be kept.": "¿Borrar esta pausa automática? Se conservarán las ejecuciones y los resultados de clasificación.",
     "Abandon this run? Completed results will be kept, and this run will not resume.": "¿Abandonar esta ejecución? Los resultados completados se conservarán y esta ejecución no se reanudará.",
     "Abandon this run. Completed results will be kept, and this run will not resume.": "Abandone esta ejecución. Los resultados completados se conservarán y esta ejecución no se reanudará.",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "Las solicitudes automáticas han alcanzado el límite compartido de {{limit}} en 24 horas. Espere antes de reanudar.",

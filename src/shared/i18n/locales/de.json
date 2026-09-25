@@ -6376,7 +6376,7 @@
     "Abandon run": "Lauf aufgeben",
     "Start a fresh automatic run": "Einen neuen automatischen Lauf starten",
     "Clear automatic pause": "Automatische Pause aufheben",
-    "Clear this pause and discard unfinished run progress? Completed classification results will be kept.": "Diese Pause aufheben und den Fortschritt des unvollständigen Durchlaufs verwerfen? Abgeschlossene Klassifizierungsergebnisse bleiben erhalten.",
+    "Clear this automatic pause? Runs and classification results will be kept.": "Diese automatische Pause aufheben? Durchläufe und Klassifizierungsergebnisse bleiben erhalten.",
     "Abandon this run? Completed results will be kept, and this run will not resume.": "Diesen Lauf aufgeben? Abgeschlossene Ergebnisse bleiben erhalten, und dieser Lauf wird nicht fortgesetzt.",
     "Abandon this run. Completed results will be kept, and this run will not resume.": "Diesen Lauf aufgeben. Abgeschlossene Ergebnisse bleiben erhalten, und dieser Lauf wird nicht fortgesetzt.",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "Automatische Anfragen haben das gemeinsame Limit von {{limit}} in 24 Stunden erreicht. Warten Sie vor dem Fortsetzen.",

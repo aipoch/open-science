@@ -1138,36 +1138,15 @@ export class LiteratureSmartCollections {
           this.active.has(id)
         )
           return { kind: 'collection', id }
-        const cleared = await client.$transaction(async (tx) => {
-          const pause = await tx.literatureSmartCollection.updateMany({
-            where: {
-              collectionId: id,
-              automaticPauseReason: definition.automaticPauseReason,
-              automaticPauseRunId: null
-            },
-            data: { automaticPauseReason: null }
-          })
-          if (!pause.count) return false
-          const latest = await tx.literatureSmartRun.findFirst({
-            where: { collectionId: id },
-            orderBy: { createdAt: 'desc' },
-            select: { id: true, state: true }
-          })
-          if (latest && ['cancelled', 'interrupted', 'failed'].includes(latest.state)) {
-            await tx.literatureSmartRun.updateMany({
-              where: { id: latest.id, state: latest.state, abandonedAt: null },
-              data: {
-                state:
-                  latest.state === 'interrupted' || latest.state === 'failed'
-                    ? 'cancelled'
-                    : latest.state,
-                abandonedAt: new Date()
-              }
-            })
-          }
-          return true
+        const cleared = await client.literatureSmartCollection.updateMany({
+          where: {
+            collectionId: id,
+            automaticPauseReason: definition.automaticPauseReason,
+            automaticPauseRunId: null
+          },
+          data: { automaticPauseReason: null }
         })
-        if (cleared) this.changed(id)
+        if (cleared.count) this.changed(id)
         return { kind: 'collection', id }
       }
       const run = await client.literatureSmartRun.findFirst({

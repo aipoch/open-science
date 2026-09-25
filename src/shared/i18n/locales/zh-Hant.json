@@ -6218,7 +6218,7 @@
     "Abandon run": "放棄執行",
     "Start a fresh automatic run": "開始新的自動執行",
     "Clear automatic pause": "清除自動暫停",
-    "Clear this pause and discard unfinished run progress? Completed classification results will be kept.": "要清除這次暫停並捨棄未完成的執行進度嗎？已完成的分類結果會保留。",
+    "Clear this automatic pause? Runs and classification results will be kept.": "要清除這次自動暫停嗎？執行記錄和分類結果會保留。",
     "Abandon this run? Completed results will be kept, and this run will not resume.": "要放棄這次執行嗎？已完成的結果會保留，且不會恢復此執行。",
     "Abandon this run. Completed results will be kept, and this run will not resume.": "放棄這次執行。已完成的結果會保留，且不會恢復此執行。",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "24 小時內的自動請求已達到共用上限 {{limit}} 次。請等待後再恢復。",
