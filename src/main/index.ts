@@ -530,6 +530,19 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./storage/initialize-location')
       ])
 
+      if (process.platform === 'darwin') {
+        Menu.setApplicationMenu(
+          Menu.buildFromTemplate([
+            { role: 'appMenu' },
+            { role: 'fileMenu' },
+            { role: 'editMenu' },
+            { role: 'viewMenu' },
+            { role: 'windowMenu' },
+            { role: 'help', submenu: [] }
+          ])
+        )
+      }
+
       const zoomSafeApplicationMenu = buildZoomSafeApplicationMenu(
         Menu.getApplicationMenu?.() ?? null,
         Menu,
