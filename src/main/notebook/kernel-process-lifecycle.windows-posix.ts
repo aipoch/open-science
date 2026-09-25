@@ -246,6 +246,7 @@ class KernelProcessLifecycleOwner {
   private readonly platform: NodeJS.Platform
   private readonly controller: KernelProcessRecoveryController
   private readonly readBootToken: () => string | undefined
+  private readonly pendingReceiptIds = new Set<string>()
   private recovery: Promise<void> | undefined
   private scopedRecoveryTail: Promise<void> = Promise.resolve()
   private readonly scopedRecoveries = new Map<string, Promise<void>>()
@@ -323,6 +324,7 @@ class KernelProcessLifecycleOwner {
       ...scope
     }
     writeRecordSync(path, record)
+    this.pendingReceiptIds.add(receiptId)
     return {
       path,
       activePath: (pid) => join(this.directory, `${prefix}.active.${pid}.${receiptId}.json`),
@@ -352,10 +354,12 @@ class KernelProcessLifecycleOwner {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || !existsSync(activePath)) throw error
     }
     writeRecordSync(activePath, record)
+    this.pendingReceiptIds.delete(record.receiptId)
     return { path: activePath, receiptId: record.receiptId }
   }
 
   abandonSpawn(intent: KernelProcessSpawnIntent): void {
+    this.pendingReceiptIds.delete(intent.record.receiptId)
     this.removeIfOwned(intent.path, intent.record.receiptId)
   }
 
@@ -382,11 +386,24 @@ class KernelProcessLifecycleOwner {
       const path = join(this.directory, name)
       if (name.includes('.pending.')) {
         if (options.allowUnverifiedReceipts) {
-          // Tolerant lane recovery can run while another lane is between beginSpawn() and the
-          // atomic pending-to-active promotion. Do not claim a pending intent here: the host may
-          // still be live and able to publish it. Strict recovery remains responsible for
-          // cancelling pending intents left by an interrupted owner.
-          continue
+          let pendingRecord: KernelProcessRecord | undefined
+          try {
+            pendingRecord = decodeRecord(readFileSync(path, 'utf8'))
+          } catch {
+            pendingRecord = undefined
+          }
+          if (!pendingRecord || !name.startsWith(`${recordFilePrefix(pendingRecord)}.`)) {
+            blocked.push(name)
+            continue
+          }
+          if (
+            pendingRecord.ownerInstanceId === this.ownerInstanceId &&
+            this.pendingReceiptIds.has(pendingRecord.receiptId)
+          ) {
+            // Tolerant lane recovery can run while this owner is between beginSpawn() and the
+            // atomic pending-to-active promotion. Leave this live intent for the host to publish.
+            continue
+          }
         }
         // The process host and recovery race through an atomic rename. Recovery winning this claim
         // guarantees the host can no longer activate or execute the kernel; a host that won first

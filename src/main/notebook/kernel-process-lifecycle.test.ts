@@ -265,18 +265,36 @@ describe('KernelProcessLifecycleOwner', () => {
       processKey: 'r:default-r',
       kernelEpochId: 'epoch-r'
     })
-    const restarted = new KernelProcessLifecycleOwner({
-      storageRoot: root,
-      ownerInstanceId: 'owner-b'
-    })
-
-    await restarted.ensureReadyForLane('["project-2","session-2","root",null,null]')
+    await owner.ensureReadyForLane('["project-2","session-2","root",null,null]')
     expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toContain(
       intent.path.split(/[\\/]/).pop()!
     )
 
     const receipt = owner.recordSpawned(intent, { pid: 5252 })
     owner.complete(receipt, true)
+  })
+
+  it('cleans a pending startup left by a crashed owner before admitting that lane', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-stale-pending-'))
+    const scope = {
+      laneKey: '["project-1","session-1","root",null,null]',
+      processKey: 'r:default-r',
+      kernelEpochId: 'epoch-r'
+    }
+    const crashed = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-a'
+    })
+    crashed.beginSpawn(scope)
+
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-b'
+    })
+    await restarted.ensureReadyForLane(scope.laneKey)
+
+    const retry = restarted.beginSpawn(scope)
+    restarted.abandonSpawn(retry)
   })
 
   it('keeps tolerant recovery fail-closed for a receipt whose scope cannot be trusted', async () => {
