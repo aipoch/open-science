@@ -119,6 +119,21 @@ describe('installWindowShortcuts', () => {
     expect(webContents.setZoomFactor).not.toHaveBeenCalled()
   })
 
+  it.each(['win32', 'linux'] as const)(
+    'does not treat the meta key as a zoom modifier on %s',
+    (platform) => {
+      const { webContents, dispatch } = createShortcut(platform)
+      expect(dispatch({ control: false, meta: true }).preventDefault).not.toHaveBeenCalled()
+      expect(webContents.setZoomFactor).not.toHaveBeenCalled()
+    }
+  )
+
+  it('uses the meta key as the zoom modifier on macOS', () => {
+    const { webContents, dispatch } = createShortcut('darwin')
+    expect(dispatch({ control: false, meta: true }).preventDefault).toHaveBeenCalledOnce()
+    expect(webContents.setZoomFactor).toHaveBeenCalledExactlyOnceWith(1.1)
+  })
+
   it.each(['darwin', 'linux'] as const)('handles shared shortcuts on %s', (platform) => {
     const { webContents } = createShortcut(platform)
     expect(webContents.on).toHaveBeenCalledWith('before-input-event', expect.any(Function))

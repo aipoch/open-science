@@ -9,7 +9,8 @@ import {
 } from '../shared/interface-scale'
 
 const scaleShortcutForInput = (input: Input): InterfaceScaleShortcut | undefined => {
-  if (input.type !== 'keyDown' || input.alt || (!input.control && !input.meta)) return undefined
+  const modifierPressed = process.platform === 'darwin' ? input.meta : input.control
+  if (input.type !== 'keyDown' || input.alt || !modifierPressed) return undefined
 
   if (
     (input.code === 'Equal' && (input.key === '=' || input.key === '+')) ||
