@@ -423,6 +423,7 @@ const createProductionDelegatedFrameworkRuntime = (
           preparedSkills: owned.preparedSkills,
           runtimeCallbacks: callbacks,
           delegatedNotebookConnection: owned.connection,
+          delegatedRuntimeHome: scope.runtimeHome,
           permissionGrantContext: {
             projectId: scope.provenance.projectId,
             sessionId: scope.provenance.sessionId

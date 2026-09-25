@@ -197,6 +197,9 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     ReturnType<NonNullable<AcpSettingsCapabilities['prepareDelegatedSkills']>>
   >
   delegatedNotebookConnection?: NotebookRpcConnection
+  // Disposable delegated framework homes contain copied authentication and Skill material.
+  // Keep the per-attempt home protected even when a parent data directory is granted.
+  delegatedRuntimeHome?: string
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
   hasPendingCredentialRequest?: AcpRuntimeOptions['hasPendingCredentialRequest']
@@ -276,6 +279,7 @@ const createAcpRuntime = ({
   runtimeCallbacks,
   preparedSkills,
   delegatedNotebookConnection,
+  delegatedRuntimeHome,
   delegatedArtifactCurrentRunFile,
   spawnAgent,
   sideChatRelays,
@@ -301,12 +305,13 @@ const createAcpRuntime = ({
   const dataRoot = resolveDataRoot()
   const defaultCwd = homedir()
   const delegatedProtectedReadRoots = [
+    delegatedRuntimeHome,
     getAppClaudeConfigDir(configRoot),
     opencodeStorageDir(configRoot),
     codexStorageDir(configRoot),
     codexSubscriptionStorageDir(configRoot),
     codeBuddyStorageDir(configRoot)
-  ]
+  ].filter((path): path is string => Boolean(path))
   const runtimeCoordinatorRef: { current?: AcpRuntimeCoordinator } = {}
   // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
   const projectRepository = new ProjectRepository(

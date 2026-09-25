@@ -362,6 +362,7 @@ describe('production delegated framework runtime bridge', () => {
           'runtime',
           'bound-attempt'
         )
+        expect(observed!.delegatedRuntimeHome).toBe(runtimeHome)
         const projection = observed!.fixedBackend!.sessionOptions![
           OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
         ] as { root: string; skillsDirectory: string }
