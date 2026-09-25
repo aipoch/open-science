@@ -100,7 +100,9 @@ const harness = async () => {
     sendPrompt: vi.fn(async () => {})
   }
   const saveErrors: string[] = []
-  const flush = async (): Promise<void> => {
+  const flushTargets: Array<string | undefined> = []
+  const flush = async (target?: string): Promise<void> => {
+    flushTargets.push(target)
     const source = useSessionStore.getState().sessions[0]
     try {
       const saved = await ordered.saveSession(toPersistedSession(source), {
@@ -111,7 +113,7 @@ const harness = async () => {
         session: saved,
         mode: 'runtime-transcript-authority'
       })
-      await ordered.flush()
+      await ordered.flush(target)
     } catch (error) {
       saveErrors.push((error as Error).message)
       throw error
@@ -120,6 +122,7 @@ const harness = async () => {
   return {
     runtime,
     saveErrors,
+    flushTargets,
     flush,
     durable: () => durable,
     terminal: async (kind: 'error' | 'stop') => {
@@ -174,6 +177,7 @@ describe('workspace send while the previous Main terminal projection is queued',
     ])
     await expect(h.send()).resolves.toBeUndefined()
     expect(h.runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(h.flushTargets).toContain('session:session-1')
   })
 
   it.each(['stop', 'error'] as const)(

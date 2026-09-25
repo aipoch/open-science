@@ -152,8 +152,8 @@ const sameValue = (left: unknown, right: unknown): boolean => {
 // edit is safe to retry once that projection clears the active run, so callers must distinguish this
 // transient admission race from a real branch identity conflict.
 export class SessionConversationCommandDeferredError extends Error {
-  constructor() {
-    super('Cannot fork a running or changed conversation Branch.')
+  constructor(message = 'Cannot fork a running or changed conversation Branch.') {
+    super(message)
     this.name = 'SessionConversationCommandDeferredError'
   }
 }
@@ -217,7 +217,10 @@ export const applySessionConversationCommands = (
           }
           break
         }
-        if (result.activeRun) throw new SessionConversationCommandDeferredError()
+        if (result.activeRun)
+          throw new SessionConversationCommandDeferredError(
+            'Cannot append a user Message while the Session run is active.'
+          )
         if (branch.id !== command.branchId || branch.headMessageId !== command.parentMessageId) {
           throw new Error('Conversation Branch changed before the user Message was admitted.')
         }

@@ -111,7 +111,7 @@ type WorkspaceCommandLifecycle = {
   // Ownership of asynchronous admission, before the command establishes its own prompt run.
   isCurrent?: () => boolean
   awaitPendingPreparation?: boolean
-  flushPersistence?: () => Promise<void>
+  flushPersistence?: (target?: string) => Promise<void>
   onSendPreparationStateChange?: (sessionId: string, inFlight: boolean) => void
   drainRuntimeEvents?: (sessionId?: string) => Promise<void>
   onSessionBound?: (pendingSessionId: string, sessionId: string) => void
@@ -991,7 +991,7 @@ const sendWorkspaceMessage = async (
     // Stable application-owned messages already have identity-based retry handling below.
     if (!stableMessageId) {
       try {
-        await (lifecycle.flushPersistence ?? flushSessionPersistence)()
+        await (lifecycle.flushPersistence ?? flushSessionPersistence)(`session:${sessionId}`)
       } catch (error) {
         if (lifecycle.isCurrent?.() === false) return undefined
         if (isSessionPersistenceDeferredError(error)) return undefined
@@ -1145,7 +1145,7 @@ const sendWorkspaceMessage = async (
       if (!ownsPrompt(sessionId, appended.messageId)) return undefined
     } else if (!rearmExistingStableMessage) {
       try {
-        await (lifecycle.flushPersistence ?? flushSessionPersistence)()
+        await (lifecycle.flushPersistence ?? flushSessionPersistence)(`session:${sessionId}`)
       } catch (error) {
         if (isSessionPersistenceDeferredError(error)) return undefined
         if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)

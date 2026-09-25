@@ -177,8 +177,9 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
   releaseAcknowledgedSessionBody: (sessionId: string) => boolean
   clearWriteFailure: (target: string) => void
   clearWriteFailures: () => void
+  pruneDeferredConversationCommands: (sessions: readonly Pick<ChatSession, 'id'>[]) => void
   hasDeferredConversationCommands: (target: string) => boolean
-  flush: () => Promise<void>
+  flush: (target?: string) => Promise<void>
 }
 
 export class SessionPersistenceDeferredError extends Error {
@@ -1096,6 +1097,11 @@ const createOrderedSessionPersistence = (
       for (const target of failedWritesByTarget.keys()) {
         if (target.startsWith('session:')) failedWritesByTarget.delete(target)
       }
+      const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
+      for (const target of deferredConversationCommandTargets) {
+        if (target.startsWith('session:') && !activeSessionTargets.has(target))
+          deferredConversationCommandTargets.delete(target)
+      }
       for (const session of sessions) {
         acknowledgedRevisions.set(session.id, sessionRevision(session))
         acknowledgedSessions.set(session.id, structuredClone(session))
@@ -1111,10 +1117,20 @@ const createOrderedSessionPersistence = (
       // Keep the small revision watermark: later explicit writes must not regress their revision.
       return true
     },
-    clearWriteFailure: (target) => failedWritesByTarget.delete(target),
+    clearWriteFailure: (target) => {
+      failedWritesByTarget.delete(target)
+      deferredConversationCommandTargets.delete(target)
+    },
     clearWriteFailures: () => {
       failedWritesByTarget.clear()
       deferredConversationCommandTargets.clear()
+    },
+    pruneDeferredConversationCommands: (sessions) => {
+      const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
+      for (const target of deferredConversationCommandTargets) {
+        if (target.startsWith('session:') && !activeSessionTargets.has(target))
+          deferredConversationCommandTargets.delete(target)
+      }
     },
     hasDeferredConversationCommands: (target) => deferredConversationCommandTargets.has(target),
     saveSession: (session, options) => {
@@ -1144,7 +1160,7 @@ const createOrderedSessionPersistence = (
       })
     },
     saveManifest: (request) => enqueue('manifest', () => api.saveManifest(request)),
-    flush: async () => {
+    flush: async (target?: string) => {
       // Runtime/store updates can admit new snapshots while earlier writes are in flight.
       // Keep cadence disabled until every overlapping flush has finished.
       activeFlushes += 1
@@ -1158,8 +1174,12 @@ const createOrderedSessionPersistence = (
         }
         const failure = failedWritesByTarget.values().next()
         if (!failure.done) throw failure.value
-        const deferredTarget = deferredConversationCommandTargets.values().next()
-        if (!deferredTarget.done) throw new SessionPersistenceDeferredError(deferredTarget.value)
+        const deferredTarget = target
+          ? deferredConversationCommandTargets.has(target)
+            ? target
+            : undefined
+          : deferredConversationCommandTargets.values().next().value
+        if (deferredTarget) throw new SessionPersistenceDeferredError(deferredTarget)
       } finally {
         activeFlushes -= 1
       }
@@ -1258,8 +1278,8 @@ class SessionPersistenceFlushConflictError extends Error {
   }
 }
 
-const flushSessionPersistence = async (): Promise<void> => {
-  await liveSessionPersistence.flush()
+const flushSessionPersistence = async (target?: string): Promise<void> => {
+  await liveSessionPersistence.flush(target)
   if (unresolvedSessionRevisionConflictTargets.size > 0) {
     throw new SessionPersistenceFlushConflictError()
   }
@@ -1578,6 +1598,7 @@ const pruneRemovedSessionWriteTargets = (
   ...relatedTargets: Set<string>[]
 ): void => {
   const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
+  liveSessionPersistence.pruneDeferredConversationCommands(sessions)
   for (const target of targets) {
     if (target.startsWith('session:') && !activeSessionTargets.has(target)) {
       targets.delete(target)
