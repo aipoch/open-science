@@ -1216,9 +1216,12 @@ const WorkspacePage = ({
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
   }
 
-  const openLibraryPreview = (): void => {
-    if (!isSessionPersistenceReady) return
+  const openLibraryPreview = (): boolean => {
+    if (!isSessionPersistenceReady) {
+      return useNavigationStore.getState().openProjectLiterature(scopedProjectId, 'user')
+    }
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectLibraryPreviewItem())
+    return true
   }
 
   const openComputePreview = (): void => {
@@ -1304,7 +1307,7 @@ const WorkspacePage = ({
                 isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
                 onOpenFiles={openFilesPreview}
                 isLibraryOpen={activePreviewItemId === PROJECT_LIBRARY_PREVIEW_ID}
-                onOpenLiterature={isSessionPersistenceReady ? openLibraryPreview : undefined}
+                onOpenLiterature={openLibraryPreview}
                 isComputeOpen={
                   canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
                 }
@@ -1370,14 +1373,9 @@ const WorkspacePage = ({
                   openFilesPreview()
                 }}
                 isLibraryOpen={activePreviewItemId === PROJECT_LIBRARY_PREVIEW_ID}
-                onOpenLiterature={
-                  isSessionPersistenceReady
-                    ? () => {
-                        close()
-                        openLibraryPreview()
-                      }
-                    : undefined
-                }
+                onOpenLiterature={() => {
+                  if (openLibraryPreview()) close()
+                }}
                 isComputeOpen={
                   canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
                 }

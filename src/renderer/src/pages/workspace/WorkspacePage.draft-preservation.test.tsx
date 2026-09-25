@@ -7,6 +7,7 @@ import type * as React from 'react'
 import { useNavigationStore } from '@/stores/navigation-store'
 import {
   createInitialPreviewWorkbenchState,
+  PROJECT_LIBRARY_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -32,6 +33,7 @@ let sidebarProps: {
   canDeleteConversations: boolean
   onOpenSession: (id: string) => void
   onNewConversation: () => void
+  onOpenLiterature?: () => void
   onDownloadArtifacts: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
 }
@@ -1025,6 +1027,28 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).toHaveBeenCalledWith({ path: attachmentB.path })
     expect(deleteSession).toHaveBeenCalledWith({ projectId: 'proj-1', sessionId: 'sess-b' })
     expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
+  })
+
+  it('keeps project Literature accessible while session persistence is recovering', async () => {
+    await renderPage(false)
+    const navigate = vi.spyOn(useNavigationStore.getState(), 'openProjectLiterature')
+
+    expect(sidebarProps.onOpenLiterature).toBeTypeOf('function')
+    await act(async () => sidebarProps.onOpenLiterature!())
+
+    expect(navigate).toHaveBeenCalledWith('proj-1', 'user')
+    expect(useNavigationStore.getState().view).toBe('library')
+    expect(useNavigationStore.getState().pendingLiteratureProjectId).toBe('proj-1')
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('opens Library Preview without leaving the conversation when persistence is ready', async () => {
+    await renderPage()
+    await act(async () => sidebarProps.onOpenLiterature!())
+
+    expect(useNavigationStore.getState().view).toBe('workspace')
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(PROJECT_LIBRARY_PREVIEW_ID)
+    expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
   })
 
   it('allows target-validated session deletion while other persistence is recovering', async () => {
