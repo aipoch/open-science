@@ -389,7 +389,10 @@ class KernelProcessLifecycleOwner {
           let pendingRecord: KernelProcessRecord | undefined
           try {
             pendingRecord = decodeRecord(readFileSync(path, 'utf8'))
-          } catch {
+          } catch (error) {
+            // The host may have atomically promoted this intent after the directory snapshot.
+            // Its active receipt still fences exact process admission in beginSpawn().
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
             pendingRecord = undefined
           }
           if (!pendingRecord || !name.startsWith(`${recordFilePrefix(pendingRecord)}.`)) {

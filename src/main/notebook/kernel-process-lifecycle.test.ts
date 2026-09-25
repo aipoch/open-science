@@ -297,6 +297,38 @@ describe('KernelProcessLifecycleOwner', () => {
     restarted.abandonSpawn(retry)
   })
 
+  it('admits another lane when a pending host promotes its receipt during recovery', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-promoted-pending-'))
+    const previous = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const intents = ['lane-a', 'lane-b']
+      .map((laneKey) =>
+        previous.beginSpawn({ laneKey, processKey: 'r:default-r', kernelEpochId: 'epoch-r' })
+      )
+      .sort((left, right) => left.path.localeCompare(right.path))
+    const [active, pending] = intents
+    previous.recordSpawned(active!, { pid: 4242 })
+    const probe = vi.fn(async () => {
+      // Recovery already captured both filenames. A host publishes the pending receipt while
+      // recovery awaits the preceding active process probe, before it reads the pending path.
+      previous.recordSpawned(pending!, { pid: 5252 })
+      return 'unknown' as const
+    })
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      controller: { probe, terminate: vi.fn(async () => ({ reaped: false })) }
+    })
+
+    await expect(restarted.ensureReadyForLane('unrelated-lane')).resolves.toBeUndefined()
+    expect(probe).toHaveBeenCalledOnce()
+    const unrelated = restarted.beginSpawn({
+      laneKey: 'unrelated-lane',
+      processKey: 'repl',
+      kernelEpochId: 'epoch-repl'
+    })
+    restarted.abandonSpawn(unrelated)
+    expect(() => restarted.beginSpawn(pending!.record)).toThrow('KERNEL_STARTUP_FENCE')
+  })
+
   it('keeps tolerant recovery fail-closed for a receipt whose scope cannot be trusted', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-invalid-receipt-'))
     const directory = join(root, 'runtime', 'kernel-processes')
