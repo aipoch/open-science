@@ -15,6 +15,7 @@ on:
         options:
           - full
           - workspace-images
+          - presentation-screening
 
 permissions:
   actions: read
@@ -43,12 +44,13 @@ jobs:
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
       - name: Build Electron application
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'presentation-screening' }}
         run: npm run build:e2e
       - name: Build web application
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         run: npm run build:web
       - name: Install headless Chromium
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'presentation-screening' }}
         run: npx playwright install chromium --only-shell
       - name: Run complete Mac functional journeys
         id: functional
@@ -83,6 +85,15 @@ jobs:
           presentation_timeout=600000
           npx playwright test --config playwright.browser.config.ts --fail-on-flaky-tests --global-timeout="$presentation_timeout"
           npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout="$presentation_timeout"
+      - name: Test concurrent screening flights
+        id: presentation_screening
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'presentation-screening' }}
+        run: >-
+          npx playwright test --config playwright.browser.config.ts
+          e2e/browser/smart-screening.spec.ts
+          --grep 'flies all four committed papers per second concurrently into the same pile'
+          --repeat-each=5
+          --fail-on-flaky-tests
       - name: Run complete Mac accessibility checks
         id: accessibility
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
@@ -139,6 +150,12 @@ jobs:
         env:
           WORKSPACE_IMAGES: ${{ steps.workspace_images.outcome }}
         run: '[[ "$WORKSPACE_IMAGES" == "success" ]]'
+      - name: Enforce screening flight dry-run
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'presentation-screening' }}
+        shell: bash
+        env:
+          PRESENTATION_SCREENING: ${{ steps.presentation_screening.outcome }}
+        run: '[[ "$PRESENTATION_SCREENING" == "success" ]]'
 
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:

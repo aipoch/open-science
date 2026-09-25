@@ -278,7 +278,7 @@ describe('independent source regression', () => {
           required: true,
           type: 'choice',
           default: 'full',
-          options: ['full', 'workspace-images']
+          options: ['full', 'workspace-images', 'presentation-screening']
         }
       }
     })
@@ -354,6 +354,25 @@ describe('independent source regression', () => {
     ]) {
       expect(steps.find((step) => step.name === name)?.if).toContain("inputs.mode == 'full'")
     }
+  })
+
+  it('keeps the screening flight dry-run focused and blocking', () => {
+    const steps = scheduled.jobs.regression.steps
+    const focused = steps.find(({ name }) => name === 'Test concurrent screening flights')!
+    const gate = steps.find(({ name }) => name === 'Enforce screening flight dry-run')!
+    expect(focused.if).toContain("inputs.mode == 'presentation-screening'")
+    expect(focused.run).toContain('e2e/browser/smart-screening.spec.ts')
+    expect(focused.run).toContain('--repeat-each=5')
+    expect(focused.run).toContain('--fail-on-flaky-tests')
+    expect(gate.if).toContain("inputs.mode == 'presentation-screening'")
+    expect(gate.env?.PRESENTATION_SCREENING).toBe('${{ steps.presentation_screening.outcome }}')
+    expect(gate.run).toContain('"$PRESENTATION_SCREENING" == "success"')
+    expect(steps.find(({ name }) => name === 'Build Electron application')?.if).toContain(
+      "inputs.mode != 'presentation-screening'"
+    )
+    expect(steps.find(({ name }) => name === 'Install headless Chromium')?.if).toContain(
+      "inputs.mode == 'presentation-screening'"
+    )
   })
 
   it.skipIf(process.platform === 'win32')(
