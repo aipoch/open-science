@@ -133,6 +133,7 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Batch actions": "일괄 작업",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 이름으로 ClinPGx 약물/화학물질 레코드를 확인합니다.",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 HGNC 기호로 ClinPGx 유전자 레코드를 확인합니다.",
     "Search ClinPGx clinical annotations linking a drug, gene, and variant. Supports CPIC-style evidence levels 1A, 1B, 2A, 2B, 3, and 4.": "약물, 유전자, 변이를 연결하는 ClinPGx 임상 주석을 검색합니다. CPIC 스타일 증거 수준 1A, 1B, 2A, 2B, 3, 4를 지원합니다.",

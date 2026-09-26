@@ -134,6 +134,7 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
+    "Batch actions": "Stapelaktionen",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Lösen Sie ClinPGx-Arzneimittel-/Chemikaliendatensätze anhand der ClinPGx-Accession-ID oder des Namens auf, bevor Sie pharmakogenomische Annotationen abfragen.",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "Lösen Sie ClinPGx-Gendatensätze anhand der ClinPGx-Accession-ID oder des HGNC-Symbols auf, bevor Sie pharmakogenomische Annotationen abfragen.",
     "Search ClinPGx clinical annotations linking a drug, gene, and variant. Supports CPIC-style evidence levels 1A, 1B, 2A, 2B, 3, and 4.": "Durchsuchen Sie klinische ClinPGx-Annotationen, die ein Arzneimittel, ein Gen und eine Variante verknüpfen. Unterstützt CPIC-artige Evidenzstufen 1A, 1B, 2A, 2B, 3 und 4.",

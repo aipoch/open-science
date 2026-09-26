@@ -153,3 +153,46 @@ test('conversation picker matches PDF hover behavior and preserves click and key
   await search.press('Enter')
   await expect(page.getByRole('status').filter({ hasText: 'session-34:' })).toBeVisible()
 })
+
+for (const dark of [false, true]) {
+  test(`batch controls opt in and split buttons keep one outline in ${dark ? 'dark' : 'light'} mode`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 375, height: 850 })
+    await page.goto(`/library-workbench.html?${dark ? 'dark' : ''}`)
+    await expect(page.getByRole('button', { name: /Example reference/ })).toBeVisible()
+    await expect(page.getByRole('checkbox')).toHaveCount(0)
+    const choose = page.getByRole('button', { name: 'Choose another conversation' })
+    const borders = await choose.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        top: style.borderTopWidth,
+        right: style.borderRightWidth,
+        bottom: style.borderBottomWidth,
+        left: style.borderLeftWidth,
+        shadow: style.boxShadow
+      }
+    })
+    expect(borders).toEqual({
+      top: '0px',
+      right: '0px',
+      bottom: '0px',
+      left: '1px',
+      shadow: 'none'
+    })
+    await page.getByRole('button', { name: 'Batch actions' }).click()
+    await expect(page.getByText('Selected: 0', { exact: true })).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Add to chat', exact: true }).first()
+    ).toBeDisabled()
+    await page.getByRole('checkbox').check()
+    await expect(page.getByText('Selected: 1', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Add to chat', exact: true }).first().click()
+    await expect(page.getByRole('status').filter({ hasText: 'session-0:' })).toBeVisible()
+    await page.getByRole('button', { name: 'Done' }).click()
+    await expect(page.getByRole('checkbox')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Batch actions' }).click()
+    await expect(page.getByRole('checkbox')).not.toBeChecked()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  })
+}

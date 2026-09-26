@@ -11,6 +11,8 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  ListChecks,
+  X,
   Search
 } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -49,6 +51,7 @@ type Selection = {
   collectionId?: string
   offset: number
   expanded?: string
+  batchMode?: boolean
 }
 
 const externalUrl = (value: string): string | undefined => {
@@ -75,6 +78,7 @@ function ReferenceRow({
   expanded,
   onToggle,
   selected,
+  selectable,
   onSelect,
   onDetails
 }: {
@@ -82,6 +86,7 @@ function ReferenceRow({
   expanded: boolean
   onToggle: () => void
   selected: boolean
+  selectable: boolean
   onSelect: () => void
   onDetails: (trigger: HTMLButtonElement) => void
 }): React.JSX.Element {
@@ -175,13 +180,15 @@ function ReferenceRow({
       )}
     >
       <div className="flex items-start gap-2">
-        <input
-          type="checkbox"
-          className="mt-4 size-3.5 shrink-0 accent-primary"
-          checked={selected}
-          aria-label={t('Select {{title}}', { title: entry.item.title })}
-          onChange={onSelect}
-        />
+        {selectable && (
+          <input
+            type="checkbox"
+            className="mt-4 size-3.5 shrink-0 accent-primary"
+            checked={selected}
+            aria-label={t('Select {{title}}', { title: entry.item.title })}
+            onChange={onSelect}
+          />
+        )}
         <button
           type="button"
           aria-expanded={expanded}
@@ -392,7 +399,8 @@ function LibraryResults({
     key: requestKey,
     ids: []
   })
-  if (checked.key !== requestKey) setChecked({ key: requestKey, ids: [] })
+  if (checked.key !== requestKey || (!selection.batchMode && checked.ids.length > 0))
+    setChecked({ key: requestKey, ids: [] })
   const [detailEntry, setDetailEntry] = useState<LiteratureItemView>()
   const detailTrigger = useRef<HTMLButtonElement | null>(null)
   const requestToken = useMemo(() => ({ key: requestKey, revision }), [requestKey, revision])
@@ -504,7 +512,9 @@ function LibraryResults({
     (entry): entry is LiteratureItemView => 'item' in entry && 'attachments' in entry
   )
   const selectedEntries =
-    checked.key === requestKey ? entries.filter((entry) => checked.ids.includes(entry.id)) : []
+    selection.batchMode && checked.key === requestKey
+      ? entries.filter((entry) => checked.ids.includes(entry.id))
+      : []
   const detailReference = detailEntry
     ? {
         itemId: detailEntry.id,
@@ -627,7 +637,7 @@ function LibraryResults({
               </span>
               <span>{t('Recently added')}</span>
             </div>
-            {selectedEntries.length > 0 && (
+            {selection.batchMode && (
               <div className="mx-4 my-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 p-2">
                 <span className="mr-auto text-xs">
                   {t('Selected: {{selected}}', { selected: selectedEntries.length })}
@@ -640,6 +650,7 @@ function LibraryResults({
                 <Button
                   size="xs"
                   variant="ghost"
+                  disabled={selectedEntries.length === 0}
                   onClick={() => setChecked({ key: requestKey, ids: [] })}
                 >
                   {t('Clear selection')}
@@ -652,6 +663,7 @@ function LibraryResults({
                   key={`${page.key}:${entry.id}`}
                   entry={entry}
                   selected={selectedEntries.includes(entry)}
+                  selectable={Boolean(selection.batchMode)}
                   onSelect={() =>
                     setChecked({
                       key: requestKey,
@@ -852,6 +864,29 @@ export default function LibraryPreview({
               {all ? t('All references') : t('Current project')}
             </button>
           ))}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="ml-auto"
+                  aria-label={selection.batchMode ? t('Done') : t('Batch actions')}
+                  aria-pressed={Boolean(selection.batchMode)}
+                  onClick={() => setSelection({ ...selection, batchMode: !selection.batchMode })}
+                >
+                  {selection.batchMode ? (
+                    <X aria-hidden="true" />
+                  ) : (
+                    <ListChecks aria-hidden="true" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {selection.batchMode ? t('Done') : t('Batch actions')}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </header>
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">

@@ -526,7 +526,7 @@ it('exposes collapsed row actions, copies the full title, and opens live details
   ).toBe('false')
 })
 
-it('batches the selected visible references and clears selection across searches', async () => {
+it('opts into batch actions, clears selection on exit, and resets selection across searches', async () => {
   const entries = [reference('one', 'First'), reference('two', 'Second')]
   search.mockResolvedValue({ entries })
   const add = vi.fn()
@@ -538,6 +538,16 @@ it('batches the selected visible references and clears selection across searches
     </LibraryReferenceActionsContext.Provider>
   )
   await settle()
+  expect(screen.queryByRole('checkbox')).toBeNull()
+  expect(screen.queryByText('Selected: 0')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Batch actions' }))
+  expect(screen.getByText('Selected: 0')).toBeTruthy()
+  expect(
+    (screen.getAllByRole('button', { name: 'Add to chat' })[0] as HTMLButtonElement).disabled
+  ).toBe(true)
+  expect(
+    (screen.getByRole('button', { name: 'Clear selection' }) as HTMLButtonElement).disabled
+  ).toBe(true)
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select First' }))
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select Second' }))
   expect(screen.getByText('Selected: 2')).toBeTruthy()
@@ -549,6 +559,12 @@ it('batches the selected visible references and clears selection across searches
     ],
     null
   )
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+  expect(screen.queryByRole('checkbox')).toBeNull()
+  expect(screen.queryByText('Selected: 2')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Batch actions' }))
+  expect(screen.getByText('Selected: 0')).toBeTruthy()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select First' }))
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'First' } })
   await settle()
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
@@ -558,3 +574,46 @@ it('batches the selected visible references and clears selection across searches
     screen.getAllByRole('checkbox').every((checkbox) => !(checkbox as HTMLInputElement).checked)
   ).toBe(true)
 })
+
+it.each(['scope', 'page', 'collection'] as const)(
+  'clears batch selection on %s changes',
+  async (change) => {
+    search.mockResolvedValue({
+      entries: [
+        reference('one', 'First'),
+        ...Array.from({ length: 19 }, (_, i) => reference(`other-${i}`, `Other ${i}`))
+      ],
+      nextOffset: 20
+    })
+    const initialScope = { collectionId: 'collection-a', collectionName: 'Collection A' }
+    const { rerender } = render(
+      <LibraryPreview projectId="project-a" isActive scopeRequest={initialScope} />
+    )
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: 'Batch actions' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select First' }))
+    expect(screen.getByText('Selected: 1')).toBeTruthy()
+    if (change === 'collection') {
+      rerender(
+        <LibraryPreview
+          projectId="project-a"
+          isActive
+          scopeRequest={{ collectionId: 'collection-b' }}
+        />
+      )
+    } else {
+      fireEvent.click(
+        screen.getByRole('button', { name: change === 'scope' ? 'All references' : 'Next page' })
+      )
+    }
+    await settle()
+    expect(screen.queryByText('Selected: 1')).toBeNull()
+    if (change === 'collection') {
+      expect(screen.queryByRole('checkbox')).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Batch actions' }))
+    }
+    expect(
+      (screen.getByRole('checkbox', { name: 'Select First' }) as HTMLInputElement).checked
+    ).toBe(false)
+  }
+)
