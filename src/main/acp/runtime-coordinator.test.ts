@@ -3337,6 +3337,38 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it.each(['delete', 'disconnect', 'shutdown'] as const)(
+    'removes pending admission from visible busy state after %s',
+    async (teardown) => {
+      const validation = createDeferred()
+      const states: AcpStateUpdate[] = []
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks }).runtime,
+        { onStateChanged: (state) => states.push(state), onEvent: vi.fn() }
+      )
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const upward = coordinator.startContinuationWhen(
+        { sessionId: session.sessionId, text: 'pending child message' },
+        () => validation.promise
+      )
+      const settled = upward.catch((error: unknown) => error)
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+      try {
+        if (teardown === 'delete') await coordinator.deleteSession({ sessionId: session.sessionId })
+        else if (teardown === 'disconnect') await coordinator.disconnect()
+        else coordinator.shutdown()
+        expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
+        expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+        expect(states.at(-1)?.promptInFlightSessionIds).not.toContain(session.sessionId)
+        expect(states.at(-1)?.promptInFlight).toBe(false)
+      } finally {
+        validation.reject(new DelegateMessageParkedError('session was removed'))
+        await settled
+      }
+    }
+  )
+
   it('linearizes real user prompts and upward continuations through one root admission lock', async () => {
     const prompts = [
       createDeferred<unknown>(),

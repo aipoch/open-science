@@ -282,7 +282,9 @@ class AcpRuntimeCoordinator {
     const promptInFlightSessionIds = Array.from(
       new Set([
         ...ownedSessionIds((snapshot) => snapshot.promptInFlightSessionIds),
-        ...this.rootAdmissionTails.keys()
+        ...Array.from(this.rootAdmissionTails.keys()).filter((sessionId) =>
+          this.sessionRuntimes.has(sessionId)
+        )
       ])
     )
     const agentPromptInFlightSessionIds = ownedSessionIds(
@@ -2345,6 +2347,7 @@ class AcpRuntimeCoordinator {
     this.latestPromptRequests.clear()
     this.activeRuntime = undefined
     this.lastRuntime = undefined
+    this.emitState()
   }
 
   private clearApplicationSessionEvents(sessionId: string): void {
