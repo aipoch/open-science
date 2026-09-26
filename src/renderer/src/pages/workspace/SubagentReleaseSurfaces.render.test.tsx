@@ -36,6 +36,8 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', async () => {
 
 import {
   createInitialPreviewWorkbenchState,
+  createSessionSubagentsPreviewItem,
+  PROJECT_LIBRARY_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
@@ -547,6 +549,47 @@ describe('release-gate Subagent surfaces', () => {
 
     expect(screen.getByText('Fourteen strong studies remain.')).toBeTruthy()
     expect(screen.queryByText('Provider turn failed')).toBeNull()
+  })
+
+  it('opens Library mentions from the child branch in the same project preview', () => {
+    const session = createSession()
+    const prompt = session.conversationGraph!.messages.find(({ id }) => id === 'child-a-prompt')!
+    prompt.parts = [
+      { type: 'literature-scope', scope: 'project' },
+      {
+        type: 'literature-scope',
+        scope: 'collection',
+        collectionId: 'collection-1',
+        name: 'TP53 evidence'
+      }
+    ]
+    useSessionStore.setState({ sessions: [session] })
+    usePreviewWorkbenchStore.setState({ activeProjectId: session.projectId })
+    const item = createSessionSubagentsPreviewItem(session.id, session.projectId, 'child-a')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(item)
+    renderSurface(<SubagentPreview item={item} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open TP53 evidence' }))
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: PROJECT_LIBRARY_PREVIEW_ID,
+      panelState: 'open',
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          id: PROJECT_LIBRARY_PREVIEW_ID,
+          libraryScopeRequest: { collectionId: 'collection-1', collectionName: 'TP53 evidence' }
+        })
+      ])
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: "Open this project's Library" }))
+    expect(
+      usePreviewWorkbenchStore.getState().items.find(({ id }) => id === PROJECT_LIBRARY_PREVIEW_ID)
+    ).toMatchObject({ libraryScopeRequest: {} })
+
+    act(() => usePreviewWorkbenchStore.setState({ activeProjectId: 'another-project' }))
+    const previewBefore = usePreviewWorkbenchStore.getState()
+    fireEvent.click(screen.getByRole('button', { name: 'Open TP53 evidence' }))
+    expect(usePreviewWorkbenchStore.getState()).toBe(previewBefore)
   })
 
   it('streams the selected running Frame without mutating root state and completes token usage on stop', async () => {
