@@ -2,12 +2,20 @@
 import { act } from 'react'
 import { waitFor } from '@testing-library/react'
 import { Lexer } from 'marked'
-import { unified } from 'unified'
+import { unified, type Plugin, type Processor } from 'unified'
 import remarkParse from 'remark-parse'
+import type { Paragraph, Root as MarkdownRoot, Text } from 'mdast'
+import type { Node } from 'unist'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AgentMarkdown, PresentedAgentMarkdown } from './AgentMarkdown'
+import {
+  createMarkdownParseOwner,
+  getMarkdownParseCost,
+  reuseCacheableMarkdownParse,
+  reuseMarkdownParse
+} from './markdown-parser'
 
 const { renderMermaid } = vi.hoisted(() => ({
   renderMermaid: vi.fn(async (id: string) => ({
@@ -436,6 +444,29 @@ describe('cost-aware Markdown parsing', () => {
     expect(container.textContent).toBe(first + 'latest append')
   })
 
+  it('retains a large first snapshot across two streaming block mounts', async () => {
+    const source = 'First mounted paragraph. '.repeat(1500)
+    const clone = vi.spyOn(globalThis, 'structuredClone')
+    await act(async () =>
+      root.render(
+        <>
+          <PresentedAgentMarkdown content={source} isAnimating />
+          <PresentedAgentMarkdown content={source} isAnimating />
+        </>
+      )
+    )
+    const markdownCopies = clone.mock.calls.filter(
+      ([tree]) =>
+        tree &&
+        typeof tree === 'object' &&
+        'type' in tree &&
+        tree.type === 'root' &&
+        'children' in tree
+    )
+    expect(markdownCopies).toHaveLength(2)
+    expect(container.textContent?.match(/First mounted paragraph\./g)).toHaveLength(3000)
+  })
+
   const finishWarmup = async (): Promise<void> => {
     expect(workers[0]!.messages[0]!.source).toBe('')
     await act(async () => workers[0]!.complete(0))
@@ -608,5 +639,180 @@ describe('cost-aware Markdown parsing', () => {
     expect(worker.messages).toHaveLength(2)
     await act(async () => worker.complete(1))
     expect(container.textContent).toBe(second + 'pending B')
+  })
+})
+
+describe('retained Markdown parse reuse', () => {
+  let parseCalls: number
+  let clock: number
+
+  const sourceOf = (label: string, length = 16 * 1024): string =>
+    label + 'x'.repeat(length - label.length)
+
+  const textOf = (tree: unknown): Text =>
+    ((tree as MarkdownRoot).children[0] as Paragraph).children[0] as Text
+
+  const fixtureParser: Plugin = function fixtureParser() {
+    this.parser = (source) => {
+      parseCalls++
+      return {
+        type: 'root',
+        children: [{ type: 'paragraph', children: [{ type: 'text', value: source }] }]
+      }
+    }
+  }
+
+  const processor = (
+    plugin: Plugin = reuseCacheableMarkdownParse
+  ): Processor<undefined, Node, Node> =>
+    unified()
+      .use(fixtureParser)
+      .use(plugin)
+      .use((): ((tree: MarkdownRoot) => void) => (tree: MarkdownRoot) => {
+        textOf(tree).value += '!'
+      })
+
+  beforeEach(() => {
+    parseCalls = 0
+    clock = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => (clock += 20))
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('reuses only identical completed sources and isolates each transformed tree', () => {
+    const first = sourceOf('completed-same-')
+    const other = sourceOf('completed-other-')
+    const initial = processor()
+    const reopened = processor()
+
+    expect(textOf(initial.runSync(initial.parse(first))).value).toBe(first + '!')
+    expect(textOf(reopened.runSync(reopened.parse(first))).value).toBe(first + '!')
+    expect(parseCalls).toBe(1)
+    expect(textOf(reopened.runSync(reopened.parse(other))).value).toBe(other + '!')
+    expect(parseCalls).toBe(2)
+  })
+
+  it('does not retain short or append-only streaming parses', () => {
+    const short = sourceOf('cheap-', 100)
+    const growing = sourceOf('streaming-')
+    const completed = processor()
+    const streaming = processor(reuseMarkdownParse)
+
+    completed.parse(short)
+    completed.parse(short)
+    streaming.parse(growing)
+    streaming.parse(growing)
+    expect(parseCalls).toBe(4)
+  })
+
+  it('restores the measured parser cost when a retained tree survives owner disposal', () => {
+    const source = sourceOf('routing-cost-')
+    const parse = processor()
+    parse.parse(source)
+    expect(getMarkdownParseCost(source)).toBe(20)
+    createMarkdownParseOwner().dispose()
+    expect(getMarkdownParseCost(source)).toBe(0)
+    parse.parse(source)
+    expect(parseCalls).toBe(1)
+    expect(getMarkdownParseCost(source)).toBe(20)
+  })
+
+  it('evicts by entry count and total retained bytes', () => {
+    const parse = processor()
+    const first = sourceOf('entry-0-')
+    parse.parse(first)
+    for (let index = 1; index <= 32; index++) {
+      parse.parse(sourceOf(`entry-${index}-`))
+    }
+    parse.parse(first)
+    expect(parseCalls).toBe(34)
+
+    const largeA = sourceOf('large-a-', 1_500_000)
+    const largeB = sourceOf('large-b-', 1_500_000)
+    parse.parse(largeA)
+    parse.parse(largeB)
+    parse.parse(largeA)
+    expect(parseCalls).toBe(37)
+  })
+
+  it('drops completed trees after an idle minute', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const source = sourceOf('idle-expiry-')
+    const parse = processor()
+    parse.parse(source)
+    parse.parse(source)
+    expect(parseCalls).toBe(1)
+    vi.advanceTimersByTime(60_001)
+    parse.parse(source)
+    expect(parseCalls).toBe(2)
+  })
+
+  it('keeps worker ownership and cancellation separate from completed tree reuse', () => {
+    class FakeWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null
+      onerror: ((event: ErrorEvent) => void) | null = null
+      onmessageerror: ((event: MessageEvent) => void) | null = null
+      message?: { id: number; source: string }
+      postMessage(message: { id: number; source: string }): void {
+        this.message = message
+      }
+      terminated = false
+      terminate(): void {
+        this.terminated = true
+      }
+      complete(): void {
+        const { id, source } = this.message!
+        this.onmessage?.({
+          data: {
+            id,
+            bytes: source.length * 4,
+            tree: {
+              type: 'root',
+              children: [{ type: 'paragraph', children: [{ type: 'text', value: source }] }]
+            }
+          }
+        } as MessageEvent)
+      }
+    }
+    const workers: FakeWorker[] = []
+    vi.stubGlobal(
+      'Worker',
+      class extends FakeWorker {
+        constructor() {
+          super()
+          workers.push(this)
+        }
+      }
+    )
+    const source = sourceOf('worker-owned-')
+    const owner = createMarkdownParseOwner()
+    const accept = vi.fn()
+    const fail = vi.fn()
+    const parse = processor()
+
+    owner.request(source, accept, fail)
+    workers[0]!.complete()
+    expect(accept).toHaveBeenCalledWith(source)
+    expect(textOf(parse.runSync(parse.parse(source))).value).toBe(source + '!')
+    expect(parseCalls).toBe(0)
+    owner.dispose()
+    parse.parse(source)
+    parse.parse(source)
+    expect(parseCalls).toBe(1)
+
+    const canceled = sourceOf('worker-canceled-')
+    const staleOwner = createMarkdownParseOwner()
+    staleOwner.request(canceled, accept, fail)
+    staleOwner.cancel()
+    workers[1]!.complete()
+    parse.parse(canceled)
+    expect(parseCalls).toBe(2)
+    expect(fail).not.toHaveBeenCalled()
+    staleOwner.dispose()
   })
 })
