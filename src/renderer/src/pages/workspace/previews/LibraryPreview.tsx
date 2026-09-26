@@ -16,7 +16,7 @@ import {
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ArtifactLiteratureDetailDialog } from '../ArtifactLiteratureDetailDialog'
 import { literatureItemToMentionOption } from '../literature-pdf-options'
 import { LibraryChatButton } from './LibraryChatButton'
@@ -856,12 +856,14 @@ export default function LibraryPreview({
       </header>
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
         {isActive && (
-          <LibraryResults
-            projectId={projectId}
-            selection={selection}
-            onChange={setSelection}
-            openLiterature={openLiterature}
-          />
+          <TooltipProvider>
+            <LibraryResults
+              projectId={projectId}
+              selection={selection}
+              onChange={setSelection}
+              openLiterature={openLiterature}
+            />
+          </TooltipProvider>
         )}
       </div>
     </section>

@@ -1,12 +1,5 @@
 // @vitest-environment jsdom
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render as renderUi,
-  screen,
-  type RenderResult
-} from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   literatureItemInputSchema,
@@ -15,8 +8,6 @@ import {
 } from '../../../../../shared/literature'
 import LibraryPreview from './LibraryPreview'
 import { LibraryReferenceActionsContext } from './library-reference-actions'
-import { TooltipProvider } from '@/components/ui/tooltip'
-const render = (ui: React.ReactNode): RenderResult => renderUi(ui, { wrapper: TooltipProvider })
 
 const navigation = vi.hoisted(() => ({
   openProjectLiterature: vi.fn(),

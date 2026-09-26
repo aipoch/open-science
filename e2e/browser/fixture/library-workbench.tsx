@@ -1,5 +1,4 @@
 import '@/assets/main.css'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import { LibraryReferenceActionsContext } from '@/pages/workspace/previews/library-reference-actions'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useState } from 'react'
@@ -85,36 +84,34 @@ export function Fixture(): React.JSX.Element {
   const [added, setAdded] = useState('')
   const [active, setActive] = useState(true)
   return (
-    <TooltipProvider>
-      <LibraryReferenceActionsContext.Provider
-        value={{
-          projectId: 'fixture-project',
-          currentSessionId: 'session-0',
-          canAddToCurrent: true,
-          add: (references, sessionId) =>
-            setAdded(
-              `${sessionId ?? 'new'}: ${references.map((reference) => '@' + reference.item.title).join(' ')}`
-            )
-        }}
-      >
-        <div className="flex h-screen min-w-0 flex-col bg-background">
-          <button
-            className="shrink-0 border-b border-border p-2 text-sm"
-            onClick={() => setActive(!active)}
-          >
-            Toggle preview visibility
-          </button>
-          {added && (
-            <div role="status" className="border-b border-border p-3 text-xs">
-              {added}
-            </div>
-          )}
-          <div className="min-h-0 min-w-0 flex-1">
-            <LibraryPreview projectId="fixture-project" isActive={active} />
+    <LibraryReferenceActionsContext.Provider
+      value={{
+        projectId: 'fixture-project',
+        currentSessionId: 'session-0',
+        canAddToCurrent: true,
+        add: (references, sessionId) =>
+          setAdded(
+            `${sessionId ?? 'new'}: ${references.map((reference) => '@' + reference.item.title).join(' ')}`
+          )
+      }}
+    >
+      <div className="flex h-screen min-w-0 flex-col bg-background">
+        <button
+          className="shrink-0 border-b border-border p-2 text-sm"
+          onClick={() => setActive(!active)}
+        >
+          Toggle preview visibility
+        </button>
+        {added && (
+          <div role="status" className="border-b border-border p-3 text-xs">
+            {added}
           </div>
+        )}
+        <div className="min-h-0 min-w-0 flex-1">
+          <LibraryPreview projectId="fixture-project" isActive={active} />
         </div>
-      </LibraryReferenceActionsContext.Provider>
-    </TooltipProvider>
+      </div>
+    </LibraryReferenceActionsContext.Provider>
   )
 }
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {
