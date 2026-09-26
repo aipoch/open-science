@@ -1597,7 +1597,8 @@ const WorkspaceMessageItemImpl = ({
         part.type === 'artifact' ||
         part.type === 'literature' ||
         part.type === 'session' ||
-        (part.type === 'literature-scope' && part.scope === 'project' && Boolean(projectId))
+        (part.type === 'literature-scope' &&
+          (part.scope === 'collection' || (part.scope === 'project' && Boolean(projectId))))
     )
   )
 
