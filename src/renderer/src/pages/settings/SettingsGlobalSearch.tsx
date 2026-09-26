@@ -12,6 +12,7 @@ type SettingsSearchEntry = {
   labelKey: string
   // Extra English match terms that are never displayed.
   keywords?: string
+  searchLabels?: string[]
   // Entries jump to the data-settings-anchor element named by their id. skipAnchor opts out and
   // falls back to the panel's first content block, for targets unmounted at jump time.
   skipAnchor?: boolean
@@ -149,7 +150,15 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
     id: 'general.appearance',
     panel: 'general',
     labelKey: 'Appearance',
-    keywords: 'theme dark light'
+    keywords: 'theme dark light',
+    searchLabels: ['Theme', 'Dark', 'Light', 'System']
+  },
+  {
+    id: 'general.about',
+    panel: 'general',
+    labelKey: 'About',
+    keywords: 'update version',
+    searchLabels: ['Checking for updates…', 'Release notes']
   },
   { id: 'general.language', panel: 'general', labelKey: 'Language', keywords: 'locale' },
   { id: 'general.notifications', panel: 'general', labelKey: 'Notifications' },
@@ -205,7 +214,7 @@ const highlightNavigatedPanel = (panel: SettingsPanelId, anchor?: string): (() =
     const root = document.querySelector(
       `[data-slot="settings-content-scroll"][data-settings-active-panel="${panel}"]`
     )
-    if (!root) {
+    if (!root || root.closest('[inert], [aria-hidden="true"]')) {
       if (Date.now() - startedAt < 3000) timers.push(window.setTimeout(attempt, 150))
       return
     }
@@ -275,9 +284,13 @@ const SettingsGlobalSearch = ({
     const normalized = query.trim().toLowerCase()
     if (!normalized) return SETTINGS_SEARCH_INDEX
     return SETTINGS_SEARCH_INDEX.filter((entry) =>
-      [entry.labelKey, t(entry.labelKey), panelLabel(entry.panel), entry.keywords ?? ''].some(
-        (haystack) => haystack.toLowerCase().includes(normalized)
-      )
+      [
+        entry.labelKey,
+        t(entry.labelKey),
+        panelLabel(entry.panel),
+        entry.keywords ?? '',
+        ...(entry.searchLabels ?? []).flatMap((label) => [label, t(label)])
+      ].some((haystack) => haystack.toLowerCase().includes(normalized))
     )
     // panelLabel closes over t and panels; both are covered by the deps below.
     // eslint-disable-next-line react-hooks/exhaustive-deps

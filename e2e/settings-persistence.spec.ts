@@ -67,7 +67,7 @@ test('persists editable memory across an application restart', async ({ app }) =
   await page.reload({ waitUntil: 'domcontentloaded' })
 
   const openMemory = async (): Promise<Locator> => {
-    await page.getByRole('button', { name: 'Model settings' }).click()
+    await page.getByRole('button', { name: 'Settings' }).click()
     const settings = page.getByRole('dialog', { name: 'Settings' })
     await settings
       .getByRole('navigation', { name: 'Settings' })
@@ -229,7 +229,7 @@ test('contains long memory lists and layers destructive confirmations above sett
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
 
-  await page.getByRole('button', { name: 'Model settings' }).click()
+  await page.getByRole('button', { name: 'Settings' }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })
@@ -408,7 +408,7 @@ test('preserves Memory drafts and shows externally saved values on conflict', as
     })
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.getByRole('button', { name: 'Model settings' }).click()
+  await page.getByRole('button', { name: 'Settings' }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })

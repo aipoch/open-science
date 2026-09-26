@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next'
 
 // Generated Skill documents retain the full API contract. Settings uses concise localized copy.
 export function connectorDescription(
-  connector: { id: string; description: string },
+  connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
   if (connector.id === 'interproscan') {
@@ -41,7 +41,9 @@ export function connectorDescription(
   }
   return connector.id === 'literature'
     ? t('Literature and research data via OpenAlex, arXiv, Crossref and DataCite.')
-    : connector.description
+    : connector.sources?.length
+      ? t('Research data from {{sources}}.', { sources: connector.sources.join(', ') })
+      : connector.description
 }
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {

@@ -9,7 +9,7 @@ describe('EmptyConversationBanner', () => {
 
     expect(html).toContain('data-testid="empty-conversation-banner"')
     expect(html).toContain('What will you research in Open-Science?')
-    expect(html).toContain('Discover, share, and collaborate on research that matters')
+    expect(html).toContain('Attach data or papers, then describe what you want to find out.')
     // The dotted flask is decorative; the heading and description carry meaning.
     expect(html).toContain('aria-hidden="true"')
     expect(html).toContain('<h2')

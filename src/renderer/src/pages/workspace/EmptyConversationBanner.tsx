@@ -1,13 +1,14 @@
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
+
 import { FlaskLogo } from '@/components/flask-logo'
 
-// Centered placeholder for a brand-new conversation with no messages yet. Mounted as an absolute
-// overlay inside MessageScroller (not MessageScrollerContent — the scroller only measures Content's
-// direct children), so it never participates in scroll anchoring. Purely decorative: the dotted
-// flask mark inherits a low-key text token via currentColor, which keeps one SVG legible in both
-// light and dark themes.
-const EmptyConversationBanner = (): React.JSX.Element => {
+const EmptyConversationBanner = ({
+  onStartResearch
+}: {
+  onStartResearch?: (prompt: string) => void
+}): React.JSX.Element => {
   const { t } = useTranslation()
 
   return (
@@ -21,9 +22,27 @@ const EmptyConversationBanner = (): React.JSX.Element => {
           {t('What will you research in Open-Science?')}
         </h2>
         <p className="text-xs text-text-100">
-          {t('Discover, share, and collaborate on research that matters')}
+          {t('Attach data or papers, then describe what you want to find out.')}
         </p>
       </div>
+      {onStartResearch ? (
+        <div className="pointer-events-auto flex flex-wrap justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onStartResearch(t('Analyze my data and explain the main findings.'))}
+          >
+            {t('Analyze data')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onStartResearch(t('Compare these papers and summarize their evidence.'))}
+          >
+            {t('Compare papers')}
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }

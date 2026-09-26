@@ -1436,6 +1436,36 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.queryByRole('button', { name: 'Collection 101' })).not.toBeNull()
   })
 
+  it.each(['Escape', 'Cancel', 'Back', 'Close'])(
+    'confirms dirty metadata dismissal through %s and retains cancelled drafts',
+    async (action) => {
+      search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+        Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+      )
+      get.mockResolvedValue(libraryItem)
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const detail = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+      await openMenu(screen.getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Edit metadata' }))
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Keep this draft' } })
+      const dismiss = (): void => {
+        if (action === 'Escape')
+          fireEvent.keyDown(screen.getByLabelText('Title'), { key: 'Escape' })
+        else fireEvent.click(within(detail).getByRole('button', { name: action }))
+      }
+      dismiss()
+      expect(await screen.findByRole('alertdialog')).not.toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+      expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Keep this draft')
+      expect(transact).not.toHaveBeenCalled()
+      dismiss()
+      fireEvent.click(await screen.findByRole('button', { name: 'Discard changes' }))
+      expect(screen.queryByLabelText('Title')).toBeNull()
+      expect(transact).not.toHaveBeenCalled()
+    }
+  )
+
   it('prevents metadata edits from being lost while a save is in flight', async () => {
     search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
       Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
@@ -1528,7 +1558,7 @@ describe('LiteratureLibraryPage', () => {
     })
     expect(await screen.findByText('No duplicates found')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    expect(await screen.findByText('No references found')).not.toBeNull()
+    expect(await screen.findByText('No references yet')).not.toBeNull()
   })
 
   it('shows duplicate group count between All references and Trash and reviews a group before merging', async () => {
@@ -1572,7 +1602,7 @@ describe('LiteratureLibraryPage', () => {
     expect(buttons.indexOf('Trash')).toBe(buttons.indexOf('Duplicates') + 1)
     expect(await within(nav).findByLabelText('1 duplicate group')).not.toBeNull()
     fireEvent.click(within(nav).getByRole('button', { name: 'All references' }))
-    expect(await screen.findByText('No references found')).not.toBeNull()
+    expect(await screen.findByText('No references yet')).not.toBeNull()
     const libraryRequests = search.mock.calls.filter(
       ([request]) => request.scope === 'library' && !request.countOnly
     ).length
@@ -2580,6 +2610,16 @@ describe('LiteratureLibraryPage', () => {
       pendingLiteratureProjectId: 'project-1',
       openProject
     })
+
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve(
+        request.scope === 'project-counts'
+          ? { entries: [{ projectId: 'project-1', itemCount: 1 }] }
+          : request.scope === 'library'
+            ? { entries: [libraryItem] }
+            : { entries: [] }
+      )
+    )
 
     render(<LiteratureLibraryPage />)
 
@@ -6012,6 +6052,7 @@ describe('LiteratureLibraryPage', () => {
         await openMenu(screen.getByRole('button', { name: 'Add' }))
         fireEvent.click(screen.getByRole('menuitem', { name: 'Add reference' }))
         if (policy === 'separate') {
+          fireEvent.click(screen.getByRole('button', { name: 'Advanced settings' }))
           await openMenu(screen.getByRole('combobox', { name: 'When identifiers match' }))
           fireEvent.click(screen.getByRole('option', { name: 'Keep as separate reference' }))
         }
@@ -7778,9 +7819,10 @@ describe('LiteratureLibraryPage', () => {
     expect.soft(screen.queryByText('Enter a valid year range (0–9999).')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
     expect(
-      (screen.getByRole('button', { name: 'Clear filters' }) as HTMLButtonElement).disabled
+      (screen.getAllByRole('button', { name: 'Clear filters' }).at(-1)! as HTMLButtonElement)
+        .disabled
     ).toBe(false)
-    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Clear filters' }).at(-1)!)
     expect((screen.getByLabelText('From year') as HTMLInputElement).value).toBe('')
     expect(screen.queryByText('Enter a valid year range (0–9999).')).toBeNull()
   })
@@ -7880,7 +7922,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
     expect((screen.getByLabelText('From year') as HTMLInputElement).value).toBe('2020')
     fireEvent.change(screen.getByLabelText('To year'), { target: { value: '2024' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Clear filters' }).at(-1)!)
     expect((screen.getByLabelText('From year') as HTMLInputElement).value).toBe('')
     expect((screen.getByLabelText('To year') as HTMLInputElement).value).toBe('')
   })
@@ -10566,7 +10608,7 @@ describe('LiteratureLibraryPage', () => {
       expect(get).toHaveBeenCalledTimes(2)
     })
     it.each(['save', 'completion'] as const)(
-      'publishes an earlier %s without replacing the reopened editor draft',
+      'protects a reopened editor draft across %s completion',
       async (operation) => {
         await showLibrary()
         await openReferenceDetail(screen.getByText(libraryItem.item.title))
@@ -10597,8 +10639,16 @@ describe('LiteratureLibraryPage', () => {
             )
           )
         }
+        if (operation === 'save') {
+          closeDetail()
+          expect(screen.queryByLabelText('Title')).not.toBeNull()
+          await act(async () => pending.resolve(updated))
+          await waitFor(() => expect(screen.queryByLabelText('Title')).toBeNull())
+        }
         closeDetail()
-        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        await openReferenceDetail(
+          screen.getByText(operation === 'save' ? updated.item.title : libraryItem.item.title)
+        )
         await editDetail()
         fireEvent.change(screen.getByLabelText('Title'), {
           target: { value: 'Keep this newer draft' }
@@ -10607,11 +10657,12 @@ describe('LiteratureLibraryPage', () => {
         expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
           'Keep this newer draft'
         )
-        expect(
-          within(screen.getByRole('dialog')).queryByText(
-            'This reference changed while you were editing. Your draft has been kept.'
-          )
-        ).not.toBeNull()
+        if (operation === 'completion')
+          expect(
+            within(screen.getByRole('dialog')).queryByText(
+              'This reference changed while you were editing. Your draft has been kept.'
+            )
+          ).not.toBeNull()
         expect(screen.queryByRole('button', { name: 'Apply metadata' })).toBeNull()
       }
     )

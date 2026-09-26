@@ -506,7 +506,7 @@ export function ConnectorsPanel({
                           <span className="block truncate text-sm text-foreground">
                             {connector.displayName}
                           </span>
-                          <span className="block truncate text-xs text-muted-foreground">
+                          <span className="block line-clamp-2 text-xs leading-5 text-muted-foreground">
                             {connectorDescription(connector, t)}
                           </span>
                         </button>
@@ -846,7 +846,7 @@ export function ConnectorsPanel({
                               <span className="block truncate text-sm text-foreground">
                                 {server.displayName}
                               </span>
-                              <span className="block truncate text-xs text-muted-foreground">
+                              <span className="block line-clamp-2 text-xs leading-5 text-muted-foreground">
                                 {server.name}
                                 {server.description ? ` · ${server.description}` : ''}
                               </span>

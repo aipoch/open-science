@@ -196,13 +196,7 @@ describe('ProviderForm field switching', () => {
     expect(container.querySelector<HTMLInputElement>('[aria-label="Model"]')?.placeholder).toBe(
       'e.g. deepseek-v4-flash'
     )
-    const contextWindow = container.querySelector<HTMLInputElement>('[aria-label="Context window"]')
-    expect(contextWindow?.placeholder).toBe('Use provider default')
-    expect(contextWindow?.getAttribute('role')).toBeNull()
-    expect(
-      container.querySelector('[role="group"][aria-labelledby="provider-context-window-label"]')
-        ?.textContent
-    ).toBe('32K64K128K200K256K1M')
+    expect(container.querySelector('[aria-label="Context window"]')).toBeNull()
     expect(container.querySelector('[aria-label="Maximum input tokens"]')).toBeNull()
     expect(container.querySelector('[aria-label="Maximum output tokens"]')).toBeNull()
 
@@ -247,17 +241,16 @@ describe('ProviderForm field switching', () => {
   it('shows context and input/output presets as inline shortcuts', () => {
     render(createEmptyProviderFormValue({ type: 'custom' }))
 
-    expect(
-      container.querySelector('[role="group"][aria-labelledby="provider-context-window-label"]')
-        ?.textContent
-    ).toBe('32K64K128K200K256K1M')
-
     act(() => {
       Array.from(container.querySelectorAll('button'))
         .find((button) => button.textContent === 'Advanced settings')
         ?.click()
     })
 
+    expect(
+      container.querySelector('[role="group"][aria-labelledby="provider-context-window-label"]')
+        ?.textContent
+    ).toBe('32K64K128K200K256K1M')
     expect(
       container.querySelector('[role="group"][aria-labelledby="provider-max-input-tokens-label"]')
         ?.textContent
@@ -692,15 +685,15 @@ describe('ProviderForm field switching', () => {
     )
   })
 
-  it('moves custom-provider descriptions into generic field-help tooltips', async () => {
+  it('identifies field-help tooltips by the field they explain', async () => {
     render(createEmptyProviderFormValue({ type: 'custom' }))
     const helpButtons = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[data-slot="field-help"]')
     )
 
-    expect(helpButtons).toHaveLength(5)
+    expect(helpButtons).toHaveLength(4)
     expect(
-      helpButtons.every((button) => button.getAttribute('aria-label') === 'More information')
+      helpButtons.every((button) => button.getAttribute('aria-label')?.startsWith('Help for '))
     ).toBe(true)
     expect(container.textContent).not.toContain(
       'Base URL, key, and model for an Anthropic or OpenAI-compatible endpoint'

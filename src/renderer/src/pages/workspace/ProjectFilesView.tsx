@@ -1,3 +1,4 @@
+import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { ErrorNotice } from '@/components/error-notice'
 // Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
 import type { TFunction } from 'i18next'
@@ -732,10 +733,32 @@ const ProjectFilesViewContent = ({
           catalogIndex.overview.isIndexComplete &&
           visibleFileCount === 0 &&
           !hasPageError ? (
-            <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-text-300">
-              {isSearchActive
-                ? t('No files match “{{query}}”', { query: debouncedSearchQuery })
-                : t('No files yet')}
+            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-[12px] text-text-300">
+              <p>
+                {isSearchActive
+                  ? t('No files match “{{query}}”', { query: debouncedSearchQuery })
+                  : t('No files yet')}
+              </p>
+              {!isSearchActive ? (
+                <p className="max-w-sm">
+                  {t('Attach files in the conversation. Research tasks save generated files here.')}
+                </p>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (isSearchActive) setSearchQuery('')
+                  else {
+                    setToolItemExpanded(null)
+                    requestAnimationFrame(() =>
+                      window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
+                    )
+                  }
+                }}
+              >
+                {isSearchActive ? t('Clear search') : t('Go to conversation')}
+              </Button>
             </div>
           ) : null}
 

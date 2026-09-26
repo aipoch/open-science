@@ -257,7 +257,9 @@ const GeneralPanel = (): React.JSX.Element => {
 
   return (
     <div className="space-y-5 p-5">
-      <AppVersionSection />
+      <div data-settings-anchor="general.about">
+        <AppVersionSection />
+      </div>
 
       <SettingsSection
         data-settings-anchor="general.appearance"

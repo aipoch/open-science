@@ -1,3 +1,4 @@
+import { i18next } from '@/i18n'
 // @vitest-environment jsdom
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -47,8 +48,7 @@ const renderSearch = (onNavigate = vi.fn()): void => {
   })
 }
 
-const input = (): HTMLInputElement =>
-  document.body.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!
+const input = (): HTMLInputElement => container.querySelector<HTMLInputElement>('input')!
 
 const typeQuery = (value: string): void => {
   const field = input()
@@ -84,6 +84,23 @@ const mountPanelRoot = (panel: string, html: string): void => {
 }
 
 describe('SettingsGlobalSearch', () => {
+  it('finds appearance and update information using Chinese labels', async () => {
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+    try {
+      renderSearch()
+      for (const query of ['主题', '深色', '更新']) {
+        typeQuery(query)
+        expect(options().length, query).toBeGreaterThan(0)
+      }
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
   it('matches by label, keywords, and panel name, and reports no matches', () => {
     renderSearch()
 

@@ -1168,11 +1168,7 @@ const WorkspaceSidebarView = ({
                 className="size-8 rounded-md"
                 onOpen={mobileMode ? onMobileClose : undefined}
               />
-              <GitHubStarBadge
-                key={activeStarNudgeKey}
-                variant="workspace"
-                nudgeKey={activeStarNudgeKey}
-              />
+              <GitHubStarBadge key={activeStarNudgeKey} variant="workspace" />
               <NetworkStatusIndicator variant="icon" />
             </div>
           </div>

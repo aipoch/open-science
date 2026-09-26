@@ -78,7 +78,7 @@ test('selects the first classification model for both features after saving a pr
     const port = (service.address() as { port: number }).port
     const page = await app.completeOnboarding()
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
-    await page.getByRole('button', { name: 'Model settings' }).click()
+    await page.getByRole('button', { name: 'Settings' }).click()
     const settings = page.getByRole('dialog', { name: 'Settings' })
     await settings.getByRole('tab', { name: 'Classification models' }).click()
     await settings.getByText('Add service').click()

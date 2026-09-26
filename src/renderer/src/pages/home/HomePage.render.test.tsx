@@ -854,7 +854,7 @@ describe('HomePage activity overview', () => {
     expect(header).not.toBeNull()
     expect(header?.querySelector('[aria-label^="Language:"]')).toBeNull()
     expect(header?.querySelector('[aria-label^="Theme:"]')).toBeNull()
-    const settings = header?.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')
+    const settings = header?.querySelector<HTMLButtonElement>('[aria-label="Settings"]')
     expect(settings).not.toBeNull()
     expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
 
@@ -871,7 +871,7 @@ describe('HomePage activity overview', () => {
       )
     )
 
-    const settings = container.querySelector('[aria-label="Model settings"]')
+    const settings = container.querySelector('[aria-label="Settings"]')
     const update = container.querySelector('[data-testid="home-update-capsule"]')
     const newProject = Array.from(container.querySelectorAll('button')).find((button) =>
       button.textContent?.includes('New project')

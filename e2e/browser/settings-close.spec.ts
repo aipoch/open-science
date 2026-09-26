@@ -20,7 +20,7 @@ for (const layout of ['restored', 'maximized', 'mobile'] as const) {
       await page.emulateMedia({ reducedMotion: 'no-preference' })
       await page.setViewportSize({ width: layout === 'mobile' ? 390 : 1280, height: 800 })
       await page.goto('/')
-      const trigger = page.getByRole('button', { name: 'Model settings', exact: true })
+      const trigger = page.getByRole('button', { name: 'Settings', exact: true })
       await trigger.click()
       if (layout === 'maximized') await page.getByRole('button', { name: 'Maximize' }).click()
       // Start inside content: Escape on an autofocus-opened tooltip dismisses that layer first.
@@ -48,7 +48,7 @@ for (const layout of ['restored', 'maximized', 'mobile'] as const) {
 test('Settings closes and reopens with reduced motion', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/')
-  const trigger = page.getByRole('button', { name: 'Model settings', exact: true })
+  const trigger = page.getByRole('button', { name: 'Settings', exact: true })
   const surface = page.locator('[data-slot="settings-surface"]')
   await trigger.click()
   await expect(surface).toHaveCSS('animation-name', 'none')

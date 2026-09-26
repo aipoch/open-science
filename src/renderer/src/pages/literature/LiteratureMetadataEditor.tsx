@@ -1,5 +1,5 @@
 import { ChevronDown, Plus, Trash2 } from 'lucide-react'
-import { useId, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,7 @@ type LiteratureMetadataEditorProps = Readonly<{
   error?: string
   className?: string
   beforeFields?: React.ReactNode
+  onDirtyChange?: (dirty: boolean) => void
   onRetry?: () => void
   onCancel: () => void
   onSave: (item: LiteratureItemInput) => void
@@ -90,6 +91,7 @@ const LiteratureMetadataEditor = ({
   error,
   className,
   beforeFields,
+  onDirtyChange,
   onRetry,
   onCancel,
   onSave
@@ -124,6 +126,19 @@ const LiteratureMetadataEditor = ({
   const [publicationDate, setPublicationDate] = useState(item.issuedText)
   const [useOriginalDate, setUseOriginalDate] = useState(false)
   const [accessDate, setAccessDate] = useState(() => accessDateText(item.accessedAt))
+  const draftSnapshot = JSON.stringify({
+    draft,
+    year,
+    publicationDate,
+    useOriginalDate,
+    accessDate
+  })
+  const [initialSnapshot] = useState(draftSnapshot)
+  const dirty = draftSnapshot !== initialSnapshot
+  useLayoutEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
   const [invalidField, setInvalidField] = useState<'year' | 'publication' | 'access'>()
   const yearRef = useRef<HTMLInputElement>(null)
   const publicationRef = useRef<HTMLInputElement>(null)
@@ -286,9 +301,8 @@ const LiteratureMetadataEditor = ({
   }
 
   return (
-    <div className={cn('min-w-0 max-h-[70vh] space-y-5 overflow-y-auto p-5 text-sm', className)}>
-      <fieldset disabled={locked} className="min-w-0 space-y-5">
-        {beforeFields}
+    <div className={cn('flex min-h-0 min-w-0 max-h-[70vh] flex-col text-sm', className)}>
+      <fieldset disabled={locked} className="min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto p-5">
         <div className="block space-y-1.5">
           <label htmlFor="literature-reference-type" className="font-medium">
             {t('Reference type')}
@@ -416,6 +430,7 @@ const LiteratureMetadataEditor = ({
           </button>
           {advancedOpen ? (
             <div id="literature-advanced-fields" className="mt-4 grid gap-4 sm:grid-cols-2">
+              {beforeFields ? <div className="sm:col-span-2">{beforeFields}</div> : null}
               {[
                 ['volume', t('Volume')],
                 ['issue', t('Issue')],
@@ -692,12 +707,11 @@ const LiteratureMetadataEditor = ({
         </label>
       </fieldset>
       {error ? (
-        <p role="alert" className="text-sm text-danger-000">
+        <p role="alert" className="shrink-0 px-5 py-2 text-sm text-danger-000">
           {error}
         </p>
       ) : null}
-
-      <div className="flex justify-end gap-2 border-t border-border-300/80 pt-4">
+      <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 bg-background px-5 py-3">
         <Button type="button" variant="outline" disabled={saving} onClick={onCancel}>
           {onRetry ? t('Close') : t('Cancel')}
         </Button>

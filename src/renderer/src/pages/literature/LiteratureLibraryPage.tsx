@@ -1,3 +1,4 @@
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { literatureMetadataProviderLabel } from '../../../../shared/literature'
 import { SmartDecisionPendingContext, createSmartCollectionState } from './smart-collection-state'
 import { SmartCollectionIcon } from '@/components/app-icons/custom-glyphs'
@@ -699,10 +700,12 @@ function LiteratureSidebarState({
 }
 
 function LiteratureAddMenu({
+  label,
   onAddReference,
   onImportPdf,
   onImportReferences
 }: Readonly<{
+  label?: string
   onAddReference: () => void
   onImportPdf: () => void
   onImportReferences: () => void
@@ -713,7 +716,7 @@ function LiteratureAddMenu({
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="outline" className="shrink-0 transition-none">
           <Plus data-icon="inline-start" aria-hidden="true" />
-          {t('Add')}
+          {label ?? t('Add')}
           <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
@@ -2650,22 +2653,47 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     detailModeRef.current = metadata.mode
   }, [metadata.mode])
 
+  const metadataExitFocusRef = useRef<HTMLElement | null>(null)
+  const metadataDirtyRef = useRef(false)
+  const newMetadataDirtyRef = useRef(false)
+  const [discardMetadata, setDiscardMetadata] = useState<() => void>()
+  const trackMetadataDirty = useCallback((dirty: boolean) => {
+    metadataDirtyRef.current = dirty
+  }, [])
+  const trackNewMetadataDirty = useCallback((dirty: boolean) => {
+    newMetadataDirtyRef.current = dirty
+  }, [])
+  const requestMetadataExit = useCallback((dirty: boolean, action: () => void): void => {
+    if (dirty) {
+      metadataExitFocusRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null
+      setDiscardMetadata(() => action)
+    } else action()
+  }, [])
+  const leaveMetadataEditor = (): void => {
+    if (metadata.saving) return
+    requestMetadataExit(metadataDirtyRef.current, () => changeDetailMode('view'))
+  }
+
   const closeSelectedItemDetail = useCallback((): void => {
-    setSmartReevaluation((current) => (current?.detailItemId ? undefined : current))
-    if (addingPdfRef.current) return
-    detailInteractionRef.current += 1
-    detailTagMenuOpenRef.current = false
-    detailSelectOpenRef.current = false
-    childLayerDismissGuardUntilRef.current = 0
-    detailController.close()
-    setRemovedDetailItemId(undefined)
-    startTransition(() => {
-      setPdfError(undefined)
-      changeDetailMode('view')
-      setProjectLinkError(undefined)
-      setCollectionLinkError(undefined)
+    if (metadata.saving || addingPdfRef.current) return
+    requestMetadataExit(metadataDirtyRef.current, () => {
+      setSmartReevaluation((current) => (current?.detailItemId ? undefined : current))
+      if (addingPdfRef.current) return
+      detailInteractionRef.current += 1
+      detailTagMenuOpenRef.current = false
+      detailSelectOpenRef.current = false
+      childLayerDismissGuardUntilRef.current = 0
+      detailController.close()
+      setRemovedDetailItemId(undefined)
+      startTransition(() => {
+        setPdfError(undefined)
+        changeDetailMode('view')
+        setProjectLinkError(undefined)
+        setCollectionLinkError(undefined)
+      })
     })
-  }, [changeDetailMode, detailController])
+  }, [changeDetailMode, detailController, metadata.saving, requestMetadataExit])
 
   const appliedTagRevision = useRef(tagRevision)
   useEffect(() => {
@@ -2899,7 +2927,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       ? activeProjectId
       : undefined)
   const showLiteratureReviewAction =
-    section === 'library' && Boolean(reviewProjectId && (selectedProject || selectedCollection))
+    section === 'library' &&
+    Boolean(reviewProjectId && (selectedProject || selectedCollection)) &&
+    (selectedCollection
+      ? selectedCollection.itemCount > 0
+      : (projectItemCounts[projectId ?? ''] ?? 0) > 0)
 
   useEffect(() => {
     if (!showLiteratureReviewAction || !shouldCueLiteratureReview) return
@@ -3751,15 +3783,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const closeItemEditor = (): void => {
-    pendingCreationRef.current = undefined
-    setCreatedItemId(undefined)
-    setDuplicatePolicy('reuse')
-    importMetadataGenerationRef.current += 1
-    setIsCreatingItem(false)
-    setPendingImportPdf(undefined)
-    setPendingImportDraft(undefined)
-    setIsReadingImportMetadata(false)
-    setCreateItemError(undefined)
+    if (creatingItemRef.current) return
+    requestMetadataExit(newMetadataDirtyRef.current && !createdItemId, () => {
+      pendingCreationRef.current = undefined
+      setCreatedItemId(undefined)
+      setDuplicatePolicy('reuse')
+      importMetadataGenerationRef.current += 1
+      setIsCreatingItem(false)
+      setPendingImportPdf(undefined)
+      setPendingImportDraft(undefined)
+      setIsReadingImportMetadata(false)
+      setCreateItemError(undefined)
+    })
   }
 
   const previewRecordImport = async (file: File): Promise<void> => {
@@ -4905,6 +4940,30 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       requestPermanentDeletion
     }
   })
+
+  const discardMetadataDialog = (
+    <ConfirmActionDialog
+      open={Boolean(discardMetadata)}
+      title={t('Discard unsaved changes?')}
+      description={t('Your reference edits have not been saved.')}
+      cancelLabel={t('Keep editing')}
+      confirmLabel={t('Discard changes')}
+      destructive
+      onCloseAutoFocus={(event) => {
+        const target = metadataExitFocusRef.current
+        metadataExitFocusRef.current = null
+        if (target?.isConnected && !target.closest('[inert], [aria-hidden="true"]')) {
+          event.preventDefault()
+          target.focus()
+        }
+      }}
+      onCancel={() => setDiscardMetadata(undefined)}
+      onConfirm={() => {
+        setDiscardMetadata(undefined)
+        discardMetadata?.()
+      }}
+    />
+  )
 
   return (
     <SmartDecisionPendingContext.Provider value={pendingDecisions.size > 0}>
@@ -6967,10 +7026,41 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         className="mx-auto size-7 text-muted-foreground"
                         aria-hidden="true"
                       />
-                      <h3 className="mt-3 font-medium">{t('No references found')}</h3>
+                      <h3 className="mt-3 font-medium">
+                        {query || activeFilterCount
+                          ? t('No references found')
+                          : t('No references yet')}
+                      </h3>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        {t('Try a different search or add references from a research session.')}
+                        {query || activeFilterCount
+                          ? t('Try a different search or clear the filters.')
+                          : t(
+                              'Add a reference, import a PDF, or import a bibliography to get started.'
+                            )}
                       </p>
+                      <div className="mt-4 flex justify-center">
+                        {query || activeFilterCount ? (
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setQuery('')
+                              clearFilters()
+                            }}
+                          >
+                            {t('Clear filters')}
+                          </Button>
+                        ) : (
+                          <LiteratureAddMenu
+                            label={t('Add reference')}
+                            onAddReference={() => {
+                              setDuplicatePolicy('reuse')
+                              setIsCreatingItem(true)
+                            }}
+                            onImportPdf={() => importPdfInputRef.current?.click()}
+                            onImportReferences={() => importRecordsInputRef.current?.click()}
+                          />
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -7087,6 +7177,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             <Dialog.Content
               className={dialogPanelClassName('flex w-[min(640px,calc(100vw-2rem))] flex-col p-0')}
             >
+              {discardMetadataDialog}
               <div className={dialogHeaderClassName}>
                 <div>
                   <Dialog.Title className={dialogTitleClassName}>
@@ -7136,6 +7227,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </div>
               ) : (
                 <LiteratureMetadataEditor
+                  onDirtyChange={trackNewMetadataDirty}
                   className="min-h-0"
                   beforeFields={
                     <LiteratureDuplicatePolicyField
@@ -7431,6 +7523,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       closeSelectedItemDetail()
                     }}
                   >
+                    {discardMetadataDialog}
                     <div className={cn(dialogHeaderClassName, 'shrink-0 items-start px-5 py-3')}>
                       <div className="flex min-w-0 flex-1 items-start gap-2">
                         {metadata.mode !== 'view' ? (
@@ -7440,9 +7533,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             size="icon-sm"
                             className="shrink-0"
                             aria-label={t('Back')}
-                            onClick={() => {
-                              changeDetailMode('view')
-                            }}
+                            disabled={metadata.saving}
+                            onClick={leaveMetadataEditor}
                           >
                             <ArrowLeft className="size-4" aria-hidden="true" />
                           </Button>
@@ -7549,7 +7641,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           size="icon-sm"
                           className={dialogCloseButtonClassName}
                           aria-label={t('Close')}
-                          disabled={isAddingPdf}
+                          disabled={isAddingPdf || metadata.saving}
                           onClick={closeSelectedItemDetail}
                         >
                           <X className="size-4" aria-hidden="true" />
@@ -7608,6 +7700,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           />
                         ) : null}
                         <LiteratureMetadataEditor
+                          onDirtyChange={trackMetadataDirty}
                           key={`${selectedItem.id}:${metadata.editBase?.metadataRevision}`}
                           item={metadata.editBase?.item ?? selectedItem.item}
                           saving={metadata.saving || metadata.awaitingReload}
@@ -7622,7 +7715,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 : metadata.error
                           }
                           className="min-h-0 flex-1 max-h-none"
-                          onCancel={() => changeDetailMode('view')}
+                          onCancel={leaveMetadataEditor}
                           onSave={(item) => void metadata.save(item)}
                         />
                       </>

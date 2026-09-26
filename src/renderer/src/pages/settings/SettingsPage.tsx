@@ -323,6 +323,10 @@ type SettingsGroup = {
 // organization, and the app-level system panel.
 const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
   {
+    labelKey: 'System',
+    panels: [{ id: 'general', labelKey: 'General', Icon: Settings2 }]
+  },
+  {
     labelKey: 'Intelligence',
     panels: [
       { id: 'model', labelKey: 'Model', Icon: Brain },
@@ -352,10 +356,6 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'usage', labelKey: 'Usage', Icon: ChartNoAxesCombined },
       { id: 'archived', labelKey: 'Archived', Icon: Archive }
     ]
-  },
-  {
-    labelKey: 'System',
-    panels: [{ id: 'general', labelKey: 'General', Icon: Settings2 }]
   }
 ]
 
@@ -1422,6 +1422,17 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     data-slot="settings-navigation-scroll"
                     className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-3"
                   >
+                    {isMobile ? (
+                      <div className="mb-4">
+                        <SettingsGlobalSearch
+                          panels={SETTINGS_PANELS}
+                          onNavigate={(panel) => {
+                            navigatePanel(panel)
+                            setIsMobileNavOpen(false)
+                          }}
+                        />
+                      </div>
+                    ) : null}
                     {SETTINGS_GROUPS.map((group) => (
                       <div key={group.labelKey} className="flex flex-col gap-0.5">
                         <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
@@ -1580,7 +1591,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </h2>
                     )}
                   </div>
-                  {/* Not mounted below the md breakpoint, so ⌘K never targets an invisible field. */}
                   {!isMobile ? (
                     <div
                       data-slot="settings-global-search"

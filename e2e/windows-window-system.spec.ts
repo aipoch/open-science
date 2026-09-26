@@ -3,7 +3,7 @@ import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
 const openGeneralSettings = async (page: Page): Promise<Locator> => {
-  await page.getByRole('button', { name: 'Model settings' }).click()
+  await page.getByRole('button', { name: 'Settings' }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })

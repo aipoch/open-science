@@ -103,3 +103,52 @@ test('synchronizes ordinary writes across two Electron renderers and a Web clien
     await web.close()
   }
 })
+
+test('protects unsaved reference edits and keeps save actions visible', async ({ app }) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  await library(page)
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add reference', exact: true }).click()
+  const title = page.getByLabel('Title', { exact: true })
+  await title.fill('Unsaved reference')
+  await title.press('Escape')
+  const confirmation = page.getByRole('alertdialog')
+  await expect(confirmation).toContainText('Discard unsaved changes?')
+  await confirmation.getByRole('button', { name: 'Keep editing' }).click()
+  await expect(confirmation).toHaveCount(0)
+  await expect(title).toBeFocused()
+  await expect(title).toHaveValue('Unsaved reference')
+  await title.press('Escape')
+  await confirmation.getByRole('button', { name: 'Discard changes' }).click()
+  await expect(title).toHaveCount(0)
+  const item = literatureItemInputSchema.parse({
+    itemType: 'journalArticle',
+    title: 'Saved reference'
+  })
+  const created = await page.evaluate(
+    (item) => window.api.literature.transact({ kind: 'create-item', item }),
+    item
+  )
+  await page.getByText(item.title, { exact: true }).click()
+  const detail = page.getByRole('dialog')
+  await detail.getByRole('button', { name: 'More actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Edit metadata', exact: true }).click()
+  await title.fill('Draft reference')
+  await page.setViewportSize({ width: 1000, height: 650 })
+  const save = page.getByRole('button', { name: 'Save', exact: true })
+  const box = await save.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box!.y).toBeGreaterThanOrEqual(0)
+  expect(box!.y + box!.height).toBeLessThanOrEqual(650)
+  await detail.getByRole('button', { name: 'Back', exact: true }).click()
+  await confirmation.getByRole('button', { name: 'Keep editing' }).click()
+  await expect(title).toHaveValue('Draft reference')
+  await save.click()
+  await expect(title).toHaveCount(0)
+  await expect
+    .poll(() =>
+      page.evaluate(async (id) => (await window.api.literature.get(id))?.item.title, created.id)
+    )
+    .toBe('Draft reference')
+})

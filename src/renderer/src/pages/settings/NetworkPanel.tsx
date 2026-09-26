@@ -190,7 +190,7 @@ const NetworkPanel = ({
         .filter((part) => part !== null)
         .join(' · ') || undefined
 
-  const networkLabel = t('Internet connection')
+  const networkLabel = t('Package registry connectivity')
 
   // The Network status row is an EnvironmentCheckItem so it renders with the exact same row
   // component as the onboarding environment step's network check. A live link with unreachable
