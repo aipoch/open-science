@@ -172,6 +172,25 @@ describe('LibraryPreview', () => {
     expect(screen.getByText('No references in this project')).toBeTruthy()
   })
 
+  it('clears a scope failure after returning to a successful reload', async () => {
+    search
+      .mockRejectedValueOnce(new Error('Read failed'))
+      .mockResolvedValueOnce({ entries: [reference('all', 'All reference')] })
+      .mockResolvedValueOnce({ entries: [reference('project', 'Project reference')] })
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+    expect(screen.getByText('Could not load references.')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await settle()
+    expect(screen.getByText('All reference')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+    await settle()
+    expect(screen.getByText('Project reference')).toBeTruthy()
+    expect(screen.queryByText('Could not load references.')).toBeNull()
+  })
+
   it('offers full Literature recovery for a record beyond the display budget', async () => {
     search.mockRejectedValueOnce(new Error('Literature reference exceeds the display budget: huge'))
     render(<LibraryPreview projectId="project-a" isActive />)

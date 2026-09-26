@@ -340,7 +340,10 @@ function LibraryResults({
         current
       )
         .then((result) => {
-          if (current()) setPage({ key: requestKey, result, offset })
+          if (current()) {
+            setFailure(undefined)
+            setPage({ key: requestKey, result, offset })
+          }
         })
         .catch((error: unknown) => {
           if (current())
