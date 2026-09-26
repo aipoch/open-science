@@ -277,8 +277,13 @@ class AcpRuntimeCoordinator {
           )
         )
       )
-    const promptInFlightSessionIds = ownedSessionIds(
-      (snapshot) => snapshot.promptInFlightSessionIds
+    // A queued root continuation still owns admission between provider turns. Publishing idle in
+    // that gap lets the renderer append a user message against a head the continuation will change.
+    const promptInFlightSessionIds = Array.from(
+      new Set([
+        ...ownedSessionIds((snapshot) => snapshot.promptInFlightSessionIds),
+        ...this.rootAdmissionTails.keys()
+      ])
     )
     const agentPromptInFlightSessionIds = ownedSessionIds(
       (snapshot) => snapshot.agentPromptInFlightSessionIds ?? []
@@ -1032,16 +1037,18 @@ class AcpRuntimeCoordinator {
       return result
     }
     const ready = previous?.catch(() => undefined)
-    const result = ready ? ready.then(run) : run()
     const tail = ready ? ready.then(() => gate) : gate
     this.rootAdmissionTails.set(sessionId, tail)
     void tail
       .finally(() => {
         if (this.rootAdmissionTails.get(sessionId) === tail) {
           this.rootAdmissionTails.delete(sessionId)
+          this.emitState()
         }
       })
       .catch(() => undefined)
+    const result = ready ? ready.then(run) : run()
+    if (!previous) this.emitState()
     return result
   }
 

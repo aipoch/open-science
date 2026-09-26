@@ -3287,6 +3287,56 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'keeps %s busy while an upward continuation validates between provider turns',
+    async (frameworkId) => {
+      const firstTurn = createDeferred<unknown>()
+      const validation = createDeferred()
+      const states: AcpStateUpdate[] = []
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) => {
+          created = createFakeRuntime({
+            frameworkId,
+            sessionIds: ['session-1'],
+            callbacks,
+            prompt: vi
+              .fn()
+              .mockImplementationOnce(() => firstTurn.promise)
+              .mockResolvedValue({ stopReason: 'end_turn' })
+          })
+          return created.runtime
+        },
+        { onStateChanged: (state) => states.push(state) }
+      )
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const user = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'user' })
+      await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+      const validate = vi.fn(() => validation.promise)
+      const upward = coordinator.startContinuationWhen(
+        { sessionId: session.sessionId, text: 'child message' },
+        validate
+      )
+      states.length = 0
+      firstTurn.resolve({ stopReason: 'end_turn' })
+      await user
+      await vi.waitFor(() => expect(validate).toHaveBeenCalledOnce())
+      try {
+        expect(created.sendAppContinuation).not.toHaveBeenCalled()
+        expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+        expect(
+          states.every((state) => state.promptInFlightSessionIds.includes(session.sessionId))
+        ).toBe(true)
+      } finally {
+        validation.resolve()
+        await upward
+      }
+      await vi.waitFor(() =>
+        expect(states.at(-1)?.promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+    }
+  )
+
   it('linearizes real user prompts and upward continuations through one root admission lock', async () => {
     const prompts = [
       createDeferred<unknown>(),
@@ -3395,14 +3445,18 @@ describe('AcpRuntimeCoordinator', () => {
 
   it('revalidates a parked upward branch inside the root lock before any provider call', async () => {
     let created!: ReturnType<typeof createFakeRuntime>
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      created = createFakeRuntime({
-        frameworkId: 'opencode',
-        sessionIds: ['session-1'],
-        callbacks
-      })
-      return created.runtime
-    })
+    const states: AcpStateUpdate[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        created = createFakeRuntime({
+          frameworkId: 'opencode',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        return created.runtime
+      },
+      { onStateChanged: (state) => states.push(state), onEvent: vi.fn() }
+    )
     const session = await coordinator.createSession({ cwd: '/workspace' })
 
     await expect(
@@ -3417,6 +3471,12 @@ describe('AcpRuntimeCoordinator', () => {
       message: 'branch A is inactive'
     })
     expect(created.sendAppContinuation).not.toHaveBeenCalled()
+    expect(states.some((state) => state.promptInFlightSessionIds.includes(session.sessionId))).toBe(
+      true
+    )
+    await vi.waitFor(() =>
+      expect(states.at(-1)?.promptInFlightSessionIds).not.toContain(session.sessionId)
+    )
   })
 
   it.each([false, true])(
