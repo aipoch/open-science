@@ -334,6 +334,7 @@ type ConversationPanelLayout = {
   isPreviewPanelCollapsed: boolean
   togglePreviewPanel: () => void
   openSidebar: () => void
+  onOpenLibraryMention?: (scope: { collectionId?: string; collectionName?: string }) => void
 }
 
 type ConversationPanelPermissions = {
@@ -1319,6 +1320,7 @@ const ConversationPanel = ({
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
+              onOpenLibraryMention={layout.onOpenLibraryMention}
               forkSourceContent={
                 activeSession?.branchSource && sessionTools.openSession ? (
                   <div className="mb-2 flex items-center gap-2 text-xs">

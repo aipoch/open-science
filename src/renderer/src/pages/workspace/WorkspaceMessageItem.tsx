@@ -105,6 +105,7 @@ type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
 type MessageImage = NonNullable<ChatMessage['images']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
 type LiteratureMentionPart = Extract<MessagePart, { type: 'literature' }>
+type LibraryMentionScopeRequest = { collectionId?: string; collectionName?: string }
 type MessageRuntimeIdentity = Partial<
   Pick<PersistedRuntimeSegment, 'frameworkId' | 'backendId' | 'model'>
 >
@@ -124,6 +125,7 @@ type WorkspaceMessageItemProps = {
   onPreviewArtifactModal?: (artifact: MessageArtifact) => void
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
   onOpenSkillMention: (skillId: string, name: string) => void
+  onOpenLibraryMention?: (scope: LibraryMentionScopeRequest) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
   artifacts?: MessageArtifact[]
   // Inline editing is only enabled once the session's run settles; confirming forks the
@@ -1143,6 +1145,7 @@ const MessagePartsContent = ({
   isStatic = false,
   projectId,
   onOpenSkillMention,
+  onOpenLibraryMention,
   onOpenLiteratureMention,
   onPreviewMentionArtifact
 }: {
@@ -1150,6 +1153,7 @@ const MessagePartsContent = ({
   isStatic?: boolean
   projectId?: string
   onOpenSkillMention: (skillId: string, name: string) => void
+  onOpenLibraryMention?: (scope: LibraryMentionScopeRequest) => void
   onOpenLiteratureMention: (part: LiteratureMentionPart) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
 }): React.JSX.Element => {
@@ -1274,7 +1278,7 @@ const MessagePartsContent = ({
 
         if (part.type === 'literature-scope') {
           const name = part.scope === 'collection' ? part.name : t('Library')
-          if (!isStatic && part.scope === 'project' && projectId) {
+          if (!isStatic && part.scope === 'project' && projectId && onOpenLibraryMention) {
             return (
               <button
                 key={index}
@@ -1284,9 +1288,7 @@ const MessagePartsContent = ({
                   mentionButtonClassName,
                   'bg-accent text-accent-foreground'
                 )}
-                onClick={() =>
-                  useNavigationStore.getState().openProjectLiterature(projectId, 'user')
-                }
+                onClick={() => onOpenLibraryMention({})}
                 aria-label={t("Open this project's Library")}
                 title={name}
               >
@@ -1294,7 +1296,7 @@ const MessagePartsContent = ({
               </button>
             )
           }
-          if (!isStatic && part.scope === 'collection') {
+          if (!isStatic && part.scope === 'collection' && onOpenLibraryMention) {
             return (
               <button
                 key={index}
@@ -1305,7 +1307,10 @@ const MessagePartsContent = ({
                   'bg-accent text-accent-foreground'
                 )}
                 onClick={() =>
-                  useNavigationStore.getState().openCollectionLiterature(part.collectionId, 'user')
+                  onOpenLibraryMention({
+                    collectionId: part.collectionId,
+                    collectionName: part.name
+                  })
                 }
                 aria-label={t('Open {{name}}', { name })}
                 title={name}
@@ -1344,6 +1349,7 @@ const WorkspaceMessageItemImpl = ({
   onPreviewArtifactModal = onPreviewArtifact,
   onPreviewUploadAttachment,
   onOpenSkillMention,
+  onOpenLibraryMention,
   onPreviewMentionArtifact,
   canEditMessage = false,
   showUserActions = true,
@@ -1564,6 +1570,7 @@ const WorkspaceMessageItemImpl = ({
         isStatic
         projectId={projectId}
         onOpenSkillMention={onOpenSkillMention}
+        onOpenLibraryMention={onOpenLibraryMention}
         onOpenLiteratureMention={setSelectedLiteratureReference}
         onPreviewMentionArtifact={onPreviewMentionArtifact}
       />
@@ -1572,6 +1579,7 @@ const WorkspaceMessageItemImpl = ({
         parts={message.parts}
         projectId={projectId}
         onOpenSkillMention={onOpenSkillMention}
+        onOpenLibraryMention={onOpenLibraryMention}
         onOpenLiteratureMention={setSelectedLiteratureReference}
         onPreviewMentionArtifact={onPreviewMentionArtifact}
       />
@@ -1586,7 +1594,9 @@ const WorkspaceMessageItemImpl = ({
         part.type === 'artifact' ||
         part.type === 'literature' ||
         part.type === 'session' ||
-        (part.type === 'literature-scope' && part.scope === 'project' && Boolean(projectId))
+        (onOpenLibraryMention &&
+          part.type === 'literature-scope' &&
+          (part.scope === 'collection' || (part.scope === 'project' && Boolean(projectId))))
     )
   )
 
@@ -2081,6 +2091,7 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onPreviewArtifactModal === next.onPreviewArtifactModal &&
   previous.onPreviewUploadAttachment === next.onPreviewUploadAttachment &&
   previous.onOpenSkillMention === next.onOpenSkillMention &&
+  previous.onOpenLibraryMention === next.onOpenLibraryMention &&
   previous.onPreviewMentionArtifact === next.onPreviewMentionArtifact &&
   previous.onSendEditedMessage === next.onSendEditedMessage &&
   previous.onEditAnnotationTargetChange === next.onEditAnnotationTargetChange &&
@@ -2108,4 +2119,4 @@ const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageI
 WorkspaceMessageItem.displayName = 'WorkspaceMessageItem'
 
 export { MessageArtifactList, WorkspaceAssistantTurnCompletion, WorkspaceMessageItem }
-export type { ArtifactMentionPart, EditAnnotationTarget }
+export type { ArtifactMentionPart, EditAnnotationTarget, LibraryMentionScopeRequest }

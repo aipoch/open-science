@@ -14,6 +14,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ChatSession } from '@/stores/session-store'
 import {
+  createProjectLibraryPreviewItem,
   createSessionSubagentsPreviewItem,
   type PreviewToolItem,
   usePreviewWorkbenchStore
@@ -24,6 +25,7 @@ import { useWorkspaceSubagentRuntimeSession } from '@/lib/acp/useWorkspaceAgentR
 
 import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
+import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
 import {
   projectSessionSubagents,
   selectSubagentFrame,
@@ -317,9 +319,18 @@ const SubagentTranscript = ({
   detail: SubagentFrameDetail
 }): React.JSX.Element => {
   const projectedSession = useWorkspaceSubagentRuntimeSession(session, detail)
+  const onOpenLibraryMention = useCallback(
+    (scope: LibraryMentionScopeRequest): void => {
+      const preview = usePreviewWorkbenchStore.getState()
+      if (!session.projectId || preview.activeProjectId !== session.projectId) return
+      preview.upsertAndActivateItem(createProjectLibraryPreviewItem(scope))
+    },
+    [session.projectId]
+  )
   return (
     <WorkspaceMessageScroller
       activeSession={projectedSession}
+      onOpenLibraryMention={onOpenLibraryMention}
       onSendEditedMessage={() => ({ ok: false })}
     />
   )

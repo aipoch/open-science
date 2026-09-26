@@ -10,6 +10,7 @@ import LibraryPreview from './LibraryPreview'
 
 const navigation = vi.hoisted(() => ({
   openProjectLiterature: vi.fn(),
+  openCollectionLiterature: vi.fn(),
   openLibrary: vi.fn(),
   openLiteratureItem: vi.fn()
 }))
@@ -67,7 +68,8 @@ afterEach(() => {
 describe('LibraryPreview', () => {
   it('distinguishes loading, empty project, empty library and empty search with useful actions', async () => {
     render(<LibraryPreview projectId="project-a" isActive />)
-    expect(screen.getByText('Loading references…')).toBeTruthy()
+    expect(screen.getByRole('status', { name: 'Loading references…' })).toBeTruthy()
+    expect(screen.getByText('Recently added')).toBeTruthy()
     expect(screen.queryByText('No references in this project')).toBeNull()
     await settle()
     expect(screen.getByText('No references in this project')).toBeTruthy()
@@ -120,15 +122,43 @@ describe('LibraryPreview', () => {
     render(<LibraryPreview projectId="project-a" isActive />)
     await settle()
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'a' } })
+    await act(async () => vi.advanceTimersByTimeAsync(120))
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'ab' } })
     expect(search).toHaveBeenCalledTimes(1)
     search.mockResolvedValueOnce({ entries: [reference('new', 'New result')] })
-    await settle()
+    await act(async () => vi.advanceTimersByTimeAsync(120))
+    expect(search).toHaveBeenCalledTimes(1)
+    await act(async () => vi.advanceTimersByTimeAsync(80))
     expect(search).toHaveBeenCalledTimes(2)
     expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ query: 'ab' }))
     await act(async () => old.resolve({ entries: [reference('old', 'Old result')] }))
     expect(screen.getByText('New result')).toBeTruthy()
     expect(screen.queryByText('Old result')).toBeNull()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(search).toHaveBeenCalledTimes(3)
+    expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ query: undefined }))
+  })
+
+  it('waits until after search debounce before showing a skeleton for a slow query', async () => {
+    search.mockResolvedValueOnce({ entries: [reference('seed', 'Previous result')] })
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+    const pending = deferred()
+    search.mockReturnValueOnce(pending.promise)
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'slow' } })
+    await act(async () => vi.advanceTimersByTimeAsync(199))
+    expect(search).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('status', { name: 'Loading references…' })).toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(search).toHaveBeenCalledTimes(2)
+    await act(async () => vi.advanceTimersByTimeAsync(159))
+    expect(screen.queryByRole('status', { name: 'Loading references…' })).toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(screen.getByRole('status', { name: 'Loading references…' })).toBeTruthy()
+    await act(async () => pending.resolve({ entries: [reference('done', 'Slow result')] }))
+    expect(screen.getByText('Slow result')).toBeTruthy()
   })
 
   it('shows a retryable failure rather than an empty library', async () => {
@@ -140,6 +170,25 @@ describe('LibraryPreview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await settle()
     expect(screen.getByText('No references in this project')).toBeTruthy()
+  })
+
+  it('clears a scope failure after returning to a successful reload', async () => {
+    search
+      .mockRejectedValueOnce(new Error('Read failed'))
+      .mockResolvedValueOnce({ entries: [reference('all', 'All reference')] })
+      .mockResolvedValueOnce({ entries: [reference('project', 'Project reference')] })
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+    expect(screen.getByText('Could not load references.')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await settle()
+    expect(screen.getByText('All reference')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+    await settle()
+    expect(screen.getByText('Project reference')).toBeTruthy()
+    expect(screen.queryByText('Could not load references.')).toBeNull()
   })
 
   it('offers full Literature recovery for a record beyond the display budget', async () => {
@@ -209,6 +258,24 @@ describe('LibraryPreview', () => {
     expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 0 }))
   })
 
+  it('starts a reused reference abstract collapsed in a different scope', async () => {
+    const entry = reference('shared', 'Shared reference')
+    entry.item.abstract = 'x'.repeat(601) + 'end of abstract'
+    search.mockResolvedValueOnce({ entries: [entry] }).mockResolvedValueOnce({ entries: [entry] })
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+
+    fireEvent.click(screen.getByRole('button', { name: /Shared reference/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    expect(screen.getByText(/end of abstract/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: /Shared reference/ }))
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
+    expect(screen.queryByText(/end of abstract/)).toBeNull()
+  })
+
   it('opens a collapsed reference PDF directly without expanding or fetching extra data', async () => {
     const entry = reference()
     entry.attachments = [
@@ -269,6 +336,120 @@ describe('LibraryPreview', () => {
     render(<LibraryPreview projectId="project-a" isActive />)
     fireEvent.click(screen.getByRole('button', { name: 'Open in Literature' }))
     expect(navigation.openProjectLiterature).toHaveBeenCalledWith('project-a', 'user')
+  })
+
+  it('shows all authors in one clipped line, then date, journal and type', async () => {
+    const first = reference('one', 'A reference with a long title')
+    first.item.creators = [
+      { nameMode: 'person', givenName: 'Taina', familyName: 'Labeau', creatorType: 'author' },
+      { nameMode: 'person', givenName: 'Jean-Samuel', familyName: 'Loger', creatorType: 'author' }
+    ]
+    first.item.issuedYear = 2025
+    first.item.containerTitle = 'Scientific reports'
+    search.mockResolvedValueOnce({ entries: [first], totalCount: 1 })
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+
+    const authors = screen.getByText('Taina Labeau; Jean-Samuel Loger')
+    expect(authors.className).toContain('truncate')
+    expect(screen.getByText('2025 · Scientific reports · Journal article')).toBeTruthy()
+    expect(screen.getByText('1 reference')).toBeTruthy()
+  })
+
+  it('shows safe record links together only when expanded', async () => {
+    const linked = reference('linked', 'Linked reference')
+    linked.item.abstract = 'A'.repeat(301)
+    linked.item.url = 'https://example.org/paper'
+    linked.item.identifiers = [
+      { scheme: 'doi', value: '10.1200/GO-26-00172', isPrimary: true },
+      { scheme: 'pmid', value: '42566739', isPrimary: false },
+      { scheme: 'issn', value: '2687-8941', isPrimary: false }
+    ]
+    const unsafe = reference('unsafe', 'Unsafe URL')
+    unsafe.item.url = 'javascript:alert(1)'
+    const duplicate = reference('duplicate', 'Duplicate DOI URL')
+    duplicate.item.url = 'https://doi.org/10.1200/GO-26-00172'
+    duplicate.item.identifiers = [{ scheme: 'doi', value: '10.1200/GO-26-00172', isPrimary: true }]
+    search.mockResolvedValueOnce({ entries: [linked, unsafe, duplicate] })
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+    expect(screen.queryByRole('link')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Linked reference/ }))
+    expect(
+      screen.getByRole('link', { name: 'URL: https://example.org/paper' }).getAttribute('href')
+    ).toBe('https://example.org/paper')
+    expect(screen.getByRole('link', { name: 'DOI: 10.1200/GO-26-00172' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'PMID: 42566739' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: /ISSN/ })).toBeNull()
+    expect(
+      screen
+        .getByRole('button', { name: 'Show more' })
+        .compareDocumentPosition(screen.getByRole('link', { name: 'DOI: 10.1200/GO-26-00172' })) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      screen
+        .getByRole('link', { name: 'DOI: 10.1200/GO-26-00172' })
+        .compareDocumentPosition(screen.getByRole('button', { name: 'View in Literature' })) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /Unsafe URL/ }))
+    expect(screen.queryByRole('link')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Duplicate DOI URL/ }))
+    expect(screen.getAllByRole('link')).toHaveLength(1)
+  })
+
+  it('avoids a skeleton flash on fast scope changes and shows matched skeletons for slow reads', async () => {
+    search.mockResolvedValueOnce({ entries: [reference('project', 'Project reference')] })
+    search.mockResolvedValueOnce({ entries: [reference('all', 'All reference')] })
+    const pending = deferred()
+    search.mockReturnValueOnce(pending.promise)
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    expect(screen.getByText('Project reference').closest('[inert]')).toBeTruthy()
+    expect(screen.queryByRole('status', { name: 'Loading references…' })).toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(screen.getByText('All reference')).toBeTruthy()
+    expect(screen.queryByRole('status', { name: 'Loading references…' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+    expect(screen.getByText('All reference').closest('[inert]')).toBeTruthy()
+    expect(screen.queryByRole('status', { name: 'Loading references…' })).toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(170))
+    expect(screen.getByRole('status', { name: 'Loading references…' })).toBeTruthy()
+    expect(screen.getByText('Recently added')).toBeTruthy()
+    expect(screen.queryByText('All reference')).toBeNull()
+    await act(async () => pending.resolve({ entries: [reference('project-2', 'Updated project')] }))
+    expect(screen.getByText('Updated project')).toBeTruthy()
+  })
+
+  it('opens and searches a Collection scope in the same preview', async () => {
+    search.mockResolvedValue({ entries: [reference()] })
+    const scopeRequest = { collectionId: 'collection-a', collectionName: 'TP53 evidence' }
+    const { rerender } = render(
+      <LibraryPreview projectId="project-a" isActive scopeRequest={scopeRequest} />
+    )
+    await settle()
+    expect(search).toHaveBeenLastCalledWith(
+      expect.objectContaining({ collectionId: 'collection-a', projectId: undefined })
+    )
+    expect(screen.getByRole('button', { name: 'TP53 evidence' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Literature' }))
+    expect(navigation.openCollectionLiterature).toHaveBeenCalledWith('collection-a', 'user')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+    await settle()
+    expect(search).toHaveBeenLastCalledWith(
+      expect.objectContaining({ collectionId: undefined, projectId: 'project-a' })
+    )
+    rerender(<LibraryPreview projectId="project-a" isActive scopeRequest={{}} />)
+    expect(screen.queryByRole('button', { name: 'TP53 evidence' })).toBeNull()
   })
 
   it('does not reuse results when the project owner remounts', async () => {
