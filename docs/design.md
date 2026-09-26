@@ -383,7 +383,9 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### Focus / Disabled
 
-- Use `focus-visible:keyboard-focus` for shared buttons, conversation controls, message actions and the composer editor. It draws a 2px solid `--ring` outline with a 2px offset, appears immediately, and remains visible in forced-colors mode. The global `:focus-visible` fallback uses the same treatment; other composite controls retain their owner-specific focus styling. Do not remove outlines without an equally visible replacement.
+- Use `focus-visible:keyboard-focus` for shared buttons, conversation controls and message actions. It draws a 2px solid `--ring` outline with a 2px offset, appears immediately, and remains visible in forced-colors mode. The global `:focus-visible` fallback uses the same treatment; other composite controls retain their owner-specific focus styling. Do not remove outlines without an equally visible replacement.
+- The composer text editor uses its caret without an additional inner focus outline; retain `outline-none focus-visible:outline-none` and native keyboard traversal. Unmodified Escape from a keyboard-focused control returns to the available message composer; a focused informational tooltip closes and returns to the composer in that same keypress, while menus, dialogs, editable fields, IME composition and other existing Escape handlers keep priority.
+- Preview tab labels and their active close button are separate keyboard targets. Content wrappers with focusable child controls use `tabIndex={-1}`; they must not create an extra Tab stop that paints only a clipped line. Notebook kernel buttons use the inset focus treatment.
 - Inside clipped scrollers or flush expandable rows, add `focus-visible:-outline-offset-2` so the full outline stays inside the control. Do not remove the focus indicator to hide clipping.
 - Inputs may add `focus-visible:border-ring/50`; the light focus border target is `rgb(134 182 239)`.
 - Disabled controls use `disabled:pointer-events-none disabled:opacity-50`; shared buttons also use `touch-manipulation`.

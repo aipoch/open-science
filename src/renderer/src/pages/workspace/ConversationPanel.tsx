@@ -993,6 +993,58 @@ const ConversationPanel = ({
   const packageOperation = usePackageOperationStore((state) => state.operation)
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
   const ordinaryComposerBlocked = Boolean(blockingInteraction || packageLocked)
+
+  useEffect(() => {
+    let tooltipEscape: KeyboardEvent | undefined
+    const rememberTooltipEscape = (event: KeyboardEvent): void => {
+      const target = event.target
+      // Radix consumes Escape while dismissing a tooltip. Remember that non-interactive layer
+      // before dismissal removes it, so the same key can also leave keyboard navigation.
+      tooltipEscape =
+        event.key === 'Escape' &&
+        target instanceof HTMLElement &&
+        target
+          .getAttribute('aria-describedby')
+          ?.split(/\s+/)
+          .some((id) => document.getElementById(id)?.getAttribute('role') === 'tooltip')
+          ? event
+          : undefined
+    }
+    const returnToComposer = (event: KeyboardEvent): void => {
+      const target = event.target
+      if (
+        event.key !== 'Escape' ||
+        (event.defaultPrevented && tooltipEscape !== event) ||
+        event.isComposing ||
+        event.repeat ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        !canEditDraft ||
+        ordinaryComposerBlocked ||
+        !(target instanceof HTMLElement) ||
+        !target.matches(':focus-visible') ||
+        target.closest(
+          'input, textarea, [contenteditable="true"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'
+        ) ||
+        document.querySelector(
+          '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
+        )
+      ) {
+        return
+      }
+      event.preventDefault()
+      setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
+    }
+    // Bubble after control, menu and mention handlers have had a chance to consume Escape.
+    window.addEventListener('keydown', rememberTooltipEscape, true)
+    window.addEventListener('keydown', returnToComposer)
+    return () => {
+      window.removeEventListener('keydown', rememberTooltipEscape, true)
+      window.removeEventListener('keydown', returnToComposer)
+    }
+  }, [canEditDraft, ordinaryComposerBlocked])
   const rootTurnBusy = Boolean(
     blockingInteraction ||
     actionability?.activity === 'running' ||

@@ -49,7 +49,7 @@ const focusAppearance = (
   })
 
 for (const dark of [false, true]) {
-  test(`shows immediate focus through messages and composer in both directions (${dark ? 'dark' : 'light'})`, async ({
+  test(`shows message focus and keeps the composer borderless in both directions (${dark ? 'dark' : 'light'})`, async ({
     page
   }, testInfo) => {
     await page.goto(`/message-clipboard.html?keyboard${dark ? '&dark' : ''}`)
@@ -63,10 +63,15 @@ for (const dark of [false, true]) {
     })
     const copy = page.getByRole('button', { name: 'Copy message', exact: true })
     const sent = page.locator('time')
+    await editor.click()
+    expect((await focusAppearance(editor)).style).toBe('none')
     await after.click()
     await page.mouse.move(0, 0)
+    await page.keyboard.press('Shift+Tab')
+    await expect(editor).toBeFocused()
+    expect((await focusAppearance(editor)).style).toBe('none')
     // Disabled actions must be skipped, and focus itself must not submit or activate anything.
-    for (const target of [editor, sent, secondFile, file, copy]) {
+    for (const target of [sent, secondFile, file, copy]) {
       await page.keyboard.press('Shift+Tab')
       const appearance = await focusAppearance(target)
       expect(appearance.focused).toBe(true)
@@ -90,6 +95,8 @@ for (const dark of [false, true]) {
     await expect(page.getByTestId('preview')).toHaveCount(0)
     await page.keyboard.press('Shift+Tab')
     await page.keyboard.press('Shift+Tab')
+    await expect(editor).toBeFocused()
+    expect((await focusAppearance(editor)).style).toBe('none')
     await page.screenshot({ path: testInfo.outputPath('composer-focus.png') })
   })
 
@@ -146,5 +153,45 @@ for (const dark of [false, true]) {
     await expect(row).toBeFocused()
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('reading-details')).toBeVisible()
+  })
+}
+
+for (const dark of [false, true]) {
+  test(`keeps preview tab, close and Python focus bounded (${dark ? 'dark' : 'light'})`, async ({
+    page
+  }, testInfo) => {
+    await page.goto(`/preview-keyboard.html${dark ? '?dark' : ''}`)
+    const tab = page.getByRole('tab', { name: 'Notebook', exact: true })
+    const close = page.getByRole('button', { name: 'Close preview of Notebook', exact: true })
+    const agent = page.getByRole('combobox', { name: 'Filter notebook runs by Agent' })
+    const python = page.getByTestId('kernel-switcher-python')
+    await expect(python).toBeVisible()
+    await page.getByRole('button', { name: 'Before preview' }).click()
+    await page.keyboard.press('Tab')
+    for (const target of [tab, close]) {
+      await expect(target).toBeFocused()
+      const appearance = await focusAppearance(target)
+      expect(appearance.style).toBe('solid')
+      expect(appearance.width).toBe(2)
+      expect(appearance.offset).toBeLessThanOrEqual(-appearance.width)
+      await page.keyboard.press('Tab')
+    }
+    // The content wrapper must not add a Tab stop that paints only a horizontal line.
+    await expect(agent).toBeFocused()
+    await expect(page.getByRole('tabpanel')).toHaveAttribute('tabindex', '-1')
+    await page.keyboard.press('Tab')
+    await expect(python).toBeFocused()
+    const appearance = await focusAppearance(python)
+    expect(appearance.style).toBe('solid')
+    expect(appearance.width).toBe(2)
+    expect(appearance.offset).toBeLessThanOrEqual(-appearance.width)
+    expect(appearance.contrast).toBeGreaterThanOrEqual(3)
+    await page.locator('main').screenshot({ path: testInfo.outputPath('preview-python-focus.png') })
+    await page.keyboard.press('Shift+Tab')
+    await page.keyboard.press('Shift+Tab')
+    await expect(close).toBeFocused()
+    await page.locator('main').screenshot({ path: testInfo.outputPath('preview-close-focus.png') })
+    await page.keyboard.press('Enter')
+    await expect(tab).toHaveCount(0)
   })
 }

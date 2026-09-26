@@ -1577,6 +1577,83 @@ describe('ConversationPanel composer intake', () => {
     expect(document.activeElement).toBe(getComposerEditor())
   })
 
+  it('returns keyboard focus from a control to the composer on Escape', () => {
+    renderPanel()
+    const button = container.querySelector<HTMLButtonElement>('[aria-label="Open navigation"]')!
+    button.focus()
+    act(() => {
+      button.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(document.activeElement).toBe(getComposerEditor())
+  })
+
+  it('dismisses a focused tooltip and returns to the composer with one Escape', () => {
+    renderPanel()
+    const button = container.querySelector<HTMLButtonElement>('[aria-label="Open navigation"]')!
+    const tooltip = document.createElement('span')
+    tooltip.id = 'escape-tooltip'
+    tooltip.setAttribute('role', 'tooltip')
+    document.body.append(tooltip)
+    button.setAttribute('aria-describedby', tooltip.id)
+    button.focus()
+    const dismissTooltip = (event: KeyboardEvent): void => {
+      event.preventDefault()
+      tooltip.remove()
+    }
+    document.addEventListener('keydown', dismissTooltip, { capture: true, once: true })
+    act(() =>
+      button.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    )
+    expect(document.activeElement).toBe(getComposerEditor())
+    expect(tooltip.isConnected).toBe(false)
+  })
+
+  it.each([
+    'handled',
+    'composing',
+    'modified',
+    'pointer',
+    'blocked',
+    'disabled',
+    'dialog',
+    'menu',
+    'editable'
+  ])('keeps Escape with its current owner (%s)', (owner) => {
+    renderPanel({
+      ...(owner === 'blocked'
+        ? { permissions: { requests: [{ requestId: 'escape-blocked' } as never] } }
+        : {}),
+      ...(owner === 'disabled' ? { view: { canEditDraft: false } } : {})
+    })
+    const region = document.createElement('div')
+    const target = document.createElement(owner === 'editable' ? 'input' : 'button')
+    if (owner === 'dialog' || owner === 'menu') region.setAttribute('role', owner)
+    region.append(target)
+    document.body.append(region)
+    target.focus()
+    const matches =
+      owner === 'pointer' ? vi.spyOn(target, 'matches').mockReturnValue(false) : undefined
+    const event = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+      isComposing: owner === 'composing',
+      ctrlKey: owner === 'modified'
+    })
+    if (owner === 'handled') event.preventDefault()
+    try {
+      act(() => target.dispatchEvent(event))
+      expect(document.activeElement).toBe(target)
+    } finally {
+      matches?.mockRestore()
+      region.remove()
+    }
+  })
+
   it('does not focus the hidden composer while a blocking interaction owns its lane', () => {
     renderPanel({
       view: {

@@ -364,6 +364,11 @@ test('supports the core project journey with keyboard input only', async ({ app 
   await page.keyboard.type('Summarize the deterministic fixture.')
   const send = page.getByRole('button', { name: 'Send message' })
   if (!(await focusWithTab(page, send))) return
+  await page.keyboard.press('Escape')
+  await expect(composer).toBeFocused()
+  await expect(composer).toHaveText('Summarize the deterministic fixture.')
+  expect(await composer.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe('none')
+  if (!(await focusWithTab(page, send))) return
   await page.keyboard.press('Enter')
   if (
     !(await expectKeyboardOutcome(page, 'Send a message with Enter', async () => {
@@ -381,6 +386,31 @@ test('supports the core project journey with keyboard input only', async ({ app 
     }))
   )
     return
+
+  const timestamp = page.locator('time').last()
+  if (!(await focusWithTab(page, timestamp))) return
+  await expect(page.getByRole('tooltip')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(composer).toBeFocused()
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+
+  const sendOptions = page.getByTestId('branch-send-menu-trigger')
+  if (!(await focusWithTab(page, sendOptions))) return
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('menu')).toBeVisible()
+  // The menu item's explanatory tooltip is a child layer; it must not send focus behind the menu.
+  await expect(page.getByRole('tooltip')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await expect(page.getByRole('menu')).toBeVisible()
+  expect(
+    await page.getByRole('menu').evaluate((element) => element.contains(document.activeElement))
+  ).toBe(true)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(sendOptions).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(composer).toBeFocused()
 
   const files = page.getByRole('button', { name: 'Files', exact: true })
   if (!(await focusWithTab(page, files))) return
