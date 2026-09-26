@@ -92,7 +92,7 @@ const LITERATURE_METADATA_FIELDS = [
   'language',
   'url'
 ] as const
-const LITERATURE_METADATA_PROVIDERS = ['crossref', 'pubmed'] as const
+const LITERATURE_METADATA_PROVIDERS = ['crossref', 'pubmed', 'europe-pmc', 'datacite'] as const
 
 type LiteratureIdentifierScheme = (typeof LITERATURE_IDENTIFIER_SCHEMES)[number]
 
@@ -959,6 +959,11 @@ const literatureMetadataConflictSchema = literatureMetadataValueSchema
   .extend({ currentValue: nonEmptyTextSchema })
   .strict()
 
+// Review versions describe replay semantics, not provider wire formats. V2 commits the
+// normalized proposal; source payloads are provenance only. Provider additions and optional,
+// defaulted fields should retain v2 when existing snapshots keep their meaning. Preserve
+// conflict choices, identifier replacement, revision checks and idempotency when evolving it.
+// New readers must keep reading earlier v2 snapshots; this is not a downgrade guarantee.
 const literatureMetadataCompletionResultSchema = z
   .object({
     mode: z.enum(['preview', 'commit']),
@@ -968,7 +973,10 @@ const literatureMetadataCompletionResultSchema = z
     filled: z.array(literatureMetadataValueSchema),
     conflicts: z.array(literatureMetadataConflictSchema),
     reviewToken: z.string().uuid().optional(),
-    reviewVersion: z.literal(1).optional(),
+    reviewVersion: z.union([z.literal(1), z.literal(2)]).optional(),
+    proposal: literatureItemInputSchema.extend({ title: z.string() }).optional(),
+    sources: z.array(literatureSourceInputSchema).max(8).optional(),
+    failures: z.array(literatureFailureSchema).max(10).optional(),
     source: literatureSourceInputSchema.optional()
   })
   .strict()
@@ -1118,7 +1126,7 @@ const literatureApplicationCommandContracts = Object.freeze({
           .trim()
           .min(1)
           .max(2048)
-          .regex(/^10\.\d{4,9}\/\S+$/u)
+          .regex(/^(?:10\.\d{4,9}\/\S+|pmid:\d+)$/u)
       ])
     ),
     validationCodec(literatureItemInputSchema)
@@ -1344,3 +1352,9 @@ export type LiteratureChangedEvent = Readonly<{
   collectionIds?: readonly string[]
   candidateIds?: readonly string[]
 }>
+
+// Provider names are product identifiers, shared by the single and batch review surfaces.
+export const literatureMetadataProviderLabel = (provider: string): string =>
+  ({ crossref: 'Crossref', pubmed: 'PubMed', 'europe-pmc': 'Europe PMC', datacite: 'DataCite' })[
+    provider
+  ] ?? provider

@@ -3677,6 +3677,56 @@ describe('LiteratureCatalog', () => {
     expect(await catalog.getMetadataCommitReceipt(input.operationId)).toBeNull()
   })
 
+  it('commits all metadata sources atomically and does not duplicate them on retry', async () => {
+    const catalog = await setup()
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const before = (await catalog.get(created.id))!
+    const sources = [
+      candidate().source,
+      {
+        provider: 'europe-pmc',
+        externalId: '12345',
+        sourceUrl: 'https://europepmc.org/article/MED/12345',
+        rawMetadata: { abstractText: 'Verified abstract' }
+      }
+    ]
+    const input = {
+      operationId: 'multi-source',
+      itemId: before.id,
+      expectedMetadataRevision: before.metadataRevision,
+      item: { ...before.item, abstract: 'Verified abstract' },
+      source: sources[0],
+      sources
+    }
+    await catalog.applyMetadata(input)
+    await catalog.applyMetadata(input)
+    expect(await client!.literatureSourceRecord.count({ where: { itemId: before.id } })).toBe(2)
+    expect((await catalog.get(before.id))?.item.abstract).toBe('Verified abstract')
+  })
+
+  it('rolls back the item and first source if a later metadata source cannot be written', async () => {
+    const catalog = await setup()
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const before = (await catalog.get(created.id))!
+    const sources = [
+      candidate().source,
+      { provider: 'europe-pmc', rawMetadata: { invalid: BigInt(1) } }
+    ]
+    await expect(
+      catalog.applyMetadata({
+        operationId: 'multi-source-failure',
+        itemId: before.id,
+        expectedMetadataRevision: before.metadataRevision,
+        item: { ...before.item, abstract: 'Must roll back' },
+        source: sources[0],
+        sources
+      })
+    ).rejects.toThrow()
+    expect(await catalog.get(before.id)).toEqual(before)
+    expect(await client!.literatureSourceRecord.count()).toBe(0)
+    expect(await catalog.getMetadataCommitReceipt('multi-source-failure')).toBeNull()
+  })
+
   it('rolls back metadata when its commit receipt cannot be written', async () => {
     const catalog = await setup()
     const created = await catalog.transact({ kind: 'create-item', item: candidate().item })

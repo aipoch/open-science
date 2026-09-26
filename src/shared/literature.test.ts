@@ -15,11 +15,13 @@ import {
   parseLiteratureAttachmentVersionReference
 } from './literature'
 
-describe('Literature DOI draft lookup contract', () => {
+describe('Literature identifier draft lookup contract', () => {
   it('accepts a DOI and rejects URLs, malformed identifiers, and oversized arguments', () => {
     const { args } = literatureApplicationCommandContracts.lookupMetadata
     expect(args.parse(['10.1007/s11914-026-00956-3'])).toEqual(['10.1007/s11914-026-00956-3'])
+    expect(args.parse(['pmid:29370583'])).toEqual(['pmid:29370583'])
     for (const input of [
+      ['pmid:abc'],
       [],
       ['https://example.com'],
       ['10.1007/has space'],

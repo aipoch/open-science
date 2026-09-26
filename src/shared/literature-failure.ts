@@ -17,6 +17,7 @@ export const literatureFailureSchema = z
     phase: z.enum(['search', 'apply']),
     source: z.enum([
       'crossref',
+      'datacite',
       'pubmed',
       'europe-pmc',
       'openalex',

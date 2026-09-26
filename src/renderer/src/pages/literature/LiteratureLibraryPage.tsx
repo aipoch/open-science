@@ -1,3 +1,4 @@
+import { literatureMetadataProviderLabel } from '../../../../shared/literature'
 import { SmartDecisionPendingContext, createSmartCollectionState } from './smart-collection-state'
 import { SmartCollectionIcon } from '@/components/app-icons/custom-glyphs'
 import { SmartRuleSummary } from './SmartRuleSummary'
@@ -1896,6 +1897,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }>(undefined)
   const [pdfBatch, setPdfBatch] = useState<{ files: File[]; destination: PdfImportDestination }>()
   const [pendingImportPdf, setPendingImportPdf] = useState<File>()
+  const [pendingImportMetadataNotice, setPendingImportMetadataNotice] = useState<string>()
   const [pendingImportDraft, setPendingImportDraft] = useState<LiteratureItemInput>()
   const [isReadingImportMetadata, setIsReadingImportMetadata] = useState(false)
   const [recordImport, setRecordImport] = useState<
@@ -1909,6 +1911,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           ? {
               file: pendingImportPdf,
               draft: pendingImportDraft,
+              metadataNotice: pendingImportMetadataNotice,
               reading: isReadingImportMetadata,
               error: createItemError,
               duplicatePolicy,
@@ -1919,6 +1922,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         isCreatingItem,
         pendingImportPdf,
         pendingImportDraft,
+        pendingImportMetadataNotice,
         isReadingImportMetadata,
         createItemError,
         duplicatePolicy,
@@ -3710,19 +3714,37 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     const generation = ++importMetadataGenerationRef.current
     setPendingImportPdf(file)
     setPendingImportDraft(fallback)
+    setPendingImportMetadataNotice(undefined)
     setCreateItemError(undefined)
     setIsReadingImportMetadata(true)
     setIsCreatingItem(true)
     void import('./literature-pdf-metadata')
-      .then(async ({ extractLiteraturePdfDraft, completeLiteraturePdfDraft }) => {
-        const local = await extractLiteraturePdfDraft(file, fallback)
-        if (importMetadataGenerationRef.current !== generation) return local
-        return completeLiteraturePdfDraft(local)
-      })
+      .then(
+        async ({
+          extractLiteraturePdfDraft,
+          completeLiteraturePdfDraft,
+          pdfMetadataNoticeLabel
+        }) => {
+          const notice = (value: Parameters<typeof pdfMetadataNoticeLabel>[0]): void => {
+            if (importMetadataGenerationRef.current === generation)
+              setPendingImportMetadataNotice(pdfMetadataNoticeLabel(value, t))
+          }
+          const local = await extractLiteraturePdfDraft(file, fallback, notice)
+          if (importMetadataGenerationRef.current !== generation) return local
+          return completeLiteraturePdfDraft(local, notice)
+        }
+      )
       .then((draft) => {
         if (importMetadataGenerationRef.current === generation) setPendingImportDraft(draft)
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (importMetadataGenerationRef.current === generation)
+          setPendingImportMetadataNotice(
+            t(
+              'PDF text could not be read. For scanned pages, use a searchable PDF. Review the metadata before importing.'
+            )
+          )
+      })
       .finally(() => {
         if (importMetadataGenerationRef.current === generation) setIsReadingImportMetadata(false)
       })
@@ -7092,6 +7114,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Dialog.Close>
               </div>
               {isSavingNewItem ? pdfUploadNotice : null}
+              {dialogItemEditor?.file &&
+              !dialogItemEditor.reading &&
+              dialogItemEditor.metadataNotice ? (
+                <p className="px-5 py-2 text-sm text-muted-foreground" role="status">
+                  {dialogItemEditor.metadataNotice}
+                </p>
+              ) : null}
               {dialogItemEditor?.file && dialogItemEditor?.reading ? (
                 <div
                   className="grid min-h-80 place-items-center text-sm text-muted-foreground"
@@ -7617,6 +7646,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         >
                           {activeMetadataCompletion ? (
                             <div className="space-y-4">
+                              {activeMetadataCompletion.sources?.map((source, index) => (
+                                <p key={index} className="text-xs text-muted-foreground">
+                                  <ExternalTextLink
+                                    href={source.sourceUrl ?? activeMetadataCompletion.sourceUrl}
+                                  >
+                                    {literatureMetadataProviderLabel(source.provider)}
+                                  </ExternalTextLink>
+                                </p>
+                              ))}
+                              {activeMetadataCompletion.failures?.length ? (
+                                <p role="status" className="text-sm text-muted-foreground">
+                                  {t('Some sources were unavailable. Results may be incomplete.')}
+                                </p>
+                              ) : null}
                               {activeMetadataCompletion.filled.length > 0 ? (
                                 <div>
                                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -7656,10 +7699,17 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     {activeMetadataCompletion.conflicts.map(
                                       ({ currentValue, field, value }) => {
                                         const valuesMatch = metadataValuesMatch(currentValue, value)
-                                        const providerLabel =
-                                          activeMetadataCompletion.provider === 'pubmed'
-                                            ? 'PubMed'
-                                            : 'Crossref'
+                                        const providerLabel = [
+                                          ...new Set(
+                                            (
+                                              activeMetadataCompletion.sources ?? [
+                                                { provider: activeMetadataCompletion.provider }
+                                              ]
+                                            ).map((source) =>
+                                              literatureMetadataProviderLabel(source.provider)
+                                            )
+                                          )
+                                        ].join(' / ')
                                         return (
                                           <div
                                             key={field}
@@ -7705,9 +7755,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                                   {metadata.overwriteFields.has(field) ? (
                                                     <Check className="size-3" aria-hidden="true" />
                                                   ) : null}
-                                                  {activeMetadataCompletion.provider === 'pubmed'
+                                                  {providerLabel === 'PubMed'
                                                     ? t('Use PubMed')
-                                                    : t('Use Crossref')}
+                                                    : providerLabel === 'Crossref'
+                                                      ? t('Use Crossref')
+                                                      : t('Use {{source}}', {
+                                                          source: providerLabel
+                                                        })}
                                                 </Button>
                                               )}
                                             </div>

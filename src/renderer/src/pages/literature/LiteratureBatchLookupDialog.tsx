@@ -1,3 +1,4 @@
+import { literatureMetadataProviderLabel } from '../../../../shared/literature'
 import { oversizedLiteratureReference } from '../../../../shared/literature-export'
 import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
 import { readLiteratureJobPages } from './literature-read-pages'
@@ -536,7 +537,14 @@ export const LiteratureBatchLookupDialog = ({
                       <details className="text-xs">
                         <summary className="cursor-pointer text-primary">
                           {t('View details')} ·{' '}
-                          {row.metadata.provider === 'crossref' ? 'Crossref' : 'PubMed'} ·{' '}
+                          {[
+                            ...new Set(
+                              (row.metadata.sources ?? [{ provider: row.metadata.provider }]).map(
+                                (source) => literatureMetadataProviderLabel(source.provider)
+                              )
+                            )
+                          ].join(' / ')}{' '}
+                          ·{' '}
                           {t('{{count}} missing fields', {
                             count: row.metadata.filled.length,
                             defaultValue_one: '{{count}} missing field'

@@ -206,7 +206,8 @@ const parseNbib = (input: string): ParsedCitationRecords | undefined => {
         ...(nbibText(record, 'TA') ? { journalAbbreviation: nbibText(record, 'TA') } : {}),
         ...(nbibText(record, 'VI') ? { volume: nbibText(record, 'VI') } : {}),
         ...(nbibText(record, 'IP') ? { issue: nbibText(record, 'IP') } : {}),
-        ...(nbibText(record, 'PG') ? { pages: nbibText(record, 'PG') } : {})
+        ...(nbibText(record, 'PG') ? { pages: nbibText(record, 'PG') } : {}),
+        ...(nbibText(record, 'PB') ? { publisher: nbibText(record, 'PB') } : {})
       },
       creators: authors.creators,
       identifiers

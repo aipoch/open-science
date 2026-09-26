@@ -60,7 +60,8 @@ vi.mock('./LiteratureTable', async (importOriginal) => {
   }
 })
 
-vi.mock('./literature-pdf-metadata', () => ({
+vi.mock('./literature-pdf-metadata', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./literature-pdf-metadata')>()),
   extractLiteraturePdfDraft,
   completeLiteraturePdfDraft
 }))
@@ -5714,38 +5715,69 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('dialog', { name })).toBe(dialog)
   })
 
-  it('exposes the metadata overwrite selection that is submitted', async () => {
-    search.mockImplementation((request: { scope: string }) =>
-      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
-    )
-    render(<LiteratureLibraryPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    const detail = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
-    await openMenu(within(detail).getByRole('button', { name: 'More actions' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
-    fireEvent.click(within(detail).getByRole('button', { name: 'Search' }))
-    const choice = await screen.findByRole('button', { name: 'Use Crossref' })
-    expect(choice.getAttribute('aria-pressed')).toBe('false')
-    expect(
-      screen.getByRole('button', { name: 'Use Crossref', description: /Title.*Corrective RAG/ })
-    ).toBe(choice)
-    fireEvent.click(choice)
-    expect(choice.getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(choice)
-    expect(choice.getAttribute('aria-pressed')).toBe('false')
-    fireEvent.click(choice)
-    const pressed = choice.getAttribute('aria-pressed')
-    fireEvent.click(screen.getByRole('button', { name: 'Apply metadata' }))
-    await waitFor(() =>
-      expect(completeMetadata).toHaveBeenCalledWith(
-        expect.objectContaining({
-          mode: 'commit',
-          overwriteFields: ['title']
+  it.each([false, true])(
+    'exposes the metadata overwrite selection with supplemental sources: %s',
+    async (supplemental) => {
+      const provider = supplemental ? 'Use Crossref / Europe PMC' : 'Use Crossref'
+      if (supplemental) {
+        const reply = await completeMetadata.getMockImplementation()!({ mode: 'preview' })
+        completeMetadata.mockResolvedValueOnce({
+          ...reply,
+          sources: [
+            {
+              provider: 'crossref',
+              sourceUrl: 'https://api.crossref.org/works/10.0000/example',
+              rawMetadata: {}
+            },
+            {
+              provider: 'europe-pmc',
+              sourceUrl: 'https://europepmc.org/article/MED/123',
+              rawMetadata: {}
+            }
+          ],
+          failures: [{ code: 'rate-limit', phase: 'search', source: 'pubmed', retryable: true }]
         })
+      }
+      search.mockImplementation((request: { scope: string }) =>
+        Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
       )
-    )
-    expect(pressed).toBe('true')
-  })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const detail = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+      await openMenu(within(detail).getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+      fireEvent.click(within(detail).getByRole('button', { name: 'Search' }))
+      const choice = await screen.findByRole('button', { name: provider })
+      if (supplemental) {
+        expect(
+          screen.getByText('Some sources were unavailable. Results may be incomplete.')
+        ).toBeTruthy()
+        expect(screen.getByRole('link', { name: 'Europe PMC' }).getAttribute('href')).toBe(
+          'https://europepmc.org/article/MED/123'
+        )
+      }
+      expect(choice.getAttribute('aria-pressed')).toBe('false')
+      expect(
+        screen.getByRole('button', { name: provider, description: /Title.*Corrective RAG/ })
+      ).toBe(choice)
+      fireEvent.click(choice)
+      expect(choice.getAttribute('aria-pressed')).toBe('true')
+      fireEvent.click(choice)
+      expect(choice.getAttribute('aria-pressed')).toBe('false')
+      fireEvent.click(choice)
+      const pressed = choice.getAttribute('aria-pressed')
+      fireEvent.click(screen.getByRole('button', { name: 'Apply metadata' }))
+      await waitFor(() =>
+        expect(completeMetadata).toHaveBeenCalledWith(
+          expect.objectContaining({
+            mode: 'commit',
+            overwriteFields: ['title']
+          })
+        )
+      )
+      expect(pressed).toBe('true')
+    }
+  )
 
   it('shows identifier-only additions and submits one publication-date conflict choice', async () => {
     search.mockImplementation((request: { scope: string }) =>

@@ -169,3 +169,137 @@ it('extracts and completes a real PDF using PDF.js font geometry and text joinin
   expect((await completeLiteraturePdfDraft(local)).title).toBe(title)
   expect(lookup).toHaveBeenCalledExactlyOnceWith(doi)
 })
+
+it('uses PMID-only drafts and retains verified remote identifiers', async () => {
+  const { lookup } = setup()
+  const draft = {
+    ...fallback,
+    identifiers: [{ scheme: 'pmid' as const, value: '12345678', isPrimary: true }]
+  }
+  lookup.mockResolvedValue({
+    ...resolved,
+    abstract: 'Verified abstract',
+    identifiers: [
+      { scheme: 'pmid', value: '12345678', isPrimary: true },
+      { scheme: 'doi', value: doi, isPrimary: false }
+    ]
+  })
+  const completed = await completeLiteraturePdfDraft(draft)
+  expect(lookup).toHaveBeenCalledWith('pmid:12345678')
+  expect(completed.identifiers).toEqual([
+    ...draft.identifiers,
+    { scheme: 'doi', value: doi, isPrimary: false }
+  ])
+})
+
+it('retains first-page text when embedded metadata and a later page fail', async () => {
+  const { file, getPage, destroy, cleanup } = setup(
+    '',
+    [item(title, 18), item('10.1234/article')],
+    2
+  )
+  const model = await pdf.getDocument().promise
+  model.getMetadata = async () => {
+    throw new Error('bad Info dictionary')
+  }
+  getPage.mockImplementation(async (n) => ({
+    getTextContent: vi.fn(async () => {
+      if (n === 2) throw new Error('bad page')
+      return { items: [item(title, 18), item('10.1234/article')] }
+    }),
+    cleanup
+  }))
+  const notice = vi.fn()
+  const draft = await extractLiteraturePdfDraft(file, fallback, notice)
+  expect(draft.title).toBe(title)
+  expect(draft.identifiers[0].value).toBe(doi)
+  expect(notice).toHaveBeenCalledWith({ textUnavailable: true })
+  expect(cleanup).toHaveBeenCalledTimes(2)
+  expect(destroy).toHaveBeenCalledOnce()
+})
+
+it('uses XMP title and authors when Info contains only a filename', async () => {
+  const { file } = setup('', [], 1)
+  const model = await pdf.getDocument().promise
+  model.getMetadata = async () => ({
+    info: { Title: 'article.pdf' },
+    metadata: {
+      get: (key: string) =>
+        ({ 'dc:title': title, 'dc:creator': ['Alice Example', 'Bob Example'], 'prism:doi': doi })[
+          key
+        ]
+    }
+  })
+  const draft = await extractLiteraturePdfDraft(file, fallback)
+  expect(draft).toMatchObject({
+    title,
+    creators: [{ familyName: 'Alice Example' }, { familyName: 'Bob Example' }],
+    identifiers: [{ scheme: 'doi', value: doi }]
+  })
+})
+
+it('reports PDFs with no text while retaining embedded metadata', async () => {
+  const { file, destroy } = setup('', [], 1)
+  const notice = vi.fn()
+  const draft = await extractLiteraturePdfDraft(file, fallback, notice)
+  expect(draft.title).toBe('Generic publisher title')
+  expect(notice).toHaveBeenCalledWith({ textUnavailable: true })
+  expect(destroy).toHaveBeenCalledOnce()
+})
+
+it('reports lookup failure without discarding the extracted abstract', async () => {
+  const { lookup } = setup()
+  lookup.mockRejectedValue(new Error('offline'))
+  const draft = {
+    ...fallback,
+    abstract: 'Locally extracted evidence.',
+    identifiers: [{ scheme: 'doi' as const, value: doi, isPrimary: true }]
+  }
+  const notice = vi.fn()
+  expect(await completeLiteraturePdfDraft(draft, notice)).toBe(draft)
+  expect(notice).toHaveBeenCalledWith({ lookupFailed: true })
+})
+
+it('does not replace a prominent PDF title with a cited paper returned by DOI lookup', async () => {
+  const { file, lookup } = setup('', [item(title, 18), item('10.1234/citation')], 1)
+  lookup.mockResolvedValue({
+    ...resolved,
+    title: 'A different cited paper',
+    abstract: 'Wrong abstract'
+  })
+  const draft = await extractLiteraturePdfDraft(file, fallback)
+  const notice = vi.fn()
+  const completed = await completeLiteraturePdfDraft(draft, notice)
+  expect(completed.abstract).toBe('')
+  expect(completed.identifiers).toEqual([])
+  expect(completed.url).toBe('')
+  expect(notice).toHaveBeenCalledWith({ lookupFailed: true })
+})
+
+it('uses geometry to end a structured abstract even when the final line has no EOL flag', async () => {
+  const lines = [
+    [
+      'Background: The study investigates an important question using direct experimental evidence.',
+      400
+    ],
+    ['Methods: We compared samples in a controlled study.', 370],
+    ['Results: The observed effect was consistent across samples.', 340],
+    ['Conclusions: The evidence supports further investigation.', 310],
+    ['', 265],
+    ['This is body text and must not be included in the abstract.', 265]
+  ] as const
+  const { file } = setup(
+    '',
+    lines.map(([str, y]) => ({
+      str,
+      height: 9,
+      hasEOL: !str,
+      transform: [9, 0, 0, 9, 40, y]
+    })),
+    1
+  )
+  const draft = await extractLiteraturePdfDraft(file, fallback)
+  expect(draft.abstract).toContain('Background:')
+  expect(draft.abstract).toContain('Conclusions: The evidence supports further investigation.')
+  expect(draft.abstract).not.toContain('body text')
+})

@@ -4919,7 +4919,9 @@ const createApplicationModules = async (
         }
       },
       lookupMetadata: async (doi) => {
-        const [resolved] = await literatureReferenceResolver.resolve(['doi:' + doi])
+        const [resolved] = await literatureReferenceResolver.resolve([
+          doi.startsWith('pmid:') ? doi : 'doi:' + doi
+        ])
         return resolved.item
       },
       completeMetadata: (request) => literatureMetadataEnricher.complete(request),
