@@ -133,6 +133,7 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "Batch actions": "批量操作",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "在查询药物基因组学注释前，按 ClinPGx accession ID 或名称解析 ClinPGx 药物/化学物质记录。",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "在查询药物基因组学注释前，按 ClinPGx accession ID 或 HGNC 符号解析 ClinPGx 基因记录。",
     "Search ClinPGx clinical annotations linking a drug, gene, and variant. Supports CPIC-style evidence levels 1A, 1B, 2A, 2B, 3, and 4.": "搜索关联药物、基因和变异的 ClinPGx 临床注释。支持 CPIC 风格的证据等级 1A、1B、2A、2B、3 和 4。",

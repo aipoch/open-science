@@ -185,7 +185,7 @@ export function LibraryChatButton({
           <Button
             variant="ghost"
             size="xs"
-            className="rounded-r-none"
+            className="rounded-[inherit] rounded-r-none border-0"
             disabled={!actions?.canAddToCurrent || !references.length}
             onClick={() => add(actions?.currentSessionId ?? null)}
           >
@@ -207,7 +207,7 @@ export function LibraryChatButton({
             ref={triggerRef}
             variant="ghost"
             size="xs"
-            className="rounded-l-none border-l border-border px-1.5"
+            className="rounded-[inherit] rounded-l-none border-0 border-l border-l-border px-1.5"
             disabled={!actions || !references.length}
             aria-label={t('Choose another conversation')}
             onPointerEnter={(event) => {

@@ -136,6 +136,7 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Batch actions": "Групповые действия",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Разрешите записи лекарств и химических веществ ClinPGx по идентификатору доступа ClinPGx или названию перед поиском фармакогеномных аннотаций.",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "Разрешите записи генов ClinPGx по идентификатору доступа ClinPGx или символу HGNC перед поиском фармакогеномных аннотаций.",
     "Search ClinPGx clinical annotations linking a drug, gene, and variant. Supports CPIC-style evidence levels 1A, 1B, 2A, 2B, 3, and 4.": "Ищите клинические аннотации ClinPGx, связывающие лекарство, ген и вариант. Поддерживаются уровни доказательности в стиле CPIC: 1A, 1B, 2A, 2B, 3 и 4.",
