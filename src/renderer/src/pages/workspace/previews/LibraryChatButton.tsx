@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useSessionStore } from '@/stores/session-store'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
@@ -169,15 +170,20 @@ export function LibraryChatButton({
   }
   return (
     <div className="inline-flex shrink-0 rounded-md border border-border bg-background">
-      <Button
-        variant="ghost"
-        size="xs"
-        className="rounded-r-none"
-        disabled={!actions?.canAddToCurrent || !references.length}
-        onClick={() => add(actions?.currentSessionId ?? null)}
-      >
-        {t('Add to chat')}
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="rounded-r-none"
+            disabled={!actions?.canAddToCurrent || !references.length}
+            onClick={() => add(actions?.currentSessionId ?? null)}
+          >
+            {t('Add to chat')}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t('Add references to the current conversation draft')}</TooltipContent>
+      </Tooltip>
       <Popover
         open={open}
         onOpenChange={(value) => {
@@ -185,18 +191,27 @@ export function LibraryChatButton({
           setOpen(value)
         }}
       >
-        <PopoverTrigger asChild>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="rounded-l-none border-l border-border px-1.5"
-            disabled={!actions || !references.length}
-            aria-label={t('Choose another conversation')}
-            title={t('Choose another conversation')}
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+            }}
           >
-            <ChevronDown aria-hidden="true" />
-          </Button>
-        </PopoverTrigger>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="xs"
+                className="rounded-l-none border-l border-border px-1.5"
+                disabled={!actions || !references.length}
+                aria-label={t('Choose another conversation')}
+              >
+                <ChevronDown aria-hidden="true" />
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent>{t('Choose another conversation')}</TooltipContent>
+        </Tooltip>
         <PopoverContent
           align="end"
           aria-label={t('Choose another conversation')}

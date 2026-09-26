@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
 import { LibraryReferenceActionsContext } from './library-reference-actions'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { LibraryChatButton } from './LibraryChatButton'
 import { literatureItemInputSchema } from '../../../../../shared/literature'
 
@@ -39,7 +40,8 @@ const setup = (): Mock => {
       value={{ projectId: 'project', currentSessionId: 'session-0', canAddToCurrent: true, add }}
     >
       <LibraryChatButton references={[reference]} />
-    </LibraryReferenceActionsContext.Provider>
+    </LibraryReferenceActionsContext.Provider>,
+    { wrapper: TooltipProvider }
   )
   return add
 }

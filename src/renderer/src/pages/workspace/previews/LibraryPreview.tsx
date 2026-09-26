@@ -244,14 +244,16 @@ function ReferenceRow({
         </div>
         <div className="ml-auto flex items-center gap-0.5">
           <Tooltip>
-            <TooltipTrigger asChild>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
               <Button
                 variant="ghost"
                 size="icon-sm"
                 aria-label={t('Reference details')}
-                onFocus={(event) => {
-                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
-                }}
                 onClick={(event) => onDetails(event.currentTarget)}
               >
                 <Info aria-hidden="true" />

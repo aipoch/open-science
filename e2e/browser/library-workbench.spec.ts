@@ -100,3 +100,33 @@ test('conversation search opens in place and supports keyboard selection among m
   await expect(search).not.toBeVisible()
   await expect(page.getByRole('status').filter({ hasText: 'session-34:' })).toBeVisible()
 })
+
+test('row actions explain their purpose on hover without reopening after pointer dismissal', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 620, height: 760 })
+  await page.goto('/library-workbench.html')
+  for (const [name, description] of [
+    ['Reference details', 'Reference details'],
+    ['Copy title', 'Copy title'],
+    ['Add to chat', 'Add references to the current conversation draft'],
+    ['Choose another conversation', 'Choose another conversation'],
+    ['View in Literature', 'View in Literature']
+  ]) {
+    await page.getByRole('button', { name, exact: true }).hover()
+    await expect(page.getByRole('tooltip')).toHaveText(description)
+    await page.mouse.move(10, 400, { steps: 10 })
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
+  }
+  const choose = page.getByRole('button', { name: 'Choose another conversation' })
+  await choose.click()
+  await expect(page.getByRole('combobox')).toBeFocused()
+  await page.getByRole('searchbox').click()
+  await expect(page.getByRole('combobox')).toHaveCount(0)
+  // Wait beyond the tooltip delay to catch focus-return reopening.
+  await page.waitForTimeout(400)
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Add to chat', exact: true }).focus()
+  await page.keyboard.press('Tab')
+  await expect(page.getByRole('tooltip')).toHaveText('Choose another conversation')
+})
