@@ -151,7 +151,9 @@ const findEocd = async (reader: ArchiveReader): Promise<number | undefined> => {
 }
 
 const isMetadataPath = (path: string): boolean =>
-  path.startsWith('__MACOSX/') || isSkillPackageIgnoredPath(path)
+  path.startsWith('__MACOSX/') ||
+  path.split('/').at(-1)?.startsWith('.') === true ||
+  isSkillPackageIgnoredPath(path)
 
 const isUnsafeArchivePath = (path: string): boolean =>
   path.length === 0 ||
