@@ -1,6 +1,9 @@
 name: Temporary Windows ARM64 feasibility spike
 
 on:
+  push:
+    branches:
+      - feat/windows-arm64-feasibility-spike
   workflow_dispatch:
 
 permissions:
@@ -46,6 +49,57 @@ jobs:
           if ($machine -ne 0xaa64) { throw ("Expected PE ARM64 0xaa64, got 0x{0:x4}" -f $machine) }
           "Micromamba: $version" >> $env:GITHUB_STEP_SUMMARY
           "PE machine: 0x{0:x4}" -f $machine >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Create and execute Anaconda Python 3.12 ARM64 notebook runtime
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP 'python-win-arm64-3.12'
+          $mm = Join-Path $env:RUNNER_TEMP 'micromamba-win-arm64.exe'
+          & $mm create --prefix $prefix --platform win-arm64 -y --channel https://repo.anaconda.com/pkgs/main python=3.12 matplotlib-base nomkl
+          if ($LASTEXITCODE -ne 0) { throw 'Anaconda win-arm64 Python 3.12 environment creation failed' }
+          $python = Join-Path $prefix 'python.exe'
+          $version = (& $python --version 2>&1).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Native ARM64 Python failed --version' }
+          @'
+          {"req_id":"arm64-python-3.12","code":"import sys\nimport matplotlib\nimport numpy as np\nimport matplotlib.pyplot as plt\nplt.plot([1, 2], [3, 4])\nprint(sys.version)\nprint(matplotlib.__version__)\nprint(np.__version__)"}
+          '@ | & $python resources/notebook/python_loop.py | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'python-loop.jsonl')
+          if ($LASTEXITCODE -ne 0) { throw 'Native ARM64 Python notebook loop failed' }
+          $response = Get-Content (Join-Path $env:RUNNER_TEMP 'python-loop.jsonl') -Raw | ConvertFrom-Json
+          if ($response.error) { throw "Notebook Python returned an error: $($response.error)" }
+          if (-not $response.figures -or $response.figures.Count -lt 1) { throw 'Notebook Python produced no figure' }
+          "Python runtime: $version" >> $env:GITHUB_STEP_SUMMARY
+          "Notebook Python figure: passed" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Probe Anaconda R 4.4 ARM64 closure
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP 'r-win-arm64-4.4'
+          $mm = Join-Path $env:RUNNER_TEMP 'micromamba-win-arm64.exe'
+          $output = (& $mm create --dry-run --json --prefix $prefix --platform win-arm64 -y --channel https://repo.anaconda.com/pkgs/main r-base=4.4 r-jsonlite r-biocmanager r-ggplot2 2>&1 | Out-String)
+          $output | Set-Content -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'r-solve.json')
+          $output
+          if ($output -match '"success"\s*:\s*true') { throw 'Unexpectedly found a complete Anaconda win-arm64 R 4.4 closure' }
+          "Anaconda R 4.4 closure: unavailable (expected)" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Create and execute Anaconda Python 3.13 ARM64 notebook runtime
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP 'python-win-arm64-3.13'
+          $mm = Join-Path $env:RUNNER_TEMP 'micromamba-win-arm64.exe'
+          & $mm create --prefix $prefix --platform win-arm64 -y --channel https://repo.anaconda.com/pkgs/main python=3.13 matplotlib-base nomkl
+          if ($LASTEXITCODE -ne 0) { throw 'Anaconda win-arm64 Python 3.13 environment creation failed' }
+          $python = Join-Path $prefix 'python.exe'
+          $version = (& $python --version 2>&1).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Native ARM64 Python 3.13 failed --version' }
+          @'
+          {"req_id":"arm64-python-3.13","code":"import sys\nimport matplotlib\nimport numpy as np\nimport matplotlib.pyplot as plt\nplt.plot([1, 2], [3, 4])\nprint(sys.version)\nprint(matplotlib.__version__)\nprint(np.__version__)"}
+          '@ | & $python resources/notebook/python_loop.py | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'python-3.13-loop.jsonl')
+          if ($LASTEXITCODE -ne 0) { throw 'Native ARM64 Python 3.13 notebook loop failed' }
+          $response = Get-Content (Join-Path $env:RUNNER_TEMP 'python-3.13-loop.jsonl') -Raw | ConvertFrom-Json
+          if ($response.error) { throw "Notebook Python 3.13 returned an error: $($response.error)" }
+          if (-not $response.figures -or $response.figures.Count -lt 1) { throw 'Notebook Python 3.13 produced no figure' }
+          "Python runtime: $version" >> $env:GITHUB_STEP_SUMMARY
+          "Notebook Python 3.13 figure: passed" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Report official win-arm64 conda closure
         shell: pwsh
