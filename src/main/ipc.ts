@@ -2994,117 +2994,110 @@ const createApplicationModules = async (
     },
     parentMessages: {
       async deliver(delivery) {
-        return archiveCoordinator.withProjectDeletionAdmission(
+        const runtime = runtimeRef.current
+        if (!runtime) throw new Error('ACP runtime is not available.')
+        const session = await sessionRepository.loadSession(
           delivery.session.projectId,
+          delivery.session.sessionId
+        )
+        const graph = session?.conversationGraph
+        const rootFrame = graph?.frames.find((frame) => frame.id === delivery.targetFrameId)
+        const rootBranch = graph?.branches.find((branch) => branch.id === rootFrame?.activeBranchId)
+        if (
+          !session ||
+          session.id !== delivery.session.sessionId ||
+          session.projectId !== delivery.session.projectId ||
+          graph?.rootFrameId !== delivery.targetFrameId ||
+          !rootBranch ||
+          !graph.messages.some((message) => message.id === delivery.originMessageId)
+        ) {
+          throw new Error('Parent message durable root provenance is unavailable.')
+        }
+        return runtime.startContinuationWhenDispatchAdmitted(
+          {
+            sessionId: delivery.session.sessionId,
+            text:
+              `[Delegated ${delivery.kind} from Frame ${delivery.sourceFrameId}, ` +
+              `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
+            suppressUserMessage: true,
+            provenanceContext: {
+              // Suppressed continuations create no user node; replies retain the durable origin.
+              promptMessageId: delivery.originMessageId,
+              originMessageId: delivery.originMessageId,
+              rootFrameId: graph.rootFrameId,
+              agentFrameId: graph.rootFrameId,
+              messageBranchId: delivery.rootBranchId,
+              messageBranchAncestry: [delivery.rootBranchId],
+              messageAncestry: [delivery.originMessageId],
+              runtimeSegmentId: `delegated-message-${delivery.messageId}`
+            }
+          },
           async () => {
-            const runtime = runtimeRef.current
-            if (!runtime) throw new Error('ACP runtime is not available.')
-            const session = await sessionRepository.loadSession(
+            let latest = await sessionRepository.loadSession(
               delivery.session.projectId,
               delivery.session.sessionId
             )
-            const graph = session?.conversationGraph
-            const rootFrame = graph?.frames.find((frame) => frame.id === delivery.targetFrameId)
-            const rootBranch = graph?.branches.find(
-              (branch) => branch.id === rootFrame?.activeBranchId
+            const latestGraph = latest?.conversationGraph
+            const latestRoot = latestGraph?.frames.find(({ id }) => id === delivery.targetFrameId)
+            const latestBranch = latestGraph?.branches.find(
+              ({ id }) => id === latestRoot?.activeBranchId
             )
             if (
-              !session ||
-              session.id !== delivery.session.sessionId ||
-              session.projectId !== delivery.session.projectId ||
-              graph?.rootFrameId !== delivery.targetFrameId ||
-              !rootBranch ||
-              !graph.messages.some((message) => message.id === delivery.originMessageId)
+              !latest ||
+              latestBranch?.id !== delivery.rootBranchId ||
+              `${latestBranch.id}:${latestBranch.createdAt}` !== delivery.rootBranchRevision
             ) {
-              throw new Error('Parent message durable root provenance is unavailable.')
+              throw new DelegateMessageParkedError(
+                'Parent message root Branch changed before dispatch.'
+              )
             }
-            return runtime.startContinuationWhenDispatchAdmitted(
-              {
-                sessionId: delivery.session.sessionId,
-                text:
-                  `[Delegated ${delivery.kind} from Frame ${delivery.sourceFrameId}, ` +
-                  `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
-                suppressUserMessage: true,
-                provenanceContext: {
-                  // Suppressed continuations create no user node; replies retain the durable origin.
-                  promptMessageId: delivery.originMessageId,
-                  originMessageId: delivery.originMessageId,
-                  rootFrameId: graph.rootFrameId,
-                  agentFrameId: graph.rootFrameId,
-                  messageBranchId: delivery.rootBranchId,
-                  messageBranchAncestry: [delivery.rootBranchId],
-                  messageAncestry: [delivery.originMessageId],
-                  runtimeSegmentId: `delegated-message-${delivery.messageId}`
-                }
-              },
-              async () => {
-                let latest = await sessionRepository.loadSession(
-                  delivery.session.projectId,
-                  delivery.session.sessionId
-                )
-                const latestGraph = latest?.conversationGraph
-                const latestRoot = latestGraph?.frames.find(
-                  ({ id }) => id === delivery.targetFrameId
-                )
-                const latestBranch = latestGraph?.branches.find(
-                  ({ id }) => id === latestRoot?.activeBranchId
-                )
-                if (
-                  !latest ||
-                  latestBranch?.id !== delivery.rootBranchId ||
-                  `${latestBranch.id}:${latestBranch.createdAt}` !== delivery.rootBranchRevision
-                ) {
-                  throw new DelegateMessageParkedError(
-                    'Parent message root Branch changed before dispatch.'
-                  )
-                }
-                const agentTarget = await resolveSessionAgentTarget(latest)
-                if (
-                  agentTarget &&
-                  shouldPersistSessionAgentConfiguration(latest.agentConfiguration, agentTarget)
-                ) {
-                  latest = await sessionPersistenceCoordinator.saveSession({
-                    ...latest,
-                    agentConfiguration: toSessionAgentConfiguration(agentTarget)
-                  })
-                }
-                if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
-                  await runtime.resumeSession({
-                    sessionId: latest.id,
-                    cwd: latest.cwd,
-                    projectId: latest.projectId,
-                    ...(latest.permissionProfile
-                      ? { permissionProfile: latest.permissionProfile }
-                      : {}),
-                    memoryEnabled: latest.memoryEnabled !== false,
-                    ...(latest.agentFrameworkId
-                      ? { previousFrameworkId: latest.agentFrameworkId }
-                      : {}),
-                    ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
-                    ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
-                    ...(latest.specialistBindingPending === true
-                      ? { specialistBindingPending: true }
-                      : {}),
-                    ...(latest.providerSessionId
-                      ? { providerSessionId: latest.providerSessionId }
-                      : {}),
-                    ...(latest.providerContinuityToken
-                      ? { providerContinuityToken: latest.providerContinuityToken }
-                      : {}),
-                    ...(agentTarget ? { agentTarget } : {})
-                  })
-                }
-                const started = await delivery.startDispatch()
-                if (started !== 'started') {
-                  throw new DelegateMessageParkedError(
-                    'Parent message dispatch fence was not acquired.'
-                  )
-                }
-              },
-              delivery.messageId,
-              delivery.onRootAdmissionQueued
-            )
-          }
+            const agentTarget = await resolveSessionAgentTarget(latest)
+            if (
+              agentTarget &&
+              shouldPersistSessionAgentConfiguration(latest.agentConfiguration, agentTarget)
+            ) {
+              latest = await sessionPersistenceCoordinator.saveSession({
+                ...latest,
+                agentConfiguration: toSessionAgentConfiguration(agentTarget)
+              })
+            }
+            if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
+              await runtime.resumeSession({
+                sessionId: latest.id,
+                cwd: latest.cwd,
+                projectId: latest.projectId,
+                ...(latest.permissionProfile
+                  ? { permissionProfile: latest.permissionProfile }
+                  : {}),
+                memoryEnabled: latest.memoryEnabled !== false,
+                ...(latest.agentFrameworkId
+                  ? { previousFrameworkId: latest.agentFrameworkId }
+                  : {}),
+                ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
+                ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
+                ...(latest.specialistBindingPending === true
+                  ? { specialistBindingPending: true }
+                  : {}),
+                ...(latest.providerSessionId
+                  ? { providerSessionId: latest.providerSessionId }
+                  : {}),
+                ...(latest.providerContinuityToken
+                  ? { providerContinuityToken: latest.providerContinuityToken }
+                  : {}),
+                ...(agentTarget ? { agentTarget } : {})
+              })
+            }
+            const started = await delivery.startDispatch()
+            if (started !== 'started') {
+              throw new DelegateMessageParkedError(
+                'Parent message dispatch fence was not acquired.'
+              )
+            }
+          },
+          delivery.messageId,
+          delivery.onRootAdmissionQueued,
+          (operation) =>
+            archiveCoordinator.withProjectDeletionAdmission(delivery.session.projectId, operation)
         )
       }
     }

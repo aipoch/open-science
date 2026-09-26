@@ -1062,16 +1062,19 @@ class AcpRuntimeCoordinator {
     request: AcpPromptRequest,
     validate: () => Promise<void>,
     delegatedMessageId?: string,
-    onAdmissionQueued?: () => void
+    onAdmissionQueued?: () => void,
+    admitDispatch?: (operation: () => Promise<void>) => Promise<void>
   ): Promise<DelegateMessageAcceptanceEvidence> {
-    // The caller owns final deletion admission for the whole validation/resume/acceptance lifecycle.
-    // Bypass only the nested dispatch guard; root-session admission remains linearized below.
+    // Acquire deletion admission inside root admission, retaining it through validation, resume,
+    // and acceptance. Taking the Project gate first can deadlock a user prompt waiting for it.
+    // Legacy already-admitted callers can omit the wrapper; nested dispatch admission is bypassed.
     return this.startContinuationWhenWithDispatchAdmission(
       request,
       validate,
       true,
       delegatedMessageId,
-      onAdmissionQueued
+      onAdmissionQueued,
+      admitDispatch
     )
   }
 
@@ -1080,7 +1083,8 @@ class AcpRuntimeCoordinator {
     validate: () => Promise<void>,
     dispatchAdmitted: boolean,
     delegatedMessageId?: string,
-    onAdmissionQueued?: () => void
+    onAdmissionQueued?: () => void,
+    admitDispatch?: (operation: () => Promise<void>) => Promise<void>
   ): Promise<DelegateMessageAcceptanceEvidence> {
     let resolve!: (evidence: DelegateMessageAcceptanceEvidence) => void
     let reject!: (error: unknown) => void
@@ -1106,7 +1110,7 @@ class AcpRuntimeCoordinator {
       reject(error)
     }
 
-    const admission = this.linearizeRootAdmission(request.sessionId, async () => {
+    const dispatch = async (): Promise<void> => {
       try {
         await validate()
       } catch (error) {
@@ -1135,6 +1139,17 @@ class AcpRuntimeCoordinator {
         acceptance.settled = true
         resolve('provider_prompt_completed')
       }
+    }
+    const admission = this.linearizeRootAdmission(request.sessionId, async () => {
+      if (!admitDispatch) return dispatch()
+      let completion!: Promise<void>
+      await admitDispatch(async () => {
+        completion = dispatch()
+        void completion.catch((error) => acceptance.reject(error))
+        // Release the Project gate at acceptance, while root admission still owns the whole turn.
+        await accepted
+      })
+      await completion
     })
     onAdmissionQueued?.()
     void admission.catch((error) => acceptance.reject(error))

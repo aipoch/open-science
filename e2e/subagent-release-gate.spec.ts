@@ -1000,7 +1000,9 @@ test('recovers a post-fence receipt persistence failure as uncertain after proce
   expect(receipt).toMatchObject({ status: 'uncertain', resolution: 'pending' })
 })
 
-test('fairly schedules two upward lanes with a concurrent real user prompt', async ({ app }) => {
+test('fairly schedules two upward lanes with a concurrent real user prompt', async ({
+  app
+}, testInfo) => {
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
@@ -1056,6 +1058,7 @@ test('fairly schedules two upward lanes with a concurrent real user prompt', asy
     { requestId: 'e2e-fairness-a', status: 'accepted' },
     { requestId: 'e2e-fairness-b', status: 'accepted' }
   ])
+  await page.screenshot({ path: testInfo.outputPath('concurrent-parent-messages.png') })
 })
 
 test('stops only the active branch and exposes a retryable partial failure', async ({
