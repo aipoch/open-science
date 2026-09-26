@@ -126,7 +126,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。",
     "Could not fork this Session: {{reason}}": "このセッションを複製できませんでした：{{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "複製の公開処理を復旧する必要があります（操作 {{operationId}}、セッション {{sessionId}}）。再度複製する前にアプリを再起動してこの操作を復旧してください。",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "このセッションパッケージには、より新しいバージョンの Open Science が必要です。Open Science を更新してから、もう一度インポートしてください。"
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "このセッションパッケージには、より新しいバージョンの Open Science が必要です。Open Science を更新してから、もう一度インポートしてください。",
+    "Running sessions": "実行中",
+    "Pinned sessions": "固定済み",
+    "Recent items": "最近のセッション",
+    "More items": "その他のセッション"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "薬理ゲノム注釈を検索する前に、ClinPGx の accession ID または名前で ClinPGx の薬物・化学物質レコードを解決します。",
@@ -2099,7 +2103,6 @@
     "Pin project": "プロジェクトを固定",
     "Pin this folder": "このフォルダーを固定",
     "Pin this folder to the Go to menu": "このフォルダーを「移動」メニューにピン留めします",
-    "Pinned": "固定済み",
     "Pinned project": "固定済みプロジェクト",
     "Plan approved": "プランが承認されました",
     "Plan blocked": "プランがブロックされました",
@@ -2212,7 +2215,6 @@
     "Reasoning effort": "推論強度",
     "Reasoning effort levels": "推論強度レベル",
     "Reasoning effort request format": "推論強度要求フォーマット",
-    "Recent sessions": "最近のセッション",
     "Recheck": "再確認",
     "Recheck message snapshot": "メッセージスナップショットを再確認",
     "Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.": "おすすめです。~/.claude の既存の Claude サインイン情報を使用します。ブラウザー OAuth 経由で一度サインインすると、すべての Claude ツールで使用できます。",
@@ -2446,7 +2448,6 @@
     "Run marks": "ランマーク",
     "Run {{runNumber}} · Message {{messageNumber}}": "実行 {{runNumber}} · メッセージ {{messageNumber}}",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "実行 {{run}}、{{state}}、コンテキストウィンドウ {{tokens}} トークン",
-    "Running": "実行中",
     "Runtime": "ランタイム",
     "Runtime_duration": "実行時間",
     "Runtimes": "ランタイム",
@@ -3673,7 +3674,6 @@
     "Daily activity metric": "毎日のアクティビティ指標",
     "Daily activity for the last 30 days": "過去 30 日間の毎日のアクティビティ",
     "Less": "少ない",
-    "More": "多い",
     "Daily token usage": "毎日のトークン使用量",
     "Daily input, cache, and output tokens over the last 30 days.": "過去 30 日間の毎日の入力、キャッシュ、出力トークン。",
     "Input (cached)": "入力 (キャッシュ済み)",
@@ -6337,6 +6337,10 @@
     "References may have moved or been removed. Return to the first page.": "文献が移動または削除された可能性があります。最初のページに戻ってください。",
     "First page": "最初のページ",
     "PDF text could not be read. For scanned pages, use a searchable PDF. Review the metadata before importing.": "PDF のテキストを読み取れませんでした。スキャンしたページには、テキスト検索が可能な PDF を使用してください。インポート前にメタデータを確認してください。",
-    "Some metadata could not be retrieved. Review the available details before importing.": "一部のメタデータを取得できませんでした。インポート前に取得済みの情報を確認してください。"
+    "Some metadata could not be retrieved. Review the available details before importing.": "一部のメタデータを取得できませんでした。インポート前に取得済みの情報を確認してください。",
+    "Running": "実行中",
+    "Pinned": "固定済み",
+    "Recent sessions": "最近のセッション",
+    "More": "多い"
   }
 }

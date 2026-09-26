@@ -294,6 +294,9 @@ vi.mock('./ipc', () => ({
   registerIpcHandlers: async () => ({
     dispose: fixture.disposeRuntime,
     openSessionPackageFile: fixture.openSessionPackageFile,
+    applicationEvents: { subscribe: () => () => undefined },
+    listTrayNavigationSessions: async () => [],
+    detectActiveSessions: () => [],
     notificationInbox: {
       configureDesktop: fixture.configureDesktop,
       syncViewState: fixture.syncViewState,
@@ -316,6 +319,7 @@ vi.mock('./storage/migration-state', () => ({
 vi.mock('./tray', () => ({
   createAppTray: vi.fn(),
   refreshAppTrayLocale: vi.fn(),
+  refreshAppTrayNavigation: vi.fn(),
   setTrayIconVariant: vi.fn()
 }))
 vi.mock('./app-lifecycle', () => ({

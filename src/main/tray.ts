@@ -1,11 +1,25 @@
-import { Menu, Tray, nativeImage, screen, type NativeImage } from 'electron'
+import {
+  Menu,
+  Tray,
+  nativeImage,
+  screen,
+  type MenuItemConstructorOptions,
+  type NativeImage
+} from 'electron'
 
 import { DEFAULT_APP_ICON_VARIANT, type AppIconVariant } from '../shared/settings'
+import type { ActiveSessionInfo } from '../shared/storage'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import { createLogger } from './logger'
+import {
+  buildTrayNavigationSections,
+  type TrayNavigationSession,
+  type TrayNavigationSection
+} from './tray-navigation'
 
 const logger = createLogger('tray')
 const trayMenuRefreshers = new WeakMap<Tray, () => void>()
+const trayNavigationRefreshers = new WeakMap<Tray, () => Promise<void>>()
 
 // Builds a NativeImage for one app-icon variant, or undefined when the asset is missing/unreadable,
 // so callers fall back instead of blanking the tray.
@@ -103,6 +117,9 @@ const createAppTray = (opts: {
   headless?: boolean
   onOpenWeb?: () => void | Promise<void>
   onCopyWebUrl?: () => void | Promise<void>
+  getNavigationSessions?: () => Promise<readonly TrayNavigationSession[]>
+  getRunningSessions?: () => readonly ActiveSessionInfo[]
+  onOpenSession?: (sessionId: string) => void
   translate?: NativeTranslator
 }): Tray | undefined => {
   // GTK tray initialization can abort the process without a display, outside JS error handling.
@@ -129,7 +146,56 @@ const createAppTray = (opts: {
     const headlessWeb = opts.headless && opts.onOpenWeb && opts.onCopyWebUrl
     const translate = opts.translate ?? englishNativeTranslator
     let menu: ReturnType<typeof Menu.buildFromTemplate>
+    let navigationSessions: readonly TrayNavigationSession[] = []
+    let navigationLoaded = false
+    let navigationRefreshGeneration = 0
+
+    const sessionMenuItem = (session: TrayNavigationSession): MenuItemConstructorOptions => {
+      const shorten = (value: string): string => {
+        const characters = Array.from(value.replace(/[\r\n\t]+/g, ' '))
+        return characters.length > 60 ? `${characters.slice(0, 59).join('')}…` : characters.join('')
+      }
+      const title = shorten(session.title.trim() || session.id)
+      const label = session.projectName ? `${title} — ${shorten(session.projectName)}` : title
+      return {
+        label: process.platform === 'win32' ? label.replaceAll('&', '&&') : label,
+        click: () => {
+          if (opts.onOpenSession) opts.onOpenSession(session.id)
+          else opts.onShow()
+        }
+      }
+    }
+
+    const sectionMenuItems = (section: TrayNavigationSection): MenuItemConstructorOptions[] => {
+      const items = section.items.map(sessionMenuItem)
+      if (section.overflow.length > 0) {
+        items.push({
+          label: translate('More items'),
+          submenu: section.overflow.map(sessionMenuItem)
+        })
+      }
+      return items
+    }
+
+    const navigationMenuItems = (): MenuItemConstructorOptions[] => {
+      if (!navigationLoaded || !opts.getNavigationSessions || headlessWeb) return []
+      const sections = buildTrayNavigationSections(
+        navigationSessions,
+        opts.getRunningSessions?.() ?? []
+      )
+      const labels: Record<TrayNavigationSection['kind'], string> = {
+        running: translate('Running sessions'),
+        pinned: translate('Pinned sessions'),
+        recent: translate('Recent items')
+      }
+      return sections.flatMap((section) => [
+        { label: labels[section.kind], enabled: false },
+        ...sectionMenuItems(section)
+      ])
+    }
+
     const rebuildMenu = (): void => {
+      const navigationItems = navigationMenuItems()
       menu = Menu.buildFromTemplate(
         headlessWeb
           ? [
@@ -140,6 +206,8 @@ const createAppTray = (opts: {
             ]
           : [
               { label: translate('Show'), click: () => opts.onShow() },
+              ...navigationItems,
+              ...(navigationItems.length > 0 ? [{ type: 'separator' as const }] : []),
               { label: translate('Hide'), click: () => opts.onHide() },
               { type: 'separator' },
               { label: translate('Quit', { context: 'verb' }), click: () => opts.onQuit() }
@@ -147,8 +215,25 @@ const createAppTray = (opts: {
       )
       if (!(process.platform === 'win32' && headlessWeb)) tray.setContextMenu(menu)
     }
+
+    const refreshNavigation = async (): Promise<void> => {
+      if (!opts.getNavigationSessions || headlessWeb) return
+      const generation = ++navigationRefreshGeneration
+      try {
+        const sessions = await opts.getNavigationSessions()
+        if (generation !== navigationRefreshGeneration || tray.isDestroyed()) return
+        navigationSessions = sessions
+        navigationLoaded = true
+        rebuildMenu()
+      } catch (error) {
+        logger.warn('failed to load tray navigation sessions', error)
+      }
+    }
+
     rebuildMenu()
     trayMenuRefreshers.set(tray, rebuildMenu)
+    trayNavigationRefreshers.set(tray, refreshNavigation)
+    void refreshNavigation()
 
     tray.setToolTip(headlessWeb ? 'Open-Science (Web)' : 'Open-Science')
 
@@ -170,6 +255,7 @@ const createAppTray = (opts: {
       tray.on('double-click', primaryAction)
     } else {
       tray.on('click', primaryAction)
+      tray.on('right-click', () => void refreshNavigation())
     }
 
     return tray
@@ -185,4 +271,9 @@ const refreshAppTrayLocale = (tray: Tray | undefined): void => {
   trayMenuRefreshers.get(tray)?.()
 }
 
-export { createAppTray, refreshAppTrayLocale, setTrayIconVariant }
+const refreshAppTrayNavigation = (tray: Tray | undefined): void => {
+  if (!tray || tray.isDestroyed()) return
+  void trayNavigationRefreshers.get(tray)?.()
+}
+
+export { createAppTray, refreshAppTrayLocale, refreshAppTrayNavigation, setTrayIconVariant }

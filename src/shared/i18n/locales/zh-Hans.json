@@ -126,7 +126,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原包文件不可用，可能已移动、删除或无法读取。请选择其他包文件。",
     "Could not fork this Session: {{reason}}": "无法创建此会话的副本：{{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本发布需要恢复（操作 {{operationId}}，会话 {{sessionId}}）。请重启应用恢复此次操作，然后再创建副本。",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。"
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。",
+    "Running sessions": "运行中",
+    "Pinned sessions": "已固定",
+    "Recent items": "最近会话",
+    "More items": "更多会话"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "在查询药物基因组学注释前，按 ClinPGx accession ID 或名称解析 ClinPGx 药物/化学物质记录。",
@@ -2186,7 +2190,6 @@
     "Pin project": "固定项目",
     "Pin this folder": "固定此文件夹",
     "Pin this folder to the Go to menu": "将此文件夹固定到“转到”菜单",
-    "Pinned": "已固定",
     "Pinned project": "已置顶项目",
     "Plan approved": "计划已批准",
     "Plan blocked": "计划受阻",
@@ -2299,7 +2302,6 @@
     "Reasoning effort": "推理强度",
     "Reasoning effort levels": "推理强度档位",
     "Reasoning effort request format": "推理强度请求格式",
-    "Recent sessions": "最近会话",
     "Recheck": "重新检测",
     "Recheck message snapshot": "重新检查消息快照",
     "Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.": "推荐。使用 ~/.claude 中你现有的 Claude 登录。通过浏览器 OAuth 登录一次，即可在所有 Claude 工具中使用。",
@@ -2533,7 +2535,6 @@
     "Run marks": "运行标记",
     "Run {{runNumber}} · Message {{messageNumber}}": "运行 {{runNumber}} · 消息 {{messageNumber}}",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "运行 {{run}}，{{state}}，{{tokens}} 个上下文窗口词元",
-    "Running": "运行中",
     "Runtime": "运行时",
     "Runtime_duration": "运行时长",
     "Runtimes": "运行时",
@@ -3760,7 +3761,6 @@
     "Daily activity metric": "每日活跃度指标",
     "Daily activity for the last 30 days": "近 30 天每日活跃度",
     "Less": "少",
-    "More": "多",
     "Daily token usage": "每日词元用量",
     "Daily input, cache, and output tokens over the last 30 days.": "近 30 天每天的输入、缓存和输出词元用量。",
     "Input (cached)": "输入（命中缓存）",
@@ -6337,6 +6337,10 @@
     "References may have moved or been removed. Return to the first page.": "文献可能已移动或移除，请返回第一页。",
     "First page": "第一页",
     "PDF text could not be read. For scanned pages, use a searchable PDF. Review the metadata before importing.": "无法读取 PDF 文本。对于扫描页面，请使用可搜索的 PDF。导入前请检查元数据。",
-    "Some metadata could not be retrieved. Review the available details before importing.": "未能获取部分元数据。导入前请检查已有信息。"
+    "Some metadata could not be retrieved. Review the available details before importing.": "未能获取部分元数据。导入前请检查已有信息。",
+    "Running": "运行中",
+    "Pinned": "已固定",
+    "Recent sessions": "最近会话",
+    "More": "多"
   }
 }

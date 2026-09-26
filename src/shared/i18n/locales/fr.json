@@ -128,7 +128,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Le paquet d’origine est indisponible. Il a peut-être été déplacé, supprimé ou est devenu illisible. Choisissez un autre paquet.",
     "Could not fork this Session: {{reason}}": "Impossible de dupliquer cette session : {{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "La publication de la copie doit être rétablie (opération {{operationId}}, session {{sessionId}}). Redémarrez l’application pour récupérer cette opération avant de dupliquer à nouveau.",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Ce paquet de session nécessite une version plus récente d’Open Science. Mettez Open Science à jour, puis réessayez de l’importer."
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Ce paquet de session nécessite une version plus récente d’Open Science. Mettez Open Science à jour, puis réessayez de l’importer.",
+    "Running sessions": "En cours",
+    "Pinned sessions": "Épinglé",
+    "Recent items": "Sessions récentes",
+    "More items": "Plus de sessions"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Résoudre les enregistrements de médicaments ou de substances chimiques ClinPGx par identifiant d’accès ClinPGx ou par nom avant d’interroger les annotations pharmacogénomiques.",
@@ -2166,7 +2170,6 @@
     "Pin project": "Épingler le projet",
     "Pin this folder": "Épingler ce dossier",
     "Pin this folder to the Go to menu": "Épinglez ce dossier au menu Aller à",
-    "Pinned": "Épinglé",
     "Pinned project": "Projet épinglé",
     "Plan approved": "Plan approuvé",
     "Plan blocked": "Plan bloqué",
@@ -2278,7 +2281,6 @@
     "Reasoning effort": "Effort de raisonnement",
     "Reasoning effort levels": "Niveaux d’effort de raisonnement",
     "Reasoning effort request format": "Format de demande d'effort de raisonnement",
-    "Recent sessions": "Sessions récentes",
     "Recheck": "Revérifier",
     "Recheck message snapshot": "Revérifier l’instantané des messages",
     "Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.": "Recommandé. Utilise votre connexion Claude existante à partir de ~/.claude. Connectez-vous une fois via le navigateur OAuth et utilisez tous les outils Claude.",
@@ -2533,7 +2535,6 @@
     "Run marks": "Marques d'exécution",
     "Run {{runNumber}} · Message {{messageNumber}}": "Exécution {{runNumber}} · Message {{messageNumber}}",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "Exécution {{run}}, {{state}}, {{tokens}} jetons de fenêtre de contexte",
-    "Running": "En cours",
     "Runtime": "Environnement d'exécution",
     "Runtime_duration": "Durée d'exécution",
     "Runtimes": "Environnements d'exécution",
@@ -3943,7 +3944,6 @@
     "Daily activity metric": "Mesure d'activité quotidienne",
     "Daily activity for the last 30 days": "Activité quotidienne des 30 derniers jours",
     "Less": "Moins",
-    "More": "Plus",
     "Daily token usage": "Utilisation quotidienne des jetons",
     "Daily input, cache, and output tokens over the last 30 days.": "Jetons d'entrée, de cache et de sortie quotidiens au cours des 30 derniers jours.",
     "Input (cached)": "Entrée (mise en cache)",
@@ -6661,6 +6661,10 @@
     "References may have moved or been removed. Return to the first page.": "Les références ont peut-être été déplacées ou supprimées. Revenez à la première page.",
     "First page": "Première page",
     "PDF text could not be read. For scanned pages, use a searchable PDF. Review the metadata before importing.": "Le texte du PDF n’a pas pu être lu. Pour les pages numérisées, utilisez un PDF permettant la recherche de texte. Vérifiez les métadonnées avant l’importation.",
-    "Some metadata could not be retrieved. Review the available details before importing.": "Certaines métadonnées n’ont pas pu être récupérées. Vérifiez les informations disponibles avant l’importation."
+    "Some metadata could not be retrieved. Review the available details before importing.": "Certaines métadonnées n’ont pas pu être récupérées. Vérifiez les informations disponibles avant l’importation.",
+    "Running": "En cours",
+    "Pinned": "Épinglé",
+    "Recent sessions": "Sessions récentes",
+    "More": "Plus"
   }
 }

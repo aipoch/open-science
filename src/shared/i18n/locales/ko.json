@@ -126,7 +126,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "원본 패키지를 사용할 수 없습니다. 이동 또는 삭제되었거나 읽을 수 없는 상태일 수 있습니다. 다른 패키지를 선택하세요.",
     "Could not fork this Session: {{reason}}": "이 세션을 복제할 수 없습니다: {{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "복제 게시를 복구해야 합니다(작업 {{operationId}}, 세션 {{sessionId}}). 다시 복제하기 전에 앱을 다시 시작하여 이 작업을 복구하세요.",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "이 세션 패키지에는 더 최신 버전의 Open Science가 필요합니다. Open Science를 업데이트한 후 다시 가져오세요."
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "이 세션 패키지에는 더 최신 버전의 Open Science가 필요합니다. Open Science를 업데이트한 후 다시 가져오세요.",
+    "Running sessions": "실행 중",
+    "Pinned sessions": "고정됨",
+    "Recent items": "최근 세션",
+    "More items": "더 많은 세션"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 이름으로 ClinPGx 약물/화학물질 레코드를 확인합니다.",
@@ -2110,7 +2114,6 @@
     "Pin project": "프로젝트 고정",
     "Pin this folder": "이 폴더 고정",
     "Pin this folder to the Go to menu": "이 폴더를 이동 메뉴에 고정하세요.",
-    "Pinned": "고정됨",
     "Pinned project": "고정된 프로젝트",
     "Plan approved": "계획 승인됨",
     "Plan blocked": "계획이 차단됨",
@@ -2222,7 +2225,6 @@
     "Reasoning effort": "추론 강도",
     "Reasoning effort levels": "추론 강도 레벨",
     "Reasoning effort request format": "추론 강도 요청 형식",
-    "Recent sessions": "최근 세션",
     "Recheck": "재확인",
     "Recheck message snapshot": "메시지 스냅샷 다시 확인",
     "Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.": "추천합니다. ~/.claude의 기존 Claude 로그인을 사용합니다. 브라우저 OAuth를 통해 한 번 로그인하면 모든 Claude 도구에서 사용할 수 있습니다.",
@@ -2453,7 +2455,6 @@
     "Run marks": "실행 표시",
     "Run {{runNumber}} · Message {{messageNumber}}": "{{runNumber}} · 메시지 {{messageNumber}} 실행",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "{{run}}, {{state}}, {{tokens}} 컨텍스트-창 토큰 실행",
-    "Running": "실행 중",
     "Runtime": "런타임",
     "Runtime_duration": "런타임",
     "Runtimes": "런타임",
@@ -3684,7 +3685,6 @@
     "Daily activity metric": "일일 활동 측정항목",
     "Daily activity for the last 30 days": "지난 30일 동안의 일일 활동",
     "Less": "덜",
-    "More": "더보기",
     "Daily token usage": "일일 토큰 사용량",
     "Daily input, cache, and output tokens over the last 30 days.": "지난 30일 동안 일일 입력 캐시 및 출력 토큰입니다.",
     "Input (cached)": "입력(캐시됨)",
@@ -6335,6 +6335,10 @@
     "References may have moved or been removed. Return to the first page.": "문헌이 이동되거나 삭제되었을 수 있습니다. 첫 페이지로 돌아가세요.",
     "First page": "첫 페이지",
     "PDF text could not be read. For scanned pages, use a searchable PDF. Review the metadata before importing.": "PDF 텍스트를 읽을 수 없습니다. 스캔한 페이지는 텍스트 검색이 가능한 PDF를 사용하세요. 가져오기 전에 메타데이터를 확인하세요.",
-    "Some metadata could not be retrieved. Review the available details before importing.": "일부 메타데이터를 가져오지 못했습니다. 가져오기 전에 확인 가능한 정보를 검토하세요."
+    "Some metadata could not be retrieved. Review the available details before importing.": "일부 메타데이터를 가져오지 못했습니다. 가져오기 전에 확인 가능한 정보를 검토하세요.",
+    "Running": "실행 중",
+    "Pinned": "고정됨",
+    "Recent sessions": "최근 세션",
+    "More": "더보기"
   }
 }
