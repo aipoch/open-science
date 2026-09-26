@@ -7445,6 +7445,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/context-window-trend.ts',
       'src/renderer/src/pages/workspace/generate-plan-activity-projection.ts',
       'src/renderer/src/pages/workspace/preview-file-item.ts',
+      'src/renderer/src/pages/workspace/previews/LibraryChatButton.tsx',
       'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
