@@ -22,6 +22,9 @@ import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { literatureReadingDocument } from '../literature/literature-reading'
 import { createPreviewFileItemFromPdfContext } from './preview-file-item'
 
+// jsdom does not implement layout scrolling; real visibility is covered in keyboard-focus.spec.ts.
+Element.prototype.scrollIntoView ??= () => undefined
+
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
     <div>{children}</div>

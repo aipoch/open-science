@@ -498,7 +498,7 @@ describe('release-gate Subagent surfaces', () => {
     expect(screen.queryByRole('button', { name: /stop/i })).toBeNull()
 
     const closeButton = screen.getByRole('button', { name: 'Close Subagents preview' })
-    expect(closeButton.className).toContain('focus-visible:ring-[3px]')
+    expect(closeButton.className).toContain('focus-visible:keyboard-focus')
     fireEvent.click(closeButton)
     expect(document.activeElement).toBe(trigger)
   })
@@ -1067,7 +1067,7 @@ describe('release-gate Subagent surfaces', () => {
       'The agent cannot create new Subagents. Enable Delegation from the composer agent controls menu.'
     )
     const turnOnButton = screen.getByRole('button', { name: 'Turn on Delegation' })
-    expect(turnOnButton.className).toContain('focus-visible:ring-[3px]')
+    expect(turnOnButton.className).toContain('focus-visible:keyboard-focus')
     fireEvent.click(turnOnButton)
     expect(onTurnOnDelegation).toHaveBeenCalledOnce()
   })
@@ -1093,7 +1093,7 @@ describe('release-gate Subagent surfaces', () => {
       'The configured Subagent model is unavailable.'
     )
     const settingsButton = screen.getByRole('button', { name: 'Open Settings' })
-    expect(settingsButton.className).toContain('focus-visible:ring-[3px]')
+    expect(settingsButton.className).toContain('focus-visible:keyboard-focus')
     fireEvent.click(settingsButton)
     expect(onOpenSettings).toHaveBeenCalledOnce()
   })

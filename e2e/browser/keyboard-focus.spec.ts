@@ -195,3 +195,77 @@ for (const dark of [false, true]) {
     await expect(tab).toHaveCount(0)
   })
 }
+
+for (const dark of [false, true]) {
+  test(`keeps environment chips inside the Notebook scroller (${dark ? 'dark' : 'light'})`, async ({
+    page
+  }, testInfo) => {
+    await page.goto(`/preview-keyboard.html?environments${dark ? '&dark' : ''}`)
+    const python = page.getByTestId('kernel-switcher-python')
+    await expect(python).toBeVisible()
+    await python.click()
+    await page.keyboard.press('Tab')
+    await expect(page.getByRole('button', { name: 'Inspect variables', exact: true })).toBeFocused()
+    const environments = page.getByTestId('env-selector').getByRole('button')
+    for (const target of await environments.all()) {
+      await page.keyboard.press('Tab')
+      await expect(target).toBeFocused()
+      const appearance = await focusAppearance(target)
+      expect(appearance.style).toBe('solid')
+      expect(appearance.width).toBe(2)
+      expect(appearance.offset).toBeLessThanOrEqual(-appearance.width)
+      await expect(page.getByTestId('env-selector')).toHaveCSS('mask-image', 'none')
+      await expect
+        .poll(async () => {
+          const bounds = (await target.boundingBox())!
+          const scroller = (await page.getByTestId('env-selector').boundingBox())!
+          return Math.max(
+            scroller.x - bounds.x,
+            bounds.x + bounds.width - scroller.x - scroller.width
+          )
+        })
+        .toBeLessThanOrEqual(1)
+    }
+    await page.locator('main').screenshot({ path: testInfo.outputPath('environment-focus.png') })
+  })
+
+  test(`skips Notebook history wrappers and keeps kernel navigation (${dark ? 'dark' : 'light'})`, async ({
+    page
+  }, testInfo) => {
+    await page.goto(`/preview-keyboard.html?history${dark ? '&dark' : ''}`)
+    const python = page.getByRole('tab', { name: 'Python 1', exact: true })
+    const r = page.getByRole('tab', { name: 'R 1', exact: true })
+    await python.click()
+    await page.keyboard.press('ArrowRight')
+    await expect(r).toBeFocused()
+    const appearance = await focusAppearance(r)
+    expect(appearance.style).toBe('solid')
+    expect(appearance.width).toBe(2)
+    expect(appearance.offset).toBeLessThanOrEqual(-appearance.width)
+    expect(appearance.contrast).toBeGreaterThanOrEqual(3)
+    await expect(page.getByRole('tabpanel')).toHaveAttribute('tabindex', '-1')
+    await page.keyboard.press('Tab')
+    const copy = page.getByRole('button', { name: 'Copy to clipboard', exact: true })
+    await expect(copy).toBeFocused()
+    expect((await focusAppearance(copy)).opacity).toBe(1)
+    expect((await focusAppearance(copy)).contrast).toBeGreaterThanOrEqual(3)
+    await page.keyboard.press('Shift+Tab')
+    await expect(r).toBeFocused()
+    await page.locator('main').screenshot({ path: testInfo.outputPath('history-kernel-focus.png') })
+  })
+}
+
+test('skips Settings content wrappers without changing tab activation', async ({ page }) => {
+  await page.goto('/tab-motion.html')
+  const models = page.locator('[data-models]')
+  await models.getByRole('tab', { name: 'Local parsing models', exact: true }).click()
+  await page.keyboard.press('Tab')
+  await expect(
+    models.getByRole('link', { name: 'microsoft/table-transformer', exact: true })
+  ).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(models.getByRole('button', { name: 'Install', exact: true })).toBeFocused()
+  await expect(models.getByRole('tabpanel')).toHaveAttribute('tabindex', '-1')
+  const capabilities = page.locator('[data-capabilities]')
+  await expect(capabilities.getByRole('tabpanel')).toHaveAttribute('tabindex', '-1')
+})

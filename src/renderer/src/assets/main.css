@@ -636,6 +636,12 @@
     );
   }
 
+  /* Edge fades must not erase a keyboard-focused chip or its outline. */
+  .scroll-fade-x:has(:focus-visible) {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
   /* Keep scrollbars available without letting idle tracks compete with the content. */
   .scrollbar-auto-hide {
     scrollbar-color: transparent transparent;

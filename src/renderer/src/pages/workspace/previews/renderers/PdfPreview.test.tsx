@@ -446,6 +446,7 @@ describe('PdfPreviewContent', () => {
     expect(navigationToggle.closest('[role="tablist"]')).not.toBeNull()
     expect(navigationToggle.closest('[data-pdf-controls="interaction"]')).toBeNull()
     expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
+    expect(notebook.getAttribute('tabindex')).toBe('-1')
     expect(notebook.getAttribute('aria-hidden')).toBe('false')
     expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe(
       '320px'
@@ -533,6 +534,9 @@ describe('PdfPreviewContent', () => {
     )
     const original = container.querySelector<HTMLElement>('[data-pdf-original-view]')!
     const scroller = original.querySelector<HTMLElement>('[role="region"]')!
+    // Only the real PDF scroller is a keyboard stop, not its structural tab wrapper.
+    expect(original.tabIndex).toBe(-1)
+    expect(scroller.tabIndex).toBe(0)
     scroller.scrollTop = 275
     const clickMode = async (label: string): Promise<void> => {
       const button = [...container.querySelectorAll('button')].find(
@@ -550,6 +554,7 @@ describe('PdfPreviewContent', () => {
     )
     expect(original.getAttribute('aria-hidden')).toBe('true')
     expect(original.hasAttribute('inert')).toBe(true)
+    expect(container.querySelector('[data-pdf-figures-view]')?.getAttribute('tabindex')).toBe('-1')
     const figures = container.querySelector('[data-pdf-figures-content]')
     expect(figures).not.toBeNull()
     await act(async () => {

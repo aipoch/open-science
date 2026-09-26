@@ -1624,7 +1624,7 @@ const ArtifactProvenancePanel = ({
               value={tab.id}
               title={t(tab.label)}
               onClick={() => setActiveTab(tab.id)}
-              className={`min-w-0 truncate whitespace-nowrap rounded px-2 py-1 text-xs ${isUserEdit || activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
+              className={`min-w-0 truncate whitespace-nowrap rounded px-2 py-1 text-xs focus-visible:keyboard-focus focus-visible:-outline-offset-2 ${isUserEdit || activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
             >
               {t(tab.label)}
             </Tabs.Trigger>

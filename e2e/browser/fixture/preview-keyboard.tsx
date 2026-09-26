@@ -2,6 +2,7 @@ import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { SessionNotebookContent } from '@/pages/workspace/SessionNotebookDialog'
 import { PreviewPanelSurface } from '@/pages/workspace/PreviewPanel'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import type { NotebookPreviewItem } from '@/pages/workspace/NotebookPreview'
@@ -11,7 +12,8 @@ import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import type { NotebookRunRecord } from '../../../src/shared/notebook'
 
 initI18n('en')
-document.documentElement.classList.toggle('dark', new URLSearchParams(location.search).has('dark'))
+const params = new URLSearchParams(location.search)
+document.documentElement.classList.toggle('dark', params.has('dark'))
 const reference = {
   sessionId: 'session',
   projectId: 'project',
@@ -57,7 +59,13 @@ window.api = {
       runs: [run],
       recentRuns: [run],
       runStaleness: {},
-      environments: []
+      environments: params.has('environments')
+        ? [
+            'default-python',
+            'analysis-with-a-long-environment-name',
+            'another-analysis-environment'
+          ].map((environment) => ({ kind: 'python', environment, status: 'idle' }))
+        : []
     }),
     onChanged: () => () => undefined
   }
@@ -82,7 +90,19 @@ createRoot(document.getElementById('root')!).render(
   <TooltipProvider>
     <button type="button">Before preview</button>
     <main style={{ height: 600, width: 440 }}>
-      <PreviewPanelSurface />
+      {params.has('history') ? (
+        <SessionNotebookContent
+          sessionId="session"
+          frameLabels={{ root: 'Main Agent' }}
+          runs={[run, { ...run, runId: 'r-run', kernelKind: 'r' }]}
+          status="ready"
+          onClose={() => undefined}
+          onExport={async () => undefined}
+          onExportAll={async () => undefined}
+        />
+      ) : (
+        <PreviewPanelSurface />
+      )}
     </main>
   </TooltipProvider>
 )

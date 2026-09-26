@@ -426,7 +426,7 @@ const SessionNotebookContent = ({
                 <span>{t('Failed to load earlier runs.')}</span>
                 <button
                   type="button"
-                  className="h-8 shrink-0 rounded-md px-2.5 text-xs text-foreground hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px"
+                  className="h-8 shrink-0 rounded-md px-2.5 text-xs text-foreground hover:bg-bg-200 focus-visible:keyboard-focus focus-visible:-outline-offset-2 active:translate-y-px"
                   onClick={onLoadEarlier}
                 >
                   {t('Retry')}
@@ -435,7 +435,7 @@ const SessionNotebookContent = ({
             ) : historyPage?.hasEarlierRuns && !supportsAutomaticHistoryLoading ? (
               <button
                 type="button"
-                className="flex h-9 w-full items-center justify-center border-b border-border bg-muted px-4 text-xs text-foreground hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 active:translate-y-px"
+                className="flex h-9 w-full items-center justify-center border-b border-border bg-muted px-4 text-xs text-foreground hover:bg-bg-200 focus-visible:keyboard-focus focus-visible:-outline-offset-2 active:translate-y-px"
                 onClick={onLoadEarlier}
               >
                 {t('Load earlier runs')}
@@ -508,7 +508,7 @@ const SessionNotebookContent = ({
                   }}
                   data-testid={`session-notebook-tab-${kind}`}
                   className={cn(
-                    'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                    'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors focus-visible:keyboard-focus focus-visible:-outline-offset-2',
                     effectiveActiveKind === kind
                       ? 'bg-card text-foreground'
                       : 'text-muted-foreground hover:bg-card/70 hover:text-foreground'
@@ -529,6 +529,7 @@ const SessionNotebookContent = ({
               ))}
             <Tabs.Content
               value={effectiveActiveKind}
+              tabIndex={-1}
               className="divide-y divide-border-100"
               data-testid={`session-notebook-kernel-${effectiveActiveKind}`}
             >

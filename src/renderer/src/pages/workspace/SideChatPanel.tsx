@@ -268,7 +268,7 @@ const SideChatPanel = ({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="grid size-7 place-items-center rounded-md text-text-300 transition-colors duration-150 hover:bg-bg-200 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
+                  className="grid size-7 place-items-center rounded-md text-text-300 transition-colors duration-150 hover:bg-bg-200 hover:text-text-000 focus-visible:keyboard-focus active:bg-bg-300 motion-reduce:transition-none"
                   aria-label={t('Close Side chat')}
                   onClick={onClose}
                 >
@@ -453,7 +453,7 @@ const SideChatPanel = ({
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    className="grid size-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-colors duration-150 hover:bg-primary/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary motion-reduce:transition-none motion-reduce:active:translate-y-0"
+                    className="grid size-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-colors duration-150 hover:bg-primary/80 focus-visible:keyboard-focus active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary motion-reduce:transition-none motion-reduce:active:translate-y-0"
                     disabled={
                       view.running
                         ? !view.sideSessionId

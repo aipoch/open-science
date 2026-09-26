@@ -3088,7 +3088,7 @@ export const PdfPreviewContent = ({
           </TooltipProvider>
         ) : null}
         <div ref={readerRef} className="relative min-h-0 flex-1">
-          <Tabs.Content value="original" forceMount asChild>
+          <Tabs.Content value="original" tabIndex={-1} forceMount asChild>
             <div
               className={cn(
                 presentation === 'search' ? 'flex' : 'absolute inset-0 flex',
@@ -3295,7 +3295,7 @@ export const PdfPreviewContent = ({
             </div>
           </Tabs.Content>
           {attachmentVersionId && figuresVisited && document ? (
-            <Tabs.Content value="figures" forceMount asChild>
+            <Tabs.Content value="figures" tabIndex={-1} forceMount asChild>
               <div
                 className={cn(
                   'absolute inset-0',
@@ -3322,6 +3322,7 @@ export const PdfPreviewContent = ({
           {(attachmentVersionId || pdfBookmarkSource) && presentation !== 'search' ? (
             <Tabs.Content
               value="notes"
+              tabIndex={-1}
               forceMount
               asChild
               role={showNotesSidebar ? 'complementary' : 'tabpanel'}

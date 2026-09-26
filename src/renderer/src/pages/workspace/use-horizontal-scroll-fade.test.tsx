@@ -98,3 +98,21 @@ describe('useHorizontalScrollFade', () => {
     expect(observe).toHaveBeenCalledTimes(1)
   })
 })
+
+it('reveals keyboard-focused controls and removes the listener when detached', () => {
+  const { unmount } = render(<TestStrip />)
+  const strip = screen.getByTestId('strip')
+  const button = document.createElement('button')
+  strip.append(button)
+  const scrollIntoView = vi.fn()
+  button.scrollIntoView = scrollIntoView
+  const matches = vi.spyOn(button, 'matches').mockReturnValue(false)
+  fireEvent.focusIn(button)
+  expect(scrollIntoView).not.toHaveBeenCalled()
+  matches.mockReturnValue(true)
+  fireEvent.focusIn(button)
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
+  unmount()
+  fireEvent.focusIn(button)
+  expect(scrollIntoView).toHaveBeenCalledTimes(1)
+})
