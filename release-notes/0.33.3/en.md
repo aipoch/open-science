@@ -18,6 +18,7 @@
 - Hover hints and bubble motion are unified across the interface. (#3010)
 - New message arrivals animate in the message center. (#3025)
 - Message navigation gets a dense, continuous hover wave for smoother scanning. (#3004)
+- ClinPGx pharmacogenomics queries in the clinical-genomics connector: drug-gene-variant clinical annotations, dosing guidelines, regulatory labels, variant frequencies, and evidence levels. (#3007)
 
 ## 🔧 Improvements
 
@@ -29,3 +30,4 @@
 - **Notebook** — kernel recovery fences are isolated by lane so one kernel's recovery never blocks another (#3031).
 - **Sessions and recovery** — conversation saves defer while runs are active (#3012); failed retries stay recoverable and dismissible (#3019); run error notices can be dismissed (#3002); the archive recovery gate is scoped to affected projects (#3023); renamed diagnostic exports receive an archive suffix (#3022).
 - **Connectors and literature** — native file access honors granted folders (#3021); Crossref abstracts import during metadata completion (#3020); classification selects the first model for both features (#3006).
+- **Skills and session packages** — skills package metadata and managed Python runtimes are handled correctly (#3033); session-package exports allow numeric cache usage (#3043); numeric token metrics are preserved during export (#3040).

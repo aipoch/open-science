@@ -18,6 +18,7 @@
 - Hover-Hinweise und Bubble-Bewegungen sind über die gesamte Oberfläche vereinheitlicht. (#3010)
 - Neue Nachrichten werden im Nachrichtenzentrum animiert eingeblendet. (#3025)
 - Die Nachrichtennavigation erhält eine dichte, durchgehende Hover-Welle für flüssigeres Scannen. (#3004)
+- ClinPGx-Pharmakogenomik-Abfragen im klinischen Genomik-Konnektor: klinische Annotationen zu Arzneimittel-Gen-Varianten, Dosierungsrichtlinien, behördliche Kennzeichnungen, Variantenhäufigkeiten und Evidenzniveaus. (#3007)
 
 ## 🔧 Verbesserungen
 
@@ -29,3 +30,4 @@
 - **Notebook** — Kernel-Wiederherstellungen werden nach Lane isoliert, sodass die Wiederherstellung eines Kernels niemals einen anderen blockiert (#3031).
 - **Sitzungen und Wiederherstellung** — Gesprächsspeicherungen werden während aktiver Läufe verschoben (#3012); fehlgeschlagene Wiederholungen bleiben wiederherstellbar und schließbar (#3019); Fehlermeldungen zu Läufen können geschlossen werden (#3002); die Archiv-Wiederherstellungssperre gilt nur für betroffene Projekte (#3023); umbenannte Diagnose-Exporte erhalten ein Archiv-Suffix (#3022).
 - **Konnektoren und Literature** — Der native Dateizugriff respektiert gewährte Ordner (#3021); Crossref-Abstracts werden beim Vervollständigen der Metadaten importiert (#3020); die Klassifikation wählt für beide Funktionen das erste Modell (#3006).
+- **Skills und Sitzungspakete** — Metadaten von Skills-Paketen und verwaltete Python-Laufzeiten werden korrekt verarbeitet (#3033); Sitzungspaket-Exporte erlauben numerische Cache-Nutzung (#3043); numerische Token-Metriken bleiben beim Export erhalten (#3040).

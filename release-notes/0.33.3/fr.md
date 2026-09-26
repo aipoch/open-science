@@ -18,6 +18,7 @@
 - Les infobulles au survol et le mouvement des bulles sont unifiés dans toute l’interface. (#3010)
 - Les nouveaux messages apparaissent avec une animation dans le centre de messages. (#3025)
 - La navigation dans les messages gagne une vague de survol dense et continue pour un balayage plus fluide. (#3004)
+- Interrogations pharmacogénomiques ClinPGx dans le connecteur de génomique clinique : annotations cliniques médicament-gène-variant, recommandations de dosage, notices réglementaires, fréquences des variants et niveaux de preuve. (#3007)
 
 ## 🔧 Améliorations
 
@@ -29,3 +30,4 @@
 - **Notebook** — les barrières de récupération des noyaux sont isolées par voie, si bien que la récupération d’un noyau ne bloque jamais un autre (#3031).
 - **Sessions et récupération** — les sauvegardes de conversation sont différées pendant l’exécution des tâches (#3012) ; les nouvelles tentatives échouées restent récupérables et fermables (#3019) ; les notifications d’erreur d’exécution peuvent être fermées (#3002) ; la barrière de récupération des archives est limitée aux projets concernés (#3023) ; les exports de diagnostics renommés reçoivent un suffixe d’archive (#3022).
 - **Connecteurs et literature** — l’accès natif aux fichiers honore les dossiers autorisés (#3021) ; les résumés Crossref sont importés lors de la complétion des métadonnées (#3020) ; la classification sélectionne le premier modèle pour les deux fonctionnalités (#3006).
+- **Compétences et paquets de session** — les métadonnées des paquets de compétences et les runtimes Python gérés sont traités correctement (#3033) ; les exportations de paquets de session autorisent l’utilisation du cache numérique (#3043) ; les métriques de jetons numériques sont préservées lors de l’exportation (#3040).

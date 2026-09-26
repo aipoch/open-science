@@ -18,6 +18,7 @@
 - Las sugerencias al pasar el cursor y el movimiento de las burbujas se unifican en toda la interfaz. (#3010)
 - La llegada de nuevos mensajes se anima en el centro de mensajes. (#3025)
 - La navegación de mensajes recibe una onda densa y continua al pasar el cursor para un escaneo más fluido. (#3004)
+- Consultas de farmacogenómica de ClinPGx en el conector de genómica clínica: anotaciones clínicas de fármaco-gen-variante, directrices de dosificación, etiquetas regulatorias, frecuencias de variantes y niveles de evidencia. (#3007)
 
 ## 🔧 Mejoras
 
@@ -29,3 +30,4 @@
 - **Notebook** — las barreras de recuperación de kernel se aíslan por carril, de modo que la recuperación de un kernel nunca bloquea a otro (#3031).
 - **Sesiones y recuperación** — los guardados de conversación se posponen mientras las ejecuciones están activas (#3012); los reintentos fallidos siguen siendo recuperables y descartables (#3019); los avisos de error de ejecución se pueden descartar (#3002); la puerta de recuperación del archivo se limita a los proyectos afectados (#3023); las exportaciones de diagnóstico renombradas reciben un sufijo de archivo (#3022).
 - **Conectores y literature** — el acceso nativo a archivos respeta las carpetas concedidas (#3021); los resúmenes de Crossref se importan durante la finalización de metadatos (#3020); la clasificación selecciona el primer modelo para ambas funciones (#3006).
+- **Skills y paquetes de sesión** — los metadatos de los paquetes de skills y los entornos de ejecución de Python gestionados se gestionan correctamente (#3033); las exportaciones de paquetes de sesión permiten el uso numérico de la caché (#3043); las métricas numéricas de tokens se conservan durante la exportación (#3040).
