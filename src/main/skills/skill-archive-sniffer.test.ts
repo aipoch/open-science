@@ -149,6 +149,22 @@ describe('isImportableSkillArchivePath', () => {
     await expectMatchesPreview(archive, false)
   })
 
+  it('ignores nested dot-prefixed metadata when sniffing archive eligibility', async () => {
+    const archive = buildZip([
+      {
+        path: 'release/skills/ppt-master/SKILL.md',
+        content: Buffer.from('---\nname: ppt-master\ndescription: d\n---\nRun it.')
+      },
+      {
+        path: 'release/skills/ppt-master/.github/workflows/ci.yml',
+        content: Buffer.from('ignored metadata'),
+        method: 99
+      }
+    ])
+
+    await expectMatchesPreview(archive, true)
+  })
+
   it('bounds ownership checks for long unrelated ZIP paths', async () => {
     const archive = buildZip([
       {

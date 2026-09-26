@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto'
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 
-import { isSkillPackageIgnoredPath } from '../../shared/skill-import-limits'
 import { validateSpecialistPackageVersion } from '../../shared/specialist'
 import type { SpecialistPackageSkillPlan } from '../../shared/specialist-package'
 import type { SpecialistPackageSkillPort } from '../specialist/package/skill-port'
@@ -441,9 +440,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
           await mkdir(dirname(staging), { recursive: true })
           await cp(existingDirectory, staging, {
             recursive: true,
-            errorOnExist: true,
-            filter: async (entry) =>
-              !isSkillPackageIgnoredPath(relative(existingDirectory, entry).replaceAll('\\', '/'))
+            errorOnExist: true
           })
           if ((await directoryHash(staging)) !== skill.contentHash) {
             throw new Error(`Skill ${skill.id} changed after preview.`)
@@ -544,9 +541,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         await mkdir(dirname(staging), { recursive: true })
         await cp(live, staging, {
           recursive: true,
-          errorOnExist: true,
-          filter: async (entry) =>
-            !isSkillPackageIgnoredPath(relative(live, entry).replaceAll('\\', '/'))
+          errorOnExist: true
         })
         const ownerIds = metadata.ownerIds.filter((ownerId) => ownerId !== specialistId).sort()
         await writeFile(

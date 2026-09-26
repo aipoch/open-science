@@ -3,7 +3,7 @@ import { Readable } from 'node:stream'
 import { createInflateRaw } from 'node:zlib'
 
 import { parseSkillDocument } from './frontmatter'
-import { SKILL_IMPORT_LIMITS } from './import-limits'
+import { isSkillPackageIgnoredPath, SKILL_IMPORT_LIMITS } from './import-limits'
 import {
   MAX_SKILL_MANIFEST_ROOT_SEGMENTS,
   selectSkillManifestRoots,
@@ -151,7 +151,7 @@ const findEocd = async (reader: ArchiveReader): Promise<number | undefined> => {
 }
 
 const isMetadataPath = (path: string): boolean =>
-  path.startsWith('__MACOSX/') || path.startsWith('.')
+  path.startsWith('__MACOSX/') || isSkillPackageIgnoredPath(path)
 
 const isUnsafeArchivePath = (path: string): boolean =>
   path.length === 0 ||

@@ -98,6 +98,24 @@ describe('ClaudeCodeSkillMaterializer', () => {
     ).toBe('print(1)')
   })
 
+  it('preserves the internal catalog stamp while filtering package metadata', async () => {
+    const configDir = await skillsDir()
+    const skill = await makeSkill('catalog-stamped')
+    await writeFile(join(skill.sourceDir, '.catalog_stamp'), 'catalog-stamp', 'utf8')
+    await writeFile(join(skill.sourceDir, '.gitignore'), 'ignored', 'utf8')
+
+    await new ClaudeCodeSkillMaterializer().sync(configDir, [skill], {
+      directoryLayout: 'app-owned'
+    })
+
+    await expect(
+      readFile(join(configDir, 'skills', 'os-catalog-stamped', '.catalog_stamp'), 'utf8')
+    ).resolves.toBe('catalog-stamp')
+    await expect(
+      readFile(join(configDir, 'skills', 'os-catalog-stamped', '.gitignore'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('keeps the runtime directory keyed by local id while normalizing SKILL.md to name', async () => {
     const configDir = await skillsDir()
     const skill = await makeSkill('paper-review')

@@ -266,7 +266,8 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
       recursive: true,
       force: true,
       filter: async (entry) => {
-        if (isSkillPackageIgnoredPath(relative(skill.sourceDir, entry).replaceAll('\\', '/'))) {
+        const relativePath = relative(skill.sourceDir, entry).replaceAll('\\', '/')
+        if (isSkillPackageIgnoredPath(relativePath) && relativePath !== '.catalog_stamp') {
           return false
         }
         if ((await lstat(entry)).isSymbolicLink()) {

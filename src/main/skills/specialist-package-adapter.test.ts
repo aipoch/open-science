@@ -227,6 +227,39 @@ describe('UserSkillSpecialistPackageAdapter', () => {
     })
   })
 
+  it('preserves hidden files when removing one owner from a shared Skill', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'specialist-skill-adapter-'))
+    roots.push(root)
+    const directory = join(root, 'skills', 'imported', 'shared-tools')
+    await mkdir(directory, { recursive: true })
+    await writeFile(
+      join(directory, 'SKILL.md'),
+      '---\nname: shared-tools\ndescription: Shared\n---\nUse this Skill.'
+    )
+    await writeFile(join(directory, '.gitignore'), 'keep historical metadata')
+    await writeFile(
+      join(directory, SPECIALIST_PACKAGE_SKILL_METADATA),
+      JSON.stringify({
+        id: 'shared-tools',
+        version: '1.2.3',
+        contentHash: 'unused-in-deletion',
+        standalone: false,
+        ownerIds: ['first-specialist', 'second-specialist']
+      })
+    )
+
+    const adapter = new UserSkillSpecialistPackageAdapter(root)
+    await adapter.prepareDeletion('remove-first-owner', 'first-specialist', ['shared-tools'], [])
+    await adapter.commit('remove-first-owner')
+
+    await expect(readFile(join(directory, '.gitignore'), 'utf8')).resolves.toBe(
+      'keep historical metadata'
+    )
+    await expect(readSpecialistPackageSkillMetadata(directory)).resolves.toMatchObject({
+      ownerIds: ['second-specialist']
+    })
+  })
+
   it('replaces a legacy imported Skill in place after conflict confirmation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'specialist-skill-adapter-'))
     roots.push(root)

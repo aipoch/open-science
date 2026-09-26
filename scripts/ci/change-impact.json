@@ -243,6 +243,7 @@
         "src/main/settings/process-tree.ts",
         "src/main/settings/service.ts",
         "src/main/settings/skill-catalog.ts",
+        "src/main/skills/registered-helper-catalog.ts",
         "src/main/settings/workflows/local-shell.ts",
         "src/main/storage-root.ts",
         "src/main/storage/**",
