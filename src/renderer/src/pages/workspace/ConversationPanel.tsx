@@ -69,7 +69,10 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
-import { isUnsupportedCodexAcpVersionError } from '../../../../shared/codex-runtime'
+import {
+  isUnsupportedCodexAcpVersionError,
+  isCodexCliCompatibilityError
+} from '../../../../shared/codex-runtime'
 import {
   validateAnnotations,
   type AnnotationValidationError,
@@ -866,15 +869,19 @@ const ConversationPanel = ({
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
     visionRunFailureMessage(activeSession?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
-  const hasUnsupportedCodexAcpRunError = isUnsupportedCodexAcpVersionError(activeSession?.error)
-  const showCodexAcpSettings =
-    isUnsupportedCodexAcpVersionError(actionError) || hasUnsupportedCodexAcpRunError
+  const hasUnsupportedCodexRunError =
+    isUnsupportedCodexAcpVersionError(activeSession?.error) ||
+    isCodexCliCompatibilityError(activeSession?.error)
+  const showCodexSettings =
+    isUnsupportedCodexAcpVersionError(actionError) ||
+    isCodexCliCompatibilityError(actionError) ||
+    hasUnsupportedCodexRunError
   // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
   // reportability is resolved at failure time and persisted on the session: a model-provider error is
   // tagged non-reportable at the ACP layer, and an app-crafted reminder is recognized by its own text.
   // Fall back to classifying the raw error for sessions persisted before the flag existed (undefined).
   const isRunErrorReportable =
-    !hasUnsupportedCodexAcpRunError &&
+    !hasUnsupportedCodexRunError &&
     (activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error))
   const canRetryArtifactFinalization = isRetryableArtifactFinalizationError(activeSession?.error)
 
@@ -1392,7 +1399,7 @@ const ConversationPanel = ({
                 ) : null}
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
-                {activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
+                {activeSession?.interrupted && !hasUnsupportedCodexRunError ? (
                   <SessionInterruptedBanner
                     message={activeSession.error ?? t('This session was interrupted.')}
                     isDisabled={!canResumeSession}
@@ -1455,7 +1462,7 @@ const ConversationPanel = ({
                         ) : null}
                       </div>
                     ) : null}
-                    {showVisionModelSettings || showCodexAcpSettings ? (
+                    {showVisionModelSettings || showCodexSettings ? (
                       <div>
                         <button
                           type="button"

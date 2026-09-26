@@ -101,6 +101,7 @@ const backend = (frameworkId: AgentFrameworkId): ResolvedAgentBackend => {
     executablePath: '/codex-acp.js',
     env: {
       CODEX_CONFIG: JSON.stringify({
+        agents: { enabled: false },
         features: { multi_agent: false, multi_agent_v2: false }
       })
     }

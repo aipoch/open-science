@@ -9,7 +9,11 @@ import type {
   EnvironmentCheckResult,
   ManagedClaudeRegistry
 } from '../../shared/settings'
-import { MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
+import {
+  MINIMUM_CODEX_ACP_VERSION,
+  MINIMUM_CODEX_CLI_VERSION,
+  isSupportedCodexCliVersion
+} from '../../shared/codex-runtime'
 import {
   CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
   isSupportedClaudeCliVersion
@@ -346,14 +350,22 @@ const runEnvironmentCheck = async ({
       const nativeCheck: EnvironmentCheckItem = {
         id: 'agent',
         label: 'Codex native CLI',
-        status: nativeCliFound ? 'passed' : isSelected ? 'failed' : 'warning',
-        summary: nativeCliFound
-          ? nativeCliVersion
-            ? `Codex CLI ${nativeCliVersion} is installed.`
-            : 'Codex CLI is installed.'
-          : isSelected
-            ? 'Native Codex CLI is not installed.'
-            : 'Native Codex CLI is not installed (optional — only needed if you switch to Codex).',
+        status:
+          nativeCliFound && isSupportedCodexCliVersion(nativeCliVersion)
+            ? 'passed'
+            : isSelected
+              ? 'failed'
+              : 'warning',
+        summary:
+          nativeCliFound && !isSupportedCodexCliVersion(nativeCliVersion)
+            ? `Codex CLI must be updated to ${MINIMUM_CODEX_CLI_VERSION} or later, then re-detected.`
+            : nativeCliFound
+              ? nativeCliVersion
+                ? `Codex CLI ${nativeCliVersion} is installed.`
+                : 'Codex CLI is installed.'
+              : isSelected
+                ? 'Native Codex CLI is not installed.'
+                : 'Native Codex CLI is not installed (optional — only needed if you switch to Codex).',
         detail: nativeCliPath
       }
 

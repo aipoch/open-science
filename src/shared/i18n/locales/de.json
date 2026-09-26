@@ -6499,6 +6499,8 @@
     "Running": "Wird ausgeführt",
     "Pinned": "Angeheftet",
     "Recent sessions": "Letzte Sitzungen",
-    "More": "Mehr"
+    "More": "Mehr",
+    "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Codex CLI v{{minimumVersion}} oder neuer ist erforderlich. Aktualisieren oder reparieren Sie Codex vor der Verwendung.",
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "Die Reparatur installiert eine von der App verwaltete Codex CLI, ohne Ihre externe Installation zu ändern. Sie können diese auch manuell aktualisieren und erneut erkennen lassen."
   }
 }

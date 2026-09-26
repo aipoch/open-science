@@ -199,7 +199,7 @@ import {
 } from './managed-codex'
 
 it('runs Windows Codex command shims through the shell during version verification', async () => {
-  const spawnVersion = vi.fn(async () => ({ status: 0, stdout: 'codex-cli 0.153.4' }))
+  const spawnVersion = vi.fn(async () => ({ status: 0, stdout: 'codex-cli 0.157.1' }))
 
   await expect(
     runManagedCodexVersion(
@@ -209,7 +209,7 @@ it('runs Windows Codex command shims through the shell during version verificati
       'win32',
       spawnVersion
     )
-  ).resolves.toBe('0.153.4')
+  ).resolves.toBe('0.157.1')
   expect(spawnVersion).toHaveBeenCalledWith(
     '"C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd"',
     ['--version'],
@@ -287,7 +287,7 @@ describe('managed Codex paths and platform resolution', () => {
     const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
 
     expect(CODEX_ACP_VERSION).toBe('1.6.2')
-    expect(CODEX_VERSION).toBe('0.153.4')
+    expect(CODEX_VERSION).toBe('0.157.1')
     expect(CODEX_ACP_INTEGRITY).toMatch(/^sha512-/)
     expect(Object.keys(CODEX_INTEGRITIES).sort()).toEqual([
       'darwin-arm64',
@@ -543,7 +543,7 @@ describe('installManagedCodex', () => {
 
     const controller = new AbortController()
     const verifyAdapter = vi.fn().mockResolvedValue('1.6.2')
-    const verifyCodex = vi.fn().mockResolvedValue('0.153.4')
+    const verifyCodex = vi.fn().mockResolvedValue('0.157.1')
     const verifyPair = vi.fn().mockResolvedValue(undefined)
     const outcome = await installManagedCodex({
       installId: 'codex-1',
@@ -565,11 +565,11 @@ describe('installManagedCodex', () => {
       adapterPath: managedCodexAdapterEntry(root),
       adapterVersion: '1.6.2',
       codexPath: managedCodexBinary(root, platform),
-      codexVersion: '0.153.4'
+      codexVersion: '0.157.1'
     })
     expect(metadataUrls).toEqual([
       'https://reg/@agentclientprotocol%2fcodex-acp/1.6.2',
-      'https://reg/@openai%2fcodex/0.153.4-darwin-arm64'
+      'https://reg/@openai%2fcodex/0.157.1-darwin-arm64'
     ])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('codex-acp')
     expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe('native-codex')
@@ -637,7 +637,7 @@ describe('installManagedCodex', () => {
       fetchJson,
       fetchTarball,
       verifyAdapter: () => Promise.resolve('1.6.2'),
-      verifyCodex: () => Promise.resolve('0.153.4'),
+      verifyCodex: () => Promise.resolve('0.157.1'),
       verifyPair,
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) },
       existingCodexPath: externalCodexPath
@@ -648,7 +648,7 @@ describe('installManagedCodex', () => {
       adapterPath: managedCodexAdapterEntry(root),
       adapterVersion: '1.6.2',
       codexPath: externalCodexPath,
-      codexVersion: '0.153.4'
+      codexVersion: '0.157.1'
     })
     expect(metadataUrls).toEqual(['https://reg/@agentclientprotocol%2fcodex-acp/1.6.2'])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('adapter-only')
@@ -661,73 +661,86 @@ describe('installManagedCodex', () => {
     )
   })
 
-  it('falls back to the managed Codex CLI when the user-owned CLI is incompatible', async () => {
-    root = await mkdtemp(join(tmpdir(), 'managed-codex-fallback-'))
-    const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
-    const adapterTgz = buildTgz([
-      {
-        name: 'package/dist/index.js',
-        content: adapterFixture('fallback-adapter'),
-        mode: 0o755
+  it.each(['handshake', 'obsolete', 'unknown', 'prerelease'])(
+    'falls back to the managed Codex CLI when the user-owned CLI is incompatible (%s)',
+    async (reason) => {
+      root = await mkdtemp(join(tmpdir(), 'managed-codex-fallback-'))
+      const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
+      const adapterTgz = buildTgz([
+        {
+          name: 'package/dist/index.js',
+          content: adapterFixture('fallback-adapter'),
+          mode: 0o755
+        }
+      ])
+      const nativeTgz = buildTgz([
+        {
+          name: `package/vendor/${platform.target}/bin/codex`,
+          content: Buffer.from('managed-compatible-codex'),
+          mode: 0o755
+        }
+      ])
+      const externalCodexPath = join(root, 'user-bin', 'codex')
+      await mkdir(dirname(externalCodexPath), { recursive: true })
+      await writeFile(externalCodexPath, 'user-owned-incompatible-codex')
+
+      const metadataUrls: string[] = []
+      const fetchJson = async (url: string): Promise<unknown> => {
+        metadataUrls.push(url)
+        return url.includes('agentclientprotocol%2fcodex-acp')
+          ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+          : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
       }
-    ])
-    const nativeTgz = buildTgz([
-      {
-        name: `package/vendor/${platform.target}/bin/codex`,
-        content: Buffer.from('managed-compatible-codex'),
-        mode: 0o755
+      const fetchTarball = async (
+        url: string
+      ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => {
+        const body = url.includes('adapter') ? adapterTgz : nativeTgz
+        return { stream: Readable.from(body), totalBytes: body.length }
       }
-    ])
-    const externalCodexPath = join(root, 'user-bin', 'codex')
-    await mkdir(dirname(externalCodexPath), { recursive: true })
-    await writeFile(externalCodexPath, 'user-owned-incompatible-codex')
+      const verifyPair = vi.fn(async (_adapterPath: string, codexPath: string) => {
+        if (codexPath === externalCodexPath && reason === 'handshake')
+          throw new Error('incompatible Codex CLI')
+      })
 
-    const metadataUrls: string[] = []
-    const fetchJson = async (url: string): Promise<unknown> => {
-      metadataUrls.push(url)
-      return url.includes('agentclientprotocol%2fcodex-acp')
-        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
-        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+      const outcome = await installManagedCodex({
+        installId: 'codex-fallback',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg'],
+        platform,
+        fetchJson,
+        fetchTarball,
+        verifyAdapter: () => Promise.resolve('1.6.2'),
+        verifyCodex: (path) =>
+          Promise.resolve(
+            path !== externalCodexPath || reason === 'handshake'
+              ? '0.157.1'
+              : reason === 'obsolete'
+                ? '0.153.4'
+                : reason === 'prerelease'
+                  ? '0.157.1-alpha.1'
+                  : undefined
+          ),
+        verifyPair,
+        integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) },
+        existingCodexPath: externalCodexPath
+      })
+
+      expect(outcome).toEqual({
+        result: { installId: 'codex-fallback', ok: true },
+        adapterPath: managedCodexAdapterEntry(root),
+        adapterVersion: '1.6.2',
+        codexPath: managedCodexBinary(root, platform),
+        codexVersion: '0.157.1'
+      })
+      expect(metadataUrls).toContain('https://reg/@openai%2fcodex/0.157.1-darwin-arm64')
+      expect(await readFile(externalCodexPath, 'utf8')).toBe('user-owned-incompatible-codex')
+      expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe(
+        'managed-compatible-codex'
+      )
+      expect(verifyPair).toHaveBeenCalledTimes(reason === 'handshake' ? 2 : 1)
     }
-    const fetchTarball = async (
-      url: string
-    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => {
-      const body = url.includes('adapter') ? adapterTgz : nativeTgz
-      return { stream: Readable.from(body), totalBytes: body.length }
-    }
-    const verifyPair = vi.fn(async (_adapterPath: string, codexPath: string) => {
-      if (codexPath === externalCodexPath) throw new Error('incompatible Codex CLI')
-    })
-
-    const outcome = await installManagedCodex({
-      installId: 'codex-fallback',
-      onEvent: () => undefined,
-      dataRoot: root,
-      registries: ['https://reg'],
-      platform,
-      fetchJson,
-      fetchTarball,
-      verifyAdapter: () => Promise.resolve('1.6.2'),
-      verifyCodex: () => Promise.resolve('0.153.4'),
-      verifyPair,
-      integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) },
-      existingCodexPath: externalCodexPath
-    })
-
-    expect(outcome).toEqual({
-      result: { installId: 'codex-fallback', ok: true },
-      adapterPath: managedCodexAdapterEntry(root),
-      adapterVersion: '1.6.2',
-      codexPath: managedCodexBinary(root, platform),
-      codexVersion: '0.153.4'
-    })
-    expect(metadataUrls).toContain('https://reg/@openai%2fcodex/0.153.4-darwin-arm64')
-    expect(await readFile(externalCodexPath, 'utf8')).toBe('user-owned-incompatible-codex')
-    expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe(
-      'managed-compatible-codex'
-    )
-    expect(verifyPair).toHaveBeenCalledTimes(2)
-  })
+  )
 
   it('runs the smoke handshake from a home outside the staged runtime tree', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
@@ -768,7 +781,7 @@ describe('installManagedCodex', () => {
       fetchJson,
       fetchTarball,
       verifyAdapter: () => Promise.resolve('1.6.2'),
-      verifyCodex: () => Promise.resolve('0.153.4'),
+      verifyCodex: () => Promise.resolve('0.157.1'),
       verifyPair,
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
     })
@@ -826,7 +839,7 @@ describe('installManagedCodex', () => {
       },
       verifyCodex: async () => {
         smokeChecks += 1
-        return '0.153.4'
+        return '0.157.1'
       },
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
     })
@@ -923,7 +936,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -974,7 +987,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1030,7 +1043,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1091,7 +1104,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1155,7 +1168,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1216,7 +1229,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1273,7 +1286,7 @@ describe('installManagedCodex', () => {
         fetchJson: fetchJsonSpy,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1333,7 +1346,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })

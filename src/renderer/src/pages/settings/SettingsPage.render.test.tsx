@@ -5472,12 +5472,12 @@ describe('SettingsPage Codex framework', () => {
 
   it.each([
     [true, '0.144.6', true],
-    [false, '0.144.6', false],
-    [true, '0.153.4', false],
-    [true, '0.154.0', false],
-    [true, undefined, false]
+    [false, '0.144.6', true],
+    [true, '0.157.1', false],
+    [true, '0.158.0', false],
+    [true, undefined, true]
   ])(
-    'offers a tested native update only for an older managed CLI (%s, %s)',
+    'requires a native update for unsupported managed or external CLIs (%s, %s)',
     async (nativeManaged, nativeVersion, expected) => {
       const api = window.api.settings
       const snapshot = {
@@ -5509,7 +5509,7 @@ describe('SettingsPage Codex framework', () => {
       const update = document.body.querySelector<HTMLButtonElement>('[aria-label="Update Codex"]')
       expect(Boolean(update)).toBe(expected)
       if (!nativeManaged)
-        expect(document.body.textContent).toContain('Update your external installation manually')
+        expect(document.body.textContent).toContain('without changing your external installation')
       if (expected) {
         const installCodex = vi
           .fn()
@@ -5530,7 +5530,7 @@ describe('SettingsPage Codex framework', () => {
       codex: {
         resolvedPath: '/data/codex-managed/adapter/dist/index.js',
         version: '1.6.2',
-        nativeVersion: '0.144.6'
+        nativeVersion: '0.157.1'
       },
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -5564,7 +5564,7 @@ describe('SettingsPage Codex framework', () => {
     const codexRadio = document.body.querySelector<HTMLButtonElement>('[aria-label="Use Codex"]')
     expect(codexRadio).not.toBeNull()
     // The native and adapter versions are displayed separately; the repo link points at the ACP adapter.
-    expect(document.body.textContent).toContain('Codex CLI 0.144.6 · ACP 1.6.2')
+    expect(document.body.textContent).toContain('Codex CLI 0.157.1 · ACP 1.6.2')
     expect(document.body.textContent).toContain('agentclientprotocol/codex-acp')
 
     await act(async () => codexRadio?.click())

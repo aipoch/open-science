@@ -53,7 +53,7 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
       adapterPath,
       adapterVersion: '1.6.2',
       codexPath: nativePath,
-      codexVersion: '0.114.0'
+      codexVersion: '0.157.1'
     }
   })
   const status = async (): Promise<CodexAuthStatus> => ({
@@ -85,7 +85,7 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
       managedCodexPath: nativePath,
       isRunnable: async () => installed,
       getAdapterVersion: async () => (installed ? '1.6.2' : undefined),
-      getCodexVersion: async () => (installed ? '0.114.0' : undefined),
+      getCodexVersion: async () => (installed ? '0.157.1' : undefined),
       smokeInitialize: async () => true,
       resolveNpmBinDirs: async () => []
     },

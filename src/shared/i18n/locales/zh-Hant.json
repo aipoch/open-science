@@ -6341,6 +6341,8 @@
     "Running": "執行中",
     "Pinned": "已釘選",
     "Recent sessions": "最近會話",
-    "More": "多"
+    "More": "多",
+    "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "需要 Codex CLI v{{minimumVersion}} 或更新版本。請先更新或修復 Codex 再使用。",
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "修復會安裝由應用程式管理的 Codex CLI，不會修改您的外部安裝。您也可以手動更新外部安裝後重新偵測。"
   }
 }

@@ -240,7 +240,9 @@ type ToolCallUpdate = Extract<
 const isContextCompactionUpdate = (update: ToolCallUpdate): boolean => {
   const meta = update._meta
 
-  return isRecord(meta) && meta.contextCompaction === true
+  if (!isRecord(meta)) return false
+  const marker = meta.contextCompaction
+  return marker === true || (isRecord(marker) && marker.version === 1)
 }
 
 const projectContextCompactionUpdate = (

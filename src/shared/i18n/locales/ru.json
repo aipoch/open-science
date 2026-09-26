@@ -6802,6 +6802,8 @@
     "Running": "Запущено",
     "Pinned": "Фиксировано",
     "Recent sessions": "Последние сессии",
-    "More": "Больше"
+    "More": "Больше",
+    "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Требуется Codex CLI v{{minimumVersion}} или новее. Перед использованием обновите или восстановите Codex.",
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "Восстановление установит Codex CLI под управлением приложения, не изменяя внешнюю установку. Вы также можете обновить её вручную и повторить обнаружение."
   }
 }
