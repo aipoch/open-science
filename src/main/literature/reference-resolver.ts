@@ -19,6 +19,7 @@ import { LiteratureProviderError, literatureFailure } from './provider-error'
 const CROSSREF_BASE = 'https://api.crossref.org/works/'
 const PUBMED_BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+const PUBMED_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 15_000
 
 type FetchFn = typeof fetch
@@ -183,7 +184,12 @@ class LiteratureReferenceResolver {
     > = new LiteratureCitationFormatter()
   ) {}
 
-  private async read(url: string, accept: string, signal?: AbortSignal): Promise<string> {
+  private async read(
+    url: string,
+    accept: string,
+    signal?: AbortSignal,
+    maxBytes = MAX_RESPONSE_BYTES
+  ): Promise<string> {
     signal?.throwIfAborted()
     const response = await this.fetchFn(url, {
       headers: {
@@ -207,7 +213,7 @@ class LiteratureReferenceResolver {
         const { done, value } = await reader.read()
         if (done) break
         length += value.byteLength
-        if (length > MAX_RESPONSE_BYTES) throw new Error('Metadata response is too large.')
+        if (length > maxBytes) throw new Error('Metadata response is too large.')
         chunks.push(value)
       }
     } finally {
@@ -230,7 +236,7 @@ class LiteratureReferenceResolver {
       tool: 'OpenScience'
     })
     const parsed = await this.formatter.parseReferences(
-      await this.read(`${PUBMED_BASE}?${params}`, 'text/plain', signal)
+      await this.read(`${PUBMED_BASE}?${params}`, 'text/plain', signal, PUBMED_MAX_RESPONSE_BYTES)
     )
     return parsed.items.flatMap((item) => {
       const pmid = item.identifiers.find(({ scheme }) => scheme === 'pmid')?.value

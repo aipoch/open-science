@@ -380,3 +380,37 @@ it('propagates cancellation to every concurrent DOI lookup without starting fall
   expect(signals.every((signal) => signal.aborted)).toBe(true)
   expect(fetchFn).toHaveBeenCalledTimes(2)
 })
+
+it.each([2 * 1024 * 1024 + 256, 8 * 1024 * 1024])(
+  'accepts a valid PubMed batch response of %i bytes',
+  async (bytes) => {
+    const originalAbstract = 'The complete abstract from PubMed.'
+    const abstract = 'a'.repeat(bytes - Buffer.byteLength(pubmedResponse) + originalAbstract.length)
+    const body = pubmedResponse.replace(originalAbstract, abstract)
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(body))
+    const result = await new LiteratureReferenceResolver(fetchFn).resolve([
+      'pmid:35486828',
+      'pmid:21458665'
+    ])
+    expect(Buffer.byteLength(body)).toBe(bytes)
+    expect(result.map(({ item }) => item.title)).toEqual([
+      'A PubMed paper.',
+      'Mapping cancer origins.'
+    ])
+    expect(result[0].item.abstract).toBe(abstract)
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+  }
+)
+
+it('rejects a PubMed response above 8 MiB before parsing', async () => {
+  const parseReferences = vi.fn()
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    new URL(String(url)).pathname.endsWith('/efetch.fcgi')
+      ? new Response('a'.repeat(8 * 1024 * 1024 + 1))
+      : new Response('', { status: 404 })
+  )
+  await expect(
+    new LiteratureReferenceResolver(fetchFn, { parseReferences }).lookup('pmid:35486828')
+  ).rejects.toThrow('Metadata response is too large.')
+  expect(parseReferences).not.toHaveBeenCalled()
+})
