@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
+import { literatureItemInputSchema } from '../../../../../shared/literature'
 import { describe, expect, it } from 'vitest'
+import type { LiteratureReference } from '../../../../../shared/session-persistence'
 import type { ArtifactReference } from '../../../../../shared/artifacts'
 
 import {
   appendArtifactMention,
+  appendLiteratureMentions,
+  MAX_COMPOSER_ARTIFACT_MENTIONS,
   applyDocToDom,
   createPastedTextAnchor,
   docArtifactCount,
@@ -1016,5 +1020,41 @@ describe('docFromMessageParts', () => {
         }
       ]
     })
+  })
+})
+
+describe('appendLiteratureMentions', () => {
+  const reference = (id: string): LiteratureReference => ({
+    type: 'literature' as const,
+    itemId: id,
+    metadataRevision: 1,
+    item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: id })
+  })
+  it('preserves draft content, deduplicates by identity, and uses the existing message format', () => {
+    const original = reference('A')
+    const doc: ComposerDoc = { nodes: [{ type: 'text', text: 'Compare ' }, original] }
+    const next = appendLiteratureMentions(doc, [
+      { ...original, metadataRevision: 2 },
+      reference('B'),
+      reference('B')
+    ])!
+    expect(docToText(next)).toBe('Compare @A @B')
+    expect(next.nodes[1]).toBe(original)
+    expect(docToMessageParts(next)).toEqual(next.nodes)
+    expect(appendLiteratureMentions(next, [original])).toBe(next)
+    expect(doc.nodes).toHaveLength(2)
+  })
+  it('rejects an entire overflowing batch, counting file and scope mentions too', () => {
+    const doc: ComposerDoc = {
+      nodes: Array.from({ length: MAX_COMPOSER_ARTIFACT_MENTIONS - 1 }, (_, index) =>
+        reference(String(index))
+      )
+    }
+    expect(appendLiteratureMentions(doc, [reference('A'), reference('B')])).toBeUndefined()
+    expect(
+      appendLiteratureMentions(doc, [reference('A')])?.nodes.filter(
+        (node) => node.type === 'literature'
+      )
+    ).toHaveLength(MAX_COMPOSER_ARTIFACT_MENTIONS)
   })
 })

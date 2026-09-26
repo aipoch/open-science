@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { configureComposerDraftStorage, revokeComposerDraftStorage } from './composer-draft-storage'
+import { literatureItemInputSchema } from '../../../../shared/literature'
 import { act, createElement, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -3205,4 +3206,30 @@ describe('workspace composer controller', () => {
 
     expect(loadSkills).toHaveBeenCalledOnce()
   })
+})
+
+it('appends Library references to the restored target draft, preserves undo, and rejects stale targets', () => {
+  const hook = renderController()
+  mounted.push(hook)
+  const reference = {
+    type: 'literature' as const,
+    itemId: 'paper',
+    metadataRevision: 1,
+    item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Paper' })
+  }
+  act(() => hook.result.current.actions.changeDoc(textDoc('Draft A')))
+  hook.selectDraft('session-b')
+  act(() => hook.result.current.actions.changeDoc(textDoc('Draft B')))
+  act(() =>
+    expect(hook.result.current.actions.appendLiterature('session-a', [reference])).toBe(false)
+  )
+  expect(docToText(hook.result.current.view.doc)).toBe('Draft B')
+  act(() =>
+    expect(hook.result.current.actions.appendLiterature('session-b', [reference])).toBe(true)
+  )
+  expect(docToText(hook.result.current.view.doc)).toBe('Draft B @Paper')
+  act(() => hook.result.current.actions.undo())
+  expect(docToText(hook.result.current.view.doc)).toBe('Draft B')
+  hook.selectDraft('session-a')
+  expect(docToText(hook.result.current.view.doc)).toBe('Draft A')
 })

@@ -6341,6 +6341,21 @@
     "Recent sessions": "최근 세션",
     "More": "더보기",
     "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Codex CLI v{{minimumVersion}} 이상이 필요합니다. 사용하기 전에 Codex를 업데이트하거나 복구하세요.",
-    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "복구하면 외부 설치를 변경하지 않고 앱에서 관리하는 Codex CLI가 설치됩니다. 외부 설치를 수동으로 업데이트한 후 다시 감지할 수도 있습니다."
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "복구하면 외부 설치를 변경하지 않고 앱에서 관리하는 Codex CLI가 설치됩니다. 외부 설치를 수동으로 업데이트한 후 다시 감지할 수도 있습니다.",
+    "Current Library entry.": "라이브러리의 현재 항목입니다.",
+    "This conversation cannot accept references right now.": "지금은 이 대화에 문헌을 추가할 수 없습니다.",
+    "Could not add references. Check that the conversation is editable and the reference limit is not exceeded.": "문헌을 추가하지 못했습니다. 대화를 편집할 수 있는지, 참조 개수 제한을 초과하지 않았는지 확인하세요.",
+    "Reference details": "문헌 상세 정보",
+    "Copy title": "제목 복사",
+    "Could not copy title.": "제목을 복사하지 못했습니다.",
+    "Selected: {{selected}}": "선택됨: {{selected}}",
+    "Search conversations": "대화 검색",
+    "Search by title or #number": "제목 또는 #번호로 검색",
+    "Conversations": "대화",
+    "Current": "현재",
+    "No matching conversations": "일치하는 대화가 없습니다",
+    "Added to the draft. You choose when to send.": "초안에 추가됩니다. 보낼 시점은 직접 선택합니다.",
+    "Add to chat": "대화에 추가",
+    "Choose another conversation": "다른 대화 선택"
   }
 }

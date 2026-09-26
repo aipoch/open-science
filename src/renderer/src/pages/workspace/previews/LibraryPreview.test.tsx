@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderUi,
+  screen,
+  type RenderResult
+} from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   literatureItemInputSchema,
@@ -7,6 +14,9 @@ import {
   type LiteratureCatalogSearchPage
 } from '../../../../../shared/literature'
 import LibraryPreview from './LibraryPreview'
+import { LibraryReferenceActionsContext } from './library-reference-actions'
+import { TooltipProvider } from '@/components/ui/tooltip'
+const render = (ui: React.ReactNode): RenderResult => renderUi(ui, { wrapper: TooltipProvider })
 
 const navigation = vi.hoisted(() => ({
   openProjectLiterature: vi.fn(),
@@ -244,7 +254,7 @@ describe('LibraryPreview', () => {
     fireEvent.click(screen.getByRole('button', { name: /Second reference/ }))
     expect(screen.getAllByRole('heading', { name: 'Abstract' })).toHaveLength(1)
     expect(screen.getByText('No abstract available.')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'View in Literature' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'View in Literature' })[1])
     expect(navigation.openLiteratureItem).toHaveBeenCalledWith('two', 'user')
     expect(search).toHaveBeenCalledTimes(1)
     expect(openPreview).not.toHaveBeenCalled()
@@ -391,8 +401,8 @@ describe('LibraryPreview', () => {
     expect(
       screen
         .getByRole('link', { name: 'DOI: 10.1200/GO-26-00172' })
-        .compareDocumentPosition(screen.getByRole('button', { name: 'View in Literature' })) &
-        Node.DOCUMENT_POSITION_FOLLOWING
+        .compareDocumentPosition(screen.getAllByRole('button', { name: 'View in Literature' })[0]) &
+        Node.DOCUMENT_POSITION_PRECEDING
     ).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /Unsafe URL/ }))
@@ -463,4 +473,66 @@ describe('LibraryPreview', () => {
     expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: 'project-b' }))
     expect(screen.queryByText('A reference')).toBeNull()
   })
+})
+
+it('exposes collapsed row actions, copies the full title, and opens live details in place', async () => {
+  const entry = reference('paper', 'Complete title to copy')
+  search.mockResolvedValue({ entries: [entry] })
+  const get = vi
+    .fn()
+    .mockResolvedValue({ ...entry, item: { ...entry.item, title: 'Latest title' } })
+  Object.assign(window.api.literature, { get })
+  const copy = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } })
+  render(<LibraryPreview projectId="project-a" isActive />)
+  await settle()
+  expect(screen.getByRole('button', { name: 'View in Literature' })).toBeTruthy()
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Copy title' })))
+  expect(copy).toHaveBeenCalledWith(entry.item.title)
+  const details = screen.getByRole('button', { name: 'Reference details' })
+  details.focus()
+  await act(async () => fireEvent.click(details))
+  expect(screen.getByRole('dialog')).toBeTruthy()
+  expect(screen.getByRole('heading', { name: 'Latest title' })).toBeTruthy()
+  expect(navigation.openLiteratureItem).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+  await settle()
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(document.activeElement).toBe(details)
+  expect(
+    screen.getByRole('button', { name: /Complete title to copy/ }).getAttribute('aria-expanded')
+  ).toBe('false')
+})
+
+it('batches the selected visible references and clears selection across searches', async () => {
+  const entries = [reference('one', 'First'), reference('two', 'Second')]
+  search.mockResolvedValue({ entries })
+  const add = vi.fn()
+  render(
+    <LibraryReferenceActionsContext.Provider
+      value={{ projectId: 'project-a', canAddToCurrent: true, add }}
+    >
+      <LibraryPreview projectId="project-a" isActive />
+    </LibraryReferenceActionsContext.Provider>
+  )
+  await settle()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select First' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Second' }))
+  expect(screen.getByText('Selected: 2')).toBeTruthy()
+  fireEvent.click(screen.getAllByRole('button', { name: 'Add to chat' })[0])
+  expect(add).toHaveBeenCalledWith(
+    [
+      expect.objectContaining({ type: 'literature', itemId: 'one' }),
+      expect.objectContaining({ type: 'literature', itemId: 'two' })
+    ],
+    null
+  )
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'First' } })
+  await settle()
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
+  await settle()
+  expect(screen.queryByText('Selected: 2')).toBeNull()
+  expect(
+    screen.getAllByRole('checkbox').every((checkbox) => !(checkbox as HTMLInputElement).checked)
+  ).toBe(true)
 })

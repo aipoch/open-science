@@ -6667,6 +6667,21 @@
     "Recent sessions": "Sesiones recientes",
     "More": "Más",
     "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Se requiere Codex CLI v{{minimumVersion}} o una versión posterior. Actualice o repare Codex antes de usarlo.",
-    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "La reparación instala una CLI de Codex administrada por la aplicación sin modificar la instalación externa. También puede actualizarla manualmente y volver a detectarla."
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "La reparación instala una CLI de Codex administrada por la aplicación sin modificar la instalación externa. También puede actualizarla manualmente y volver a detectarla.",
+    "Current Library entry.": "Entrada actual de la biblioteca.",
+    "This conversation cannot accept references right now.": "No se pueden añadir referencias a esta conversación en este momento.",
+    "Could not add references. Check that the conversation is editable and the reference limit is not exceeded.": "No se pudieron añadir las referencias. Compruebe que la conversación se pueda editar y que no se supere el límite de referencias.",
+    "Reference details": "Detalles de la referencia",
+    "Copy title": "Copiar título",
+    "Could not copy title.": "No se pudo copiar el título.",
+    "Selected: {{selected}}": "Seleccionadas: {{selected}}",
+    "Search conversations": "Buscar conversaciones",
+    "Search by title or #number": "Buscar por título o #número",
+    "Conversations": "Conversaciones",
+    "Current": "Actual",
+    "No matching conversations": "No hay conversaciones coincidentes",
+    "Added to the draft. You choose when to send.": "Se añade al borrador. Usted decide cuándo enviarlo.",
+    "Add to chat": "Añadir a la conversación",
+    "Choose another conversation": "Elegir otra conversación"
   }
 }

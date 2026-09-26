@@ -22,8 +22,8 @@ for (const width of [320, 375, 414, 768]) {
       const literatureBounds = await literature.boundingBox()
       expect(expandBounds).not.toBeNull()
       expect(literatureBounds).not.toBeNull()
-      // Literature navigation is a separate footer below the abstract expansion control.
-      expect(literatureBounds!.y).toBeGreaterThanOrEqual(expandBounds!.y + expandBounds!.height)
+      // Navigation is directly available beside the row actions, above the expanded abstract.
+      expect(literatureBounds!.y).toBeLessThan(expandBounds!.y)
       await expand.click()
       await expect(expand).toHaveAttribute('aria-expanded', 'true')
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
@@ -81,4 +81,22 @@ test('empty states offer recovery and hidden preview performs no reads', async (
         ).libraryFixture.counts().reads
     )
   ).toBe(counts.reads + 1)
+})
+
+test('conversation search opens in place and supports keyboard selection among many sessions', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 620, height: 760 })
+  await page.goto('/library-workbench.html')
+  await page.getByRole('button', { name: 'Choose another conversation' }).click()
+  const search = page.getByRole('combobox', { name: 'Search conversations' })
+  await expect(search).toBeFocused()
+  await expect(page.getByRole('option')).toHaveCount(10)
+  await page.getByRole('button', { name: 'Load more' }).click()
+  await expect(page.getByRole('option')).toHaveCount(20)
+  await search.fill('#35')
+  await expect(page.getByRole('option')).toHaveCount(1)
+  await search.press('Enter')
+  await expect(search).not.toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'session-34:' })).toBeVisible()
 })

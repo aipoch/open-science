@@ -3,6 +3,9 @@
  */
 import {
   ArrowUpRight,
+  Check,
+  Copy,
+  Info,
   BookOpen,
   ChevronDown,
   ChevronLeft,
@@ -13,6 +16,10 @@ import {
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { ArtifactLiteratureDetailDialog } from '../ArtifactLiteratureDetailDialog'
+import { literatureItemToMentionOption } from '../literature-pdf-options'
+import { LibraryChatButton } from './LibraryChatButton'
 import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
@@ -66,14 +73,29 @@ const pdfAttachments = (entry: LiteratureItemView): LiteratureItemView['attachme
 function ReferenceRow({
   entry,
   expanded,
-  onToggle
+  onToggle,
+  selected,
+  onSelect,
+  onDetails
 }: {
   entry: LiteratureItemView
   expanded: boolean
   onToggle: () => void
+  selected: boolean
+  onSelect: () => void
+  onDetails: (trigger: HTMLButtonElement) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const detailId = useId()
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
+  const copyTitle = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(entry.item.title)
+      setCopyStatus('copied')
+    } catch {
+      setCopyStatus('error')
+    }
+  }
   const [showMore, setShowMore] = useState(false)
   const creators = entry.item.creators
     .map((creator) =>
@@ -152,64 +174,136 @@ function ReferenceRow({
           'bg-primary/5 before:absolute before:inset-y-3 before:left-0 before:w-0.5 before:bg-primary'
       )}
     >
-      <button
-        type="button"
-        aria-expanded={expanded}
-        aria-controls={detailId}
-        onClick={onToggle}
-        className="block w-full min-w-0 rounded-sm pt-3 pb-2 text-left hover:text-primary active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
-      >
-        <span
-          className={cn(
-            'block min-w-0 text-sm font-medium leading-relaxed [overflow-wrap:anywhere]',
-            !expanded && 'line-clamp-2'
-          )}
+      <div className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-4 size-3.5 shrink-0 accent-primary"
+          checked={selected}
+          aria-label={t('Select {{title}}', { title: entry.item.title })}
+          onChange={onSelect}
+        />
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={detailId}
+          onClick={onToggle}
+          className="block w-full min-w-0 rounded-sm pt-3 pb-2 text-left hover:text-primary active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
         >
-          {entry.item.title}
-        </span>
-        {creators.length > 0 && (
+          <span
+            className={cn(
+              'block min-w-0 text-sm font-medium leading-relaxed [overflow-wrap:anywhere]',
+              !expanded && 'line-clamp-2'
+            )}
+          >
+            {entry.item.title}
+          </span>
+          {creators.length > 0 && (
+            <span
+              className={cn(
+                'mt-1 block text-xs text-muted-foreground',
+                !expanded ? 'truncate' : '[overflow-wrap:anywhere]'
+              )}
+            >
+              {creators.join('; ')}
+            </span>
+          )}
           <span
             className={cn(
               'mt-1 block text-xs text-muted-foreground',
               !expanded ? 'truncate' : '[overflow-wrap:anywhere]'
             )}
           >
-            {creators.join('; ')}
+            {[
+              entry.item.issuedYear ?? entry.item.issuedText,
+              entry.item.containerTitle,
+              typeLabels[entry.item.itemType]
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </span>
-        )}
-        <span
-          className={cn(
-            'mt-1 block text-xs text-muted-foreground',
-            !expanded ? 'truncate' : '[overflow-wrap:anywhere]'
-          )}
-        >
-          {[
-            entry.item.issuedYear ?? entry.item.issuedText,
-            entry.item.containerTitle,
-            typeLabels[entry.item.itemType]
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </span>
-      </button>
-      <div className="flex min-w-0 items-center justify-between gap-2 pb-3">
-        <Button
-          variant="ghost"
-          size="xs"
-          className="-ml-2 text-muted-foreground"
-          aria-expanded={expanded}
-          aria-controls={detailId}
-          onClick={onToggle}
-        >
-          {t('Abstract')}
-          <ChevronDown aria-hidden="true" className={cn('size-3', !expanded && '-rotate-90')} />
-        </Button>
-        {pdfs[0] ? (
-          pdfButton(pdfs[0], true)
-        ) : (
-          <span className="text-xs text-muted-foreground">{t('No PDF attached.')}</span>
-        )}
+        </button>
       </div>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-2 pb-3">
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="xs"
+            className="-ml-2 text-muted-foreground"
+            aria-expanded={expanded}
+            aria-controls={detailId}
+            onClick={onToggle}
+          >
+            {t('Abstract')}
+            <ChevronDown aria-hidden="true" className={cn('size-3', !expanded && '-rotate-90')} />
+          </Button>
+          {pdfs[0] ? (
+            pdfButton(pdfs[0], true)
+          ) : (
+            <span className="sr-only">{t('No PDF attached.')}</span>
+          )}
+        </div>
+        <div className="ml-auto flex items-center gap-0.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Reference details')}
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+                onClick={(event) => onDetails(event.currentTarget)}
+              >
+                <Info aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Reference details')}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Copy title')}
+                onClick={() => void copyTitle()}
+              >
+                {copyStatus === 'copied' ? (
+                  <Check aria-hidden="true" />
+                ) : (
+                  <Copy aria-hidden="true" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {copyStatus === 'copied' ? t('Copied') : t('Copy title')}
+            </TooltipContent>
+          </Tooltip>
+          <LibraryChatButton references={[literatureItemToMentionOption(entry).reference]} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('View in Literature')}
+                onClick={() => useNavigationStore.getState().openLiteratureItem(entry.id, 'user')}
+              >
+                <ArrowUpRight aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('View in Literature')}</TooltipContent>
+          </Tooltip>
+        </div>
+      </div>
+      <span
+        role="status"
+        className={copyStatus === 'error' ? 'mb-2 block text-xs text-destructive' : 'sr-only'}
+      >
+        {copyStatus === 'error'
+          ? t('Could not copy title.')
+          : copyStatus === 'copied'
+            ? t('Copied')
+            : ''}
+      </span>
       {expanded && (
         <div id={detailId} className="min-w-0 pb-3 text-xs [overflow-wrap:anywhere]">
           {pdfs.length > 1 && (
@@ -258,17 +352,6 @@ function ReferenceRow({
               ))}
             </div>
           )}
-          <div className="mt-2 flex justify-end">
-            <Button
-              variant="ghost"
-              size="xs"
-              className="-mr-2 ml-auto text-[11px] text-muted-foreground"
-              onClick={() => useNavigationStore.getState().openLiteratureItem(entry.id, 'user')}
-            >
-              {t('View in Literature')}
-              <ArrowUpRight aria-hidden="true" />
-            </Button>
-          </div>
         </div>
       )}
     </li>
@@ -303,6 +386,13 @@ function LibraryResults({
   const generation = useRef(0)
   const { query, all, collectionId, offset } = selection
   const requestKey = JSON.stringify([projectId, collectionId, all, query, offset])
+  const [checked, setChecked] = useState<{ key: string; ids: string[] }>({
+    key: requestKey,
+    ids: []
+  })
+  if (checked.key !== requestKey) setChecked({ key: requestKey, ids: [] })
+  const [detailEntry, setDetailEntry] = useState<LiteratureItemView>()
+  const detailTrigger = useRef<HTMLButtonElement | null>(null)
   const requestToken = useMemo(() => ({ key: requestKey, revision }), [requestKey, revision])
   const refresh = (): void => {
     generation.current += 1
@@ -411,9 +501,34 @@ function LibraryResults({
   const entries = displayedPage.entries.filter(
     (entry): entry is LiteratureItemView => 'item' in entry && 'attachments' in entry
   )
+  const selectedEntries =
+    checked.key === requestKey ? entries.filter((entry) => checked.ids.includes(entry.id)) : []
+  const detailReference = detailEntry
+    ? {
+        itemId: detailEntry.id,
+        metadataRevision: detailEntry.metadataRevision,
+        item: detailEntry.item
+      }
+    : undefined
   const empty = entries.length === 0
   return (
     <>
+      {detailReference && (
+        <ArtifactLiteratureDetailDialog
+          liveMetadata
+          reference={detailReference}
+          onOpenChange={(open) => {
+            if (!open) setDetailEntry(undefined)
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            detailTrigger.current?.focus()
+          }}
+          onViewInLiterature={() =>
+            useNavigationStore.getState().openLiteratureItem(detailReference.itemId, 'user')
+          }
+        />
+      )}
       {waiting && (
         <span role="status" className="sr-only">
           {t('Loading references…')}
@@ -510,11 +625,45 @@ function LibraryResults({
               </span>
               <span>{t('Recently added')}</span>
             </div>
+            {selectedEntries.length > 0 && (
+              <div className="mx-4 my-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 p-2">
+                <span className="mr-auto text-xs">
+                  {t('Selected: {{selected}}', { selected: selectedEntries.length })}
+                </span>
+                <LibraryChatButton
+                  references={selectedEntries.map(
+                    (entry) => literatureItemToMentionOption(entry).reference
+                  )}
+                />
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => setChecked({ key: requestKey, ids: [] })}
+                >
+                  {t('Clear selection')}
+                </Button>
+              </div>
+            )}
             <ul aria-label={t('Library')} className="min-w-0">
               {entries.map((entry) => (
                 <ReferenceRow
                   key={`${page.key}:${entry.id}`}
                   entry={entry}
+                  selected={selectedEntries.includes(entry)}
+                  onSelect={() =>
+                    setChecked({
+                      key: requestKey,
+                      ids: selectedEntries.includes(entry)
+                        ? selectedEntries
+                            .filter((selected) => selected.id !== entry.id)
+                            .map((selected) => selected.id)
+                        : [...selectedEntries.map((selected) => selected.id), entry.id]
+                    })
+                  }
+                  onDetails={(trigger) => {
+                    detailTrigger.current = trigger
+                    setDetailEntry(entry)
+                  }}
                   expanded={selection.expanded === entry.id}
                   onToggle={() =>
                     onChange({
@@ -615,9 +764,8 @@ export default function LibraryPreview({
             {t('Library')}
           </h2>
           <Button
-            variant="ghost"
+            variant="default"
             size="xs"
-            className="-mr-2 text-muted-foreground"
             onClick={openLiterature}
             aria-label={t('Open in Literature')}
             title={t('Open in Literature')}

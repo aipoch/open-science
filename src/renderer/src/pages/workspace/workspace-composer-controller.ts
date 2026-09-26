@@ -26,6 +26,7 @@ import {
 import {
   isSessionSizeLimitError,
   MAX_SESSION_PDF_CONTEXTS,
+  type LiteratureReference,
   type MessagePdfContextSnapshot,
   type PdfReadingPosition,
   type SessionPdfBinding,
@@ -43,6 +44,7 @@ import {
 import { useWorkspaceComposerDrafts } from './workspace-composer-drafts'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import {
+  appendLiteratureMentions,
   docIsEmpty,
   docToPdfContextSources,
   docToText,
@@ -163,6 +165,7 @@ type WorkspaceComposerController = {
   actions: {
     cancelQueuedEdit?: () => void
     discardWslSetupDraft: () => boolean
+    appendLiterature: (draftKey: string, references: readonly LiteratureReference[]) => boolean
     changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     addAnnotation: (annotation: Annotation) => AnnotationValidationError | undefined
     updateAnnotationNote: (id: string, note: string) => AnnotationValidationError | undefined
@@ -1441,6 +1444,13 @@ const useWorkspaceComposerController = ({
         return clearDraft(activeDraftKeyRef.current)
       },
       changeDoc,
+      appendLiterature: (draftKey, references): boolean => {
+        if (activeDraftKeyRef.current !== draftKey || !canStageAttachments) return false
+        const next = appendLiteratureMentions(docRef.current, references)
+        if (!next) return false
+        changeDoc(next)
+        return true
+      },
       addAnnotation,
       updateAnnotationNote: (id, note): AnnotationValidationError | undefined => {
         const next = annotationsRef.current.map((annotation) =>

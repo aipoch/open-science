@@ -6501,6 +6501,21 @@
     "Recent sessions": "Letzte Sitzungen",
     "More": "Mehr",
     "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Codex CLI v{{minimumVersion}} oder neuer ist erforderlich. Aktualisieren oder reparieren Sie Codex vor der Verwendung.",
-    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "Die Reparatur installiert eine von der App verwaltete Codex CLI, ohne Ihre externe Installation zu ändern. Sie können diese auch manuell aktualisieren und erneut erkennen lassen."
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "Die Reparatur installiert eine von der App verwaltete Codex CLI, ohne Ihre externe Installation zu ändern. Sie können diese auch manuell aktualisieren und erneut erkennen lassen.",
+    "Current Library entry.": "Aktueller Eintrag in der Bibliothek.",
+    "This conversation cannot accept references right now.": "Dieser Konversation können derzeit keine Referenzen hinzugefügt werden.",
+    "Could not add references. Check that the conversation is editable and the reference limit is not exceeded.": "Referenzen konnten nicht hinzugefügt werden. Prüfen Sie, ob die Konversation bearbeitbar ist und das Referenzlimit nicht überschritten wird.",
+    "Reference details": "Referenzdetails",
+    "Copy title": "Titel kopieren",
+    "Could not copy title.": "Titel konnte nicht kopiert werden.",
+    "Selected: {{selected}}": "Ausgewählt: {{selected}}",
+    "Search conversations": "Konversationen suchen",
+    "Search by title or #number": "Nach Titel oder #Nummer suchen",
+    "Conversations": "Konversationen",
+    "Current": "Aktuell",
+    "No matching conversations": "Keine passenden Konversationen",
+    "Added to the draft. You choose when to send.": "Wird dem Entwurf hinzugefügt. Sie entscheiden, wann Sie senden.",
+    "Add to chat": "Zur Konversation hinzufügen",
+    "Choose another conversation": "Andere Konversation wählen"
   }
 }

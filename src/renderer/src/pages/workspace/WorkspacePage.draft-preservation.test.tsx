@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { literatureItemInputSchema } from '../../../../shared/literature'
+import { useLibraryReferenceActions } from './previews/library-reference-actions'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
@@ -29,6 +31,7 @@ import {
 } from './workspace-page-test-fixtures'
 
 // Capture the props passed to the heavy child components so the test can drive selection and drafts.
+let libraryActions: ReturnType<typeof useLibraryReferenceActions>
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
 let sidebarProps: {
   canDeleteConversations: boolean
@@ -91,7 +94,10 @@ vi.mock('./ConversationPanel', () => ({
 }))
 
 vi.mock('./PreviewPanel', () => ({
-  PreviewPanel: (): React.JSX.Element => <div data-testid="preview-panel" />
+  PreviewPanel: (): React.JSX.Element => {
+    libraryActions = useLibraryReferenceActions()
+    return <div data-testid="preview-panel" />
+  }
 }))
 
 vi.mock('./EditSessionDialog', () => ({
@@ -351,6 +357,35 @@ describe('WorkspacePage draft preservation', () => {
       downloadArtifactsDialogProps.onClose()
     })
     expect(downloadArtifactsDialogProps.session).toBeUndefined()
+  })
+
+  it('routes Library batches into the chosen draft without sending or overwriting other drafts', async () => {
+    await renderPage()
+    await act(async () => sidebarProps.onOpenLiterature!())
+    const reference = {
+      type: 'literature' as const,
+      itemId: 'paper',
+      metadataRevision: 1,
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Paper' })
+    }
+    await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Draft A')))
+    await openSession('sess-b')
+    await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Draft B')))
+    await openSession('sess-a')
+    await act(async () => libraryActions!.add([reference, reference], 'sess-b'))
+    expect(conversationProps.view.composerFocusKey).toBe('sess-b')
+    expect(conversationProps.composer.view.doc.nodes).toEqual([
+      { type: 'text', text: 'Draft B' },
+      { type: 'text', text: ' ' },
+      reference
+    ])
+    await openSession('sess-a')
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('Draft A'))
+    await act(async () => libraryActions!.add([reference], null))
+    expect(conversationProps.view.composerFocusKey).toBe('new:proj-1')
+    expect(conversationProps.composer.view.doc.nodes).toEqual([reference])
+    expect(useSessionStore.getState().sessions).toHaveLength(2)
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
   })
 
   it('preserves each session doc independently when switching away and back', async () => {

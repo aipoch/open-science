@@ -1,4 +1,7 @@
 import '@/assets/main.css'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { LibraryReferenceActionsContext } from '@/pages/workspace/previews/library-reference-actions'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
@@ -37,6 +40,7 @@ const entry: LiteratureItemView = {
 }
 window.api = {
   literature: {
+    get: async () => entry,
     search: async (request: LiteratureCatalogSearchRequest) => {
       reads += 1
       if (mode === 'error') throw new Error('Fixture read failure')
@@ -54,24 +58,63 @@ window.api = {
     }
   }
 } as unknown as typeof window.api
+useSessionStore.setState({
+  sessions: Array.from(
+    { length: 35 },
+    (_, index) =>
+      ({
+        id: `session-${index}`,
+        projectId: 'fixture-project',
+        cwd: '/fixture-project',
+        title:
+          ['Literature review', 'Compare findings', 'Endometrial cancer — follow-up'][index % 3] +
+          (index > 2 ? ` ${index}` : ''),
+        number: index + 1,
+        updatedAt: Date.now() - index * 86400000,
+        createdAt: 1,
+        messages: [],
+        status: 'idle'
+      }) as ChatSession
+  )
+})
 Object.assign(window, {
   libraryFixture: { counts: () => ({ reads, subscriptions }), notify: () => notify?.() }
 })
 
 export function Fixture(): React.JSX.Element {
+  const [added, setAdded] = useState('')
   const [active, setActive] = useState(true)
   return (
-    <div className="flex h-screen min-w-0 flex-col bg-background">
-      <button
-        className="shrink-0 border-b border-border p-2 text-sm"
-        onClick={() => setActive(!active)}
+    <TooltipProvider>
+      <LibraryReferenceActionsContext.Provider
+        value={{
+          projectId: 'fixture-project',
+          currentSessionId: 'session-0',
+          canAddToCurrent: true,
+          add: (references, sessionId) =>
+            setAdded(
+              `${sessionId ?? 'new'}: ${references.map((reference) => '@' + reference.item.title).join(' ')}`
+            )
+        }}
       >
-        Toggle preview visibility
-      </button>
-      <div className="min-h-0 min-w-0 flex-1">
-        <LibraryPreview projectId="fixture-project" isActive={active} />
-      </div>
-    </div>
+        <div className="flex h-screen min-w-0 flex-col bg-background">
+          <button
+            className="shrink-0 border-b border-border p-2 text-sm"
+            onClick={() => setActive(!active)}
+          >
+            Toggle preview visibility
+          </button>
+          {added && (
+            <div role="status" className="border-b border-border p-3 text-xs">
+              {added}
+            </div>
+          )}
+          <div className="min-h-0 min-w-0 flex-1">
+            <LibraryPreview projectId="fixture-project" isActive={active} />
+          </div>
+        </div>
+      </LibraryReferenceActionsContext.Provider>
+    </TooltipProvider>
   )
 }
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {

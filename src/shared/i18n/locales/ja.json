@@ -6343,6 +6343,21 @@
     "Recent sessions": "最近のセッション",
     "More": "多い",
     "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Codex CLI v{{minimumVersion}} 以降が必要です。使用する前に Codex を更新または修復してください。",
-    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "修復すると、外部のインストールを変更せずに、アプリが管理する Codex CLI をインストールします。外部のインストールを手動で更新して再検出することもできます。"
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "修復すると、外部のインストールを変更せずに、アプリが管理する Codex CLI をインストールします。外部のインストールを手動で更新して再検出することもできます。",
+    "Current Library entry.": "ライブラリの現在の項目。",
+    "This conversation cannot accept references right now.": "この会話には現在文献を追加できません。",
+    "Could not add references. Check that the conversation is editable and the reference limit is not exceeded.": "文献を追加できませんでした。会話が編集可能で、参照数の上限を超えていないことを確認してください。",
+    "Reference details": "文献の詳細",
+    "Copy title": "タイトルをコピー",
+    "Could not copy title.": "タイトルをコピーできませんでした。",
+    "Selected: {{selected}}": "選択中：{{selected}}",
+    "Search conversations": "会話を検索",
+    "Search by title or #number": "タイトルまたは #番号で検索",
+    "Conversations": "会話",
+    "Current": "現在",
+    "No matching conversations": "一致する会話はありません",
+    "Added to the draft. You choose when to send.": "下書きに追加します。送信するタイミングは自分で選べます。",
+    "Add to chat": "会話に追加",
+    "Choose another conversation": "別の会話を選択"
   }
 }

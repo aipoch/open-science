@@ -316,6 +316,32 @@ export const appendArtifactMention = (doc: ComposerDoc, reference: FileReference
   }
 }
 
+// Append a batch atomically: preserve existing snapshots and reject overflow without a partial add.
+export const appendLiteratureMentions = (
+  doc: ComposerDoc,
+  references: readonly LiteratureReference[]
+): ComposerDoc | undefined => {
+  const seen = new Set(
+    doc.nodes.flatMap((node) => (node.type === 'literature' ? [node.itemId] : []))
+  )
+  const additions = references.filter((reference) => {
+    if (seen.has(reference.itemId)) return false
+    seen.add(reference.itemId)
+    return true
+  })
+  if (additions.length === 0) return doc
+  if (docArtifactCount(doc) + additions.length > MAX_COMPOSER_ARTIFACT_MENTIONS) return undefined
+  const nodes = [...doc.nodes]
+  for (const reference of additions) {
+    const previous = nodes.at(-1)
+    if (previous && (previous.type !== 'text' || !/\s$/.test(previous.text))) {
+      nodes.push({ type: 'text', text: ' ' })
+    }
+    nodes.push(reference)
+  }
+  return { nodes }
+}
+
 // Hydrate a plain-text draft into a single text node; empty text yields the empty doc.
 export const docFromText = (text: string): ComposerDoc =>
   text === '' ? emptyDoc : { nodes: [{ type: 'text', text }] }

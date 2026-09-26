@@ -257,7 +257,9 @@
       "src/renderer/src/components/streamdown/install-streamdown.lazy-table.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
       "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
-      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
+      "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

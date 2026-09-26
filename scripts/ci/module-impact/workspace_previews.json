@@ -120,7 +120,10 @@
     "src/renderer/src/pages/workspace/previews/renderers/pdf-search-text-cache.ts",
     "src/renderer/src/pages/workspace/previews/renderers/pdf-search-text-cache.test.ts",
     "src/renderer/src/pages/workspace/previews/LibraryPreview.tsx",
-    "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
+    "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
+    "src/renderer/src/pages/workspace/previews/LibraryChatButton.tsx",
+    "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
+    "src/renderer/src/pages/workspace/previews/library-reference-actions.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",
@@ -151,7 +154,8 @@
     "src/renderer/src/pages/workspace/previews/useCachedPreviewImage.ts",
     "src/renderer/src/pages/workspace/previews/useNearViewport.ts",
     "src/renderer/src/pages/workspace/previews/usePreviewResourceGeneration.ts",
-    "src/renderer/src/pages/workspace/previews/useUnavailablePreviewProbe.ts"
+    "src/renderer/src/pages/workspace/previews/useUnavailablePreviewProbe.ts",
+    "src/renderer/src/pages/workspace/previews/library-reference-actions.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -206,7 +210,8 @@
       "src/renderer/src/pages/workspace/previews/useUnavailablePreviewProbe.test.tsx",
       "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-search-text-cache.test.ts",
-      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx"
     ],
     "contract": [],
     "consumer": [
