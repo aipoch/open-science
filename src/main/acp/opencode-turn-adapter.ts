@@ -33,11 +33,8 @@ const normalizeTurnUsage = (
   if (!diff) return EMPTY_RESULT
 
   const { turnCount: modelTurnCount, ...turnUsage } = diff.turnUsage
-  const cachedReadTokens = diff.lastModelStepUsage.cachedReadTokens
   const contextUsedTokens =
-    cachedReadTokens === undefined
-      ? undefined
-      : diff.lastModelStepUsage.inputTokens + cachedReadTokens
+    diff.lastModelStepUsage.inputTokens + diff.lastModelStepUsage.cacheTokens
   return Object.freeze({
     turnUsage: Object.freeze(turnUsage),
     modelTurnCount,

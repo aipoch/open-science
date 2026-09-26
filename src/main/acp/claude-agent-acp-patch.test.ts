@@ -1,5 +1,5 @@
 import type { McpServerStatus, Query } from '@anthropic-ai/claude-agent-sdk'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -109,4 +109,25 @@ describe('claude-agent-acp Session deletion patch', () => {
       rmSync(configDir, { recursive: true, force: true })
     }
   })
+})
+
+// Exercise the installed patch without exporting private upstream helpers as application API.
+it('counts Claude cache reads and writes once while excluding completion tokens', () => {
+  const source = readFileSync(
+    new URL(import.meta.resolve('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js')),
+    'utf8'
+  )
+  const helper = source.match(/function contextTokens\(usage\) \{[\s\S]*?^\}/m)?.[0]
+  expect(helper).toBeDefined()
+  const contextTokens = new Function(`${helper}; return contextTokens`)() as (
+    usage: Record<string, number>
+  ) => number
+  expect(
+    contextTokens({
+      input_tokens: 100,
+      cache_read_input_tokens: 40_000,
+      cache_creation_input_tokens: 150_000,
+      output_tokens: 5_000
+    })
+  ).toBe(190_100)
 })

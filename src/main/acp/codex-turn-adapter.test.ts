@@ -140,7 +140,7 @@ describe('Codex turn adapter', () => {
     }
   )
 
-  it('recombines uncached and cached-read input for the exact context numerator', async () => {
+  it('recombines uncached input, cache reads, and cache writes for the exact context numerator', async () => {
     const probe = await createCodexTurnAdapter().begin({
       providerSessionId: 'provider-session-1',
       cwd: '/workspace'
@@ -172,7 +172,7 @@ describe('Codex turn adapter', () => {
         cachedWriteTokens: 0,
         outputTokens: 10
       },
-      contextUsedTokens: 32_174,
+      contextUsedTokens: 32_674,
       lastModelStepUsage: {
         inputTokens: 174,
         cacheTokens: 32_500,

@@ -75,8 +75,7 @@ const MAX_LOGICAL_TURN_USAGE_ENTRIES = 500
 
 const inferredCallContextUsedTokens = (call: AcpProviderModelCallUsage): number | undefined => {
   if (call.contextUsedTokens !== undefined) return call.contextUsedTokens
-  if (call.cachedReadTokens === undefined) return undefined
-  const used = call.inputTokens + call.cachedReadTokens
+  const used = call.inputTokens + call.cacheTokens
   return Number.isSafeInteger(used) ? used : undefined
 }
 

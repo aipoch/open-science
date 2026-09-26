@@ -57,20 +57,13 @@ const createCodexTurnAdapter = (): AcpProviderTurnAdapter => ({
         if (closed) return {}
         closed = true
         const terminalUsage = toCodexTurnTokenUsage(response.usage)
-        // Managed Codex metadata carries whole-turn footer usage, while PromptResponse.usage remains
-        // the latest request snapshot and therefore the exact context numerator. The pinned adapter
-        // publishes uncached and cached-read input as exclusive categories, so recombine them here;
-        // cache writes populate future requests and are not part of the current model input.
+        // Raw Codex input already includes cached reads; pinned ACP publishes mutually exclusive
+        // input/cache categories. Recombine those once, using the latest request rather than the turn sum.
         const turnUsage =
           toCodexTurnTokenUsage(response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY]) ?? terminalUsage
-        const contextInputTokens = nonNegativeSafeInteger(response.usage?.inputTokens)
-        const contextCachedReadTokens = nonNegativeSafeInteger(
-          response.usage?.cachedReadTokens ?? 0
-        )
-        const reportedContextUsedTokens =
-          contextInputTokens !== undefined && contextCachedReadTokens !== undefined
-            ? contextInputTokens + contextCachedReadTokens
-            : undefined
+        const reportedContextUsedTokens = terminalUsage
+          ? terminalUsage.inputTokens + terminalUsage.cacheTokens
+          : undefined
         const contextUsedTokens = Number.isSafeInteger(reportedContextUsedTokens)
           ? reportedContextUsedTokens
           : undefined

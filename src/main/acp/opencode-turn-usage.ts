@@ -145,15 +145,14 @@ export const diffOpenCodeTurnUsage = (
     ) {
       return undefined
     }
-    const contextUsedTokens =
-      usage.cachedReadTokens === undefined ? undefined : usage.inputTokens + usage.cachedReadTokens
-    if (contextUsedTokens !== undefined && !Number.isSafeInteger(contextUsedTokens)) {
+    const contextUsedTokens = usage.inputTokens + usage.cacheTokens
+    if (!Number.isSafeInteger(contextUsedTokens)) {
       return undefined
     }
     modelCalls.push({
       sourceInvocationId: messageId,
       ...usage,
-      ...(contextUsedTokens === undefined ? {} : { contextUsedTokens })
+      contextUsedTokens
     })
   }
 

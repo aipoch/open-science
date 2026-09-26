@@ -173,6 +173,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
             inputTokens: 3,
             cacheTokens: 1,
             outputTokens: 1,
+            contextUsedTokens: 4,
             contextWindowSize: 128_000
           },
           {
@@ -182,6 +183,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
             inputTokens: 2,
             cacheTokens: 0,
             outputTokens: 1,
+            contextUsedTokens: 2,
             contextWindowSize: 128_000
           },
           {
@@ -191,6 +193,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
             inputTokens: 3,
             cacheTokens: 1,
             outputTokens: 0,
+            contextUsedTokens: 4,
             contextWindowSize: 128_000
           },
           {
@@ -200,6 +203,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
             inputTokens: 2,
             cacheTokens: 0,
             outputTokens: 1,
+            contextUsedTokens: 2,
             contextWindowSize: 128_000
           }
         ],

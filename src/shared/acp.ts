@@ -209,9 +209,9 @@ export type AcpContextUsageBreakdown = {
 // Current agent-context usage projected onto its logical app session. `used` remains the latest Agent
 // model-input total once one exists; before the first Agent report it is the local preflight estimate.
 // During later preflight updates, `agentUsed` preserves that latest authoritative reading while the
-// independent breakdown keeps changing. Output/completion and cache-write tokens are excluded. `size`
-// is omitted until the selected model window is known, then remains bound to that same agent-context
-// generation. Both expire when that context disconnects or is replaced. Monetary cost is deliberately
+// independent breakdown keeps changing. Cache reads and writes are input, counted once; output is
+// excluded. `size` is omitted until the selected model window is known, then remains bound to that
+// same agent-context generation. Both expire when that context disconnects or is replaced. Monetary cost is deliberately
 // excluded.
 export type AcpContextUsage = {
   used: number
@@ -301,7 +301,8 @@ export const sanitizeAcpContextUsage = (value: unknown): AcpContextUsage | undef
   return sanitized
 }
 
-// Provider-reported totals for one completed prompt turn. `cacheTokens` stays as the comparable
+// Provider-reported totals for one completed prompt turn. Input excludes the cache categories;
+// inputTokens + cacheTokens is the full input. `cacheTokens` stays as the comparable
 // provider-neutral total. Read/write details are present as a pair only when the adapter reports both
 // categories separately.
 export type AcpTurnTokenUsage = {

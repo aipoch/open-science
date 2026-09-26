@@ -56,6 +56,7 @@ describe('Claude Code turn adapter', () => {
         outputTokens: 14
       },
       modelTurnCount: 3,
+      contextUsedTokens: 44,
       lastModelStepUsage: {
         inputTokens: 12,
         cacheTokens: 32,
@@ -99,6 +100,7 @@ describe('Claude Code turn adapter', () => {
     await expect(
       Promise.resolve(probe.finalize({ response: { stopReason: 'end_turn' } as PromptResponse }))
     ).resolves.toEqual({
+      contextUsedTokens: 57,
       lastModelStepUsage: {
         inputTokens: 14,
         cacheTokens: 43,

@@ -249,7 +249,7 @@ class AcpPromptPreparationOwner {
         usage,
         sourceInvocationId
       }: SkillSelectorUsageObservation): void => {
-        const contextUsedTokens = usage.inputTokens + (usage.cachedReadTokens ?? 0)
+        const contextUsedTokens = usage.inputTokens + usage.cacheTokens
         preDispatchModelCalls.push({
           ...usage,
           ...(sourceInvocationId ? { sourceInvocationId } : {}),

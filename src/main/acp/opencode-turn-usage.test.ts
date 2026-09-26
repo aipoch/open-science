@@ -164,7 +164,7 @@ describe('OpenCode turn usage', () => {
         cachedReadTokens: 2,
         cachedWriteTokens: 1,
         outputTokens: 2,
-        contextUsedTokens: 14
+        contextUsedTokens: 15
       },
       {
         sourceInvocationId: 'step-2',
@@ -173,7 +173,7 @@ describe('OpenCode turn usage', () => {
         cachedReadTokens: 4,
         cachedWriteTokens: 1,
         outputTokens: 3,
-        contextUsedTokens: 23
+        contextUsedTokens: 24
       }
     ])
   })

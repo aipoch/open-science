@@ -157,9 +157,9 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
 -        usage.cache_read_input_tokens +
 -        usage.cache_creation_input_tokens);
 +/** Report the current upstream request's model-input context. Cache reads are
-+ *  part of that input; completion tokens and cache writes are not. */
++ *  part of that input, as are cache writes; completion tokens are not. */
 +function contextTokens(usage) {
-+    return usage.input_tokens + usage.cache_read_input_tokens;
++    return usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens;
  }
  /**
   * Build the `data` payload attached to a `RequestError.internalError` when we
