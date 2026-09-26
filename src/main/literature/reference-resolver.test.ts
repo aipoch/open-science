@@ -323,3 +323,60 @@ it('keeps titleless metadata available for enrichment but rejects incomplete Age
     'REFERENCE_NOT_FOUND: No title'
   )
 })
+
+it('starts distinct DOI lookups concurrently and preserves order and duplicate receipts', async () => {
+  const controller = new AbortController()
+  const pending = new Map<string, (response: Response) => void>()
+  const fetchFn = vi.fn<typeof fetch>(
+    (url, options) =>
+      new Promise<Response>((resolve, reject) => {
+        const signal = options!.signal!
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        const doi = decodeURIComponent(new URL(String(url)).pathname.slice('/works/'.length))
+        pending.set(doi, resolve)
+      })
+  )
+  const references = ['doi:10.1234/first', 'doi:10.1234/second', 'doi:10.1234/FIRST']
+  const outcome = new LiteratureReferenceResolver(fetchFn).resolve(references, controller.signal)
+  try {
+    expect([...pending.keys()]).toEqual(['10.1234/first', '10.1234/second'])
+    for (const doi of ['10.1234/second', '10.1234/first']) {
+      pending.get(doi)!(
+        Response.json({ message: { DOI: doi, title: [doi], abstract: 'Complete abstract.' } })
+      )
+    }
+    const result = await outcome
+    expect(result.map(({ item }) => item.title)).toEqual([
+      '10.1234/first',
+      '10.1234/second',
+      '10.1234/first'
+    ])
+    expect(result[0]).toBe(result[2])
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+  } finally {
+    controller.abort()
+    await outcome.catch(() => undefined)
+  }
+})
+
+it('propagates cancellation to every concurrent DOI lookup without starting fallback requests', async () => {
+  const controller = new AbortController()
+  const signals: AbortSignal[] = []
+  const fetchFn = vi.fn<typeof fetch>(
+    (_url, options) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = options!.signal!
+        signals.push(signal)
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+  )
+  const outcome = new LiteratureReferenceResolver(fetchFn)
+    .resolve(['doi:10.1234/first', 'doi:10.1234/second'], controller.signal)
+    .catch((error: unknown) => error)
+  const reason = new Error('Cancel all lookups')
+  controller.abort(reason)
+  expect(await outcome).toBe(reason)
+  expect(signals).toHaveLength(2)
+  expect(signals.every((signal) => signal.aborted)).toBe(true)
+  expect(fetchFn).toHaveBeenCalledTimes(2)
+})

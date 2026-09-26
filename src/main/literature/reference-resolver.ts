@@ -477,37 +477,40 @@ class LiteratureReferenceResolver {
         signal?.throwIfAborted()
       }
     }
-    for (const ref of references) {
-      if (discoveries.get(ref.key)?.item.abstract) continue
-      try {
-        const result = await this.lookup(ref.key, signal)
-        if (!result.item.title.trim())
-          throw new Error(`REFERENCE_NOT_FOUND: No title was found for ${ref.key}.`)
-        literatureItemInputSchema.parse(result.item)
-        // The Agent discovery contract has one source; retain explicit supplemental provenance
-        // inside that receipt instead of attributing another provider's abstract to Crossref.
-        discoveries.set(ref.key, {
-          item: result.item,
-          source:
-            result.sources.length === 1
-              ? result.source
-              : {
-                  ...result.source,
-                  rawMetadata: {
-                    ...result.source.rawMetadata,
-                    supplementalSources: result.sources.slice(1)
+    await Promise.all(
+      references.map(async (ref) => {
+        if (discoveries.get(ref.key)?.item.abstract) return
+        try {
+          const result = await this.lookup(ref.key, signal)
+          if (!result.item.title.trim())
+            throw new Error(`REFERENCE_NOT_FOUND: No title was found for ${ref.key}.`)
+          literatureItemInputSchema.parse(result.item)
+          // The Agent discovery contract has one source; retain explicit supplemental provenance
+          // inside that receipt instead of attributing another provider's abstract to Crossref.
+          discoveries.set(ref.key, {
+            item: result.item,
+            source:
+              result.sources.length === 1
+                ? result.source
+                : {
+                    ...result.source,
+                    rawMetadata: {
+                      ...result.source.rawMetadata,
+                      supplementalSources: result.sources.slice(1)
+                    }
                   }
-                }
-        })
-      } catch (error) {
-        signal?.throwIfAborted()
-        if (!discoveries.has(ref.key)) {
-          if (error instanceof LiteratureProviderError && error.status === 404)
-            throw new Error(`REFERENCE_NOT_FOUND: No metadata was found for ${ref.key}.`)
-          throw error
+          })
+        } catch (error) {
+          signal?.throwIfAborted()
+          if (!discoveries.has(ref.key)) {
+            if (error instanceof LiteratureProviderError && error.status === 404)
+              throw new Error(`REFERENCE_NOT_FOUND: No metadata was found for ${ref.key}.`)
+            throw error
+          }
         }
-      }
-    }
+      })
+    )
+    signal?.throwIfAborted()
     return requested.map(({ key }) => {
       const result = discoveries.get(key)
       if (!result) throw new Error(`REFERENCE_NOT_FOUND: No metadata was found for ${key}.`)
