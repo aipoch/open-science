@@ -3369,6 +3369,40 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it.each(['disconnect', 'shutdown'] as const)(
+    'allows a resumed Session to send after %s cancels its queued admission',
+    async (teardown) => {
+      const validation = createDeferred()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const session = await coordinator.createSession()
+      const upward = coordinator.startContinuationWhen(
+        { sessionId: session.sessionId, text: 'stale child message' },
+        () => validation.promise
+      )
+      const settled = upward.catch(() => undefined)
+      if (teardown === 'disconnect') await coordinator.disconnect()
+      else coordinator.shutdown()
+      await settled
+      await coordinator.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+      const prompt = coordinator.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'new user message'
+      })
+      await prompt
+      expect(created.at(-1)?.sendPrompt).toHaveBeenCalledOnce()
+      validation.reject(new DelegateMessageParkedError('cancelled during teardown'))
+    }
+  )
+
   it('linearizes real user prompts and upward continuations through one root admission lock', async () => {
     const prompts = [
       createDeferred<unknown>(),

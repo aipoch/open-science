@@ -171,6 +171,10 @@ class AcpRuntimeCoordinator {
   private readonly activePromptCounts = new Map<string, number>()
   private readonly interactionReleaseWaiters = new Map<string, Set<() => void>>()
   private readonly rootAdmissionTails = new Map<string, Promise<void>>()
+  private readonly rootAdmissionCancellations = new Map<
+    string,
+    Set<{ cancelled: boolean; reject?: (error: unknown) => void }>
+  >()
   private readonly activeRootAdmissions = new Map<string, RootAdmissionLease>()
   private promptAdmissionGuard?: (sessionId: string) => Promise<void>
   private promptDispatchAdmissionGuard?: PromptAdmissionGuard
@@ -448,6 +452,7 @@ class AcpRuntimeCoordinator {
     // reject after partial cleanup, but a dialog that was already open must not remain actionable.
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
+    this.cancelRootAdmissions()
     const runtimes = Array.from(this.runtimes)
     const [delegatedResult, ...results] = await Promise.allSettled([
       this.delegatedWork?.stopAll() ?? Promise.resolve(),
@@ -477,6 +482,7 @@ class AcpRuntimeCoordinator {
   shutdown(): void {
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
+    this.cancelRootAdmissions()
     void this.delegatedWork?.shutdown().catch(() => undefined)
     for (const runtime of this.runtimes) runtime.shutdown()
     this.clearRuntimeOwnership()
@@ -1012,6 +1018,17 @@ class AcpRuntimeCoordinator {
     operation: () => Promise<Result>
   ): Promise<Result> {
     const previous = this.rootAdmissionTails.get(sessionId)
+    let rejectCancellation!: (error: unknown) => void
+    const cancellationPromise = new Promise<Result>((_, reject) => {
+      rejectCancellation = reject
+    })
+    const cancellation: { cancelled: boolean; reject?: (error: unknown) => void } = {
+      cancelled: false,
+      reject: rejectCancellation
+    }
+    const cancellations = this.rootAdmissionCancellations.get(sessionId) ?? new Set()
+    cancellations.add(cancellation)
+    this.rootAdmissionCancellations.set(sessionId, cancellations)
     let resolveGate!: () => void
     const gate = new Promise<void>((resolve) => {
       resolveGate = resolve
@@ -1028,6 +1045,13 @@ class AcpRuntimeCoordinator {
       }
     }
     const run = (): Promise<Result> => {
+      if (cancellation.cancelled) {
+        return Promise.reject(
+          new DelegateMessagePreAcceptanceError(
+            'ACP prompt was superseded before provider dispatch during Session teardown'
+          )
+        )
+      }
       this.activeRootAdmissions.set(sessionId, lease)
       let result: Promise<Result>
       try {
@@ -1047,11 +1071,35 @@ class AcpRuntimeCoordinator {
           this.rootAdmissionTails.delete(sessionId)
           this.emitState()
         }
+        cancellations.delete(cancellation)
+        if (cancellations.size === 0) this.rootAdmissionCancellations.delete(sessionId)
       })
       .catch(() => undefined)
     const result = ready ? ready.then(run) : run()
     if (!previous) this.emitState()
-    return result
+    void result.catch(() => undefined)
+    return Promise.race([result, cancellationPromise])
+  }
+
+  private cancelRootAdmissions(sessionId?: string): void {
+    const ids = (
+      sessionId ? [sessionId] : Array.from(this.rootAdmissionCancellations.keys())
+    ).filter((id) => sessionId !== undefined || !this.durableQuitDetachedSessionIds.has(id))
+    for (const id of ids) {
+      for (const cancellation of this.rootAdmissionCancellations.get(id) ?? []) {
+        cancellation.cancelled = true
+        cancellation.reject?.(
+          new DelegateMessagePreAcceptanceError(
+            'ACP prompt was superseded before provider dispatch during Session teardown'
+          )
+        )
+      }
+      this.rootAdmissionCancellations.delete(id)
+      this.rootAdmissionTails.delete(id)
+      this.activeRootAdmissions.get(id)?.release()
+      this.activeRootAdmissions.delete(id)
+    }
+    this.emitState()
   }
 
   // Starts an app-owned continuation and reports the strongest acceptance evidence available.
@@ -1442,6 +1490,7 @@ class AcpRuntimeCoordinator {
 
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpRuntimeState> {
     this.invalidateSessionTurn(request.sessionId)
+    this.cancelRootAdmissions(request.sessionId)
     this.teardownCallbacks.onSessionDeleteStarted?.(request.sessionId)
     this.activePromptRequests.delete(request.sessionId)
     this.pendingResumeReconciliations.delete(request.sessionId)
@@ -2320,6 +2369,7 @@ class AcpRuntimeCoordinator {
   }
 
   private clearRuntimeOwnership(): void {
+    this.cancelRootAdmissions()
     for (const attempts of this.pendingPromptStarts.values()) {
       for (const attempt of attempts) {
         attempt.startAdmission?.reject(
