@@ -181,3 +181,18 @@ it('stops after a verified result already includes an abstract', async () => {
   expect(lookup).toHaveBeenCalledExactlyOnceWith(draft.identifiers[0].value)
   expect(notice).not.toHaveBeenCalled()
 })
+
+it('does not report a lookup failure when local metadata has no lookup identifier', async () => {
+  const lookup = vi.fn()
+  install(lookup)
+  const notice = vi.fn()
+  const local = {
+    ...draft,
+    title: 'Locally extracted title',
+    abstract: 'Locally extracted abstract',
+    identifiers: []
+  }
+  expect(await completeLiteraturePdfDraft(local, notice)).toBe(local)
+  expect(lookup).not.toHaveBeenCalled()
+  expect(notice).not.toHaveBeenCalled()
+})

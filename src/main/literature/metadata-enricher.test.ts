@@ -1185,3 +1185,47 @@ it('reviews replacement identifiers atomically without retaining identifiers fro
   await enricher.applyReviewed(review, ['identifiers'])
   expect(applyMetadata.mock.calls[1][0].item.identifiers).toEqual(review.item.item.identifiers)
 })
+
+it.each([false, true])(
+  'requires a shared provider identity before adding a secondary PMID abstract: %s',
+  async (sharedDoi) => {
+    const current = {
+      ...view,
+      item: {
+        ...item,
+        identifiers: [
+          ...item.identifiers,
+          { scheme: 'pmid' as const, value: '12345678', isPrimary: false }
+        ]
+      }
+    }
+    const fetchFn = vi.fn<typeof fetch>(async (url) => {
+      const endpoint = new URL(String(url))
+      if (endpoint.hostname === 'api.crossref.org') return Response.json(crossrefResponse)
+      if (endpoint.hostname === 'eutils.ncbi.nlm.nih.gov')
+        return new Response(
+          'PMID- 12345678\nTI  - A paper\nAB  - Supplemental abstract\n' +
+            (sharedDoi ? 'LID - 10.1000/example [doi]\n' : '')
+        )
+      return Response.json({ resultList: { result: [] } })
+    })
+    const enricher = new LiteratureMetadataEnricher(
+      {
+        get: async () => current,
+        getMetadataCommitReceipt: async () => null,
+        applyMetadata: vi.fn()
+      },
+      fetchFn
+    )
+    const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+    expect(review.item.item.abstract).toBe(sharedDoi ? 'Supplemental abstract' : '')
+    expect(review.sources?.map(({ provider }) => provider)).toEqual(
+      sharedDoi ? ['crossref', 'pubmed'] : ['crossref']
+    )
+    expect(
+      fetchFn.mock.calls.some(
+        ([url]) => new URL(String(url)).hostname === 'eutils.ncbi.nlm.nih.gov'
+      )
+    ).toBe(true)
+  }
+)

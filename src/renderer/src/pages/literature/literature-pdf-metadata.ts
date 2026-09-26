@@ -97,10 +97,7 @@ const completeLiteraturePdfDraft = async (
   const identifiers = draft.identifiers.filter(
     ({ scheme }) => scheme === 'doi' || scheme === 'pmid'
   )
-  if (!identifiers.length) {
-    onNotice?.({ lookupFailed: true })
-    return draft
-  }
+  if (!identifiers.length) return draft
   let completed = draft
   const rejected = new Set<(typeof identifiers)[number]>()
   for (const identifier of identifiers) {

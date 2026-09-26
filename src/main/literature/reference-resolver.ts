@@ -148,8 +148,18 @@ const dataciteSchema = z.object({
   })
 })
 
-// Reject contradictory identities before accepting any complementary fields.
+// Require a shared identity and reject contradictory identifiers before merging sources.
 const identitiesAgree = (left: LiteratureItemInput, right: LiteratureItemInput): boolean =>
+  left.identifiers.some(
+    (identifier) =>
+      (identifier.scheme === 'doi' || identifier.scheme === 'pmid') &&
+      right.identifiers.some(
+        (candidate) =>
+          candidate.scheme === identifier.scheme &&
+          normalizeIdentifier(candidate.scheme, candidate.value) ===
+            normalizeIdentifier(identifier.scheme, identifier.value)
+      )
+  ) &&
   left.identifiers
     .filter(({ scheme }) => scheme === 'doi' || scheme === 'pmid')
     .every((identifier) => {
