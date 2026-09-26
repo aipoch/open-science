@@ -1664,7 +1664,9 @@ describe('production delegated-work composition', () => {
 
       expect(first).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit' }] })
       expect(second).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit 2' }] })
-      await expect(harness.reopen().host.children(harness.caller)).resolves.toMatchObject([
+      const verification = harness.reopen()
+      compositions.push(verification)
+      await expect(verification.host.children(harness.caller)).resolves.toMatchObject([
         { name: 'Source audit' },
         { name: 'Source audit 2' }
       ])
@@ -1675,7 +1677,7 @@ describe('production delegated-work composition', () => {
           .map(({ delegateName }) => delegateName)
       ).toEqual(['Source audit', 'Source audit 2'])
     } finally {
-      // Both owners can still be materializing the wait:false children. Drain them before rm.
+      // Reopened owners can still be recovering the wait:false children. Drain them before rm.
       for (const composition of compositions) await composition.root.shutdown()
     }
   })
