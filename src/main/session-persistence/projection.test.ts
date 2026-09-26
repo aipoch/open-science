@@ -375,6 +375,37 @@ describe('Session projection', () => {
     }
   }, 15_000)
 
+  it('keeps a session save queued through prolonged SQLite transaction contention', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'session-transaction-contention-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const entered = createDeferred<void>()
+    const release = createDeferred<void>()
+    const active = client.$transaction(
+      async (tx) => {
+        await tx.$queryRawUnsafe('SELECT 1')
+        entered.resolve()
+        await release.promise
+      },
+      { timeout: 30_000 }
+    )
+    await entered.promise
+    const timer = setTimeout(() => release.resolve(), 12_500)
+    try {
+      await expect(repository.saveSession(session('prolonged-contention'))).resolves.toMatchObject({
+        title: 'Session prolonged-contention'
+      })
+    } finally {
+      clearTimeout(timer)
+      release.resolve()
+      await active
+    }
+  }, 30_000)
+
   it('saves sessions while cancellation recovery polls the shared database', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'session-recovery-contention-'))
     initDataRoot(storageRoot)
