@@ -762,6 +762,59 @@ describe('AgentMcpHttpHost', () => {
     expect(response.headers.get('connection')).toBe('close')
   })
 
+  it('retains the host body budget above the SDK default for parsed requests', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    host.registerHostMessage('large', { sendMessage: vi.fn() })
+    const response = await fetch(host.urlFor('host-message', 'large'), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream'
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'ping',
+        params: { padding: 'x'.repeat(4 * 1024 * 1024) }
+      })
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id: 1, result: {} })
+  })
+
+  it.each([100, 101])('enforces the SDK batch boundary for %i messages', async (count) => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    const sendMessage = vi.fn()
+    host.registerHostMessage('batch', { sendMessage })
+    const response = await fetch(host.urlFor('host-message', 'batch'), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream'
+      },
+      body: JSON.stringify(
+        Array.from({ length: count }, (_, id) => ({ jsonrpc: '2.0', id, method: 'ping' }))
+      )
+    })
+    expect(response.status).toBe(count === 100 ? 200 : 400)
+    const body = await response.json()
+    if (count === 100) {
+      expect(body).toHaveLength(100)
+      expect(body).toEqual(
+        expect.arrayContaining(
+          Array.from({ length: count }, (_, id) => ({ jsonrpc: '2.0', id, result: {} }))
+        )
+      )
+    } else {
+      expect(body).toMatchObject({ error: { code: -32600 } })
+    }
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
   it('serves one trusted side-chat host-message handler over its bound route', async () => {
     host = new AgentMcpHttpHost()
     const { token } = await host.ensureStarted()
