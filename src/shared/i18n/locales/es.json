@@ -128,7 +128,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "El paquete original no está disponible. Puede que se haya movido, eliminado o que ya no se pueda leer. Seleccione otro paquete.",
     "Could not fork this Session: {{reason}}": "No se pudo bifurcar esta sesión: {{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Es necesario recuperar la publicación de la bifurcación (operación {{operationId}}, sesión {{sessionId}}). Reinicie la aplicación para recuperar este intento antes de volver a bifurcar.",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Este paquete de sesión requiere una versión más reciente de Open Science. Actualice Open Science y vuelva a importarlo."
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Este paquete de sesión requiere una versión más reciente de Open Science. Actualice Open Science y vuelva a importarlo.",
+    "Running sessions": "En ejecución",
+    "Pinned sessions": "Fijado",
+    "Recent items": "Sesiones recientes",
+    "More items": "Más sesiones"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Resuelva registros de fármacos o sustancias químicas de ClinPGx mediante el ID de acceso o el nombre de ClinPGx antes de consultar anotaciones farmacogenómicas.",
@@ -2166,7 +2170,6 @@
     "Pin project": "Fijar proyecto",
     "Pin this folder": "Fijar esta carpeta",
     "Pin this folder to the Go to menu": "Fijar esta carpeta en el menú Ir a",
-    "Pinned": "Fijado",
     "Pinned project": "Proyecto fijado",
     "Plan approved": "Plan aprobado",
     "Plan blocked": "Plan bloqueado",
@@ -2300,7 +2303,6 @@
     "Reasoning effort": "Esfuerzo de razonamiento",
     "Reasoning effort levels": "Niveles de esfuerzo de razonamiento",
     "Reasoning effort request format": "Formato de solicitud de esfuerzo de razonamiento",
-    "Recent sessions": "Sesiones recientes",
     "Recheck": "Volver a comprobar",
     "Recheck message snapshot": "Volver a comprobar la instantánea de mensajes",
     "Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.": "Recomendado. Utiliza su inicio de sesión de Claude existente en ~/.claude. Inicie sesión una vez mediante OAuth en el navegador y utilícelo en todas las herramientas de Claude.",
@@ -2533,7 +2535,6 @@
     "Run marks": "Marcas de ejecución",
     "Run {{runNumber}} · Message {{messageNumber}}": "Ejecución {{runNumber}} · Mensaje {{messageNumber}}",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "Ejecución {{run}}, {{state}}, {{tokens}} tokens de la ventana de contexto",
-    "Running": "En ejecución",
     "Runtime": "Entorno de ejecución",
     "Runtime_duration": "Duración de la ejecución",
     "Runtimes": "Entornos de ejecución",
@@ -3943,7 +3944,6 @@
     "Daily activity metric": "Métrica de actividad diaria",
     "Daily activity for the last 30 days": "Actividad diaria de los últimos 30 días",
     "Less": "Menos",
-    "More": "Más",
     "Daily token usage": "Uso diario de tokens",
     "Daily input, cache, and output tokens over the last 30 days.": "Tokens diarios de entrada, caché y salida durante los últimos 30 días.",
     "Input (cached)": "Entrada (en caché)",
@@ -6658,6 +6658,10 @@
     "PDF unavailable": "PDF no disponible",
     "No references on this page": "No hay referencias en esta página",
     "References may have moved or been removed. Return to the first page.": "Es posible que las referencias se hayan movido o eliminado. Vuelva a la primera página.",
-    "First page": "Primera página"
+    "First page": "Primera página",
+    "Running": "En ejecución",
+    "Pinned": "Fijado",
+    "Recent sessions": "Sesiones recientes",
+    "More": "Más"
   }
 }

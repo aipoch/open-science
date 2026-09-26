@@ -129,7 +129,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Исходный пакет недоступен. Возможно, он перемещён, удалён или больше не читается. Выберите другой пакет.",
     "Could not fork this Session: {{reason}}": "Не удалось создать ответвление этой сессии: {{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Необходимо восстановить публикацию ответвления (операция {{operationId}}, сессия {{sessionId}}). Перезапустите приложение для восстановления этой попытки перед созданием нового ответвления.",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Для этого пакета сессии требуется более новая версия Open Science. Обновите Open Science и повторите импорт."
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Для этого пакета сессии требуется более новая версия Open Science. Обновите Open Science и повторите импорт.",
+    "Running sessions": "Запущено",
+    "Pinned sessions": "Фиксировано",
+    "Recent items": "Последние сессии",
+    "More items": "Другие сеансы"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Разрешите записи лекарств и химических веществ ClinPGx по идентификатору доступа ClinPGx или названию перед поиском фармакогеномных аннотаций.",
@@ -2168,7 +2172,6 @@
     "Pin project": "Фиксировать проект",
     "Pin this folder": "Фиксировать эту папку",
     "Pin this folder to the Go to menu": "Фиксировать эту папку в меню «Перейти»",
-    "Pinned": "Фиксировано",
     "Pinned project": "Фиксированный проект",
     "Plan approved": "План утверждён",
     "Plan blocked": "План заблокирован",
@@ -2280,7 +2283,6 @@
     "Reasoning effort": "Глубина рассуждений",
     "Reasoning effort levels": "Глубина рассуждений",
     "Reasoning effort request format": "Формат запроса глубины рассуждений",
-    "Recent sessions": "Последние сессии",
     "Recheck": "Повторить проверку",
     "Recheck message snapshot": "Проверить снимок сообщений ещё раз",
     "Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.": "Рекомендуется. Использует существующий вход Claude из ~/.claude. Один раз войдите через OAuth в браузере и используйте этот вход во всех инструментах Claude.",
@@ -2548,7 +2550,6 @@
     "Run marks": "Запускать метки",
     "Run {{runNumber}} · Message {{messageNumber}}": "Запускать {{runNumber}} · сообщение {{messageNumber}}",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "Запускать {{run}}, {{state}}, {{tokens}} токенов окна контекста",
-    "Running": "Запущено",
     "Runtime": "Среда выполнения",
     "Runtime_duration": "Время выполнения",
     "Runtimes": "Среды выполнения",
@@ -4046,7 +4047,6 @@
     "Daily activity metric": "Метрика ежедневной активности",
     "Daily activity for the last 30 days": "Ежедневная активность за последние 30 дней",
     "Less": "Меньше",
-    "More": "Больше",
     "Daily token usage": "Ежедневное использование токенов",
     "Daily input, cache, and output tokens over the last 30 days.": "Ежедневное использование входных, кэшированных и выходных токенов за последние 30 дней.",
     "Input (cached)": "Вход (кэшированный)",
@@ -6795,6 +6795,10 @@
     "PDF unavailable": "PDF недоступен",
     "No references on this page": "На этой странице нет источников",
     "References may have moved or been removed. Return to the first page.": "Возможно, источники перемещены или удалены. Вернитесь на первую страницу.",
-    "First page": "Первая страница"
+    "First page": "Первая страница",
+    "Running": "Запущено",
+    "Pinned": "Фиксировано",
+    "Recent sessions": "Последние сессии",
+    "More": "Больше"
   }
 }
