@@ -56,7 +56,7 @@ import {
   clearSuppressNextAutoReview
 } from '@/lib/acp/workspace-events'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
-import { revealNotebookWhenProjectActive } from './notebook-preview-availability'
+import { registerNotebookWhenProjectActive } from './notebook-preview-availability'
 import { invalidateSessionNotebookCache } from './session-notebook-data'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import {
@@ -911,22 +911,22 @@ const WorkspacePage = ({
     if (pendingWslSupportPrefill !== undefined) consumeWslSupportPrefill()
   }, [pendingWslSupportPrefill, consumeWslSupportPrefill])
 
-  // The first agent-side notebook call reveals the new notebook entry and its preview together.
+  // Agent-side notebook calls make the entry available without opening its preview.
   useEffect(() => {
-    let cancelPendingOpen = (): void => undefined
+    let cancelPendingRegistration = (): void => undefined
     const removeNotebookAvailableListener = window.api.notebook.onAvailable((notebook) => {
       setNotebookReferences((references) => ({
         ...references,
         [notebook.sessionId]: notebook
       }))
       if (notebook.projectId !== scopedProjectId || notebook.sessionId !== activeSessionId) return
-      cancelPendingOpen()
-      cancelPendingOpen = revealNotebookWhenProjectActive(notebook)
+      cancelPendingRegistration()
+      cancelPendingRegistration = registerNotebookWhenProjectActive(notebook)
     })
 
     return () => {
       removeNotebookAvailableListener()
-      cancelPendingOpen()
+      cancelPendingRegistration()
     }
   }, [activeSessionId, scopedProjectId])
 
