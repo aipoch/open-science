@@ -170,7 +170,7 @@ const createAppTray = (opts: {
       const items = section.items.map(sessionMenuItem)
       if (section.overflow.length > 0) {
         items.push({
-          label: translate('More'),
+          label: translate('More items'),
           submenu: section.overflow.map(sessionMenuItem)
         })
       }
@@ -184,9 +184,9 @@ const createAppTray = (opts: {
         opts.getRunningSessions?.() ?? []
       )
       const labels: Record<TrayNavigationSection['kind'], string> = {
-        running: translate('Running'),
-        pinned: translate('Pinned'),
-        recent: translate('Recent sessions')
+        running: translate('Running sessions'),
+        pinned: translate('Pinned sessions'),
+        recent: translate('Recent items')
       }
       return sections.flatMap((section) => [
         { label: labels[section.kind], enabled: false },

@@ -1,9 +1,5 @@
 {
   "common": {
-    "Running": "Wird ausgeführt",
-    "Pinned": "Angeheftet",
-    "Recent sessions": "Letzte Sitzungen",
-    "More": "Mehr",
     "The conversation changed. Close and reopen export to review it.": "Die Konversation wurde geändert. Schließen Sie den Export und öffnen Sie ihn erneut, um die aktuelle Fassung zu prüfen.",
     "Cancel": "Abbrechen",
     "Stay": "In der App bleiben",
@@ -131,7 +127,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Das ursprüngliche Paket ist nicht verfügbar. Es wurde möglicherweise verschoben, gelöscht oder ist nicht mehr lesbar. Wählen Sie ein anderes Paket.",
     "Could not fork this Session: {{reason}}": "Diese Session konnte nicht abgezweigt werden: {{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Die Veröffentlichung der Abzweigung muss wiederhergestellt werden (Vorgang {{operationId}}, Session {{sessionId}}). Starten Sie die App neu, um diesen Versuch wiederherzustellen, bevor Sie erneut abzweigen.",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Dieses Sitzungspaket erfordert eine neuere Version von Open Science. Aktualisieren Sie Open Science und versuchen Sie anschließend erneut, das Paket zu importieren."
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Dieses Sitzungspaket erfordert eine neuere Version von Open Science. Aktualisieren Sie Open Science und versuchen Sie anschließend erneut, das Paket zu importieren.",
+    "Running sessions": "Wird ausgeführt",
+    "Pinned sessions": "Angeheftet",
+    "Recent items": "Letzte Sitzungen",
+    "More items": "Weitere Sitzungen"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Lösen Sie ClinPGx-Arzneimittel-/Chemikaliendatensätze anhand der ClinPGx-Accession-ID oder des Namens auf, bevor Sie pharmakogenomische Annotationen abfragen.",
@@ -6490,6 +6490,10 @@
     "PDF unavailable": "PDF nicht verfügbar",
     "No references on this page": "Keine Literaturangaben auf dieser Seite",
     "References may have moved or been removed. Return to the first page.": "Literaturangaben wurden möglicherweise verschoben oder entfernt. Kehren Sie zur ersten Seite zurück.",
-    "First page": "Erste Seite"
+    "First page": "Erste Seite",
+    "Running": "Wird ausgeführt",
+    "Pinned": "Angeheftet",
+    "Recent sessions": "Letzte Sitzungen",
+    "More": "Mehr"
   }
 }

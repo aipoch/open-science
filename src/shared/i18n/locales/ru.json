@@ -1,9 +1,5 @@
 {
   "common": {
-    "Running": "Запущено",
-    "Pinned": "Фиксировано",
-    "Recent sessions": "Последние сессии",
-    "More": "Ещё",
     "The conversation changed. Close and reopen export to review it.": "Диалог изменён. Закройте и снова откройте окно экспорта, чтобы проверить его.",
     "Approval needed": "Требуется разрешение",
     "Cancel": "Отмена",
@@ -133,7 +129,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Исходный пакет недоступен. Возможно, он перемещён, удалён или больше не читается. Выберите другой пакет.",
     "Could not fork this Session: {{reason}}": "Не удалось создать ответвление этой сессии: {{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Необходимо восстановить публикацию ответвления (операция {{operationId}}, сессия {{sessionId}}). Перезапустите приложение для восстановления этой попытки перед созданием нового ответвления.",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Для этого пакета сессии требуется более новая версия Open Science. Обновите Open Science и повторите импорт."
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Для этого пакета сессии требуется более новая версия Open Science. Обновите Open Science и повторите импорт.",
+    "Running sessions": "Запущено",
+    "Pinned sessions": "Фиксировано",
+    "Recent items": "Последние сессии",
+    "More items": "Другие сеансы"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Разрешите записи лекарств и химических веществ ClinPGx по идентификатору доступа ClinPGx или названию перед поиском фармакогеномных аннотаций.",
@@ -6793,6 +6793,10 @@
     "PDF unavailable": "PDF недоступен",
     "No references on this page": "На этой странице нет источников",
     "References may have moved or been removed. Return to the first page.": "Возможно, источники перемещены или удалены. Вернитесь на первую страницу.",
-    "First page": "Первая страница"
+    "First page": "Первая страница",
+    "Running": "Запущено",
+    "Pinned": "Фиксировано",
+    "Recent sessions": "Последние сессии",
+    "More": "Больше"
   }
 }

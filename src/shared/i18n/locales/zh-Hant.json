@@ -1,9 +1,5 @@
 {
   "common": {
-    "Running": "執行中",
-    "Pinned": "已釘選",
-    "Recent sessions": "最近會話",
-    "More": "更多",
     "The conversation changed. Close and reopen export to review it.": "對話已發生變更。請關閉並重新開啟匯出以檢查內容。",
     "Approval needed": "需要批准",
     "Cancel": "取消",
@@ -130,7 +126,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原套件檔案無法使用，可能已移動、刪除或無法讀取。請選擇其他套件檔案。",
     "Could not fork this Session: {{reason}}": "無法建立此工作階段的副本：{{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本發布需要復原（操作 {{operationId}}，工作階段 {{sessionId}}）。請重新啟動應用程式以復原此次操作，然後再建立副本。",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "此會話研究套件需要較新版本的 Open Science。請更新 Open Science 後重新匯入。"
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "此會話研究套件需要較新版本的 Open Science。請更新 Open Science 後重新匯入。",
+    "Running sessions": "執行中",
+    "Pinned sessions": "已釘選",
+    "Recent items": "最近會話",
+    "More items": "更多會話"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "在查詢藥物基因組學註釋前，依 ClinPGx accession ID 或名稱解析 ClinPGx 藥物／化學物質記錄。",
@@ -6332,6 +6332,10 @@
     "PDF unavailable": "PDF 無法使用",
     "No references on this page": "此頁尚無文獻",
     "References may have moved or been removed. Return to the first page.": "文獻可能已移動或移除，請返回第一頁。",
-    "First page": "第一頁"
+    "First page": "第一頁",
+    "Running": "執行中",
+    "Pinned": "已釘選",
+    "Recent sessions": "最近會話",
+    "More": "多"
   }
 }

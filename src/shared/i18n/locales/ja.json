@@ -1,9 +1,5 @@
 {
   "common": {
-    "Running": "実行中",
-    "Pinned": "固定済み",
-    "Recent sessions": "最近のセッション",
-    "More": "その他",
     "The conversation changed. Close and reopen export to review it.": "会話が変更されました。内容を確認するには、エクスポートを閉じて再度開いてください。",
     "Approval needed": "承認が必要です",
     "Cancel": "キャンセル",
@@ -130,7 +126,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。",
     "Could not fork this Session: {{reason}}": "このセッションを複製できませんでした：{{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "複製の公開処理を復旧する必要があります（操作 {{operationId}}、セッション {{sessionId}}）。再度複製する前にアプリを再起動してこの操作を復旧してください。",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "このセッションパッケージには、より新しいバージョンの Open Science が必要です。Open Science を更新してから、もう一度インポートしてください。"
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "このセッションパッケージには、より新しいバージョンの Open Science が必要です。Open Science を更新してから、もう一度インポートしてください。",
+    "Running sessions": "実行中",
+    "Pinned sessions": "固定済み",
+    "Recent items": "最近のセッション",
+    "More items": "その他のセッション"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "薬理ゲノム注釈を検索する前に、ClinPGx の accession ID または名前で ClinPGx の薬物・化学物質レコードを解決します。",
@@ -6332,6 +6332,10 @@
     "PDF unavailable": "PDFを利用できません",
     "No references on this page": "このページに文献はありません",
     "References may have moved or been removed. Return to the first page.": "文献が移動または削除された可能性があります。最初のページに戻ってください。",
-    "First page": "最初のページ"
+    "First page": "最初のページ",
+    "Running": "実行中",
+    "Pinned": "固定済み",
+    "Recent sessions": "最近のセッション",
+    "More": "多い"
   }
 }

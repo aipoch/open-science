@@ -1,9 +1,5 @@
 {
   "common": {
-    "Running": "En cours",
-    "Pinned": "Épinglé",
-    "Recent sessions": "Sessions récentes",
-    "More": "Plus",
     "The conversation changed. Close and reopen export to review it.": "La conversation a changé. Fermez puis rouvrez l’exportation pour la vérifier.",
     "Approval needed": "Approbation nécessaire",
     "Cancel": "Annuler",
@@ -132,7 +128,11 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Le paquet d’origine est indisponible. Il a peut-être été déplacé, supprimé ou est devenu illisible. Choisissez un autre paquet.",
     "Could not fork this Session: {{reason}}": "Impossible de dupliquer cette session : {{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "La publication de la copie doit être rétablie (opération {{operationId}}, session {{sessionId}}). Redémarrez l’application pour récupérer cette opération avant de dupliquer à nouveau.",
-    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Ce paquet de session nécessite une version plus récente d’Open Science. Mettez Open Science à jour, puis réessayez de l’importer."
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Ce paquet de session nécessite une version plus récente d’Open Science. Mettez Open Science à jour, puis réessayez de l’importer.",
+    "Running sessions": "En cours",
+    "Pinned sessions": "Épinglé",
+    "Recent items": "Sessions récentes",
+    "More items": "Plus de sessions"
   },
   "renderer": {
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Résoudre les enregistrements de médicaments ou de substances chimiques ClinPGx par identifiant d’accès ClinPGx ou par nom avant d’interroger les annotations pharmacogénomiques.",
@@ -6656,6 +6656,10 @@
     "PDF unavailable": "PDF indisponible",
     "No references on this page": "Aucune référence sur cette page",
     "References may have moved or been removed. Return to the first page.": "Les références ont peut-être été déplacées ou supprimées. Revenez à la première page.",
-    "First page": "Première page"
+    "First page": "Première page",
+    "Running": "En cours",
+    "Pinned": "Épinglé",
+    "Recent sessions": "Sessions récentes",
+    "More": "Plus"
   }
 }

@@ -241,15 +241,15 @@ describe('createAppTray', () => {
     })
 
     await vi.waitFor(() =>
-      expect(lastTemplate?.some((item) => item.label === 'Running')).toBe(true)
+      expect(lastTemplate?.some((item) => item.label === 'Running sessions')).toBe(true)
     )
     expect(lastTemplate?.filter((item) => item.label).map((item) => item.label)).toEqual([
       'Show',
-      'Running',
+      'Running sessions',
       'Running task — Alpha',
-      'Pinned',
+      'Pinned sessions',
       'Pinned task — Beta',
-      'Recent sessions',
+      'Recent items',
       'Recent task — Gamma',
       'Hide',
       'Quit'
@@ -282,7 +282,7 @@ describe('createAppTray', () => {
     })
 
     await vi.waitFor(() =>
-      expect(lastTemplate?.some((item) => item.label === 'Recent sessions')).toBe(true)
+      expect(lastTemplate?.some((item) => item.label === 'Recent items')).toBe(true)
     )
     expect(lastTray?.contextMenu).toBeDefined()
     lastTemplate?.find((item) => item.label === 'Mac task — Mac project')?.click?.()
