@@ -388,6 +388,62 @@ describe('WorkspacePage draft preservation', () => {
     expect(runtime.sendMessage).not.toHaveBeenCalled()
   })
 
+  it.each([null, 'sess-b'])(
+    'sends Library references without enabling Reading (destination: %s)',
+    async (destination) => {
+      await renderPage()
+      await act(async () => sidebarProps.onOpenLiterature!())
+      const references = [
+        {
+          type: 'literature' as const,
+          itemId: 'paper-with-pdf',
+          metadataRevision: 1,
+          item: literatureItemInputSchema.parse({
+            itemType: 'journalArticle',
+            title: 'Paper with PDF'
+          }),
+          attachmentVersionId: 'pdf-version-1'
+        },
+        {
+          type: 'literature' as const,
+          itemId: 'paper-without-pdf',
+          metadataRevision: 2,
+          item: literatureItemInputSchema.parse({
+            itemType: 'journalArticle',
+            title: 'Metadata paper'
+          })
+        }
+      ]
+      await act(async () => libraryActions!.add(references, destination))
+      expect(conversationProps.composer.view.readingContext.bindings).toEqual([])
+      const preview = container.querySelector('[data-testid="preview-panel"]')
+      runtime.sendMessage.mockImplementationOnce(async () => {
+        const sessionId = destination ?? 'created-session'
+        if (!destination) {
+          useSessionStore.setState((state) => ({
+            sessions: [...state.sessions, createSession(sessionId, 'proj-1')],
+            selectedSessionId: sessionId
+          }))
+        }
+        return { sessionId, messageId: 'm1' }
+      })
+      await act(async () =>
+        conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+      )
+      expect(container.querySelector('[data-testid="preview-panel"]')).toBe(preview)
+      expect(runtime.sendMessage).toHaveBeenCalledOnce()
+      expect(runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: destination ?? undefined,
+          parts: expect.arrayContaining(references),
+          pdfContext: undefined,
+          pendingPdfContextVersions: undefined,
+          pendingPdfContextAttachmentIds: undefined
+        })
+      )
+    }
+  )
+
   it('preserves each session doc independently when switching away and back', async () => {
     await renderPage()
     expect(conversationProps.view.composerFocusKey).toBe('sess-a')

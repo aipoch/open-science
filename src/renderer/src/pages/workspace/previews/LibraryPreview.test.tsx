@@ -7,6 +7,7 @@ import {
   type LiteratureCatalogSearchPage
 } from '../../../../../shared/literature'
 import LibraryPreview from './LibraryPreview'
+import { PdfAnnotationsProvider } from '../pdf-annotations/PdfAnnotationsProvider'
 import { LibraryReferenceActionsContext } from './library-reference-actions'
 
 const navigation = vi.hoisted(() => ({
@@ -67,6 +68,36 @@ afterEach(() => {
 })
 
 describe('LibraryPreview', () => {
+  it('preserves the loaded Library when a new conversation acquires a session', async () => {
+    search.mockResolvedValue({ entries: [reference()], totalCount: 1 })
+    const view = (sessionId?: string): React.JSX.Element => (
+      <PdfAnnotationsProvider
+        projectId={sessionId ? 'project-a' : undefined}
+        sessionId={sessionId}
+        loadAnnotations={false}
+      >
+        <LibraryPreview projectId="project-a" isActive />
+      </PdfAnnotationsProvider>
+    )
+    const { rerender } = render(view())
+    await settle()
+    const rowTitle = screen.getByText('A reference')
+    const searchbox = screen.getByRole('searchbox')
+    expect(search).toHaveBeenCalledTimes(1)
+
+    rerender(view('new-session'))
+    expect(screen.queryByRole('status', { name: 'Loading references…' })).toBeNull()
+    expect(screen.getByText('A reference')).toBe(rowTitle)
+    expect(screen.getByRole('searchbox')).toBe(searchbox)
+    await settle()
+    expect(search).toHaveBeenCalledTimes(1)
+
+    rerender(view('another-session'))
+    await settle()
+    expect(screen.getByText('A reference')).toBe(rowTitle)
+    expect(search).toHaveBeenCalledTimes(1)
+  })
+
   it('distinguishes loading, empty project, empty library and empty search with useful actions', async () => {
     render(<LibraryPreview projectId="project-a" isActive />)
     expect(screen.getByRole('status', { name: 'Loading references…' })).toBeTruthy()

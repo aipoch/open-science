@@ -1,5 +1,5 @@
 import { useTagStore } from '@/stores/tag-store'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createRef, useCallback, useEffect, useMemo, useState } from 'react'
 
 import { PDF_ANNOTATION_LIMITS } from '../../../../../shared/pdf-annotations'
 import {
@@ -16,6 +16,7 @@ import {
 
 type Change = Readonly<{ before?: PdfAnnotation; after?: PdfAnnotation }>
 type Runtime = {
+  scopeKey: string
   active: boolean
   items: Map<string, PdfAnnotation>
   overlays: Map<string, PdfAnnotation | null>
@@ -51,7 +52,7 @@ type ScopeState = Readonly<{
   redoSources: readonly string[]
 }>
 
-const PdfAnnotationsStateProvider = ({
+const PdfAnnotationsProvider = ({
   projectId,
   sessionId,
   literatureVersionId,
@@ -78,15 +79,23 @@ const PdfAnnotationsStateProvider = ({
     () => (literatureVersionId ? { literatureVersionId } : { projectId, sessionId }),
     [literatureVersionId, projectId, sessionId]
   )
-  const runtime = useRef<Runtime>({
-    active: false,
-    items: new Map(),
-    overlays: new Map(),
-    undo: [],
-    redo: [],
-    queue: Promise.resolve(),
-    pending: 0
-  })
+  // Reset the scoped owner without remounting the workspace below it. Async callbacks
+  // keep their original runtime, which cleanup deactivates when the scope changes.
+  const runtime = useMemo(() => {
+    const ref = createRef<Runtime>()
+    if (ref.current === null)
+      ref.current = {
+        scopeKey,
+        active: false,
+        items: new Map(),
+        overlays: new Map(),
+        undo: [],
+        redo: [],
+        queue: Promise.resolve(),
+        pending: 0
+      }
+    return ref as React.RefObject<Runtime>
+  }, [scopeKey])
   const [state, setState] = useState<ScopeState>({
     key: scopeKey,
     annotations: [],
@@ -319,7 +328,16 @@ const PdfAnnotationsStateProvider = ({
       stopAnnotations?.()
       stopLiterature?.()
     }
-  }, [scope, scopeKey, loadAnnotations, sourceFileId, versionId, literatureVersionId, publish])
+  }, [
+    scope,
+    scopeKey,
+    loadAnnotations,
+    sourceFileId,
+    versionId,
+    literatureVersionId,
+    publish,
+    runtime
+  ])
 
   // Serialize local writes, including history replay, so each command captures the committed prior value.
   const enqueue = useCallback(
@@ -566,26 +584,4 @@ const PdfAnnotationsStateProvider = ({
   )
   return <PdfAnnotationsContext.Provider value={value}>{children}</PdfAnnotationsContext.Provider>
 }
-const PdfAnnotationsProvider = ({
-  projectId,
-  sessionId,
-  literatureVersionId,
-  sourceFileId,
-  versionId,
-  ...props
-}: React.ComponentProps<typeof PdfAnnotationsStateProvider>): React.JSX.Element => (
-  <PdfAnnotationsStateProvider
-    key={
-      literatureVersionId
-        ? `literature:${literatureVersionId}`
-        : `${projectId ?? ''}\u0000${sessionId ?? ''}\u0000${sourceFileId ?? ''}\u0000${versionId ?? ''}`
-    }
-    sourceFileId={sourceFileId}
-    versionId={versionId}
-    literatureVersionId={literatureVersionId}
-    projectId={projectId}
-    sessionId={sessionId}
-    {...props}
-  />
-)
 export { PdfAnnotationsProvider }

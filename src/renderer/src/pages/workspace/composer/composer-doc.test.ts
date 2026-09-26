@@ -324,7 +324,7 @@ describe('docToPdfContextSources', () => {
     ])
   })
 
-  it('uses only PDF-backed Literature references as Reading candidates', () => {
+  it('keeps Literature references out of Reading candidates even when they have PDFs', () => {
     expect(
       docToPdfContextSources({
         nodes: [
@@ -371,12 +371,7 @@ describe('docToPdfContextSources', () => {
           }
         ]
       })
-    ).toEqual([
-      {
-        sourceKind: 'literature-attachment-version',
-        sourceVersionId: 'literature-version-1'
-      }
-    ])
+    ).toEqual([])
   })
 })
 

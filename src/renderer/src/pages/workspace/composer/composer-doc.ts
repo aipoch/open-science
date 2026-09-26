@@ -241,19 +241,15 @@ export const docToArtifactRefs = (doc: ComposerDoc): FileReference[] => {
   return refs
 }
 
-// `@`-mentioned immutable PDF Versions become send-time Reading candidates. Main verifies the
-// actual page count; this renderer pass only removes obvious non-PDF and compatibility references.
+// Explicit PDF file mentions become send-time Reading candidates. Bibliographic Literature
+// mentions remain message references; Library tools can read their PDFs without a Session binding.
+// Main verifies the actual page count of the explicit file candidates.
 export const docToPdfContextSources = (doc: ComposerDoc): SessionPdfContextSource[] => {
   const sources: SessionPdfContextSource[] = []
   const seen = new Set<string>()
   for (const node of doc.nodes) {
     let source: SessionPdfContextSource | undefined
-    if (node.type === 'literature' && node.attachmentVersionId) {
-      source = {
-        sourceKind: 'literature-attachment-version',
-        sourceVersionId: node.attachmentVersionId
-      }
-    } else if (
+    if (
       node.type === 'artifact' &&
       node.source !== 'linked-folder' &&
       node.versionId &&
