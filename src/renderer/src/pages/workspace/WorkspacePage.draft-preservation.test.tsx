@@ -1052,6 +1052,45 @@ describe('WorkspacePage draft preservation', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
   })
 
+  it('opens the latest Library mention scope after preview restoration activates the project', async () => {
+    const pendingLoad = createDeferred<undefined>()
+    const load = vi.fn(() => pendingLoad.promise)
+    window.api.preview.load = load as never
+    await renderPage(false)
+
+    act(() => {
+      conversationProps.onOpenLibraryMention!({})
+      conversationProps.onOpenLibraryMention!({
+        collectionId: 'collection-1',
+        collectionName: 'TP53 evidence'
+      })
+    })
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+
+    await act(async () => {
+      root.render(
+        <WorkspacePage
+          isSessionPersistenceHydrated
+          isSessionPersistenceReady
+          canDeleteConversations
+        />
+      )
+    })
+    expect(load).toHaveBeenCalled()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+
+    await act(async () => pendingLoad.resolve(undefined))
+    const preview = usePreviewWorkbenchStore.getState()
+    expect(preview.activeProjectId).toBe('proj-1')
+    expect(preview.activeItemId).toBe(PROJECT_LIBRARY_PREVIEW_ID)
+    expect(preview.items.find((item) => item.id === PROJECT_LIBRARY_PREVIEW_ID)).toEqual(
+      expect.objectContaining({
+        libraryScopeRequest: { collectionId: 'collection-1', collectionName: 'TP53 evidence' }
+      })
+    )
+    expect(useNavigationStore.getState().view).toBe('workspace')
+  })
+
   it('reports blocked Library activation so the mobile sidebar stays open', async () => {
     await renderPage()
     await act(async () => {

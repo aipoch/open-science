@@ -78,7 +78,11 @@ import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
 import { EmptyConversationBanner } from './EmptyConversationBanner'
 import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
 import { WorkspaceRunMarks } from './WorkspaceRunMarks'
-import type { ArtifactMentionPart, EditAnnotationTarget } from './WorkspaceMessageItem'
+import type {
+  ArtifactMentionPart,
+  EditAnnotationTarget,
+  LibraryMentionScopeRequest
+} from './WorkspaceMessageItem'
 import { useWorkspaceArtifactVisibility, type MessageArtifact } from './WorkspaceArtifactVisibility'
 import { useWorkspaceMessageEditState } from './workspace-message-edit-state-context'
 import {
@@ -170,6 +174,7 @@ type WorkspaceMessageScrollerProps = {
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: SendEditedMessage
+  onOpenLibraryMention?: (scope: LibraryMentionScopeRequest) => void
   optimisticMessage?: ChatMessage
   annotations?: readonly Annotation[]
   onAddAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
@@ -555,6 +560,7 @@ const WorkspaceMessageScrollerImpl = ({
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
+  onOpenLibraryMention,
   annotations = EMPTY_ANNOTATIONS,
   onAddAnnotation,
   onUpdateAnnotationNote,
@@ -1720,6 +1726,7 @@ const WorkspaceMessageScrollerImpl = ({
                     onPreviewArtifactModal,
                     onPreviewUploadAttachment,
                     onOpenSkillMention,
+                    onOpenLibraryMention,
                     onPreviewMentionArtifact,
                     onSendEditedMessage,
                     onEditAnnotationTargetChange: isHumanUser
@@ -2067,6 +2074,7 @@ const WorkspaceMessageScrollerImpl = ({
                   onPreviewArtifactModal={onPreviewArtifactModal}
                   onPreviewUploadAttachment={onPreviewUploadAttachment}
                   onOpenSkillMention={onOpenSkillMention}
+                  onOpenLibraryMention={onOpenLibraryMention}
                   onPreviewMentionArtifact={onPreviewMentionArtifact}
                   showUserActions={false}
                   sending
@@ -2224,6 +2232,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  previous.onOpenLibraryMention === next.onOpenLibraryMention &&
   (previous.credentialPending ?? false) === (next.credentialPending ?? false) &&
   (previous.visiblePermissionPending ?? false) === (next.visiblePermissionPending ?? false) &&
   previous.optimisticMessage === next.optimisticMessage &&

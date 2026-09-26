@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import type { ChatMessage } from '@/stores/session-store'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -299,15 +298,7 @@ describe('WorkspaceMessageItem mention pills', () => {
   })
 
   it('opens Project and Collection Library scopes in the preview sidebar', () => {
-    const openProjectLiterature = vi
-      .spyOn(useNavigationStore.getState(), 'openProjectLiterature')
-      .mockReturnValue(true)
-    const openCollectionLiterature = vi
-      .spyOn(useNavigationStore.getState(), 'openCollectionLiterature')
-      .mockReturnValue(true)
-    const openPreview = vi
-      .spyOn(usePreviewWorkbenchStore.getState(), 'upsertAndActivateItem')
-      .mockImplementation(() => {})
+    const onOpenLibraryMention = vi.fn()
     const message = createMessage({
       content: '@Library @TP53 evidence',
       parts: [
@@ -327,6 +318,7 @@ describe('WorkspaceMessageItem mention pills', () => {
         <WorkspaceMessageItem
           message={message}
           projectId="project-1"
+          onOpenLibraryMention={onOpenLibraryMention}
           onPreviewArtifact={noop}
           onPreviewUploadAttachment={noop}
           onOpenSkillMention={noop}
@@ -338,18 +330,12 @@ describe('WorkspaceMessageItem mention pills', () => {
     expect(container.textContent).toContain('@Library')
     expect(container.textContent).toContain('@TP53 evidence')
     clickButton("Open this project's Library")
-    expect(openPreview).toHaveBeenLastCalledWith(
-      expect.objectContaining({ toolKind: 'library', libraryScopeRequest: {} })
-    )
+    expect(onOpenLibraryMention).toHaveBeenLastCalledWith({})
     clickButton('Open TP53 evidence')
-    expect(openPreview).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        toolKind: 'library',
-        libraryScopeRequest: { collectionId: 'collection-1', collectionName: 'TP53 evidence' }
-      })
-    )
-    expect(openProjectLiterature).not.toHaveBeenCalled()
-    expect(openCollectionLiterature).not.toHaveBeenCalled()
+    expect(onOpenLibraryMention).toHaveBeenLastCalledWith({
+      collectionId: 'collection-1',
+      collectionName: 'TP53 evidence'
+    })
     expect(container.querySelector('[title="TP53 evidence"]')?.tagName).toBe('BUTTON')
     expect(container.querySelector('button[aria-label^="Preview"]')).toBeNull()
   })

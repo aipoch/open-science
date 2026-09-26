@@ -70,6 +70,7 @@ import {
   starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
+import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
 import { ConversationExportDialog } from './ConversationExportDialog'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { DownloadProjectArtifactsDialog } from './DownloadProjectArtifactsDialog'
@@ -196,6 +197,11 @@ const WorkspacePage = ({
   const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
+  const activePreviewProjectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
+  const pendingLibraryMention = useRef<{
+    projectId: string
+    scope: LibraryMentionScopeRequest
+  } | null>(null)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
   const projectFormDialog = useProjectFormDialog()
@@ -862,6 +868,38 @@ const WorkspacePage = ({
   // previews) and persists/restores each project's panel state across switches and restarts.
   usePreviewPersistence(activeProjectId, isSessionPersistenceReady)
 
+  const onOpenLibraryMention = useCallback(
+    (scope: LibraryMentionScopeRequest): void => {
+      if (!scopedProjectId) return
+      if (
+        !isSessionPersistenceReady ||
+        usePreviewWorkbenchStore.getState().activeProjectId !== scopedProjectId
+      ) {
+        pendingLibraryMention.current = { projectId: scopedProjectId, scope }
+        return
+      }
+      pendingLibraryMention.current = null
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(createProjectLibraryPreviewItem(scope))
+    },
+    [isSessionPersistenceReady, scopedProjectId]
+  )
+
+  useEffect(() => {
+    const pending = pendingLibraryMention.current
+    if (!pending) return
+    if (pending.projectId !== scopedProjectId) {
+      pendingLibraryMention.current = null
+      return
+    }
+    if (!isSessionPersistenceReady || activePreviewProjectId !== scopedProjectId) return
+    pendingLibraryMention.current = null
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertAndActivateItem(createProjectLibraryPreviewItem(pending.scope))
+  }, [activePreviewProjectId, isSessionPersistenceReady, scopedProjectId])
+
   // Clear the consumed `Chat with agent` prefill intent from the store once it has been applied in the
   // render phase above, so a later normal open starts fresh. (Calling a store action — not a React
   // setter — so this does not trip the set-state-in-effect rule.)
@@ -1482,6 +1520,7 @@ const WorkspacePage = ({
               openMobileSidebar
             }) => (
               <ConversationPanel
+                onOpenLibraryMention={onOpenLibraryMention}
                 view={{
                   activeSession,
                   composerFocusKey: currentDraftKey,
