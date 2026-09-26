@@ -67,7 +67,7 @@ export const clearSourcePreviewOriginStorage = async (origin: string): Promise<v
   if (!url || url.origin !== origin) throw new Error('Expected an HTTPS origin')
   await getSourcePreviewSession().clearStorageData({
     origin,
-    storages: ['filesystem', 'indexdb', 'localstorage', 'websql', 'serviceworkers', 'cachestorage']
+    storages: ['filesystem', 'indexdb', 'localstorage', 'serviceworkers', 'cachestorage']
   })
 }
 

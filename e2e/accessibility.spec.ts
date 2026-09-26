@@ -240,7 +240,7 @@ test('reports accessibility violations in permission and file preview states', a
 
 test('reports accessibility violations across representative state combinations', async ({
   app
-}) => {
+}, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   await setViewport(page, 1280)
@@ -329,6 +329,7 @@ test('reports accessibility violations across representative state combinations'
     .getByRole('alert')
     .filter({ hasText: 'Project archive needs attention' })
   await expect(recoveryAlert).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('recovered-project-archive-warning.png') })
   await scanAccessibility(page, 'Conversation recovery warning')
 })
 

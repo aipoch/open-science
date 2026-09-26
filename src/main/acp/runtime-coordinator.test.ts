@@ -3287,6 +3287,208 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'keeps %s busy while an upward continuation validates between provider turns',
+    async (frameworkId) => {
+      const firstTurn = createDeferred<unknown>()
+      const validation = createDeferred()
+      const states: AcpStateUpdate[] = []
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) => {
+          created = createFakeRuntime({
+            frameworkId,
+            sessionIds: ['session-1'],
+            callbacks,
+            prompt: vi
+              .fn()
+              .mockImplementationOnce(() => firstTurn.promise)
+              .mockResolvedValue({ stopReason: 'end_turn' })
+          })
+          return created.runtime
+        },
+        { onStateChanged: (state) => states.push(state) }
+      )
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const user = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'user' })
+      await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+      const validate = vi.fn(() => validation.promise)
+      const upward = coordinator.startContinuationWhen(
+        { sessionId: session.sessionId, text: 'child message' },
+        validate
+      )
+      states.length = 0
+      firstTurn.resolve({ stopReason: 'end_turn' })
+      await user
+      await vi.waitFor(() => expect(validate).toHaveBeenCalledOnce())
+      try {
+        expect(created.sendAppContinuation).not.toHaveBeenCalled()
+        expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+        expect(
+          states.every((state) => state.promptInFlightSessionIds.includes(session.sessionId))
+        ).toBe(true)
+      } finally {
+        validation.resolve()
+        await upward
+      }
+      await vi.waitFor(() =>
+        expect(states.at(-1)?.promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+    }
+  )
+
+  it.each(['delete', 'disconnect', 'shutdown'] as const)(
+    'removes pending admission from visible busy state after %s',
+    async (teardown) => {
+      const validation = createDeferred()
+      const states: AcpStateUpdate[] = []
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks }).runtime,
+        { onStateChanged: (state) => states.push(state), onEvent: vi.fn() }
+      )
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const upward = coordinator.startContinuationWhen(
+        { sessionId: session.sessionId, text: 'pending child message' },
+        () => validation.promise
+      )
+      const settled = upward.catch((error: unknown) => error)
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+      try {
+        if (teardown === 'delete') await coordinator.deleteSession({ sessionId: session.sessionId })
+        else if (teardown === 'disconnect') await coordinator.disconnect()
+        else coordinator.shutdown()
+        expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
+        expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+        expect(states.at(-1)?.promptInFlightSessionIds).not.toContain(session.sessionId)
+        expect(states.at(-1)?.promptInFlight).toBe(false)
+      } finally {
+        validation.reject(new DelegateMessageParkedError('session was removed'))
+        await settled
+      }
+    }
+  )
+
+  it.each(['disconnect', 'shutdown'] as const)(
+    'allows a resumed Session to send after %s cancels its queued admission',
+    async (teardown) => {
+      const validation = createDeferred()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const session = await coordinator.createSession()
+      const upward = coordinator.startContinuationWhen(
+        { sessionId: session.sessionId, text: 'stale child message' },
+        () => validation.promise
+      )
+      const settled = upward.catch(() => undefined)
+      if (teardown === 'disconnect') await coordinator.disconnect()
+      else coordinator.shutdown()
+      await settled
+      await coordinator.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+      const prompt = coordinator.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'new user message'
+      })
+      await prompt
+      expect(created.at(-1)?.sendPrompt).toHaveBeenCalledOnce()
+      validation.reject(new DelegateMessageParkedError('cancelled during teardown'))
+    }
+  )
+
+  it('does not dispatch a continuation when teardown races after validation', async () => {
+    const dispatchGate = createDeferred<void>()
+    const guardEntered = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    coordinator.setPromptDispatchAdmissionGuard(async (_sessionId, dispatch) => {
+      guardEntered.resolve()
+      await dispatchGate.promise
+      return dispatch()
+    })
+    const continuation = coordinator.startContinuationWhen(
+      { sessionId: session.sessionId, text: 'validated child message' },
+      async () => undefined
+    )
+    await guardEntered.promise
+
+    await coordinator.disconnect()
+    await expect(continuation).rejects.toThrow('superseded before provider dispatch')
+    dispatchGate.resolve()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
+  })
+
+  it('does not dispatch an activity prompt when teardown races its admission guard', async () => {
+    const guardGate = createDeferred<void>()
+    const guardEntered = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    coordinator.setPromptAdmissionGuard(async () => {
+      guardEntered.resolve()
+      await guardGate.promise
+    })
+    const prompt = coordinator.withActivity(
+      { session: { sessionId: session.sessionId, cwd: '/workspace' } },
+      (runtime) =>
+        runtime.sendPrompt({ sessionId: session.sessionId, text: 'stale activity prompt' })
+    )
+    await guardEntered.promise
+
+    await coordinator.disconnect()
+    await expect(prompt).rejects.toThrow('superseded before provider dispatch')
+    guardGate.resolve()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(created.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('cancels queued root admissions before update-gate shutdown', async () => {
+    const validation = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    const continuation = coordinator.startContinuationWhen(
+      { sessionId: session.sessionId, text: 'stale update-gate prompt' },
+      () => validation.promise
+    )
+    const settled = continuation.catch(() => undefined)
+
+    await coordinator.shutdownForUpdateGate()
+    validation.resolve()
+    await settled
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
+  })
+
   it('linearizes real user prompts and upward continuations through one root admission lock', async () => {
     const prompts = [
       createDeferred<unknown>(),
@@ -3395,14 +3597,18 @@ describe('AcpRuntimeCoordinator', () => {
 
   it('revalidates a parked upward branch inside the root lock before any provider call', async () => {
     let created!: ReturnType<typeof createFakeRuntime>
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      created = createFakeRuntime({
-        frameworkId: 'opencode',
-        sessionIds: ['session-1'],
-        callbacks
-      })
-      return created.runtime
-    })
+    const states: AcpStateUpdate[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        created = createFakeRuntime({
+          frameworkId: 'opencode',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        return created.runtime
+      },
+      { onStateChanged: (state) => states.push(state), onEvent: vi.fn() }
+    )
     const session = await coordinator.createSession({ cwd: '/workspace' })
 
     await expect(
@@ -3417,6 +3623,12 @@ describe('AcpRuntimeCoordinator', () => {
       message: 'branch A is inactive'
     })
     expect(created.sendAppContinuation).not.toHaveBeenCalled()
+    expect(states.some((state) => state.promptInFlightSessionIds.includes(session.sessionId))).toBe(
+      true
+    )
+    await vi.waitFor(() =>
+      expect(states.at(-1)?.promptInFlightSessionIds).not.toContain(session.sessionId)
+    )
   })
 
   it.each([false, true])(

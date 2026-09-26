@@ -98,7 +98,7 @@ test('imports external notes, preserves provenance through undo, and persists an
     .toBeLessThanOrEqual(1)
   await page.screenshot({ path: testInfo.outputPath('annotation-editor-replaces-selection.png') })
   await annotationEditor.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await page.keyboard.press('Escape')
+  await expect(annotationEditor).toBeHidden()
   await page.getByRole('button', { name: 'Show notes sidebar', exact: true }).click()
   const notesSidebar = page.locator('[data-pdf-notes-sidebar="true"]')
   await expect(notesSidebar).toBeVisible()

@@ -486,14 +486,7 @@ describe('source partition management', () => {
     await clearSourcePreviewOriginStorage('https://example.com')
     expect(previewSession.clearStorageData).toHaveBeenCalledWith({
       origin: 'https://example.com',
-      storages: [
-        'filesystem',
-        'indexdb',
-        'localstorage',
-        'websql',
-        'serviceworkers',
-        'cachestorage'
-      ]
+      storages: ['filesystem', 'indexdb', 'localstorage', 'serviceworkers', 'cachestorage']
     })
     for (const origin of ['', 'https://example.com/path', 'http://example.com'])
       await expect(clearSourcePreviewOriginStorage(origin)).rejects.toThrow()

@@ -1929,11 +1929,17 @@ const createApplicationModules = async (
     projectRecovery: projectDeletionCoordinator,
     sessionLoader: sessionPersistenceCoordinator
   })
-  const loadAllSessions = (): Promise<LoadAllSessionsResult> => sessionCatalogHydration.loadAll()
+  const sessionProjectionDiagnostics = new SessionProjectionDiagnostics()
+  const loadAllSessions = async (): Promise<LoadAllSessionsResult> => {
+    const result = await sessionCatalogHydration.loadAll()
+    // Startup and non-renderer readers can recover historical files before the first list call.
+    // Retain their warnings in the same cache used by subsequent projection-only reads.
+    sessionProjectionDiagnostics.resolve(result.diagnostics)
+    return result
+  }
   // Consume only during composition, before client adapters are installed. Keep just details
   // recovery candidates, not a long-lived cache of every historical transcript.
   let startupSessionDetails: LoadAllSessionsResult['sessions'] | undefined
-  const sessionProjectionDiagnostics = new SessionProjectionDiagnostics()
   let wslSetupSessionsReconciliation: Promise<void> | undefined
   const reconcileWslSetupSessions = async (sessions: readonly SessionSummary[]): Promise<void> => {
     wslSetupSessionsReconciliation ??= wslSetupSessions.reconcileBoundSessions(

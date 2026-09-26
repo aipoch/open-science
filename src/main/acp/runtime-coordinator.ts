@@ -132,6 +132,13 @@ type RootAdmissionLease = {
   release: () => void
 }
 
+type RootAdmissionCancellation = {
+  cancelled: boolean
+  promise: Promise<never>
+  reject?: (error: unknown) => void
+  throwIfCancelled: () => void
+}
+
 type PromptAdmissionGuard = <Result>(
   sessionId: string,
   dispatch: () => Promise<Result>,
@@ -171,6 +178,7 @@ class AcpRuntimeCoordinator {
   private readonly activePromptCounts = new Map<string, number>()
   private readonly interactionReleaseWaiters = new Map<string, Set<() => void>>()
   private readonly rootAdmissionTails = new Map<string, Promise<void>>()
+  private readonly rootAdmissionCancellations = new Map<string, Set<RootAdmissionCancellation>>()
   private readonly activeRootAdmissions = new Map<string, RootAdmissionLease>()
   private promptAdmissionGuard?: (sessionId: string) => Promise<void>
   private promptDispatchAdmissionGuard?: PromptAdmissionGuard
@@ -277,8 +285,15 @@ class AcpRuntimeCoordinator {
           )
         )
       )
-    const promptInFlightSessionIds = ownedSessionIds(
-      (snapshot) => snapshot.promptInFlightSessionIds
+    // A queued root continuation still owns admission between provider turns. Publishing idle in
+    // that gap lets the renderer append a user message against a head the continuation will change.
+    const promptInFlightSessionIds = Array.from(
+      new Set([
+        ...ownedSessionIds((snapshot) => snapshot.promptInFlightSessionIds),
+        ...Array.from(this.rootAdmissionTails.keys()).filter((sessionId) =>
+          this.sessionRuntimes.has(sessionId)
+        )
+      ])
     )
     const agentPromptInFlightSessionIds = ownedSessionIds(
       (snapshot) => snapshot.agentPromptInFlightSessionIds ?? []
@@ -441,6 +456,7 @@ class AcpRuntimeCoordinator {
     // reject after partial cleanup, but a dialog that was already open must not remain actionable.
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
+    this.cancelRootAdmissions()
     const runtimes = Array.from(this.runtimes)
     const [delegatedResult, ...results] = await Promise.allSettled([
       this.delegatedWork?.stopAll() ?? Promise.resolve(),
@@ -470,6 +486,7 @@ class AcpRuntimeCoordinator {
   shutdown(): void {
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
+    this.cancelRootAdmissions()
     void this.delegatedWork?.shutdown().catch(() => undefined)
     for (const runtime of this.runtimes) runtime.shutdown()
     this.clearRuntimeOwnership()
@@ -550,6 +567,7 @@ class AcpRuntimeCoordinator {
   }
 
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
+    this.cancelRootAdmissions()
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
     return this.shutdownAll(
@@ -924,7 +942,7 @@ class AcpRuntimeCoordinator {
     options?: Parameters<AcpRuntime['sendApplicationPrompt']>[2],
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendApplicationPrompt']> {
-    return this.linearizeRootAdmission(request.sessionId, () =>
+    return this.linearizeRootAdmission(request.sessionId, (cancellation) =>
       this.dispatchPrompt(
         request,
         undefined,
@@ -933,7 +951,10 @@ class AcpRuntimeCoordinator {
         false,
         attribution,
         onApplicationPromptAdmitted,
-        options?.onPromptAdmitted
+        options?.onPromptAdmitted,
+        'renderer',
+        undefined,
+        cancellation
       )
     )
   }
@@ -963,7 +984,7 @@ class AcpRuntimeCoordinator {
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
-      this.linearizeRootAdmission(request.sessionId, () =>
+      this.linearizeRootAdmission(request.sessionId, (cancellation) =>
         this.dispatchPrompt(
           request,
           acceptance,
@@ -974,7 +995,8 @@ class AcpRuntimeCoordinator {
           onApplicationPromptAdmitted,
           onPromptAdmitted,
           runtimeReviewOwner,
-          startAdmission
+          startAdmission,
+          cancellation
         ).finally(() => this.delegatedWork?.wakeMessages?.(request.sessionId))
       )
     const admission = this.promptAdmissionGuard?.(request.sessionId)
@@ -982,8 +1004,20 @@ class AcpRuntimeCoordinator {
   }
 
   sendAppContinuation(request: AcpPromptRequest): ReturnType<AcpRuntime['sendAppContinuation']> {
-    return this.linearizeRootAdmission(request.sessionId, () =>
-      this.dispatchPrompt(request, undefined, 'sendAppContinuation')
+    return this.linearizeRootAdmission(request.sessionId, (cancellation) =>
+      this.dispatchPrompt(
+        request,
+        undefined,
+        'sendAppContinuation',
+        undefined,
+        true,
+        undefined,
+        undefined,
+        undefined,
+        'renderer',
+        undefined,
+        cancellation
+      )
     )
   }
 
@@ -991,20 +1025,47 @@ class AcpRuntimeCoordinator {
     request: AcpPromptRequest,
     onProviderPromptAccepted: () => void
   ): ReturnType<AcpRuntime['sendAppContinuation']> {
-    return this.linearizeRootAdmission(request.sessionId, () =>
+    return this.linearizeRootAdmission(request.sessionId, (cancellation) =>
       this.dispatchPrompt(
         request,
         observePromptAcceptance(onProviderPromptAccepted),
-        'sendAppContinuation'
+        'sendAppContinuation',
+        undefined,
+        true,
+        undefined,
+        undefined,
+        undefined,
+        'renderer',
+        undefined,
+        cancellation
       )
     )
   }
 
   private linearizeRootAdmission<Result>(
     sessionId: string,
-    operation: () => Promise<Result>
+    operation: (cancellation: RootAdmissionCancellation) => Promise<Result>
   ): Promise<Result> {
     const previous = this.rootAdmissionTails.get(sessionId)
+    let rejectCancellation!: (error: unknown) => void
+    const cancellationPromise = new Promise<never>((_, reject) => {
+      rejectCancellation = reject
+    })
+    const cancellation: RootAdmissionCancellation = {
+      cancelled: false,
+      promise: cancellationPromise,
+      reject: rejectCancellation,
+      throwIfCancelled: () => {
+        if (cancellation.cancelled) {
+          throw new DelegateMessagePreAcceptanceError(
+            'ACP prompt was superseded before provider dispatch during Session teardown'
+          )
+        }
+      }
+    }
+    const cancellations = this.rootAdmissionCancellations.get(sessionId) ?? new Set()
+    cancellations.add(cancellation)
+    this.rootAdmissionCancellations.set(sessionId, cancellations)
     let resolveGate!: () => void
     const gate = new Promise<void>((resolve) => {
       resolveGate = resolve
@@ -1021,10 +1082,17 @@ class AcpRuntimeCoordinator {
       }
     }
     const run = (): Promise<Result> => {
+      if (cancellation.cancelled) {
+        return Promise.reject(
+          new DelegateMessagePreAcceptanceError(
+            'ACP prompt was superseded before provider dispatch during Session teardown'
+          )
+        )
+      }
       this.activeRootAdmissions.set(sessionId, lease)
       let result: Promise<Result>
       try {
-        result = operation()
+        result = operation(cancellation)
       } catch (error) {
         result = Promise.reject(error)
       }
@@ -1032,17 +1100,42 @@ class AcpRuntimeCoordinator {
       return result
     }
     const ready = previous?.catch(() => undefined)
-    const result = ready ? ready.then(run) : run()
     const tail = ready ? ready.then(() => gate) : gate
     this.rootAdmissionTails.set(sessionId, tail)
     void tail
       .finally(() => {
         if (this.rootAdmissionTails.get(sessionId) === tail) {
           this.rootAdmissionTails.delete(sessionId)
+          this.emitState()
         }
+        cancellations.delete(cancellation)
+        if (cancellations.size === 0) this.rootAdmissionCancellations.delete(sessionId)
       })
       .catch(() => undefined)
-    return result
+    const result = ready ? ready.then(run) : run()
+    if (!previous) this.emitState()
+    void result.catch(() => undefined)
+    return Promise.race([result, cancellationPromise])
+  }
+
+  private cancelRootAdmissions(sessionId?: string): void {
+    const ids = (
+      sessionId ? [sessionId] : Array.from(this.rootAdmissionCancellations.keys())
+    ).filter((id) => sessionId !== undefined || !this.durableQuitDetachedSessionIds.has(id))
+    for (const id of ids) {
+      for (const cancellation of this.rootAdmissionCancellations.get(id) ?? []) {
+        cancellation.cancelled = true
+        cancellation.reject?.(
+          new DelegateMessagePreAcceptanceError(
+            'ACP prompt was superseded before provider dispatch during Session teardown'
+          )
+        )
+      }
+      // Keep the tail and lease until the underlying operation settles. The public admission
+      // rejects immediately, but releasing the lease here would let a resumed session dispatch
+      // behind a provider call that is still unwinding.
+    }
+    this.emitState()
   }
 
   // Starts an app-owned continuation and reports the strongest acceptance evidence available.
@@ -1110,9 +1203,9 @@ class AcpRuntimeCoordinator {
       reject(error)
     }
 
-    const dispatch = async (): Promise<void> => {
+    const dispatch = async (cancellation: RootAdmissionCancellation): Promise<void> => {
       try {
-        await validate()
+        await Promise.race([validate(), cancellation.promise])
       } catch (error) {
         if (error instanceof DelegateMessageParkedError) throw error
         throw new DelegateMessagePreAcceptanceError(
@@ -1120,6 +1213,7 @@ class AcpRuntimeCoordinator {
           error
         )
       }
+      cancellation.throwIfCancelled()
       await (dispatchAdmitted
         ? this.dispatchAdmittedPrompt(
             request,
@@ -1132,23 +1226,40 @@ class AcpRuntimeCoordinator {
             undefined,
             'renderer',
             undefined,
-            delegatedMessageId
+            delegatedMessageId,
+            cancellation
           )
-        : this.dispatchPrompt(request, acceptance, 'sendAppContinuation'))
+        : this.dispatchPrompt(
+            request,
+            acceptance,
+            'sendAppContinuation',
+            undefined,
+            true,
+            undefined,
+            undefined,
+            undefined,
+            'renderer',
+            undefined,
+            cancellation
+          ))
       if (!acceptance.settled) {
         acceptance.settled = true
         resolve('provider_prompt_completed')
       }
     }
-    const admission = this.linearizeRootAdmission(request.sessionId, async () => {
-      if (!admitDispatch) return dispatch()
+    const admission = this.linearizeRootAdmission(request.sessionId, async (cancellation) => {
+      if (!admitDispatch) return dispatch(cancellation)
       let completion!: Promise<void>
-      await admitDispatch(async () => {
-        completion = dispatch()
-        void completion.catch((error) => acceptance.reject(error))
-        // Release the Project gate at acceptance, while root admission still owns the whole turn.
-        await accepted
-      })
+      await Promise.race([
+        admitDispatch(async () => {
+          cancellation.throwIfCancelled()
+          completion = dispatch(cancellation)
+          void completion.catch((error) => acceptance.reject(error))
+          // Release the Project gate at acceptance, while root admission still owns the whole turn.
+          await accepted
+        }),
+        cancellation.promise
+      ])
       await completion
     })
     onAdmissionQueued?.()
@@ -1166,10 +1277,12 @@ class AcpRuntimeCoordinator {
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void,
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
-    startAdmission?: PromptAcceptance
+    startAdmission?: PromptAcceptance,
+    cancellation?: RootAdmissionCancellation
   ): ReturnType<AcpRuntime['sendPrompt']> {
     let dispatchStarted = false
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> => {
+      cancellation?.throwIfCancelled()
       dispatchStarted = true
       return this.dispatchAdmittedPrompt(
         request,
@@ -1181,15 +1294,21 @@ class AcpRuntimeCoordinator {
         onApplicationPromptAdmitted,
         onPromptAdmitted,
         runtimeReviewOwner,
-        startAdmission
+        startAdmission,
+        undefined,
+        cancellation
       )
     }
     if (!this.promptDispatchAdmissionGuard) return dispatch()
-    return this.promptDispatchAdmissionGuard(
+    const guarded = this.promptDispatchAdmissionGuard(
       request.sessionId,
       dispatch,
       operation === 'sendPrompt'
-    ).catch((error) => {
+    )
+    return Promise.race([
+      guarded,
+      cancellation?.promise ?? new Promise<never>(() => undefined)
+    ]).catch((error) => {
       if (dispatchStarted || error instanceof DelegateMessagePreAcceptanceError) throw error
       throw new DelegateMessagePreAcceptanceError(
         error instanceof Error ? error.message : String(error),
@@ -1209,7 +1328,8 @@ class AcpRuntimeCoordinator {
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
     startAdmission?: PromptAcceptance,
-    delegatedMessageId?: string
+    delegatedMessageId?: string,
+    cancellation?: RootAdmissionCancellation
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const origin =
@@ -1282,6 +1402,7 @@ class AcpRuntimeCoordinator {
       : undefined
     const prompt = Promise.resolve(settlementStart).then((leaseId) => {
       settlementLeaseId = leaseId
+      cancellation?.throwIfCancelled()
       if (
         attempt.globalCancellationGeneration !== this.globalCancellationGeneration ||
         attempt.cancelled ||
@@ -1433,6 +1554,7 @@ class AcpRuntimeCoordinator {
 
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpRuntimeState> {
     this.invalidateSessionTurn(request.sessionId)
+    this.cancelRootAdmissions(request.sessionId)
     this.teardownCallbacks.onSessionDeleteStarted?.(request.sessionId)
     this.activePromptRequests.delete(request.sessionId)
     this.pendingResumeReconciliations.delete(request.sessionId)
@@ -1722,29 +1844,53 @@ class AcpRuntimeCoordinator {
         return runtime.disposeReviewerSession(session)
       },
       sendPrompt: async (request) => {
-        this.assertPromptAdmissionOpen()
-        const contextReset = await ensureActivitySession(request.sessionId)
-        await this.promptAdmissionGuard?.(request.sessionId)
-        const historyPreamble = options.session?.historyPreamble
-        return this.dispatchPrompt(
-          contextReset
-            ? {
-                ...request,
-                contextReset: true,
-                ...(historyPreamble && !request.historyPreamble ? { historyPreamble } : {})
-              }
-            : request,
-          undefined,
-          'sendPrompt',
-          runtime,
-          false
-        )
+        return this.linearizeRootAdmission(request.sessionId, async (cancellation) => {
+          this.assertPromptAdmissionOpen()
+          const contextReset = await Promise.race([
+            ensureActivitySession(request.sessionId),
+            cancellation.promise
+          ])
+          cancellation.throwIfCancelled()
+          await Promise.race([
+            this.promptAdmissionGuard?.(request.sessionId) ?? Promise.resolve(),
+            cancellation.promise
+          ])
+          cancellation.throwIfCancelled()
+          const historyPreamble = options.session?.historyPreamble
+          return this.dispatchPrompt(
+            contextReset
+              ? {
+                  ...request,
+                  contextReset: true,
+                  ...(historyPreamble && !request.historyPreamble ? { historyPreamble } : {})
+                }
+              : request,
+            undefined,
+            'sendPrompt',
+            runtime,
+            false,
+            undefined,
+            undefined,
+            undefined,
+            'renderer',
+            undefined,
+            cancellation
+          )
+        })
       },
       sendApplicationPrompt: (request, attribution, admission) =>
-        this.linearizeRootAdmission(request.sessionId, async () => {
+        this.linearizeRootAdmission(request.sessionId, async (cancellation) => {
           this.assertPromptAdmissionOpen()
-          const contextReset = await ensureActivitySession(request.sessionId)
-          await this.promptAdmissionGuard?.(request.sessionId)
+          const contextReset = await Promise.race([
+            ensureActivitySession(request.sessionId),
+            cancellation.promise
+          ])
+          cancellation.throwIfCancelled()
+          await Promise.race([
+            this.promptAdmissionGuard?.(request.sessionId) ?? Promise.resolve(),
+            cancellation.promise
+          ])
+          cancellation.throwIfCancelled()
           const historyPreamble = options.session?.historyPreamble
           return this.dispatchPrompt(
             contextReset
@@ -1760,7 +1906,10 @@ class AcpRuntimeCoordinator {
             false,
             attribution,
             undefined,
-            admission?.onPromptAdmitted
+            admission?.onPromptAdmitted,
+            'renderer',
+            undefined,
+            cancellation
           )
         })
     }
@@ -2311,6 +2460,7 @@ class AcpRuntimeCoordinator {
   }
 
   private clearRuntimeOwnership(): void {
+    this.cancelRootAdmissions()
     for (const attempts of this.pendingPromptStarts.values()) {
       for (const attempt of attempts) {
         attempt.startAdmission?.reject(
@@ -2338,6 +2488,7 @@ class AcpRuntimeCoordinator {
     this.latestPromptRequests.clear()
     this.activeRuntime = undefined
     this.lastRuntime = undefined
+    this.emitState()
   }
 
   private clearApplicationSessionEvents(sessionId: string): void {

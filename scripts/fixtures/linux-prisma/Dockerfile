@@ -12,9 +12,9 @@ COPY scripts/fixtures/linux-prisma/probe.mjs probe.mjs
 # The same generated client must first work on the Debian build host.
 RUN node probe.mjs
 
-# Keep the runtime probe on Node 22 to match the unchanged Electron runtime.
+# Keep the runtime probe on Node 24 to match Electron 43.
 FROM fedora:44
-RUN dnf -y --setopt=install_weak_deps=False install nodejs22 && dnf clean all
+RUN dnf -y --setopt=install_weak_deps=False install nodejs24 && dnf clean all
 WORKDIR /app
 # Match electron-builder's extraResources: only the generated client and its runtime are shipped.
 COPY --from=client /app/node_modules/.prisma node_modules/.prisma
