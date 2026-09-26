@@ -1,4 +1,16 @@
-import { expect, test, type Locator } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
+
+// Retained outgoing cards must fail even if the assertion runs after their exit duration.
+async function freezeClosedBubbles(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    new MutationObserver((records) => {
+      for (const { target } of records) {
+        if (target instanceof HTMLElement && target.matches('.hover-bubble[data-state="closed"]'))
+          target.getAnimations().forEach((animation) => animation.pause())
+      }
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-state'] })
+  })
+}
 
 // Sample real browser keyframes at known times without relying on machine/frame scheduling.
 async function sampleEntry(content: Locator): Promise<void> {
@@ -120,29 +132,13 @@ test('releases a blurred tooltip before Escape dismisses Settings', async ({ pag
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
 
-test('retains the information popover exit fade', async ({ page }) => {
+test('dismisses information popovers without retaining an outgoing card', async ({ page }) => {
   await page.goto('/hover-bubble.html')
+  await freezeClosedBubbles(page)
   await page.getByRole('button', { name: 'View Skill availability for 2 agents' }).hover()
   const preview = page.locator('[data-slot="skill-usage-agents-popover"]')
   await expect(preview).toHaveCSS('transform', 'none')
-  await page.evaluate(() =>
-    document.addEventListener('animationstart', (event) => {
-      if (event.animationName === 'hover-bubble-exit')
-        (event.target as HTMLElement).getAnimations().forEach((a) => a.pause())
-    })
-  )
   await page.keyboard.press('Escape')
-  await expect(preview).toHaveAttribute('data-state', 'closed')
-  await expect(preview).toHaveCSS('pointer-events', 'none')
-  const opacity = await preview.evaluate((el) => {
-    const animation = el.getAnimations()[0]
-    animation.currentTime = 45
-    const opacity = Number(getComputedStyle(el).opacity)
-    animation.finish()
-    return opacity
-  })
-  expect(opacity).toBeGreaterThan(0)
-  expect(opacity).toBeLessThan(1)
   await expect(preview).toHaveCount(0)
 })
 
@@ -309,6 +305,7 @@ test('switches session previews without entry motion and restores it after the w
   page
 }) => {
   await page.goto('/hover-bubble.html')
+  await freezeClosedBubbles(page)
   const first = page.getByRole('button', { name: 'First row', exact: true })
   const second = page.getByRole('button', { name: 'Second row', exact: true })
   const firstBox = (await first.boundingBox())!
@@ -325,10 +322,21 @@ test('switches session previews without entry motion and restores it after the w
   await expect(preview).toHaveCSS('animation-name', 'none')
   await expect(preview).toHaveCSS('transform', 'none')
   await expect(preview).toHaveCSS('opacity', '1')
+  await expect(page.locator('[data-slot="session-preview-content"]')).toHaveCount(1)
+
+  for (const [box, title] of [
+    [firstBox, 'First session'],
+    [secondBox, 'Second session']
+  ] as const) {
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await expect(preview).toHaveAttribute('aria-label', title)
+    await expect(page.locator('[data-slot="session-preview-content"]')).toHaveCount(1)
+  }
 
   await page.mouse.move(0, 0)
   // Existing 300ms leave grace, then 300ms warm window.
   await page.clock.runFor(601)
+  await expect(page.locator('[data-slot="session-preview-content"]')).toHaveCount(0)
   await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2)
   await page.clock.runFor(299)
   await expect(preview).toHaveCount(0)
@@ -338,6 +346,7 @@ test('switches session previews without entry motion and restores it after the w
 
 test('switches CSL previews at full width and restores cold entry motion', async ({ page }) => {
   await page.goto('/hover-bubble.html?csl')
+  await freezeClosedBubbles(page)
   const first = page.getByRole('button', { name: 'Preview: APA', exact: true })
   const second = page.getByRole('button', { name: 'Preview: MLA', exact: true })
   const firstBox = (await first.boundingBox())!
@@ -356,9 +365,11 @@ test('switches CSL previews at full width and restores cold entry motion', async
   await expect(preview).toHaveCSS('transform', 'none')
   await expect(preview).toHaveCSS('opacity', '1')
   expect((await preview.boundingBox())!.width).toBe(320)
+  await expect(page.locator('[role="dialog"].hover-bubble')).toHaveCount(1)
 
   await page.mouse.move(0, 0)
   await page.clock.runFor(151)
+  await expect(page.locator('[role="dialog"].hover-bubble')).toHaveCount(0)
   await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2)
   await expect(preview).toHaveAttribute('aria-label', 'Preview: APA')
   await expect(preview).toHaveCSS('animation-name', 'none')
@@ -376,4 +387,13 @@ test('switches CSL previews at full width and restores cold entry motion', async
   await page.keyboard.press('Tab')
   await first.focus()
   await expect(preview).toHaveCSS('animation-name', 'none')
+  await page.keyboard.press('Shift+Tab')
+  await expect(page.locator('[role="dialog"].hover-bubble')).toHaveCount(0)
+  await page.keyboard.press('Tab')
+  await expect(first).toBeFocused()
+  await expect(preview).toHaveAttribute('aria-label', 'Preview: APA')
+  await expect(preview).toHaveCSS('animation-name', 'none')
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[role="dialog"].hover-bubble')).toHaveCount(0)
+  await expect(first).toBeFocused()
 })

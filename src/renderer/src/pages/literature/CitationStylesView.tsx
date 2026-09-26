@@ -349,6 +349,12 @@ const CitationStylesView = ({
             className="hover-bubble max-h-[min(24rem,var(--radix-popover-content-available-height))] min-h-0 w-80 max-w-[calc(100vw-1rem)] space-y-2.5 overflow-y-auto overscroll-contain break-words p-3 select-text"
             onPointerEnter={cancelPreviewTimer}
             onPointerLeave={scheduleClosePreview}
+            onFocusOutside={(event) => {
+              // The custom anchor's opening focus must not immediately dismiss its preview.
+              const target = event.detail.originalEvent.target
+              if (target instanceof Node && previewTriggerRef.current?.contains(target))
+                event.preventDefault()
+            }}
             onFocusCapture={() => {
               cancelPreviewTimer()
               pinnedRef.current = true

@@ -776,13 +776,9 @@
     animation: hover-bubble-enter 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
+  /* Close immediately: outgoing previews must not overlap the next card or retain a Radix layer. */
   .hover-bubble[data-state='closed'] {
     pointer-events: none;
-  }
-
-  /* Closed tooltips must release Radix's dismissable layer before the next interaction. */
-  .hover-bubble[data-state='closed']:not([data-slot='tooltip-content']) {
-    animation: hover-bubble-exit 90ms ease-out;
   }
 
   @keyframes hover-bubble-enter {
@@ -797,15 +793,6 @@
     to {
       opacity: 1;
       transform: scale(1);
-    }
-  }
-
-  @keyframes hover-bubble-exit {
-    from {
-      opacity: 1;
-    }
-    to {
-      opacity: 0;
     }
   }
 
