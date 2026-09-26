@@ -959,6 +959,11 @@ const literatureMetadataConflictSchema = literatureMetadataValueSchema
   .extend({ currentValue: nonEmptyTextSchema })
   .strict()
 
+// Review versions describe replay semantics, not provider wire formats. V2 commits the
+// normalized proposal; source payloads are provenance only. Provider additions and optional,
+// defaulted fields should retain v2 when existing snapshots keep their meaning. Preserve
+// conflict choices, identifier replacement, revision checks and idempotency when evolving it.
+// New readers must keep reading earlier v2 snapshots; this is not a downgrade guarantee.
 const literatureMetadataCompletionResultSchema = z
   .object({
     mode: z.enum(['preview', 'commit']),

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
-import type { LiteratureItemInput, LiteratureItemView } from '../../shared/literature'
+import {
+  literatureMetadataCompletionResultSchema,
+  type LiteratureItemInput,
+  type LiteratureItemView
+} from '../../shared/literature'
 import { LiteratureMetadataEnricher, mergePubmedMetadata } from './metadata-enricher'
 import { toCslItem } from '../../shared/literature-csl'
 import { LiteratureCitationFormatter } from './citation-formatter'
@@ -1232,3 +1236,40 @@ it.each([false, true])(
     ).toBe(true)
   }
 )
+
+it('replays serialized v2 proposals independently of provider payload shape and optional diagnostics', async () => {
+  const { enricher, applyMetadata } = regressionEnricher(
+    item,
+    crossref({ title: ['A paper'], abstract: 'The reviewed abstract.' })
+  )
+  const preview = await enricher.complete({ mode: 'preview', itemId: view.id })
+  const stored = JSON.parse(JSON.stringify(preview))
+  delete stored.failures
+  for (const source of stored.sources) {
+    source.rawMetadata = {
+      abstract: 'Do not reinterpret this raw response.',
+      futurePayload: { version: 99 }
+    }
+  }
+  stored.source = stored.sources[0]
+  const restored = literatureMetadataCompletionResultSchema.parse(stored)
+  const fetchFn = vi
+    .fn<typeof fetch>()
+    .mockRejectedValue(new Error('No provider access during replay'))
+  const restarted = new LiteratureMetadataEnricher(
+    {
+      get: async () => view,
+      getMetadataCommitReceipt: async () => null,
+      applyMetadata
+    },
+    fetchFn
+  )
+  await restarted.applyReviewed(restored)
+  expect(fetchFn).not.toHaveBeenCalled()
+  expect(applyMetadata).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      item: expect.objectContaining({ title: 'A paper', abstract: 'The reviewed abstract.' }),
+      sources: restored.sources
+    })
+  )
+})
