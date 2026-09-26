@@ -1268,6 +1268,15 @@ test('exports a CLI conversation first opened after completion', async ({ app },
       .getByRole('region', { name: 'Conversation' })
       .getByText('CLI export completed before opening.', { exact: true })
   ).toBeVisible()
+  // The first visible message does not mean the throttled renderer has finished presenting the
+  // completed transcript. Open the menu only after its existing export prerequisite is visible.
+  await expect(
+    page
+      .getByRole('navigation', { name: 'Sessions' })
+      .locator('button[data-slot="session-open-button"]')
+      .filter({ hasText: saved!.title })
+      .getByText('Session status: Idle', { exact: true })
+  ).toBeVisible()
   await page.getByRole('button', { name: `Open actions for ${saved!.title}` }).click()
   await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
   await page.getByRole('menuitem', { name: 'Export conversation…' }).click()
