@@ -17,6 +17,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
   createInitialSessionState,
+  toPersistedSession,
   useSessionStore,
   type ChatMessage,
   type ChatSession
@@ -24,6 +25,10 @@ import {
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { TextAnnotation } from '../../../../shared/annotations'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import type {
+  LiteratureReference,
+  PersistedChatSession
+} from '../../../../shared/session-persistence'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 import {
   markWorkspaceReviewHistoryLoaded,
@@ -386,6 +391,124 @@ describe('WorkspacePage draft preservation', () => {
     expect(conversationProps.composer.view.doc.nodes).toEqual([reference])
     expect(useSessionStore.getState().sessions).toHaveLength(2)
     expect(runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  const libraryReference = (itemId = 'paper'): LiteratureReference => ({
+    type: 'literature' as const,
+    itemId,
+    metadataRevision: 1,
+    item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: itemId })
+  })
+  const prepareSummaryLoad = (
+    sessionId = 'sess-b'
+  ): {
+    loaded: ReturnType<typeof createDeferred<PersistedChatSession | undefined>>
+    persisted: PersistedChatSession
+  } => {
+    const loaded = createDeferred<ReturnType<typeof toPersistedSession> | undefined>()
+    const persisted = toPersistedSession(createSession(sessionId, 'proj-1'))
+    window.api.sessions.loadOne = vi.fn(() => loaded.promise)
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId ? { ...session, contentLoaded: false } : session
+      )
+    }))
+    return { loaded, persisted }
+  }
+
+  it.each([
+    ['sess-a', false],
+    ['sess-b', false],
+    ['sess-a', true],
+    ['sess-b', true]
+  ] as const)(
+    'validates a summary destination before inserting references (%s, imported: %s)',
+    async (sessionId, imported) => {
+      const { loaded, persisted } = prepareSummaryLoad(sessionId)
+      await renderPage()
+      await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Draft A')))
+      if (sessionId === 'sess-a') expect(libraryActions!.canAddToCurrent).toBe(false)
+      const reference = libraryReference()
+      await act(async () => libraryActions!.add([reference], sessionId))
+      expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
+      expect(conversationProps.composer.view.doc).toEqual(textDoc('Draft A'))
+      await act(async () =>
+        loaded.resolve({
+          ...persisted,
+          ...(imported
+            ? {
+                packageOrigin: {
+                  importId: 'import-1',
+                  sourceProjectId: 'source-project',
+                  sourceSessionId: 'source-session',
+                  importedAt: 1,
+                  manifestChecksum: 'a'.repeat(64)
+                }
+              }
+            : {})
+        })
+      )
+      if (imported) {
+        expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
+        expect(conversationProps.composer.view.doc).toEqual(textDoc('Draft A'))
+        expect(conversationProps.composer.view.error).toBe(
+          'This conversation cannot accept references right now.'
+        )
+      } else {
+        expect(useSessionStore.getState().selectedSessionId).toBe(sessionId)
+        expect(conversationProps.composer.view.doc.nodes).toContainEqual(reference)
+      }
+      expect(runtime.sendMessage).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps the current draft when loading a Library destination fails', async () => {
+    prepareSummaryLoad()
+    window.api.sessions.loadOne = vi.fn().mockRejectedValue(new Error('Unavailable'))
+    await renderPage()
+    await act(async () => libraryActions!.add([libraryReference()], 'sess-b'))
+    expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
+    expect(conversationProps.composer.view.error).toBe(
+      'This conversation cannot accept references right now.'
+    )
+  })
+
+  it('accumulates references for the same destination while its summary is loading', async () => {
+    const { loaded, persisted } = prepareSummaryLoad()
+    await renderPage()
+    const references = [libraryReference('one'), libraryReference('two')]
+    await act(async () => {
+      libraryActions!.add([references[0]], 'sess-b')
+      libraryActions!.add([references[1]], 'sess-b')
+    })
+    await act(async () => loaded.resolve(persisted))
+    expect(useSessionStore.getState().selectedSessionId).toBe('sess-b')
+    expect(
+      conversationProps.composer.view.doc.nodes.filter((node) => node.type === 'literature')
+    ).toEqual(references)
+  })
+
+  it('does not let a late Library destination load override a newer insertion', async () => {
+    const { loaded, persisted } = prepareSummaryLoad()
+    await renderPage()
+    await act(async () => libraryActions!.add([libraryReference('old')], 'sess-b'))
+    const newer = libraryReference('new')
+    await act(async () => libraryActions!.add([newer], null))
+    await act(async () => loaded.resolve(persisted))
+    expect(conversationProps.view.composerFocusKey).toBe('new:proj-1')
+    expect(conversationProps.composer.view.doc.nodes).toEqual([newer])
+  })
+
+  it('cancels a Library destination load when the user navigates away and back', async () => {
+    const { loaded, persisted } = prepareSummaryLoad()
+    await renderPage()
+    await act(async () => libraryActions!.add([libraryReference()], 'sess-b'))
+    await act(async () => useNavigationStore.getState().openLibrary('user'))
+    await act(async () => useNavigationStore.getState().openSession('proj-1', 'sess-a', 'user'))
+    await act(async () => loaded.resolve(persisted))
+    expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
   })
 
   it.each([null, 'sess-b'])(
