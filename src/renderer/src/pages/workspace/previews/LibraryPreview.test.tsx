@@ -380,6 +380,8 @@ describe('LibraryPreview', () => {
     expect(screen.queryByRole('status', { name: 'Loading references…' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+    expect(screen.getByText('All reference').closest('[inert]')).toBeTruthy()
+    expect(screen.queryByRole('status', { name: 'Loading references…' })).toBeNull()
     await act(async () => vi.advanceTimersByTimeAsync(170))
     expect(screen.getByRole('status', { name: 'Loading references…' })).toBeTruthy()
     expect(screen.getByText('Recently added')).toBeTruthy()

@@ -10,7 +10,7 @@ import {
   FileText,
   Search
 } from 'lucide-react'
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -295,11 +295,15 @@ function LibraryResults({
     offset: number
   }>()
   const [failure, setFailure] = useState<{ key: string; oversized: boolean }>()
-  const [delayedSkeletonKey, setDelayedSkeletonKey] = useState<string>()
+  const [delayedSkeletonToken, setDelayedSkeletonToken] = useState<{
+    key: string
+    revision: number
+  }>()
   const [revision, setRevision] = useState(0)
   const generation = useRef(0)
   const { query, all, collectionId, offset } = selection
   const requestKey = JSON.stringify([projectId, collectionId, all, query, offset])
+  const requestToken = useMemo(() => ({ key: requestKey, revision }), [requestKey, revision])
   const refresh = (): void => {
     generation.current += 1
     setFailure(undefined)
@@ -317,7 +321,7 @@ function LibraryResults({
     const current = (): boolean => generation.current === ticket
     const requestDelay = query.trim() ? SEARCH_DEBOUNCE_MS : 0
     const skeletonTimer = window.setTimeout(
-      () => setDelayedSkeletonKey(requestKey),
+      () => setDelayedSkeletonToken(requestToken),
       requestDelay + SKELETON_DELAY_MS
     )
     const timer = window.setTimeout(() => {
@@ -351,7 +355,7 @@ function LibraryResults({
       window.clearTimeout(skeletonTimer)
       generation.current += 1
     }
-  }, [all, collectionId, offset, projectId, query, requestKey, revision])
+  }, [all, collectionId, offset, projectId, query, requestKey, requestToken, revision])
 
   if (failure?.key === requestKey)
     return (
@@ -374,7 +378,7 @@ function LibraryResults({
       </div>
     )
   const waiting = page?.key !== requestKey
-  if (waiting && (!page || delayedSkeletonKey === requestKey))
+  if (waiting && (!page || delayedSkeletonToken === requestToken))
     return (
       <div role="status" aria-label={t('Loading references…')}>
         <div className="flex h-8 items-center justify-between gap-2 px-4 pt-3 pb-1 text-xs text-muted-foreground">
