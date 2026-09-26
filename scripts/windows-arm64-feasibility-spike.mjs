@@ -10,7 +10,6 @@ export function collectFindings() {
   const lockfile = read('package-lock.json')
   const micromamba = read('scripts/micromamba-versions.json')
   const prismaSchema = read('prisma/schema.prisma')
-  const generatedPrisma = read('node_modules/.prisma/client/index.js')
   const sandboxBuild = read('packages/notebook-network-sandbox/vendor/windows/build.mjs')
   const runtimePaths = read('src/main/notebook/runtime-paths.ts')
   const staging = read('scripts/stage-default-envs.mjs')
@@ -64,9 +63,7 @@ export function collectFindings() {
     },
     {
       id: 'prisma-engine',
-      status:
-        prismaSchema.includes('windows-arm64') ||
-        generatedPrisma.includes('query_engine-windows-arm64'),
+      status: prismaSchema.includes('windows-arm64'),
       blocking: true,
       detail: 'No Windows ARM64 Prisma binary target or generated ARM64 query engine is present.'
     },
