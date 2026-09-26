@@ -651,36 +651,57 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
   })
 
-  it('opens and activates the notebook preview when its entry first becomes available', async () => {
-    selectSession('session-1', 'project-1')
-    await renderPage(false)
+  it.each([false, true])(
+    'keeps the first notebook preview closed until requested (mobile: %s)',
+    async (isMobile) => {
+      workspacePageHarness.isMobile = isMobile
+      selectSession('session-1', 'project-1')
+      await renderPage(false)
 
-    const notebook: NotebookSessionReference = {
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      workspaceCwd: '/workspace/project-1',
-      notebookSessionRoot: '/notebooks/project-1/session-1',
-      dataRoot: '/notebooks/project-1/session-1/data',
-      runtimeRoot: '/notebooks/project-1/session-1/runtime',
-      runJsonPath: '/notebooks/project-1/session-1/run.json'
+      const notebook: NotebookSessionReference = {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace/project-1',
+        notebookSessionRoot: '/notebooks/project-1/session-1',
+        dataRoot: '/notebooks/project-1/session-1/data',
+        runtimeRoot: '/notebooks/project-1/session-1/runtime',
+        runJsonPath: '/notebooks/project-1/session-1/run.json'
+      }
+
+      await act(async () => {
+        notebookAvailableListener?.(notebook)
+      })
+
+      expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+        activeItemId: 'tool:session-1:notebook',
+        panelState: 'collapsed',
+        openRequestVersion: 0,
+        items: [
+          expect.objectContaining({
+            id: 'tool:session-1:notebook',
+            toolKind: 'notebook',
+            notebook
+          })
+        ]
+      })
+      if (isMobile) {
+        expect(
+          container.querySelector('[data-testid="mobile-preview-sheet"]')?.getAttribute('data-open')
+        ).toBe('false')
+      }
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="preview-toggle"]')?.click()
+      })
+      if (isMobile) {
+        expect(
+          container.querySelector('[data-testid="mobile-preview-sheet"]')?.getAttribute('data-open')
+        ).toBe('true')
+      } else {
+        expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+      }
     }
-
-    await act(async () => {
-      notebookAvailableListener?.(notebook)
-    })
-
-    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
-      activeItemId: 'tool:session-1:notebook',
-      panelState: 'open',
-      items: [
-        expect.objectContaining({
-          id: 'tool:session-1:notebook',
-          toolKind: 'notebook',
-          notebook
-        })
-      ]
-    })
-  })
+  )
 
   it.each([
     ['another session', 'project-1', 'session-2'],
@@ -708,7 +729,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     })
   })
 
-  it('waits for the target project preview slice before opening the notebook', async () => {
+  it('waits for the target project preview slice before registering the notebook without opening it', async () => {
     selectSession('session-1', 'project-1')
     await renderPage(false)
     act(() => usePreviewWorkbenchStore.getState().activateProject('previous-project'))
@@ -736,10 +757,42 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(usePreviewWorkbenchStore.getState()).toMatchObject({
       activeProjectId: 'project-1',
       activeItemId: 'tool:session-1:notebook',
-      panelState: 'open',
+      panelState: 'collapsed',
+      openRequestVersion: 0,
       items: [expect.objectContaining({ id: 'tool:session-1:notebook', notebook })]
     })
   })
+
+  it.each(['open', 'collapsed'] as const)(
+    'preserves the current preview when the first notebook arrives with the panel %s',
+    async (panelState) => {
+      selectSession('session-1', 'project-1')
+      await renderPage()
+      act(() => usePreviewWorkbenchStore.setState({ panelState }))
+      const { activeItemId, openRequestVersion } = usePreviewWorkbenchStore.getState()
+      const notebook: NotebookSessionReference = {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace/project-1',
+        notebookSessionRoot: '/notebooks/project-1/session-1',
+        dataRoot: '/notebooks/project-1/session-1/data',
+        runtimeRoot: '/notebooks/project-1/session-1/runtime',
+        runJsonPath: '/notebooks/project-1/session-1/run.json'
+      }
+
+      await act(async () => notebookAvailableListener?.(notebook))
+
+      expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+        activeItemId,
+        panelState,
+        openRequestVersion,
+        items: [
+          expect.objectContaining({ id: activeItemId }),
+          expect.objectContaining({ id: 'tool:session-1:notebook', notebook })
+        ]
+      })
+    }
+  )
 
   it('refreshes an existing notebook entry without reopening or activating it', async () => {
     selectSession('session-1', 'project-1')
