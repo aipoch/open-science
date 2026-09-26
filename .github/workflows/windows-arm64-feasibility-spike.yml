@@ -79,9 +79,12 @@ jobs:
           $prefix = Join-Path $env:RUNNER_TEMP 'r-win-arm64-4.4'
           $mm = Join-Path $env:RUNNER_TEMP 'micromamba-win-arm64.exe'
           $output = (& $mm create --dry-run --json --prefix $prefix --platform win-arm64 -y --channel https://repo.anaconda.com/pkgs/main r-base=4.4 r-jsonlite r-biocmanager r-ggplot2 2>&1 | Out-String)
+          $solveExitCode = $LASTEXITCODE
           $output | Set-Content -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'r-solve.json')
           $output
           if ($output -match '"success"\s*:\s*true') { throw 'Unexpectedly found a complete Anaconda win-arm64 R 4.4 closure' }
+          if ($output -notmatch '"success"\s*:\s*false') { throw "R closure probe returned no solver result (exit $solveExitCode)" }
+          $global:LASTEXITCODE = 0
           "Anaconda R 4.4 closure: unavailable (expected)" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Create and execute Anaconda Python 3.13 ARM64 notebook runtime
