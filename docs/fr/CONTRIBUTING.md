@@ -17,7 +17,7 @@ aidez à faire de ce projet un lieu accueillant pour tout le monde.
 
 ### Prérequis
 
-- [Node.js](https://nodejs.org/) 22 (voir [`.nvmrc`](../../.nvmrc)) et npm
+- [Node.js](https://nodejs.org/) 24 (voir [`.nvmrc`](../../.nvmrc)) et npm
 - Git
 
 ### Installation

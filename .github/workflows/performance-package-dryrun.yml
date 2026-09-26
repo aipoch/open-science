@@ -15,6 +15,11 @@ concurrency:
 jobs:
   build:
     uses: ./.github/workflows/build.yml
+    # Reusable Build declares OIDC for conditional Windows signing; callers must allow it
+    # even when this run selects an unsigned or macOS-only build. Keep this job-scoped.
+    permissions:
+      contents: read
+      id-token: write
     with:
       nightly: true
       skip_verify: true
@@ -36,7 +41,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install test tooling
         run: node scripts/ci/npm-ci.mjs

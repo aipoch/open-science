@@ -14,8 +14,12 @@ project for everyone.
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 22 (see [`.nvmrc`](.nvmrc)) and npm
+- [Node.js](https://nodejs.org/) 24 (see [`.nvmrc`](.nvmrc)) and npm
 - Git
+
+Node 24 is the development and CI toolchain. The published CLI continues to support
+Node >=22.5.0; PR Gate checks CLI/SDK compatibility on Node 22 as well. Electron
+ships its own Node runtime, so changing the toolchain does not upgrade Electron.
 
 ### Setup
 

@@ -12,7 +12,7 @@ Sea respetuoso y constructivo en todas las interacciones. Asuma buenas intencion
 
 ### Requisitos previos
 
-- [Node.js](https://nodejs.org/) 22 (consulte [`.nvmrc`](../../.nvmrc)) y npm
+- [Node.js](https://nodejs.org/) 24 (consulte [`.nvmrc`](../../.nvmrc)) y npm
 - Git
 
 ### Instalación

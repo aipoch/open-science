@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { load } from 'js-yaml'
@@ -48,6 +48,51 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
+  it('allows Build OIDC through every direct and nested caller', () => {
+    // GitHub validates declared permissions before evaluating signing inputs or job conditions.
+    const callees = new Set([
+      './.github/workflows/build.yml',
+      './.github/workflows/performance-package-dryrun.yml'
+    ])
+    const callers: string[] = []
+    for (const name of readdirSync(join(process.cwd(), '.github/workflows'))) {
+      if (!name.endsWith('.yml')) continue
+      const document = workflow(name)
+      for (const [id, job] of Object.entries(document.jobs)) {
+        if (!callees.has(job.uses ?? '')) continue
+        callers.push(`${name}:${id}`)
+        expect(job.permissions ?? document.permissions, `${name}:${id}`).toMatchObject({
+          contents: 'read',
+          'id-token': 'write'
+        })
+      }
+    }
+    expect(callers.sort()).toEqual([
+      'nightly.yml:build',
+      'notarize-dryrun.yml:build',
+      'performance-package-dryrun.yml:build',
+      'release.yml:build',
+      'runtime-resource-soak.yml:packaged_performance',
+      'signpath-test.yml:build'
+    ])
+    for (const name of [
+      'nightly.yml',
+      'notarize-dryrun.yml',
+      'performance-package-dryrun.yml',
+      'runtime-resource-soak.yml'
+    ]) {
+      const document = workflow(name)
+      expect(document.permissions?.['id-token']).toBeUndefined()
+      for (const job of Object.values(document.jobs)) {
+        if (callees.has(job.uses ?? '')) {
+          expect(job.permissions).toEqual({ contents: 'read', 'id-token': 'write' })
+        } else {
+          expect(job.permissions?.['id-token']).toBeUndefined()
+        }
+      }
+    }
+  })
+
   it('blocks verified Windows builds on real receipt publication and submission recovery', () => {
     const build = workflow('build.yml').jobs.build
     const gate = step(build, 'Verify Windows receipt publication and submission recovery')
@@ -261,7 +306,7 @@ describe('release and scheduled workflow topology', () => {
     expect(nightly.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(nightly.concurrency).toEqual({
       group:
-        "nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}",
+        "nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || inputs.dry_run == 'windows-package' && '-windows-package' || '' }}",
       'cancel-in-progress': true
     })
     expect(nightly.jobs.build).toMatchObject({
@@ -270,9 +315,10 @@ describe('release and scheduled workflow topology', () => {
       uses: './.github/workflows/build.yml',
       with: {
         nightly: true,
-        skip_verify: "${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' }}",
+        skip_verify:
+          "${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' || inputs.dry_run == 'windows-package' }}",
         platform_name:
-          "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}"
+          "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || inputs.dry_run == 'windows-package' && 'windows-x64' || '' }}"
       }
     })
     expect(nightly.jobs.plan.outputs).toEqual({
@@ -290,17 +336,30 @@ describe('release and scheduled workflow topology', () => {
     }
     expect(dispatch.inputs?.dry_run).toMatchObject({
       default: 'full',
-      options: ['full', 'runtime-source', 'macos-x64', 'linux-cli']
+      options: ['full', 'runtime-source', 'macos-x64', 'linux-cli', 'windows-package']
     })
+    // Package dry-runs must exercise the produced installer without requesting signing or
+    // falling back to the setup-only/install-only paths that never launch the package.
+    expect(nightly.jobs.build.with).not.toHaveProperty('sign_windows')
+    const buildInputs = workflow('build.yml').on?.workflow_call as {
+      inputs: Record<string, { default?: unknown }>
+    }
+    expect(buildInputs.inputs.sign_windows.default).toBe(false)
+    expect(nightly.jobs['package-smoke'].with).not.toHaveProperty('install_only')
+    expect(nightly.jobs['package-smoke'].with).not.toHaveProperty('setup_only')
+    expect(nightly.jobs['package-smoke']['continue-on-error']).not.toBe(true)
     expect(nightly.jobs['package-smoke'].if).toBe("inputs.dry_run != 'macos-x64'")
     expect(nightly.jobs['package-smoke'].with).toEqual({
-      platform_name: "${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}"
+      platform_name:
+        "${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || inputs.dry_run == 'windows-package' && 'windows-x64' || '' }}"
     })
-    expect(nightly.jobs.regression.if).toBe("inputs.dry_run != 'linux-cli'")
+    expect(nightly.jobs.regression.if).toBe(
+      "inputs.dry_run != 'linux-cli' && inputs.dry_run != 'windows-package'"
+    )
     expect(nightly.jobs['runtime-certification'].if).toContain("inputs.dry_run != 'macos-x64'")
     expect(prepare).toMatchObject({
       needs: ['plan', 'build', 'package-smoke'],
-      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli'",
+      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'windows-package'",
       'runs-on': 'ubuntu-latest'
     })
     expect(step(prepare, 'Aggregate release certification evidence').run).toContain(
@@ -644,10 +703,14 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     })
     expect(document.permissions).toEqual({ actions: 'read', contents: 'read' })
     for (const [id, job] of Object.entries(jobs)) {
-      expect(
-        (job as Job & { permissions?: Record<string, string> }).permissions,
-        id
-      ).toBeUndefined()
+      if (
+        job.uses === './.github/workflows/build.yml' ||
+        job.uses === './.github/workflows/performance-package-dryrun.yml'
+      ) {
+        expect(job.permissions, id).toEqual({ contents: 'read', 'id-token': 'write' })
+      } else {
+        expect(job.permissions, id).toBeUndefined()
+      }
     }
     expect(step(report, 'Checkout reporter')).toMatchObject({
       uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
@@ -828,7 +891,7 @@ describe('build verification throughput', () => {
     const install = publishSteps.findIndex(
       ({ name }) => name === 'Install release transform dependencies'
     )
-    expect(publishSteps[setupNode]?.with).toEqual({ 'node-version': 22 })
+    expect(publishSteps[setupNode]?.with).toEqual({ 'node-version': 24 })
     expect(setupNode).toBeLessThan(install)
     for (const reusable of [build, regression, workflow('package-smoke.yml')]) {
       for (const job of Object.values(reusable.jobs)) {

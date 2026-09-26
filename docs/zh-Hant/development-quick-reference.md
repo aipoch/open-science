@@ -4,7 +4,7 @@ AIPOCH Open-Science 是以 React、TypeScript、Prisma/SQLite 及 ACP 智能體�
 
 原始碼開發前置需求：
 
-- Node.js 22（請參閱 [`.nvmrc`](../../.nvmrc)）與 npm
+- Node.js 24（請參閱 [`.nvmrc`](../../.nvmrc)）與 npm
 - Git
 - Notebook 執行為選用功能，可使用應用程式管理的 Python/R 環境或自行設定的相容直譯器。
 

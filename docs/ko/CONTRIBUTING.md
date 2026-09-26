@@ -12,7 +12,7 @@
 
 ### 요구 사항
 
-- [Node.js](https://nodejs.org/) 22([`.nvmrc`](../../.nvmrc) 참고) 및 npm
+- [Node.js](https://nodejs.org/) 24([`.nvmrc`](../../.nvmrc) 참고) 및 npm
 - Git
 
 ### 설정

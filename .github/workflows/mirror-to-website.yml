@@ -122,7 +122,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install manifest dependencies
         run: npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund

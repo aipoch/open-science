@@ -76,7 +76,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -119,7 +119,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -174,7 +174,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -217,7 +217,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -326,7 +326,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       # npm ci runs postinstall: prisma generate + electron-builder install-app-deps.
@@ -512,7 +512,7 @@ jobs:
           AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
           AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
-          # macos-26-intel Node 22 x64 defaults to a ~2 GB old-space. The renderer production graph
+          # The previous Node 22 x64 build on macos-26-intel defaulted to ~2 GB old-space. The renderer graph
           # (~6400 modules) OOMs during emit at that limit. This is a ceiling, not a reservation.
           NODE_OPTIONS: --max-old-space-size=8192
         run: |

@@ -191,7 +191,7 @@ describe('post-merge Windows validation', () => {
     const rustTest = findStep(sandbox, 'Test Windows sandbox native source')
     const buildHost = findStep(sandbox, 'Build Windows sandbox native host')
     const smoke = findStep(sandbox, 'Test AppContainer ownership and removal lifecycle')
-    expect(findStep(sandbox, 'Setup Node').with).toMatchObject({ 'node-version': 22 })
+    expect(findStep(sandbox, 'Setup Node').with).toMatchObject({ 'node-version': 24 })
     expect(rustTest.run).toBe(
       'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml'
     )
@@ -658,7 +658,7 @@ describe('post-merge Windows validation', () => {
     expect(upgrade['timeout-minutes']).toBe(40)
     expect(findStep(upgrade, 'Setup Node')).toMatchObject({
       uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-      with: { 'node-version': 22 }
+      with: { 'node-version': 24 }
     })
     expect(findStep(upgrade, 'Install dependencies').run).toBe(
       'npm ci --ignore-scripts --no-audit --no-fund'

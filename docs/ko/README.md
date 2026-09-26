@@ -224,7 +224,7 @@ AIPOCH Open-Science는 React, TypeScript, Prisma/SQLite, ACP 기반 에이전트
 
 소스 개발 요구 사항:
 
-- Node.js 22([`.nvmrc`](../../.nvmrc) 참고)와 npm
+- Node.js 24([`.nvmrc`](../../.nvmrc) 참고)와 npm
 - Git
 - Notebook 실행은 선택 사항이며 앱 관리 Python/R 환경이나 직접 설정한 호환 인터프리터를 사용할 수 있습니다.
 

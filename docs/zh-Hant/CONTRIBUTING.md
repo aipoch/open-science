@@ -12,7 +12,7 @@
 
 ### 前置需求
 
-- [Node.js](https://nodejs.org/) 22（請參閱 [`.nvmrc`](../../.nvmrc)）與 npm
+- [Node.js](https://nodejs.org/) 24（請參閱 [`.nvmrc`](../../.nvmrc)）與 npm
 - Git
 
 ### 設定

@@ -12,7 +12,7 @@
 
 ### 前提条件
 
-- [Node.js](https://nodejs.org/) 22（[`.nvmrc`](../../.nvmrc) を参照）と npm
+- [Node.js](https://nodejs.org/) 24（[`.nvmrc`](../../.nvmrc) を参照）と npm
 - Git
 
 ### セットアップ

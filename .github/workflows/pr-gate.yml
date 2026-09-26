@@ -61,7 +61,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Resolve changed revisions
         id: revisions
@@ -392,7 +392,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Review dependency changes
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
@@ -453,7 +453,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -567,12 +567,26 @@ jobs:
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
         continue-on-error: true
         run: node scripts/verify-runtime-bundle.mjs linux-64 osx-arm64 osx-64 win-64
+      - name: Setup Node 22 for CLI compatibility
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - name: Test Node 22 CLI compatibility
+        id: cli_node22
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
+        continue-on-error: true
+        # Full portable shards use Node 24 and cannot replace this compatibility check.
+        run: |
+          npx vitest run cli packages/open-science
+          npm run check:cli-package
       - name: Enforce selected static checks
         if: ${{ always() }}
         shell: bash
         env:
           ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
           CLI_SDK_OUTCOME: ${{ steps.cli_sdk.outcome }}
+          CLI_NODE22_OUTCOME: ${{ steps.cli_node22.outcome }}
           DOCS_OUTCOME: ${{ steps.docs.outcome }}
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           I18N_OUTCOME: ${{ steps.i18n.outcome }}
@@ -600,6 +614,7 @@ jobs:
           check typechecks "$TYPECHECKS_OUTCOME"
           check interface_contracts "$INTERFACE_CONTRACTS_OUTCOME"
           check cli_sdk "$CLI_SDK_OUTCOME"
+          check cli_node22 "$CLI_NODE22_OUTCOME"
           check i18n "$I18N_OUTCOME"
           check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"
           exit "$failed"
@@ -626,7 +641,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -703,7 +718,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         if: ${{ needs.unit_shard.result == 'skipped' }}
@@ -798,7 +813,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install application dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -841,7 +856,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -1002,7 +1017,7 @@ jobs:
         id: node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -1042,7 +1057,7 @@ jobs:
         id: node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
@@ -1082,7 +1097,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: ${{ needs.macos_e2e_setup.outputs.node_version || '22' }}
+          node-version: ${{ needs.macos_e2e_setup.outputs.node_version || '24' }}
           cache: ${{ (fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) && 'npm' || '' }}
           package-manager-cache: false
       - name: Install short Mac dependencies
@@ -1391,7 +1406,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install report tools
         run: npm ci --ignore-scripts --no-audit --fund=false
@@ -1440,7 +1455,7 @@ jobs:
         if: ${{ needs.preflight.result == 'success' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Evaluate deterministic gate from trusted base
         shell: bash
         # Keep process environment bounded. Embedding the complete needs payload in job env includes

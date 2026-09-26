@@ -1230,7 +1230,7 @@ describe('PR Gate workflow', () => {
       expect(node?.with).toEqual({
         'node-version':
           platform === 'macos'
-            ? "${{ needs.macos_e2e_setup.outputs.node_version || '22' }}"
+            ? "${{ needs.macos_e2e_setup.outputs.node_version || '24' }}"
             : `\${{ needs.${producerId}.outputs.node_version }}`,
         ...(platform === 'macos'
           ? {
@@ -1765,6 +1765,39 @@ describe('PR Gate workflow', () => {
 
     expect(testStep?.run).toContain('npx vitest run cli packages/open-science')
     expect(testStep?.run).toContain('npm run check:cli-package')
+  })
+
+  it('keeps Node 22 CLI compatibility blocking even when Node 24 shards cover the full plan', () => {
+    const steps = workflow.jobs.static.steps ?? []
+    const setup = steps.find(({ name }) => name === 'Setup Node 22 for CLI compatibility')
+    const compatibility = steps.find(({ id }) => id === 'cli_node22')
+    const enforce = steps.find(({ name }) => name === 'Enforce selected static checks')!
+
+    expect(readFileSync(join(process.cwd(), '.nvmrc'), 'utf8').trim()).toBe('24')
+    expect(steps.find(({ name }) => name === 'Setup Node')?.with?.['node-version']).toBe(24)
+    expect(setup?.with?.['node-version']).toBe(22)
+    expect(setup?.if).toBe(compatibility?.if)
+    expect(compatibility?.if).toBe(
+      "${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}"
+    )
+    expect(compatibility?.env ?? {}).not.toHaveProperty('RUN_DEDICATED_TESTS')
+    expect(compatibility?.run).toContain('npx vitest run cli packages/open-science')
+    expect(compatibility?.run).toContain('npm run check:cli-package')
+    expect(steps.indexOf(setup!)).toBeLessThan(steps.indexOf(compatibility!))
+    expect(steps.indexOf(compatibility!)).toBeLessThan(steps.indexOf(enforce))
+    expect(enforce.env?.CLI_NODE22_OUTCOME).toBe('${{ steps.cli_node22.outcome }}')
+
+    for (const outcome of ['success', 'failure', 'cancelled']) {
+      const result = spawnSync('bash', ['-c', enforce.run!], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          ...Object.fromEntries(Object.keys(enforce.env ?? {}).map((key) => [key, 'success'])),
+          CLI_NODE22_OUTCOME: outcome
+        }
+      })
+      expect(result.status, result.stderr).toBe(outcome === 'success' ? 0 : 1)
+    }
   })
 
   it('labels the existing cross-process checks as a shadow baseline', () => {

@@ -4,7 +4,7 @@ AIPOCH Open-Science — Electron-приложение на React, TypeScript, Pr
 
 Для разработки из исходного кода нужны:
 
-- Node.js 22 (см. [`.nvmrc`](../../.nvmrc)) и npm
+- Node.js 24 (см. [`.nvmrc`](../../.nvmrc)) и npm
 - Git
 - Выполнение Notebook необязательно: используйте управляемые приложением среды Python/R или настроенный вами совместимый интерпретатор.
 
