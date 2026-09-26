@@ -1342,7 +1342,7 @@ describe('workspace composer controller', () => {
       expect(hook.result.current.view.readingContext.bindings).toEqual([])
       const snapshot = hook.result.current.lifecycle.captureSend()
       expect(snapshot.pendingPdfContextVersions).toBeUndefined()
-      expect(snapshot.automaticReadingEnabled).toBe(false)
+      expect(snapshot.automaticReadingEnabled).toBe(true)
       expect(snapshot.doc.nodes.some((node) => node.type === 'literature')).toBe(withMention)
       act(() => {
         hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
@@ -1351,7 +1351,7 @@ describe('workspace composer controller', () => {
         hook.result.current.lifecycle.restoreFailedSend(snapshot)
       })
       expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toBeUndefined()
-      // An explicit Read with agent selection still wins over automatic-link suppression.
+      // The removed Literature PDF can still be explicitly selected again.
       act(() =>
         preview.setPendingPdfContext('project', {
           kind: 'version',
@@ -1365,6 +1365,47 @@ describe('workspace composer controller', () => {
       ])
     }
   )
+
+  it('preserves automatic PDF file mentions when an unrelated pending PDF is removed', () => {
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.activateProject('project')
+    preview.setPendingPdfContext('project', {
+      kind: 'version',
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: 'removed-version',
+      previewItemId: 'literature:removed-version'
+    })
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.changeDoc({
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'other-paper',
+            name: 'other-paper.pdf',
+            path: '/other-paper.pdf',
+            source: 'artifact',
+            sourceFileId: 'other-paper',
+            mimeType: 'application/pdf',
+            versionId: 'other-version'
+          }
+        ]
+      })
+    )
+    act(() =>
+      hook.result.current.actions.unlinkReadingContext(
+        'version:literature-attachment-version:removed-version'
+      )
+    )
+    expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toEqual([
+      {
+        sourceKind: 'artifact-version',
+        sourceFileId: 'other-paper',
+        sourceVersionId: 'other-version'
+      }
+    ])
+  })
 
   it('previews and removes individual PDFs from a three-document draft and sends the remaining sources', () => {
     const preview = usePreviewWorkbenchStore.getState()
