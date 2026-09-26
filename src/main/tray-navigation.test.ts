@@ -66,8 +66,8 @@ describe('buildTrayNavigationSections', () => {
       expect(buildTrayNavigationSections([waiting], [agent])[0]?.kind).toBe('recent')
       expect(
         buildTrayNavigationSections(
-          [waiting, session('notebook')],
-          [agent, { projectId: 'p', sessionId: 'notebook', kind: 'notebook' }]
+          [waiting],
+          [agent, { projectId: 'p', sessionId: 'waiting', kind: 'notebook' }]
         )[0]?.kind
       ).toBe('running')
     }

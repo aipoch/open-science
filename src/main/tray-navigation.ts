@@ -53,9 +53,9 @@ export const buildTrayNavigationSections = (
   const byId = new Map(sessions.map((session) => [session.id, session]))
   const runningIds = new Set(
     running
-      .filter(({ sessionId }) => {
+      .filter(({ sessionId, kind }) => {
         const status = byId.get(sessionId)?.presentedStatus
-        return !status?.startsWith('waiting-')
+        return kind !== 'agent' || !status?.startsWith('waiting-')
       })
       .map(({ sessionId }) => sessionId)
   )
