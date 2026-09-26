@@ -189,6 +189,7 @@ import {
   patchCodexAcpContextUsageSource,
   patchCodexAcpModelCatalogStartupSource,
   patchCodexAcpPromptFailureSource,
+  patchCodexAcpCompactionSource,
   patchCodexAcpSkillInputSource,
   patchCodexAcpTurnUsageSource,
   resolveManagedCodexPlatform,
@@ -2377,5 +2378,127 @@ describe('managed Codex process admission', () => {
     } finally {
       await rm(dataRoot, { recursive: true, force: true })
     }
+  })
+})
+
+describe('Codex native compaction settlement patch', () => {
+  const source = `class Client {
+  async runCompact(params) {
+    const compactionCompleted = this.awaitCompactionCompleted(params.threadId);
+    await this.threadCompactStart(params);
+    return await compactionCompleted;
+  }
+}
+class Bridge {
+  async runCompact(sessionId) {
+    await this.codexClient.runCompact({ threadId: sessionId });
+  }
+}
+async function command() {
+  switch (name) {
+      case "compact": {
+        await this.runWithProcessCheck(() => this.codexAcpClient.runCompact(sessionId));
+        return { handled: true };
+      }
+  }
+}`
+  // The dynamically evaluated class is the pinned adapter code under test.
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const harness = () => {
+    const patched = patchCodexAcpCompactionSource(source)
+    expect(patchCodexAcpCompactionSource(patched)).toBe(patched)
+    const Client = new Function(
+      'RequestError',
+      'isCompactionCompletedNotification',
+      `${patched}; return Client`
+    )(
+      {
+        internalError: (data: unknown, message: string) =>
+          Object.assign(new Error(message), { data })
+      },
+      (event: { method: string }) => event.method === 'thread/compacted'
+    )
+    const client = new Client()
+    client.codexEventHandlers = []
+    const completions = new Map<string, (event: unknown) => void>()
+    client.captureTurnCompletions = (
+      threadId: string,
+      capture: (event: unknown) => void
+    ): (() => void) => {
+      completions.set(threadId, capture)
+      return () => {
+        completions.delete(threadId)
+      }
+    }
+    client.threadCompactStart = vi.fn(async () => {})
+    const emit = (method: string, params: Record<string, unknown>): void => {
+      if (method === 'turn/completed') completions.get(String(params.threadId))?.(params)
+      for (const callback of [...client.codexEventHandlers])
+        callback({ eventType: 'notification', method, params })
+    }
+    return { client, emit, completions }
+  }
+
+  it.each(['completed', 'interrupted'])(
+    'settles a %s turn and releases its listener',
+    async (status) => {
+      const { client, emit } = harness()
+      const started = vi.fn()
+      const pending = client.runCompact({ threadId: 'one' }, started)
+      emit('turn/started', { threadId: 'one', turn: { id: 'turn' } })
+      expect(started).toHaveBeenCalledWith('turn', 'one')
+      emit('turn/completed', { threadId: 'other', turn: { id: 'turn', status } })
+      expect(client.codexEventHandlers).toHaveLength(1)
+      emit('turn/completed', { threadId: 'one', turn: { id: 'turn', status } })
+      await expect(pending).resolves.toMatchObject({ turn: { status } })
+      expect(client.codexEventHandlers).toHaveLength(0)
+    }
+  )
+
+  it('settles the native close fence and releases both subscriptions', async () => {
+    const { client, emit, completions } = harness()
+    const pending = client.runCompact({ threadId: 'one' })
+    emit('turn/started', { threadId: 'one', turn: { id: 'turn' } })
+    // closeSession calls recordTurnCompleted directly after fencing stale notifications.
+    completions.get('one')?.({ threadId: 'one', turn: { id: 'turn', status: 'interrupted' } })
+    await expect(pending).resolves.toMatchObject({ turn: { status: 'interrupted' } })
+    expect(completions.size).toBe(0)
+    expect(client.codexEventHandlers).toHaveLength(0)
+  })
+
+  it('ignores retries and rejects only the active turn terminal error', async () => {
+    const { client, emit } = harness()
+    const pending = client.runCompact({ threadId: 'one' })
+    emit('turn/started', { threadId: 'one', turn: { id: 'turn' } })
+    emit('error', { threadId: 'one', turnId: 'old', willRetry: false, error: { message: 'stale' } })
+    emit('error', { threadId: 'one', turnId: 'turn', willRetry: true, error: { message: 'retry' } })
+    expect(client.codexEventHandlers).toHaveLength(1)
+    emit('error', {
+      threadId: 'one',
+      turnId: 'turn',
+      willRetry: false,
+      error: { message: 'context full' }
+    })
+    await expect(pending).rejects.toThrow('context full')
+    expect(client.codexEventHandlers).toHaveLength(0)
+  })
+
+  it('retains native success and cleans up a rejected start', async () => {
+    const { client, emit } = harness()
+    const pending = client.runCompact({ threadId: 'one' })
+    emit('thread/compacted', { threadId: 'one' })
+    await expect(pending).resolves.toBeUndefined()
+    client.threadCompactStart.mockRejectedValueOnce(new Error('start rejected'))
+    await expect(client.runCompact({ threadId: 'one' })).rejects.toThrow('start rejected')
+    expect(client.codexEventHandlers).toHaveLength(0)
+  })
+
+  it('rejects ambiguous or drifted pinned code', () => {
+    expect(() => patchCodexAcpCompactionSource(source + source)).toThrow('no longer matches')
+    expect(() =>
+      patchCodexAcpCompactionSource(
+        source.replace('await this.threadCompactStart(params)', 'await changed(params)')
+      )
+    ).toThrow('no longer matches')
   })
 })

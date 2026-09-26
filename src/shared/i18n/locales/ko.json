@@ -999,7 +999,7 @@
     "Context compacted after run {{run}}": "컨텍스트 실행 후 압축됨 {{run}}",
     "Context compaction cancelled": "컨텍스트 압축이 취소되었습니다",
     "Context compaction failed": "컨텍스트 압축 실패",
-    "Earlier context is unchanged.": "이전 컨텍스트는 변경되지 않았습니다.",
+    "Your conversation history is preserved.": "대화 기록은 유지됩니다.",
     "Earlier context was summarized so the session can continue.": "세션을 계속할 수 있도록 이전 컨텍스트를 요약했습니다.",
     "Summarizing earlier context…": "이전 컨텍스트를 요약하는 중…",
     "Current composition": "현재 구성",

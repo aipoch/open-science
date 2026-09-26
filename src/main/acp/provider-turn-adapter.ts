@@ -44,6 +44,8 @@ export type AcpProviderModelCallUsage = Readonly<
  * Durable interaction, context, and Session owners decide whether and how to publish these facts.
  */
 export type AcpProviderTurnResult = Readonly<{
+  /** Native summary result, independent of token usage; absent when unverified. */
+  compaction?: Readonly<{ succeeded: boolean; error?: string }>
   turnUsage?: Readonly<Omit<AcpTurnTokenUsage, 'turnCount'>>
   modelTurnCount?: number
   modelCalls?: ReadonlyArray<AcpProviderModelCallUsage>

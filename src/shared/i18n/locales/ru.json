@@ -1030,7 +1030,7 @@
     "Context compacted after run {{run}}": "Контекст сжат после запуска {{run}}",
     "Context compaction cancelled": "Сжатие контекста отменено",
     "Context compaction failed": "Сбой сжатия контекста",
-    "Earlier context is unchanged.": "Предыдущий контекст не изменён.",
+    "Your conversation history is preserved.": "История вашего диалога сохранена.",
     "Earlier context was summarized so the session can continue.": "Предыдущий контекст был кратко изложен, чтобы продолжить сеанс.",
     "Summarizing earlier context…": "Составляется краткое изложение предыдущего контекста…",
     "Current composition": "Текущая композиция",

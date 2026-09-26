@@ -1109,7 +1109,7 @@
     "Context compacted after run {{run}}": "執行 {{run}} 後已壓縮上下文",
     "Context compaction cancelled": "內文壓縮已取消",
     "Context compaction failed": "內文壓縮失敗",
-    "Earlier context is unchanged.": "先前的內文未變更。",
+    "Your conversation history is preserved.": "你的對話歷史已保留。",
     "Earlier context was summarized so the session can continue.": "已摘要先前的內文，工作階段可以繼續。",
     "Summarizing earlier context…": "正在摘要先前的內文…",
     "Current composition": "目前構成",

@@ -1021,7 +1021,7 @@
     "Context compacted after run {{run}}": "Contexte compacté après l'exécution {{run}}",
     "Context compaction cancelled": "Compactage du contexte annulé",
     "Context compaction failed": "Échec du compactage du contexte",
-    "Earlier context is unchanged.": "Le contexte précédent est inchangé.",
+    "Your conversation history is preserved.": "L’historique de votre conversation est conservé.",
     "Earlier context was summarized so the session can continue.": "Le contexte précédent a été résumé pour permettre à la session de continuer.",
     "Summarizing earlier context…": "Résumé du contexte précédent…",
     "Current composition": "Composition actuelle",

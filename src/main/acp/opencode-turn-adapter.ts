@@ -73,7 +73,13 @@ export class AcpOpenCodeTurnAdapter implements AcpProviderTurnAdapter {
         const finalReader = reader
         close()
         const after = await readSnapshotBestEffort(finalReader, providerSessionId, cwd)
-        return normalizeTurnUsage(baseline, after)
+        const compaction =
+          baseline && after
+            ? [...(after.compactionByMessageId ?? [])]
+                .filter(([id]) => !baseline.assistantMessageIds.has(id))
+                .at(-1)?.[1]
+            : undefined
+        return { ...normalizeTurnUsage(baseline, after), ...(compaction ? { compaction } : {}) }
       },
       cancel: close
     })

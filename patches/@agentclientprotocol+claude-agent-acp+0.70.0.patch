@@ -150,3 +150,30 @@ index f11169b..cca061f 100644
   *  NaN. `input_tokens`/`output_tokens` are typed `number` by the SDK but
   *  synthetic or third-party-backend stream events have been observed emitting
   *  them as null/undefined — coerce those too so a malformed upstream event
+diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
+--- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
++++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
+@@ -2028,6 +2028,7 @@
+                                         update: {
+                                             sessionUpdate: "agent_message_chunk",
+                                             content: { type: "text", text: "Compacting..." },
++                                            _meta: { claudeCode: { isContextCompaction: true } },
+                                         },
+                                     });
+                                 }
+@@ -2041,6 +2042,7 @@
+                                         update: {
+                                             sessionUpdate: "agent_message_chunk",
+                                             content: { type: "text", text: "\n\nCompacting completed." },
++                                            _meta: { claudeCode: { isContextCompaction: true } },
+                                         },
+                                     });
+                                 }
+@@ -2052,6 +2054,7 @@
+                                         update: {
+                                             sessionUpdate: "agent_message_chunk",
+                                             content: { type: "text", text: `\n\nCompacting failed${reason}` },
++                                            _meta: { claudeCode: { isContextCompaction: true } },
+                                         },
+                                     });
+                                 }

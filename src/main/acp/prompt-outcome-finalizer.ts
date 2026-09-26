@@ -16,6 +16,7 @@ import type { PreparedPromptHandle } from './prompt-preparation-owner'
 import {
   describePromptError,
   isOpenCodeSessionServiceFailure,
+  isOpenCodeContextOverflow,
   isProviderPromptError
 } from './prompt-error'
 import type { ProviderPromptOutcome } from './provider-prompt-executor'
@@ -341,7 +342,8 @@ export class AcpPromptOutcomeFinalizer {
       const text = describePromptError(error, { model: handles.model })
       const recoverable = isOpenCodeSessionServiceFailure(error)
         ? 'session-lost'
-        : isMediaOverflowError(text) ||
+        : isOpenCodeContextOverflow(error) ||
+            isMediaOverflowError(text) ||
             isMediaOverflowError(handles.errorMessage(error)) ||
             isMediaOverflowError(handles.errorKind(error))
           ? 'context-overflow'

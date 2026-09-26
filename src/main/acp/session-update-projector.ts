@@ -225,6 +225,17 @@ class AcpSessionUpdateProjector {
     if (routing.appSessionId) routed.sessionId = routing.appSessionId
     deepFreeze(routed)
 
+    // Adapter-authored compaction banners can arrive after cancellation. They belong to the
+    // control lifecycle, never to a later user turn's assistant text. Do not match model prose.
+    const meta = routed.update._meta
+    if (
+      routing.framework === 'claude-code' &&
+      routed.update.sessionUpdate === 'agent_message_chunk' &&
+      isRecord(meta?.claudeCode) &&
+      meta.claudeCode.isContextCompaction === true
+    )
+      return Object.freeze([])
+
     const projection = this.codexSkillActivity.projectWithContext(
       toAcpRuntimeEvent(
         routed,

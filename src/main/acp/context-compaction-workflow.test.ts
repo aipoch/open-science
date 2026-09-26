@@ -2,7 +2,7 @@ import type { ActiveSession, PromptResponse, SessionNotification } from '@agentc
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
-import { claudeCodeFramework, codeBuddyFramework } from '../agent-framework'
+import { claudeCodeFramework, codeBuddyFramework, opencodeFramework } from '../agent-framework'
 import type { AgentFramework } from '../agent-framework/types'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
@@ -135,6 +135,29 @@ const createHarness = (input?: {
 }
 
 describe('AcpContextCompactionWorkflow', () => {
+  it.each([
+    { succeeded: true },
+    { succeeded: false, error: 'Session too large to compact' },
+    undefined
+  ])('requires a verified OpenCode summary result: %j', async (compaction) => {
+    const harness = createHarness({
+      framework: opencodeFramework,
+      session: fakeSession([stop('end_turn')]),
+      usage: {
+        begin: async () => ({ finalize: () => ({ compaction }), cancel: () => {} }),
+        cwd: () => '/workspace',
+        model: () => 'model',
+        record: async () => {}
+      }
+    })
+    const operation = harness.workflow.compact({ sessionId: 'app-session' })
+    if (compaction?.succeeded)
+      await expect(operation).resolves.toMatchObject({ stopReason: 'end_turn' })
+    else await expect(operation).rejects.toThrow(compaction?.error ?? 'could not be verified')
+    expect(harness.events.at(-1)?.status).toBe(compaction?.succeeded ? 'completed' : 'failed')
+    expect(harness.promptContent.resetSession).toHaveBeenCalledTimes(compaction?.succeeded ? 1 : 0)
+  })
+
   it('records provider usage for the hidden native compaction turn', async () => {
     const hidden = notification('Compacting conversation history')
     const session = fakeSession([update(hidden), stop('end_turn')])
@@ -216,6 +239,16 @@ describe('AcpContextCompactionWorkflow', () => {
     {
       name: 'adapter failure output',
       messages: [update(notification('  Compacting failed: media_unstrippable')), stop('end_turn')],
+      expectedStatus: 'failed',
+      expectedError: 'Compacting failed: media_unstrippable'
+    },
+    {
+      name: 'streamed adapter failure output',
+      messages: [
+        update(notification('  Compacting ')),
+        update(notification('failed: media_unstrippable')),
+        stop('end_turn')
+      ],
       expectedStatus: 'failed',
       expectedError: 'Compacting failed: media_unstrippable'
     }

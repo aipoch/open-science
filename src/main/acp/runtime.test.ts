@@ -9031,8 +9031,31 @@ describe('ACP runtime session management', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
-        })
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {}),
+          ...(framework.id === 'opencode'
+            ? { opencodeUsageApi: { baseUrl: 'http://localhost:4242', authorization: 'test' } }
+            : {})
+        }),
+        opencodeUsageFetch: vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify(
+                agent.prompts.some(({ text }) => text === '/compact')
+                  ? [
+                      {
+                        info: {
+                          id: 'summary',
+                          role: 'assistant',
+                          summary: true,
+                          finish: 'stop',
+                          tokens: { input: 0, output: 1 }
+                        }
+                      }
+                    ]
+                  : []
+              )
+            )
+        )
       })
 
       const session = await runtime.createSession({ cwd: '/workspace' })

@@ -436,6 +436,21 @@ describe('AcpPromptOutcomeFinalizer', () => {
       providerError: false
     },
     {
+      name: 'OpenCode typed overflow without provider wording',
+      error: Object.assign(
+        new Error(
+          'Session too large to compact - context exceeds model limit even after stripping media'
+        ),
+        {
+          code: -32603,
+          data: { service: 'session', errorName: 'ContextOverflowError' },
+          name: 'RequestError'
+        }
+      ),
+      recoverable: 'context-overflow',
+      providerError: false
+    },
+    {
       name: 'OpenCode session service failure',
       error: Object.assign(new Error('Internal error: OpenCode service failure'), {
         code: -32603,
