@@ -521,7 +521,7 @@ for (const theme of ['Light', 'Dark'] as const) {
     for (const width of [1280, 767]) {
       await setViewport(page, width)
       await checkContrast(
-        page.getByText('Discover, share, and collaborate on research that matters', {
+        page.getByText('Attach data or papers, then describe what you want to find out.', {
           exact: true
         }),
         `Empty conversation ${width}px`

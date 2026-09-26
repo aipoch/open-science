@@ -262,7 +262,7 @@ export const NewConversationPdfPreview = (): React.JSX.Element => {
           <div>
             <h2 className="text-2xl">What will you research in Open-Science?</h2>
             <p className="mt-3 text-muted-foreground">
-              Discover, share, and collaborate on research that matters
+              Attach data or papers, then describe what you want to find out.
             </p>
           </div>
         </div>
