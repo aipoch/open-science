@@ -20,6 +20,7 @@ on:
           - runtime-source
           - macos-x64
           - linux-cli
+          - windows-package
 
 # Build and publication preparation run without write access. Only the separate workflow_run
 # publisher receives contents:write, and it never checks out or executes the triggering revision.
@@ -28,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}
+  group: nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || inputs.dry_run == 'windows-package' && '-windows-package' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -68,10 +69,10 @@ jobs:
     with:
       nightly: true
       # A manual `macos-x64` dispatch runs only the Intel packaging job (the heap-sensitive Vite
-      # renderer build) and skips verify. The linux-cli dry-run builds and smoke-tests Linux only;
-      # unrelated certification and publication preparation stay skipped.
-      skip_verify: ${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' }}
-      platform_name: ${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}
+      # renderer build) and skips verify. Linux/Windows package dry-runs build and smoke-test
+      # only their selected platform; certification and publication preparation stay skipped.
+      skip_verify: ${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' || inputs.dry_run == 'windows-package' }}
+      platform_name: ${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || inputs.dry_run == 'windows-package' && 'windows-x64' || '' }}
 
   # Scheduled coverage is advisory for the build only: it stays absent from prepare.needs so artifacts
   # and evidence remain diagnosable, but nightly-publish.yml refuses to roll the tag unless every
@@ -79,7 +80,7 @@ jobs:
   # job as a blocking focused dry-run while build/package/publish preparation stay skipped.
   runtime-certification:
     needs: plan
-    if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64' && inputs.dry_run != 'linux-cli'
+    if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'windows-package'
     uses: ./.github/workflows/runtime-certification.yml
     with:
       # Scheduled failures keep the build green so prepare still runs; publication gates on them.
@@ -90,14 +91,14 @@ jobs:
     if: inputs.dry_run != 'macos-x64'
     uses: ./.github/workflows/package-smoke.yml
     with:
-      platform_name: ${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}
+      platform_name: ${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || inputs.dry_run == 'windows-package' && 'windows-x64' || '' }}
 
   # Run desktop behavior checks inside the same read-only Nightly run. Failures keep the build green
   # and independently rerunnable so artifacts stay diagnosable, but nightly-publish.yml refuses to
   # roll the tag unless every regression job succeeded.
   regression:
     needs: [build, package-smoke]
-    if: inputs.dry_run != 'linux-cli'
+    if: inputs.dry_run != 'linux-cli' && inputs.dry_run != 'windows-package'
     uses: ./.github/workflows/desktop-regression.yml
     with:
       # Advisory for the build only; publication gates on the real job conclusions.
@@ -109,7 +110,7 @@ jobs:
   prepare:
     name: Prepare nightly publish artifact
     needs: [plan, build, package-smoke]
-    if: needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli'
+    if: needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'windows-package'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -306,7 +306,7 @@ describe('release and scheduled workflow topology', () => {
     expect(nightly.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(nightly.concurrency).toEqual({
       group:
-        "nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}",
+        "nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || inputs.dry_run == 'windows-package' && '-windows-package' || '' }}",
       'cancel-in-progress': true
     })
     expect(nightly.jobs.build).toMatchObject({
@@ -315,9 +315,10 @@ describe('release and scheduled workflow topology', () => {
       uses: './.github/workflows/build.yml',
       with: {
         nightly: true,
-        skip_verify: "${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' }}",
+        skip_verify:
+          "${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' || inputs.dry_run == 'windows-package' }}",
         platform_name:
-          "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}"
+          "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || inputs.dry_run == 'windows-package' && 'windows-x64' || '' }}"
       }
     })
     expect(nightly.jobs.plan.outputs).toEqual({
@@ -335,17 +336,30 @@ describe('release and scheduled workflow topology', () => {
     }
     expect(dispatch.inputs?.dry_run).toMatchObject({
       default: 'full',
-      options: ['full', 'runtime-source', 'macos-x64', 'linux-cli']
+      options: ['full', 'runtime-source', 'macos-x64', 'linux-cli', 'windows-package']
     })
+    // Package dry-runs must exercise the produced installer without requesting signing or
+    // falling back to the setup-only/install-only paths that never launch the package.
+    expect(nightly.jobs.build.with).not.toHaveProperty('sign_windows')
+    const buildInputs = workflow('build.yml').on?.workflow_call as {
+      inputs: Record<string, { default?: unknown }>
+    }
+    expect(buildInputs.inputs.sign_windows.default).toBe(false)
+    expect(nightly.jobs['package-smoke'].with).not.toHaveProperty('install_only')
+    expect(nightly.jobs['package-smoke'].with).not.toHaveProperty('setup_only')
+    expect(nightly.jobs['package-smoke']['continue-on-error']).not.toBe(true)
     expect(nightly.jobs['package-smoke'].if).toBe("inputs.dry_run != 'macos-x64'")
     expect(nightly.jobs['package-smoke'].with).toEqual({
-      platform_name: "${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}"
+      platform_name:
+        "${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || inputs.dry_run == 'windows-package' && 'windows-x64' || '' }}"
     })
-    expect(nightly.jobs.regression.if).toBe("inputs.dry_run != 'linux-cli'")
+    expect(nightly.jobs.regression.if).toBe(
+      "inputs.dry_run != 'linux-cli' && inputs.dry_run != 'windows-package'"
+    )
     expect(nightly.jobs['runtime-certification'].if).toContain("inputs.dry_run != 'macos-x64'")
     expect(prepare).toMatchObject({
       needs: ['plan', 'build', 'package-smoke'],
-      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli'",
+      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'windows-package'",
       'runs-on': 'ubuntu-latest'
     })
     expect(step(prepare, 'Aggregate release certification evidence').run).toContain(
