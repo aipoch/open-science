@@ -5328,6 +5328,7 @@ const createApplicationModules = async (
               title: summary.title,
               projectName: project.name,
               updatedAt: summary.updatedAt,
+              presentedStatus: summary.presentedStatus,
               pinned: summary.pinned === true
             }
           ]

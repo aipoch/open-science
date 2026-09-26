@@ -711,7 +711,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           [
             { registerIpcHandlers },
             { installMigrationQuitGuard, isMigrationInProgress },
-            { createAppTray, refreshAppTrayLocale, setTrayIconVariant },
+            { createAppTray, refreshAppTrayLocale, refreshAppTrayNavigation, setTrayIconVariant },
             { installAppLifecycle },
             { disposeIpcHandlerRegistry },
             { createWebServiceController, buildAuthenticatedWebUrl },
@@ -738,6 +738,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             Awaited<ReturnType<typeof RemoteAccessService.create>> | undefined
           let partialWebController: ReturnType<typeof createWebServiceController> | undefined
           let disposeTrayLocaleSubscription: (() => void) | undefined
+          let disposeTrayNavigationSubscription: (() => void) | undefined
 
           // The controller must exist before its IPC responder, while the responder calls back into the
           // controller. This box breaks that startup cycle without exposing unread ownership to renderer.
@@ -823,6 +824,26 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               return disposeRuntime()
             }
             disposePartialRuntime = disposeApplicationRuntime
+            let trayRefreshTimer: ReturnType<typeof setTimeout> | undefined
+            const unsubscribeTrayNavigation = applicationEvents.subscribe(({ channel }) => {
+              if (
+                !channel.startsWith('session:') &&
+                !channel.startsWith('project:') &&
+                channel !== 'acp:state' &&
+                channel !== 'side-chat:event' &&
+                channel !== 'notebook:changed'
+              )
+                return
+              if (trayRefreshTimer) return
+              trayRefreshTimer = setTimeout(() => {
+                trayRefreshTimer = undefined
+                refreshAppTrayNavigation(appTrayBox.current)
+              }, 100)
+            })
+            disposeTrayNavigationSubscription = () => {
+              unsubscribeTrayNavigation()
+              clearTimeout(trayRefreshTimer)
+            }
             startupDiagnostics?.phase('compose-desktop-surfaces')
 
             notificationInbox.configureDesktop({
@@ -896,6 +917,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               for (const cleanup of [
                 () => visibilityProbeBox.current?.dispose(),
                 () => disposeTrayLocaleSubscription?.(),
+                () => disposeTrayNavigationSubscription?.(),
                 disposeLocalePreferenceIpc,
                 () => managedPreviewProtocolBridge.dispose(),
                 disposeDatabaseStartupIpc,
@@ -999,7 +1021,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               disposeApplicationRuntime: () => disposePartialRuntime?.(),
               remoteAccess: { shutdown: () => partialRemoteAccess?.shutdown() },
               webController: { dispose: () => partialWebController?.dispose() },
-              disposeIpcHandlers: () => disposeTrayLocaleSubscription?.(),
+              disposeIpcHandlers: () => {
+                disposeTrayLocaleSubscription?.()
+                disposeTrayNavigationSubscription?.()
+              },
               log
             })()
             throw error

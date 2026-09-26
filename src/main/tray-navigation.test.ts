@@ -57,4 +57,19 @@ describe('buildTrayNavigationSections', () => {
       ).map(({ kind }) => kind)
     ).toEqual(['pinned'])
   })
+
+  it.each(['waiting-for-user', 'waiting-permission', 'waiting-plan-approval'] as const)(
+    'excludes %s prompts while preserving independent Notebook execution',
+    (presentedStatus) => {
+      const waiting = { ...session('waiting'), presentedStatus }
+      const agent = { projectId: 'p', sessionId: 'waiting', kind: 'agent' as const }
+      expect(buildTrayNavigationSections([waiting], [agent])[0]?.kind).toBe('recent')
+      expect(
+        buildTrayNavigationSections(
+          [waiting, session('notebook')],
+          [agent, { projectId: 'p', sessionId: 'notebook', kind: 'notebook' }]
+        )[0]?.kind
+      ).toBe('running')
+    }
+  )
 })

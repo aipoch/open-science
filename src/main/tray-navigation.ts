@@ -1,4 +1,5 @@
 import type { ActiveSessionInfo } from '../shared/storage'
+import type { PersistedSessionStatus } from '../shared/session-persistence'
 
 export type TrayNavigationSession = Readonly<{
   id: string
@@ -6,6 +7,7 @@ export type TrayNavigationSession = Readonly<{
   projectName: string
   updatedAt: number
   pinned: boolean
+  presentedStatus?: PersistedSessionStatus
 }>
 
 export type TrayNavigationSectionKind = 'running' | 'pinned' | 'recent'
@@ -49,7 +51,14 @@ export const buildTrayNavigationSections = (
 ): TrayNavigationSection[] => {
   const normalizedLimit = Math.max(1, Math.floor(limit))
   const byId = new Map(sessions.map((session) => [session.id, session]))
-  const runningIds = new Set(running.map(({ sessionId }) => sessionId))
+  const runningIds = new Set(
+    running
+      .filter(({ sessionId }) => {
+        const status = byId.get(sessionId)?.presentedStatus
+        return !status?.startsWith('waiting-')
+      })
+      .map(({ sessionId }) => sessionId)
+  )
   const runningSessions = [...runningIds]
     .map((sessionId) => byId.get(sessionId))
     .filter((session): session is TrayNavigationSession => session !== undefined)

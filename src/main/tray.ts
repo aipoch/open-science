@@ -19,6 +19,7 @@ import {
 
 const logger = createLogger('tray')
 const trayMenuRefreshers = new WeakMap<Tray, () => void>()
+const trayNavigationRefreshers = new WeakMap<Tray, () => Promise<void>>()
 
 // Builds a NativeImage for one app-icon variant, or undefined when the asset is missing/unreadable,
 // so callers fall back instead of blanking the tray.
@@ -149,13 +150,21 @@ const createAppTray = (opts: {
     let navigationLoaded = false
     let navigationRefreshGeneration = 0
 
-    const sessionMenuItem = (session: TrayNavigationSession): MenuItemConstructorOptions => ({
-      label: session.projectName ? `${session.title} — ${session.projectName}` : session.title,
-      click: () => {
-        if (opts.onOpenSession) opts.onOpenSession(session.id)
-        else opts.onShow()
+    const sessionMenuItem = (session: TrayNavigationSession): MenuItemConstructorOptions => {
+      const shorten = (value: string): string => {
+        const characters = Array.from(value.replace(/[\r\n\t]+/g, ' '))
+        return characters.length > 60 ? `${characters.slice(0, 59).join('')}…` : characters.join('')
       }
-    })
+      const title = shorten(session.title.trim() || session.id)
+      const label = session.projectName ? `${title} — ${shorten(session.projectName)}` : title
+      return {
+        label: process.platform === 'win32' ? label.replaceAll('&', '&&') : label,
+        click: () => {
+          if (opts.onOpenSession) opts.onOpenSession(session.id)
+          else opts.onShow()
+        }
+      }
+    }
 
     const sectionMenuItems = (section: TrayNavigationSection): MenuItemConstructorOptions[] => {
       const items = section.items.map(sessionMenuItem)
@@ -223,6 +232,7 @@ const createAppTray = (opts: {
 
     rebuildMenu()
     trayMenuRefreshers.set(tray, rebuildMenu)
+    trayNavigationRefreshers.set(tray, refreshNavigation)
     void refreshNavigation()
 
     tray.setToolTip(headlessWeb ? 'Open-Science (Web)' : 'Open-Science')
@@ -261,4 +271,9 @@ const refreshAppTrayLocale = (tray: Tray | undefined): void => {
   trayMenuRefreshers.get(tray)?.()
 }
 
-export { createAppTray, refreshAppTrayLocale, setTrayIconVariant }
+const refreshAppTrayNavigation = (tray: Tray | undefined): void => {
+  if (!tray || tray.isDestroyed()) return
+  void trayNavigationRefreshers.get(tray)?.()
+}
+
+export { createAppTray, refreshAppTrayLocale, refreshAppTrayNavigation, setTrayIconVariant }
