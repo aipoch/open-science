@@ -15,8 +15,8 @@ name: Notarize macOS (dry-run)
 on:
   workflow_dispatch:
 
-# Both reusable workflows (build.yml, notarize-mac.yml) declare contents: read, and this dry-run never
-# writes to a Release, so the caller grants no more than that.
+# Default to read-only repository access. Only the Build call grants its required OIDC
+# permission; this macOS-only run never invokes Azure signing or writes to a Release.
 permissions:
   contents: read
 
@@ -24,6 +24,11 @@ jobs:
   # Signed mac-only build (no verify, no publish). Uploads macos-arm64 / macos-x64 run artifacts.
   build:
     uses: ./.github/workflows/build.yml
+    # Reusable Build declares OIDC for conditional Windows signing; callers must allow it
+    # even when this run selects an unsigned or macOS-only build. Keep this job-scoped.
+    permissions:
+      contents: read
+      id-token: write
     with:
       mac_only: true
       skip_verify: true

@@ -90,6 +90,11 @@ jobs:
   packaged_performance:
     if: github.event_name == 'workflow_dispatch' && inputs.mode == 'package-macos-arm64'
     uses: ./.github/workflows/performance-package-dryrun.yml
+    # Reusable Build declares OIDC for conditional Windows signing; callers must allow it
+    # even when this run selects an unsigned or macOS-only build. Keep this job-scoped.
+    permissions:
+      contents: read
+      id-token: write
 
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:
