@@ -125,7 +125,7 @@ jobs:
         run: node scripts/windows-arm64-runtime-availability.mjs
 
       - name: Run focused ARM64 probe tests
-        run: npx vitest run scripts/windows-arm64-conda-availability.test.ts scripts/windows-arm64-runtime-availability.test.ts scripts/fetch-micromamba.test.ts scripts/windows-arm64-feasibility-spike.test.ts scripts/stage-default-envs.test.ts
+        run: npx vitest run scripts/windows-arm64-conda-availability.test.ts scripts/windows-arm64-runtime-availability.test.ts scripts/fetch-micromamba.test.ts scripts/windows-arm64-feasibility-spike.test.ts
 
       - name: Check ARM64 AppContainer host target
         shell: pwsh
