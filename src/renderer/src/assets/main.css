@@ -786,10 +786,6 @@
       opacity: 0;
       transform: scale(0.9);
     }
-    60% {
-      opacity: 1;
-      transform: scale(1.02);
-    }
     to {
       opacity: 1;
       transform: scale(1);

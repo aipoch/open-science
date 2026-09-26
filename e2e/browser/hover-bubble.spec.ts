@@ -28,7 +28,7 @@ async function sampleEntry(content: Locator): Promise<void> {
       .getAnimations()
       .find((a) => a instanceof CSSAnimation && a.animationName === 'hover-bubble-enter')!
     animation.pause()
-    const samples = [0, 72, 144, 192, 240].map((time) => {
+    const samples = Array.from({ length: 25 }, (_, index) => index * 10).map((time) => {
       animation.currentTime = time
       const style = getComputedStyle(el)
       return { opacity: Number(style.opacity), scale: new DOMMatrixReadOnly(style.transform).a }
@@ -38,19 +38,19 @@ async function sampleEntry(content: Locator): Promise<void> {
   })
   expect(samples[0].scale).toBeCloseTo(0.9)
   expect(samples[0].opacity).toBe(0)
-  expect(samples[1].scale).toBeGreaterThan(samples[0].scale)
-  expect(samples[1].scale).toBeLessThan(samples[2].scale)
-  expect(samples[1].opacity).toBeGreaterThan(0)
-  expect(samples[1].opacity).toBeLessThan(1)
-  expect(samples[2]).toEqual({ opacity: 1, scale: 1.02 })
-  expect(samples[3].scale).toBeGreaterThan(1)
-  expect(samples[3].scale).toBeLessThan(samples[2].scale)
-  expect(samples[3].opacity).toBe(1)
-  expect(samples[4]).toEqual({ opacity: 1, scale: 1 })
+  for (const [index, sample] of samples.entries()) {
+    expect(sample.scale).toBeLessThanOrEqual(1)
+    expect(sample.scale).toBeGreaterThanOrEqual(samples[Math.max(0, index - 1)].scale)
+    expect(sample.opacity).toBeLessThanOrEqual(1)
+    expect(sample.opacity).toBeGreaterThanOrEqual(samples[Math.max(0, index - 1)].opacity)
+  }
+  expect(samples[12].scale).toBeGreaterThan(0.9)
+  expect(samples[12].scale).toBeLessThan(1)
+  expect(samples.at(-1)).toEqual({ opacity: 1, scale: 1 })
 }
 
 for (const side of ['top', 'right', 'bottom', 'left']) {
-  test(`grows from the ${side} anchor without moving its trigger`, async ({ page }) => {
+  test(`grows from the ${side} anchor up to 100% without moving its trigger`, async ({ page }) => {
     await page.goto('/hover-bubble.html')
     const trigger = page.getByRole('button', { name: side, exact: true })
     const before = await trigger.boundingBox()
