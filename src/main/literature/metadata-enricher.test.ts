@@ -55,6 +55,7 @@ const pubmedWire = (response: { result: Record<string, unknown> }): string =>
         title?: string
         pubdate?: string
         fulljournalname?: string
+        publishername?: string
         volume?: string
         issue?: string
         pages?: string
@@ -69,6 +70,7 @@ const pubmedWire = (response: { result: Record<string, unknown> }): string =>
         ...Object.entries({
           DP: record.pubdate,
           JT: record.fulljournalname,
+          PB: record.publishername,
           VI: record.volume,
           IP: record.issue,
           PG: record.pages,
@@ -353,6 +355,7 @@ describe('LiteratureMetadataEnricher', () => {
       typeFields: {
         issue: '2',
         pages: '10-18',
+        publisher: 'Medical Press',
         volume: '8'
       }
     })

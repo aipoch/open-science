@@ -8,6 +8,7 @@ AB  - The complete abstract from PubMed.
 FAU - Example, Alice
 DP  - 2022 Apr
 JT  - Example Journal
+PB  - Example Press
 
 PMID- 21458665
 TI  - Mapping cancer origins.
@@ -89,6 +90,7 @@ describe('LiteratureReferenceResolver', () => {
       'Mapping cancer origins.'
     ])
     expect(result[0]?.item.abstract).toBe('The complete abstract from PubMed.')
+    expect(result[0]?.item.typeFields.publisher).toBe('Example Press')
     expect(result[1]?.item.identifiers).toContainEqual({
       scheme: 'doi',
       value: '10.1000/example',
@@ -274,4 +276,50 @@ it('preserves a registration-agency rate limit when Crossref and Europe PMC have
   await expect(
     new LiteratureReferenceResolver(fetchFn).resolve(['doi:10.1234/dataset'])
   ).rejects.toThrow('429')
+})
+
+it.each([{ title: [] }, { title: ['   '] }])(
+  'recovers titleless Crossref records with an abstract via Europe PMC (%j)',
+  async ({ title }) => {
+    const fetchFn = vi.fn<typeof fetch>(async (url) =>
+      new URL(String(url)).hostname === 'api.crossref.org'
+        ? Response.json({
+            message: { DOI: '10.1234/requested', title, abstract: 'Original abstract.' }
+          })
+        : Response.json({
+            resultList: {
+              result: [
+                {
+                  id: '123',
+                  source: 'MED',
+                  doi: '10.1234/requested',
+                  title: 'Recovered title',
+                  abstractText: 'Supplemental abstract.'
+                }
+              ]
+            }
+          })
+    )
+    const [result] = await new LiteratureReferenceResolver(fetchFn).resolve([
+      'doi:10.1234/requested'
+    ])
+    expect(result.item).toMatchObject({ title: 'Recovered title', abstract: 'Original abstract.' })
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+  }
+)
+
+it('keeps titleless metadata available for enrichment but rejects incomplete Agent discoveries', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    new URL(String(url)).hostname === 'api.crossref.org'
+      ? Response.json({ message: { DOI: '10.1234/requested', abstract: 'Useful abstract.' } })
+      : Response.json({ resultList: { result: [] } })
+  )
+  const resolver = new LiteratureReferenceResolver(fetchFn)
+  expect((await resolver.lookup('doi:10.1234/requested')).item).toMatchObject({
+    title: '',
+    abstract: 'Useful abstract.'
+  })
+  await expect(resolver.resolve(['doi:10.1234/requested'])).rejects.toThrow(
+    'REFERENCE_NOT_FOUND: No title'
+  )
 })

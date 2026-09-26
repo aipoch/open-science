@@ -438,7 +438,7 @@ class LiteratureReferenceResolver {
           primaryError = error
       }
     }
-    if (!primary?.item.abstract) {
+    if (!primary?.item.abstract || !primary.item.title.trim()) {
       try {
         accept(await this.europe(reference, signal))
       } catch (error) {
@@ -481,6 +481,8 @@ class LiteratureReferenceResolver {
       if (discoveries.get(ref.key)?.item.abstract) continue
       try {
         const result = await this.lookup(ref.key, signal)
+        if (!result.item.title.trim())
+          throw new Error(`REFERENCE_NOT_FOUND: No title was found for ${ref.key}.`)
         literatureItemInputSchema.parse(result.item)
         // The Agent discovery contract has one source; retain explicit supplemental provenance
         // inside that receipt instead of attributing another provider's abstract to Crossref.
