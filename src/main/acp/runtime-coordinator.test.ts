@@ -3434,6 +3434,61 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created.sendAppContinuation).not.toHaveBeenCalled()
   })
 
+  it('does not dispatch an activity prompt when teardown races its admission guard', async () => {
+    const guardGate = createDeferred<void>()
+    const guardEntered = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    coordinator.setPromptAdmissionGuard(async () => {
+      guardEntered.resolve()
+      await guardGate.promise
+    })
+    const prompt = coordinator.withActivity(
+      { session: { sessionId: session.sessionId, cwd: '/workspace' } },
+      (runtime) =>
+        runtime.sendPrompt({ sessionId: session.sessionId, text: 'stale activity prompt' })
+    )
+    await guardEntered.promise
+
+    await coordinator.disconnect()
+    await expect(prompt).rejects.toThrow('superseded before provider dispatch')
+    guardGate.resolve()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(created.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('cancels queued root admissions before update-gate shutdown', async () => {
+    const validation = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    const continuation = coordinator.startContinuationWhen(
+      { sessionId: session.sessionId, text: 'stale update-gate prompt' },
+      () => validation.promise
+    )
+    const settled = continuation.catch(() => undefined)
+
+    await coordinator.shutdownForUpdateGate()
+    validation.resolve()
+    await settled
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
+  })
+
   it('linearizes real user prompts and upward continuations through one root admission lock', async () => {
     const prompts = [
       createDeferred<unknown>(),

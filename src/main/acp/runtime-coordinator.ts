@@ -567,6 +567,7 @@ class AcpRuntimeCoordinator {
   }
 
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
+    this.cancelRootAdmissions()
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
     return this.shutdownAll(
@@ -1843,29 +1844,53 @@ class AcpRuntimeCoordinator {
         return runtime.disposeReviewerSession(session)
       },
       sendPrompt: async (request) => {
-        this.assertPromptAdmissionOpen()
-        const contextReset = await ensureActivitySession(request.sessionId)
-        await this.promptAdmissionGuard?.(request.sessionId)
-        const historyPreamble = options.session?.historyPreamble
-        return this.dispatchPrompt(
-          contextReset
-            ? {
-                ...request,
-                contextReset: true,
-                ...(historyPreamble && !request.historyPreamble ? { historyPreamble } : {})
-              }
-            : request,
-          undefined,
-          'sendPrompt',
-          runtime,
-          false
-        )
+        return this.linearizeRootAdmission(request.sessionId, async (cancellation) => {
+          this.assertPromptAdmissionOpen()
+          const contextReset = await Promise.race([
+            ensureActivitySession(request.sessionId),
+            cancellation.promise
+          ])
+          cancellation.throwIfCancelled()
+          await Promise.race([
+            this.promptAdmissionGuard?.(request.sessionId) ?? Promise.resolve(),
+            cancellation.promise
+          ])
+          cancellation.throwIfCancelled()
+          const historyPreamble = options.session?.historyPreamble
+          return this.dispatchPrompt(
+            contextReset
+              ? {
+                  ...request,
+                  contextReset: true,
+                  ...(historyPreamble && !request.historyPreamble ? { historyPreamble } : {})
+                }
+              : request,
+            undefined,
+            'sendPrompt',
+            runtime,
+            false,
+            undefined,
+            undefined,
+            undefined,
+            'renderer',
+            undefined,
+            cancellation
+          )
+        })
       },
       sendApplicationPrompt: (request, attribution, admission) =>
-        this.linearizeRootAdmission(request.sessionId, async () => {
+        this.linearizeRootAdmission(request.sessionId, async (cancellation) => {
           this.assertPromptAdmissionOpen()
-          const contextReset = await ensureActivitySession(request.sessionId)
-          await this.promptAdmissionGuard?.(request.sessionId)
+          const contextReset = await Promise.race([
+            ensureActivitySession(request.sessionId),
+            cancellation.promise
+          ])
+          cancellation.throwIfCancelled()
+          await Promise.race([
+            this.promptAdmissionGuard?.(request.sessionId) ?? Promise.resolve(),
+            cancellation.promise
+          ])
+          cancellation.throwIfCancelled()
           const historyPreamble = options.session?.historyPreamble
           return this.dispatchPrompt(
             contextReset
@@ -1881,7 +1906,10 @@ class AcpRuntimeCoordinator {
             false,
             attribution,
             undefined,
-            admission?.onPromptAdmitted
+            admission?.onPromptAdmitted,
+            'renderer',
+            undefined,
+            cancellation
           )
         })
     }
