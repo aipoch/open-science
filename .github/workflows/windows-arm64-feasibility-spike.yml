@@ -36,6 +36,38 @@ jobs:
           if ($arch -ne 'arm64') { throw "Expected native ARM64 Node, got $arch" }
           "Node architecture: $arch" >> $env:GITHUB_STEP_SUMMARY
 
+      - name: Probe ARM64 native npm dependencies
+        shell: pwsh
+        run: |
+          $sharpScript = @'
+          const sharp = require('sharp')
+          sharp({ create: { width: 2, height: 2, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } } })
+            .png()
+            .toBuffer()
+            .then((buffer) => console.log(`Sharp ARM64 transform: passed (${buffer.length} bytes)`))
+            .catch((error) => { console.error(error); process.exit(1) })
+          '@
+          $sharpOutput = ($sharpScript | node 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0) { throw "Sharp ARM64 transform failed: $sharpOutput" }
+          $sharpOutput >> $env:GITHUB_STEP_SUMMARY
+
+          $enginePath = Join-Path $PWD 'node_modules/@prisma/engines/query_engine-windows.dll.node'
+          if (-not (Test-Path $enginePath)) { throw "Prisma query engine missing: $enginePath" }
+          $bytes = [IO.File]::ReadAllBytes($enginePath)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          $prismaOutput = (& node -e "require('./node_modules/@prisma/engines/query_engine-windows.dll.node')" 2>&1 | Out-String)
+          $prismaExitCode = $LASTEXITCODE
+          $prismaOutput
+          if ($machine -eq 0xaa64 -and $prismaExitCode -eq 0) {
+            'Prisma query engine: native ARM64' >> $env:GITHUB_STEP_SUMMARY
+          } elseif ($machine -eq 0x8664 -and $prismaOutput -match 'not a valid Win32 application|invalid ELF header|Unable to require') {
+            'Prisma query engine: incompatible x64 binary on native ARM64 (expected blocker)' >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            throw ("Unexpected Prisma ARM64 probe result: PE 0x{0:x4}, exit {1}, output {2}" -f $machine, $prismaExitCode, $prismaOutput)
+          }
+          $global:LASTEXITCODE = 0
+
       - name: Fetch and execute pinned native ARM64 micromamba
         shell: pwsh
         run: |
