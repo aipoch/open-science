@@ -644,7 +644,9 @@
       "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
       "src/main/literature/smart-collections.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
-      "src/main/acp/library-auto-policy.test.ts"
+      "src/main/acp/library-auto-policy.test.ts",
+      "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

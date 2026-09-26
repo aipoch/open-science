@@ -6667,6 +6667,22 @@
     "Recent sessions": "Sessions récentes",
     "More": "Plus",
     "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Codex CLI v{{minimumVersion}} ou une version ultérieure est requis. Mettez à jour ou réparez Codex avant de l’utiliser.",
-    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "La réparation installe une CLI Codex gérée par l’application sans modifier votre installation externe. Vous pouvez aussi mettre celle-ci à jour manuellement, puis relancer la détection."
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "La réparation installe une CLI Codex gérée par l’application sans modifier votre installation externe. Vous pouvez aussi mettre celle-ci à jour manuellement, puis relancer la détection.",
+    "Current Library entry.": "Entrée actuelle de la bibliothèque.",
+    "This conversation cannot accept references right now.": "Impossible d’ajouter des références à cette conversation pour le moment.",
+    "Could not add references. Check that the conversation is editable and the reference limit is not exceeded.": "Impossible d’ajouter les références. Vérifiez que la conversation est modifiable et que la limite de références n’est pas dépassée.",
+    "Reference details": "Détails de la référence",
+    "Copy title": "Copier le titre",
+    "Could not copy title.": "Impossible de copier le titre.",
+    "Selected: {{selected}}": "Sélection : {{selected}}",
+    "Search conversations": "Rechercher des conversations",
+    "Search by title or #number": "Rechercher par titre ou #numéro",
+    "Conversations": "Conversations",
+    "Current": "Actuelle",
+    "No matching conversations": "Aucune conversation correspondante",
+    "Added to the draft. You choose when to send.": "Ajout au brouillon. Vous choisissez quand l’envoyer.",
+    "Add references to the current conversation draft": "Ajouter les références au brouillon de la conversation actuelle",
+    "Add to chat": "Ajouter à la conversation",
+    "Choose another conversation": "Choisir une autre conversation"
   }
 }

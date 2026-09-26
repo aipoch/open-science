@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { configureComposerDraftStorage, revokeComposerDraftStorage } from './composer-draft-storage'
+import { literatureItemInputSchema } from '../../../../shared/literature'
 import { act, createElement, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1284,6 +1285,126 @@ describe('workspace composer controller', () => {
         sourceVersionId: 'version-1'
       }
     })
+  })
+
+  it.each([false, true])(
+    'keeps removed draft Reading unlinked on send (literature mention: %s)',
+    (withMention) => {
+      const preview = usePreviewWorkbenchStore.getState()
+      preview.activateProject('project')
+      preview.upsertItem({
+        id: 'literature:version-1',
+        projectId: 'project',
+        sessionId: 'literature-library',
+        type: 'file',
+        source: 'literature',
+        title: 'paper.pdf',
+        name: 'paper.pdf',
+        format: 'pdf',
+        path: 'literature-attachment-version:version-1',
+        mimeType: 'application/pdf',
+        size: 100
+      })
+      preview.setPendingPdfContext('project', {
+        kind: 'version',
+        sourceKind: 'literature-attachment-version',
+        sourceVersionId: 'version-1',
+        previewItemId: 'literature:version-1'
+      })
+      const hook = renderController(uploads(), undefined, [], null)
+      mounted.push(hook)
+      act(() =>
+        hook.result.current.actions.unlinkReadingContext(
+          'version:literature-attachment-version:version-1'
+        )
+      )
+      act(() =>
+        hook.result.current.actions.changeDoc({
+          nodes: [
+            { type: 'text', text: 'Summarize this' },
+            ...(withMention
+              ? [
+                  {
+                    type: 'literature' as const,
+                    itemId: 'paper',
+                    metadataRevision: 1,
+                    item: literatureItemInputSchema.parse({
+                      itemType: 'journalArticle',
+                      title: 'Paper'
+                    }),
+                    attachmentVersionId: 'version-1'
+                  }
+                ]
+              : [])
+          ]
+        })
+      )
+      expect(hook.result.current.view.readingContext.bindings).toEqual([])
+      const snapshot = hook.result.current.lifecycle.captureSend()
+      expect(snapshot.pendingPdfContextVersions).toBeUndefined()
+      expect(snapshot.automaticReadingEnabled).toBe(true)
+      expect(snapshot.doc.nodes.some((node) => node.type === 'literature')).toBe(withMention)
+      act(() => {
+        hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
+      })
+      act(() => {
+        hook.result.current.lifecycle.restoreFailedSend(snapshot)
+      })
+      expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toBeUndefined()
+      // The removed Literature PDF can still be explicitly selected again.
+      act(() =>
+        preview.setPendingPdfContext('project', {
+          kind: 'version',
+          sourceKind: 'literature-attachment-version',
+          sourceVersionId: 'version-1',
+          previewItemId: 'literature:version-1'
+        })
+      )
+      expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toEqual([
+        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
+      ])
+    }
+  )
+
+  it('preserves automatic PDF file mentions when an unrelated pending PDF is removed', () => {
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.activateProject('project')
+    preview.setPendingPdfContext('project', {
+      kind: 'version',
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: 'removed-version',
+      previewItemId: 'literature:removed-version'
+    })
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.changeDoc({
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'other-paper',
+            name: 'other-paper.pdf',
+            path: '/other-paper.pdf',
+            source: 'artifact',
+            sourceFileId: 'other-paper',
+            mimeType: 'application/pdf',
+            versionId: 'other-version'
+          }
+        ]
+      })
+    )
+    act(() =>
+      hook.result.current.actions.unlinkReadingContext(
+        'version:literature-attachment-version:removed-version'
+      )
+    )
+    expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toEqual([
+      {
+        sourceKind: 'artifact-version',
+        sourceFileId: 'other-paper',
+        sourceVersionId: 'other-version'
+      }
+    ])
   })
 
   it('previews and removes individual PDFs from a three-document draft and sends the remaining sources', () => {
@@ -3205,4 +3326,30 @@ describe('workspace composer controller', () => {
 
     expect(loadSkills).toHaveBeenCalledOnce()
   })
+})
+
+it('appends Library references to the restored target draft, preserves undo, and rejects stale targets', () => {
+  const hook = renderController()
+  mounted.push(hook)
+  const reference = {
+    type: 'literature' as const,
+    itemId: 'paper',
+    metadataRevision: 1,
+    item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Paper' })
+  }
+  act(() => hook.result.current.actions.changeDoc(textDoc('Draft A')))
+  hook.selectDraft('session-b')
+  act(() => hook.result.current.actions.changeDoc(textDoc('Draft B')))
+  act(() =>
+    expect(hook.result.current.actions.appendLiterature('session-a', [reference])).toBe(false)
+  )
+  expect(docToText(hook.result.current.view.doc)).toBe('Draft B')
+  act(() =>
+    expect(hook.result.current.actions.appendLiterature('session-b', [reference])).toBe(true)
+  )
+  expect(docToText(hook.result.current.view.doc)).toBe('Draft B @Paper')
+  act(() => hook.result.current.actions.undo())
+  expect(docToText(hook.result.current.view.doc)).toBe('Draft B')
+  hook.selectDraft('session-a')
+  expect(docToText(hook.result.current.view.doc)).toBe('Draft A')
 })

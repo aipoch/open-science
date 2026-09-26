@@ -119,6 +119,42 @@ it('does not publish a pending write into a different Session', async () => {
   expect(port.annotations).toEqual([])
   expect(port.total).toBe(0)
 })
+it('discards the previous scope history and rejects its captured write port', async () => {
+  installStore()
+  await mount()
+  await act(async () => {
+    await port.create('a1', annotation.target, 'document-note', undefined, [], 'First session')
+  })
+  expect(port.history(annotation.target.source).canUndo).toBe(true)
+  const previous = port
+  vi.mocked(window.api.pdfAnnotations.list).mockResolvedValue({ items: [], total: 0 })
+  await mount('s2')
+  expect(port.annotations).toEqual([])
+  expect(port.history(annotation.target.source)).toEqual({
+    canUndo: false,
+    canRedo: false,
+    busy: false
+  })
+  await expect(
+    previous.create('stale', annotation.target, 'document-note', undefined, [], 'Stale')
+  ).rejects.toThrow()
+  expect(window.api.pdfAnnotations.create).toHaveBeenCalledTimes(1)
+})
+
+it('ignores the previous scope load when it finishes after switching sessions', async () => {
+  installStore()
+  const oldLoad = deferred<PdfAnnotationListResult>()
+  vi.mocked(window.api.pdfAnnotations.list)
+    .mockReturnValueOnce(oldLoad.promise)
+    .mockResolvedValue({ items: [], total: 0 })
+  await mount()
+  await mount('s2')
+  await act(async () => oldLoad.resolve({ items: [annotation], total: 1 }))
+  expect(port.sessionId).toBe('s2')
+  expect(port.annotations).toEqual([])
+  expect(port.loading).toBe(false)
+})
+
 it('preserves list failures for retry instead of treating them as an empty notebook', async () => {
   const list = vi
     .fn()

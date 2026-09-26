@@ -1,3 +1,6 @@
+import { LibraryReferenceActionsContext } from './previews/library-reference-actions'
+import { requestComposerFocus } from './composer-focus-events'
+import type { LiteratureReference } from '../../../../shared/session-persistence'
 import { SessionDiagnosticsDialog } from './SessionDiagnosticsDialog'
 import { sessionDiagnosticsAvailable } from '@/lib/session-diagnostics'
 import type { SessionDiagnosticIdentity } from '../../../../shared/session-diagnostics'
@@ -15,6 +18,8 @@ import {
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
 import {
   deleteSession,
+  hydratePersistedSessionIfPresent,
+  loadPersistedSession,
   retryPendingArtifactFinalization,
   saveSessionInOrder
 } from '@/lib/session-persistence/session-persistence'
@@ -1044,6 +1049,154 @@ const WorkspacePage = ({
     sessionController.actions,
     setAttachmentError
   ])
+  const [pendingLibraryReferences, setPendingLibraryReferences] = useState<{
+    projectId: string
+    draftKey: string
+    references: readonly LiteratureReference[]
+  }>()
+  const consumedLibraryReferences = useRef<typeof pendingLibraryReferences>(undefined)
+  const libraryLoadIntent = useRef<
+    | {
+        projectId: string
+        sessionId: string | null
+        sourceSessionId: string | null | undefined
+        navigationRevision: number
+        references: readonly LiteratureReference[]
+      }
+    | undefined
+  >(undefined)
+  useEffect(
+    () => () => {
+      libraryLoadIntent.current = undefined
+    },
+    [activeProjectId, isSessionPersistenceReady]
+  )
+  const addLibraryReferences = (
+    references: readonly LiteratureReference[],
+    sessionId: string | null
+  ): void => {
+    if (!isSessionPersistenceReady || !activeProjectId) return
+    const projectId = activeProjectId
+    const sourceSessionId = useSessionStore.getState().selectedSessionId
+    const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
+    const previous = libraryLoadIntent.current
+    const intent = {
+      projectId,
+      sessionId,
+      sourceSessionId,
+      navigationRevision,
+      references:
+        previous?.projectId === projectId &&
+        previous.sessionId === sessionId &&
+        previous.sourceSessionId === sourceSessionId &&
+        previous.navigationRevision === navigationRevision
+          ? [...previous.references, ...references]
+          : references
+    }
+    libraryLoadIntent.current = intent
+    const isCurrent = (): boolean =>
+      libraryLoadIntent.current === intent &&
+      useNavigationStore.getState().activeProjectId === projectId &&
+      useNavigationStore.getState().explicitNavigationRevision === navigationRevision &&
+      useSessionStore.getState().selectedSessionId === sourceSessionId
+    const reject = (): void => {
+      if (!isCurrent()) return
+      libraryLoadIntent.current = undefined
+      setAttachmentError(t('This conversation cannot accept references right now.'))
+      requestComposerFocus()
+    }
+    const accept = (): void => {
+      if (!isCurrent()) return
+      if (sessionId) {
+        const target = useSessionStore
+          .getState()
+          .sessions.find((session) => session.id === sessionId)
+        if (
+          !target ||
+          target.projectId !== projectId ||
+          target.contentLoaded === false ||
+          target.isPending ||
+          target.packageOrigin ||
+          target.archivedAt !== undefined ||
+          target.status === 'waiting-plan-approval'
+        ) {
+          reject()
+          return
+        }
+      }
+      libraryLoadIntent.current = undefined
+      const draftKey = sessionId ?? newConversationDraftKey
+      const enqueue = (): void =>
+        setPendingLibraryReferences((pending) => ({
+          projectId,
+          draftKey,
+          references:
+            pending?.projectId === projectId &&
+            pending.draftKey === draftKey &&
+            consumedLibraryReferences.current !== pending
+              ? [...pending.references, ...intent.references]
+              : intent.references
+        }))
+      if (sessionId && sessionId !== sourceSessionId) {
+        useNavigationStore.getState().openSession(projectId, sessionId, 'user', enqueue)
+      } else {
+        if (!sessionId && sourceSessionId) openNewConversation()
+        enqueue()
+      }
+    }
+    const target = useSessionStore.getState().sessions.find((session) => session.id === sessionId)
+    // Session summaries omit packageOrigin. Resolve just the chosen destination through the
+    // persistence owner before navigation or draft writes; do not hydrate the whole picker.
+    if (target?.projectId === projectId && target.contentLoaded === false) {
+      void loadPersistedSession({ projectId, sessionId: target.id })
+        .then((persisted) => {
+          if (!isCurrent()) return
+          if (!persisted || persisted.projectId !== projectId || persisted.id !== sessionId) {
+            reject()
+            return
+          }
+          hydratePersistedSessionIfPresent(persisted)
+          accept()
+        })
+        .catch(reject)
+    } else {
+      accept()
+    }
+  }
+  useEffect(() => {
+    const pending = pendingLibraryReferences
+    if (!pending || consumedLibraryReferences.current === pending) return
+    consumedLibraryReferences.current = pending
+    setPendingLibraryReferences(undefined)
+    // A cancelled/superseded navigation must never append to a different draft. The controller
+    // reads its live document after its layout effect has restored the destination draft.
+    if (pending.projectId !== activeProjectId || pending.draftKey !== currentDraftKey) return
+    if (
+      !canEditDraft ||
+      activeSession?.contentLoaded === false ||
+      !composer.actions.appendLiterature(pending.draftKey, pending.references)
+    ) {
+      setAttachmentError(
+        t(
+          'Could not add references. Check that the conversation is editable and the reference limit is not exceeded.'
+        )
+      )
+      requestComposerFocus()
+      return
+    }
+    setAttachmentError(null)
+    requestComposerFocus()
+  }, [
+    pendingLibraryReferences,
+    activeProjectId,
+    activeSession?.contentLoaded,
+    currentDraftKey,
+    canEditDraft,
+    composer.actions,
+    setAttachmentError,
+    t
+  ])
+
   const activeSessionHasMessages = (activeSession?.messages.length ?? 0) > 0
 
   useEffect(() => {
@@ -1278,7 +1431,7 @@ const WorkspacePage = ({
     activeProject?.archivedAt === undefined
   )
 
-  return (
+  const content = (
     <ProjectPackageDropZone
       projectId={scopedProjectId}
       projectName={activeProject?.name ?? t('Project')}
@@ -1642,7 +1795,10 @@ const WorkspacePage = ({
                         useSessionStore.getState().streamingMessages
                       )
                     )
-                    await window.api.acp.cancel({ sessionId: activeSession.id, scope: 'subagents' })
+                    await window.api.acp.cancel({
+                      sessionId: activeSession.id,
+                      scope: 'subagents'
+                    })
                   }
                 }}
               />
@@ -1732,6 +1888,22 @@ const WorkspacePage = ({
         </PdfAnnotationsProvider>
       </BookmarksProvider>
     </ProjectPackageDropZone>
+  )
+  return (
+    <LibraryReferenceActionsContext.Provider
+      value={
+        isSessionPersistenceReady && activeProjectId
+          ? {
+              projectId: scopedProjectId,
+              currentSessionId: selectedSessionId ?? undefined,
+              canAddToCurrent: canEditDraft && activeSession?.contentLoaded !== false,
+              add: addLibraryReferences
+            }
+          : undefined
+      }
+    >
+      {content}
+    </LibraryReferenceActionsContext.Provider>
   )
 }
 

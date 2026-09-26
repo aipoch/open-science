@@ -6343,6 +6343,22 @@
     "Recent sessions": "最近會話",
     "More": "多",
     "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "需要 Codex CLI v{{minimumVersion}} 或更新版本。請先更新或修復 Codex 再使用。",
-    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "修復會安裝由應用程式管理的 Codex CLI，不會修改您的外部安裝。您也可以手動更新外部安裝後重新偵測。"
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "修復會安裝由應用程式管理的 Codex CLI，不會修改您的外部安裝。您也可以手動更新外部安裝後重新偵測。",
+    "Current Library entry.": "文獻庫中的目前項目。",
+    "This conversation cannot accept references right now.": "此對話目前無法新增文獻引用。",
+    "Could not add references. Check that the conversation is editable and the reference limit is not exceeded.": "無法新增文獻引用。請確認對話可編輯，且未超出引用數量上限。",
+    "Reference details": "文獻詳情",
+    "Copy title": "複製標題",
+    "Could not copy title.": "無法複製標題。",
+    "Selected: {{selected}}": "已選：{{selected}}",
+    "Search conversations": "搜尋對話",
+    "Search by title or #number": "依標題或 #編號搜尋",
+    "Conversations": "對話",
+    "Current": "目前",
+    "No matching conversations": "沒有符合的對話",
+    "Added to the draft. You choose when to send.": "新增至草稿，由你決定何時傳送。",
+    "Add references to the current conversation draft": "將文獻引用加入目前對話草稿",
+    "Add to chat": "新增至對話",
+    "Choose another conversation": "選擇其他對話"
   }
 }

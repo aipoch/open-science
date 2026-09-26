@@ -193,6 +193,10 @@ export const usePdfContextAction = (
   const updatePendingPdfContext = (): void => {
     if (!projectId || activeSession || (!stagedAttachmentInDraft && !pdfContextTarget)) return
     if (pendingSelection) {
+      if (mutations.unlink) {
+        mutations.unlink(pendingPdfContextBindingId(pendingSelection))
+        return
+      }
       usePreviewWorkbenchStore
         .getState()
         .clearPdfReadingPosition(pendingPdfContextBindingId(pendingSelection))

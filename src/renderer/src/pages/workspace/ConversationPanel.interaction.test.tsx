@@ -636,6 +636,7 @@ const createPanelDefaults = (): PanelProps => ({
     actions: {
       discardWslSetupDraft: vi.fn(() => false),
       changeDoc: vi.fn(),
+      appendLiterature: vi.fn(() => true),
       addAnnotation: vi.fn(),
       updateAnnotationNote: vi.fn(),
       removeAnnotation: vi.fn(),
