@@ -482,7 +482,8 @@
       "src/renderer/src/reviewer-paged-preview/main.test.ts",
       "src/renderer/src/office-preview/office-preview-controller.test.ts",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
-      "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx"
+      "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
+      "src/renderer/src/pages/workspace/EmptyConversationBanner.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

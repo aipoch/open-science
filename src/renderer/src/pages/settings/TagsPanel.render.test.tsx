@@ -891,7 +891,7 @@ describe('TagsPanel', () => {
       true
     )
     expect(container.textContent).toContain('Analyze data')
-    expect(container.textContent).toContain('Biomedical literature')
+    expect(container.textContent).toContain('Research data from NCBI.')
     expect(container.textContent).toContain('Research specialist')
     expect(
       Array.from(container.querySelectorAll('[data-slot="tag-resource-row"]')).map((row) =>
@@ -899,7 +899,7 @@ describe('TagsPanel', () => {
       )
     ).toEqual([
       'AnalysisAnalyze data',
-      'PubMedBiomedical literature',
+      'PubMedResearch data from NCBI.',
       'Auto ResearchResearch specialist'
     ])
 

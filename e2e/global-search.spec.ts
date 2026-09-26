@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test'
-import { suppressWorkspaceStarNudge, test } from './fixtures/electron-app'
+import { test } from './fixtures/electron-app'
 
 test('refreshes global search when another renderer edits a Library collection', async ({
   app
@@ -46,7 +46,6 @@ test('opens a Library PDF from search without leaving the current results', asyn
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
   await page.evaluate(async () => {
     const { id } = await window.api.literature.transact({
       kind: 'create-item',
@@ -146,7 +145,6 @@ test('searches projects, sessions, message bodies and Library with paged disclos
 }, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
   const projectId = await page.evaluate(async () => {
     const project = await window.api.projects.create({
       name: 'Search research',
@@ -392,7 +390,6 @@ test('opens uploaded files from search using the existing file preview dialog', 
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
   await page.getByRole('button', { name: 'New project', exact: true }).click()
   const create = page.getByRole('dialog', { name: 'New project' })
   await create.getByLabel('Name').fill('Search files')
@@ -500,7 +497,6 @@ test('keeps saved Notebook output and structured file previews visible inside se
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
   await page.getByRole('button', { name: 'New project', exact: true }).click()
   const create = page.getByRole('dialog', { name: 'New project' })
   await create.getByLabel('Name').fill('Search preview formats')
@@ -585,7 +581,6 @@ test('toggles the advanced filter island column from the toolbar toggle', async 
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
   await page.getByRole('button', { name: 'Search', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Global search' })
   const toggle = dialog.getByRole('button', { name: 'Advanced filters' })
@@ -699,7 +694,6 @@ test('uses the same preview and information tabs for generated files', async ({
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
   await page.getByRole('button', { name: 'New project', exact: true }).click()
   const create = page.getByRole('dialog', { name: 'New project' })
   await create.getByLabel('Name').fill('Generated search previews')
