@@ -1,0 +1,68 @@
+name: Temporary Windows ARM64 feasibility spike
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arm64:
+    name: Native Windows ARM64 probe
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies without lifecycle builds
+        run: npm ci --ignore-scripts --no-audit
+
+      - name: Verify native Node architecture
+        shell: pwsh
+        run: |
+          $arch = node -p "process.arch"
+          if ($arch -ne 'arm64') { throw "Expected native ARM64 Node, got $arch" }
+          "Node architecture: $arch" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Fetch and execute pinned native ARM64 micromamba
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP 'micromamba-win-arm64.exe'
+          node scripts/fetch-micromamba.mjs win-arm64 $dest
+          $version = (& $dest --version).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "win-arm64 micromamba failed --version" }
+          $bytes = [IO.File]::ReadAllBytes($dest)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xaa64) { throw ("Expected PE ARM64 0xaa64, got 0x{0:x4}" -f $machine) }
+          "Micromamba: $version" >> $env:GITHUB_STEP_SUMMARY
+          "PE machine: 0x{0:x4}" -f $machine >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Report official win-arm64 conda closure
+        shell: pwsh
+        run: |
+          node scripts/windows-arm64-conda-availability.mjs | Tee-Object -FilePath $env:RUNNER_TEMP\conda-report.json
+          $report = Get-Content $env:RUNNER_TEMP\conda-report.json -Raw | ConvertFrom-Json
+          "Package availability complete: $($report.packageAvailabilityComplete)" >> $env:GITHUB_STEP_SUMMARY
+          "Dependency solve: $($report.dependencySolve)" >> $env:GITHUB_STEP_SUMMARY
+          if ($report.packageAvailabilityComplete) {
+            throw 'The expected incomplete upstream package closure changed; review before enabling ARM64 runtime staging.'
+          }
+
+      - name: Run focused ARM64 probe tests
+        run: npx vitest run scripts/windows-arm64-conda-availability.test.ts scripts/fetch-micromamba.test.ts scripts/windows-arm64-feasibility-spike.test.ts scripts/stage-default-envs.test.ts
+
+      - name: Check ARM64 AppContainer host target
+        shell: pwsh
+        run: |
+          rustup target add aarch64-pc-windows-msvc
+          cargo check --locked --target aarch64-pc-windows-msvc --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
