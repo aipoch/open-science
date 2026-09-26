@@ -127,7 +127,10 @@ jobs:
           $loadableExtensions = @('.dll', '.exe', '.node', '.pyd')
           $foreignBinaries = @(
             Get-ChildItem -Path $rRoot -File -Recurse |
-              Where-Object { $loadableExtensions -contains $_.Extension.ToLowerInvariant() } |
+              Where-Object {
+                ($loadableExtensions -contains $_.Extension.ToLowerInvariant()) -and
+                ($_.Name -notlike 'unins*.exe')
+              } |
               Where-Object { (Get-PeMachine $_.FullName) -ne 0xaa64 }
           )
           if ($foreignBinaries.Count -gt 0) {
