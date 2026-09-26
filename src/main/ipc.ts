@@ -461,6 +461,7 @@ import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
 import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
+import type { TrayNavigationSession } from './tray-navigation'
 
 const permissionGrantsLog = createLogger('permission-grants')
 const notebookStartupLog = createLogger('notebook:startup')
@@ -515,6 +516,7 @@ export type ApplicationRuntimeInterfaces = {
   sessionDeletionCapability: Pick<SessionDeletion, 'setSessionDeletionHandlers'>
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
+  listTrayNavigationSessions: () => Promise<readonly TrayNavigationSession[]>
   hasActiveReviewerWork: () => boolean
   getActiveSettingsInstallId: () => string | undefined
   holdSettingsInstallAdmission: () => () => void
@@ -5305,6 +5307,31 @@ const createApplicationModules = async (
         sideChat: { getActivePromptSessions: getActiveSideChatSessions },
         delegated: { getActiveDelegatedSessions },
         notebook: notebookLifecycle
+      }),
+    listTrayNavigationSessions: () =>
+      withDataRootWrite(async () => {
+        const [summaries, projects] = await Promise.all([
+          sessionRepository.loadSessionSummaries(),
+          projectRepository.list()
+        ])
+        const projectsById = new Map(
+          projects
+            .filter((project) => project.archivedAt === undefined)
+            .map((project) => [project.id, project])
+        )
+        return summaries.flatMap((summary) => {
+          const project = projectsById.get(summary.projectId)
+          if (!project || summary.archivedAt !== undefined) return []
+          return [
+            {
+              id: summary.id,
+              title: summary.title,
+              projectName: project.name,
+              updatedAt: summary.updatedAt,
+              pinned: summary.pinned === true
+            }
+          ]
+        })
       }),
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsService.getActiveInstallId(),

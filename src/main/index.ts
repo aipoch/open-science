@@ -782,6 +782,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               taskControls,
               computePreferences,
               detectActiveSessions,
+              listTrayNavigationSessions,
               hasActiveReviewerWork,
               getActiveSettingsInstallId,
               holdSettingsInstallAdmission,
@@ -941,6 +942,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               getAppIconVariant: () => appIconControllerBox.current?.getVariant() ?? initialVariant,
               disposeApplicationRuntime,
               detectActiveSessions,
+              listTrayNavigationSessions,
               hasActiveReviewerWork,
               getActiveSettingsInstallId,
               holdSettingsInstallAdmission,
@@ -1050,6 +1052,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             translate: ctx.translate,
             templateIconPath: process.platform === 'darwin' ? trayMacTemplate : undefined,
             ...handlers,
+            getNavigationSessions: ctx.listTrayNavigationSessions,
+            getRunningSessions: ctx.detectActiveSessions,
+            onOpenSession: (sessionId) => {
+              handlers.onShow()
+              ctx.taskNotifications.setPendingOpenSession(sessionId)
+              ctx.mainWindowGetterBox.current?.()?.webContents.send('notifications:open-session')
+            },
             ...(headlessWeb
               ? {
                   headless: true,
