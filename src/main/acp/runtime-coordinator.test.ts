@@ -3403,6 +3403,37 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it('does not dispatch a continuation when teardown races after validation', async () => {
+    const dispatchGate = createDeferred<void>()
+    const guardEntered = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    coordinator.setPromptDispatchAdmissionGuard(async (_sessionId, dispatch) => {
+      guardEntered.resolve()
+      await dispatchGate.promise
+      return dispatch()
+    })
+    const continuation = coordinator.startContinuationWhen(
+      { sessionId: session.sessionId, text: 'validated child message' },
+      async () => undefined
+    )
+    await guardEntered.promise
+
+    await coordinator.disconnect()
+    await expect(continuation).rejects.toThrow('superseded before provider dispatch')
+    dispatchGate.resolve()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
+  })
+
   it('linearizes real user prompts and upward continuations through one root admission lock', async () => {
     const prompts = [
       createDeferred<unknown>(),
