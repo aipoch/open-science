@@ -3156,6 +3156,137 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created.sendPrompt).toHaveBeenCalledOnce()
   })
 
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'admits an upward message without reversing the root and Project lock order for %s',
+    async (frameworkId) => {
+      let created!: ReturnType<typeof createFakeRuntime>
+      const userFinished = createDeferred<unknown>()
+      const parentFinished = createDeferred<unknown>()
+      const parentAtProvider = createDeferred()
+      const allowParentAcceptance = createDeferred()
+      let promptIndex = 0
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          beforeProviderPromptAccepted: async () => {
+            if (promptIndex === 2) {
+              parentAtProvider.resolve()
+              await allowParentAcceptance.promise
+            }
+          },
+          prompt: () => (promptIndex++ === 0 ? userFinished.promise : parentFinished.promise)
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession({ cwd: '/workspace', projectId: 'project-1' })
+      const archive = new ArchiveCoordinator(
+        { get: vi.fn(), updateArchive: vi.fn() },
+        {
+          sessionProjectId: async () => 'project-1',
+          assertProjectArchivable: vi.fn(),
+          assertSessionAvailable: vi.fn(),
+          updateArchive: vi.fn()
+        },
+        {
+          isSessionBusy: () => false,
+          isProjectBusy: () => false,
+          liveSessionProjectId: () => 'project-1'
+        }
+      )
+      const userAtDispatch = createDeferred()
+      const allowUserDispatch = createDeferred()
+      coordinator.setPromptDispatchAdmissionGuard(async (sessionId, dispatch) => {
+        userAtDispatch.resolve()
+        await allowUserDispatch.promise
+        return archive.withSessionDeletionAdmissionById(sessionId, dispatch)
+      })
+      const user = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'concurrent user' })
+      await userAtDispatch.promise
+      const parentAtProject = createDeferred()
+      const parentQueued = createDeferred()
+      const upward = coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'upward message' },
+        async () => undefined,
+        'message-1',
+        () => parentQueued.resolve(),
+        (operation) =>
+          archive.withProjectDeletionAdmission('project-1', async () => {
+            parentAtProject.resolve()
+            await operation()
+          })
+      )
+      await parentQueued.promise
+      allowUserDispatch.resolve()
+      await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+      userFinished.resolve({ stopReason: 'end_turn' })
+      await user
+      await parentAtProject.promise
+      await parentAtProvider.promise
+      const nextProjectOperation = vi.fn(async () => 'available')
+      const projectAvailable = archive.withProjectDeletionAdmission(
+        'project-1',
+        nextProjectOperation
+      )
+      await Promise.resolve()
+      expect(nextProjectOperation).not.toHaveBeenCalled()
+      allowParentAcceptance.resolve()
+      await expect(upward).resolves.toBe('provider_prompt_accepted')
+      // Acceptance releases the Project gate even while the provider turn is still running.
+      await expect(projectAvailable).resolves.toBe('available')
+      const laterUser = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'later user' })
+      await Promise.resolve()
+      expect(created.sendPrompt).toHaveBeenCalledOnce()
+      parentFinished.resolve({ stopReason: 'end_turn' })
+      await laterUser
+      expect(created.sendPrompt).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it.each(['admission', 'validation', 'provider'] as const)(
+    'releases parent-message deletion admission after a %s failure',
+    async (failurePhase) => {
+      const failure = new Error('parent delivery failed')
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          createFakeRuntime({
+            frameworkId: 'opencode',
+            sessionIds: ['session-1'],
+            callbacks,
+            beforeProviderPromptAccepted: async () => {
+              if (failurePhase === 'provider') throw failure
+            }
+          }).runtime
+      )
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      let held = false
+      const released = createDeferred()
+      const upward = coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'upward message' },
+        async () => {
+          expect(held).toBe(true)
+          if (failurePhase === 'validation') throw failure
+        },
+        'message-1',
+        undefined,
+        async (operation) => {
+          held = true
+          try {
+            if (failurePhase === 'admission') throw failure
+            await operation()
+          } finally {
+            held = false
+            released.resolve()
+          }
+        }
+      )
+      await expect(upward).rejects.toThrow('parent delivery failed')
+      await released.promise
+      expect(held).toBe(false)
+    }
+  )
+
   it('linearizes real user prompts and upward continuations through one root admission lock', async () => {
     const prompts = [
       createDeferred<unknown>(),
@@ -3288,25 +3419,36 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created.sendAppContinuation).not.toHaveBeenCalled()
   })
 
-  it('returns completion evidence when an upward continuation completes without an acceptance callback', async () => {
-    const coordinator = new AcpRuntimeCoordinator(
-      (callbacks) =>
-        createFakeRuntime({
-          frameworkId: 'codex',
-          sessionIds: ['session-1'],
-          callbacks,
-          skipProviderPromptAccepted: true
-        }).runtime
-    )
-    const session = await coordinator.createSession({ cwd: '/workspace' })
-
-    await expect(
-      coordinator.startContinuationWhen(
-        { sessionId: session.sessionId, text: 'completion fallback' },
-        async () => undefined
+  it.each([false, true])(
+    'returns completion evidence without an acceptance callback (guarded=%s)',
+    async (guarded) => {
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          createFakeRuntime({
+            frameworkId: 'codex',
+            sessionIds: ['session-1'],
+            callbacks,
+            skipProviderPromptAccepted: true
+          }).runtime
       )
-    ).resolves.toBe('provider_prompt_completed')
-  })
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+
+      await expect(
+        guarded
+          ? coordinator.startContinuationWhenDispatchAdmitted(
+              { sessionId: session.sessionId, text: 'completion fallback' },
+              async () => undefined,
+              undefined,
+              undefined,
+              (operation) => operation()
+            )
+          : coordinator.startContinuationWhen(
+              { sessionId: session.sessionId, text: 'completion fallback' },
+              async () => undefined
+            )
+      ).resolves.toBe('provider_prompt_completed')
+    }
+  )
 
   it('rejects a user prompt still waiting on admission when quit begins', async () => {
     const admission = createDeferred<void>()

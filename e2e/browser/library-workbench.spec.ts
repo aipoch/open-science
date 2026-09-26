@@ -22,7 +22,8 @@ for (const width of [320, 375, 414, 768]) {
       const literatureBounds = await literature.boundingBox()
       expect(expandBounds).not.toBeNull()
       expect(literatureBounds).not.toBeNull()
-      expect(Math.abs(expandBounds!.y - literatureBounds!.y)).toBeLessThanOrEqual(1)
+      // Literature navigation is a separate footer below the abstract expansion control.
+      expect(literatureBounds!.y).toBeGreaterThanOrEqual(expandBounds!.y + expandBounds!.height)
       await expand.click()
       await expect(expand).toHaveAttribute('aria-expanded', 'true')
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(

@@ -126,9 +126,18 @@ const createHarness = (
   )
   const snapshot = { status: 'connected' } as never
   const startContinuationWhenDispatchAdmitted = vi.fn(
-    async (request: unknown, validate: () => Promise<void>) => {
-      await validate()
-      return startContinuation(request)
+    async (
+      request: unknown,
+      validate: () => Promise<void>,
+      _messageId?: string,
+      _queued?: () => void,
+      admitDispatch?: (operation: () => Promise<void>) => Promise<void>
+    ) => {
+      const dispatch = async (): Promise<void> => {
+        await validate()
+        await startContinuation(request)
+      }
+      return admitDispatch ? admitDispatch(dispatch) : dispatch()
     }
   )
   const workflows = createAcpHandlerWorkflows(
@@ -255,6 +264,55 @@ describe('ACP resume Session workflow', () => {
   })
 })
 
+describe('continuation admission ordering', () => {
+  it.each(['continue', 'save-as-skill'] as const)(
+    'queues %s at the root before holding Project admission',
+    async (kind) => {
+      let held = false
+      const harness = createHarness(undefined, {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => {
+          expect(held).toBe(false)
+          held = true
+          try {
+            return await operation()
+          } finally {
+            held = false
+          }
+        },
+        withSessionAvailableById: vi.fn()
+      })
+      if (kind === 'continue') {
+        harness.session.status = 'error'
+        harness.session.activeRun = undefined
+        harness.session.resumeRecovery = {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        }
+      }
+      harness.startContinuationWhenDispatchAdmitted.mockImplementationOnce(
+        async (_request, validate, _messageId, _queued, admitDispatch) => {
+          expect(held).toBe(false)
+          expect(admitDispatch).toEqual(expect.any(Function))
+          await admitDispatch!(async () => {
+            expect(held).toBe(true)
+            await validate()
+          })
+        }
+      )
+      if (kind === 'continue')
+        await harness.workflows.continueInterruptedTurn({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          promptMessageId: 'prompt-1'
+        })
+      else await harness.workflows.saveAsSkill(harness.request)
+      expect(harness.startContinuationWhenDispatchAdmitted).toHaveBeenCalledOnce()
+      expect(held).toBe(false)
+    }
+  )
+})
+
 describe('ACP interrupted turn workflow', () => {
   it('does not re-enter archive admission while continuing an interrupted turn', async () => {
     let archiveQueue: Promise<void> = Promise.resolve()
@@ -283,9 +341,8 @@ describe('ACP interrupted turn workflow', () => {
     // itself; the dispatch-admitted path intentionally bypasses only that nested guard.
     harness.startContinuation.mockImplementationOnce(() => enqueueArchive(async () => undefined))
     harness.startContinuationWhenDispatchAdmitted.mockImplementationOnce(
-      async (_request: unknown, validate: () => Promise<void>) => {
-        await validate()
-        return 'provider_prompt_accepted'
+      async (_request, validate, _messageId, _queued, admitDispatch) => {
+        await admitDispatch!(validate)
       }
     )
 
@@ -499,7 +556,7 @@ describe('ACP Save as skill workflow', () => {
     }
   )
 
-  it('dispatches through the Session admission already held by the workflow', async () => {
+  it('passes Session admission into the root continuation scheduler', async () => {
     const harness = createHarness()
 
     await harness.workflows.saveAsSkill(harness.request)

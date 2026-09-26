@@ -163,6 +163,7 @@ useComputeStore.setState({
 
 export function Fixture(): React.JSX.Element {
   const [actions, setActions] = useState<string[]>([])
+  const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)
   const record = (action: string): void => setActions((current) => [...current, action])
   useEffect(() => {
     useNavigationStore.setState({
@@ -243,6 +244,12 @@ export function Fixture(): React.JSX.Element {
             onNewConversation={noop}
             onOpenFiles={noop}
             onOpenSession={() => record('session')}
+            openSessionActionsId={openSessionActionsId}
+            onSessionActionsOpenChange={(sessionId, open) => {
+              setOpenSessionActionsId((current) =>
+                open ? sessionId : current === sessionId ? null : current
+              )
+            }}
             onRenameSession={noop}
             onDownloadArtifacts={noop}
             onViewNotebook={noop}

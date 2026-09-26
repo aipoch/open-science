@@ -49,7 +49,10 @@ type AcpHandlerWorkflowRuntime = {
   startContinuation(request: AcpPromptRequest): Promise<void>
   startContinuationWhenDispatchAdmitted(
     request: AcpPromptRequest,
-    validate: () => Promise<void>
+    validate: () => Promise<void>,
+    delegatedMessageId?: string,
+    onAdmissionQueued?: () => void,
+    admitDispatch?: (operation: () => Promise<void>) => Promise<void>
   ): Promise<unknown>
 }
 
@@ -345,16 +348,32 @@ const createAcpHandlerWorkflows = (
                 startDispatchAdmittedContinuation: (
                   continuation: AcpPromptRequest,
                   validate: () => Promise<void>
-                ) => runtime.startContinuationWhenDispatchAdmitted(continuation, validate)
+                ) =>
+                  runtime.startContinuationWhenDispatchAdmitted(
+                    continuation,
+                    validate,
+                    undefined,
+                    undefined,
+                    (operation) =>
+                      archiveAvailability.withSessionAvailable(
+                        request.projectId,
+                        request.sessionId,
+                        operation
+                      )
+                  )
               }
             : {}),
           notifications: taskNotifications
         },
         request
       )
-    return archiveAvailability
-      ? archiveAvailability.withSessionAvailable(request.projectId, request.sessionId, run)
-      : run()
+    // Check availability before reading, but never hold the Project gate while queuing root work.
+    await archiveAvailability?.withSessionAvailable(
+      request.projectId,
+      request.sessionId,
+      async () => undefined
+    )
+    return run()
   },
 
   async saveAsSkill(request): Promise<AcpRuntimeState> {
@@ -370,26 +389,42 @@ const createAcpHandlerWorkflows = (
         text: 'Save as skill'
       })
       try {
-        await runtime.startContinuationWhenDispatchAdmitted(prepared.continuation, async () => {
-          await saveAsSkillAdmission?.(request.sessionId)
-          const admitted = prepareSaveAsSkillContinuation(
-            runtime,
-            await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),
-            request
-          )
-          if (!isDeepStrictEqual(admitted.continuation, prepared.continuation)) {
-            throw new Error('Save as skill Session changed before provider admission.')
-          }
-        })
+        await runtime.startContinuationWhenDispatchAdmitted(
+          prepared.continuation,
+          async () => {
+            await saveAsSkillAdmission?.(request.sessionId)
+            const admitted = prepareSaveAsSkillContinuation(
+              runtime,
+              await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),
+              request
+            )
+            if (!isDeepStrictEqual(admitted.continuation, prepared.continuation)) {
+              throw new Error('Save as skill Session changed before provider admission.')
+            }
+          },
+          undefined,
+          undefined,
+          archiveAvailability
+            ? (operation) =>
+                archiveAvailability.withSessionAvailable(
+                  request.projectId,
+                  request.sessionId,
+                  operation
+                )
+            : undefined
+        )
       } catch (error) {
         if (tracked) taskNotifications?.untrackPrompt(prepared.session.id, tracked)
         throw error
       }
       return runtime.getState()
     }
-    return archiveAvailability
-      ? archiveAvailability.withSessionAvailable(request.projectId, request.sessionId, save)
-      : save()
+    await archiveAvailability?.withSessionAvailable(
+      request.projectId,
+      request.sessionId,
+      async () => undefined
+    )
+    return save()
   },
 
   async sendPrompt(request): Promise<AcpRuntimeState> {
