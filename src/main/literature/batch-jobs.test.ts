@@ -29,7 +29,15 @@ const item = (id: string): LiteratureItemView => ({
 })
 const preview = (id: string): LiteratureMetadataCompletionResult => ({
   mode: 'preview',
-  reviewVersion: 1,
+  reviewVersion: 2,
+  proposal: item(id).item,
+  sources: [
+    {
+      provider: 'crossref',
+      sourceUrl: 'https://api.crossref.org/works/10.1234%2Fpaper',
+      rawMetadata: {}
+    }
+  ],
   provider: 'crossref',
   sourceUrl: 'https://crossref.org',
   item: item(id),
@@ -498,19 +506,7 @@ it('offers identifier-only metadata additions as a ready batch row', async () =>
     { getMetadataCommitReceipt: async () => null, get: async () => current, applyMetadata },
     vi.fn(
       async () =>
-        new Response(
-          JSON.stringify({
-            result: {
-              '12345678': {
-                uid: '12345678',
-                articleids: [
-                  { idtype: 'doi', value: '10.2000/example' },
-                  { idtype: 'pmc', value: 'PMC1234567' }
-                ]
-              }
-            }
-          })
-        )
+        new Response('PMID- 12345678\nTI  - a\nLID - 10.2000/example [doi]\nPMC - PMC1234567\n')
     )
   )
   const jobs = new LiteratureBatchJobs({
@@ -607,27 +603,30 @@ it('does not pause an active worker when the pause checkpoint fails', async () =
   expect(metadata).toHaveBeenCalledTimes(2)
 })
 
-it('marks a persisted legacy review for a fresh search without applying it', async () => {
-  const { jobs, metadata, options } = await setup()
-  metadata.mockImplementation(async ({ itemId }) => {
-    const old = preview(itemId)
-    delete old.reviewVersion
-    return old
-  })
-  const jobId = randomUUID()
-  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
-  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
-  await jobs.close()
-  const reopened = new LiteratureBatchJobs(options)
-  cleanup.push(() => reopened.close())
-  await reopened.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
-  await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('completed'))
-  expect(options.metadata.applyReviewed).not.toHaveBeenCalled()
-  expect((await state(reopened, jobId)).rows[0]).toMatchObject({
-    status: 'error',
-    message: 'Search again to refresh this older metadata review.'
-  })
-})
+it.each([undefined, 1] as const)(
+  'marks a persisted legacy review %s for a fresh search without applying it',
+  async (version) => {
+    const { jobs, metadata, options } = await setup()
+    metadata.mockImplementation(async ({ itemId }) => {
+      const old = preview(itemId)
+      old.reviewVersion = version
+      return old
+    })
+    const jobId = randomUUID()
+    await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+    await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+    await jobs.close()
+    const reopened = new LiteratureBatchJobs(options)
+    cleanup.push(() => reopened.close())
+    await reopened.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
+    await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('completed'))
+    expect(options.metadata.applyReviewed).not.toHaveBeenCalled()
+    expect((await state(reopened, jobId)).rows[0]).toMatchObject({
+      status: 'error',
+      message: 'Search again to refresh this older metadata review.'
+    })
+  }
+)
 
 it.each(['supplement', 'fullText'] as const)(
   'uses the attachment role when searching for full text beside a %s PDF',
@@ -894,7 +893,7 @@ it('recognizes its committed metadata after replaying the pre-commit checkpoint'
     failed: 0,
     completedItemIds: [created.id]
   })
-  expect(fetchMetadata).toHaveBeenCalledOnce()
+  expect(fetchMetadata).toHaveBeenCalledTimes(2)
 })
 
 it('restores a historically completed partial search without repeating completed metadata', async () => {
@@ -1216,4 +1215,52 @@ it('distinguishes deletion during review from a retryable metadata revision conf
     { code: 'unavailable', phase: 'apply', source: 'catalog', retryable: false }
   ])
   expect(options.metadata.applyReviewed).not.toHaveBeenCalled()
+})
+
+it('keeps a failed optional metadata lookup retryable when it supplied no new fields', async () => {
+  const { jobs, metadata } = await setup()
+  metadata.mockResolvedValueOnce({
+    ...preview('a'),
+    filled: [],
+    failures: [{ code: 'rate-limit', phase: 'search', source: 'europe-pmc', retryable: true }]
+  })
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await waitForDataRootWriters()
+  expect((await state(jobs, jobId)).rows[0]).toMatchObject({
+    status: 'error',
+    failures: [{ source: 'europe-pmc', code: 'rate-limit' }]
+  })
+  expect((await state(jobs, jobId)).rows[0].message).not.toBe('No missing metadata was found.')
+  await jobs.run({ action: 'retry-failed', jobId, itemIds: ['a'] })
+  await waitForDataRootWriters()
+  expect((await state(jobs, jobId)).rows[0].status).toBe('ready')
+})
+
+it('reopens and applies the exact normalized multi-source preview without a new lookup', async () => {
+  const { jobs, metadata, options } = await setup()
+  const review = {
+    ...preview('a'),
+    proposal: { ...item('a').item, abstract: 'Reviewed abstract' },
+    sources: [
+      ...preview('a').sources!,
+      {
+        provider: 'europe-pmc',
+        sourceUrl: 'https://europepmc.org/article/MED/123',
+        rawMetadata: { abstractText: 'Reviewed abstract' }
+      }
+    ]
+  }
+  metadata.mockResolvedValueOnce(review)
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await waitForDataRootWriters()
+  await jobs.close()
+  const reopened = new LiteratureBatchJobs(options)
+  cleanup.push(() => reopened.close())
+  await reopened.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
+  await waitForDataRootWriters()
+  expect(options.metadata.applyReviewed).toHaveBeenCalledWith(review)
+  expect(metadata).toHaveBeenCalledOnce()
+  expect((await state(reopened, jobId)).rows[0].status).toBe('done')
 })

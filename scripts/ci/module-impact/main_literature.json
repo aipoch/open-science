@@ -641,7 +641,8 @@
     "src/main/literature/smart-collections.ts",
     "src/main/literature/smart-evidence.ts",
     "src/main/literature/smart-rule-history.ts",
-    "src/main/literature/smart-run-progress.ts"
+    "src/main/literature/smart-run-progress.ts",
+    "src/main/literature/metadata-merge.ts"
   ],
   "interfacePaths": [
     "src/main/literature/agent-pdf-acquisition.ts",

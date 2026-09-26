@@ -110,6 +110,7 @@ type ApplyLiteratureMetadataInput = Readonly<{
   expectedMetadataRevision: number
   item: LiteratureItemInput
   source: LiteratureSourceInput
+  sources?: readonly LiteratureSourceInput[]
 }>
 
 const identitySchemes = new Set<string>(LITERATURE_IDENTITY_SCHEMES)
@@ -1597,7 +1598,7 @@ class LiteratureCatalog {
         expectedMetadataRevision: input.expectedMetadataRevision,
         item: input.item
       },
-      input.source,
+      input.sources ?? [input.source],
       input.operationId
     )
     const updated = await this.get(input.itemId)
@@ -2032,7 +2033,7 @@ class LiteratureCatalog {
 
   private async updateItem(
     command: Extract<LiteratureCatalogCommand, { kind: 'update-item' }>,
-    source?: LiteratureSourceInput,
+    sources: readonly LiteratureSourceInput[] = [],
     operationId?: string
   ): Promise<LiteratureCatalogReceipt> {
     const itemId = normalizeSpace(command.itemId)
@@ -2056,7 +2057,7 @@ class LiteratureCatalog {
           }
         }
         await replaceItemMetadata(transaction, itemId, command.expectedMetadataRevision, item)
-        if (source) await this.attachSource(transaction, { source, itemId })
+        for (const source of sources) await this.attachSource(transaction, { source, itemId })
         if (operationId) {
           const committed = await transaction.literatureItem.findUniqueOrThrow({
             where: { id: itemId },

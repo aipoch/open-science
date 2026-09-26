@@ -1,15 +1,24 @@
+import { z } from 'zod'
 import {
   literatureItemInputSchema,
   type LiteratureItemInput,
   type LiteratureSourceInput
 } from '../../shared/literature'
+import type { LiteratureFailure } from '../../shared/literature-failure'
 import { normalizeIdentifier } from './catalog'
 import { LiteratureCitationFormatter } from './citation-formatter'
-import { mergeCrossrefMetadata, parseCrossrefResponse } from './metadata-enricher'
+import {
+  metadataProposalSchema,
+  mergeMetadata,
+  mergeCrossrefMetadata,
+  parseCrossrefResponse,
+  crossrefAbstract
+} from './metadata-merge'
+import { LiteratureProviderError, literatureFailure } from './provider-error'
 
 const CROSSREF_BASE = 'https://api.crossref.org/works/'
 const PUBMED_BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
-const MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 15_000
 
 type FetchFn = typeof fetch
@@ -17,6 +26,10 @@ type LiteratureReferenceDiscovery = Readonly<{
   item: LiteratureItemInput
   source: LiteratureSourceInput
 }>
+type MetadataLookup = LiteratureReferenceDiscovery & {
+  sources: LiteratureSourceInput[]
+  failures: LiteratureFailure[]
+}
 
 type ReferenceKey = Readonly<{
   key: string
@@ -72,16 +85,84 @@ const crossrefItemType = (type: string | undefined): LiteratureItemInput['itemTy
   }
 }
 
-const readResponse = async (response: Response, provider: string): Promise<string> => {
-  if (!response.ok) {
-    throw new Error(`${provider} metadata request failed with HTTP ${response.status}.`)
-  }
-  const body = await response.text()
-  if (body.length > MAX_RESPONSE_BYTES) {
-    throw new Error(`${provider} metadata response is too large.`)
-  }
-  return body
-}
+const europeRecordSchema = z
+  .object({
+    id: z.string(),
+    source: z.string(),
+    doi: z.string().optional(),
+    pmcid: z.string().optional(),
+    title: z.string(),
+    abstractText: z.string().optional(),
+    firstPublicationDate: z.string().optional(),
+    pubYear: z.string().optional(),
+    language: z.string().optional(),
+    authorList: z
+      .object({
+        author: z.array(
+          z.object({
+            firstName: z.string().optional(),
+            lastName: z.string().optional(),
+            fullName: z.string().optional(),
+            collectiveName: z.string().optional()
+          })
+        )
+      })
+      .optional(),
+    journalInfo: z
+      .object({
+        volume: z.string().optional(),
+        issue: z.string().optional(),
+        journal: z.object({ title: z.string().optional(), issn: z.string().optional() }).optional()
+      })
+      .optional(),
+    pageInfo: z.string().optional()
+  })
+  .passthrough()
+const europeSchema = z.object({ resultList: z.object({ result: z.array(europeRecordSchema) }) })
+const dataciteSchema = z.object({
+  data: z.object({
+    attributes: z
+      .object({
+        doi: z.string(),
+        titles: z.array(z.object({ title: z.string() })),
+        descriptions: z
+          .array(z.object({ description: z.string(), descriptionType: z.string() }))
+          .optional(),
+        creators: z
+          .array(
+            z.object({
+              name: z.string(),
+              nameType: z.string().optional(),
+              givenName: z.string().optional(),
+              familyName: z.string().optional()
+            })
+          )
+          .optional(),
+        publicationYear: z.number().int().optional(),
+        publisher: z.union([z.string(), z.object({ name: z.string() })]).optional(),
+        url: z.string().nullable().optional(),
+        language: z.string().nullable().optional(),
+        types: z.object({ resourceTypeGeneral: z.string().optional() }).optional()
+      })
+      .passthrough()
+  })
+})
+
+// Reject contradictory identities before accepting any complementary fields.
+const identitiesAgree = (left: LiteratureItemInput, right: LiteratureItemInput): boolean =>
+  left.identifiers
+    .filter(({ scheme }) => scheme === 'doi' || scheme === 'pmid')
+    .every((identifier) => {
+      const candidates = right.identifiers.filter(({ scheme }) => scheme === identifier.scheme)
+      return (
+        !candidates.length ||
+        candidates.every(
+          (candidate) =>
+            normalizeIdentifier(candidate.scheme, candidate.value) ===
+            normalizeIdentifier(identifier.scheme, identifier.value)
+        )
+      )
+    })
 
 class LiteratureReferenceResolver {
   constructor(
@@ -92,38 +173,45 @@ class LiteratureReferenceResolver {
     > = new LiteratureCitationFormatter()
   ) {}
 
-  async resolve(
-    inputs: readonly string[],
-    signal?: AbortSignal
-  ): Promise<readonly LiteratureReferenceDiscovery[]> {
+  private async read(url: string, accept: string, signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted()
-    const requested = inputs.map(parseReference)
-    const references = [...new Map(requested.map((ref) => [ref.key, ref])).values()]
-    const pmids = references.filter(({ scheme }) => scheme === 'pmid').map(({ value }) => value)
-    const discoveries = new Map<string, LiteratureReferenceDiscovery>()
-
-    await Promise.all([
-      this.resolvePubmed(pmids, discoveries, signal),
-      ...references
-        .filter(({ scheme }) => scheme === 'doi')
-        .map(({ value }) => this.resolveCrossref(value, discoveries, signal))
-    ])
-
-    signal?.throwIfAborted()
-    // Fetch each identifier once, but keep receipts aligned with every original input.
-    return requested.map(({ key }) => {
-      const discovery = discoveries.get(key)
-      if (!discovery) throw new Error(`REFERENCE_NOT_FOUND: No metadata was found for ${key}.`)
-      return discovery
+    const response = await this.fetchFn(url, {
+      headers: {
+        Accept: accept,
+        'User-Agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
+      },
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+        : AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     })
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw new LiteratureProviderError(response.status)
+    }
+    if (!response.body) throw new Error('Metadata response is empty.')
+    const reader = response.body.getReader()
+    const chunks: Uint8Array[] = []
+    let length = 0
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        length += value.byteLength
+        if (length > MAX_RESPONSE_BYTES) throw new Error('Metadata response is too large.')
+        chunks.push(value)
+      }
+    } finally {
+      await reader.cancel()
+    }
+    signal?.throwIfAborted()
+    return Buffer.concat(chunks).toString('utf8')
   }
 
-  private async resolvePubmed(
+  private async pubmed(
     pmids: readonly string[],
-    discoveries: Map<string, LiteratureReferenceDiscovery>,
     signal?: AbortSignal
-  ): Promise<void> {
-    if (pmids.length === 0) return
+  ): Promise<LiteratureReferenceDiscovery[]> {
+    if (!pmids.length) return []
     const params = new URLSearchParams({
       db: 'pubmed',
       id: pmids.join(','),
@@ -131,70 +219,289 @@ class LiteratureReferenceResolver {
       retmode: 'text',
       tool: 'OpenScience'
     })
-    const response = await this.fetchFn(`${PUBMED_BASE}?${params.toString()}`, {
-      headers: {
-        Accept: 'text/plain',
-        'User-Agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
-      },
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
-        : AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-    })
-    const parsed = await this.formatter.parseReferences(await readResponse(response, 'PubMed'))
-    for (const item of parsed.items) {
+    const parsed = await this.formatter.parseReferences(
+      await this.read(`${PUBMED_BASE}?${params}`, 'text/plain', signal)
+    )
+    return parsed.items.flatMap((item) => {
       const pmid = item.identifiers.find(({ scheme }) => scheme === 'pmid')?.value
-      if (!pmid) continue
-      const value = normalizeIdentifier('pmid', pmid)
-      if (!pmids.includes(value)) continue
-      discoveries.set(`pmid:${value}`, {
-        item,
-        source: {
-          provider: 'pubmed',
-          externalId: value,
-          sourceUrl: `https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(value)}/`,
-          rawMetadata: { format: 'pubmed-medline', normalizedRecord: item }
+      if (!pmid || !pmids.includes(pmid)) return []
+      return [
+        {
+          item,
+          source: {
+            provider: 'pubmed',
+            externalId: pmid,
+            sourceUrl: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`,
+            rawMetadata: { format: 'pubmed-medline', normalizedRecord: item }
+          }
         }
-      })
+      ]
+    })
+  }
+
+  private async crossref(doi: string, signal?: AbortSignal): Promise<LiteratureReferenceDiscovery> {
+    const sourceUrl = `${CROSSREF_BASE}${encodeURIComponent(doi)}`
+    const message = parseCrossrefResponse(await this.read(sourceUrl, 'application/json', signal))
+    if (normalizeIdentifier('doi', message.DOI ?? doi) !== doi)
+      throw new Error('Crossref returned metadata for a different DOI.')
+    const seed = metadataProposalSchema.parse({
+      itemType: crossrefItemType(message.type),
+      identifiers: [{ scheme: 'doi', value: doi, isPrimary: true }]
+    })
+    return {
+      item: mergeCrossrefMetadata(seed, message).item,
+      source: { provider: 'crossref', externalId: doi, sourceUrl, rawMetadata: message }
     }
   }
 
-  private async resolveCrossref(
-    doi: string,
-    discoveries: Map<string, LiteratureReferenceDiscovery>,
+  private async europe(
+    reference: ReferenceKey,
     signal?: AbortSignal
-  ): Promise<void> {
-    const sourceUrl = `${CROSSREF_BASE}${encodeURIComponent(doi)}`
-    const response = await this.fetchFn(sourceUrl, {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
-      },
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
-        : AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  ): Promise<LiteratureReferenceDiscovery> {
+    // Quoting and escaping keep a DOI suffix from changing the provider's query semantics.
+    const escaped = reference.value.replace(/[\\"]/gu, '\\$&')
+    const query =
+      reference.scheme === 'doi' ? `DOI:"${escaped}"` : `EXT_ID:${reference.value} AND SRC:MED`
+    const sourceUrl = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?${new URLSearchParams({ query, resultType: 'core', format: 'json', pageSize: '5' })}`
+    const records = europeSchema.parse(
+      JSON.parse(await this.read(sourceUrl, 'application/json', signal))
+    ).resultList.result
+    const matches = records.filter((record) =>
+      reference.scheme === 'doi'
+        ? normalizeIdentifier('doi', record.doi ?? '') === reference.value
+        : record.source === 'MED' && record.id === reference.value
+    )
+    if (matches.length !== 1) throw new LiteratureProviderError(404)
+    const record = matches[0]
+    const identifiers: LiteratureItemInput['identifiers'] = [
+      { scheme: reference.scheme, value: reference.value, isPrimary: true }
+    ]
+    if (record.doi && reference.scheme !== 'doi')
+      identifiers.push({ scheme: 'doi', value: record.doi, isPrimary: false })
+    if (record.source === 'MED' && reference.scheme !== 'pmid')
+      identifiers.push({ scheme: 'pmid', value: record.id, isPrimary: false })
+    if (record.pmcid) identifiers.push({ scheme: 'pmcid', value: record.pmcid, isPrimary: false })
+    const year = Number(record.pubYear ?? record.firstPublicationDate?.slice(0, 4))
+    const item = metadataProposalSchema.parse({
+      itemType: 'journalArticle',
+      title: record.title,
+      abstract: crossrefAbstract(record.abstractText),
+      identifiers,
+      containerTitle: record.journalInfo?.journal?.title ?? '',
+      language: record.language ?? '',
+      issuedText: record.firstPublicationDate ?? record.pubYear ?? '',
+      issuedYear: Number.isInteger(year) && year > 0 && year <= 9999 ? year : undefined,
+      url:
+        reference.scheme === 'doi'
+          ? `https://doi.org/${reference.value}`
+          : `https://pubmed.ncbi.nlm.nih.gov/${reference.value}/`,
+      typeFields: Object.fromEntries(
+        Object.entries({
+          volume: record.journalInfo?.volume,
+          issue: record.journalInfo?.issue,
+          pages: record.pageInfo
+        }).filter(([, value]) => value)
+      ),
+      creators:
+        record.authorList?.author.flatMap<LiteratureItemInput['creators'][number]>((author) =>
+          author.collectiveName
+            ? [
+                {
+                  nameMode: 'organization',
+                  literalName: author.collectiveName,
+                  creatorType: 'author'
+                }
+              ]
+            : author.lastName || author.firstName || author.fullName
+              ? [
+                  {
+                    nameMode: 'person',
+                    familyName: author.lastName ?? author.fullName ?? '',
+                    givenName: author.firstName ?? '',
+                    creatorType: 'author'
+                  }
+                ]
+              : []
+        ) ?? []
     })
-    const message = parseCrossrefResponse(await readResponse(response, 'Crossref'))
-    const responseDoi = normalizeIdentifier('doi', message.DOI ?? doi)
-    if (responseDoi !== doi) throw new Error('Crossref returned metadata for a different DOI.')
-    const title = message.title?.[0]?.trim()
-    if (!title) throw new Error(`REFERENCE_NOT_FOUND: Crossref returned no title for doi:${doi}.`)
-    const seed = literatureItemInputSchema.parse({
-      itemType: crossrefItemType(message.type),
-      title,
-      identifiers: [{ scheme: 'doi', value: doi, isPrimary: true }]
-    })
-    const item = mergeCrossrefMetadata(seed, message).item
-    discoveries.set(`doi:${doi}`, {
+    return {
       item,
-      source: {
-        provider: 'crossref',
-        externalId: doi,
-        sourceUrl,
-        rawMetadata: message
+      source: { provider: 'europe-pmc', externalId: record.id, sourceUrl, rawMetadata: record }
+    }
+  }
+
+  private async datacite(doi: string, signal?: AbortSignal): Promise<LiteratureReferenceDiscovery> {
+    const sourceUrl = `https://api.datacite.org/dois/${encodeURIComponent(doi)}`
+    const record = dataciteSchema.parse(
+      JSON.parse(await this.read(sourceUrl, 'application/json', signal))
+    ).data.attributes
+    if (normalizeIdentifier('doi', record.doi) !== doi)
+      throw new Error('DataCite returned metadata for a different DOI.')
+    const type = record.types?.resourceTypeGeneral
+    const item = metadataProposalSchema.parse({
+      itemType:
+        type === 'Dataset'
+          ? 'dataset'
+          : type === 'Preprint'
+            ? 'preprint'
+            : type === 'Book'
+              ? 'book'
+              : type === 'Dissertation'
+                ? 'thesis'
+                : 'journalArticle',
+      title: record.titles[0]?.title ?? '',
+      abstract: crossrefAbstract(
+        record.descriptions?.find(({ descriptionType }) => descriptionType === 'Abstract')
+          ?.description
+      ),
+      issuedYear: record.publicationYear,
+      issuedText: record.publicationYear ? String(record.publicationYear) : '',
+      url: record.url ?? `https://doi.org/${doi}`,
+      language: record.language ?? '',
+      identifiers: [{ scheme: 'doi', value: doi, isPrimary: true }],
+      typeFields: record.publisher
+        ? {
+            publisher:
+              typeof record.publisher === 'string' ? record.publisher : record.publisher.name
+          }
+        : {},
+      creators:
+        record.creators?.map((creator) =>
+          creator.nameType === 'Organizational'
+            ? { nameMode: 'organization', literalName: creator.name, creatorType: 'author' }
+            : {
+                nameMode: 'person',
+                familyName: creator.familyName ?? creator.name,
+                givenName: creator.givenName ?? '',
+                creatorType: 'author'
+              }
+        ) ?? []
+    })
+    return {
+      item,
+      source: { provider: 'datacite', externalId: doi, sourceUrl, rawMetadata: record }
+    }
+  }
+
+  async lookup(input: string, signal?: AbortSignal): Promise<MetadataLookup> {
+    const reference = parseReference(input)
+    signal?.throwIfAborted()
+    let primary: LiteratureReferenceDiscovery | undefined
+    let primaryError: unknown
+    const failures: LiteratureFailure[] = []
+    const sources: LiteratureSourceInput[] = []
+    const accept = (result: LiteratureReferenceDiscovery): void => {
+      if (primary && !identitiesAgree(primary.item, result.item))
+        throw new Error('Metadata sources returned conflicting identifiers.')
+      primary = primary
+        ? { ...primary, item: mergeMetadata(primary.item, result.item).item }
+        : result
+      sources.push(result.source)
+    }
+    try {
+      const result =
+        reference.scheme === 'doi'
+          ? await this.crossref(reference.value, signal)
+          : (await this.pubmed([reference.value], signal))[0]
+      if (!result) throw new LiteratureProviderError(404)
+      accept(result)
+    } catch (error) {
+      signal?.throwIfAborted()
+      primaryError = error
+      failures.push(
+        literatureFailure(error, 'search', reference.scheme === 'doi' ? 'crossref' : 'pubmed')
+      )
+    }
+    // DataCite is a different registration agency, not a mirror for transient Crossref failures.
+    if (
+      !primary &&
+      reference.scheme === 'doi' &&
+      primaryError instanceof LiteratureProviderError &&
+      primaryError.status === 404
+    ) {
+      try {
+        accept(await this.datacite(reference.value, signal))
+      } catch (error) {
+        signal?.throwIfAborted()
+        failures.push(literatureFailure(error, 'search', 'datacite'))
+        if (['network', 'timeout', 'rate-limit'].includes(literatureFailure(error, 'search').code))
+          primaryError = error
       }
+    }
+    if (!primary?.item.abstract) {
+      try {
+        accept(await this.europe(reference, signal))
+      } catch (error) {
+        signal?.throwIfAborted()
+        failures.push(literatureFailure(error, 'search', 'europe-pmc'))
+        if (
+          primaryError instanceof LiteratureProviderError &&
+          primaryError.status === 404 &&
+          ['network', 'timeout', 'rate-limit'].includes(literatureFailure(error, 'search').code)
+        )
+          primaryError = error
+      }
+    }
+    signal?.throwIfAborted()
+    if (!primary) throw primaryError ?? new LiteratureProviderError(404)
+    return { ...primary, sources, failures: failures.filter(({ code }) => code !== 'no-result') }
+  }
+
+  async resolve(
+    inputs: readonly string[],
+    signal?: AbortSignal
+  ): Promise<readonly LiteratureReferenceDiscovery[]> {
+    signal?.throwIfAborted()
+    const requested = inputs.map(parseReference)
+    const references = [...new Map(requested.map((ref) => [ref.key, ref])).values()]
+    const discoveries = new Map<string, LiteratureReferenceDiscovery>()
+    const pmids = references.filter(({ scheme }) => scheme === 'pmid').map(({ value }) => value)
+    // Retain the existing compact EFetch batch and ordered receipt contract for Agent imports.
+    if (pmids.length) {
+      try {
+        for (const result of await this.pubmed(pmids, signal)) {
+          const pmid = result.item.identifiers.find(({ scheme }) => scheme === 'pmid')!.value
+          discoveries.set(`pmid:${pmid}`, result)
+        }
+      } catch {
+        signal?.throwIfAborted()
+      }
+    }
+    for (const ref of references) {
+      if (discoveries.get(ref.key)?.item.abstract) continue
+      try {
+        const result = await this.lookup(ref.key, signal)
+        literatureItemInputSchema.parse(result.item)
+        // The Agent discovery contract has one source; retain explicit supplemental provenance
+        // inside that receipt instead of attributing another provider's abstract to Crossref.
+        discoveries.set(ref.key, {
+          item: result.item,
+          source:
+            result.sources.length === 1
+              ? result.source
+              : {
+                  ...result.source,
+                  rawMetadata: {
+                    ...result.source.rawMetadata,
+                    supplementalSources: result.sources.slice(1)
+                  }
+                }
+        })
+      } catch (error) {
+        signal?.throwIfAborted()
+        if (!discoveries.has(ref.key)) {
+          if (error instanceof LiteratureProviderError && error.status === 404)
+            throw new Error(`REFERENCE_NOT_FOUND: No metadata was found for ${ref.key}.`)
+          throw error
+        }
+      }
+    }
+    return requested.map(({ key }) => {
+      const result = discoveries.get(key)
+      if (!result) throw new Error(`REFERENCE_NOT_FOUND: No metadata was found for ${key}.`)
+      return result
     })
   }
 }
-
-export { LiteratureReferenceResolver }
+export { LiteratureReferenceResolver, identitiesAgree }
 export type { LiteratureReferenceDiscovery }

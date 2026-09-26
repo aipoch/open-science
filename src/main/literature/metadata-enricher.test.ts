@@ -47,6 +47,50 @@ const crossrefResponse = {
   }
 }
 
+const pubmedWire = (response: { result: Record<string, unknown> }): string =>
+  Object.entries(response.result)
+    .filter(([id]) => id !== 'uids')
+    .map(([id, value]) => {
+      const record = value as {
+        title?: string
+        pubdate?: string
+        fulljournalname?: string
+        volume?: string
+        issue?: string
+        pages?: string
+        lang?: string[]
+        issn?: string
+        authors?: { name: string; authtype?: string }[]
+        articleids?: { idtype: string; value: string }[]
+      }
+      return [
+        `PMID- ${id}`,
+        `TI  - ${record.title ?? 'A PubMed paper'}`,
+        ...Object.entries({
+          DP: record.pubdate,
+          JT: record.fulljournalname,
+          VI: record.volume,
+          IP: record.issue,
+          PG: record.pages,
+          LA: record.lang?.[0],
+          IS: record.issn
+        })
+          .filter(([, v]) => v)
+          .map(([k, v]) => `${k.padEnd(4)}- ${v}`),
+        ...(record.authors ?? []).map(
+          (author) => `${author.authtype === 'CollectiveAuthor' ? 'CN' : 'AU'}  - ${author.name}`
+        ),
+        ...(record.articleids ?? []).flatMap((identifier) =>
+          identifier.idtype === 'doi'
+            ? [`LID - ${identifier.value} [doi]`]
+            : identifier.idtype === 'pmc'
+              ? [`PMC - ${identifier.value}`]
+              : []
+        )
+      ].join('\n')
+    })
+    .join('\n\n')
+
 const pubmedResponse = {
   result: {
     uids: ['12345678'],
@@ -190,15 +234,17 @@ describe('LiteratureMetadataEnricher', () => {
     }
     const { enricher, applyMetadata } = regressionEnricher(
       current,
-      Response.json({
-        result: {
-          '31452104': {
-            uid: '31452104',
-            pubdate: '2019',
-            authors: [{ name: 'Bitencourt-Ferreira G', authtype: 'Author' }]
+      new Response(
+        pubmedWire({
+          result: {
+            '31452104': {
+              uid: '31452104',
+              pubdate: '2019',
+              authors: [{ name: 'Bitencourt-Ferreira G', authtype: 'Author' }]
+            }
           }
-        }
-      })
+        })
+      )
     )
     const review = await enricher.complete({ mode: 'preview', itemId: view.id })
     expect(applyMetadata).not.toHaveBeenCalled()
@@ -289,7 +335,7 @@ describe('LiteratureMetadataEnricher', () => {
         }),
         applyMetadata
       },
-      vi.fn().mockResolvedValue(new Response(JSON.stringify(pubmedResponse), { status: 200 }))
+      vi.fn().mockResolvedValue(new Response(pubmedWire(pubmedResponse), { status: 200 }))
     )
 
     const result = await enricher.complete({
@@ -307,7 +353,6 @@ describe('LiteratureMetadataEnricher', () => {
       typeFields: {
         issue: '2',
         pages: '10-18',
-        publisher: 'Medical Press',
         volume: '8'
       }
     })
@@ -432,7 +477,7 @@ describe('LiteratureMetadataEnricher', () => {
       overwriteFields: [],
       reviewToken: review.reviewToken
     })
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(2)
     expect(applyMetadata.mock.calls[0]![0].item.containerTitle).toBe('Journal of Examples')
     get.mockResolvedValue({ ...view, metadataRevision: 3 })
     await expect(enricher.applyReviewed(review)).rejects.toThrow('Reference changed')
@@ -603,7 +648,7 @@ it('reports identifier-only additions as reviewable changes', async () => {
       identifiers: [{ scheme: 'pmid', value: '12345678', isPrimary: true }]
     },
     new Response(
-      JSON.stringify({
+      pubmedWire({
         result: {
           '12345678': {
             uid: '12345678',
@@ -704,7 +749,7 @@ it.each([false, true])(
     expect(review.conflicts).toContainEqual({
       field: 'identifiers',
       currentValue: 'DOI: 10.1000/example ★; PMID: 12345678',
-      value: 'PMID: 12345678; DOI: 10.2000/new ★'
+      value: 'DOI: 10.2000/new ★'
     })
     await enricher.complete({
       mode: 'commit',
@@ -874,7 +919,7 @@ it('preserves PubMed seasonal dates and collective authors without inventing mon
     vi.fn(
       async () =>
         new Response(
-          JSON.stringify({
+          pubmedWire({
             result: {
               '12345678': {
                 uid: '12345678',
@@ -892,4 +937,251 @@ it('preserves PubMed seasonal dates and collective authors without inventing mon
     issuedYear: 2024,
     creators: [{ nameMode: 'organization', literalName: 'WHO Study Group' }]
   })
+})
+
+it('recovers a missing abstract by exact DOI and commits both reviewed sources without refetching', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    String(url).includes('crossref.org')
+      ? Response.json({
+          message: { ...crossrefResponse.message, author: [{ name: 'Example Research Group' }] }
+        })
+      : Response.json({
+          resultList: {
+            result: [
+              {
+                id: '12345678',
+                source: 'MED',
+                doi: '10.1000/example',
+                title: 'A paper',
+                abstractText:
+                  '<h4>Background</h4><p>Direct evidence from the indexed publication.</p>'
+              }
+            ]
+          }
+        })
+  )
+  const applyMetadata = vi.fn(async (input) => ({ ...view, item: input.item, metadataRevision: 3 }))
+  const enricher = new LiteratureMetadataEnricher(
+    { get: async () => view, getMetadataCommitReceipt: async () => null, applyMetadata },
+    fetchFn
+  )
+  const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+  expect(review.reviewVersion).toBe(2)
+  expect(review.item.item.creators).toEqual([
+    { nameMode: 'organization', literalName: 'Example Research Group', creatorType: 'author' }
+  ])
+  expect(review.item.item.abstract).toBe(
+    'Background\n\nDirect evidence from the indexed publication.'
+  )
+  expect(review.sources?.map((source) => source.provider)).toEqual(['crossref', 'europe-pmc'])
+  expect(review.filled).toContainEqual({ field: 'abstract', value: review.item.item.abstract })
+  expect(applyMetadata).not.toHaveBeenCalled()
+  fetchFn.mockRejectedValue(new Error('offline after review'))
+  await enricher.complete({
+    mode: 'commit',
+    itemId: view.id,
+    expectedMetadataRevision: 2,
+    reviewToken: review.reviewToken,
+    overwriteFields: []
+  })
+  expect(fetchFn).toHaveBeenCalledTimes(2)
+  expect(applyMetadata.mock.calls[0][0]).toMatchObject({
+    sources: review.sources,
+    item: { abstract: review.item.item.abstract }
+  })
+})
+
+it('gets an abstract through PubMed EFetch and retains a full author name', async () => {
+  const fetchFn = vi.fn<typeof fetch>(
+    async () =>
+      new Response(
+        'PMID- 12345678\nTI  - A paper\nAB  - Evidence supplied by the publication.\nFAU - Lovelace, Ada\nDP  - 2024 Jan 12\n'
+      )
+  )
+  const enricher = new LiteratureMetadataEnricher(
+    {
+      get: async () => ({
+        ...view,
+        item: { ...item, identifiers: [{ scheme: 'pmid', value: '12345678', isPrimary: true }] }
+      }),
+      getMetadataCommitReceipt: async () => null,
+      applyMetadata: vi.fn()
+    },
+    fetchFn
+  )
+  const result = await enricher.complete({ mode: 'preview', itemId: view.id })
+  expect(result.item.item).toMatchObject({
+    abstract: 'Evidence supplied by the publication.',
+    issuedText: '2024-01-12',
+    creators: [{ givenName: 'Ada', familyName: 'Lovelace' }]
+  })
+  expect(String(fetchFn.mock.calls[0][0])).toContain('efetch.fcgi')
+})
+
+it('retains usable fields when an optional abstract source is rate limited', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    String(url).includes('crossref.org')
+      ? Response.json(crossrefResponse)
+      : new Response('', { status: 429 })
+  )
+  const enricher = new LiteratureMetadataEnricher(
+    { get: async () => view, getMetadataCommitReceipt: async () => null, applyMetadata: vi.fn() },
+    fetchFn
+  )
+  const result = await enricher.complete({ mode: 'preview', itemId: view.id })
+  expect(result.item.item.containerTitle).toBe('Journal of Examples')
+  expect(result.failures).toContainEqual({
+    code: 'rate-limit',
+    phase: 'search',
+    source: 'europe-pmc',
+    retryable: true
+  })
+})
+
+it('does not fall back to an old PMID after the user enters a replacement DOI', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async () => new Response('', { status: 404 }))
+  const enricher = new LiteratureMetadataEnricher(
+    {
+      get: async () => ({
+        ...view,
+        item: {
+          ...item,
+          identifiers: [
+            ...item.identifiers,
+            { scheme: 'pmid', value: '12345678', isPrimary: false }
+          ]
+        }
+      }),
+      getMetadataCommitReceipt: async () => null,
+      applyMetadata: vi.fn()
+    },
+    fetchFn
+  )
+  await expect(
+    enricher.complete({
+      mode: 'preview',
+      itemId: view.id,
+      identifier: { scheme: 'doi', value: '10.1234/replacement' }
+    })
+  ).rejects.toThrow()
+  expect(fetchFn.mock.calls.some(([url]) => String(url).includes('12345678'))).toBe(false)
+})
+
+it('rejects a conflicting secondary identifier rather than mixing two papers', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    String(url).includes('crossref.org')
+      ? new Response('', { status: 503 })
+      : String(url).includes('efetch')
+        ? new Response(
+            'PMID- 12345678\nTI  - Different paper\nAB  - Wrong abstract\nLID - 10.1234/different [doi]\n'
+          )
+        : Response.json({ resultList: { result: [] } })
+  )
+  const enricher = new LiteratureMetadataEnricher(
+    {
+      get: async () => ({
+        ...view,
+        item: {
+          ...item,
+          identifiers: [
+            ...item.identifiers,
+            { scheme: 'pmid', value: '12345678', isPrimary: false }
+          ]
+        }
+      }),
+      getMetadataCommitReceipt: async () => null,
+      applyMetadata: vi.fn()
+    },
+    fetchFn
+  )
+  await expect(enricher.complete({ mode: 'preview', itemId: view.id })).rejects.toThrow('503')
+})
+
+it('requires a fresh search to apply a v1 metadata snapshot', async () => {
+  const { enricher, applyMetadata } = regressionEnricher(
+    item,
+    crossref({ abstract: 'Reviewed evidence.' })
+  )
+  const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+  await expect(enricher.applyReviewed({ ...review, reviewVersion: 1 })).rejects.toThrow(
+    'Search again'
+  )
+  expect(applyMetadata).not.toHaveBeenCalled()
+})
+
+it('rejects a successful DOI lookup that contradicts the stored PMID', async () => {
+  const current = {
+    ...item,
+    identifiers: [
+      ...item.identifiers,
+      { scheme: 'pmid' as const, value: '99999', isPrimary: false }
+    ]
+  }
+  const enricher = new LiteratureMetadataEnricher(
+    {
+      get: async () => ({ ...view, item: current }),
+      getMetadataCommitReceipt: async () => null,
+      applyMetadata: vi.fn()
+    },
+    vi.fn(async (url) =>
+      String(url).includes('crossref.org')
+        ? Response.json(crossrefResponse)
+        : Response.json({
+            resultList: {
+              result: [
+                {
+                  id: '12345678',
+                  source: 'MED',
+                  doi: '10.1000/example',
+                  title: 'A paper',
+                  abstractText: 'Verified abstract'
+                }
+              ]
+            }
+          })
+    )
+  )
+  await expect(enricher.complete({ mode: 'preview', itemId: view.id })).rejects.toThrow(
+    'identifiers disagree'
+  )
+})
+
+it('reviews replacement identifiers atomically without retaining identifiers from the old paper', async () => {
+  const current = {
+    ...item,
+    identifiers: [
+      ...item.identifiers,
+      { scheme: 'pmid' as const, value: '99999', isPrimary: false }
+    ]
+  }
+  const applyMetadata = vi.fn(async (input) => ({ ...view, item: input.item, metadataRevision: 3 }))
+  const enricher = new LiteratureMetadataEnricher(
+    {
+      get: async () => ({ ...view, item: current }),
+      getMetadataCommitReceipt: async () => null,
+      applyMetadata
+    },
+    vi.fn(async () =>
+      Response.json({
+        message: {
+          DOI: '10.1234/replacement',
+          title: ['Replacement paper'],
+          abstract: 'Replacement abstract'
+        }
+      })
+    )
+  )
+  const review = await enricher.complete({
+    mode: 'preview',
+    itemId: view.id,
+    identifier: { scheme: 'doi', value: '10.1234/replacement' }
+  })
+  expect(review.item.item.identifiers).toEqual([
+    { scheme: 'doi', value: '10.1234/replacement', isPrimary: true }
+  ])
+  expect(review.conflicts.some(({ field }) => field === 'identifiers')).toBe(true)
+  await enricher.applyReviewed(review, [])
+  expect(applyMetadata.mock.calls[0][0].item.identifiers).toEqual(current.identifiers)
+  await enricher.applyReviewed(review, ['identifiers'])
+  expect(applyMetadata.mock.calls[1][0].item.identifiers).toEqual(review.item.item.identifiers)
 })

@@ -4629,6 +4629,7 @@
     "Kept": "유지 값",
     "Apply metadata": "메타데이터 적용",
     "Use Crossref": "Crossref 사용",
+    "Use {{source}}": "{{source}} 사용",
     "Use PubMed": "PubMed 사용",
     "Rights": "권리",
     "Citation key": "인용 키",
@@ -6332,6 +6333,8 @@
     "PDF unavailable": "PDF를 사용할 수 없습니다",
     "No references on this page": "이 페이지에 문헌이 없습니다",
     "References may have moved or been removed. Return to the first page.": "문헌이 이동되거나 삭제되었을 수 있습니다. 첫 페이지로 돌아가세요.",
-    "First page": "첫 페이지"
+    "First page": "첫 페이지",
+    "PDF text could not be read. For scanned pages, use a searchable PDF. Review the metadata before importing.": "PDF 텍스트를 읽을 수 없습니다. 스캔한 페이지는 텍스트 검색이 가능한 PDF를 사용하세요. 가져오기 전에 메타데이터를 확인하세요.",
+    "Some metadata could not be retrieved. Review the available details before importing.": "일부 메타데이터를 가져오지 못했습니다. 가져오기 전에 확인 가능한 정보를 검토하세요."
   }
 }

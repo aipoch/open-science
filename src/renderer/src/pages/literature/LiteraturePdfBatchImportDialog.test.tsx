@@ -9,7 +9,8 @@ import {
 import { LiteraturePdfBatchImportDialog } from './LiteraturePdfBatchImportDialog'
 
 const mocks = vi.hoisted(() => ({ extract: vi.fn(), complete: vi.fn(), stage: vi.fn() }))
-vi.mock('./literature-pdf-metadata', () => ({
+vi.mock('./literature-pdf-metadata', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./literature-pdf-metadata')>()),
   extractLiteraturePdfDraft: mocks.extract,
   completeLiteraturePdfDraft: mocks.complete
 }))
@@ -148,6 +149,9 @@ it('does not replay an unconfirmed creation and still imports other files', asyn
 it('honors deselection and retains filename metadata fallback', async () => {
   mocks.extract.mockRejectedValueOnce(new Error('No metadata'))
   open()
+  await screen.findByText(
+    'PDF text could not be read. For scanned pages, use a searchable PDF. Review the metadata before importing.'
+  )
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select second.pdf' }))
   await start()
   await screen.findByText('1 / 2 completed')

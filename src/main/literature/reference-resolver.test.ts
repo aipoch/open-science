@@ -94,7 +94,7 @@ describe('LiteratureReferenceResolver', () => {
       value: '10.1000/example',
       isPrimary: true
     })
-    expect(fetchFn).toHaveBeenCalledTimes(2)
+    expect(fetchFn).toHaveBeenCalledTimes(3)
     expect(String(fetchFn.mock.calls[0]?.[0])).toContain('id=35486828%2C21458665')
   })
 
@@ -147,3 +147,131 @@ it.each(['doi:10.1234/cancelled', 'pmid:12345'])(
     expect(await outcome).toBe(reason)
   }
 )
+
+it('falls back from a Crossref 404 to the matching DataCite DOI', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    String(url).includes('crossref.org')
+      ? new Response('', { status: 404 })
+      : Response.json({
+          data: {
+            attributes: {
+              doi: '10.1234/dataset',
+              titles: [{ title: 'Measured data' }],
+              types: { resourceTypeGeneral: 'Dataset' },
+              publicationYear: 2024,
+              publisher: { name: 'Archive' },
+              descriptions: [
+                { descriptionType: 'Abstract', description: 'Observed values from the experiment.' }
+              ],
+              creators: [{ name: 'Example Consortium', nameType: 'Organizational' }]
+            }
+          }
+        })
+  )
+  const [result] = await new LiteratureReferenceResolver(fetchFn).resolve(['doi:10.1234/dataset'])
+  expect(result.item).toMatchObject({
+    itemType: 'dataset',
+    title: 'Measured data',
+    abstract: 'Observed values from the experiment.',
+    typeFields: { publisher: 'Archive' }
+  })
+  expect(result.source.provider).toBe('datacite')
+  expect(fetchFn).toHaveBeenCalledTimes(2)
+})
+
+it.each(['10.1234/other', undefined])(
+  'does not accept an unmatched Europe PMC DOI: %s',
+  async (doi) => {
+    const fetchFn = vi.fn<typeof fetch>(async (url) =>
+      String(url).includes('crossref.org')
+        ? Response.json({ message: { DOI: '10.1234/requested', title: ['Requested paper'] } })
+        : Response.json({
+            resultList: {
+              result: [
+                {
+                  id: '123',
+                  source: 'MED',
+                  doi,
+                  title: 'Other paper',
+                  abstractText: 'Wrong evidence.'
+                }
+              ]
+            }
+          })
+    )
+    const result = await new LiteratureReferenceResolver(fetchFn).lookup('doi:10.1234/requested')
+    expect(result.item.abstract).toBe('')
+    expect(result.sources).toHaveLength(1)
+  }
+)
+
+it('does not select one of multiple exact DOI matches arbitrarily', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    String(url).includes('crossref.org')
+      ? Response.json({ message: { DOI: '10.1234/requested', title: ['Requested paper'] } })
+      : Response.json({
+          resultList: {
+            result: ['123', '456'].map((id) => ({
+              id,
+              source: 'MED',
+              doi: '10.1234/requested',
+              title: 'A candidate',
+              abstractText: 'Ambiguous evidence.'
+            }))
+          }
+        })
+  )
+  expect(
+    (await new LiteratureReferenceResolver(fetchFn).lookup('doi:10.1234/requested')).item.abstract
+  ).toBe('')
+})
+
+it('keeps supplemental source attribution in the Agent discovery receipt', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    String(url).includes('crossref.org')
+      ? Response.json({ message: { DOI: '10.1234/requested', title: ['Requested paper'] } })
+      : Response.json({
+          resultList: {
+            result: [
+              {
+                id: '123',
+                source: 'MED',
+                doi: '10.1234/requested',
+                title: 'Requested paper',
+                abstractText: 'Verified evidence.'
+              }
+            ]
+          }
+        })
+  )
+  const [result] = await new LiteratureReferenceResolver(fetchFn).resolve(['doi:10.1234/requested'])
+  expect(result.item.abstract).toBe('Verified evidence.')
+  expect(result.source.rawMetadata.supplementalSources).toEqual([
+    expect.objectContaining({ provider: 'europe-pmc', externalId: '123' })
+  ])
+})
+
+it('escapes DOI suffixes as a single Europe PMC query literal', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    String(url).includes('crossref.org')
+      ? Response.json({ message: { title: ['Paper'] } })
+      : Response.json({ resultList: { result: [] } })
+  )
+  await new LiteratureReferenceResolver(fetchFn).lookup('doi:10.1234/a"OR*')
+  expect(new URL(String(fetchFn.mock.calls[1][0])).searchParams.get('query')).toBe(
+    'DOI:"10.1234/a\\"or*"'
+  )
+})
+
+it('preserves a registration-agency rate limit when Crossref and Europe PMC have no record', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    String(url).includes('datacite.org')
+      ? new Response('', { status: 429 })
+      : String(url).includes('crossref.org')
+        ? new Response('', { status: 404 })
+        : Response.json({ resultList: { result: [] } })
+  )
+  await expect(
+    new LiteratureReferenceResolver(fetchFn).resolve(['doi:10.1234/dataset'])
+  ).rejects.toThrow('429')
+})

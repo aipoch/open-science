@@ -5050,6 +5050,7 @@
     "Kept": "Сохранено",
     "Apply metadata": "Применить метаданные",
     "Use Crossref": "Использовать Crossref",
+    "Use {{source}}": "Использовать {{source}}",
     "Use PubMed": "Использовать PubMed",
     "Rights": "Права",
     "Citation key": "Ключ цитирования",
@@ -6795,6 +6796,8 @@
     "PDF unavailable": "PDF недоступен",
     "No references on this page": "На этой странице нет источников",
     "References may have moved or been removed. Return to the first page.": "Возможно, источники перемещены или удалены. Вернитесь на первую страницу.",
-    "First page": "Первая страница"
+    "First page": "Первая страница",
+    "PDF text could not be read. For scanned pages, use a searchable PDF. Review the metadata before importing.": "Не удалось прочитать текст PDF. Для отсканированных страниц используйте PDF с возможностью поиска по тексту. Проверьте метаданные перед импортом.",
+    "Some metadata could not be retrieved. Review the available details before importing.": "Не удалось получить часть метаданных. Проверьте доступные сведения перед импортом."
   }
 }

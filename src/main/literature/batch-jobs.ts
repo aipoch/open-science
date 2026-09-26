@@ -497,8 +497,9 @@ export class LiteratureBatchJobs {
         return
       }
       row.metadata = await this.options.metadata.complete({ mode: 'preview', itemId: row.id })
-      row.status = row.metadata.filled.length ? 'ready' : 'skipped'
-      if (!row.metadata.filled.length) row.message = 'No missing metadata was found.'
+      row.failures = row.metadata.failures
+      row.status = row.metadata.filled.length ? 'ready' : row.failures?.length ? 'error' : 'skipped'
+      if (row.status === 'skipped') row.message = 'No missing metadata was found.'
     } else {
       if (
         item.attachments.some(
@@ -541,7 +542,7 @@ export class LiteratureBatchJobs {
       throw new Error('Reference changed')
     if (job.mode === 'metadata') {
       if (!row.metadata) throw new Error('Metadata review unavailable')
-      if (row.metadata.reviewVersion !== 1) {
+      if (row.metadata.reviewVersion !== 2) {
         row.status = 'error'
         row.failures = [
           literatureFailure(

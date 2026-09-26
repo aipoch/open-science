@@ -31,8 +31,6 @@ describe('parseLiteraturePdfMetadata', () => {
         }
       ],
       containerTitle: 'Cell',
-      issuedYear: 2011,
-      issuedText: '2011',
       url: 'https://doi.org/10.1234/example',
       identifiers: [
         { scheme: 'doi', value: '10.1234/example', isPrimary: true },
@@ -48,5 +46,44 @@ describe('parseLiteraturePdfMetadata', () => {
         identifiers: [{ scheme: 'doi', value: '10.1234/example', isPrimary: true }]
       }
     )
+  })
+})
+
+it('extracts a structured abstract without an Abstract heading and stops before the body', () => {
+  const text =
+    'A publication\n\nBackground: We assessed measured responses in a controlled experiment.\n\nMethods: Samples were compared with controls.\n\nResults: Responses increased in the study group.\n\nConclusions: These observations support the proposed mechanism.\n\nBody paragraphs describe the full experiment.'
+  const result = parseLiteraturePdfMetadata({}, text)
+  expect(result.abstract).toContain('Background:')
+  expect(result.abstract).toContain('Conclusions:')
+  expect(result.abstract).not.toContain('Body paragraphs')
+})
+
+it('extracts a headed abstract with an explicit introduction boundary', () => {
+  const text =
+    'Abstract\nWe measured a series of samples and compared their responses with a control group. The results support a reproducible association.\n1. Introduction\nThis is body text.'
+  expect(parseLiteraturePdfMetadata({}, text).abstract).toBe(
+    'We measured a series of samples and compared their responses with a control group. The results support a reproducible association.'
+  )
+})
+
+it('does not fabricate an abstract from an unbounded heading or DOI from References', () => {
+  expect(
+    parseLiteraturePdfMetadata(
+      {},
+      'Abstract\nAmbiguous body text without an end boundary.\nReferences\n10.1234/cited'
+    )
+  ).toEqual({})
+})
+
+it('does not turn a PDF creation date or filename title into publication metadata', () => {
+  expect(
+    parseLiteraturePdfMetadata(
+      { Title: 'article.pdf', CreationDate: 'D:20260101', ModDate: 'D:20260102' },
+      ''
+    )
+  ).toEqual({})
+  expect(parseLiteraturePdfMetadata({ PublicationDate: '2018-01-25' }, '')).toMatchObject({
+    issuedYear: 2018,
+    issuedText: '2018'
   })
 })

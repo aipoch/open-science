@@ -23,6 +23,7 @@ type Row = {
   linked?: boolean
   uncertain?: boolean
   error?: string
+  metadataNotice?: string
   nativeAnnotations?: { importedCount: number; unsupportedCount: number; truncated: boolean }
 }
 export type PdfImportDestination = { name: string; projectId?: string; collectionId?: string }
@@ -81,23 +82,32 @@ export function LiteraturePdfBatchImportDialog({
         ?.catch(() => undefined)
     }
   }
+  const metadataTranslation = useRef(t)
   useEffect(() => {
     active.current = true
     let disposed = false
     const read = async (): Promise<void> => {
-      const { extractLiteraturePdfDraft, completeLiteraturePdfDraft } =
+      const { extractLiteraturePdfDraft, completeLiteraturePdfDraft, pdfMetadataNoticeLabel } =
         await import('./literature-pdf-metadata')
       for (const row of rowsRef.current) {
         if (disposed) return
         row.status = 'reading'
         publish()
         try {
-          const local = await extractLiteraturePdfDraft(row.file, row.draft)
+          const notice = (value: Parameters<typeof pdfMetadataNoticeLabel>[0]): void => {
+            if (!disposed)
+              row.metadataNotice = pdfMetadataNoticeLabel(value, metadataTranslation.current)
+          }
+          const local = await extractLiteraturePdfDraft(row.file, row.draft, notice)
           if (disposed) return
-          const draft = await completeLiteraturePdfDraft(local)
+          const draft = await completeLiteraturePdfDraft(local, notice)
           if (disposed) return
           row.draft = draft
         } catch {
+          row.metadataNotice = pdfMetadataNoticeLabel(
+            { textUnavailable: true },
+            metadataTranslation.current
+          )
           // Metadata is optional; the importer validates PDF bytes before attaching them.
         }
         if (disposed) return
@@ -108,7 +118,12 @@ export function LiteraturePdfBatchImportDialog({
     void read()
       .catch(() => {
         if (!disposed) {
-          for (const row of rowsRef.current) row.status = 'ready'
+          for (const row of rowsRef.current) {
+            row.status = 'ready'
+            row.metadataNotice = metadataTranslation.current(
+              'PDF text could not be read. For scanned pages, use a searchable PDF. Review the metadata before importing.'
+            )
+          }
           publish()
         }
       })
@@ -464,6 +479,11 @@ export function LiteraturePdfBatchImportDialog({
                   {t('Unsupported native annotations: {{count}}', {
                     count: row.nativeAnnotations.unsupportedCount
                   })}
+                </p>
+              ) : null}
+              {row.metadataNotice ? (
+                <p className="text-xs text-muted-foreground" role="status">
+                  {row.metadataNotice}
                 </p>
               ) : null}
               {row.error ? <LiteratureErrorNotice title={row.error} /> : null}
