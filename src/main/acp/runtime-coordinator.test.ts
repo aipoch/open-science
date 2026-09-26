@@ -2412,6 +2412,16 @@ describe('AcpRuntimeCoordinator', () => {
     })
     await coordinator.sendAppContinuation({
       sessionId,
+      text: 'Child follow-up',
+      provenanceContext: { promptMessageId: 'child' }
+    })
+    await coordinator.continueApprovedHandoff(sessionId, 'Continue the original task')
+    expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0]).toMatchObject({
+      permissionPrompts: 'none',
+      provenanceContext: { promptMessageId: 'original' }
+    })
+    await coordinator.sendAppContinuation({
+      sessionId,
       text: 'Other branch',
       provenanceContext: { promptMessageId: 'other' }
     })
