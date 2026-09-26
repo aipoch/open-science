@@ -1423,7 +1423,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-3"
                   >
                     {isMobile ? (
-                      <div className="mb-4">
+                      <div data-slot="settings-global-search" className="mb-4">
                         <SettingsGlobalSearch
                           panels={SETTINGS_PANELS}
                           onNavigate={(panel) => {

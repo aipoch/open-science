@@ -15,7 +15,7 @@ import { WorkspaceSidebar } from './WorkspaceSidebar'
 
 type WorkspaceSidebarContainerProps = Omit<
   React.ComponentProps<typeof WorkspaceSidebar>,
-  'sessions' | 'starNudgeKey' | 'onPreviewSession' | 'otherProjects' | 'onOpenProject'
+  'sessions' | 'onPreviewSession' | 'otherProjects' | 'onOpenProject'
 > & {
   projectId: string
   isProjectArchived: boolean
@@ -91,7 +91,6 @@ const WorkspaceSidebarContainer = ({
       {...sidebarProps}
       importProjectId={projectId}
       onMobileClose={onMobileClose}
-      starNudgeKey={projectId}
       sessions={sessions}
       credentialPendingSessionIds={credentialPendingSessionIds}
       otherProjects={otherProjects}

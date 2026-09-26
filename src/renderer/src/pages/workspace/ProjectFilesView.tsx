@@ -36,6 +36,7 @@ import {
 } from './project-files-preview-owner'
 import {
   ProjectFileItems,
+  ProjectFilesEmptyState,
   ProjectFilesFilterMenu,
   type ProjectFilesViewMode
 } from './project-files-presentation-owner'
@@ -733,33 +734,18 @@ const ProjectFilesViewContent = ({
           catalogIndex.overview.isIndexComplete &&
           visibleFileCount === 0 &&
           !hasPageError ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-[12px] text-text-300">
-              <p>
-                {isSearchActive
-                  ? t('No files match “{{query}}”', { query: debouncedSearchQuery })
-                  : t('No files yet')}
-              </p>
-              {!isSearchActive ? (
-                <p className="max-w-sm">
-                  {t('Attach files in the conversation. Research tasks save generated files here.')}
-                </p>
-              ) : null}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (isSearchActive) setSearchQuery('')
-                  else {
-                    setToolItemExpanded(null)
-                    requestAnimationFrame(() =>
-                      window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
-                    )
-                  }
-                }}
-              >
-                {isSearchActive ? t('Clear search') : t('Go to conversation')}
-              </Button>
-            </div>
+            <ProjectFilesEmptyState
+              query={isSearchActive ? debouncedSearchQuery : undefined}
+              onAction={() => {
+                if (isSearchActive) setSearchQuery('')
+                else {
+                  setToolItemExpanded(null)
+                  requestAnimationFrame(() =>
+                    window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
+                  )
+                }
+              }}
+            />
           ) : null}
 
           {showsUploadsSection ? (

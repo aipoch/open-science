@@ -152,3 +152,17 @@ test('protects unsaved reference edits and keeps save actions visible', async ({
     )
     .toBe('Draft reference')
 })
+
+test('finishes manual reference creation before opening its saved detail', async ({ app }) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  await library(page)
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add reference', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Add reference', exact: true })
+  await editor.getByLabel('Title', { exact: true }).fill('Manual creation regression')
+  await editor.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(editor).toHaveCount(0)
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Manual creation regression' })).toBeVisible()
+})

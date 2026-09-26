@@ -1825,6 +1825,17 @@ describe('SettingsPage layout', () => {
     expect(content?.getAttribute('aria-hidden')).toBe('true')
     expect(nav?.contains(document.activeElement)).toBe(true)
 
+    const search = nav!.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!
+    await act(async () => {
+      search.focus()
+      fireEvent.change(search, { target: { value: 'proxy' } })
+    })
+    expect(nav!.querySelector('[role="listbox"]')).not.toBeNull()
+    await act(async () => fireEvent.keyDown(search, { key: 'Escape' }))
+    expect(nav!.querySelector('[role="listbox"]')).toBeNull()
+    expect(nav?.getAttribute('aria-hidden')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+
     await act(async () => {
       document.activeElement?.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })

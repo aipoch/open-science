@@ -5987,6 +5987,8 @@ describe('LiteratureLibraryPage', () => {
     )
     await waitFor(() => expect(get).toHaveBeenCalledWith(libraryItem.id))
     expect(await screen.findByRole('heading', { name: 'Manual paper' })).not.toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Add reference' })).toBeNull()
+    expect(screen.queryByRole('alertdialog')).toBeNull()
     await within(countButton).findByText('1')
     expect(
       search.mock.calls.filter(([request]) => request.scope === 'library' && request.countOnly)
@@ -9593,6 +9595,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByRole('heading', { name: 'Paper' })).not.toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Add reference' })).toBeNull()
     expect((await screen.findByRole('alert')).textContent).toBe('PDF could not be added.')
     expect(transact).toHaveBeenCalledTimes(1)
   })

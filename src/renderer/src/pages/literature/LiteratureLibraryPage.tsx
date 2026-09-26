@@ -3697,7 +3697,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       )
       if (pending.collectionId) await loadCollections()
       if (pending.projectId) await loadProjectCounts()
-      closeItemEditor()
+      resetItemEditor()
       openSelectedItemDetail(created)
     } catch (error) {
       const pending = pendingCreationRef.current
@@ -3707,7 +3707,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           ? await detailController.read(pending.id).catch(() => undefined)
           : undefined
       if (created) {
-        closeItemEditor()
+        resetItemEditor()
         openSelectedItemDetail(created)
         setPdfError(
           pdfUploadRef.current?.controller.signal.aborted
@@ -3782,19 +3782,21 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       })
   }
 
+  const resetItemEditor = (): void => {
+    pendingCreationRef.current = undefined
+    setCreatedItemId(undefined)
+    setDuplicatePolicy('reuse')
+    importMetadataGenerationRef.current += 1
+    setIsCreatingItem(false)
+    setPendingImportPdf(undefined)
+    setPendingImportDraft(undefined)
+    setIsReadingImportMetadata(false)
+    setCreateItemError(undefined)
+  }
+
   const closeItemEditor = (): void => {
     if (creatingItemRef.current) return
-    requestMetadataExit(newMetadataDirtyRef.current && !createdItemId, () => {
-      pendingCreationRef.current = undefined
-      setCreatedItemId(undefined)
-      setDuplicatePolicy('reuse')
-      importMetadataGenerationRef.current += 1
-      setIsCreatingItem(false)
-      setPendingImportPdf(undefined)
-      setPendingImportDraft(undefined)
-      setIsReadingImportMetadata(false)
-      setCreateItemError(undefined)
-    })
+    requestMetadataExit(newMetadataDirtyRef.current && !createdItemId, resetItemEditor)
   }
 
   const previewRecordImport = async (file: File): Promise<void> => {

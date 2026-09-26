@@ -24,7 +24,7 @@ for (const layout of ['restored', 'maximized', 'mobile'] as const) {
       await trigger.click()
       if (layout === 'maximized') await page.getByRole('button', { name: 'Maximize' }).click()
       // Start inside content: Escape on an autofocus-opened tooltip dismisses that layer first.
-      await page.getByRole('tab', { name: 'Conversation models', exact: true }).focus()
+      await page.locator('[data-slot="settings-main"] h2').first().click()
       const surface = page.locator('[data-slot="settings-surface"]')
       await observeExit(surface)
       if (closeWith === 'button') {
@@ -76,3 +76,20 @@ for (const kind of ['dialog', 'alertdialog'] as const) {
     expect(await page.locator('body').getAttribute('data-closed-surface-opacity')).toBe('0')
   })
 }
+
+test('mobile search dismisses results before navigation and Settings', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Open settings navigation', exact: true }).click()
+  const nav = page.getByRole('navigation', { name: 'Settings', exact: true })
+  const search = nav.getByRole('combobox', { name: 'Search settings', exact: true })
+  await search.fill('proxy')
+  await expect(nav.getByRole('listbox')).toBeVisible()
+  await search.press('Escape')
+  await expect(nav.getByRole('listbox')).toHaveCount(0)
+  await expect(nav).not.toHaveAttribute('aria-hidden', 'true')
+  await page.keyboard.press('Escape')
+  await expect(page.locator('nav[aria-label="Settings"]')).toHaveAttribute('aria-hidden', 'true')
+  await expect(page.locator('[data-slot="settings-surface"]')).toBeVisible()
+})
