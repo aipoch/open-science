@@ -124,6 +124,16 @@ jobs:
               throw ("Expected native ARM64 R binary, got {0} for {1}" -f ("0x{0:x4}" -f $machine), $binary)
             }
           }
+          $loadableExtensions = @('.dll', '.exe', '.node', '.pyd')
+          $foreignBinaries = @(
+            Get-ChildItem -Path $rRoot -File -Recurse |
+              Where-Object { $loadableExtensions -contains $_.Extension.ToLowerInvariant() } |
+              Where-Object { (Get-PeMachine $_.FullName) -ne 0xaa64 }
+          )
+          if ($foreignBinaries.Count -gt 0) {
+            $paths = $foreignBinaries | Select-Object -ExpandProperty FullName
+            throw "R ARM64 installation contains non-ARM64 loadable binaries: $($paths -join ', ')"
+          }
           $version = (& $rscript --version 2>&1 | Out-String).Trim()
           if ($LASTEXITCODE -ne 0) { throw "Rscript ARM64 failed --version: $version" }
           "OPEN_SCIENCE_RSCRIPT=$rscript" >> $env:GITHUB_ENV
