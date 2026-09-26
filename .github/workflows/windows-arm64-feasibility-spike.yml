@@ -110,11 +110,25 @@ jobs:
           if ($install.ExitCode -ne 0) { throw "R ARM64 installer failed with exit code $($install.ExitCode)" }
           $rscript = Join-Path $rRoot 'bin/Rscript.exe'
           if (-not (Test-Path $rscript)) { throw "Rscript missing after ARM64 install: $rscript" }
+          function Get-PeMachine([string] $path) {
+            $bytes = [IO.File]::ReadAllBytes($path)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+            return [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          }
+          $rDlls = @(Get-ChildItem -Path $rRoot -Filter 'R.dll' -File -Recurse | Select-Object -ExpandProperty FullName)
+          if ($rDlls.Count -eq 0) { throw "R.dll missing after ARM64 install: $rRoot" }
+          $rBinaries = @($rscript) + $rDlls
+          foreach ($binary in $rBinaries) {
+            $machine = Get-PeMachine $binary
+            if ($machine -ne 0xaa64) {
+              throw ("Expected native ARM64 R binary, got {0} for {1}" -f ("0x{0:x4}" -f $machine), $binary)
+            }
+          }
           $version = (& $rscript --version 2>&1 | Out-String).Trim()
           if ($LASTEXITCODE -ne 0) { throw "Rscript ARM64 failed --version: $version" }
           "OPEN_SCIENCE_RSCRIPT=$rscript" >> $env:GITHUB_ENV
           "OPEN_SCIENCE_R_ROOT=$rRoot" >> $env:GITHUB_ENV
-          "R runtime: $version" >> $env:GITHUB_STEP_SUMMARY
+          "R runtime: $version (native ARM64 PE 0xaa64)" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Build R Notebook dependency from source
         shell: pwsh
