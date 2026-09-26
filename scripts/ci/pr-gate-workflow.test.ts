@@ -1624,7 +1624,7 @@ describe('PR Gate workflow', () => {
 
     expect(workflow.jobs.windows_core).toMatchObject({
       'runs-on': 'windows-latest',
-      'timeout-minutes': 15
+      'timeout-minutes': 30
     })
     const runtime = workflow.jobs.windows_core.steps?.find(
       ({ name }) => name === 'Test Windows-specific behavior'
