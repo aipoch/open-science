@@ -24,13 +24,14 @@ const probe = (
   const script = `
     const Module = require('node:module')
     const { spawn } = require('node:child_process')
-    const { readFileSync, mkdtempSync, writeFileSync, rmSync } = require('node:fs')
+    const { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } = require('node:fs')
     const ts = require('typescript')
     const native = require('@aipoch/process-tree-native')
     const filename = ${JSON.stringify(filename)}
     const scenario = process.argv[1]
     const fixture = mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'owned-exec-proof-'))
     const gate = require('node:path').join(fixture, 'exec')
+    const execReady = require('node:path').join(fixture, 'exec-ready')
     let ambiguousPid
     let readable = false
     let snapshotFault = false
@@ -89,7 +90,8 @@ const probe = (
       if (native.getDarwinProcess(pid)) throw new Error('Probe process did not exit')
     }
     const helper = 'setInterval(() => {}, 1000)'
-    const clearMarker = 'while [ ! -f ' + JSON.stringify(gate) + ' ]; do /bin/sleep 0.02; done; exec /usr/bin/env -u OPEN_SCIENCE_PROCESS_TREE_ID OWNERSHIP_TEST_EXEC=ready ' + JSON.stringify(process.execPath) + " -e '" + helper + "'"
+    const execHelper = 'require("node:fs").writeFileSync(' + JSON.stringify(execReady) + ', "");' + helper
+    const clearMarker = 'while [ ! -f ' + JSON.stringify(gate) + ' ]; do /bin/sleep 0.02; done; exec /usr/bin/env -u OPEN_SCIENCE_PROCESS_TREE_ID ' + JSON.stringify(process.execPath) + " -e '" + execHelper + "'"
     const forkHelper = [
       "const {spawn}=require('node:child_process')",
       scenario === 'owned-clear'
@@ -140,8 +142,10 @@ const probe = (
         let markerAbsentAfterExec
         if (scenario === 'owned-clear') {
           writeFileSync(gate, '')
-          for (let i = 0; i < 150 && native.getDarwinEnvironmentValue(ambiguousPid, 'OWNERSHIP_TEST_EXEC') !== 'ready'; i++) await pause(20)
-          if (native.getDarwinEnvironmentValue(ambiguousPid, 'OWNERSHIP_TEST_EXEC') !== 'ready') throw new Error('Helper did not exec')
+          // KERN_PROCARGS2 includes argv: env's assignment argument can look ready before exec.
+          // Only the final Node helper can acknowledge that it has started with the new image.
+          for (let i = 0; i < 150 && !existsSync(execReady); i++) await pause(20)
+          if (!existsSync(execReady)) throw new Error('Helper did not exec')
           execPreservedBirthIdentity = native.getDarwinProcess(ambiguousPid)?.uniqueId === identities.get(ambiguousPid)
           markerAbsentAfterExec = native.getDarwinEnvironmentValue(ambiguousPid, 'OPEN_SCIENCE_PROCESS_TREE_ID') === false
         }
