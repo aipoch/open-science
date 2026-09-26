@@ -235,6 +235,31 @@ test('links a multi-page PDF upload as Reading context in a new project @pr-main
   await page.getByRole('button', { name: 'Send message' }).click()
 
   await expect(page.getByTestId('pdf-context-bar')).toContainText('paper.pdf')
+  const readingPicker = page.getByRole('button', { name: 'Choose PDFs for Reading' })
+  await readingPicker.focus()
+  for (const name of ['Open PDF context paper.pdf', 'Remove PDF context paper.pdf']) {
+    await page.keyboard.press('Tab')
+    const control = page.getByRole('button', { name, exact: true })
+    await expect(control).toBeFocused()
+    const outline = await control.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        style: style.outlineStyle,
+        width: parseFloat(style.outlineWidth),
+        offset: parseFloat(style.outlineOffset)
+      }
+    })
+    expect(outline.style).toBe('solid')
+    expect(outline.width).toBeGreaterThanOrEqual(2)
+    // The horizontal scroller clips outside paint: both halves must keep their outline inside.
+    expect(outline.offset).toBeLessThanOrEqual(-outline.width)
+  }
+  await page.keyboard.press('Shift+Tab')
+  await expect(
+    page.getByRole('button', { name: 'Open PDF context paper.pdf', exact: true })
+  ).toBeFocused()
+  await page.screenshot({ path: test.info().outputPath('reading-context-focus.png') })
+
   await expect(page.getByRole('button', { name: 'Page 1 of 2' })).toBeVisible()
   await expect(page.getByText('PDF context Version is unavailable in this Project.')).toHaveCount(0)
   await expect(page.getByText('Managed file reference requires a logical identity.')).toHaveCount(0)

@@ -1204,7 +1204,7 @@ describe('App startup routing', () => {
     const retry = container.querySelector<HTMLButtonElement>('button')
     expect(retry).not.toBeNull()
     expect(retry?.dataset.slot).toBe('button')
-    expect(retry?.className).toContain('focus-visible:ring-3')
+    expect(retry?.className).toContain('focus-visible:keyboard-focus')
     expect(retry?.className).toContain('disabled:pointer-events-none')
     await act(async () => retry?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
@@ -1590,7 +1590,7 @@ describe('App startup routing', () => {
       '[data-testid="session-persistence-retry"]'
     )
     expect(retry?.dataset.slot).toBe('button')
-    expect(retry?.className).toContain('focus-visible:ring-3')
+    expect(retry?.className).toContain('focus-visible:keyboard-focus')
     retry?.click()
     expect(mocks.sessionPersistence.retryLoad).toHaveBeenCalledOnce()
   })

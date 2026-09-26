@@ -67,7 +67,7 @@ describe('SessionPersistenceAlert', () => {
     expect(alert?.className).not.toContain('fixed')
     expect(alert?.className).not.toContain('border-destructive/40')
     expect(retry?.dataset.slot).toBe('button')
-    expect(retry?.className).toContain('focus-visible:ring-3')
+    expect(retry?.className).toContain('focus-visible:keyboard-focus')
     expect(retry?.className).toContain('disabled:pointer-events-none')
 
     act(() => retry?.click())
@@ -93,7 +93,7 @@ describe('SessionPersistenceAlert', () => {
 
     expect(dismiss?.dataset.slot).toBe('button')
     expect(dismiss?.getAttribute('aria-label')).toBe('Dismiss storage warning')
-    expect(dismiss?.className).toContain('focus-visible:ring-3')
+    expect(dismiss?.className).toContain('focus-visible:keyboard-focus')
     act(() => dismiss?.click())
     expect(onDismiss).toHaveBeenCalledOnce()
   })

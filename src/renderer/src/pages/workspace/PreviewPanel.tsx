@@ -337,14 +337,8 @@ const PreviewTab = ({
           aria-selected={isActive}
           aria-keyshortcuts="Delete Backspace"
           tabIndex={isActive ? 0 : -1}
-          className="flex min-w-0 items-center gap-1 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-          onClick={(event) => {
-            if (event.target instanceof Element && event.target.closest('[data-preview-close]')) {
-              onClose(tab.id)
-              return
-            }
-            onActivate(tab.id)
-          }}
+          className="flex min-w-0 items-center gap-1 self-stretch rounded-md px-1 text-left focus-visible:keyboard-focus focus-visible:-outline-offset-2"
+          onClick={() => onActivate(tab.id)}
           onDragOver={(event) => {
             const transfer = annotationTransfers.read()
             if (
@@ -390,19 +384,22 @@ const PreviewTab = ({
           ) : (
             <span className="min-w-0 truncate">{tabTitle}</span>
           )}
-          <span
-            data-preview-close={tabTitle}
-            aria-hidden="true"
-            title={t('Close preview of {{title}}', { title: tabTitle })}
-            className={cn(
-              'shrink-0 rounded-sm p-0.5 hover:bg-bg-000/60',
-              isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-            )}
-          >
-            <X className="size-3.5" />
-          </span>
         </button>
       </PreviewTabActionTarget>
+      <button
+        type="button"
+        data-preview-close={tabTitle}
+        aria-label={t('Close preview of {{title}}', { title: tabTitle })}
+        title={t('Close preview of {{title}}', { title: tabTitle })}
+        tabIndex={isActive ? 0 : -1}
+        className={cn(
+          'flex size-5 shrink-0 items-center justify-center rounded-sm hover:bg-bg-000/60 focus-visible:keyboard-focus focus-visible:-outline-offset-2',
+          isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+        )}
+        onClick={() => onClose(tab.id)}
+      >
+        <X className="size-3.5" aria-hidden="true" />
+      </button>
     </div>
   )
 }
@@ -488,17 +485,27 @@ const PreviewTabBar = ({
     tabRefs.current[index]?.focus()
   }
 
+  const closeTab = (index: number): boolean => {
+    const tab = tabs[index]
+    if (!tab || !onClose(tab.id)) return false
+    const fallbackIndex =
+      tab.id === activeItemId
+        ? index < tabs.length - 1
+          ? index + 1
+          : index - 1
+        : tabs.findIndex((item) => item.id === activeItemId)
+    if (fallbackIndex >= 0) moveToTab(fallbackIndex)
+    else requestComposerFocus()
+    return true
+  }
+
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number): void => {
     const lastIndex = tabs.length - 1
     let nextIndex: number | undefined
 
     if (event.key === 'Delete' || event.key === 'Backspace') {
-      const tab = tabs[index]
-      if (!tab) return
-
       event.preventDefault()
-      const fallbackIndex = index < lastIndex ? index + 1 : index - 1
-      if (onClose(tab.id) && fallbackIndex >= 0) moveToTab(fallbackIndex)
+      closeTab(index)
       return
     }
 
@@ -539,7 +546,7 @@ const PreviewTabBar = ({
           onLinkReadingContext={onLinkReadingContext}
           onUnlinkReadingContext={onUnlinkReadingContext}
           onActivate={onActivate}
-          onClose={onClose}
+          onClose={() => closeTab(index)}
           onKeyDown={(event) => handleTabKeyDown(event, index)}
         />
       ))}
@@ -682,7 +689,7 @@ const PreviewFilePanel = ({
         aria-label={isFullScreenOpen ? t('Preview {{title}}', { title: item.title }) : undefined}
         id={isFullScreenOpen ? undefined : getPreviewPanelId(item.id)}
         aria-labelledby={isFullScreenOpen ? undefined : getPreviewTabId(item.id)}
-        tabIndex={isFullScreenOpen ? -1 : 0}
+        tabIndex={-1}
         data-state={isFullScreenOpen ? 'open' : undefined}
         className={
           isFullScreenOpen
@@ -769,7 +776,7 @@ const PreviewToolPanel = ({
         aria-label={isExpanded ? item.title : undefined}
         id={isExpanded ? undefined : getPreviewPanelId(item.id)}
         aria-labelledby={isExpanded ? undefined : getPreviewTabId(item.id)}
-        tabIndex={isExpanded ? -1 : 0}
+        tabIndex={-1}
         hidden={!isActive && !isExpanded}
         data-state={isExpanded ? 'open' : undefined}
         className={
@@ -803,7 +810,7 @@ const PreviewSourcePanel = ({
     role="tabpanel"
     id={getPreviewPanelId(item.id)}
     aria-labelledby={getPreviewTabId(item.id)}
-    tabIndex={0}
+    tabIndex={-1}
     hidden={!isActive}
     className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card"
   >

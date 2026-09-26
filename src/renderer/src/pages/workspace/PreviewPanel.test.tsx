@@ -22,6 +22,9 @@ import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { literatureReadingDocument } from '../literature/literature-reading'
 import { createPreviewFileItemFromPdfContext } from './preview-file-item'
 
+// jsdom does not implement layout scrolling; real visibility is covered in keyboard-focus.spec.ts.
+Element.prototype.scrollIntoView ??= () => undefined
+
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
     <div>{children}</div>
@@ -1178,7 +1181,7 @@ describe('PreviewPanel', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
   })
 
-  it('keeps pointer close affordances non-focusable and supports Delete on the tab', async () => {
+  it('exposes the active tab close button and preserves Delete navigation', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
     usePreviewWorkbenchStore.getState().upsertItem(
       createFileItem({
@@ -1194,10 +1197,13 @@ describe('PreviewPanel', () => {
     const closeAffordances = container.querySelectorAll<HTMLElement>(
       '[aria-label="Open previews"] [data-preview-close]'
     )
-    expect(Array.from(closeAffordances).every((element) => element.tabIndex === -1)).toBe(true)
+    expect(Array.from(closeAffordances).map((element) => element.tabIndex)).toEqual([0, -1])
     expect(
       Array.from(closeAffordances).every(
-        (element) => element.tagName === 'SPAN' && element.getAttribute('aria-hidden') === 'true'
+        (element) =>
+          element.tagName === 'BUTTON' &&
+          element.hasAttribute('aria-label') &&
+          !element.closest('[role="tab"]')
       )
     ).toBe(true)
 

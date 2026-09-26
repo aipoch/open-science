@@ -192,29 +192,29 @@ const localizeVisionRunFailure = (
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
 const composerIconButtonClassName = cn(
-  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50',
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-50',
   composerInteractiveTransitionClassName
 )
 
 const composerSplitSendPrimaryButtonClassName = cn(
-  "relative h-8 w-8 rounded-l-md rounded-r-none border-0 bg-transparent bg-clip-border text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:-left-3 [@media(pointer:coarse)]:before:right-0 [@media(pointer:coarse)]:before:content-['']",
+  "relative h-8 w-8 rounded-l-md rounded-r-none border-0 bg-transparent bg-clip-border text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:-left-3 [@media(pointer:coarse)]:before:right-0 [@media(pointer:coarse)]:before:content-['']",
   composerInteractiveTransitionClassName
 )
 
 const composerSplitSendMenuButtonClassName = cn(
-  "relative h-8 w-8 rounded-l-none rounded-r-md border-0 bg-transparent bg-clip-border text-primary-foreground after:pointer-events-none after:absolute after:inset-y-1 after:left-0 after:w-px after:bg-primary-foreground/20 after:content-[''] hover:bg-primary-foreground/10 hover:text-primary-foreground active:translate-y-px aria-expanded:bg-primary-foreground/10 aria-expanded:text-primary-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:left-0 [@media(pointer:coarse)]:before:-right-3 [@media(pointer:coarse)]:before:content-['']",
+  "relative h-8 w-8 rounded-l-none rounded-r-md border-0 bg-transparent bg-clip-border text-primary-foreground after:pointer-events-none after:absolute after:inset-y-1 after:left-0 after:w-px after:bg-primary-foreground/20 after:content-[''] hover:bg-primary-foreground/10 hover:text-primary-foreground active:translate-y-px aria-expanded:bg-primary-foreground/10 aria-expanded:text-primary-foreground focus-visible:keyboard-focus motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:left-0 [@media(pointer:coarse)]:before:-right-3 [@media(pointer:coarse)]:before:content-['']",
   composerInteractiveTransitionClassName
 )
 
 const composerCancelButtonClassName = cn(
-  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-000 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-000 hover:bg-bg-300 focus-visible:keyboard-focus',
   composerInteractiveTransitionClassName
 )
 const composerContentClassName = 'mx-auto w-full max-w-4xl'
 const attachmentChipClassName =
   'flex h-9 min-w-0 max-w-[220px] items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-2 text-text-000'
 const attachmentRemoveButtonClassName = cn(
-  "relative flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-2 [@media(pointer:coarse)]:before:content-['']",
+  "relative flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-2 [@media(pointer:coarse)]:before:content-['']",
   composerInteractiveTransitionClassName
 )
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4
@@ -223,7 +223,7 @@ const attachmentRemoveButtonClassName = cn(
  * slop: pass (1–58) · contrast: inherited semantic tokens · mobile: pass (34, 49–57)
  */
 const pastedTextRestoreButtonClassName = cn(
-  'flex h-full min-w-0 flex-1 flex-col justify-center rounded-md text-left hover:text-text-100 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50',
+  'flex h-full min-w-0 flex-1 flex-col justify-center rounded-md text-left hover:text-text-100 active:translate-y-px focus-visible:keyboard-focus motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50',
   composerInteractiveTransitionClassName
 )
 // Read from two places (pointer-fine tooltip and coarse-pointer hint), so it takes t rather than
@@ -469,7 +469,7 @@ const DismissibleConversationError = ({
         type="button"
         onClick={() => setDismissed(true)}
         aria-label={t('Dismiss error')}
-        className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-red-900/40"
+        className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
       >
         <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
       </button>
@@ -993,6 +993,58 @@ const ConversationPanel = ({
   const packageOperation = usePackageOperationStore((state) => state.operation)
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
   const ordinaryComposerBlocked = Boolean(blockingInteraction || packageLocked)
+
+  useEffect(() => {
+    let tooltipEscape: KeyboardEvent | undefined
+    const rememberTooltipEscape = (event: KeyboardEvent): void => {
+      const target = event.target
+      // Radix consumes Escape while dismissing a tooltip. Remember that non-interactive layer
+      // before dismissal removes it, so the same key can also leave keyboard navigation.
+      tooltipEscape =
+        event.key === 'Escape' &&
+        target instanceof HTMLElement &&
+        target
+          .getAttribute('aria-describedby')
+          ?.split(/\s+/)
+          .some((id) => document.getElementById(id)?.getAttribute('role') === 'tooltip')
+          ? event
+          : undefined
+    }
+    const returnToComposer = (event: KeyboardEvent): void => {
+      const target = event.target
+      if (
+        event.key !== 'Escape' ||
+        (event.defaultPrevented && tooltipEscape !== event) ||
+        event.isComposing ||
+        event.repeat ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        !canEditDraft ||
+        ordinaryComposerBlocked ||
+        !(target instanceof HTMLElement) ||
+        !target.matches(':focus-visible') ||
+        target.closest(
+          'input, textarea, [contenteditable="true"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'
+        ) ||
+        document.querySelector(
+          '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
+        )
+      ) {
+        return
+      }
+      event.preventDefault()
+      setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
+    }
+    // Bubble after control, menu and mention handlers have had a chance to consume Escape.
+    window.addEventListener('keydown', rememberTooltipEscape, true)
+    window.addEventListener('keydown', returnToComposer)
+    return () => {
+      window.removeEventListener('keydown', rememberTooltipEscape, true)
+      window.removeEventListener('keydown', returnToComposer)
+    }
+  }, [canEditDraft, ordinaryComposerBlocked])
   const rootTurnBusy = Boolean(
     blockingInteraction ||
     actionability?.activity === 'running' ||
@@ -1279,7 +1331,7 @@ const ConversationPanel = ({
                 >
                   <button
                     type="button"
-                    className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 transition-colors hover:bg-surface-control-hover hover:text-text-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 transition-colors hover:bg-surface-control-hover hover:text-text-000 focus-visible:keyboard-focus"
                     aria-label={t('Export diagnostics…')}
                     onClick={() => sessionTools.exportDiagnostics?.(activeSession)}
                   >
@@ -1922,7 +1974,7 @@ const ConversationPanel = ({
                                   disabled={pdfContext.isPending}
                                   aria-label={t('Choose PDFs for Reading')}
                                   className={cn(
-                                    'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-[12px] font-medium leading-4 text-text-000 hover:bg-bg-200 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
+                                    'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-[12px] font-medium leading-4 text-text-000 hover:bg-bg-200 active:translate-y-px focus-visible:keyboard-focus motion-reduce:active:translate-y-0',
                                     composerInteractiveTransitionClassName
                                   )}
                                 >
@@ -1965,7 +2017,7 @@ const ConversationPanel = ({
                                           <button
                                             type="button"
                                             className={cn(
-                                              'min-w-0 flex-1 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
+                                              'min-w-0 flex-1 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus focus-visible:-outline-offset-2 motion-reduce:active:translate-y-0',
                                               composerInteractiveTransitionClassName
                                             )}
                                             aria-label={t('Open PDF context {{name}}', {
@@ -1989,7 +2041,10 @@ const ConversationPanel = ({
                                         <TooltipTrigger asChild>
                                           <button
                                             type="button"
-                                            className={attachmentRemoveButtonClassName}
+                                            className={cn(
+                                              attachmentRemoveButtonClassName,
+                                              'focus-visible:-outline-offset-2'
+                                            )}
                                             disabled={pending || pdfContext.isPending}
                                             aria-label={t('Remove PDF context {{name}}', {
                                               name: binding.name
@@ -2052,7 +2107,7 @@ const ConversationPanel = ({
                                     aria-label={t('Keep as attachments')}
                                     onClick={dismissAutomaticReading}
                                     className={cn(
-                                      'relative flex size-7 shrink-0 items-center justify-center rounded-lg text-text-300 before:absolute before:-inset-2 hover:bg-bg-200 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
+                                      'relative flex size-7 shrink-0 items-center justify-center rounded-lg text-text-300 before:absolute before:-inset-2 hover:bg-bg-200 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus motion-reduce:active:translate-y-0',
                                       composerInteractiveTransitionClassName
                                     )}
                                   >
@@ -2116,7 +2171,7 @@ const ConversationPanel = ({
                             <button
                               type="button"
                               onClick={composer.actions.cancelQueuedEdit}
-                              className="rounded px-2 py-1 hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              className="rounded px-2 py-1 hover:bg-bg-200 focus-visible:keyboard-focus"
                               disabled={!canEditDraft}
                             >
                               {t('Exit queued editing')}

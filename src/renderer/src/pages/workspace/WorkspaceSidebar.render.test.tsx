@@ -1592,7 +1592,7 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(clearButton?.getAttribute('data-size')).toBe('icon-xs')
       expect(clearButton?.className).toContain('text-text-100')
       expect(clearButton?.className).toContain('hover:bg-bg-200')
-      expect(clearButton?.className).toContain('focus-visible:ring-3')
+      expect(clearButton?.className).toContain('focus-visible:keyboard-focus')
 
       const mouseDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
       await act(async () => {

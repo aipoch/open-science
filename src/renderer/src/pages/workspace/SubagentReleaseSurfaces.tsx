@@ -170,7 +170,7 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
         aria-controls={single ? undefined : `subagents-bar-list-${session.id}`}
         aria-live="polite"
         title={single?.title}
-        className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-[11px] text-text-300 hover:bg-bg-300 hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-[11px] text-text-300 hover:bg-bg-300 hover:text-text-100 focus-visible:keyboard-focus"
         onClick={(event) => {
           if (single) {
             openSubagentPreview(session, single, event.currentTarget)
@@ -229,7 +229,7 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
                       status: t(SUBAGENT_STATUS_LABELS[child.status])
                     })
               }
-              className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border-300/15 px-3.5 py-2.5 text-left last:border-b-0 hover:bg-bg-100/60 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50"
+              className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border-300/15 px-3.5 py-2.5 text-left last:border-b-0 hover:bg-bg-100/60 focus-visible:keyboard-focus focus-visible:-outline-offset-2"
               onClick={() => selectChild(child)}
             >
               <span className="min-w-0">
@@ -300,7 +300,7 @@ const SubagentAvailabilityNotice = ({
       </span>
       <button
         type="button"
-        className="shrink-0 rounded-md border border-border-200 bg-bg-000 px-2 py-1 text-text-100 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className="shrink-0 rounded-md border border-border-200 bg-bg-000 px-2 py-1 text-text-100 hover:bg-bg-300 focus-visible:keyboard-focus"
         onClick={policyDisabled ? onTurnOnDelegation : onOpenSettings}
       >
         {policyDisabled ? t('Turn on Delegation') : t('Open Settings')}
@@ -437,7 +437,7 @@ const SubagentPreview = ({
               <button
                 type="button"
                 aria-label={t('Close Subagents preview')}
-                className="grid size-8 shrink-0 place-items-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                className="grid size-8 shrink-0 place-items-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-000 focus-visible:keyboard-focus"
                 onClick={close}
               >
                 <X className="size-4" aria-hidden="true" />

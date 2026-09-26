@@ -640,7 +640,7 @@ const SpecialistCapabilitiesSection = ({
               )}
             </div>
 
-            <Tabs.Content value="skills">
+            <Tabs.Content value="skills" tabIndex={-1}>
               <div className="overflow-hidden rounded-lg border border-border">
                 {selectedSkillRows.length === 0 ? (
                   <p className="px-3 py-3.5 text-[12px] text-muted-foreground">
@@ -709,7 +709,7 @@ const SpecialistCapabilitiesSection = ({
               </p>
             </Tabs.Content>
 
-            <Tabs.Content value="connectors">
+            <Tabs.Content value="connectors" tabIndex={-1}>
               <div className="overflow-hidden rounded-lg border border-border">
                 {selectedConnectorRows.length === 0 ? (
                   <p className="px-3 py-3.5 text-[12px] text-muted-foreground">
