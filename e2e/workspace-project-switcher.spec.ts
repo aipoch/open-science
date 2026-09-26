@@ -1,7 +1,7 @@
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 
-import { suppressWorkspaceStarNudge, test } from './fixtures/electron-app'
+import { test } from './fixtures/electron-app'
 
 const createProject = async (
   page: Page,
@@ -66,7 +66,6 @@ test('switches projects from the Workspace project menu and expands remaining pr
 }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
 
   await seedProjects(page, 15)
   page = await app.restart()
@@ -263,7 +262,6 @@ test('switches projects from the Workspace project menu and expands remaining pr
 test('closes mobile navigation when switching projects', async ({ app }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
 
   await seedProjects(page, 1)
   page = await app.restart()

@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 type FieldHelpProps = {
+  label?: string
   content: ReactNode
   delayDuration?: number
   contentClassName?: string
@@ -15,6 +16,7 @@ type FieldHelpProps = {
 // Keeps field guidance compact and consistent while callers retain ownership of the help content.
 const FieldHelp = ({
   content,
+  label,
   delayDuration = 200,
   contentClassName
 }: FieldHelpProps): React.JSX.Element => {
@@ -28,9 +30,9 @@ const FieldHelp = ({
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label={t('More information')}
+            aria-label={label ? t('Help for {{field}}', { field: label }) : t('More information')}
             data-slot="field-help"
-            className="size-[18px] rounded-full bg-transparent text-muted-foreground/50 hover:bg-muted hover:text-foreground focus-visible:bg-muted focus-visible:text-foreground data-[state=delayed-open]:bg-muted data-[state=delayed-open]:text-foreground data-[state=instant-open]:bg-muted data-[state=instant-open]:text-foreground"
+            className="size-6 rounded-full bg-transparent text-muted-foreground/50 hover:bg-muted hover:text-foreground focus-visible:bg-muted focus-visible:text-foreground data-[state=delayed-open]:bg-muted data-[state=delayed-open]:text-foreground data-[state=instant-open]:bg-muted data-[state=instant-open]:text-foreground"
           >
             <CircleHelp className="size-3" aria-hidden="true" />
           </Button>

@@ -46,15 +46,14 @@ describe('SettingsSearchInput', () => {
         )
       })
       const input = container.querySelector('input')!
-      const hint = input.nextElementSibling!
+      const hint = container.querySelector('kbd')
       expect(input.type).toBe('search')
       expect(input.value).toBe('abst')
       expect(input.placeholder).toBe(placeholder || ' ')
       expect(input.classList.contains('pr-20')).toBe(false)
       expect(input.classList.contains('pr-2.5')).toBe(true)
-      expect(input.classList.contains('[&:placeholder-shown:not(:focus)]:pr-28')).toBe(true)
-      expect(hint.classList.contains('hidden')).toBe(true)
-      expect(hint.classList.contains('peer-[:placeholder-shown:not(:focus)]:flex')).toBe(true)
+      expect(input.classList.contains('[&:placeholder-shown:not(:focus)]:pr-28')).toBe(false)
+      expect(hint).toBeNull()
     }
   )
 
@@ -74,7 +73,7 @@ describe('SettingsSearchInput', () => {
     expect(event.defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(input)
     expect(input?.getAttribute('aria-keyshortcuts')).toBe('Meta+Alt+K')
-    expect(document.body.textContent).toContain('⌘⌥K')
+    expect(container.querySelector('kbd')).toBeNull()
   })
 
   it('shows the cross-platform shortcut and focuses the field with Ctrl+Alt+K', () => {
@@ -93,7 +92,7 @@ describe('SettingsSearchInput', () => {
     expect(event.defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(input)
     expect(input?.getAttribute('aria-keyshortcuts')).toBe('Control+Alt+K')
-    expect(document.body.textContent).toContain('CtrlAltK')
+    expect(container.querySelector('kbd')).toBeNull()
   })
 
   it('focuses the search owned by the topmost dialog', () => {
@@ -251,7 +250,7 @@ describe('SettingsSearchInput', () => {
     const input = document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
     expect(input?.className).toContain('[&::-webkit-search-cancel-button]:hidden')
     expect(document.body.querySelector('[aria-label="Clear search"]')).toBeNull()
-    expect(document.body.textContent).toContain('K')
+    expect(container.querySelector('kbd')).toBeNull()
   })
 
   it('replaces the shortcut hint with a clear button once the field has text', () => {

@@ -16,7 +16,7 @@ vi.mock('@/lib/session-fork', () => ({
 import { ConversationPanel } from './ConversationPanel'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { subscribeAnnotationReveal } from './annotations/annotation-reveal'
-import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
+import { docFromText, emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
 import {
   createInitialGrantedFoldersState,
@@ -67,6 +67,7 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
     <div>{children}</div>
   ),
   DropdownMenuSeparator: (): React.JSX.Element => <hr />,
+  DropdownMenuLabel: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
   DropdownMenuItem: ({
     children,
     disabled,
@@ -207,16 +208,21 @@ vi.mock('./WorkspaceMessageScroller', () => ({
     credentialPending,
     isResumingSession,
     visiblePermissionPending,
-    pendingElicitations = []
+    pendingElicitations = [],
+    onStartResearch
   }: {
     forkSourceContent?: React.ReactNode
     credentialPending?: boolean
     isResumingSession?: boolean
     visiblePermissionPending?: boolean
     pendingElicitations?: unknown[]
+    onStartResearch?: (prompt: string) => void
   }): React.JSX.Element => (
     <>
       {forkSourceContent}
+      {onStartResearch ? (
+        <button onClick={() => onStartResearch('Analyze my data')}>Start research</button>
+      ) : null}
       {isResumingSession ? (
         <span data-testid="resume-progress-indicator">Resuming session</span>
       ) : null}
@@ -1150,6 +1156,28 @@ describe('ConversationPanel composer errors', () => {
     expect(
       container.querySelector<HTMLButtonElement>('[aria-label="Retry Artifact publication"]')
     ).toBeNull()
+  })
+})
+
+describe('ConversationPanel research starters', () => {
+  it('fills an empty draft without submitting or overwriting existing content', () => {
+    const changeDoc = vi.fn()
+    const submit = vi.fn()
+    renderPanel({
+      composer: { actions: { changeDoc } },
+      conversation: { actions: { submit: { draft: submit } } }
+    })
+    const starter = (): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Start research'
+      )
+    act(() => starter()?.click())
+    expect(changeDoc).toHaveBeenCalledWith(docFromText('Analyze my data'))
+    expect(submit).not.toHaveBeenCalled()
+    renderPanel({ composer: { view: { doc: docFromText('Existing draft') } } })
+    expect(starter()).toBeUndefined()
+    renderPanel({ view: { canEditDraft: false } })
+    expect(starter()).toBeUndefined()
   })
 })
 

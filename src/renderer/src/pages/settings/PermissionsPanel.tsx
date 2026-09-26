@@ -161,13 +161,13 @@ const PermissionRow = ({
   const summary = grant.approvalSummary ? t(grant.approvalSummary) : undefined
   const createdLabel =
     typeof grant.createdAt === 'number' && Number.isFinite(grant.createdAt)
-      ? t('Approved {{date}}', {
+      ? t('Added {{date}}', {
           date: new Intl.DateTimeFormat(i18n.language, {
             dateStyle: 'medium',
             timeStyle: 'medium'
           }).format(grant.createdAt)
         })
-      : t('Approval time unknown')
+      : t('Added time unknown')
   const revokeName = [
     title,
     summary,
@@ -396,7 +396,9 @@ const PermissionsPanel = ({
                 {t('Remembered permissions')}
               </h3>
               <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-muted-foreground">
-                {t('Review or revoke approvals saved for tools, projects, and conversations.')}
+                {t(
+                  'Review built-in defaults and permissions remembered for tools, projects, and conversations.'
+                )}
               </p>
               <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
                 {t(

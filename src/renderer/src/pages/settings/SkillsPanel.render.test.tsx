@@ -353,7 +353,7 @@ describe('SkillsPanel (list view)', () => {
     expect(filters?.querySelector('[aria-label="Filter Skills by agent"]')).not.toBeNull()
     expect(filters?.querySelector('[aria-label="Filter by Tag"]')).not.toBeNull()
     const search = filters?.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
-    expect(search?.parentElement?.className).toContain('min-w-48')
+    expect(search?.parentElement?.className).toContain('basis-full')
     expect(filters?.contains(manage ?? null)).toBe(false)
     expect(filters?.contains(addSkill ?? null)).toBe(false)
     expect(manage).toBeUndefined()

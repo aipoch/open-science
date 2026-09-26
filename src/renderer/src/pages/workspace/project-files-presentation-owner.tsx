@@ -733,5 +733,28 @@ const ProjectFilesFilterMenu = ({
   )
 }
 
-export { ProjectFileItems, ProjectFilesFilterMenu }
+const ProjectFilesEmptyState = ({
+  query,
+  onAction
+}: {
+  query?: string
+  onAction: () => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-[12px] text-text-300">
+      <p>{query ? t('No files match “{{query}}”', { query }) : t('No files yet')}</p>
+      {!query ? (
+        <p className="max-w-sm">
+          {t('Attach files in the conversation. Research tasks save generated files here.')}
+        </p>
+      ) : null}
+      <Button variant="outline" size="sm" onClick={onAction}>
+        {query ? t('Clear search') : t('Go to conversation')}
+      </Button>
+    </div>
+  )
+}
+
+export { ProjectFileItems, ProjectFilesEmptyState, ProjectFilesFilterMenu }
 export type { ProjectFilesViewMode }

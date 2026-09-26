@@ -122,7 +122,7 @@ describe('AgentStep', () => {
     const panel = container.querySelector('section[aria-label="Set up the agent runtime"]')
     expect(panel?.querySelector('h2')?.textContent).toBe('Set up the agent runtime')
     expect(panel?.textContent).toContain(
-      'Pick the agent Open-Science drives, then install it. Only this agent needs to be installed to continue.'
+      'Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.'
     )
     expect(panel?.querySelector('button')?.textContent).toContain('Re-detect')
     expect(container.textContent).not.toContain('Agent framework')

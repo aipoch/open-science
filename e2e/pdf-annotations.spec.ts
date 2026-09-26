@@ -192,7 +192,7 @@ test('imports external notes, preserves provenance through undo, and persists an
   await page.getByRole('button', { name: 'Close preview of native-notes.pdf', exact: true }).click()
   await page.getByRole('button', { name: 'Close', exact: true }).click()
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
-  await page.getByRole('button', { name: 'Model settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
   await settings
     .getByRole('navigation', { name: 'Settings' })

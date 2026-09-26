@@ -970,7 +970,7 @@ describe('mandatory product glossary', () => {
       sessionNotebook: de.renderer['Session notebook'],
       drivenAgent:
         de.renderer[
-          'Pick the agent Open-Science drives, then install it. Only this agent needs to be installed to continue.'
+          'Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.'
         ]
     }).toEqual({
       minimizeToTray: 'In den Infobereich minimieren',
@@ -1007,7 +1007,7 @@ describe('mandatory product glossary', () => {
         'Durch das Senden dieses bearbeiteten Prompts wird ab hier ein neuer Branch erstellt. Die folgende {{count}} Interaktion bleibt über die Versionssteuerung der Nachricht verfügbar.',
       sessionNotebook: 'Sitzungs-Notebook',
       drivenAgent:
-        'Wählen Sie den Agenten aus, den Open-Science steuert, und installieren Sie ihn. Nur dieser Agent muss installiert sein, um fortzufahren.'
+        'Verwenden Sie die ausgewählte Laufzeit, sobald sie bereit ist. Wechseln Sie nur, wenn Sie deren Anbieterunterstützung benötigen. Im nächsten Schritt verbinden Sie ein Modell.'
     })
   })
 
@@ -2066,7 +2066,7 @@ describe('mandatory product glossary', () => {
       'Edit specialist': 'Modifier le spécialiste',
       'Recent files': 'Fichiers récents',
       'Search messages, projects, files and Library…':
-        'Rechercher des messages, projets, fichiers et dans Library…',
+        'Rechercher des messages, projets, fichiers et dans la bibliothèque…',
       'Search skills': 'Rechercher des compétences',
       'Search skills to add': 'Rechercher des compétences à ajouter',
       'Search skills…': 'Rechercher des compétences…',
@@ -3151,8 +3151,8 @@ describe('Russian catalog quality', () => {
     ['System_language', 'Как в системе'],
     ['System_runtime', 'Системная'],
     [
-      'Pick the agent Open-Science drives, then install it. Only this agent needs to be installed to continue.',
-      'Выберите агента, которым будет управлять Open-Science, затем установите его. Для продолжения достаточно установить только этого агента.'
+      'Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.',
+      'Используйте выбранную среду, если она готова. Выбирайте другую только ради нужной поддержки поставщиков. На следующем шаге вы подключите модель.'
     ],
     ['Read-only', 'Только чтение'],
     [

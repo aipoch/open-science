@@ -1,9 +1,9 @@
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 
-// Home and Workspace expose different labels for the same direct Settings action.
+// Home and Workspace expose the same Settings action.
 export const openGeneralSettings = async (page: Page): Promise<Locator> => {
-  await page.getByRole('button', { name: /^(Model settings|Settings)$/ }).click()
+  await page.getByRole('button', { name: /^Settings$/ }).click()
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
   await expect(settings).toBeVisible()
   const navigation = settings.getByRole('navigation', { name: 'Settings', exact: true })

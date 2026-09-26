@@ -54,7 +54,7 @@ export const SettingsSearchInput = ({
   }
 
   return (
-    <div className={cn('group relative flex-1', containerClassName)}>
+    <div className={cn('group relative min-w-0 flex-1', containerClassName)}>
       <Search
         className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
         aria-hidden="true"
@@ -71,30 +71,25 @@ export const SettingsSearchInput = ({
         aria-keyshortcuts={getSettingsSearchKeyShortcuts(shortcutScope)}
         className={cn(
           'peer pl-8 pr-2.5 [&::-webkit-search-cancel-button]:hidden',
-          shortcutScope === 'local'
-            ? '[&:placeholder-shown:not(:focus)]:pr-28'
-            : '[&:placeholder-shown:not(:focus)]:pr-20',
+          shortcutScope === 'global' && '[&:placeholder-shown:not(:focus)]:pr-20',
           // The clear button needs more room than the text-only padding once the field has text.
           hasText && 'pr-8!',
           className
         )}
       />
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-1 peer-[:placeholder-shown:not(:focus)]:flex"
-      >
-        <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1 font-mono text-[10px] leading-none text-muted-foreground shadow-sm">
-          {isMac ? '⌘' : 'Ctrl'}
-        </kbd>
-        {shortcutScope === 'local' ? (
+      {shortcutScope === 'global' ? (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-1 peer-[:placeholder-shown:not(:focus)]:flex"
+        >
           <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1 font-mono text-[10px] leading-none text-muted-foreground shadow-sm">
-            {isMac ? '⌥' : 'Alt'}
+            {isMac ? '⌘' : 'Ctrl'}
           </kbd>
-        ) : null}
-        <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1 font-mono text-[10px] leading-none text-muted-foreground shadow-sm">
-          K
-        </kbd>
-      </span>
+          <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1 font-mono text-[10px] leading-none text-muted-foreground shadow-sm">
+            K
+          </kbd>
+        </span>
+      ) : null}
       {hasText ? (
         <Button
           type="button"

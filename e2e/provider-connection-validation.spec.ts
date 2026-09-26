@@ -12,7 +12,7 @@ const SYNTHETIC_KEY = 'sk-e2e-connection-validation-only'
 type Probe = { model: unknown; authorization?: string; path?: string }
 
 const openModelSettings = async (page: Page): Promise<Locator> => {
-  await page.getByRole('button', { name: /^(Model settings|Settings)$/ }).click()
+  await page.getByRole('button', { name: /^Settings$/ }).click()
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
   await expect(settings).toBeVisible()
   const navigation = settings.getByRole('navigation', { name: 'Settings', exact: true })

@@ -195,7 +195,7 @@ const TokenLimitField = ({
       <label id={`${id}-label`} className={fieldLabelClassName} htmlFor={id}>
         {label}
       </label>
-      <FieldHelp content={help} />
+      <FieldHelp label={label} content={help} />
     </div>
     <Input
       id={id}
@@ -271,6 +271,7 @@ const ProviderForm = ({
       value.codexTransport !== 'auto' ||
       value.supportsImageInput ||
       value.reasoningEffortPreset !== 'unsupported' ||
+      Boolean(value.contextWindow.trim()) ||
       Boolean(value.maxInputTokens.trim()) ||
       Boolean(value.maxOutputTokens.trim())
   )
@@ -298,7 +299,10 @@ const ProviderForm = ({
         )
 
   const advancedVisible =
-    advancedOpen || Boolean(errors.maxInputTokens) || Boolean(errors.maxOutputTokens)
+    advancedOpen ||
+    Boolean(errors.contextWindow) ||
+    Boolean(errors.maxInputTokens) ||
+    Boolean(errors.maxOutputTokens)
 
   const selectedKind = PROVIDER_KINDS.find((kind) => kind.key === selectedKey)
   // Where to get a key for an official vendor (region-specific console); custom providers have none.
@@ -319,6 +323,7 @@ const ProviderForm = ({
             )}
           </label>
           <FieldHelp
+            label={t('API key')}
             content={
               <>
                 <span className="block font-medium">{t(securityCopyKeys.title)}</span>
@@ -405,7 +410,9 @@ const ProviderForm = ({
       <div className="space-y-1.5">
         <div className="flex items-center gap-1">
           <span className={fieldLabelClassName}>{t('Provider type')}</span>
-          {selectedKind ? <FieldHelp content={t(selectedKind.descriptionKey)} /> : null}
+          {selectedKind ? (
+            <FieldHelp label={t('Provider type')} content={t(selectedKind.descriptionKey)} />
+          ) : null}
         </div>
         <Select
           value={selectedKey}
@@ -524,6 +531,7 @@ const ProviderForm = ({
               <div className="flex items-center gap-1">
                 <span className={fieldLabelClassName}>{t('Transport')}</span>
                 <FieldHelp
+                  label={t('Transport')}
                   content={t(
                     'Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.'
                   )}
@@ -637,8 +645,10 @@ const ProviderForm = ({
         </>
       ) : isCustom ? (
         <>
-          <div className="space-y-1.5">
-            <span className={fieldLabelClassName}>{t('Local model server')}</span>
+          <details className="space-y-2" open={loopbackCustomGateway || undefined}>
+            <summary className="cursor-pointer text-xs font-medium">
+              {t('Local model server')}
+            </summary>
             <div className="flex flex-wrap gap-2" role="group" aria-label={t('Local model server')}>
               {LOCAL_MODEL_PRESETS.map((preset) => {
                 const active = value.baseUrl.trim() === preset.baseUrl
@@ -668,7 +678,7 @@ const ProviderForm = ({
                 'Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.'
               )}
             </p>
-          </div>
+          </details>
 
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">
@@ -677,6 +687,7 @@ const ProviderForm = ({
                 <RequiredMark />
               </label>
               <FieldHelp
+                label={t('Base URL')}
                 content={
                   <Trans
                     t={t}
@@ -708,6 +719,7 @@ const ProviderForm = ({
             <div className="flex items-center gap-1">
               <span className={fieldLabelClassName}>{t('API format')}</span>
               <FieldHelp
+                label={t('API format')}
                 content={t(
                   'Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.'
                 )}
@@ -778,23 +790,23 @@ const ProviderForm = ({
             ) : null}
           </div>
 
-          <TokenLimitField
-            id="provider-context-window"
-            label={t('Context window')}
-            help={t('Total tokens shared by the request and response.')}
-            value={value.contextWindow}
-            presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
-            disabled={disabled}
-            error={errors.contextWindow}
-            onValueChange={(contextWindow) => onChange({ contextWindow })}
-            t={t}
-          />
-
           <AdvancedSettingsDisclosure
             expanded={advancedVisible}
             label={t('Advanced settings')}
             onToggle={() => setAdvancedOpen((open) => !open)}
           >
+            <TokenLimitField
+              id="provider-context-window"
+              label={t('Context window')}
+              help={t('Total tokens shared by the request and response.')}
+              value={value.contextWindow}
+              presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
+              disabled={disabled}
+              error={errors.contextWindow}
+              onValueChange={(contextWindow) => onChange({ contextWindow })}
+              t={t}
+            />
+
             <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
               <div className="flex items-start justify-between gap-3">
                 <label className="space-y-0.5" htmlFor="provider-image-input">
@@ -842,6 +854,7 @@ const ProviderForm = ({
                     <div className="flex items-center gap-1">
                       <span className={fieldLabelClassName}>{t('Supported effort levels')}</span>
                       <FieldHelp
+                        label={t('Supported effort levels')}
                         content={
                           <>
                             <span className="block">
@@ -904,6 +917,7 @@ const ProviderForm = ({
                       <div className="flex items-center gap-1">
                         <span className={fieldLabelClassName}>{t('Reasoning request format')}</span>
                         <FieldHelp
+                          label={t('Reasoning request format')}
                           content={t(
                             'The JSON fields sent to a Chat Completions gateway. Follow the gateway documentation; OpenAI-compatible services commonly use {{parameter}}.',
                             { parameter: 'reasoning_effort' }
@@ -1031,6 +1045,7 @@ const ProviderForm = ({
                   <div className="flex items-center gap-1">
                     <span className={fieldLabelClassName}>{t('Supported models')}</span>
                     <FieldHelp
+                      label={t('Supported models')}
                       content={t(
                         'Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active model selector after adding.'
                       )}

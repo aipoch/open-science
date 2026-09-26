@@ -307,7 +307,9 @@ const PreviewTab = ({
       ? t('Side chat')
       : tab.type === 'tool' && tab.toolKind === 'library'
         ? t('Library')
-        : tab.title
+        : tab.type === 'tool' && tab.toolKind === 'files'
+          ? t('Files')
+          : tab.title
 
   return (
     <div

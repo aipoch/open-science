@@ -54,7 +54,7 @@ describe('FieldHelp', () => {
     const trigger = container.querySelector<HTMLButtonElement>('[data-slot="field-help"]')
 
     expect(trigger?.getAttribute('aria-label')).toBe('More information')
-    expect(trigger?.className).toContain('size-[18px]')
+    expect(trigger?.className).toContain('size-6')
     expect(trigger?.className).toContain('rounded-full')
     expect(trigger?.className).toContain('text-muted-foreground/50')
     expect(trigger?.className).toContain('hover:bg-muted')

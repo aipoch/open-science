@@ -89,6 +89,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
@@ -112,6 +113,7 @@ import {
   appendArtifactMention,
   docToSkillIds,
   docToText,
+  docFromText,
   pastedTextAttachmentDomId,
   pastedTextPreviewName,
   type ComposerPastedTextNode
@@ -1379,6 +1381,15 @@ const ConversationPanel = ({
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
+              onStartResearch={
+                canEditDraft &&
+                !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())
+                  ? (prompt) => {
+                      onValidatedDraftDocChange(docFromText(prompt))
+                      window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
+                    }
+                  : undefined
+              }
               onOpenLibraryMention={layout.onOpenLibraryMention}
               forkSourceContent={
                 activeSession?.branchSource && sessionTools.openSession ? (
@@ -2491,6 +2502,7 @@ const ConversationPanel = ({
                                 </Tooltip>
                               </>
                               <DropdownMenuContent side="top" align="start" className="w-56">
+                                <DropdownMenuLabel>{t('Files')}</DropdownMenuLabel>
                                 <>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
@@ -2563,6 +2575,7 @@ const ConversationPanel = ({
                                     <DropdownMenuSeparator />
                                   </>
                                 ) : null}
+                                <DropdownMenuLabel>{t('Conversation actions')}</DropdownMenuLabel>
                                 <DropdownMenuItem
                                   data-testid="menu-request-review"
                                   disabled={!canEditDraft || isRequestReviewDisabled || isReviewing}

@@ -50,7 +50,7 @@ test('routes a Settings UI fixed model through production Delegation and Usage',
   )
   page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'Model settings' }).click()
+  await page.getByRole('button', { name: 'Settings' }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })

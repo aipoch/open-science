@@ -47,22 +47,6 @@ const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.c
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 type E2eWindowMode = 'hidden' | 'normal'
 
-// Keep in sync with GitHubStarBadge. Workspace variant waits 5s, then opens a popover that can
-// swallow the next pointer click (revision navigation, project menus) on macOS and Windows CI.
-const STAR_NUDGE_LAST_SHOWN_STORAGE_KEY = 'open-science:github-star-nudge-last-shown-at'
-
-const recordStarNudgeCooldown = (storageKey: string): void => {
-  try {
-    window.localStorage.setItem(storageKey, String(Date.now()))
-  } catch {
-    // Isolated source-preview documents and opaque origins deny localStorage.
-  }
-}
-
-const suppressWorkspaceStarNudge = async (page: Pick<Page, 'evaluate'>): Promise<void> => {
-  await page.evaluate(recordStarNudgeCooldown, STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
-}
-
 const electronLaunchTarget = (
   userDataRoot: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -574,12 +558,6 @@ const openMainWindow = async (
   await rendererFailures.observe(page)
   await waitForRendererReady(page)
   await onFirstReady?.(page)
-  // Writing the cooldown after first paint does not cancel a timer GitHubStarBadge already
-  // scheduled. Reload so the workspace variant remounts with the cooldown already set.
-  await suppressWorkspaceStarNudge(page)
-  await page.reload({ waitUntil: 'domcontentloaded' })
-  await applyHiddenWindowPresentation(page, windowMode)
-  await waitForRendererReady(page)
   return page
 }
 
@@ -1628,8 +1606,6 @@ export {
   electronLaunchTarget,
   launchEnvironment,
   removeTreeForCleanup,
-  STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
-  suppressWorkspaceStarNudge,
   test
 }
 export type { ElectronApp }

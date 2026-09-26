@@ -410,3 +410,24 @@ it('allows original seasonal date text with an independently optional searchable
     expect.objectContaining({ issuedText: 'Winter 2024–2025?', issuedYear: undefined })
   )
 })
+
+it('tracks edited and reverted input without treating disclosure as a data change', () => {
+  const item = literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Original' })
+  const onDirtyChange = vi.fn()
+  render(
+    <LiteratureMetadataEditor
+      item={item}
+      saving={false}
+      onSave={vi.fn()}
+      onCancel={vi.fn()}
+      onDirtyChange={onDirtyChange}
+    />
+  )
+  expect(onDirtyChange).toHaveBeenLastCalledWith(false)
+  fireEvent.click(screen.getByRole('button', { name: 'Advanced settings' }))
+  expect(onDirtyChange).toHaveBeenLastCalledWith(false)
+  fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Draft' } })
+  expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+  fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Original' } })
+  expect(onDirtyChange).toHaveBeenLastCalledWith(false)
+})

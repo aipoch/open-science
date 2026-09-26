@@ -1,3 +1,4 @@
+import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { ErrorNotice } from '@/components/error-notice'
 // Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
 import type { TFunction } from 'i18next'
@@ -35,6 +36,7 @@ import {
 } from './project-files-preview-owner'
 import {
   ProjectFileItems,
+  ProjectFilesEmptyState,
   ProjectFilesFilterMenu,
   type ProjectFilesViewMode
 } from './project-files-presentation-owner'
@@ -732,11 +734,18 @@ const ProjectFilesViewContent = ({
           catalogIndex.overview.isIndexComplete &&
           visibleFileCount === 0 &&
           !hasPageError ? (
-            <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-text-300">
-              {isSearchActive
-                ? t('No files match “{{query}}”', { query: debouncedSearchQuery })
-                : t('No files yet')}
-            </div>
+            <ProjectFilesEmptyState
+              query={isSearchActive ? debouncedSearchQuery : undefined}
+              onAction={() => {
+                if (isSearchActive) setSearchQuery('')
+                else {
+                  setToolItemExpanded(null)
+                  requestAnimationFrame(() =>
+                    window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
+                  )
+                }
+              }}
+            />
           ) : null}
 
           {showsUploadsSection ? (
