@@ -1059,8 +1059,8 @@ describe('WorkspacePage draft preservation', () => {
     await renderPage(false)
 
     act(() => {
-      conversationProps.onOpenLibraryMention!({})
-      conversationProps.onOpenLibraryMention!({
+      conversationProps.layout.onOpenLibraryMention!({})
+      conversationProps.layout.onOpenLibraryMention!({
         collectionId: 'collection-1',
         collectionName: 'TP53 evidence'
       })

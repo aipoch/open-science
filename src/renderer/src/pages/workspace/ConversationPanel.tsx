@@ -334,6 +334,7 @@ type ConversationPanelLayout = {
   isPreviewPanelCollapsed: boolean
   togglePreviewPanel: () => void
   openSidebar: () => void
+  onOpenLibraryMention?: (scope: { collectionId?: string; collectionName?: string }) => void
 }
 
 type ConversationPanelPermissions = {
@@ -436,7 +437,6 @@ type StopSubmissionState = Readonly<{
 
 type ConversationPanelProps = {
   view: ConversationPanelView
-  onOpenLibraryMention?: (scope: { collectionId?: string; collectionName?: string }) => void
   composer: Pick<WorkspaceComposerController, 'view' | 'actions'>
   conversation: WorkspaceConversationController
   sideChat: SideChatController
@@ -478,7 +478,6 @@ const DismissibleConversationError = ({
 // Middle chat surface owns the visible conversation and local message composer UI.
 const ConversationPanel = ({
   view,
-  onOpenLibraryMention,
   composer,
   conversation,
   sideChat: sideChatController,
@@ -1321,7 +1320,7 @@ const ConversationPanel = ({
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
-              onOpenLibraryMention={onOpenLibraryMention}
+              onOpenLibraryMention={layout.onOpenLibraryMention}
               forkSourceContent={
                 activeSession?.branchSource && sessionTools.openSession ? (
                   <div className="mb-2 flex items-center gap-2 text-xs">

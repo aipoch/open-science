@@ -1520,7 +1520,6 @@ const WorkspacePage = ({
               openMobileSidebar
             }) => (
               <ConversationPanel
-                onOpenLibraryMention={onOpenLibraryMention}
                 view={{
                   activeSession,
                   composerFocusKey: currentDraftKey,
@@ -1535,7 +1534,8 @@ const WorkspacePage = ({
                 layout={{
                   isPreviewPanelCollapsed,
                   togglePreviewPanel: togglePreviewPanelFromLayout,
-                  openSidebar: openMobileSidebar
+                  openSidebar: openMobileSidebar,
+                  onOpenLibraryMention
                 }}
                 permissions={{
                   requests: visiblePermissionRequests,
