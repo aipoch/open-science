@@ -85,6 +85,21 @@ jobs:
           }
           $global:LASTEXITCODE = 0
 
+      - name: Probe Electron ARM64 artifact
+        shell: pwsh
+        run: |
+          node node_modules/electron/install.js
+          if ($LASTEXITCODE -ne 0) { throw 'Electron ARM64 artifact download failed' }
+          $electronPath = Join-Path $PWD 'node_modules/electron/dist/electron.exe'
+          if (-not (Test-Path $electronPath)) { throw "Electron executable missing: $electronPath" }
+          $electronVersion = (& $electronPath --version 2>&1 | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Electron ARM64 executable failed --version: $electronVersion" }
+          $bytes = [IO.File]::ReadAllBytes($electronPath)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xaa64) { throw ("Expected Electron PE ARM64 0xaa64, got 0x{0:x4}" -f $machine) }
+          "Electron ${electronVersion}: native ARM64 (PE 0x{0:x4})" -f $machine >> $env:GITHUB_STEP_SUMMARY
+
       - name: Fetch and execute pinned native ARM64 micromamba
         shell: pwsh
         run: |
