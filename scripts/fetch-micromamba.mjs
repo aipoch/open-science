@@ -4,7 +4,7 @@
 // Downloads a micromamba binary for one conda subdir and writes it to a destination path.
 //
 //   node scripts/fetch-micromamba.mjs <subdir> <destPath> [primary|compatibility]
-//   subdir   one of: osx-arm64 | osx-64 | linux-64 | linux-aarch64 | win-64
+//   subdir   one of: osx-arm64 | osx-64 | linux-64 | linux-aarch64 | win-64 | win-arm64
 //   destPath full path to write the binary to (e.g. resources/bin/mac/arm64/micromamba)
 //
 // Source is the pinned release in mamba-org/micromamba-releases, the official mirror of conda-forge
@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const SUBDIRS = new Set(['osx-arm64', 'osx-64', 'linux-64', 'linux-aarch64', 'win-64'])
+const SUBDIRS = new Set(['osx-arm64', 'osx-64', 'linux-64', 'linux-aarch64', 'win-64', 'win-arm64'])
 
 // Pinned version + digests, loaded from the sibling JSON (kept out of code so repinning is a data edit).
 const PINNED = JSON.parse(
@@ -72,7 +72,7 @@ const resolveVersion = (env = process.env, variant = 'primary') => {
   if (override && override !== pin.version) {
     throw new Error(
       `MICROMAMBA_VERSION=${override} does not match the pinned ${pin.version}; ` +
-        'update scripts/micromamba-versions.json (version + all 5 sha256 digests) to repin, ' +
+        'update scripts/micromamba-versions.json (version + all 6 sha256 digests) to repin, ' +
         'rather than overriding at runtime'
     )
   }
@@ -133,7 +133,7 @@ const main = async () => {
     console.error(`unknown subdir "${subdir}" (expected one of ${[...SUBDIRS].join(', ')})`)
     process.exit(1)
   }
-  const binName = subdir === 'win-64' ? 'micromamba.exe' : 'micromamba'
+  const binName = subdir.startsWith('win-') ? 'micromamba.exe' : 'micromamba'
   const pin = resolvePin(variant)
   const version = resolveVersion(process.env, variant)
   const url = resolveDownloadUrl(subdir, variant)

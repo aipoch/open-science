@@ -29,6 +29,14 @@ describe('micromamba pinning', () => {
     )
   })
 
+  it('pins the native Windows ARM64 archive and executable', () => {
+    expect(PINNED.sha256['win-arm64']).toMatch(/^[0-9a-f]{64}$/)
+    expect(PINNED.binarySha256['win-arm64']).toMatch(/^[0-9a-f]{64}$/)
+    expect(resolveDownloadUrl('win-arm64')).toBe(
+      'https://github.com/mamba-org/micromamba-releases/releases/download/2.8.1-1/micromamba-win-arm64.tar.bz2'
+    )
+  })
+
   it('pins a separately built Windows compatibility runner and both of its digests', () => {
     expect(PINNED.compatibility).toMatchObject({
       version: '1.5.12',
@@ -40,6 +48,7 @@ describe('micromamba pinning', () => {
       'https://github.com/mamba-org/micromamba-releases/releases/download/1.5.12-0/micromamba-win-64.tar.bz2'
     )
     expect(() => resolveDownloadUrl('linux-64', 'compatibility')).toThrow(/no pinned sha256/)
+    expect(() => resolveDownloadUrl('win-arm64', 'compatibility')).toThrow(/no pinned sha256/)
   })
 })
 

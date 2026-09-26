@@ -10,7 +10,7 @@
     "",
     "To repin (bump `version` and `releaseTag`, then regenerate every digest below):",
     "  tag=2.8.1-1",
-    "  for s in osx-arm64 osx-64 linux-64 linux-aarch64 win-64; do",
+    "  for s in osx-arm64 osx-64 linux-64 linux-aarch64 win-64 win-arm64; do",
     "    curl -fsSL \"https://github.com/mamba-org/micromamba-releases/releases/download/$tag/micromamba-$s.tar.bz2\" | shasum -a 256 | awk -v s=$s '{print s, $1}'",
     "  done",
     "The sha256 covers the downloaded .tar.bz2 archive (before extraction). binarySha256 covers the extracted executable before Windows release signing; the signed installed executable is checked with Authenticode at runtime.",
@@ -25,10 +25,12 @@
     "osx-64": "cd3c10cec65704c0a96195b46002d45350d0dd43a52d940e9dc17c517b7ee439",
     "linux-64": "8528263837623551a44464a372e5bd6b0b856479a83d2a77490a19dd98da3b06",
     "linux-aarch64": "daa4d5c7c5d688ce0deed4ff7887a4ff95429c89d80c76e39ab1ee3d5f66b913",
-    "win-64": "e82874c473688860d087dfe825e1a52ae9deaf8099c7edaf3caff80e2687ed5d"
+    "win-64": "e82874c473688860d087dfe825e1a52ae9deaf8099c7edaf3caff80e2687ed5d",
+    "win-arm64": "9990c8bacfa1019efcc58096d4d1aabbfc83b5760a782351b4bb7d5ef2578f28"
   },
   "binarySha256": {
-    "win-64": "b645a5259cb92b5869b0e60943390dd0d362cae45bc7e2f5ba8c7e4a4b06c7aa"
+    "win-64": "b645a5259cb92b5869b0e60943390dd0d362cae45bc7e2f5ba8c7e4a4b06c7aa",
+    "win-arm64": "62d82b63e7bcbd592882a35d0787f0a2b7051086323dd3fc4c758d42417b1323"
   },
   "compatibility": {
     "version": "1.5.12",
