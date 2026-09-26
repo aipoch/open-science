@@ -60,6 +60,9 @@ jobs:
           $python = Join-Path $prefix 'python.exe'
           $version = (& $python --version 2>&1).Trim()
           if ($LASTEXITCODE -ne 0) { throw 'Native ARM64 Python failed --version' }
+          $figures = Join-Path $env:RUNNER_TEMP 'python-3.12-figures'
+          New-Item -ItemType Directory -Force $figures | Out-Null
+          $env:OPEN_SCIENCE_KERNEL_FIGURES_DIR = $figures
           @'
           {"req_id":"arm64-python-3.12","code":"import sys\nimport matplotlib\nimport numpy as np\nimport matplotlib.pyplot as plt\nplt.plot([1, 2], [3, 4])\nprint(sys.version)\nprint(matplotlib.__version__)\nprint(np.__version__)"}
           '@ | & $python resources/notebook/python_loop.py | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'python-loop.jsonl')
@@ -91,6 +94,9 @@ jobs:
           $python = Join-Path $prefix 'python.exe'
           $version = (& $python --version 2>&1).Trim()
           if ($LASTEXITCODE -ne 0) { throw 'Native ARM64 Python 3.13 failed --version' }
+          $figures = Join-Path $env:RUNNER_TEMP 'python-3.13-figures'
+          New-Item -ItemType Directory -Force $figures | Out-Null
+          $env:OPEN_SCIENCE_KERNEL_FIGURES_DIR = $figures
           @'
           {"req_id":"arm64-python-3.13","code":"import sys\nimport matplotlib\nimport numpy as np\nimport matplotlib.pyplot as plt\nplt.plot([1, 2], [3, 4])\nprint(sys.version)\nprint(matplotlib.__version__)\nprint(np.__version__)"}
           '@ | & $python resources/notebook/python_loop.py | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'python-3.13-loop.jsonl')
