@@ -13,7 +13,7 @@ jobs:
   arm64:
     name: Native Windows ARM64 probe
     runs-on: windows-11-arm
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -99,6 +99,68 @@ jobs:
           $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
           if ($machine -ne 0xaa64) { throw ("Expected Electron PE ARM64 0xaa64, got 0x{0:x4}" -f $machine) }
           "Electron ${electronVersion}: native ARM64 (PE 0x{0:x4})" -f $machine >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Install official R 4.4 ARM64 runtime
+        shell: pwsh
+        run: |
+          $rInstaller = Join-Path $env:RUNNER_TEMP 'R-4.4.3-aarch64.exe'
+          $rRoot = Join-Path $env:RUNNER_TEMP 'R-4.4.3-aarch64'
+          Invoke-WebRequest -Uri 'https://www.r-project.org/nosvn/winutf8/aarch64/R-4/R-4.4.3-aarch64.exe' -OutFile $rInstaller
+          $install = Start-Process -FilePath $rInstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$rRoot") -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "R ARM64 installer failed with exit code $($install.ExitCode)" }
+          $rscript = Join-Path $rRoot 'bin/Rscript.exe'
+          if (-not (Test-Path $rscript)) { throw "Rscript missing after ARM64 install: $rscript" }
+          $version = (& $rscript --version 2>&1 | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Rscript ARM64 failed --version: $version" }
+          "OPEN_SCIENCE_RSCRIPT=$rscript" >> $env:GITHUB_ENV
+          "OPEN_SCIENCE_R_ROOT=$rRoot" >> $env:GITHUB_ENV
+          "R runtime: $version" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Build R Notebook dependency from source
+        shell: pwsh
+        run: |
+          $rtoolsInstaller = Join-Path $env:RUNNER_TEMP 'rtools44-aarch64.exe'
+          Invoke-WebRequest -Uri 'https://cran.r-project.org/bin/windows/Rtools/rtools44/files/rtools44-aarch64-6459-6401.exe' -OutFile $rtoolsInstaller
+          $install = Start-Process -FilePath $rtoolsInstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Rtools44 ARM64 installer failed with exit code $($install.ExitCode)" }
+          $library = Join-Path $env:RUNNER_TEMP 'r-library'
+          New-Item -ItemType Directory -Force $library | Out-Null
+          $env:R_LIBS_USER = $library
+          "R_LIBS_USER=$library" >> $env:GITHUB_ENV
+          $output = (& $env:OPEN_SCIENCE_RSCRIPT --vanilla -e "install.packages('jsonlite', repos='https://cloud.r-project.org', type='source', lib=Sys.getenv('R_LIBS_USER'))" 2>&1 | Out-String)
+          $output
+          if ($LASTEXITCODE -ne 0) { throw "jsonlite ARM64 source build failed: $output" }
+          & $env:OPEN_SCIENCE_RSCRIPT --vanilla -e "library(jsonlite); cat('jsonlite=', as.character(packageVersion('jsonlite')), '\n', sep='')"
+          if ($LASTEXITCODE -ne 0) { throw 'jsonlite ARM64 load failed' }
+          "R jsonlite: source build and load passed" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Execute R Notebook loop on ARM64
+        shell: pwsh
+        run: |
+          $figures = Join-Path $env:RUNNER_TEMP 'r-figures'
+          New-Item -ItemType Directory -Force $figures | Out-Null
+          $env:OPEN_SCIENCE_KERNEL_FIGURES_DIR = $figures
+          $probe = @'
+          const { spawnSync } = require('node:child_process')
+          const { readFileSync } = require('node:fs')
+          const rscript = process.env.OPEN_SCIENCE_RSCRIPT
+          const loop = `${process.cwd()}\\resources\\notebook\\r_loop.R`
+          const code = 'plot(c(1, 2), c(3, 4))\ncat("r-arm64\\n")\n'
+          const codeBytes = Buffer.from(code, 'utf8')
+          const input = Buffer.concat([Buffer.from(`arm64-r ${codeBytes.length}\n`, 'ascii'), codeBytes])
+          const result = spawnSync(rscript, ['--vanilla', loop], { input, encoding: 'utf8', env: process.env })
+          process.stdout.write(result.stdout || '')
+          process.stderr.write(result.stderr || '')
+          if (result.status !== 0) process.exit(result.status || 1)
+          const response = JSON.parse((result.stdout || '').trim().split(/\r?\n/).at(-1))
+          if (response.error) throw new Error(response.error)
+          if (!Array.isArray(response.figures) || response.figures.length < 1) throw new Error('R Notebook produced no figure')
+          console.log(`R Notebook figure: passed (${response.figures.length})`)
+          '@
+          $output = ($probe | node 2>&1 | Out-String)
+          $output
+          if ($LASTEXITCODE -ne 0) { throw "R Notebook ARM64 loop failed: $output" }
+          'R Notebook ARM64 loop: passed' >> $env:GITHUB_STEP_SUMMARY
 
       - name: Fetch and execute pinned native ARM64 micromamba
         shell: pwsh
