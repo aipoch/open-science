@@ -941,7 +941,7 @@ it('preserves PubMed seasonal dates and collective authors without inventing mon
 
 it('recovers a missing abstract by exact DOI and commits both reviewed sources without refetching', async () => {
   const fetchFn = vi.fn<typeof fetch>(async (url) =>
-    String(url).includes('crossref.org')
+    new URL(String(url)).hostname === 'api.crossref.org'
       ? Response.json({
           message: { ...crossrefResponse.message, author: [{ name: 'Example Research Group' }] }
         })
@@ -1020,7 +1020,7 @@ it('gets an abstract through PubMed EFetch and retains a full author name', asyn
 
 it('retains usable fields when an optional abstract source is rate limited', async () => {
   const fetchFn = vi.fn<typeof fetch>(async (url) =>
-    String(url).includes('crossref.org')
+    new URL(String(url)).hostname === 'api.crossref.org'
       ? Response.json(crossrefResponse)
       : new Response('', { status: 429 })
   )
@@ -1069,7 +1069,7 @@ it('does not fall back to an old PMID after the user enters a replacement DOI', 
 
 it('rejects a conflicting secondary identifier rather than mixing two papers', async () => {
   const fetchFn = vi.fn<typeof fetch>(async (url) =>
-    String(url).includes('crossref.org')
+    new URL(String(url)).hostname === 'api.crossref.org'
       ? new Response('', { status: 503 })
       : String(url).includes('efetch')
         ? new Response(
@@ -1124,7 +1124,7 @@ it('rejects a successful DOI lookup that contradicts the stored PMID', async () 
       applyMetadata: vi.fn()
     },
     vi.fn(async (url) =>
-      String(url).includes('crossref.org')
+      new URL(String(url)).hostname === 'api.crossref.org'
         ? Response.json(crossrefResponse)
         : Response.json({
             resultList: {

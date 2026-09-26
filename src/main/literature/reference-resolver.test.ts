@@ -150,7 +150,7 @@ it.each(['doi:10.1234/cancelled', 'pmid:12345'])(
 
 it('falls back from a Crossref 404 to the matching DataCite DOI', async () => {
   const fetchFn = vi.fn<typeof fetch>(async (url) =>
-    String(url).includes('crossref.org')
+    new URL(String(url)).hostname === 'api.crossref.org'
       ? new Response('', { status: 404 })
       : Response.json({
           data: {
@@ -183,7 +183,7 @@ it.each(['10.1234/other', undefined])(
   'does not accept an unmatched Europe PMC DOI: %s',
   async (doi) => {
     const fetchFn = vi.fn<typeof fetch>(async (url) =>
-      String(url).includes('crossref.org')
+      new URL(String(url)).hostname === 'api.crossref.org'
         ? Response.json({ message: { DOI: '10.1234/requested', title: ['Requested paper'] } })
         : Response.json({
             resultList: {
@@ -207,7 +207,7 @@ it.each(['10.1234/other', undefined])(
 
 it('does not select one of multiple exact DOI matches arbitrarily', async () => {
   const fetchFn = vi.fn<typeof fetch>(async (url) =>
-    String(url).includes('crossref.org')
+    new URL(String(url)).hostname === 'api.crossref.org'
       ? Response.json({ message: { DOI: '10.1234/requested', title: ['Requested paper'] } })
       : Response.json({
           resultList: {
@@ -228,7 +228,7 @@ it('does not select one of multiple exact DOI matches arbitrarily', async () => 
 
 it('keeps supplemental source attribution in the Agent discovery receipt', async () => {
   const fetchFn = vi.fn<typeof fetch>(async (url) =>
-    String(url).includes('crossref.org')
+    new URL(String(url)).hostname === 'api.crossref.org'
       ? Response.json({ message: { DOI: '10.1234/requested', title: ['Requested paper'] } })
       : Response.json({
           resultList: {
@@ -253,7 +253,7 @@ it('keeps supplemental source attribution in the Agent discovery receipt', async
 
 it('escapes DOI suffixes as a single Europe PMC query literal', async () => {
   const fetchFn = vi.fn<typeof fetch>(async (url) =>
-    String(url).includes('crossref.org')
+    new URL(String(url)).hostname === 'api.crossref.org'
       ? Response.json({ message: { title: ['Paper'] } })
       : Response.json({ resultList: { result: [] } })
   )
@@ -265,9 +265,9 @@ it('escapes DOI suffixes as a single Europe PMC query literal', async () => {
 
 it('preserves a registration-agency rate limit when Crossref and Europe PMC have no record', async () => {
   const fetchFn = vi.fn<typeof fetch>(async (url) =>
-    String(url).includes('datacite.org')
+    new URL(String(url)).hostname === 'api.datacite.org'
       ? new Response('', { status: 429 })
-      : String(url).includes('crossref.org')
+      : new URL(String(url)).hostname === 'api.crossref.org'
         ? new Response('', { status: 404 })
         : Response.json({ resultList: { result: [] } })
   )

@@ -98,3 +98,86 @@ it('starts TTL at successful completion and shares a slow request past the TTL w
   await completeLiteraturePdfDraft(draft)
   expect(lookup).toHaveBeenCalledTimes(2)
 })
+
+const dualIdentifierDraft = {
+  ...draft,
+  identifiers: [
+    ...draft.identifiers,
+    { scheme: 'pmid' as const, value: '12345678', isPrimary: false }
+  ]
+}
+
+it('tries PMID after a successful DOI result lacks an abstract, preserving earlier verified fields', async () => {
+  const lookup = vi
+    .fn()
+    .mockResolvedValueOnce({
+      ...resolved,
+      containerTitle: 'Crossref journal',
+      typeFields: { volume: '12' }
+    })
+    .mockResolvedValueOnce({
+      ...dualIdentifierDraft,
+      title: 'Alternate source title',
+      abstract: 'PubMed supplies the missing abstract.',
+      containerTitle: 'Alternative journal',
+      language: 'eng',
+      typeFields: { volume: '99', pages: '10-20' }
+    })
+  install(lookup)
+  const notice = vi.fn()
+  const completed = await completeLiteraturePdfDraft(dualIdentifierDraft, notice)
+  expect(lookup.mock.calls).toEqual([[draft.identifiers[0].value], ['pmid:12345678']])
+  expect(completed).toMatchObject({
+    title: resolved.title,
+    abstract: 'PubMed supplies the missing abstract.',
+    containerTitle: 'Crossref journal',
+    language: 'eng',
+    typeFields: { volume: '12', pages: '10-20' },
+    identifiers: dualIdentifierDraft.identifiers
+  })
+  expect(notice).not.toHaveBeenCalled()
+  expect(dualIdentifierDraft.abstract).toBe('')
+})
+
+it.each(['offline', 'conflicting', 'empty'])(
+  'retains DOI metadata and reports one notice after an unhelpful PMID lookup: %s',
+  async (outcome) => {
+    const lookup = vi
+      .fn()
+      .mockResolvedValueOnce({ ...resolved, containerTitle: 'Verified journal' })
+    if (outcome === 'offline') lookup.mockRejectedValueOnce(new Error('offline'))
+    else
+      lookup.mockResolvedValueOnce({
+        ...dualIdentifierDraft,
+        abstract: outcome === 'empty' ? '' : 'Unrelated abstract',
+        identifiers:
+          outcome === 'conflicting'
+            ? [
+                { scheme: 'doi', value: '10.1234/unrelated', isPrimary: true },
+                dualIdentifierDraft.identifiers[1]
+              ]
+            : dualIdentifierDraft.identifiers
+      })
+    install(lookup)
+    const notice = vi.fn()
+    expect(await completeLiteraturePdfDraft(dualIdentifierDraft, notice)).toMatchObject({
+      title: resolved.title,
+      containerTitle: 'Verified journal',
+      abstract: '',
+      identifiers: dualIdentifierDraft.identifiers
+    })
+    expect(lookup).toHaveBeenCalledTimes(2)
+    expect(notice).toHaveBeenCalledExactlyOnceWith({ lookupFailed: true })
+  }
+)
+
+it('stops after a verified result already includes an abstract', async () => {
+  const lookup = vi.fn().mockResolvedValue({ ...resolved, abstract: 'Available abstract.' })
+  install(lookup)
+  const notice = vi.fn()
+  expect((await completeLiteraturePdfDraft(dualIdentifierDraft, notice)).abstract).toBe(
+    'Available abstract.'
+  )
+  expect(lookup).toHaveBeenCalledExactlyOnceWith(draft.identifiers[0].value)
+  expect(notice).not.toHaveBeenCalled()
+})

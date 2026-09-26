@@ -83,6 +83,13 @@ const lookupPdfDoi = (doi: string): Promise<LiteratureItemInput> => {
   return result
 }
 
+const hasMetadataValue = (value: unknown): boolean =>
+  typeof value === 'string'
+    ? value.trim().length > 0
+    : value !== undefined &&
+      value !== null &&
+      (typeof value !== 'object' || Object.keys(value).length > 0)
+
 const completeLiteraturePdfDraft = async (
   draft: LiteratureItemInput,
   onNotice?: Notice
@@ -94,6 +101,7 @@ const completeLiteraturePdfDraft = async (
     onNotice?.({ lookupFailed: true })
     return draft
   }
+  let completed = draft
   const rejected = new Set<(typeof identifiers)[number]>()
   for (const identifier of identifiers) {
     try {
@@ -105,7 +113,7 @@ const completeLiteraturePdfDraft = async (
         rejected.add(identifier)
         continue
       }
-      const conflictingIdentifier = draft.identifiers
+      const conflictingIdentifier = completed.identifiers
         .filter((entry) => !rejected.has(entry))
         .some(
           (local) =>
@@ -118,16 +126,23 @@ const completeLiteraturePdfDraft = async (
             )
         )
       if (conflictingIdentifier) continue
-      // Remote defaults must not erase fields present only in the PDF metadata.
+      // The first verified source completes the local draft; later sources only fill gaps.
+      const supplemental = completed !== draft
       const populated = Object.fromEntries(
-        Object.entries(resolved).filter(([, value]) =>
-          typeof value === 'string'
-            ? value.trim().length > 0
-            : value !== undefined &&
-              (typeof value !== 'object' || (value !== null && Object.keys(value).length > 0))
+        Object.entries(resolved).filter(
+          ([key, value]) =>
+            hasMetadataValue(value) &&
+            (!supplemental || !hasMetadataValue(completed[key as keyof LiteratureItemInput]))
         )
       )
-      const mergedIdentifiers = draft.identifiers.filter((entry) => !rejected.has(entry))
+      const typeFields = Object.fromEntries(
+        Object.entries(resolved.typeFields).filter(
+          ([key, value]) =>
+            hasMetadataValue(value) &&
+            (!supplemental || !hasMetadataValue(completed.typeFields[key]))
+        )
+      )
+      const mergedIdentifiers = completed.identifiers.filter((entry) => !rejected.has(entry))
       for (const remote of resolved.identifiers) {
         if (
           !mergedIdentifiers.some(
@@ -139,28 +154,27 @@ const completeLiteraturePdfDraft = async (
         )
           mergedIdentifiers.push({ ...remote, isPrimary: false })
       }
-      const completed = {
-        ...draft,
+      completed = {
+        ...completed,
         ...populated,
-        typeFields: { ...draft.typeFields, ...resolved.typeFields },
+        typeFields: { ...completed.typeFields, ...typeFields },
         identifiers: mergedIdentifiers
       }
-      if (!completed.abstract) onNotice?.({ lookupFailed: true })
-      return completed
+      if (completed.abstract) return completed
     } catch {
       /* Try another identifier; retain the local draft on network failure. */
     }
   }
   onNotice?.({ lookupFailed: true })
-  if (!rejected.size) return draft
+  if (!rejected.size) return completed
   return {
-    ...draft,
-    identifiers: draft.identifiers.filter((entry) => !rejected.has(entry)),
+    ...completed,
+    identifiers: completed.identifiers.filter((entry) => !rejected.has(entry)),
     url: [...rejected].some(
-      (entry) => createLiteratureIdentifierUrl(entry.scheme, entry.value) === draft.url
+      (entry) => createLiteratureIdentifierUrl(entry.scheme, entry.value) === completed.url
     )
       ? ''
-      : draft.url
+      : completed.url
   }
 }
 
