@@ -510,7 +510,7 @@ function LibraryResults({
             <ul aria-label={t('Library')} className="min-w-0">
               {entries.map((entry) => (
                 <ReferenceRow
-                  key={entry.id}
+                  key={`${page.key}:${entry.id}`}
                   entry={entry}
                   expanded={selection.expanded === entry.id}
                   onToggle={() =>

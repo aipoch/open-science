@@ -239,6 +239,24 @@ describe('LibraryPreview', () => {
     expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 0 }))
   })
 
+  it('starts a reused reference abstract collapsed in a different scope', async () => {
+    const entry = reference('shared', 'Shared reference')
+    entry.item.abstract = 'x'.repeat(601) + 'end of abstract'
+    search.mockResolvedValueOnce({ entries: [entry] }).mockResolvedValueOnce({ entries: [entry] })
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+
+    fireEvent.click(screen.getByRole('button', { name: /Shared reference/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    expect(screen.getByText(/end of abstract/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: /Shared reference/ }))
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
+    expect(screen.queryByText(/end of abstract/)).toBeNull()
+  })
+
   it('opens a collapsed reference PDF directly without expanding or fetching extra data', async () => {
     const entry = reference()
     entry.attachments = [
