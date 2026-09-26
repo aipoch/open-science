@@ -856,7 +856,7 @@ describe('ProjectFilesView', () => {
     expect(clearButton?.className).toContain('text-text-100')
     expect(clearButton?.className).toContain('hover:bg-bg-200')
     expect(clearButton?.className).not.toContain('hover:text-text-000')
-    expect(clearButton?.className).toContain('focus-visible:ring-3')
+    expect(clearButton?.className).toContain('focus-visible:keyboard-focus')
     expect(clearButton?.className).not.toContain('focus-visible:ring-2')
 
     await act(async () => clearButton?.focus())

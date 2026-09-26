@@ -466,6 +466,13 @@
   --ring: oklch(0.66 0.1 184);
 }
 
+/* Keyboard focus must remain visible in forced colors and appear without a transition. */
+@utility keyboard-focus {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  transition-property: none;
+}
+
 @layer base {
   *,
   *::before,
@@ -475,7 +482,7 @@
   }
 
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-ring/50;
+    @apply keyboard-focus;
   }
 
   html,

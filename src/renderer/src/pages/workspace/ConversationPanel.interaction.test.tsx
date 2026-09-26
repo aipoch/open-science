@@ -4578,7 +4578,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
     )
     expect(resumeButton?.disabled).toBe(true)
     expect(resumeButton?.dataset.slot).toBe('button')
-    expect(resumeButton?.className).toContain('focus-visible:ring-3')
+    expect(resumeButton?.className).toContain('focus-visible:keyboard-focus')
     expect(resumeButton?.className).toContain('disabled:pointer-events-none')
 
     act(() => resumeButton?.click())

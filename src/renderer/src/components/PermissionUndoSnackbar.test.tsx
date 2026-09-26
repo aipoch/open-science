@@ -529,7 +529,7 @@ describe('PermissionUndoSnackbar', () => {
     expect(buttons).toHaveLength(2)
     buttons.forEach((button) => {
       expect(button.className).toContain('hover:bg-muted')
-      expect(button.className).toContain('focus-visible:ring-3')
+      expect(button.className).toContain('focus-visible:keyboard-focus')
     })
   })
   it('retains an archive notice during restore and preserves remaining time after hover', async () => {

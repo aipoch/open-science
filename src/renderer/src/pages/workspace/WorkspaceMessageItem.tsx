@@ -200,7 +200,7 @@ const MessageTimestamp = ({
         <time
           dateTime={date.toISOString()}
           tabIndex={0}
-          className="rounded-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          className="rounded-sm focus-visible:keyboard-focus"
         >
           {label} {formatDate(date)}
         </time>
@@ -285,7 +285,7 @@ const TurnTokenUsage = ({
             type="button"
             aria-label={accessibleLabel}
             aria-expanded={open}
-            className="inline-flex touch-manipulation items-center gap-1 border-b border-dashed border-current pb-px leading-none transition-colors duration-150 motion-reduce:transition-none hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="inline-flex touch-manipulation items-center gap-1 border-b border-dashed border-current pb-px leading-none transition-colors duration-150 motion-reduce:transition-none hover:text-text-100 focus-visible:keyboard-focus"
             onClick={(event) => {
               // Calls is read-only detail; retain explicit click/touch access to the hover content.
               event.preventDefault()
@@ -446,20 +446,20 @@ const TurnTokenUsage = ({
 }
 
 const artifactCardClassName =
-  'h-[82px] w-[128px] shrink-0 cursor-pointer overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60 disabled:cursor-not-allowed disabled:opacity-50'
+  'h-[82px] w-[128px] shrink-0 cursor-pointer overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 active:bg-bg-300 focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-50'
 const artifactPreviewClassName = 'h-[56px] w-full overflow-hidden bg-bg-200'
 const artifactGalleryClassName = 'grid max-w-full grid-cols-[repeat(auto-fill,128px)] gap-2 pb-1'
 
 const userMessageBubbleClassName =
   'max-w-[90%] break-words rounded-2xl bg-bg-300 px-3.5 py-2 text-sm text-message-user-text md:max-w-[min(85%,56rem)] md:px-4 md:py-2.5 md:text-[15px]'
 const userMessageCollapseButtonClassName =
-  'inline-flex items-center gap-1 whitespace-nowrap rounded-md text-[13px] font-medium text-text-200 transition-colors duration-200 ease-out hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:pointer-events-none disabled:opacity-50 motion-reduce:active:translate-y-0 motion-reduce:transition-none'
+  'inline-flex items-center gap-1 whitespace-nowrap rounded-md text-[13px] font-medium text-text-200 transition-colors duration-200 ease-out hover:text-text-000 focus-visible:keyboard-focus active:translate-y-px disabled:pointer-events-none disabled:opacity-50 motion-reduce:active:translate-y-0 motion-reduce:transition-none'
 const USER_MESSAGE_PREVIEW_LINE_COUNT = 12.5
 // Hover actions sit left of the user bubble, revealed on row hover or keyboard focus.
 const userMessageActionsClassName =
-  'flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
+  'flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 focus-within:transition-none'
 const userMessageActionButtonClassName =
-  'flex size-6 touch-manipulation items-center justify-center rounded-md text-text-300 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50'
+  'flex size-6 touch-manipulation items-center justify-center rounded-md text-text-300 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-100 focus-visible:keyboard-focus disabled:pointer-events-none disabled:opacity-50'
 
 const UserMessageActionTooltip = ({
   children,
@@ -582,7 +582,7 @@ const ignoreEditPaste = (): void => {}
 const EDIT_TRUNCATION_WARNING_TURNS = 2
 // Staged uploads render as gray file pills inside the sent bubble.
 const uploadedAttachmentButtonClassName =
-  'inline-flex max-w-full items-center gap-1.5 rounded-md border border-border-200 bg-bg-200 px-2 py-0.5 text-left text-[13px] leading-5 text-text-000 transition-colors hover:bg-bg-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
+  'inline-flex max-w-full items-center gap-1.5 rounded-md border border-border-200 bg-bg-200 px-2 py-0.5 text-left text-[13px] leading-5 text-text-000 transition-colors hover:bg-bg-000 focus-visible:keyboard-focus'
 // Shared pill shape for inline skill/artifact mentions in the sent bubble. Capped width + truncation
 // keeps a long file/skill name from overflowing the bubble.
 const mentionPillClassName =
@@ -590,8 +590,7 @@ const mentionPillClassName =
 const artifactMentionPillClassName =
   'inline-flex max-w-[220px] align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium'
 // Interactive additions layered onto the pill shape when a mention resolves to a clickable target.
-const mentionButtonClassName =
-  'cursor-pointer hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
+const mentionButtonClassName = 'cursor-pointer hover:brightness-95 focus-visible:keyboard-focus'
 
 const assistantMessageSurfaceClassName =
   'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'
@@ -1127,7 +1126,7 @@ const MessagePdfReadingContext = ({
       <button
         type="button"
         data-slot="message-pdf-reading-context"
-        className="inline-flex items-center gap-1.5 rounded-md border border-border-200 bg-bg-200 px-2 py-0.5 text-[13px] leading-5 text-text-200 transition-colors hover:bg-bg-000 hover:text-text-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60"
+        className="inline-flex items-center gap-1.5 rounded-md border border-border-200 bg-bg-200 px-2 py-0.5 text-[13px] leading-5 text-text-200 transition-colors hover:bg-bg-000 hover:text-text-000 focus-visible:keyboard-focus"
         aria-label={label}
         title={binding.name}
         onClick={() => requestPdfReadingReveal(projectId, binding, position.pageNumber)}

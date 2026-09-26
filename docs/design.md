@@ -383,7 +383,8 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### Focus / Disabled
 
-- All focusable controls use `focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50`.
+- Use `focus-visible:keyboard-focus` for shared buttons, conversation controls, message actions and the composer editor. It draws a 2px solid `--ring` outline with a 2px offset, appears immediately, and remains visible in forced-colors mode. The global `:focus-visible` fallback uses the same treatment; other composite controls retain their owner-specific focus styling. Do not remove outlines without an equally visible replacement.
+- Inside clipped scrollers or flush expandable rows, add `focus-visible:-outline-offset-2` so the full outline stays inside the control. Do not remove the focus indicator to hide clipping.
 - Inputs may add `focus-visible:border-ring/50`; the light focus border target is `rgb(134 182 239)`.
 - Disabled controls use `disabled:pointer-events-none disabled:opacity-50`; shared buttons also use `touch-manipulation`.
 - **Exception — a disabled control that must explain _why_:** a natively `disabled` element receives no pointer events, so a `Tooltip` on it never opens. When the disabled state needs an on-hover explanation (e.g. the agent-framework Uninstall button when the runtime is not app-managed or is the active backend), render it as `aria-disabled` + `opacity-50 cursor-not-allowed` with a neutralized `onClick` instead of the native `disabled` attribute, so it keeps the greyed look yet stays hoverable as the tooltip trigger. Reserve this for standing (non-transient) reasons; transient busy states (in-flight install/detect) still use native `disabled` with no tooltip.
@@ -394,7 +395,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 ### Motion
 
 - Menu, option, and navigation hover highlights update immediately; do not animate their background or foreground colors.
-- Inline action reveal: `transition-opacity duration-150`, default `opacity-0`, then `opacity-100` on hover or focus-visible.
+- Inline action reveal: `transition-opacity duration-150`, default `opacity-0`, then `opacity-100` on hover or focus-visible. Keyboard focus reveals the action immediately (`focus-within:transition-none` for an action group).
 - Keep purposeful transforms and dialog entry/exit motion, with reduced-motion support.
 - Session row action reveal uses `transition-opacity duration-200 ease-out`; its hover colors update immediately.
 - Dialog open: `data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95`.
