@@ -828,7 +828,7 @@ describe('build verification throughput', () => {
     const install = publishSteps.findIndex(
       ({ name }) => name === 'Install release transform dependencies'
     )
-    expect(publishSteps[setupNode]?.with).toEqual({ 'node-version': 22 })
+    expect(publishSteps[setupNode]?.with).toEqual({ 'node-version': 24 })
     expect(setupNode).toBeLessThan(install)
     for (const reusable of [build, regression, workflow('package-smoke.yml')]) {
       for (const job of Object.values(reusable.jobs)) {

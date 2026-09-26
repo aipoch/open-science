@@ -4,7 +4,7 @@ AIPOCH Open-Science ist eine Electron-Anwendung auf Basis von React, TypeScript,
 
 Voraussetzungen für die Quellentwicklung:
 
-- Node.js 22 (siehe [`.nvmrc`](../../.nvmrc)) mit npm
+- Node.js 24 (siehe [`.nvmrc`](../../.nvmrc)) mit npm
 - Git
 - Notebook-Ausführung ist optional und verwendet App-verwaltete Python/R-Umgebungen oder einen von Ihnen eingerichteten kompatiblen Interpreter.
 

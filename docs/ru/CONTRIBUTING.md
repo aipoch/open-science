@@ -14,7 +14,7 @@
 
 ### Требования
 
-- [Node.js](https://nodejs.org/) 22 (см. [`.nvmrc`](../../.nvmrc)) и npm
+- [Node.js](https://nodejs.org/) 24 (см. [`.nvmrc`](../../.nvmrc)) и npm
 - Git
 
 ### Настройка

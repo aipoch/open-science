@@ -4,7 +4,7 @@ AIPOCH Open-Science es una aplicación Electron creada con React, TypeScript, Pr
 
 Requisitos previos para desarrollar desde el código fuente:
 
-- Node.js 22 (consulte [`.nvmrc`](../../.nvmrc)) con npm
+- Node.js 24 (consulte [`.nvmrc`](../../.nvmrc)) con npm
 - Git
 - La ejecución de Notebook es opcional y usa entornos Python/R gestionados por la aplicación o un intérprete compatible que usted configure.
 

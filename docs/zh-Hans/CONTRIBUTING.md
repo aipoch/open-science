@@ -12,7 +12,7 @@
 
 ### 前提条件
 
-- [Node.js](https://nodejs.org/) 22（参阅 [`.nvmrc`](../../.nvmrc)）和 npm
+- [Node.js](https://nodejs.org/) 24（参阅 [`.nvmrc`](../../.nvmrc)）和 npm
 - Git
 
 ### 设置

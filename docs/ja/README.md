@@ -224,7 +224,7 @@ AIPOCH Open-Science は React、TypeScript、Prisma/SQLite、ACP ベースのエ
 
 ソース開発の前提条件：
 
-- Node.js 22（[`.nvmrc`](../../.nvmrc) を参照）と npm
+- Node.js 24（[`.nvmrc`](../../.nvmrc) を参照）と npm
 - Git
 - Notebook の実行は任意で、アプリ管理の Python/R 環境または自分で設定した互換インタープリターを使用できます。
 

@@ -106,7 +106,7 @@ jobs:
         if: steps.gate.outputs.enabled == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 24
 
       # The notarize smoke test imports database-migration-ledger-smoke.mjs, which requires
       # @prisma/client at runtime. Install dependencies so the smoke script can resolve them.

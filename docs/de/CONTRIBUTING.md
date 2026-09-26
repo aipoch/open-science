@@ -12,7 +12,7 @@ Verhalten Sie sich in allen Interaktionen respektvoll und konstruktiv. Gehen Sie
 
 ### Voraussetzungen
 
-- [Node.js](https://nodejs.org/) 22 (siehe [`.nvmrc`](../../.nvmrc)) und npm
+- [Node.js](https://nodejs.org/) 24 (siehe [`.nvmrc`](../../.nvmrc)) und npm
 - Git
 
 ### Einrichtung
