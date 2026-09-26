@@ -101,16 +101,13 @@ test('conversation search opens in place and supports keyboard selection among m
   await expect(page.getByRole('status').filter({ hasText: 'session-34:' })).toBeVisible()
 })
 
-test('row actions explain their purpose on hover without reopening after pointer dismissal', async ({
-  page
-}) => {
+test('row actions explain their purpose on hover', async ({ page }) => {
   await page.setViewportSize({ width: 620, height: 760 })
   await page.goto('/library-workbench.html')
   for (const [name, description] of [
     ['Reference details', 'Reference details'],
     ['Copy title', 'Copy title'],
     ['Add to chat', 'Add references to the current conversation draft'],
-    ['Choose another conversation', 'Choose another conversation'],
     ['View in Literature', 'View in Literature']
   ]) {
     await page.getByRole('button', { name, exact: true }).hover()
@@ -118,15 +115,41 @@ test('row actions explain their purpose on hover without reopening after pointer
     await page.mouse.move(10, 400, { steps: 10 })
     await expect(page.getByRole('tooltip')).toHaveCount(0)
   }
+})
+
+test('conversation picker matches PDF hover behavior and preserves click and keyboard use', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 620, height: 760 })
+  await page.goto('/library-workbench.html')
   const choose = page.getByRole('button', { name: 'Choose another conversation' })
-  await choose.click()
-  await expect(page.getByRole('combobox')).toBeFocused()
-  await page.getByRole('searchbox').click()
-  await expect(page.getByRole('combobox')).toHaveCount(0)
-  // Wait beyond the tooltip delay to catch focus-return reopening.
-  await page.waitForTimeout(400)
+  const search = page.getByRole('combobox', { name: 'Search conversations' })
+  const librarySearch = page.getByRole('searchbox')
+  await librarySearch.focus()
+  await choose.hover()
+  await expect(search).toBeVisible()
+  await expect(librarySearch).toBeFocused()
   await expect(page.getByRole('tooltip')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Add to chat', exact: true }).focus()
-  await page.keyboard.press('Tab')
-  await expect(page.getByRole('tooltip')).toHaveText('Choose another conversation')
+  await search.hover()
+  await page.waitForTimeout(250)
+  await expect(search).toBeVisible()
+  await page.mouse.move(10, 700, { steps: 10 })
+  await expect(search).toHaveCount(0)
+  await expect(librarySearch).toBeFocused()
+
+  await choose.hover()
+  await expect(search).toBeVisible()
+  await choose.click()
+  await expect(search).toBeFocused()
+  await page.mouse.move(10, 700, { steps: 10 })
+  await page.waitForTimeout(250)
+  await expect(search).toBeVisible()
+  await search.press('Escape')
+  await expect(search).toHaveCount(0)
+  await expect(choose).toBeFocused()
+  await choose.press('Enter')
+  await expect(search).toBeFocused()
+  await search.fill('#35')
+  await search.press('Enter')
+  await expect(page.getByRole('status').filter({ hasText: 'session-34:' })).toBeVisible()
 })

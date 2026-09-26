@@ -57,7 +57,6 @@ function ConversationPicker({
           aria-hidden="true"
         />
         <Input
-          autoFocus
           role="combobox"
           aria-label={t('Search conversations')}
           placeholder={t('Search by title or #number')}
@@ -162,8 +161,19 @@ export function LibraryChatButton({
   const actions = useLibraryReferenceActions()
   const [open, setOpen] = useState(false)
   const selected = useRef(false)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const openedByHover = useRef(false)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const cancelHover = (): void => clearTimeout(hoverTimer.current)
+  const closeHoveredPicker = (): void => {
+    cancelHover()
+    if (openedByHover.current) hoverTimer.current = setTimeout(() => setOpen(false), 180)
+  }
+  useEffect(() => () => clearTimeout(hoverTimer.current), [])
   const add = (sessionId: string | null): void => {
     if (!actions || !references.length) return
+    cancelHover()
     selected.current = true
     setOpen(false)
     actions.add(references, sessionId)
@@ -187,37 +197,62 @@ export function LibraryChatButton({
       <Popover
         open={open}
         onOpenChange={(value) => {
+          cancelHover()
           selected.current = false
           setOpen(value)
         }}
       >
-        <Tooltip>
-          <TooltipTrigger
-            asChild
-            onFocus={(event) => {
-              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+        <PopoverTrigger asChild>
+          <Button
+            ref={triggerRef}
+            variant="ghost"
+            size="xs"
+            className="rounded-l-none border-l border-border px-1.5"
+            disabled={!actions || !references.length}
+            aria-label={t('Choose another conversation')}
+            onPointerEnter={(event) => {
+              cancelHover()
+              if (event.pointerType === 'touch' || !actions || !references.length || open) return
+              hoverTimer.current = setTimeout(() => {
+                selected.current = false
+                openedByHover.current = true
+                setOpen(true)
+              }, 120)
+            }}
+            onPointerLeave={closeHoveredPicker}
+            onClick={(event) => {
+              cancelHover()
+              // Match the PDF mark-style picker: clicking a hover-open panel pins it.
+              if (open && openedByHover.current) {
+                event.preventDefault()
+                contentRef.current?.querySelector<HTMLInputElement>('[role="combobox"]')?.focus()
+              }
+              openedByHover.current = false
             }}
           >
-            <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="xs"
-                className="rounded-l-none border-l border-border px-1.5"
-                disabled={!actions || !references.length}
-                aria-label={t('Choose another conversation')}
-              >
-                <ChevronDown aria-hidden="true" />
-              </Button>
-            </PopoverTrigger>
-          </TooltipTrigger>
-          <TooltipContent>{t('Choose another conversation')}</TooltipContent>
-        </Tooltip>
+            <ChevronDown aria-hidden="true" />
+          </Button>
+        </PopoverTrigger>
         <PopoverContent
+          ref={contentRef}
           align="end"
+          onPointerEnter={cancelHover}
+          onPointerLeave={closeHoveredPicker}
+          onFocusCapture={() => {
+            cancelHover()
+            openedByHover.current = false
+          }}
+          onInteractOutside={(event) => {
+            // Pinning through the trigger is not an outside dismissal; keep Radix focus return.
+            if (triggerRef.current?.contains(event.target as Node)) event.preventDefault()
+          }}
+          onOpenAutoFocus={(event) => {
+            if (openedByHover.current) event.preventDefault()
+          }}
           aria-label={t('Choose another conversation')}
           className="z-[130] w-80 max-w-[calc(100vw-2rem)] border border-border bg-popover p-0 text-popover-foreground shadow-menu"
           onCloseAutoFocus={(event) => {
-            if (selected.current) event.preventDefault()
+            if (selected.current || openedByHover.current) event.preventDefault()
           }}
         >
           {open && <ConversationPicker onSelect={add} />}

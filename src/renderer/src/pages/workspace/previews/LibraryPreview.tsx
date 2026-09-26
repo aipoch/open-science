@@ -244,24 +244,6 @@ function ReferenceRow({
         </div>
         <div className="ml-auto flex items-center gap-0.5">
           <Tooltip>
-            <TooltipTrigger
-              asChild
-              onFocus={(event) => {
-                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
-              }}
-            >
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Reference details')}
-                onClick={(event) => onDetails(event.currentTarget)}
-              >
-                <Info aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('Reference details')}</TooltipContent>
-          </Tooltip>
-          <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
@@ -281,6 +263,24 @@ function ReferenceRow({
             </TooltipContent>
           </Tooltip>
           <LibraryChatButton references={[literatureItemToMentionOption(entry).reference]} />
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Reference details')}
+                onClick={(event) => onDetails(event.currentTarget)}
+              >
+                <Info aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Reference details')}</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
