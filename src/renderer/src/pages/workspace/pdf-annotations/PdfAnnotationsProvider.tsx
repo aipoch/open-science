@@ -220,13 +220,14 @@ const PdfAnnotationsProvider = ({
   }, [loadAttempt, scope, runtime, scopeKey, loadAnnotations, sourceFileId, versionId])
 
   const retryLoad = useCallback(() => {
+    if (!runtime.current.active) return
     setState((current) => ({
       ...current,
       loading: Boolean(scopeKey) && loadAnnotations,
       loadError: undefined
     }))
     setLoadAttempt((attempt) => attempt + 1)
-  }, [scopeKey, loadAnnotations])
+  }, [scopeKey, loadAnnotations, runtime])
 
   useEffect(() => {
     if (!loadAnnotations || !scopeKey) return

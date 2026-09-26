@@ -33,6 +33,7 @@ vi.mock('./previews/PreviewFileContent', () => ({ PreviewFileContent: () => <div
 
 import { PreviewPanelSurface } from './PreviewPanel'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
+import { PdfAnnotationsProvider } from './pdf-annotations/PdfAnnotationsProvider'
 
 let root: Root
 let container: HTMLDivElement
@@ -163,6 +164,30 @@ afterEach(async () => {
 })
 
 describe('preview draft lifecycle', () => {
+  it('preserves a non-PDF editor and its unsaved draft when the first Session binds', async () => {
+    const render = async (sessionId?: string): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <PdfAnnotationsProvider
+            projectId={sessionId ? projectId : undefined}
+            sessionId={sessionId}
+            loadAnnotations={false}
+          >
+            <ResponsivePreview />
+          </PdfAnnotationsProvider>
+        )
+      )
+    }
+    await render()
+    await startEditing()
+    const originalEditor = editor()
+    await render('pending-session')
+    await render('bound-session')
+    expect(editor()).toBe(originalEditor)
+    expect(editor()?.value).toBe(draft)
+    expect(window.api.managedFileVersions.saveTextEdit).not.toHaveBeenCalled()
+  })
+
   it('protects dirty text when the active tab is closed normally', async () => {
     await act(async () => root.render(<PreviewPanelSurface />))
     await startEditing()
