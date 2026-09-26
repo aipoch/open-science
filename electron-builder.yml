@@ -7,6 +7,7 @@ directories:
 # electron-builder ships an incompletely-signed bundle that Gatekeeper flags as "damaged"
 # on downloaded/quarantined copies, so the app won't launch on other machines. See the hook.
 afterPack: build/adhoc-sign.cjs
+afterSign: build/sign-windows.cjs
 files:
   - '!**/.vscode/*'
   # Agent/AI tooling state lives in the project (.claude holds git worktrees — full nested repo
@@ -98,8 +99,8 @@ extraResources:
       - 'LICENSE'
       - 'package.json'
 # Windows: stable releases use Azure Artifact Signing; nightly and other builds remain unsigned.
-# The afterPack hook signs unsigned bundled PE files, including DLLs and native addons,
-# only when Azure signing is configured.
+# The afterSign hook supplements missing bundled PE signatures for Store submissions after
+# electron-builder edits/signs the launcher. Existing helper/vendor signatures are preserved.
 win:
   # Windows ProgID is a persisted association identity; other platforms use a display name.
   fileAssociations:
