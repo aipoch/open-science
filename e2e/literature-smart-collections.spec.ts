@@ -40,7 +40,7 @@ test('creates a smart collection without a model and preserves the setup path', 
   await expect(page.getByRole('heading', { name: 'Clinical trials', exact: true })).toBeVisible()
   const panel = page.getByRole('region', { name: 'Smart collection', exact: true })
   await expect(panel.getByRole('button', { name: 'Update collection' })).toHaveCount(0)
-  await expect(page.getByText('No references found', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('No references yet', { exact: true })).toHaveCount(0)
   await expect(
     panel.getByText('Choose a classification model to start organizing papers.')
   ).toBeVisible()
@@ -269,7 +269,7 @@ test('reviews classified papers in the library table using a local fixture servi
     await page.getByRole('button', { name: 'Library', exact: true }).click()
     await page.getByRole('button', { name: 'Manual collection', exact: true }).click()
     const ordinaryTop = (await page
-      .getByRole('heading', { name: 'No references found' })
+      .getByRole('heading', { name: 'No references yet' })
       .locator('..')
       .boundingBox())!.y
     await page.screenshot({ path: testInfo.outputPath('ordinary-collection-empty.png') })
