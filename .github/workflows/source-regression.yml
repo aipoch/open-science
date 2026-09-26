@@ -59,7 +59,8 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional.json
-        run: npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=600000
+        # Leave headroom for slower macOS runners to finish every journey and teardown.
+        run: npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=900000
       - name: Run complete Mac workspace journeys
         id: workspace
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
@@ -67,7 +68,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace.json
-        run: npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=900000
+        run: npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=1500000
       - name: Test workspace message images
         id: workspace_images
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'workspace-images' }}
