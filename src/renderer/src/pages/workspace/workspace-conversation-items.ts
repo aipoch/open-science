@@ -197,12 +197,12 @@ const formatActivityTitle = (
   if (isContextCompactionActivity(activity)) {
     const title = trimDetail(activity.title)
 
+    if (activity.status === 'failed') return t('Context compaction failed')
     if (title === 'Compacting context') return t('Compacting context')
     if (title === 'Context compacted') return t('Context compacted')
     if (title === 'Context compaction failed') return t('Context compaction failed')
     if (title === 'Context compaction cancelled') return t('Context compaction cancelled')
     if (title) return title
-    if (activity.status === 'failed') return t('Context compaction failed')
     if (activity.status === 'completed') return t('Context compacted')
     return t('Compacting context')
   }

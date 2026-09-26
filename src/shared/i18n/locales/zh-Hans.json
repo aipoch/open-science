@@ -1109,7 +1109,7 @@
     "Context compacted after run {{run}}": "运行 {{run}} 后已压缩上下文",
     "Context compaction cancelled": "上下文压缩已取消",
     "Context compaction failed": "上下文压缩失败",
-    "Earlier context is unchanged.": "此前的上下文未更改。",
+    "Your conversation history is preserved.": "你的对话历史已保留。",
     "Earlier context was summarized so the session can continue.": "已总结此前的上下文，会话可继续。",
     "Summarizing earlier context…": "正在总结此前的上下文…",
     "Current composition": "当前构成",

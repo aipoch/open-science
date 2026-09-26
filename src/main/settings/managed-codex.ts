@@ -851,12 +851,89 @@ export const patchCodexAcpPromptFailureSource = (source: string): string => {
   return source
 }
 
+// The pinned adapter waits only for a successful compaction item. Capture the native turn as
+// well so failed/interrupted compactions settle and Cancel can address the actual turn.
+const CODEX_ACP_COMPACTION_PATCHES = [
+  [
+    `  async runCompact(params) {
+    const compactionCompleted = this.awaitCompactionCompleted(params.threadId);
+    await this.threadCompactStart(params);
+    return await compactionCompleted;
+  }`,
+    `  async runCompact(params, onTurnStarted) {
+    let turnId;
+    let observe;
+    let releaseCompletion;
+    const completion = new Promise((resolve, reject) => {
+      releaseCompletion = this.captureTurnCompletions(params.threadId, (event) => {
+        if (event.turn.id === turnId) resolve(event);
+      });
+      observe = (event) => {
+        if (event.eventType !== "notification" || event.params?.threadId !== params.threadId) return;
+        if (event.method === "turn/started") {
+          turnId = event.params.turn.id;
+          onTurnStarted?.(turnId, params.threadId);
+        } else if (event.method === "error" && event.params.turnId === turnId && event.params.willRetry === false) {
+          reject(RequestError.internalError(event.params.error, event.params.error.message));
+        } else if (isCompactionCompletedNotification(event)) {
+          resolve(undefined);
+        }
+      };
+      this.codexEventHandlers.push(observe);
+    });
+    // A notification can reject before thread/compact/start acknowledges the request.
+    void completion.catch(() => {});
+    try {
+      await this.threadCompactStart(params);
+      return await completion;
+    } finally {
+      releaseCompletion();
+      const index = this.codexEventHandlers.indexOf(observe);
+      if (index >= 0) this.codexEventHandlers.splice(index, 1);
+    }
+  }`
+  ],
+  [
+    `  async runCompact(sessionId) {
+    await this.codexClient.runCompact({ threadId: sessionId });
+  }`,
+    `  async runCompact(sessionId, onTurnStarted) {
+    return await this.codexClient.runCompact({ threadId: sessionId }, onTurnStarted);
+  }`
+  ],
+  [
+    `      case "compact": {
+        await this.runWithProcessCheck(() => this.codexAcpClient.runCompact(sessionId));
+        return { handled: true };
+      }`,
+    `      case "compact": {
+        options.onTurnStartPending?.();
+        const turnCompleted = await this.runWithProcessCheck(() => this.codexAcpClient.runCompact(sessionId, options.onTurnStarted));
+        return { handled: true, turnCompleted };
+      }`
+  ]
+] as const
+
+export const patchCodexAcpCompactionSource = (source: string): string => {
+  if (!source.includes('async runCompact(')) return source
+  for (const [before, after] of CODEX_ACP_COMPACTION_PATCHES) {
+    if (source.includes(after)) continue
+    if (source.split(before).length !== 2) {
+      throw new Error('Pinned Codex ACP compaction patch no longer matches the adapter bundle')
+    }
+    source = source.replace(before, after)
+  }
+  return source
+}
+
 export const ensureManagedCodexContextUsage = async (adapterPath: string): Promise<void> => {
   const source = await readFile(adapterPath, 'utf8')
   const patched = patchCodexAcpModelCatalogStartupSource(
     patchCodexAcpSkillInputSource(
       patchCodexAcpTurnUsageSource(
-        patchCodexAcpContextUsageSource(patchCodexAcpPromptFailureSource(source))
+        patchCodexAcpContextUsageSource(
+          patchCodexAcpPromptFailureSource(patchCodexAcpCompactionSource(source))
+        )
       )
     )
   )

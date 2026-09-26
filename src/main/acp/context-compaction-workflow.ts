@@ -233,6 +233,8 @@ class AcpContextCompactionWorkflow {
           })
           try {
             let failureText: string | undefined
+            let controlText = ''
+            let compaction: AcpProviderTurnResult['compaction']
             const promptFailure = new Promise<never>((_, reject) => {
               session.prompt([{ type: 'text', text: strategy.command }]).catch(reject)
             })
@@ -242,6 +244,7 @@ class AcpContextCompactionWorkflow {
                 if (usageProbe) {
                   const facts = await usageProbe.finalize({ response: message.response })
                   usageProbe = undefined
+                  compaction = facts.compaction
                   if (facts.turnUsage) {
                     await this.options.usage
                       ?.record({
@@ -279,6 +282,9 @@ class AcpContextCompactionWorkflow {
                   )
                 }
                 if (failureText) throw new Error(failureText)
+                if (frameworkId === 'opencode' && !compaction?.succeeded) {
+                  throw new Error(compaction?.error ?? 'Context compaction could not be verified.')
+                }
                 this.options.context.resetAfterCompaction(
                   sessionId,
                   this.options.contextEstimateInput(sessionId),
@@ -301,13 +307,13 @@ class AcpContextCompactionWorkflow {
               usageProbe?.observe?.(message.notification)
               const update = message.notification.update
               if (
-                !failureText &&
                 strategy.failureTextPrefix &&
                 update.sessionUpdate === 'agent_message_chunk' &&
-                update.content.type === 'text' &&
-                update.content.text.trimStart().startsWith(strategy.failureTextPrefix)
+                update.content.type === 'text'
               ) {
-                failureText = update.content.text.trim()
+                controlText = (controlText + update.content.text).slice(-4000)
+                const failureStart = controlText.indexOf(strategy.failureTextPrefix)
+                if (failureStart >= 0) failureText = controlText.slice(failureStart).trim()
               }
               this.options.routeHiddenNotification(message.notification, sessionId)
             }

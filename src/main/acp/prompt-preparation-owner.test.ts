@@ -826,9 +826,9 @@ describe('AcpPromptPreparationOwner', () => {
         sourceInvocationId: 'selector-call-1',
         usage: {
           inputTokens: 40,
-          cacheTokens: 5,
+          cacheTokens: 15,
           cachedReadTokens: 5,
-          cachedWriteTokens: 0,
+          cachedWriteTokens: 10,
           outputTokens: 3
         }
       })
@@ -887,12 +887,12 @@ describe('AcpPromptPreparationOwner', () => {
       preDispatchModelCalls: [
         {
           inputTokens: 40,
-          cacheTokens: 5,
+          cacheTokens: 15,
           cachedReadTokens: 5,
-          cachedWriteTokens: 0,
+          cachedWriteTokens: 10,
           outputTokens: 3,
           sourceInvocationId: 'selector-call-1',
-          contextUsedTokens: 45
+          contextUsedTokens: 55
         }
       ]
     })

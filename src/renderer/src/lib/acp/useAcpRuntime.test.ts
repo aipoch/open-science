@@ -317,6 +317,20 @@ describe('useAcpRuntime payload construction', () => {
     })
   })
 
+  it('preserves the native compaction failure for the session error surface', async () => {
+    const failure = new Error('Session too large to compact')
+    acpApi.compactSession.mockRejectedValueOnce(failure)
+    const { result } = await mountRuntime()
+    let thrown: unknown
+    await act(async () => {
+      await result.current.compactSession('session-1').catch((error: unknown) => {
+        thrown = error
+      })
+    })
+    expect(thrown).toBe(failure)
+    expect(result.current.actionError).toBeNull()
+  })
+
   it('requests native context compaction for one session', async () => {
     const { result } = await mountRuntime()
 

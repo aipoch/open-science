@@ -5,12 +5,16 @@ import type { ResolvedAgentBackend } from '../agent-framework'
 export type OpenCodeUsageSnapshot = {
   assistantMessageIds: Set<string>
   usageByMessageId: Map<string, AcpTurnTokenUsage>
+  compactionByMessageId?: Map<string, { succeeded: boolean; error?: string }>
 }
 
 type OpenCodeMessageInfo = {
   id?: unknown
   role?: unknown
   tokens?: unknown
+  summary?: unknown
+  finish?: unknown
+  error?: { data?: { message?: unknown } }
 }
 
 const tokenCount = (value: unknown): number | undefined =>
@@ -72,16 +76,24 @@ export const fetchOpenCodeUsageSnapshot = async (
 
     const assistantMessageIds = new Set<string>()
     const usageByMessageId = new Map<string, AcpTurnTokenUsage>()
+    const compactionByMessageId = new Map<string, { succeeded: boolean; error?: string }>()
     for (const message of messages) {
       if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
       const info = (message as { info?: OpenCodeMessageInfo }).info
       if (!info || info.role !== 'assistant' || typeof info.id !== 'string') continue
       assistantMessageIds.add(info.id)
+      if (info.summary === true) {
+        const error = info.error?.data?.message
+        compactionByMessageId.set(info.id, {
+          succeeded: !info.error && info.finish === 'stop',
+          ...(typeof error === 'string' ? { error: error.slice(0, 2000) } : {})
+        })
+      }
       const usage = messageUsage(info.tokens)
       if (usage) usageByMessageId.set(info.id, usage)
     }
 
-    return { assistantMessageIds, usageByMessageId }
+    return { assistantMessageIds, usageByMessageId, compactionByMessageId }
   } catch {
     return undefined
   }
@@ -133,15 +145,14 @@ export const diffOpenCodeTurnUsage = (
     ) {
       return undefined
     }
-    const contextUsedTokens =
-      usage.cachedReadTokens === undefined ? undefined : usage.inputTokens + usage.cachedReadTokens
-    if (contextUsedTokens !== undefined && !Number.isSafeInteger(contextUsedTokens)) {
+    const contextUsedTokens = usage.inputTokens + usage.cacheTokens
+    if (!Number.isSafeInteger(contextUsedTokens)) {
       return undefined
     }
     modelCalls.push({
       sourceInvocationId: messageId,
       ...usage,
-      ...(contextUsedTokens === undefined ? {} : { contextUsedTokens })
+      contextUsedTokens
     })
   }
 

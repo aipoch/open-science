@@ -16,6 +16,7 @@ import type { PreparedPromptHandle } from './prompt-preparation-owner'
 import {
   describePromptError,
   isOpenCodeSessionServiceFailure,
+  isOpenCodeContextOverflow,
   isProviderPromptError
 } from './prompt-error'
 import type { ProviderPromptOutcome } from './provider-prompt-executor'
@@ -74,8 +75,7 @@ const MAX_LOGICAL_TURN_USAGE_ENTRIES = 500
 
 const inferredCallContextUsedTokens = (call: AcpProviderModelCallUsage): number | undefined => {
   if (call.contextUsedTokens !== undefined) return call.contextUsedTokens
-  if (call.cachedReadTokens === undefined) return undefined
-  const used = call.inputTokens + call.cachedReadTokens
+  const used = call.inputTokens + call.cacheTokens
   return Number.isSafeInteger(used) ? used : undefined
 }
 
@@ -341,7 +341,8 @@ export class AcpPromptOutcomeFinalizer {
       const text = describePromptError(error, { model: handles.model })
       const recoverable = isOpenCodeSessionServiceFailure(error)
         ? 'session-lost'
-        : isMediaOverflowError(text) ||
+        : isOpenCodeContextOverflow(error) ||
+            isMediaOverflowError(text) ||
             isMediaOverflowError(handles.errorMessage(error)) ||
             isMediaOverflowError(handles.errorKind(error))
           ? 'context-overflow'

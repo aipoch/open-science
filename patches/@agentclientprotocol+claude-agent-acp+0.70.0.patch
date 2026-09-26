@@ -1,8 +1,7 @@
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
-index 243386d..f0a16da 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
-@@ -16,6 +16,7 @@ export interface Logger {
+@@ -16,6 +16,7 @@
      log: (...args: any[]) => void;
      error: (...args: any[]) => void;
  }
@@ -11,13 +10,14 @@ index 243386d..f0a16da 100644
      inputTokens: number;
      outputTokens: number;
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-index f11169b..cca061f 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-@@ -570,6 +570,62 @@ class ClientConnection {
-         return this.ctx.notify(method, params);
+@@ -568,6 +568,62 @@
      }
- }
+     extNotification(method, params) {
+         return this.ctx.notify(method, params);
++    }
++}
 +// Claude snapshots the available tool set when a model request starts. Wait for every MCP server
 +// supplied by the ACP client before returning session/new so the first prompt cannot race startup.
 +const MCP_STARTUP_TIMEOUT_MS = 10000;
@@ -72,12 +72,34 @@ index f11169b..cca061f 100644
 +        if (pending.size > 0) {
 +            await delay(Math.min(MCP_STATUS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
 +        }
-+    }
-+}
+     }
+ }
  export class ClaudeAcpAgent {
-     sessions;
-     client;
-@@ -2972,7 +3028,7 @@ export class ClaudeAcpAgent {
+@@ -1972,6 +2028,7 @@
+                                         update: {
+                                             sessionUpdate: "agent_message_chunk",
+                                             content: { type: "text", text: "Compacting..." },
++                                            _meta: { claudeCode: { isContextCompaction: true } },
+                                         },
+                                     });
+                                 }
+@@ -1985,6 +2042,7 @@
+                                         update: {
+                                             sessionUpdate: "agent_message_chunk",
+                                             content: { type: "text", text: "\n\nCompacting completed." },
++                                            _meta: { claudeCode: { isContextCompaction: true } },
+                                         },
+                                     });
+                                 }
+@@ -1996,6 +2054,7 @@
+                                         update: {
+                                             sessionUpdate: "agent_message_chunk",
+                                             content: { type: "text", text: `\n\nCompacting failed${reason}` },
++                                            _meta: { claudeCode: { isContextCompaction: true } },
+                                         },
+                                     });
+                                 }
+@@ -2972,7 +3031,7 @@
                                      cache_creation_input_tokens: usage.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
                                  };
                              }
@@ -86,7 +108,7 @@ index f11169b..cca061f 100644
                              if (nextUsage !== lastAssistantTotalUsage) {
                                  lastAssistantTotalUsage = nextUsage;
                                  await sendUpdate({
-@@ -3110,7 +3166,7 @@ export class ClaudeAcpAgent {
+@@ -3110,7 +3169,7 @@
                          // aligned with what the user's current selection is producing.
                          if (message.type === "assistant" && message.parent_tool_use_id === null) {
                              lastAssistantUsage = snapshotFromUsage(message.message.usage);
@@ -95,7 +117,7 @@ index f11169b..cca061f 100644
                              lastAssistantWasUsageLimit = isSyntheticUsageLimitMessage(message.message);
                              if (message.error || lastAssistantWasUsageLimit) {
                                  lastAssistantFailureTitle = assistantMessageText(message.message);
-@@ -3715,7 +3771,16 @@ export class ClaudeAcpAgent {
+@@ -3718,7 +3777,16 @@
          if (this.sessions[params.sessionId]) {
              await this.teardownSession(params.sessionId);
          }
@@ -113,7 +135,7 @@ index f11169b..cca061f 100644
          return {};
      }
      async setSessionMode(params) {
-@@ -4995,6 +5051,7 @@ export class ClaudeAcpAgent {
+@@ -4995,6 +5063,7 @@
          let initializationResult;
          try {
              initializationResult = await q.initializationResult();
@@ -121,7 +143,7 @@ index f11169b..cca061f 100644
          }
          catch (error) {
              if (creationOpts.resume &&
-@@ -5259,15 +5316,10 @@ function sessionUsage(session) {
+@@ -5259,15 +5328,10 @@
              session.accumulatedUsage.cachedWriteTokens,
      };
  }
@@ -135,13 +157,13 @@ index f11169b..cca061f 100644
 -        usage.cache_read_input_tokens +
 -        usage.cache_creation_input_tokens);
 +/** Report the current upstream request's model-input context. Cache reads are
-+ *  part of that input; completion tokens and cache writes are not. */
++ *  part of that input, as are cache writes; completion tokens are not. */
 +function contextTokens(usage) {
-+    return usage.input_tokens + usage.cache_read_input_tokens;
++    return usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens;
  }
  /**
   * Build the `data` payload attached to a `RequestError.internalError` when we
-@@ -5284,7 +5336,7 @@ function errorKindData(errorKind) {
+@@ -5284,7 +5348,7 @@
  }
  /** Project a nullable API usage object into our non-null snapshot shape.
   *  Both SDK message_start and assistant message `usage` have `number | null`

@@ -38,8 +38,7 @@ const sumModelSteps = (
   const cacheTokens = cachedReadTokens + cachedWriteTokens
   if (!Number.isSafeInteger(cacheTokens)) return undefined
   const lastModelStepUsage = steps.at(-1)!
-  const contextUsedTokens =
-    lastModelStepUsage.inputTokens + (lastModelStepUsage.cachedReadTokens ?? 0)
+  const contextUsedTokens = lastModelStepUsage.inputTokens + lastModelStepUsage.cacheTokens
   if (!Number.isSafeInteger(contextUsedTokens)) return undefined
 
   const turnUsage: Omit<AcpTurnTokenUsage, 'turnCount'> = {

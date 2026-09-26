@@ -294,6 +294,28 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(config.env?.OPENCODE_CONFIG_CONTENT).not.toContain('"k"')
   })
 
+  it('pins the Anthropic driver for an app-generated provider id in both config layers', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        agentProviderId: 'open-science-messages-model',
+        apiEndpoints: ['anthropic'],
+        baseUrl: 'http://127.0.0.1:41002',
+        model: 'claude-sonnet-4-5',
+        key: 'local-token'
+      },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+    const file = config.configFiles?.find((entry) => entry.path.endsWith('opencode.json'))
+    for (const source of [file?.content, config.env?.OPENCODE_CONFIG_CONTENT]) {
+      const content = JSON.parse(source ?? '{}')
+      expect(content.provider['open-science-messages-model']).toMatchObject({
+        npm: '@ai-sdk/anthropic',
+        options: { baseURL: 'http://127.0.0.1:41002/v1' }
+      })
+    }
+  })
+
   it('gives the Anthropic AI SDK a /v1 base so it requests /v1/messages', () => {
     const config = opencodeFramework.prepareModelConfig(
       {

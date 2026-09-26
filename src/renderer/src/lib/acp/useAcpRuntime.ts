@@ -304,10 +304,10 @@ const useAcpRuntime = (): {
     [beginAction, finishPendingAction]
   )
 
-  // Specialized helper for sendPrompt: rethrows errors (like runValueAction) but does NOT
+  // Prompt and native-compaction helper: rethrows errors (like runValueAction) but does NOT
   // record actionError on failure, avoiding stale-state reads in .catch() handlers. Also performs
   // the state-sync side-effect that runSnapshotAction provides, since callers use `void sendPrompt(...)`.
-  const runSendPromptAction = useCallback(
+  const runPromptAction = useCallback(
     async (action: StateCommandAction): Promise<AcpRuntimeState> => {
       // Clear on entry so the helper is self-consistent with the other action helpers and does
       // not rely on WorkspacePage's active-session visibility gate to hide a stale actionError.
@@ -399,8 +399,8 @@ const useAcpRuntime = (): {
 
   const continueInterruptedTurn = useCallback(
     (request: AcpContinueInterruptedTurnRequest) =>
-      runSendPromptAction(() => window.api.acp.continueInterruptedTurn(request)),
-    [runSendPromptAction]
+      runPromptAction(() => window.api.acp.continueInterruptedTurn(request)),
+    [runPromptAction]
   )
 
   // Drops the agent-side context for a session whose accumulated history outgrew the request limit,
@@ -428,10 +428,10 @@ const useAcpRuntime = (): {
   // Asks the active agent framework to compact its own session context.
   const compactSession = useCallback(
     (sessionId: string, reason?: 'manual' | 'overflow-recovery') =>
-      runSnapshotAction(undefined, () =>
+      runPromptAction(() =>
         window.api.acp.compactSession({ sessionId, ...(reason ? { reason } : {}) })
       ),
-    [runSnapshotAction]
+    [runPromptAction]
   )
 
   // Deletes a runtime session and returns the updated snapshot if it succeeds.
@@ -472,7 +472,7 @@ const useAcpRuntime = (): {
       currentImages?: AcpPromptRequest['currentImages'],
       parts?: AcpPromptRequest['parts']
     ) =>
-      runSendPromptAction(() =>
+      runPromptAction(() =>
         window.api.acp.sendPrompt({
           sessionId,
           text,
@@ -495,7 +495,7 @@ const useAcpRuntime = (): {
           ...(turnIntent ? { turnIntent } : {})
         })
       ),
-    [runSendPromptAction]
+    [runPromptAction]
   )
 
   // Converts a UI permission click into the response shape expected by IPC.

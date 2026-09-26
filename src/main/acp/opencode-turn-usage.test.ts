@@ -12,6 +12,38 @@ const api = {
 }
 
 describe('OpenCode turn usage', () => {
+  it('reads native summary failure independently of zero usage', async () => {
+    const snapshot = await fetchOpenCodeUsageSnapshot(
+      api,
+      'session',
+      '/workspace',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify([
+              {
+                info: {
+                  id: 'summary',
+                  role: 'assistant',
+                  summary: true,
+                  finish: 'error',
+                  error: {
+                    name: 'ContextOverflowError',
+                    data: { message: 'Session too large to compact' }
+                  },
+                  tokens: { input: 0, output: 0 }
+                }
+              }
+            ])
+          )
+      )
+    )
+    expect(snapshot?.compactionByMessageId?.get('summary')).toEqual({
+      succeeded: false,
+      error: 'Session too large to compact'
+    })
+  })
+
   it('fetches authenticated assistant usage from the session message API', async () => {
     const fetchImpl = vi.fn(
       async () =>
@@ -132,7 +164,7 @@ describe('OpenCode turn usage', () => {
         cachedReadTokens: 2,
         cachedWriteTokens: 1,
         outputTokens: 2,
-        contextUsedTokens: 14
+        contextUsedTokens: 15
       },
       {
         sourceInvocationId: 'step-2',
@@ -141,7 +173,7 @@ describe('OpenCode turn usage', () => {
         cachedReadTokens: 4,
         cachedWriteTokens: 1,
         outputTokens: 3,
-        contextUsedTokens: 23
+        contextUsedTokens: 24
       }
     ])
   })

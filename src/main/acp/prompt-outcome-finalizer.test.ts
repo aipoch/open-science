@@ -173,6 +173,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
             inputTokens: 3,
             cacheTokens: 1,
             outputTokens: 1,
+            contextUsedTokens: 4,
             contextWindowSize: 128_000
           },
           {
@@ -182,6 +183,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
             inputTokens: 2,
             cacheTokens: 0,
             outputTokens: 1,
+            contextUsedTokens: 2,
             contextWindowSize: 128_000
           },
           {
@@ -191,6 +193,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
             inputTokens: 3,
             cacheTokens: 1,
             outputTokens: 0,
+            contextUsedTokens: 4,
             contextWindowSize: 128_000
           },
           {
@@ -200,6 +203,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
             inputTokens: 2,
             cacheTokens: 0,
             outputTokens: 1,
+            contextUsedTokens: 2,
             contextWindowSize: 128_000
           }
         ],
@@ -432,6 +436,21 @@ describe('AcpPromptOutcomeFinalizer', () => {
       error: Object.assign(new Error('Internal error'), {
         data: { errorKind: 'request_too_large' }
       }),
+      recoverable: 'context-overflow',
+      providerError: false
+    },
+    {
+      name: 'OpenCode typed overflow without provider wording',
+      error: Object.assign(
+        new Error(
+          'Session too large to compact - context exceeds model limit even after stripping media'
+        ),
+        {
+          code: -32603,
+          data: { service: 'session', errorName: 'ContextOverflowError' },
+          name: 'RequestError'
+        }
+      ),
       recoverable: 'context-overflow',
       providerError: false
     },

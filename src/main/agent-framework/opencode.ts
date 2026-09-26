@@ -78,12 +78,10 @@ export const opencodeTransportProviderId = (providerId: string, model: string): 
     .digest('hex')
     .slice(0, 16)}`
 
-// The opencode provider block used for each endpoint. Anthropic /v1/messages maps to opencode's
-// built-in `anthropic` provider; OpenAI /v1/chat/completions maps to a custom provider backed by the
-// `@ai-sdk/openai-compatible` package. opencode drives both, so the endpoint is chosen from the
-// provider's apiType (preferring OpenAI when it offers both).
+// Pin the SDK for both protocols: app-generated provider ids do not inherit OpenCode's
+// built-in Anthropic driver. The endpoint prefers OpenAI when the provider offers both.
 const OPENCODE_ENDPOINT_PROVIDER: Record<'anthropic' | 'openai', { id: string; npm?: string }> = {
-  anthropic: { id: 'anthropic' },
+  anthropic: { id: 'anthropic', npm: '@ai-sdk/anthropic' },
   openai: { id: 'openai-compatible', npm: '@ai-sdk/openai-compatible' }
 }
 
