@@ -78,6 +78,7 @@ test('finds offscreen cells across XLSX and XLS worksheets', async ({ app }) => 
   expect(Math.abs(zoomInBounds!.y - findBounds!.y)).toBeLessThan(2)
   await find.click()
   const query = spreadsheet.getByRole('searchbox', { name: 'Find' })
+  await expect(query).toBeVisible()
   await expect(query).toBeFocused()
   await query.fill('CaseProbe')
   await expect(spreadsheet.locator('.spreadsheet-review-find-count')).toHaveText('1 / 3')

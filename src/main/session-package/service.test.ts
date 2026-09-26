@@ -945,8 +945,8 @@ it.each(['direct', 'forward'] as const)(
     ).toEqual(expect.arrayContaining([expect.objectContaining({ filename: 'plot.png' })]))
   },
   // Multiple real archive imports each migrate a validation database; hosted Windows I/O
-  // exceeded 60 seconds even with one worker. Keep this bound local to these round trips.
-  process.platform === 'win32' ? 120_000 : 60_000
+  // exceeded two minutes even with one worker. Keep this bound local to these round trips.
+  process.platform === 'win32' ? 180_000 : 60_000
 )
 afterEach(async () => {
   vi.restoreAllMocks()

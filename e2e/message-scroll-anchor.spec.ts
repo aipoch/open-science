@@ -69,6 +69,7 @@ test('keeps the prompt fixed while a blocking panel covers and leaves the transc
 
   for (let turn = 0; turn < 5; turn += 1) {
     await textbox.fill(`Turn ${turn}: ${USER_MESSAGE}`)
+    await expect(sendButton).toBeEnabled()
     await sendButton.click()
     await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toHaveCount(turn + 1)
   }

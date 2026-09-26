@@ -1462,7 +1462,10 @@ describe('LiteratureCatalog', () => {
       await expect(catalog.importItems([incoming], undefined, 'separate')).resolves.toMatchObject({
         createdCount: 1
       })
-    }
+    },
+    // Two import paths each migrate and write a SQLite fixture; hosted Windows I/O can exceed
+    // one minute.
+    process.platform === 'win32' ? 120_000 : 60_000
   )
 
   it('reuses consistent identifiers and restores a unique Trash match', async () => {
