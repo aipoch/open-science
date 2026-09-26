@@ -396,6 +396,10 @@ describe('codexFramework', () => {
 
     const codexConfigs = configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}'))
 
+    expect(codexConfigs.map(({ agents }) => agents)).toEqual(
+      configurations.map(() => ({ enabled: false }))
+    )
+
     expect(codexConfigs.map(({ features }) => features)).toEqual(
       configurations.map((_configuration, index) => ({
         apps: false,
@@ -974,6 +978,7 @@ describe('codexFramework', () => {
         HOME: join('/data', 'codex-subscription'),
         CODEX_HOME: join('/data', 'codex-subscription'),
         CODEX_CONFIG: JSON.stringify({
+          agents: { enabled: false },
           features: {
             apps: false,
             memories: false,
@@ -1002,6 +1007,7 @@ describe('codexFramework', () => {
         HOME: join('/data', 'codex-subscription'),
         CODEX_HOME: join('/data', 'codex-subscription'),
         CODEX_CONFIG: JSON.stringify({
+          agents: { enabled: false },
           features: {
             apps: false,
             memories: false,

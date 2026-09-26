@@ -1,7 +1,27 @@
 import { compareVersions } from './update'
 
-// App-tested native CLI target; this is not a minimum for all models or external installations.
-export const MANAGED_CODEX_VERSION = '0.153.4'
+// Open-Science's supported baseline, not a universal provider minimum for every model.
+export const MINIMUM_CODEX_CLI_VERSION = '0.157.1'
+// Keep optional future download upgrades independent from the supported baseline.
+export const MANAGED_CODEX_VERSION = '0.157.1'
+
+export const isSupportedCodexCliVersion = (version: string | null | undefined): boolean =>
+  Boolean(
+    version &&
+    /^\d+\.\d+\.\d+$/.test(version) &&
+    compareVersions(version, MINIMUM_CODEX_CLI_VERSION) >= 0
+  )
+
+export const CODEX_CLI_INCOMPATIBLE_MESSAGE = `The installed Codex CLI is incompatible or its version could not be verified. Update Codex CLI to ${MINIMUM_CODEX_CLI_VERSION} or later, then re-detect it in Settings.`
+
+export const isCodexCliCompatibilityError = (error: string | null | undefined): boolean => {
+  const message = error?.trim()
+  return (
+    message === CODEX_CLI_INCOMPATIBLE_MESSAGE ||
+    Boolean(message?.endsWith(`Error: ${CODEX_CLI_INCOMPATIBLE_MESSAGE}`)) ||
+    message === `Agent session resume failed: ${CODEX_CLI_INCOMPATIBLE_MESSAGE}`
+  )
+}
 
 export const hasCodexNativeUpdate = (version: string | undefined): boolean =>
   Boolean(

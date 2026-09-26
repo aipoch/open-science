@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { isSupportedCodexAcpVersion } from '../../shared/codex-runtime'
+import { isSupportedCodexAcpVersion, isSupportedCodexCliVersion } from '../../shared/codex-runtime'
 import { createLogger } from '../logger'
 import { augmentedPathEnv } from './shell-path'
 import { stripCodexCredentialEnv } from './process-tree'
@@ -128,7 +128,7 @@ const detectCodex = async (
         : await detectNativeCodex(deps, signal)
       // The adapter is app-owned, while the native executable may be the bundled binary or a global
       // installation. Pin the resolved executable through CODEX_PATH in either case.
-      if (!nativeCodex) continue
+      if (!nativeCodex || !isSupportedCodexCliVersion(nativeCodex.version)) continue
       result.nativeCodexPath = nativeCodex.path
       result.nativeCodexVersion = nativeCodex.version
     }

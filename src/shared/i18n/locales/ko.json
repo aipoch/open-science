@@ -6336,6 +6336,8 @@
     "Running": "실행 중",
     "Pinned": "고정됨",
     "Recent sessions": "최근 세션",
-    "More": "더보기"
+    "More": "더보기",
+    "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Codex CLI v{{minimumVersion}} 이상이 필요합니다. 사용하기 전에 Codex를 업데이트하거나 복구하세요.",
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "복구하면 외부 설치를 변경하지 않고 앱에서 관리하는 Codex CLI가 설치됩니다. 외부 설치를 수동으로 업데이트한 후 다시 감지할 수도 있습니다."
   }
 }

@@ -143,6 +143,7 @@ describe('production delegated framework factory composition', () => {
                           HOME: runtimeHome,
                           CODEX_HOME: runtimeHome,
                           CODEX_CONFIG: JSON.stringify({
+                            agents: { enabled: false },
                             features: { multi_agent: false, multi_agent_v2: false }
                           })
                         } as Record<string, string>

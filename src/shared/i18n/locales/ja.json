@@ -6338,6 +6338,8 @@
     "Running": "実行中",
     "Pinned": "固定済み",
     "Recent sessions": "最近のセッション",
-    "More": "多い"
+    "More": "多い",
+    "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Codex CLI v{{minimumVersion}} 以降が必要です。使用する前に Codex を更新または修復してください。",
+    "Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.": "修復すると、外部のインストールを変更せずに、アプリが管理する Codex CLI をインストールします。外部のインストールを手動で更新して再検出することもできます。"
   }
 }

@@ -55,6 +55,28 @@ const createDeps = (
 })
 
 describe('codex-detect', () => {
+  it.each(['0.153.4', '0.157.0', '0.157.1-alpha.1'])(
+    'rejects an obsolete native CLI %s even when ACP initializes',
+    async (nativeVersion) => {
+      const adapterPath = '/data/codex-managed/adapter/dist/index.js'
+      const codexPath = '/data/codex-managed/codex/bin/codex'
+      const smokeInitialize = vi.fn().mockResolvedValue(true)
+      const result = await detectCodex(
+        createDeps(
+          { [adapterPath]: 'codex-acp 1.6.2' },
+          {
+            managedAdapterPath: adapterPath,
+            managedCodexPath: codexPath,
+            getCodexVersion: () => Promise.resolve(`codex-cli ${nativeVersion}`),
+            smokeInitialize
+          }
+        )
+      )
+      expect(result).toBeUndefined()
+      expect(smokeInitialize).not.toHaveBeenCalled()
+    }
+  )
+
   it('finds a runnable codex-acp on PATH and reports its adapter version', async () => {
     const result = await detectCodex(
       createDeps({ '/usr/local/bin/codex-acp': '@agentclientprotocol/codex-acp 1.6.2' })
@@ -77,7 +99,7 @@ describe('codex-detect', () => {
           managedAdapterPath: adapterPath,
           managedCodexPath: codexPath,
           getCodexVersion: (candidate) =>
-            Promise.resolve(candidate === codexPath ? 'codex-cli 0.144.6' : undefined)
+            Promise.resolve(candidate === codexPath ? 'codex-cli 0.157.1' : undefined)
         }
       )
     )
@@ -86,7 +108,7 @@ describe('codex-detect', () => {
       adapterPath,
       adapterVersion: '1.6.2',
       nativeCodexPath: codexPath,
-      nativeCodexVersion: '0.144.6'
+      nativeCodexVersion: '0.157.1'
     })
   })
 
@@ -96,7 +118,7 @@ describe('codex-detect', () => {
     const codexPath = '/data/codex-managed/codex/bin/codex'
     const resolveNpmBinDirs = vi.fn().mockResolvedValue([])
     const getAdapterVersion = vi.fn().mockResolvedValue('codex-acp 1.6.2')
-    const getCodexVersion = vi.fn().mockResolvedValue('codex-cli 0.144.6')
+    const getCodexVersion = vi.fn().mockResolvedValue('codex-cli 0.157.1')
     const smokeInitialize = vi.fn().mockResolvedValue(true)
 
     await detectCodex(
@@ -133,7 +155,7 @@ describe('codex-detect', () => {
           managedAdapterPath: adapterPath,
           managedCodexPath,
           getCodexVersion: (candidate) =>
-            Promise.resolve(candidate === globalCodexPath ? 'codex-cli 0.144.6' : undefined),
+            Promise.resolve(candidate === globalCodexPath ? 'codex-cli 0.157.1' : undefined),
           smokeInitialize
         }
       )
@@ -143,7 +165,7 @@ describe('codex-detect', () => {
       adapterPath,
       adapterVersion: '1.6.2',
       nativeCodexPath: globalCodexPath,
-      nativeCodexVersion: '0.144.6'
+      nativeCodexVersion: '0.157.1'
     })
     expect(smokeInitialize).toHaveBeenCalledWith(adapterPath, { codexPath: globalCodexPath })
   })
@@ -279,7 +301,7 @@ describe('codex-detect', () => {
           managedAdapterPath: adapterPath,
           managedCodexPath: codexPath,
           getCodexVersion: (candidate) =>
-            Promise.resolve(candidate === codexPath ? 'codex-cli 0.144.6' : undefined),
+            Promise.resolve(candidate === codexPath ? 'codex-cli 0.157.1' : undefined),
           smokeInitialize: (_candidate, opts) => {
             smokeOpts = opts
             return Promise.resolve(true)
@@ -340,7 +362,7 @@ describe('codex-detect: real ACP initialize smoke', () => {
       getAdapterVersion: (candidate) =>
         Promise.resolve(candidate === adapterPath ? 'codex-acp 1.6.2' : undefined),
       getCodexVersion: (candidate) =>
-        Promise.resolve(candidate === codexPath ? 'codex-cli 0.144.6' : undefined),
+        Promise.resolve(candidate === codexPath ? 'codex-cli 0.157.1' : undefined),
       // The production default dep — not a stub.
       smokeInitialize: runAcpInitializeSmoke(process.platform),
       resolveNpmBinDirs: () => Promise.resolve([]),
@@ -369,7 +391,7 @@ describe('codex-detect: real ACP initialize smoke', () => {
       adapterPath,
       adapterVersion: '1.6.2',
       nativeCodexPath: join(tempRoot, 'codex'),
-      nativeCodexVersion: '0.144.6'
+      nativeCodexVersion: '0.157.1'
     })
     // The smoke reaped the tree cleanly, so it must not emit the degraded-reap warning.
     expect(warnLogSpy).not.toHaveBeenCalled()
@@ -411,7 +433,7 @@ describe('codex-detect: real ACP initialize smoke', () => {
       adapterPath,
       adapterVersion: '1.6.2',
       nativeCodexPath: join(tempRoot, 'codex'),
-      nativeCodexVersion: '0.144.6'
+      nativeCodexVersion: '0.157.1'
     })
     // (b) The degraded teardown is reported exactly once with the fully-reaped warning.
     expect(warnLogSpy).toHaveBeenCalledTimes(1)
@@ -446,13 +468,13 @@ describe('detectNativeCodex', () => {
       env: { PATH: '/usr/bin' },
       getCodexVersion: (path) =>
         path === '/Applications/ChatGPT.app/Contents/Resources/codex'
-          ? Promise.resolve('codex-cli 0.144.2')
+          ? Promise.resolve('codex-cli 0.157.0')
           : Promise.resolve(undefined)
     })
 
     expect(result).toEqual({
       path: '/Applications/ChatGPT.app/Contents/Resources/codex',
-      version: '0.144.2'
+      version: '0.157.0'
     })
   })
 
@@ -466,13 +488,13 @@ describe('detectNativeCodex', () => {
       },
       getCodexVersion: (path) =>
         path === win32.join('C:\\Users\\User\\AppData\\Local', 'Programs', 'ChatGPT', 'codex.exe')
-          ? Promise.resolve('codex-cli 0.144.2')
+          ? Promise.resolve('codex-cli 0.157.0')
           : Promise.resolve(undefined)
     })
 
     expect(result).toEqual({
       path: 'C:\\Users\\User\\AppData\\Local\\Programs\\ChatGPT\\codex.exe',
-      version: '0.144.2'
+      version: '0.157.0'
     })
   })
 
@@ -483,13 +505,13 @@ describe('detectNativeCodex', () => {
       env: { PATH: '/usr/bin:/usr/local/bin' },
       getCodexVersion: (path) =>
         path === '/usr/local/bin/codex'
-          ? Promise.resolve('codex-cli 0.144.2')
+          ? Promise.resolve('codex-cli 0.157.0')
           : Promise.resolve(undefined)
     })
 
     expect(result).toEqual({
       path: '/usr/local/bin/codex',
-      version: '0.144.2'
+      version: '0.157.0'
     })
   })
 
@@ -515,12 +537,12 @@ describe('detectNativeCodex', () => {
       homePath: '/Users/test',
       getCodexVersion: (path) =>
         path === '/opt/homebrew/bin/codex'
-          ? Promise.resolve('codex-cli 0.144.2')
+          ? Promise.resolve('codex-cli 0.157.0')
           : Promise.resolve(undefined),
       resolveNpmBinDirs: () => Promise.resolve([])
     })
 
-    expect(result).toEqual({ path: '/opt/homebrew/bin/codex', version: '0.144.2' })
+    expect(result).toEqual({ path: '/opt/homebrew/bin/codex', version: '0.157.0' })
   })
 
   it('finds native Codex in an npm global bin dir', async () => {
@@ -531,12 +553,12 @@ describe('detectNativeCodex', () => {
       homePath: '/home/user',
       getCodexVersion: (path) =>
         path === '/home/user/.npm-global/bin/codex'
-          ? Promise.resolve('codex-cli 0.144.2')
+          ? Promise.resolve('codex-cli 0.157.0')
           : Promise.resolve(undefined),
       resolveNpmBinDirs: () => Promise.resolve(['/home/user/.npm-global/bin'])
     })
 
-    expect(result).toEqual({ path: '/home/user/.npm-global/bin/codex', version: '0.144.2' })
+    expect(result).toEqual({ path: '/home/user/.npm-global/bin/codex', version: '0.157.0' })
   })
 
   it('finds native Codex in ~/.local/bin via homePath', async () => {
@@ -547,12 +569,12 @@ describe('detectNativeCodex', () => {
       homePath: '/home/user',
       getCodexVersion: (path) =>
         path === '/home/user/.local/bin/codex'
-          ? Promise.resolve('codex-cli 0.144.2')
+          ? Promise.resolve('codex-cli 0.157.0')
           : Promise.resolve(undefined),
       resolveNpmBinDirs: () => Promise.resolve([])
     })
 
-    expect(result).toEqual({ path: '/home/user/.local/bin/codex', version: '0.144.2' })
+    expect(result).toEqual({ path: '/home/user/.local/bin/codex', version: '0.157.0' })
   })
 })
 
@@ -603,7 +625,7 @@ describe('detectCodexComponents', () => {
       getAdapterVersion: (path) =>
         Promise.resolve(path === globalAdapterPath ? 'codex-acp 1.6.2' : undefined),
       getCodexVersion: (path) =>
-        Promise.resolve(path === globalCodexPath ? 'codex-cli 0.144.2' : undefined),
+        Promise.resolve(path === globalCodexPath ? 'codex-cli 0.157.0' : undefined),
       smokeInitialize: () => Promise.resolve(true),
       resolveNpmBinDirs: () => Promise.resolve([])
     })
@@ -630,7 +652,7 @@ describe('detectCodexComponents', () => {
       getAdapterVersion: (path) =>
         Promise.resolve(path === managedAdapterPath ? 'codex-acp 1.6.2' : undefined),
       getCodexVersion: (path) =>
-        Promise.resolve(path === globalCodexPath ? 'codex-cli 0.144.2' : undefined),
+        Promise.resolve(path === globalCodexPath ? 'codex-cli 0.157.0' : undefined),
       smokeInitialize,
       resolveNpmBinDirs: () => Promise.resolve([])
     })
@@ -666,7 +688,7 @@ describe('detectCodexComponents', () => {
           : Promise.resolve(undefined),
       getCodexVersion: (path) =>
         path === '/Applications/ChatGPT.app/Contents/Resources/codex'
-          ? Promise.resolve('codex-cli 0.144.2')
+          ? Promise.resolve('codex-cli 0.157.0')
           : Promise.resolve(undefined),
       smokeInitialize: () => Promise.resolve(true),
       resolveNpmBinDirs: () => Promise.resolve([])
@@ -675,7 +697,7 @@ describe('detectCodexComponents', () => {
     expect(result).toMatchObject({
       nativeCliFound: true,
       nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
-      nativeCliVersion: '0.144.2',
+      nativeCliVersion: '0.157.0',
       adapterFound: true,
       adapterPath: '/usr/local/bin/codex-acp',
       adapterVersion: '1.6.2',
@@ -694,7 +716,7 @@ describe('detectCodexComponents', () => {
       getAdapterVersion: () => Promise.resolve(undefined),
       getCodexVersion: (path) =>
         path === '/Applications/ChatGPT.app/Contents/Resources/codex'
-          ? Promise.resolve('codex-cli 0.144.2')
+          ? Promise.resolve('codex-cli 0.157.0')
           : Promise.resolve(undefined),
       smokeInitialize: () => Promise.resolve(false),
       resolveNpmBinDirs: () => Promise.resolve([])
@@ -703,7 +725,7 @@ describe('detectCodexComponents', () => {
     expect(result).toMatchObject({
       nativeCliFound: true,
       nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
-      nativeCliVersion: '0.144.2',
+      nativeCliVersion: '0.157.0',
       adapterFound: false,
       adapterPath: undefined,
       adapterVersion: undefined

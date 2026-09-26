@@ -28,7 +28,12 @@ import {
   ACP_MODEL_TURN_COUNT_META_KEY,
   ACP_TURN_TOKEN_USAGE_META_KEY
 } from '../../shared/acp'
-import { MANAGED_CODEX_VERSION, MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
+import {
+  MANAGED_CODEX_VERSION,
+  MINIMUM_CODEX_ACP_VERSION,
+  isSupportedCodexCliVersion,
+  CODEX_CLI_INCOMPATIBLE_MESSAGE
+} from '../../shared/codex-runtime'
 import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
@@ -56,17 +61,17 @@ export const CODEX_ACP_INTEGRITY =
 
 export const CODEX_INTEGRITIES: Readonly<Record<string, string>> = {
   'darwin-arm64':
-    'sha512-B1qhN3fa1ay0R0wGziXqgwSkB5icpYChNKHhtBHff/0UtSTC7z+l8aTtvMlGjH3E8HEvY3+njIJelM9CAAoVWg==',
+    'sha512-62/e4TZ34z93KK3FYIHmo/K88aH0JRPA8x7SAVBdK4iG9f9HPO2tsDrJcmOj9z6DrFpMvPEVymomCbYpqN+ylQ==',
   'darwin-x64':
-    'sha512-vnSbbPzfoDZmmyzsxswsDDXQ06IVFBzkQU7/hroB3ji93Ok2utcsq8Psfk2tjF5r9mEx8RWFJhzuTGHG26/NDA==',
+    'sha512-PscZvqKD4zlaSw1nM5Sh4lU1M+01sr4b3qzGx8pf+4OLyULg1z1yAyTR1c35C3t62H8DXy/14y7oazTR3JMMKA==',
   'linux-arm64':
-    'sha512-QKdjYLYV4hXIuUQDP3P6F4NXuWFoKo9WUoV4nAREIx55kiUyi8UsYdsVobkeXir5n/maEQgYMCKLHVma4rNPiw==',
+    'sha512-nEaBZT3ldrtqUNaBlvI+Y+fg+LbNCTsQjbUnl7Q45rl9vSSqHU2vRj1l6iJDwupZkrpeIJ/ClHIwxgMKv1SKHg==',
   'linux-x64':
-    'sha512-x1EcwBlY3AObM1VTUHNM2AzAJQsyreGdagpF+qFiYi/Oa30VBktvvG0C6tLtCzqW6hjZNWkGZQWmeVk7MuJKWg==',
+    'sha512-Eac8XlC0nCXSeUjDU9l8yLJ6P9evv1mO+AnvILoNwlegBC7B3AVXqJ05QcMhQX7RcJ3Lk2618ykCb2X2ui8VAQ==',
   'win32-arm64':
-    'sha512-/FBh42976ltF1kxDoPQBg1Q6+hwChRU5/sm5dfeC8kFVQMvOCGoGeY5d8rRZGVJE8XojlXo74VQb0sHowcfgBw==',
+    'sha512-tFkxdrSXPUDQXXp3JwTxNOgI17RQcexyuaZTiNmL1A/UaVtVmVBNe+8cBk3r8b7dLpaoWFbjPwL7p5SBCrkLQg==',
   'win32-x64':
-    'sha512-lMkB43kJZH0VFr+hoXc11qqR7QtQIbkr07ALgj4urKL1osNyUyuy1iXd3Vzz2iCYvBUCSw7I0l/W1cEPGx9euQ=='
+    'sha512-vgqs/VRXNwhLYMsZDgYfnRSXpRh5Nm782L8lacGskw86kOxbMaquvQKxkuZHUBrJA2XGcksB7rMUHy1XaCJgrA=='
 }
 
 export type ManagedCodexPlatform = {
@@ -1592,6 +1597,8 @@ const installManagedCodexFiles = async (
         const verifiedVersion = await verifyCodex(codexPath, signal)
         signal?.throwIfAborted()
         if (!verifiedVersion) throw new Error('Installed Codex binary failed its --version check')
+        if (!isSupportedCodexCliVersion(verifiedVersion))
+          throw new Error(CODEX_CLI_INCOMPATIBLE_MESSAGE)
         // Smoke home lives in scratch (auto-removed), NEVER inside stagedRoot: stagedRoot is moved to
         // the final runtime, so anything Codex might write here must not ride along into the install.
         const smokeHome = join(scratch, 'smoke-home')

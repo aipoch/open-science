@@ -246,6 +246,9 @@ const buildCodexConfig = (provider: {
 
   return {
     ...buildCodexModelOptions(provider),
+    // Model metadata can enable native delegation even when both feature flags are off.
+    // Codex 0.157.1 config::multi_agent_version_override requires agents.enabled=false.
+    agents: { enabled: false },
     features: CODEX_DISABLED_NATIVE_FEATURES,
     memories: CODEX_DISABLED_NATIVE_MEMORY,
     ...(contextWindow
@@ -547,6 +550,9 @@ export const createCodexFramework = ({
       })
       const codexConfig = {
         ...modelOptions,
+        // Model metadata can enable native delegation even when both feature flags are off.
+        // Codex 0.157.1 config::multi_agent_version_override requires agents.enabled=false.
+        agents: { enabled: false },
         features: CODEX_DISABLED_NATIVE_FEATURES,
         memories: CODEX_DISABLED_NATIVE_MEMORY,
         ...(persistentSystemPrompt ? { developer_instructions: persistentSystemPrompt } : {})

@@ -6922,6 +6922,34 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(openSettingsToPanel).toHaveBeenCalledWith('model')
   })
 
+  it.each(['', 'Agent session resume failed: ', 'Error invoking remote method: Error: '])(
+    'opens Agent settings for an unsupported native Codex CLI (%s)',
+    (wrapper) => {
+      const openSettingsToPanel = vi.fn()
+      useSettingsStore.setState({ openSettingsToPanel })
+      renderPanel({
+        view: {
+          activeSession: {
+            ...errorSession,
+            interrupted: Boolean(wrapper),
+            error:
+              wrapper +
+              'The installed Codex CLI is incompatible or its version could not be verified. Update Codex CLI to 0.157.1 or later, then re-detect it in Settings.',
+            errorReportable: true
+          }
+        }
+      })
+      expect(reportButton()).toBeNull()
+      expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+      const button = Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === 'Agent settings'
+      )
+      expect(button).toBeDefined()
+      act(() => button?.click())
+      expect(openSettingsToPanel).toHaveBeenCalledWith('agent')
+    }
+  )
+
   it('opens Agent settings instead of reporting an unsupported Codex ACP version', () => {
     const openSettingsToPanel = vi.fn()
     useSettingsStore.setState({ openSettingsToPanel })

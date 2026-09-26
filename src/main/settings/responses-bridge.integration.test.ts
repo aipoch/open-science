@@ -10,6 +10,7 @@ import { expect, it, vi } from 'vitest'
 
 import { CODEX_BRIDGE_MODEL, createCodexFramework } from '../agent-framework/codex'
 import { CODEX_VERSION } from './managed-codex'
+import { toAcpRuntimeEvent } from '../acp/runtime-events'
 import { terminateProcessTree } from '../process-tree'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import { ReviewerMcpServer, type SubmitFindingsHandler } from '../reviewer/mcp-server'
@@ -269,36 +270,38 @@ it.runIf(runLiveContract)(
         Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
         Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
       )
-      await acp
-        .client({ name: 'open-science-native-auth-contract' })
-        .onRequest(acp.methods.client.session.requestPermission, (ctx) => ({
-          outcome: {
-            outcome: 'selected',
-            optionId:
-              ctx.params.options.find((option) => option.kind === 'allow_once')?.optionId ??
-              ctx.params.options[0].optionId
-          }
-        }))
-        .onRequest(acp.methods.client.fs.readTextFile, () => ({ content: '' }))
-        .onRequest(acp.methods.client.fs.writeTextFile, () => ({}))
-        .connectWith(stream, async (ctx) => {
-          await ctx.request(acp.methods.agent.initialize, {
-            protocolVersion: acp.PROTOCOL_VERSION,
-            clientInfo: { name: 'open-science-native-auth-contract', version: '1.0.0' },
-            clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } }
-          })
-          await ctx.request(acp.methods.agent.providers.set, modelConfig.providerConfiguration!)
-
-          await ctx
-            .buildSession({ cwd: workspace, mcpServers: [] })
-            .withSession(async (session) => {
-              session.prompt('Confirm authentication.')
-              for (;;) {
-                const update = await session.nextUpdate()
-                if (update.kind === 'stop') return
-              }
+      await expect(
+        acp
+          .client({ name: 'open-science-native-auth-contract' })
+          .onRequest(acp.methods.client.session.requestPermission, (ctx) => ({
+            outcome: {
+              outcome: 'selected',
+              optionId:
+                ctx.params.options.find((option) => option.kind === 'allow_once')?.optionId ??
+                ctx.params.options[0].optionId
+            }
+          }))
+          .onRequest(acp.methods.client.fs.readTextFile, () => ({ content: '' }))
+          .onRequest(acp.methods.client.fs.writeTextFile, () => ({}))
+          .connectWith(stream, async (ctx) => {
+            await ctx.request(acp.methods.agent.initialize, {
+              protocolVersion: acp.PROTOCOL_VERSION,
+              clientInfo: { name: 'open-science-native-auth-contract', version: '1.0.0' },
+              clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } }
             })
-        })
+            await ctx.request(acp.methods.agent.providers.set, modelConfig.providerConfiguration!)
+
+            await ctx
+              .buildSession({ cwd: workspace, mcpServers: [] })
+              .withSession(async (session) => {
+                session.prompt('Confirm authentication.')
+                for (;;) {
+                  const update = await session.nextUpdate()
+                  if (update.kind === 'stop') return
+                }
+              })
+          })
+      ).rejects.toThrow('Incorrect API key provided')
 
       expect(upstreamFetch).toHaveBeenCalledOnce()
     } catch (error) {
@@ -559,11 +562,11 @@ it.runIf(runLiveContract)(
       expect(result.initial.stopReason).toBe('end_turn')
       expect(
         result.compact.updates
-          .map((notification) => notification.update)
-          .filter((update) => update._meta?.contextCompaction === true)
+          .map((notification) => toAcpRuntimeEvent(notification, 'native-compaction'))
+          .filter((event) => event?.kind === 'compaction')
       ).toMatchObject([
-        { sessionUpdate: 'tool_call', status: 'in_progress' },
-        { sessionUpdate: 'tool_call_update', status: 'completed' }
+        { kind: 'compaction', status: 'in_progress' },
+        { kind: 'compaction', status: 'completed' }
       ])
       expect(result.compact.updates.map((notification) => notification.update)).toEqual(
         expect.arrayContaining([

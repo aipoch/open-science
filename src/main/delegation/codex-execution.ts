@@ -3,7 +3,6 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { terminateProcessTree } from '../process-tree'
 import { codexFramework } from '../agent-framework/codex'
 import type { AgentFramework, AgentSpawnInput } from '../agent-framework/types'
-import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
 import {
   DELEGATED_WORK_CERTIFICATION_JOURNEYS,
   assertDelegatedWorkCertified,
@@ -57,16 +56,15 @@ type CodexDelegateExecution = Readonly<{
 }>
 
 /**
- * Native entry-point evidence is pinned to reviewed Codex/codex-acp pairs. Keep the previously
- * reviewed CLI usable while the managed upgrade remains optional.
- * Upgrades fail closed until their tool inventory and feature switches are audited again.
+ * Pin reviewed identities independently of the download target: an upgrade must not implicitly
+ * certify its tool inventory. 0.157.1 was audited with ACP 1.6.2 and agents.enabled=false;
+ * features.multi_agent{,_v2}=false alone does not override the new models' native delegation.
+ * Upstream: rust-v0.157.1 codex-rs/core/src/config/mod.rs::multi_agent_version_override.
  */
 const getCodexNativeDelegationAudit = (
   identity: CodexRuntimeIdentity
 ): readonly NativeDelegationAudit[] => {
-  const reviewed =
-    (identity.nativeVersion === CODEX_VERSION || identity.nativeVersion === '0.144.6') &&
-    identity.adapterVersion === CODEX_ACP_VERSION
+  const reviewed = identity.nativeVersion === '0.157.1' && identity.adapterVersion === '1.6.2'
   if (!reviewed) {
     return Object.freeze(
       (['task', 'agent', 'multi-agent'] as const).map((entryPoint) =>
@@ -100,13 +98,20 @@ const assertCodexLaunchIsolated = (
   if (spawn.env.CODEX_HOME !== runtimeHome || spawn.env.HOME !== runtimeHome) {
     throw new Error('Codex delegated execution requires an isolated runtime home.')
   }
-  let config: { features?: { multi_agent?: unknown; multi_agent_v2?: unknown } }
+  let config: {
+    agents?: { enabled?: unknown }
+    features?: { multi_agent?: unknown; multi_agent_v2?: unknown }
+  }
   try {
     config = JSON.parse(spawn.env.CODEX_CONFIG ?? '') as typeof config
   } catch {
     throw new Error('Codex delegated execution requires an auditable CODEX_CONFIG.')
   }
-  if (config.features?.multi_agent !== false || config.features.multi_agent_v2 !== false) {
+  if (
+    config.agents?.enabled !== false ||
+    config.features?.multi_agent !== false ||
+    config.features.multi_agent_v2 !== false
+  ) {
     throw new Error('Codex native multi-agent features must be disabled.')
   }
 }

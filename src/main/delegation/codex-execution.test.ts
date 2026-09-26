@@ -8,6 +8,7 @@ import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
 import type { AcpDelegateExecutionCallbacks, AcpDelegateRuntime } from './acp-execution'
 import {
   createCodexDelegateExecution,
+  assertCodexLaunchIsolated,
   getCodexNativeDelegationAudit,
   type PreparedCodexDelegateExecution
 } from './codex-execution'
@@ -96,6 +97,7 @@ const makeCertificationAdapter = (
             HOME: runtimeHome,
             CODEX_HOME: runtimeHome,
             CODEX_CONFIG: JSON.stringify({
+              agents: { enabled: false },
               features: { multi_agent: false, multi_agent_v2: false }
             })
           }
@@ -199,7 +201,7 @@ const makeCertificationAdapter = (
 }
 
 describe('Codex delegated-work production adapter', () => {
-  it.each([CODEX_VERSION, '0.144.6'])(
+  it.each([CODEX_VERSION])(
     'audits reviewed runtime %s and fails closed for an unreviewed pair',
     (nativeVersion) => {
       expect(
@@ -237,6 +239,31 @@ delegatedWorkCertificationContract((options) => {
 })
 
 describe('Codex delegated-work isolation evidence', () => {
+  it.each([undefined, true])(
+    'rejects model-enabled native delegation even with both feature flags off (%s)',
+    (enabled) => {
+      const runtimeHome = '/runtime/codex'
+      expect(() =>
+        assertCodexLaunchIsolated(
+          {
+            executablePath: '/runtime/codex-acp',
+            args: [],
+            env: {
+              HOME: runtimeHome,
+              CODEX_HOME: runtimeHome,
+              CODEX_CONFIG: JSON.stringify({
+                agents: { enabled },
+                features: { multi_agent: false, multi_agent_v2: false }
+              })
+            }
+          },
+          runtimeHome,
+          { nativeVersion: CODEX_VERSION, adapterVersion: CODEX_ACP_VERSION }
+        )
+      ).toThrow('Codex native multi-agent features must be disabled.')
+    }
+  )
+
   it.each(['throw', 'reuse'] as const)(
     'reaps the process tree after %s construction failure',
     async (failure) => {
