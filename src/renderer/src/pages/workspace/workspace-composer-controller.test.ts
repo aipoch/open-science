@@ -1287,6 +1287,85 @@ describe('workspace composer controller', () => {
     })
   })
 
+  it.each([false, true])(
+    'keeps removed draft Reading unlinked on send (literature mention: %s)',
+    (withMention) => {
+      const preview = usePreviewWorkbenchStore.getState()
+      preview.activateProject('project')
+      preview.upsertItem({
+        id: 'literature:version-1',
+        projectId: 'project',
+        sessionId: 'literature-library',
+        type: 'file',
+        source: 'literature',
+        title: 'paper.pdf',
+        name: 'paper.pdf',
+        format: 'pdf',
+        path: 'literature-attachment-version:version-1',
+        mimeType: 'application/pdf',
+        size: 100
+      })
+      preview.setPendingPdfContext('project', {
+        kind: 'version',
+        sourceKind: 'literature-attachment-version',
+        sourceVersionId: 'version-1',
+        previewItemId: 'literature:version-1'
+      })
+      const hook = renderController(uploads(), undefined, [], null)
+      mounted.push(hook)
+      act(() =>
+        hook.result.current.actions.unlinkReadingContext(
+          'version:literature-attachment-version:version-1'
+        )
+      )
+      act(() =>
+        hook.result.current.actions.changeDoc({
+          nodes: [
+            { type: 'text', text: 'Summarize this' },
+            ...(withMention
+              ? [
+                  {
+                    type: 'literature' as const,
+                    itemId: 'paper',
+                    metadataRevision: 1,
+                    item: literatureItemInputSchema.parse({
+                      itemType: 'journalArticle',
+                      title: 'Paper'
+                    }),
+                    attachmentVersionId: 'version-1'
+                  }
+                ]
+              : [])
+          ]
+        })
+      )
+      expect(hook.result.current.view.readingContext.bindings).toEqual([])
+      const snapshot = hook.result.current.lifecycle.captureSend()
+      expect(snapshot.pendingPdfContextVersions).toBeUndefined()
+      expect(snapshot.automaticReadingEnabled).toBe(false)
+      expect(snapshot.doc.nodes.some((node) => node.type === 'literature')).toBe(withMention)
+      act(() => {
+        hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
+      })
+      act(() => {
+        hook.result.current.lifecycle.restoreFailedSend(snapshot)
+      })
+      expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toBeUndefined()
+      // An explicit Read with agent selection still wins over automatic-link suppression.
+      act(() =>
+        preview.setPendingPdfContext('project', {
+          kind: 'version',
+          sourceKind: 'literature-attachment-version',
+          sourceVersionId: 'version-1',
+          previewItemId: 'literature:version-1'
+        })
+      )
+      expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toEqual([
+        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
+      ])
+    }
+  )
+
   it('previews and removes individual PDFs from a three-document draft and sends the remaining sources', () => {
     const preview = usePreviewWorkbenchStore.getState()
     preview.activateProject('project')

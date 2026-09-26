@@ -800,6 +800,9 @@ const useWorkspaceComposerController = ({
         (selection) => pendingPdfContextBindingId(selection) === bindingId
       )
       if (pending && activeProjectId && !activeSession) {
+        // Keep explicit removal authoritative when the same PDF is still mentioned in the draft.
+        markChanged()
+        setActiveAutomaticReadingEnabled(false)
         usePreviewWorkbenchStore.getState().clearPdfReadingPosition(bindingId)
         usePreviewWorkbenchStore.getState().clearPendingPdfContext(activeProjectId, pending)
         return
@@ -828,7 +831,9 @@ const useWorkspaceComposerController = ({
       beginReadingContextUndo,
       durableReadingBindings,
       pendingReadingSelections,
-      reconcileReadingContextSources
+      reconcileReadingContextSources,
+      markChanged,
+      setActiveAutomaticReadingEnabled
     ]
   )
   const dismissAutomaticReading = useCallback((): void => {
@@ -1192,7 +1197,7 @@ const useWorkspaceComposerController = ({
                   : []
               )
           : []),
-        ...docToPdfContextSources(docRef.current)
+        ...(automaticReadingEnabledRef.current ? docToPdfContextSources(docRef.current) : [])
       ]
       const pendingPdfContextVersions = candidates
         .filter((source) => {

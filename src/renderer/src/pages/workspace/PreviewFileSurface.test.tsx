@@ -3928,6 +3928,30 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     })
   })
 
+  it('routes removal of draft Reading through the composer owner', async () => {
+    installPdfContextApi()
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', {
+      kind: 'version',
+      sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-1',
+      sourceVersionId: 'version-1',
+      previewItemId: 'artifact-1'
+    })
+    const onUnlinkReadingContext = vi.fn()
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={pdfItem}
+          onClose={vi.fn()}
+          onUnlinkReadingContext={onUnlinkReadingContext}
+        />
+      )
+    })
+    await openMenu(container.querySelector('[data-testid="pdf-context-status"]'))
+    await clickMenuItem('Remove PDF from context')
+    expect(onUnlinkReadingContext).toHaveBeenCalledWith('version:artifact-version:version-1')
+  })
+
   it('preserves other draft PDFs when removing one and enforces the three PDF limit', async () => {
     installPdfContextApi()
     const selections = ['1', '2', '3'].map((id) => ({
