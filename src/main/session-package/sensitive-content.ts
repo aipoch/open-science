@@ -233,9 +233,14 @@ export const findSensitivePackageText = (
     if (!isSensitiveDiagnosticKey(match[1])) continue
     const start = match.index + match[0].length
     const rest = text.slice(start)
-    // Serialized context-usage counts are numbers, not credentials. Keep this exception
+    // Serialized context/model usage counts are numbers, not credentials. Keep this exception
     // limited to the exact JSON metric keys and integer values, never quoted secrets.
-    if (text[match.index - 1] === '"' && /^(?:estimatedTokens|tokens)"\s*:\s*$/.test(match[0])) {
+    if (
+      text[match.index - 1] === '"' &&
+      /^(?:estimatedTokens|tokens|cacheTokens|cachedReadTokens|cachedWriteTokens)"\s*:\s*$/.test(
+        match[0]
+      )
+    ) {
       const count = /^(0|[1-9]\d{0,15})\s*(?=[,}]|$)/.exec(rest)
       if (
         count &&

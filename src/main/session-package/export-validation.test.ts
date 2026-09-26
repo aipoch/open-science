@@ -85,6 +85,13 @@ it.each([
     true
   ],
   [
+    'cache count crossing a chunk boundary',
+    Buffer.from(
+      ' '.repeat(65519) + '{"cacheTokens":123456,"cachedReadTokens":123456,"cachedWriteTokens":0}'
+    ),
+    true
+  ],
+  [
     'credential after a token count',
     Buffer.from('{"estimatedTokens":71862,"password":"synthetic-private-value"}'),
     false
@@ -321,7 +328,7 @@ it('honors cancellation after a text match while classifying the remaining file'
   }
 })
 
-it('preserves context token counts through native export and imported-package forwarding', async () => {
+it('preserves context and model-step token counts through native export and imported-package forwarding', async () => {
   const fixture = await createProvenanceTestFixture()
   initDataRoot(fixture.storageRoot)
   const sessions = new SessionRepository(fixture.storageRoot)
@@ -344,6 +351,13 @@ it('preserves context token counts through native export and imported-package fo
         { key: 'other' as const, tokens: 16335, estimated: true }
       ]
     }
+  }
+  const modelStepUsage = {
+    inputTokens: 351,
+    cacheTokens: 123456,
+    cachedReadTokens: 123456,
+    cachedWriteTokens: 0,
+    outputTokens: 890
   }
   try {
     await fixture.client.project.create({ data: { id: 'project-1', name: 'Research' } })
@@ -370,7 +384,8 @@ it('preserves context token counts through native export and imported-package fo
               timestamp: 2,
               termination: { kind: 'stop', stopReason: 'end_turn' },
               source: 'provider-response',
-              contextWindow
+              contextWindow,
+              modelStepUsage
             }
           ]
         }
@@ -379,6 +394,7 @@ it('preserves context token counts through native export and imported-package fo
     const request = { projectId: 'project-1', sessionId: 'session-1' }
     const before = await sessions.loadSession(request.projectId, request.sessionId)
     expect(before?.messages[0].contextWindowSamples?.[0].contextWindow).toEqual(contextWindow)
+    expect(before?.messages[0].contextWindowSamples?.[0].modelStepUsage).toEqual(modelStepUsage)
     const native = join(fixture.storageRoot, 'native.science')
     await service.exportTo(request, native)
     const imported = await service.importFrom(native)
@@ -393,6 +409,9 @@ it('preserves context token counts through native export and imported-package fo
       expect(
         JSON.parse(document).session.messages[0].contextWindowSamples[0].contextWindow
       ).toEqual(contextWindow)
+      expect(
+        JSON.parse(document).session.messages[0].contextWindowSamples[0].modelStepUsage
+      ).toEqual(modelStepUsage)
       documents.push(document)
     }
     expect(documents[1]).toBe(documents[0])

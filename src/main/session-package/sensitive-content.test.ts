@@ -22,6 +22,9 @@ describe('package text policy', () => {
     '{"estimatedTokens":71862,"difference":16335}',
     '{"tokens":0,"estimated":true}',
     '{"tokens" : 88197 }',
+    '{"cacheTokens":123456}',
+    '{"cachedReadTokens":123456}',
+    '{"cachedWriteTokens":0}',
     'one-token bluffs. A hyphenated phrase is not a command-line flag.',
     'prefix--token value is not a standalone command-line flag.',
     'café-token valeur is not a standalone command-line flag.',
@@ -74,6 +77,31 @@ describe('package text policy', () => {
     expect(findSensitivePackageText('Authorization: Bearer [redacted]', true)).toBeUndefined()
     expect(findSensitivePackageText('Authorization: Bearer actual-value\n', false)).toBeDefined()
   })
+  it.each(['cacheTokens', 'cachedReadTokens', 'cachedWriteTokens'])(
+    'limits the %s exception to exact JSON integer metrics',
+    (key) => {
+      for (const count of [0, 123456, Number.MAX_SAFE_INTEGER])
+        expect(findSensitivePackageText(`{"${key}" : ${count} }`)).toBeUndefined()
+      for (const value of [
+        '"123456"',
+        '"synthetic-private-value"',
+        '-1',
+        '1.5',
+        '9007199254740992',
+        '123456secret'
+      ])
+        expect(findSensitivePackageText(`{"${key}":${value}}`)).toBeDefined()
+      for (const text of [
+        `{"${key}":123`,
+        `${key}=123456`,
+        `--${key} 123456`,
+        `{"${key[0].toUpperCase() + key.slice(1)}":123456}`,
+        `{"${key}Secret":123456}`,
+        `{"${key}":123,"password":"synthetic-private-value"}`
+      ])
+        expect(findSensitivePackageText(text), text).toBeDefined()
+    }
+  )
   it('treats object-field values consistently', () => {
     expect(isPrivatePackageValue('')).toBe(false)
     expect(isPrivatePackageValue(' [redacted] ')).toBe(false)
@@ -136,6 +164,7 @@ it('keeps matched values out of location errors', async () => {
 it.each([
   '{"estimatedTokens":71862,"difference":16335}',
   '{"tokens":88197,"estimated":true}',
+  '{"cacheTokens":123456,"cachedReadTokens":123456,"cachedWriteTokens":0}',
   'Authorization: Bearer [redacted]',
   '--authorization Bearer [redacted]',
   'password="\\u005bredacted]"',
