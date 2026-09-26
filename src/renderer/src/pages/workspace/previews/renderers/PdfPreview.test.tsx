@@ -778,6 +778,55 @@ describe('PdfPreviewContent', () => {
     }
   })
 
+  it('keeps the PDF resource and zoom while the conversation Session binds', async () => {
+    window.api.pdfAnnotations = {
+      list: vi.fn().mockResolvedValue({ items: [], total: 0 })
+    } as unknown as Window['api']['pdfAnnotations']
+    const render = async (sessionId?: string): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <PdfAnnotationsProvider
+              projectId={sessionId ? 'project-1' : undefined}
+              sessionId={sessionId}
+              loadAnnotations={false}
+            >
+              <PdfPreviewRenderer
+                item={{
+                  id: 'upload-1',
+                  projectId: 'project-1',
+                  sessionId: 'creator',
+                  title: 'paper.pdf',
+                  type: 'file',
+                  source: 'upload',
+                  path: 'upload-version:version-1',
+                  name: 'paper.pdf',
+                  format: 'pdf',
+                  managedFileId: 'upload-1',
+                  selectedVersionId: 'version-1'
+                }}
+              />
+            </PdfAnnotationsProvider>
+          </TooltipProvider>
+        )
+        await flush()
+      })
+    }
+    await render()
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Zoom in' })))
+    expect(container.textContent).toContain('125%')
+    const scroll = screen.getByLabelText('paper.pdf scrollable preview')
+    const loads = vi.mocked(createManagedPdfLoadingTask).mock.calls.length
+    await render('pending-session')
+    await render('bound-session')
+    expect(container.textContent).toContain('125%')
+    expect(screen.getByLabelText('paper.pdf scrollable preview')).toBe(scroll)
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+    expect(createManagedPdfLoadingTask).toHaveBeenCalledTimes(loads)
+    expect(destroyDocument).not.toHaveBeenCalled()
+    expect(window.api.previewResources.release).not.toHaveBeenCalled()
+  })
+
   it('acquires the exact managed Artifact version selected by the preview item', async () => {
     await act(async () => {
       root.render(

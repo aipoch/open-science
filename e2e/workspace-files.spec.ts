@@ -263,6 +263,30 @@ test('links a multi-page PDF upload as Reading context in a new project @pr-main
   await expect(page.getByRole('button', { name: 'Page 1 of 2' })).toBeVisible()
   await expect(page.getByText('PDF context Version is unavailable in this Project.')).toHaveCount(0)
   await expect(page.getByText('Managed file reference requires a logical identity.')).toHaveCount(0)
+
+  await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
+  // Both ordinary and Reading conversations share the workspace annotation authority.
+  // Starting/binding a Session must not recreate its unrelated open file preview.
+  for (const reading of [false, true]) {
+    await page.getByRole('button', { name: 'New', exact: true }).click()
+    if (reading) await page.getByRole('button', { name: 'Read with agent', exact: true }).click()
+    const preview = page.getByTestId('preview-card')
+    await preview.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    const zoom = reading ? '150%' : '125%'
+    await expect(preview.getByText(zoom, { exact: true })).toBeVisible()
+    const scroller = await preview
+      .getByRole('region', { name: 'paper.pdf scrollable preview' })
+      .elementHandle()
+    await sendPrompt(
+      page,
+      `Keep the ${reading ? 'Reading' : 'ordinary'} preview.`,
+      'Deterministic reply:'
+    )
+    expect(await scroller!.evaluate((node) => node.isConnected)).toBe(true)
+    await expect(preview.getByText(zoom, { exact: true })).toBeVisible()
+    if (reading) await expect(page.getByTestId('pdf-context-bar')).toContainText('paper.pdf')
+    await scroller!.dispose()
+  }
 })
 
 test('shows structured text replacements with character-level highlights', async ({ app }) => {

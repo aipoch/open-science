@@ -8,6 +8,7 @@ import type { PreviewFileRendererProps } from './preview-types'
 import { createCachedImageFetchResponse } from './cached-preview-image.test-support'
 import { createManagedPreviewTestTransport } from './managed-preview-test-support'
 import { PreviewFileContent } from './PreviewFileContent'
+import { PdfAnnotationsProvider } from '../pdf-annotations/PdfAnnotationsProvider'
 import type { PreviewDownloadVersionContext } from './preview-runtime-context'
 
 const highlightSpy = vi.hoisted(() => vi.fn())
@@ -303,6 +304,48 @@ describe('PreviewFileContent', () => {
       await vi.dynamicImportSettled()
     })
   }
+
+  it.each([
+    ['text', 'notes.txt', 'preview evidence'],
+    ['markdown', 'notes.md', '# preview evidence'],
+    ['csv', 'results.csv', 'sample,value\npreview evidence,1']
+  ] as const)(
+    'keeps the %s preview loaded when the first Session binds',
+    async (format, name, content) => {
+      vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+      vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+        content,
+        encoding: 'utf8',
+        size: content.length,
+        truncated: false
+      })
+      const item = createFileItem({ format, name, selectedVersionId: 'version-1' })
+      root = createRoot(container)
+      const render = async (sessionId?: string): Promise<void> => {
+        await act(async () => {
+          root.render(
+            <PdfAnnotationsProvider
+              projectId={sessionId ? item.projectId : undefined}
+              sessionId={sessionId}
+              loadAnnotations={false}
+            >
+              <PreviewFileContent item={item} />
+            </PdfAnnotationsProvider>
+          )
+        })
+        await act(async () => vi.dynamicImportSettled())
+        await vi.waitFor(() => expect(container.textContent).toContain('preview evidence'))
+      }
+      await render()
+      const preview = container.firstElementChild!
+      await render('pending-session')
+      await render('bound-session')
+      expect.soft(container.firstElementChild).toBe(preview)
+      expect.soft(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+      expect.soft(window.api.artifacts.readPreview).toHaveBeenCalledTimes(1)
+      expect(window.api.previewResources.release).not.toHaveBeenCalled()
+    }
+  )
 
   it.each([
     ['markdown', 'notes.md'],
