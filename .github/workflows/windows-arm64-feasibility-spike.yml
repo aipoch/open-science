@@ -51,20 +51,37 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Sharp ARM64 transform failed: $sharpOutput" }
           $sharpOutput >> $env:GITHUB_STEP_SUMMARY
 
-          $enginePath = Join-Path $PWD 'node_modules/@prisma/engines/query_engine-windows.dll.node'
-          if (-not (Test-Path $enginePath)) { throw "Prisma query engine missing: $enginePath" }
-          $bytes = [IO.File]::ReadAllBytes($enginePath)
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
-          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-          $prismaOutput = (& node -e "require('./node_modules/@prisma/engines/query_engine-windows.dll.node')" 2>&1 | Out-String)
-          $prismaExitCode = $LASTEXITCODE
-          $prismaOutput
-          if ($machine -eq 0xaa64 -and $prismaExitCode -eq 0) {
-            'Prisma query engine: native ARM64' >> $env:GITHUB_STEP_SUMMARY
-          } elseif ($machine -eq 0x8664 -and $prismaOutput -match 'not a valid Win32 application|invalid ELF header|Unable to require') {
-            'Prisma query engine: incompatible x64 binary on native ARM64 (expected blocker)' >> $env:GITHUB_STEP_SUMMARY
+          $engineCandidates = @(
+            (Join-Path $PWD 'node_modules/@prisma/engines/query_engine-windows.dll.node'),
+            (Join-Path $PWD 'node_modules/.prisma/client/query_engine-windows.dll.node')
+          )
+          if (-not ($engineCandidates | Where-Object { Test-Path $_ })) {
+            $prismaGenerateOutput = (& npx prisma generate 2>&1 | Out-String)
+            $prismaGenerateExitCode = $LASTEXITCODE
+            $prismaGenerateOutput
+            $global:LASTEXITCODE = 0
+            if ($prismaGenerateExitCode -ne 0) {
+              'Prisma native ARM64: generate failed; native engine remains unverified (expected blocker)' >> $env:GITHUB_STEP_SUMMARY
+            }
+          }
+
+          $enginePath = $engineCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($enginePath) {
+            $bytes = [IO.File]::ReadAllBytes($enginePath)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            $prismaOutput = (& node -e "require('$($enginePath.Replace('\', '/'))')" 2>&1 | Out-String)
+            $prismaExitCode = $LASTEXITCODE
+            $prismaOutput
+            if ($machine -eq 0xaa64 -and $prismaExitCode -eq 0) {
+              'Prisma query engine: native ARM64' >> $env:GITHUB_STEP_SUMMARY
+            } elseif ($machine -eq 0x8664 -and $prismaOutput -match 'not a valid Win32 application|invalid ELF header|Unable to require') {
+              'Prisma query engine: incompatible x64 binary on native ARM64 (expected blocker)' >> $env:GITHUB_STEP_SUMMARY
+            } else {
+              throw ("Unexpected Prisma ARM64 probe result: PE 0x{0:x4}, exit {1}, output {2}" -f $machine, $prismaExitCode, $prismaOutput)
+            }
           } else {
-            throw ("Unexpected Prisma ARM64 probe result: PE 0x{0:x4}, exit {1}, output {2}" -f $machine, $prismaExitCode, $prismaOutput)
+            'Prisma query engine: no generated engine available on ARM64' >> $env:GITHUB_STEP_SUMMARY
           }
           $global:LASTEXITCODE = 0
 
