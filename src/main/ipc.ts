@@ -5310,10 +5310,16 @@ const createApplicationModules = async (
       }),
     listTrayNavigationSessions: () =>
       withDataRootWrite(async () => {
-        const [summaries, projects] = await Promise.all([
-          sessionRepository.loadSessionSummaries(),
-          projectRepository.list()
-        ])
+        let summaries: SessionSummary[]
+        try {
+          summaries = await sessionRepository.loadSessionSummaries()
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== 'Session projection is not ready.')
+            throw error
+          await ensureSessionProjection()
+          summaries = await sessionRepository.loadSessionSummaries()
+        }
+        const projects = await projectRepository.list()
         const projectsById = new Map(
           projects
             .filter((project) => project.archivedAt === undefined)
