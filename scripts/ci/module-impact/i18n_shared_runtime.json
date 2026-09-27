@@ -646,7 +646,8 @@
       "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
       "src/main/acp/library-auto-policy.test.ts",
       "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
-      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
+      "src/main/notebook/wsl2-scheduling.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

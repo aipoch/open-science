@@ -6,6 +6,7 @@
     "src/main/wsl/wsl-setup-guide.ts",
     "src/main/wsl/wsl-setup-operation-journal.test.ts",
     "src/main/wsl/wsl-setup-operation-journal.ts",
+    "src/main/wsl/wsl-setup-owner.integration.test.ts",
     "src/main/wsl/wsl-setup-owner.test.ts",
     "src/main/wsl/wsl-setup-owner.ts",
     "src/main/wsl/wsl-setup-session-owner.test.ts",
@@ -32,6 +33,7 @@
       "src/main/wsl/windows-volume-probe.test.ts",
       "src/main/wsl/wsl-setup-guide.test.ts",
       "src/main/wsl/wsl-setup-operation-journal.test.ts",
+      "src/main/wsl/wsl-setup-owner.integration.test.ts",
       "src/main/wsl/wsl-setup-owner.test.ts",
       "src/main/wsl/wsl-setup-session-owner.test.ts",
       "src/main/wsl/wsl-setup-terminal.test.ts",
@@ -222,7 +224,9 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/notebook/wsl2-scheduling.integration.test.ts",
+      "src/main/notebook/mcp-wsl-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

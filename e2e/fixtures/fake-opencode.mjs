@@ -1350,6 +1350,23 @@ if (process.argv.includes('--version')) {
             '  A[begin] --> B[a node with a fairly long label] --> C[another node with an even longer label here] --> D[end]',
             '```'
           ].join('\n')
+        } else if (prompt.includes('Verify real WSL Bash execution.')) {
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const execution = toolResult(
+              'bash_execute',
+              await client.callTool({
+                name: 'bash_execute',
+                arguments: { command: "printf 'wsl-bash-live\\n'; uname -s; id -u" }
+              })
+            )
+            if (
+              execution.exitCode !== 0 ||
+              !/^wsl-bash-live\r?\nLinux\r?\n[1-9][0-9]*\s*$/u.test(execution.stdout ?? '')
+            ) {
+              throw new Error('The application did not execute Bash as a non-root Linux user.')
+            }
+          })
+          reply = 'Real WSL Bash execution passed: Linux, non-root user, exit code 0.'
         } else if (prompt.includes(WSL_SETUP_UNAVAILABLE_PROMPT)) {
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
             const catalog = await client.listTools()

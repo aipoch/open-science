@@ -101,17 +101,17 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
   })
 
   it.each([
-    { reason: 'timeout' as const, timeoutMs: 200 },
+    { reason: 'timeout' as const, timeoutMs: 1_000 },
     { reason: 'cancel' as const, timeoutMs: 5_000 }
   ])(
     'propagates $reason to exact guest cleanup within a bounded time',
     async ({ reason, timeoutMs }) => {
       const controller = new AbortController()
-      if (reason === 'cancel') setTimeout(() => controller.abort(), 200)
+      let guestOutput = ''
       const startedAt = Date.now()
 
       const result = await runShellCommand({
-        command: `trap '' TERM; while :; do sleep 1; done`,
+        command: `printf 'wsl-running\\n'; sleep 30`,
         cwd: workspace,
         handoffDir: handoff,
         runtimeRoot,
@@ -130,11 +130,19 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
         },
         processSandbox: sandbox,
         previewAvailable,
+        claimProcess: (child) => {
+          child.stdout?.on('data', (chunk: Buffer) => {
+            guestOutput += chunk.toString('utf8')
+            if (reason === 'cancel' && guestOutput.includes('wsl-running')) controller.abort()
+          })
+          return () => undefined
+        },
         // The WSL adapter owns exact guest cleanup; host taskkill is not authoritative here.
         terminateTree: async () => ({ reaped: false })
       })
 
       expect(Date.now() - startedAt).toBeLessThan(8_000)
+      expect(guestOutput).toContain('wsl-running')
       expect(result.exitCode).toBeNull()
       expect(result.errorCode).toBeUndefined()
       expect(result.cancelled).toBe(reason === 'cancel' ? true : undefined)

@@ -163,6 +163,7 @@
     "src/main/notebook/mcp-management-lifecycle.integration.test.ts",
     "src/main/notebook/mcp-server.test.ts",
     "src/main/notebook/mcp-server.ts",
+    "src/main/notebook/mcp-wsl-diagnostics.test.ts",
     "src/main/notebook/minimax-bioinformatics.fixture.json",
     "src/main/notebook/mirror-probe.test.ts",
     "src/main/notebook/mirror-probe.ts",
@@ -457,6 +458,7 @@
       "src/main/notebook/managed-path-context.test.ts",
       "src/main/notebook/mcp-management-lifecycle.integration.test.ts",
       "src/main/notebook/mcp-server.test.ts",
+      "src/main/notebook/mcp-wsl-diagnostics.test.ts",
       "src/main/notebook/mirror-probe.test.ts",
       "src/main/notebook/mirror.test.ts",
       "src/main/notebook/native-lock-restoration.test.ts",
@@ -917,7 +919,8 @@
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/literature/smart-collections.test.ts",
       "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
-      "src/main/acp/library-auto-policy.test.ts"
+      "src/main/acp/library-auto-policy.test.ts",
+      "src/main/notebook/wsl2-scheduling.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

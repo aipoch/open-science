@@ -809,6 +809,66 @@ describe('notebook shell process behavior', () => {
     }
   })
 
+  it.each([true, false])(
+    'retains WSL launch evidence until guest cleanup is proven after an identity race: %s',
+    async (reaped) => {
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'open-science-wsl-identity-'))
+      const registry = new ShellProcessOwnershipRegistry(runtimeRoot, {
+        processStartIdentity: () => undefined
+      })
+      const launch = registry.beginLaunch({
+        runId: 'short-wsl-command',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        platform: 'win32'
+      })
+      const cleanup = vi.fn(async () => {
+        expect(registry.hasReceipts()).toBe(true)
+        return {
+          processesTerminated: reaped,
+          networkClosed: true,
+          temporaryResourcesRemoved: reaped
+        }
+      })
+      try {
+        const result = await runShellCommand({
+          command: 'printf finished',
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'win32',
+          runtimeBinding: {
+            kind: 'wsl2-bash',
+            profileId: 'profile-1',
+            distro: 'Ubuntu',
+            user: 'researcher'
+          },
+          previewAvailable: () => true,
+          prepareProcessOwnership: () => launch,
+          terminateTree: async () => ({ reaped: false }),
+          processSandbox: {
+            wrap: async () => ({
+              executable: process.execPath,
+              args: ['-e', 'process.stdout.write("finished")'],
+              env: process.env,
+              annotateStderr: (stderr) => stderr,
+              cleanup
+            })
+          }
+        })
+        expect(result.stdout).toBe('finished')
+        expect(result.exitCode).toBe(reaped ? 0 : null)
+        expect(result.errorCode).toBe(reaped ? undefined : 'shell-cleanup-incomplete')
+        expect(registry.hasReceipts()).toBe(!reaped)
+        expect(cleanup).toHaveBeenCalled()
+      } finally {
+        await rm(runtimeRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
   describe.runIf(process.platform !== 'win32')('process results', () => {
     let runtimeRoot: string
     beforeEach(async () => {

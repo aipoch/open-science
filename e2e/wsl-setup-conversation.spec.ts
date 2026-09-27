@@ -9,6 +9,37 @@ import { test } from './fixtures/electron-app'
 test.describe('WSL setup conversation', () => {
   test.skip(process.platform !== 'win32' || process.env.OPEN_SCIENCE_E2E_WSL_SETUP !== '1')
 
+  test('executes real WSL Bash through the application before and after restart', async ({
+    app
+  }, testInfo) => {
+    const distro = process.env.OPEN_SCIENCE_WSL_DISTRO
+    const user = process.env.OPEN_SCIENCE_WSL_USER
+    test.skip(!distro || !user, 'A real WSL profile is required')
+    test.setTimeout(240_000)
+    let page = await app.completeOnboarding()
+    page = await app.configureFakeAgent()
+    const snapshot = await page.evaluate(
+      (selection) => window.api.settings.selectWslProfile(selection),
+      { distro: distro!, user: user! }
+    )
+    expect(snapshot.state, JSON.stringify(snapshot)).toBe('ready')
+    await page.evaluate(() => window.api.settings.useWsl2Bash())
+    const projectName = 'Real WSL Bash verification'
+    await createProject(page, projectName)
+    const prompt = 'Verify real WSL Bash execution.'
+    const reply = 'Real WSL Bash execution passed: Linux, non-root user, exit code 0.'
+    await sendPrompt(page, prompt, reply, 90_000)
+    page = await app.restart()
+    await openProjectSession(page, projectName, prompt)
+    await sendPrompt(page, prompt, reply, 90_000)
+    const screenshot = testInfo.outputPath('wsl-bash-live.png')
+    await page.screenshot({ path: screenshot, fullPage: true })
+    await testInfo.attach('Real WSL Bash after restart', {
+      path: screenshot,
+      contentType: 'image/png'
+    })
+  })
+
   test('manual command grants setup tools only to its conversation and survives restart', async ({
     app
   }) => {
