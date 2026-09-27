@@ -2853,6 +2853,7 @@ const createApplicationModules = async (
     capacity: 4,
     dataRoot: resolveDataRoot(),
     runtime: {
+      appVersion: app.getVersion(),
       mcpEntryPath: mainEntryPath,
       repository: artifactRepository,
       runRegistry: artifactRunRegistry,
@@ -3444,6 +3445,7 @@ const createApplicationModules = async (
   )
   const runtime = await modules.add(
     {
+      appVersion: app.getVersion(),
       mcpEntryPath: mainEntryPath,
       repository: artifactRepository,
       runRegistry: artifactRunRegistry,

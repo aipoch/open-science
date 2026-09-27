@@ -236,6 +236,7 @@ const registerWithFakes = (overrides?: {
     })
 
   const options = {
+    appVersion: '0.0.0-test',
     mcpEntryPath: '/app/out/main/index.js',
     repository: {} as never,
     runRegistry: {} as never,

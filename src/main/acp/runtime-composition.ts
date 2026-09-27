@@ -5,8 +5,6 @@ import { randomUUID } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 
-import { app } from 'electron'
-
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
@@ -133,6 +131,7 @@ type AcpRuntimeArtifacts = {
 }
 
 type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
+  appVersion: string
   mcpEntryPath: string
   uploadRepository: UploadRepository
   notebookRpcServer: NotebookLocalRpcServer
@@ -237,6 +236,7 @@ const isPdfAttachmentVersion = (version: { filename: string; contentType: string
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
 const createAcpRuntime = ({
+  appVersion,
   mcpEntryPath,
   repository,
   runRegistry,
@@ -417,7 +417,7 @@ const createAcpRuntime = ({
           ? undefined
           : settingsService.captureActiveAgentBackendSelection()
       const runtimeOptions: AcpRuntimeOptions = {
-        appVersion: app.getVersion(),
+        appVersion,
         auxiliaryUsage,
         classifySkills: delegatedNotebookConnection ? undefined : classifySkills,
         classifyReadingRoute: delegatedNotebookConnection ? undefined : classifyReadingRoute,
