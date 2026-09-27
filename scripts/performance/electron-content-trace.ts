@@ -35,7 +35,8 @@ const startElectronContentTrace = async (
   { heapProfile = false }: ElectronContentTraceOptions = {}
 ): Promise<void> => {
   await application.evaluate(
-    async ({ contentTracing }, { enableHeapProfile, config }) => {
+    async ({ app, contentTracing }, { enableHeapProfile, config }) => {
+      await app.whenReady()
       if (enableHeapProfile) await contentTracing.enableHeapProfiling()
       await contentTracing.startRecording(config)
     },
