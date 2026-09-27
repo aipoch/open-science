@@ -801,6 +801,9 @@ describe('Compute service architecture', () => {
       'src/shared/renderer-contract-catalog.test.ts'
     ])
     expect(computeService.testFiles.consumer).toEqual([
+      'src/main/composition/notebook-environment.test.ts',
+      'src/main/literature/command-owner.test.ts',
+      'src/main/composition/reviewer.test.ts',
       'src/main/session-persistence/runtime-session-owner.test.ts',
       'src/main/session-plan/adversarial-session-plan.test.ts',
       'src/main/compute/job-runtime.test.ts',

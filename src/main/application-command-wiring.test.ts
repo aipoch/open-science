@@ -147,7 +147,7 @@ describe('production application command wiring', () => {
       between(
         ipcSource,
         'surfaceAdapters = afterAcpAdapters',
-        "declareElectronAdapter('notebook-environment'"
+        'const notebookEnvironmentLifecycle = await registerNotebookEnvironmentComposition'
       )
     )
     expect(phase).toContain(

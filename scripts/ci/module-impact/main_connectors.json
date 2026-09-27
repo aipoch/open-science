@@ -85,6 +85,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/connectors/descriptors/clinpgx.test.ts",
       "src/renderer/src/pages/settings/ConnectorApprovalDialog.render.test.tsx",

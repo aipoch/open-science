@@ -204,6 +204,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/composition/notebook-environment.test.ts",
       "src/main/literature/command-owner.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",

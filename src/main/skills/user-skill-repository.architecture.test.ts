@@ -386,6 +386,9 @@ describe('User Skill repository architecture', () => {
           'src/shared/renderer-contract-catalog.test.ts'
         ],
         consumer: [
+          'src/main/composition/notebook-environment.test.ts',
+          'src/main/literature/command-owner.test.ts',
+          'src/main/composition/reviewer.test.ts',
           'src/main/session-persistence/runtime-session-owner.test.ts',
           'src/main/session-plan/adversarial-session-plan.test.ts',
           'src/main/skills/conversation-import.test.ts',

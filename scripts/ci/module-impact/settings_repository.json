@@ -49,6 +49,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/settings/service.test.ts",
       "src/main/compute/ipc.test.ts",

@@ -64,6 +64,7 @@
       "src/preload/index.test.ts"
     ],
     "consumer": [
+      "src/main/composition/notebook-environment.test.ts",
       "packages/open-science/cli.test.ts",
       "src/main/acp/backend-generation-owner.test.ts",
       "src/main/acp/runtime-provider-session-composition.test.ts",

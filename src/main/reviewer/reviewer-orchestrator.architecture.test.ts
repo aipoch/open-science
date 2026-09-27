@@ -547,6 +547,9 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/uploads/attachment-media.pdf-preview.test.ts'
         ],
         consumer: [
+          'src/main/composition/notebook-environment.test.ts',
+          'src/main/composition/reviewer.test.ts',
+          'src/main/literature/command-owner.test.ts',
           'src/main/session-persistence/runtime-session-owner.test.ts',
           'src/main/session-plan/adversarial-session-plan.test.ts',
           'packages/open-science/cli.test.ts',

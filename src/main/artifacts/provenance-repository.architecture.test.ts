@@ -613,6 +613,9 @@ describe('Artifact Provenance repository architecture', () => {
       'src/shared/renderer-surface-matrix.test.ts'
     ])
     expect(module.testFiles.consumer).toEqual([
+      'src/main/composition/notebook-environment.test.ts',
+      'src/main/literature/command-owner.test.ts',
+      'src/main/composition/reviewer.test.ts',
       'src/main/session-persistence/runtime-session-owner.test.ts',
       'src/main/session-plan/adversarial-session-plan.test.ts',
       'src/main/acp/file-reference-resolver.test.ts',

@@ -598,6 +598,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/validate.ts'
     ])
     expect(importersOf(settingsPaths.service)).toEqual([
+      'src/main/composition/notebook-environment.ts',
       'src/main/ipc-application-composition.ts',
       'src/main/settings/application-commands.ts',
       'src/main/settings/bootstrap-application-commands.ts',
@@ -1036,6 +1037,7 @@ describe('Settings backend ownership architecture', () => {
       'src/preload/index.test.ts'
     ])
     expect(manifest.modules.settings_service_facade.testFiles.consumer).toEqual([
+      'src/main/composition/notebook-environment.test.ts',
       'packages/open-science/cli.test.ts',
       'src/main/acp/backend-generation-owner.test.ts',
       'src/main/acp/runtime-provider-session-composition.test.ts',
@@ -1073,6 +1075,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/literature/smart-collections.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
+      'src/main/composition/notebook-environment.test.ts',
+      'src/main/literature/command-owner.test.ts',
+      'src/main/composition/reviewer.test.ts',
       'src/main/session-persistence/runtime-session-owner.test.ts',
       'src/main/session-plan/adversarial-session-plan.test.ts',
       'packages/open-science/cli.test.ts',
