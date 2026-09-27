@@ -44,6 +44,7 @@
       "src/renderer/web/api-installer.test.ts"
     ],
     "consumer": [
+      "src/main/composition/reviewer.test.ts",
       "src/main/acp/runtime-coordinator.test.ts",
       "src/main/archive/coordinator.test.ts",
       "src/main/compute/job-deletion-owner.test.ts",

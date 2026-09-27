@@ -48,7 +48,7 @@ const computePaths = {
   jobDispatcher: resolve(mainRoot, 'compute/job-dispatcher.ts'),
   jobPoller: resolve(mainRoot, 'compute/job-poller.ts'),
   ipc: resolve(mainRoot, 'compute/ipc.ts'),
-  mainIpc: resolve(mainRoot, 'ipc.ts'),
+  mainIpc: resolve(mainRoot, 'ipc-application-composition.ts'),
   applicationCommands: resolve(mainRoot, 'compute/application-commands.ts'),
   jobRuntime: resolve(mainRoot, 'compute/job-runtime.ts'),
   localRpc: resolve(mainRoot, 'notebook/local-rpc-server.ts')

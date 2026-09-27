@@ -365,7 +365,10 @@ describe('Project-owned data catalog architecture', () => {
   })
 
   it('locks the durable Project deletion composition and tail order', () => {
-    const constructor = newExpression('src/main/ipc.ts', 'ProjectDeletionCoordinator')
+    const constructor = newExpression(
+      'src/main/ipc-application-composition.ts',
+      'ProjectDeletionCoordinator'
+    )
     if (!isNewExpression(constructor.node)) throw new Error('Expected constructor expression.')
     expect(
       constructor.node.arguments?.slice(0, 5).map((argument) => argument.getText(constructor.file))
@@ -455,7 +458,10 @@ describe('Project-owned data catalog architecture', () => {
     expect(acpDeletes).toHaveLength(2)
     expect(acpDeletes[1]!.position).toBeGreaterThan(delegatedDelete.position)
 
-    const composition = newExpression('src/main/ipc.ts', 'ProjectRuntimeQuiescenceOwner')
+    const composition = newExpression(
+      'src/main/ipc-application-composition.ts',
+      'ProjectRuntimeQuiescenceOwner'
+    )
     if (!isNewExpression(composition.node)) throw new Error('Expected quiescence constructor.')
     const options = composition.node.arguments?.[0]
     if (!options || !isObjectLiteralExpression(options)) {
@@ -548,7 +554,7 @@ describe('Project-owned data catalog architecture', () => {
     expectCall(binding, 'dependencies.sessionPersistenceCoordinator.setSessionDeletionHandlers')
     expectCall(binding, 'dependencies.inbox.invalidateSessions')
 
-    const ipc = sourceFile('src/main/ipc.ts')
+    const ipc = sourceFile('src/main/ipc-application-composition.ts')
     let bindCall: CallExpression | undefined
     visit(ipc, (node) => {
       if (
@@ -687,7 +693,10 @@ describe('Project-owned data catalog architecture', () => {
       }
     })
 
-    const constructor = newExpression('src/main/ipc.ts', 'ProjectDeletionCoordinator')
+    const constructor = newExpression(
+      'src/main/ipc-application-composition.ts',
+      'ProjectDeletionCoordinator'
+    )
     if (!isNewExpression(constructor.node)) throw new Error('Expected constructor expression.')
     const lifecycle = constructor.node.arguments?.[5]
     if (!lifecycle || !isObjectLiteralExpression(lifecycle)) {

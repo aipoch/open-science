@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/main/literature/command-owner.test.ts",
+    "src/main/literature/command-owner.ts",
     "src/main/literature/agent-pdf-acquisition.test.ts",
     "src/main/literature/agent-pdf-acquisition.ts",
     "src/main/literature/application-commands.ts",
@@ -645,6 +647,7 @@
     "src/main/literature/metadata-merge.ts"
   ],
   "interfacePaths": [
+    "src/main/literature/command-owner.ts",
     "src/main/literature/agent-pdf-acquisition.ts",
     "src/main/literature/application-commands.ts",
     "src/main/literature/attachment-authority.ts",
@@ -675,6 +678,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/literature/command-owner.test.ts",
       "src/main/literature/agent-pdf-acquisition.test.ts",
       "src/main/literature/attachment-authority.test.ts",
       "src/main/literature/batch-job-journal.test.ts",
@@ -846,6 +850,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/reviewer.test.ts",
+      "src/main/application-command-wiring.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/session-plan/adversarial-session-plan.test.ts",
       "src/main/acp/application-commands.test.ts",

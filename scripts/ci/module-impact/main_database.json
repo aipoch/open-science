@@ -136,6 +136,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/reviewer.test.ts",
+      "src/main/literature/command-owner.test.ts",
       "scripts/database-migration-ledger-smoke.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",

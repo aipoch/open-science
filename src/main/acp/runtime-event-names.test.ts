@@ -17,7 +17,7 @@ const runtimeEventConsumerPaths = [
 ]
 
 const debugEntryPointPaths = [
-  'src/main/ipc.ts',
+  'src/main/ipc-application-composition.ts',
   'src/main/windows.ts',
   'src/preload/index.ts',
   'src/preload/renderer-api.d.ts'

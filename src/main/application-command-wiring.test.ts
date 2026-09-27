@@ -17,14 +17,16 @@ const between = (source: string, start: string, end: string): string => {
   return source.slice(startIndex, endIndex)
 }
 
-// The registration facade and application composition are intentionally separate modules. Keep
-// these wiring assertions over their combined production source so the tests continue to verify
-// ordering and ownership without coupling them to the file split.
+// Check execution order at the composition root; inspect domain builders separately.
+// Concatenating builder definitions would make file order look like runtime order.
 const ipcSource = [
   readSource('src/main/ipc.ts'),
-  readSource('src/main/ipc-application-composition.ts'),
-  readSource('src/main/composition/application-commands.ts')
+  readSource('src/main/ipc-application-composition.ts')
 ].join('\n')
+const commandRegistrationSource = compact(
+  readSource('src/main/composition/application-commands.ts')
+)
+const literatureOwnerSource = compact(readSource('src/main/literature/command-owner.ts'))
 const coreSurfaceSource = compact(readSource('src/main/ipc-surfaces/core.ts'))
 const indexSource = readSource('src/main/index.ts')
 const runtimeSource = readSource('src/main/application-runtime.ts')
@@ -41,6 +43,7 @@ const webAdapterSources = [
 const legacyAdapterBlock = compact(
   between(ipcSource, 'createDesktopUtilitiesElectronSurface({', 'const electronSenderFor')
 )
+const reviewerCompositionSource = compact(readSource('src/main/composition/reviewer.ts'))
 const notificationAdapterBlock = compact(readSource('src/main/ipc-surfaces/notifications.ts'))
 const dependencyBlock = compact(
   between(
@@ -70,7 +73,11 @@ describe('production application command wiring', () => {
 
   it('constructs Session package desktop once with shared owners and retains lifecycle bindings', () => {
     const phase = compact(
-      between(ipcSource, 'surfaceAdapters = afterAcpAdapters', 'const reviewerModelRuntime =')
+      between(
+        ipcSource,
+        'surfaceAdapters = afterAcpAdapters',
+        'const reviewerCommandOwner = await registerReviewerComposition'
+      )
     )
     expect(phase).toContain(
       'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld, onSensitiveContentFailure: rememberSensitiveContentFailure })'
@@ -245,7 +252,8 @@ describe('production application command wiring', () => {
   })
 
   it('routes literature mutations through the tested catalog and cleanup orchestration', () => {
-    expect(compact(ipcSource)).toContain(
+    expect(compact(ipcSource)).toContain('literature: createLiteratureCommandOwner({')
+    expect(literatureOwnerSource).toContain(
       'transact: (command) => transactLiterature(literatureCatalog, contentRepository, command)'
     )
   })
@@ -352,9 +360,11 @@ describe('production application command wiring', () => {
     ] as const
 
     for (const [owner, electronUse, compositionUse] of sharedOwners) {
-      expect(legacyAdapterBlock, `${owner} must be used by the legacy Electron adapter`).toContain(
-        electronUse
-      )
+      const adapterSource =
+        owner === 'reviewerCommandOwner' ? reviewerCompositionSource : legacyAdapterBlock
+      const adapterLabel =
+        owner === 'reviewerCommandOwner' ? 'reviewer composition' : 'legacy Electron adapter'
+      expect(adapterSource, `${owner} must be used by the ${adapterLabel}`).toContain(electronUse)
       expect(dependencyBlock, `${owner} must be used by command composition`).toContain(
         compositionUse
       )
@@ -366,7 +376,7 @@ describe('production application command wiring', () => {
     expect(dependencyBlock).toContain(
       'deleteSession: (request) => sessionDeletionOwner.delete(request)'
     )
-    expect(compact(ipcSource)).toContain(
+    expect(commandRegistrationSource).toContain(
       "declareElectronAdapter('application-projects', () => registerApplicationCommandElectronAdapter(applicationCommandComposition.electron) )"
     )
     expect(ipcSource).not.toContain('registerSessionDeletionIpcHandler')
@@ -441,18 +451,23 @@ describe('production application command wiring', () => {
   })
 
   it('shares one Electron page preview resolver with the production Reviewer owner', () => {
-    const options = compact(
-      between(ipcSource, 'const reviewerOptions = {', 'const reviewerCommandOwner =')
+    expect(compact(ipcSource)).toContain(
+      'const reviewerCommandOwner = await registerReviewerComposition(modules, {'
     )
-    expect(options).toContain(
+    expect(compact(ipcSource)).toContain(
+      'previewResources, runtimeShutdownOwner: reviewerModelRuntimeShutdown, declareElectronAdapter'
+    )
+    expect(reviewerCompositionSource).toContain(
       'pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources)'
     )
-    expect(occurrences(ipcSource, 'createReviewerElectronPagedContentResolver(')).toBe(1)
-    expect(compact(ipcSource)).toContain('createReviewerCommandOwner(reviewerOptions)')
-    expect(compact(ipcSource)).toContain(
+    expect(
+      occurrences(reviewerCompositionSource, 'createReviewerElectronPagedContentResolver(')
+    ).toBe(1)
+    expect(reviewerCompositionSource).toContain('createReviewerCommandOwner(reviewerOptions)')
+    expect(reviewerCompositionSource).toContain(
       'registerReviewerIpcHandlers(reviewerOptions, reviewerCommandOwner)'
     )
-    expect(ipcSource).not.toContain('createReviewerPagedContentResolver(')
+    expect(ipcSource).not.toContain('createReviewerCommandOwner(')
     expect(ipcSource).not.toContain("partition: 'reviewer-paged-preview'")
   })
 
@@ -493,10 +508,11 @@ describe('production application command wiring', () => {
 
   it('adds transport adapters after composition and disposes the router before its owners', () => {
     const backendModule = ipcSource.indexOf("name: 'backend-shutdown-coordinator'")
-    const commandModule = ipcSource.indexOf("name: 'application-command-composition'")
+    const commandModule = ipcSource.indexOf('await registerApplicationCommandComposition({')
     expect(backendModule).toBeGreaterThan(-1)
     expect(commandModule).toBeGreaterThan(backendModule)
-    expect(compact(ipcSource)).toContain('dispose: () => capability.dispose()')
+    expect(commandRegistrationSource).toContain("name: 'application-command-composition'")
+    expect(commandRegistrationSource).toContain('dispose: () => capability.dispose()')
 
     const build = runtimeSource.indexOf('const built = await createModules(modules)')
     const install = runtimeSource.indexOf(

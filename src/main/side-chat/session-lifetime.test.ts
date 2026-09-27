@@ -212,7 +212,10 @@ describe('process-local Side chat delivery', () => {
   })
 
   it('keeps startup composition free of Side chat authority scans and persistence wiring', async () => {
-    const source = await readFile(join(process.cwd(), 'src/main/ipc.ts'), 'utf8')
+    const source = await readFile(
+      join(process.cwd(), 'src/main/ipc-application-composition.ts'),
+      'utf8'
+    )
     expect(source).not.toMatch(/\.loadPersistedSideChats\s*\(/)
     expect(source).not.toMatch(/\.(?:saveSideChatProjection|appendSideChatRelay)\s*\(/)
     expect(source).not.toMatch(/(?:sideChatRuntime|sideChatRelay)\.hydrate\s*\(/)

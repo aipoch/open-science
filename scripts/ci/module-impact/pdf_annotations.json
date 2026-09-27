@@ -78,6 +78,8 @@
       "src/shared/pdf-annotations.test.ts"
     ],
     "consumer": [
+      "src/main/composition/reviewer.test.ts",
+      "src/main/literature/command-owner.test.ts",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",

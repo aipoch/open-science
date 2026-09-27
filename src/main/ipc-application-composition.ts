@@ -5,7 +5,7 @@ import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
 import { getDefaultPermissionProfile } from '../shared/permission-profiles'
 import { PackageLiteratureReader } from './session-package/literature-reader'
 import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
-import { transactLiterature } from './literature/transact'
+import { createLiteratureCommandOwner } from './literature/command-owner'
 import { createPdfStructureOwner } from './literature/pdf-structure/owner'
 import { createPdfStructureEngine } from './literature/pdf-structure/engine'
 import { PdfStructureSourceAuthority } from './literature/pdf-structure/source'
@@ -241,14 +241,12 @@ import {
   createDefaultProjectRepository,
   createProjectHandlers
 } from './projects/ipc'
-import {
-  createReviewerCommandOwner,
-  registerReviewerIpcHandlers,
-  type ReviewerCommandOwner
-} from './reviewer/ipc'
-import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
+import { type ReviewerCommandOwner } from './reviewer/ipc'
 import { ReviewerProjectRuntimeOwner } from './reviewer/project-runtime-owner'
-import { createReviewerElectronPagedContentResolver } from './reviewer/paged-preview-electron'
+import {
+  registerReviewerComposition,
+  type ReviewerRuntimeShutdownOwner
+} from './composition/reviewer'
 import {
   canReconcileSessionAbsences,
   createDefaultReviewRepository,
@@ -381,11 +379,7 @@ import {
   type PersistedSessionSpecialistBinding
 } from './specialist/session-reconfiguration'
 import { SPECIALIST_IPC } from '../shared/specialist'
-import {
-  type AppIconPreview,
-  type AppIconVariant,
-  type SessionAgentConfiguration
-} from '../shared/settings'
+import { type AppIconPreview, type AppIconVariant } from '../shared/settings'
 import type { AcpSessionAgentTarget } from '../shared/acp'
 import type {
   LoadAllSessionsResult,
@@ -3962,16 +3956,16 @@ export const createApplicationModules = async (
   permissionGrantRegistry.subscribe(() => runtime.notifyPermissionGrantsChanged())
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
   // gate. Update handling is deliberately constructed below, after this dependency is complete.
-  let reviewerModelRuntimeShutdown:
-    | Pick<ReviewerModelRuntimeOwner, 'hasActiveWork' | 'shutdown' | 'shutdownForUpdateGate'>
-    | undefined
+  const reviewerModelRuntimeShutdown: { current: ReviewerRuntimeShutdownOwner | undefined } = {
+    current: undefined
+  }
   const shutdownCoordinator = new BackendShutdownCoordinator({
     runtime: {
       shutdownForQuit: async () => {
         const [main, reviewer] = await Promise.all([
           runtime.shutdownForQuit(),
-          reviewerModelRuntimeShutdown
-            ? reviewerModelRuntimeShutdown.shutdown()
+          reviewerModelRuntimeShutdown.current
+            ? reviewerModelRuntimeShutdown.current.shutdown()
             : Promise.resolve({ reaped: true })
         ])
         return { reaped: main.reaped && reviewer.reaped }
@@ -3979,8 +3973,8 @@ export const createApplicationModules = async (
       shutdownForUpdateGate: async () => {
         const [main, reviewer] = await Promise.all([
           runtime.shutdownForUpdateGate(),
-          reviewerModelRuntimeShutdown
-            ? reviewerModelRuntimeShutdown.shutdownForUpdateGate()
+          reviewerModelRuntimeShutdown.current
+            ? reviewerModelRuntimeShutdown.current.shutdownForUpdateGate()
             : Promise.resolve({ reaped: true })
         ])
         return { reaped: main.reaped && reviewer.reaped }
@@ -4008,7 +4002,7 @@ export const createApplicationModules = async (
       delegated: { getActiveDelegatedSessions },
       notebook: notebookLifecycle
     }).map((session) => session.kind)
-    if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
+    if (reviewerModelRuntimeShutdown.current?.hasActiveWork()) blockers.push('reviewer')
     if (settingsService.hasActiveInstall()) blockers.push('settings-install')
     return blockers
   }
@@ -4542,7 +4536,7 @@ export const createApplicationModules = async (
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
     getActiveSideChatSessions,
     getActiveDelegatedSessions,
-    hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
+    hasActiveReviewerWork: () => reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
     settingsService,
     micromambaRunner,
     acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
@@ -4583,7 +4577,7 @@ export const createApplicationModules = async (
         getActivePromptSessions: () => runtime.getActivePromptSessions(),
         getActiveSideChatSessions,
         getActiveDelegatedSessions,
-        hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
+        hasActiveReviewerWork: () => reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
         settingsService
       },
       storageCommandOwner
@@ -4749,79 +4743,49 @@ export const createApplicationModules = async (
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
   // can spawn sessions under the same agent connection.
-  const reviewerModelRuntime = await modules.add(
-    {
+  const reviewerCommandOwner = await registerReviewerComposition(modules, {
+    modelRuntime: {
       appVersion: app.getVersion(),
       isDataRootHandoffActive: () => isMigrationInProgress() || isMigrationPending(),
       captureModel: () => settingsService.admitReviewerExecutionModel(),
       resolveTarget: (target, context) =>
         settingsService.resolveExplicitAgentBackend(target, context)
-    } satisfies ConstructorParameters<typeof ReviewerModelRuntimeOwner>[0],
-    (options) => {
-      const owner = new ReviewerModelRuntimeOwner(options)
-      reviewerModelRuntimeShutdown = owner
-      return {
-        name: 'reviewer-model-runtime',
-        capability: owner,
-        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
-        dispose: async () => {
-          try {
-            if (!(await owner.shutdown()).reaped) {
-              throw new BackendShutdownOutcomeError('degraded')
-            }
-          } finally {
-            if (reviewerModelRuntimeShutdown === owner) reviewerModelRuntimeShutdown = undefined
-          }
-        }
-      }
-    }
-  )
-  const reviewerOptions = {
-    admitSessionWork: (projectId: string, sessionId: string) =>
-      archiveCoordinator.admitSessionWork(projectId, sessionId),
-    acpRuntime: runtime,
-    modelRuntime: reviewerModelRuntime,
-    projectRuntime: reviewerProjectRuntime,
-    withProjectAvailable: <Result>(projectId: string, operation: () => Promise<Result>) =>
-      archiveCoordinator.withProjectAvailable(projectId, operation),
-    mcpEntryPath: mainEntryPath,
-    managedFileVersions: managedFileVersionService,
-    artifactCatalog: projectFilesRepository,
-    artifactProvenanceRepository,
-    pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources),
-    resolveSessionAgentTarget,
-    // Reviewer reads transcripts but never owns them. Injecting the composed owner keeps those
-    // reads on its scheduler and projection instead of a second SessionRepository over the same
-    // tree, whose corrupt-file recovery would rename live files outside this write lane.
-    sessionReader: {
-      loadSession: (projectId: string, sessionId: string) =>
-        sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId),
-      findSessionById: async (sessionId: string) => {
-        const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
-        if (!projectId) return undefined
-        return sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId)
-      }
     },
-    saveSessionAgentConfiguration: (
-      session: PersistedChatSession,
-      configuration: SessionAgentConfiguration
-    ) =>
-      sessionPersistenceCoordinator.saveSession({
-        ...session,
-        agentConfiguration: configuration
-      }),
-    withSessionMutation: <Result>(
-      projectId: string,
-      sessionId: string,
-      mutation: () => Promise<Result>
-    ) => sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
-    recordUsage: recordAuxiliaryUsage
-  }
-  const reviewerCommandOwner = createReviewerCommandOwner(reviewerOptions)
-  reviewerCommandOwnerRef.current = reviewerCommandOwner
-  declareElectronAdapter('reviewer', () => {
-    registerReviewerIpcHandlers(reviewerOptions, reviewerCommandOwner)
+    options: {
+      acpRuntime: runtime,
+      projectRuntime: reviewerProjectRuntime,
+      admitSessionWork: (projectId, sessionId) =>
+        archiveCoordinator.admitSessionWork(projectId, sessionId),
+      withProjectAvailable: (projectId, operation) =>
+        archiveCoordinator.withProjectAvailable(projectId, operation),
+      mcpEntryPath: mainEntryPath,
+      managedFileVersions: managedFileVersionService,
+      artifactCatalog: projectFilesRepository,
+      artifactProvenanceRepository,
+      resolveSessionAgentTarget,
+      sessionReader: {
+        loadSession: (projectId, sessionId) =>
+          sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId),
+        findSessionById: async (sessionId) => {
+          const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+          if (!projectId) return undefined
+          return sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId)
+        }
+      },
+      saveSessionAgentConfiguration: (session, configuration) =>
+        sessionPersistenceCoordinator.saveSession({
+          ...session,
+          agentConfiguration: configuration
+        }),
+      withSessionMutation: (projectId, sessionId, mutation) =>
+        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
+      recordUsage: recordAuxiliaryUsage
+    },
+    previewResources,
+    runtimeShutdownOwner: reviewerModelRuntimeShutdown,
+    declareElectronAdapter
   })
+  reviewerCommandOwnerRef.current = reviewerCommandOwner
 
   const electronSenderFor = (
     invocation: ApplicationInvocation<readonly unknown[]>
@@ -4892,155 +4856,20 @@ export const createApplicationModules = async (
     },
     permissionGrants: permissionGrantProjection,
     tags: tagService,
-    literature: {
-      jobs: (request) => literatureBatchJobs.run(request),
-      citationStyles: async (request) => {
-        if (request.kind === 'preview') {
-          const [styles, preview] = await Promise.all([
-            literatureCitationStyles.list(),
-            literatureCitationFormatter.formatStyleExample(request.styleId)
-          ])
-          return { styles, preview: { styleId: request.styleId, ...preview } }
-        }
-        let changedStyleId: string | undefined
-        if (request.kind === 'import') {
-          changedStyleId = await literatureCitationStyles.import(request.content)
-          literatureCitationFormatter.invalidateStyles()
-        } else if (request.kind === 'delete') {
-          await literatureCitationStyles.delete(request.styleId)
-          changedStyleId = request.styleId
-          literatureCitationFormatter.invalidateStyles()
-        }
-        return {
-          styles: await literatureCitationStyles.list(),
-          ...(changedStyleId ? { changedStyleId } : {})
-        }
-      },
-      lookupMetadata: async (doi) => {
-        const [resolved] = await literatureReferenceResolver.resolve([
-          doi.startsWith('pmid:') ? doi : 'doi:' + doi
-        ])
-        return resolved.item
-      },
-      completeMetadata: (request) => literatureMetadataEnricher.complete(request),
-      fullText: (request) => literatureFullTextFinder.run(request),
-      formatDocument: async (request) => {
-        const literature = await artifactProvenanceRepository.getVersionLiterature({
-          projectId: request.projectId,
-          appSessionId: request.sessionId,
-          artifactId: request.artifactId,
-          versionId: request.versionId
-        })
-        if (!literature) {
-          throw new Error('This Artifact Version has no Literature manifest.')
-        }
-        if (request.mode === 'preview') {
-          const references = await literatureCitationFormatter.formatReferences(
-            literature.references.map((reference) => ({
-              id: reference.itemId,
-              item: reference.item
-            })),
-            request.styleId,
-            request.locale
-          )
-          return { mode: 'preview' as const, references }
-        }
-
-        const lease = await managedFileVersionService.openVersion(
-          { source: 'artifact', projectId: request.projectId, fileId: request.artifactId },
-          request.versionId
-        )
-        let content: Uint8Array
-        try {
-          content = lease.size === 0 ? new Uint8Array() : await lease.readRange(0, lease.size)
-        } finally {
-          await lease.close()
-        }
-        const formatted = await literatureCitationDocument.reformat({
-          content,
-          literature,
-          styleId: request.styleId,
-          locale: request.locale
-        })
-        const saved = await withDataRootWrite(() =>
-          managedFileVersionService.saveDerivedArtifactEdit({
-            source: 'artifact',
-            projectId: request.projectId,
-            fileId: request.artifactId,
-            basedOnVersionId: request.versionId,
-            expectedHeadVersionId: request.expectedHeadVersionId,
-            operationId: request.operationId,
-            content: formatted.content,
-            literature: formatted.literature
-          })
-        )
-        if (saved.kind !== 'created') {
-          throw new Error(
-            saved.kind === 'conflict'
-              ? 'This file has a newer version.'
-              : 'Citation formatting did not create a new version.'
-          )
-        }
-        if (!saved.replayed) {
-          broadcastToRenderers('project-files:changed', {
-            projectId: request.projectId,
-            sources: ['artifact'],
-            kind: 'upsert'
-          })
-        }
-        return {
-          mode: 'save' as const,
-          versionId: saved.version.id,
-          versionNumber: saved.version.versionNumber
-        }
-      },
-      formatReferences: async (request) => {
-        const items = await literatureCatalog.getMany(request.itemIds)
-        const itemsById = new Map(items.map((item) => [item.id, item]))
-        const references = request.itemIds.map((itemId) => {
-          const item = itemsById.get(itemId)
-          if (!item) throw new Error(`Literature Item is unavailable: ${itemId}`)
-          return { id: itemId, item: item.item }
-        })
-        const [formatted, bibtex, ris] = await Promise.all([
-          literatureCitationFormatter.formatReferences(references, request.styleId, request.locale),
-          literatureCitationFormatter.exportReferences(references, 'bibtex'),
-          literatureCitationFormatter.exportReferences(references, 'ris')
-        ])
-        return {
-          references: formatted,
-          exports: { bibtex, ris }
-        }
-      },
-      exportRecord: (request) => literatureCatalog.exportRecord(request),
-      get: (itemId) => literatureCatalog.get(itemId),
-      sources: (itemId) => literatureCatalog.sources(itemId),
-      importPdf: (request, signal) => literaturePdfImporter.import(request, signal),
-      cancelPdfImport: (request) => literaturePdfImporter.cancelImport(request.operationId),
-      importRecords: async (request) => {
-        const { warnings, ...parsed } = await literatureCitationFormatter.parseReferences(
-          request.content
-        )
-        const entries = await literatureCatalog.inspectImportItems(
-          parsed.items,
-          parsed.errors,
-          warnings
-        )
-        if (request.mode === 'preview') return { ...parsed, entries }
-        if (parsed.items.length === 0) throw new Error('No valid references were found.')
-        return {
-          ...parsed,
-          entries,
-          imported: await literatureCatalog.importItems(
-            parsed.items,
-            request.collectionId,
-            request.duplicatePolicy
-          )
-        }
-      },
-      search: (request) => literatureCatalog.search(request),
-      transact: (command) => transactLiterature(literatureCatalog, contentRepository, command)
-    },
+    literature: createLiteratureCommandOwner({
+      literatureBatchJobs,
+      literatureCitationStyles,
+      literatureCitationFormatter,
+      literatureReferenceResolver,
+      literatureMetadataEnricher,
+      literatureFullTextFinder,
+      artifactProvenanceRepository,
+      managedFileVersionService,
+      literatureCitationDocument,
+      literatureCatalog,
+      literaturePdfImporter,
+      contentRepository
+    }),
     memory: {
       snapshot: () => memoryService.snapshot(),
       setEnabled: async (request) => {
@@ -5331,7 +5160,7 @@ export const createApplicationModules = async (
           ]
         })
       }),
-    hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
+    hasActiveReviewerWork: () => reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsService.getActiveInstallId(),
     holdSettingsInstallAdmission: () => settingsService.holdInstallAdmission(),
     prepareForQuit: () => runtime.prepareForQuit(),

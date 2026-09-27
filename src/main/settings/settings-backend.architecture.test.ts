@@ -513,7 +513,7 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks the current production importer graph at the public seams', () => {
     expect(importersOf(settingsPaths.repository)).toEqual([
-      'src/main/ipc.ts',
+      'src/main/ipc-application-composition.ts',
       'src/main/locale/owner.ts',
       'src/main/settings/agent-runtime-manager.ts',
       'src/main/settings/classification-settings.ts',
@@ -547,7 +547,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/repository.ts'
     ])
     expect(importersOf(settingsPaths.documentStore)).toEqual([
-      'src/main/ipc.ts',
+      'src/main/ipc-application-composition.ts',
       'src/main/settings/repository.ts',
       'src/main/storage/initialize-location.ts'
     ])
@@ -598,7 +598,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/validate.ts'
     ])
     expect(importersOf(settingsPaths.service)).toEqual([
-      'src/main/ipc.ts',
+      'src/main/ipc-application-composition.ts',
       'src/main/settings/application-commands.ts',
       'src/main/settings/bootstrap-application-commands.ts',
       'src/main/settings/ipc.ts',
@@ -758,7 +758,7 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks one production Settings document owner and the narrow Compute legacy port', () => {
     expect(constructorSitesFor(settingsPaths.repository, 'SettingsRepository')).toEqual([
-      'src/main/ipc.ts',
+      'src/main/ipc-application-composition.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/service.ts',
       'src/main/specialist/package/transaction.ts',
@@ -770,7 +770,7 @@ describe('Settings backend ownership architecture', () => {
     expect(computeIpc).toContain('legacyComputeGrants && !permissionGrantRegistry')
     expect(computeIpc).toContain('legacyComputeGrants.hasComputeGrant(grant)')
     expect(computeIpc).toContain('legacyComputeGrants.addComputeGrant(grant)')
-    const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc.ts'))
+    const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc-application-composition.ts'))
     const mainIndex = readSource(resolve(projectRoot, 'src/main/index.ts'))
     expect(mainIndex).toContain('const settingsStore = bootstrapLocations.settingsStore')
     expect(mainIndex).toContain('const startupSettingsRepository = bootstrapLocations.repository')

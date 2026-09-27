@@ -34,6 +34,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/composition/reviewer.test.ts",
       "src/main/index-fatal-errors.test.ts",
       "src/main/index-startup-failure.test.ts",
       "src/main/ipc-surfaces/office-preview.test.ts",

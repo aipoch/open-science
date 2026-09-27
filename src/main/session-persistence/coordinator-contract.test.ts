@@ -891,7 +891,7 @@ const archiveRuntime = (
 ): SessionRuntimeActivity => {
   const source = ts.createSourceFile(
     'ipc.ts',
-    readFileSync(new URL('../ipc.ts', import.meta.url), 'utf8'),
+    readFileSync(new URL('../ipc-application-composition.ts', import.meta.url), 'utf8'),
     ts.ScriptTarget.Latest,
     true
   )

@@ -13,6 +13,8 @@
     "owner": [],
     "contract": [],
     "consumer": [
+      "src/main/literature/command-owner.test.ts",
+      "src/main/composition/reviewer.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/session-plan/adversarial-session-plan.test.ts",
       "scripts/electron-app-fixture.test.ts",

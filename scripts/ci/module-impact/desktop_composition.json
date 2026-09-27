@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/main/composition/reviewer.test.ts",
     "src/main/app-branding.test.ts",
     "src/main/app-icon.test.ts",
     "src/main/app-icon.ts",
@@ -22,6 +23,7 @@
     "src/main/application-runtime.test.ts",
     "src/main/application-runtime.ts",
     "src/main/composition/application-commands.ts",
+    "src/main/composition/reviewer.ts",
     "src/main/application-shutdown-trigger.ts",
     "src/main/artifact-execution-authority.architecture.test.ts",
     "src/main/bounded-file-io.test.ts",
@@ -214,6 +216,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/composition/reviewer.test.ts",
       "src/main/app-branding.test.ts",
       "src/main/app-icon.test.ts",
       "src/main/app-lifecycle.test.ts",
@@ -302,6 +305,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/literature/command-owner.test.ts",
       "src/main/delegation/escaped-descendant.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/session-plan/adversarial-session-plan.test.ts",

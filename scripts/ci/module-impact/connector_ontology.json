@@ -16,6 +16,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/reviewer.test.ts",
       "src/main/connectors/service.test.ts",
       "src/main/connectors/skill-doc.test.ts",
       "src/main/connectors/provision.test.ts",

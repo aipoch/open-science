@@ -1,0 +1,65 @@
+import type { ApplicationModuleBuilder } from '../application-runtime'
+import { BackendShutdownOutcomeError, QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
+import {
+  createReviewerCommandOwner,
+  registerReviewerIpcHandlers,
+  type ReviewerCommandOwner,
+  type ReviewerIpcOptions
+} from '../reviewer/ipc'
+import { createReviewerElectronPagedContentResolver } from '../reviewer/paged-preview-electron'
+import { ReviewerModelRuntimeOwner } from '../reviewer/model-runtime-owner'
+
+type ReviewerRuntimeShutdownOwner = Pick<
+  ReviewerModelRuntimeOwner,
+  'hasActiveWork' | 'shutdown' | 'shutdownForUpdateGate'
+>
+
+type ReviewerCompositionDependencies = Readonly<{
+  modelRuntime: ConstructorParameters<typeof ReviewerModelRuntimeOwner>[0]
+  options: Omit<ReviewerIpcOptions, 'modelRuntime' | 'pagedContentResolver'>
+  previewResources: Parameters<typeof createReviewerElectronPagedContentResolver>[0]
+  runtimeShutdownOwner: { current: ReviewerRuntimeShutdownOwner | undefined }
+  declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
+}>
+
+export const registerReviewerComposition = async (
+  modules: ApplicationModuleBuilder,
+  {
+    modelRuntime,
+    options,
+    previewResources,
+    runtimeShutdownOwner,
+    declareElectronAdapter
+  }: ReviewerCompositionDependencies
+): Promise<ReviewerCommandOwner> => {
+  const reviewerModelRuntime = await modules.add(modelRuntime, (options) => {
+    const owner = new ReviewerModelRuntimeOwner(options)
+    runtimeShutdownOwner.current = owner
+    return {
+      name: 'reviewer-model-runtime',
+      capability: owner,
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
+      dispose: async () => {
+        try {
+          if (!(await owner.shutdown()).reaped) {
+            throw new BackendShutdownOutcomeError('degraded')
+          }
+        } finally {
+          if (runtimeShutdownOwner.current === owner) runtimeShutdownOwner.current = undefined
+        }
+      }
+    }
+  })
+  const reviewerOptions: ReviewerIpcOptions = {
+    ...options,
+    modelRuntime: reviewerModelRuntime,
+    pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources)
+  }
+  const reviewerCommandOwner = createReviewerCommandOwner(reviewerOptions)
+  declareElectronAdapter('reviewer', () => {
+    registerReviewerIpcHandlers(reviewerOptions, reviewerCommandOwner)
+  })
+  return reviewerCommandOwner
+}
+
+export type { ReviewerRuntimeShutdownOwner }
