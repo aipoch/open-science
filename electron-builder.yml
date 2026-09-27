@@ -81,6 +81,9 @@ extraResources:
   # Keep the project license readable outside app.asar on every platform.
   - from: LICENSE
     to: LICENSE.txt
+  # Keep the copied third-party provider icon paths' MIT notice readable in every packaged app.
+  - from: src/renderer/src/assets/provider-icons/LobeHub-icons-LICENSE
+    to: LobeHub-icons-LICENSE
   - from: node_modules/.prisma
     to: node_modules/.prisma
   - from: node_modules/@prisma/client
