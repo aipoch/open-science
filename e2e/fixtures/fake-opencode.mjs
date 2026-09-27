@@ -1352,6 +1352,15 @@ if (process.argv.includes('--version')) {
           ].join('\n')
         } else if (prompt.includes('Verify WSL background cancellation.')) {
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            // Compute lists persistent kernels, not stateless Shell Runs. Keep a real REPL
+            // alive beside WSL so the inbox consumer can be verified through actual events.
+            toolResult(
+              'repl_execute',
+              await client.callTool({
+                name: 'repl_execute',
+                arguments: { code: "console.log('wsl-event-inbox')" }
+              })
+            )
             const run = toolResult(
               'bash_execute',
               await client.callTool({

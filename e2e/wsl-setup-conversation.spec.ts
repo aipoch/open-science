@@ -163,6 +163,9 @@ test.describe('WSL setup conversation', () => {
       if ((await chip.getAttribute('aria-expanded')) !== 'true') await chip.click()
       const ledger = page.getByTestId('session-background-activity')
       await expect(ledger.getByText('Running', { exact: true })).toBeVisible({ timeout: 30_000 })
+      await page.getByRole('button', { name: 'Compute', exact: true }).click()
+      const inbox = page.getByRole('region', { name: 'Compute', exact: true })
+      await expect(inbox.getByText('JavaScript REPL', { exact: true }).first()).toBeVisible()
       await page.screenshot({
         path: testInfo.outputPath(`wsl-events-${round}-running.png`),
         fullPage: true
@@ -187,11 +190,13 @@ test.describe('WSL setup conversation', () => {
         const state = await window.api.notebook.state(reference)
         return {
           events: probe.events,
-          runs: state.runs.map(({ runId, status, cancellationRequestedAt }) => ({
-            runId,
-            status,
-            cancellationRequestedAt
-          }))
+          runs: state.runs
+            .filter(({ kernelKind }) => kernelKind === 'bash')
+            .map(({ runId, status, cancellationRequestedAt }) => ({
+              runId,
+              status,
+              cancellationRequestedAt
+            }))
         }
       })
       expect(evidence.events.length).toBeGreaterThanOrEqual(3)
@@ -209,6 +214,21 @@ test.describe('WSL setup conversation', () => {
       await page.screenshot({ path: screenshot, fullPage: true })
       await testInfo.attach(`WSL cancellation ${round}`, {
         path: screenshot,
+        contentType: 'image/png'
+      })
+      // Keep Compute mounted while a real kernel termination invalidates its snapshot.
+      // The REPL uses the host runtime; the Shell task above uses the selected WSL profile.
+      await page.evaluate(async (scope) => {
+        const reference = await window.api.notebook.getReference(scope)
+        if (!reference) throw new Error('Missing Notebook before kernel shutdown')
+        await window.api.notebook.shutdown(reference)
+      }, evidence.events.at(-1)!)
+      await expect(inbox.getByText('No active kernels', { exact: true })).toBeVisible()
+      await expect(inbox.getByText('JavaScript REPL', { exact: true })).toHaveCount(0)
+      const inboxScreenshot = testInfo.outputPath(`wsl-compute-${round}-stopped.png`)
+      await page.screenshot({ path: inboxScreenshot, fullPage: true })
+      await testInfo.attach(`Compute kernel stop ${round}`, {
+        path: inboxScreenshot,
         contentType: 'image/png'
       })
     }

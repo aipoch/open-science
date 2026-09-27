@@ -8947,7 +8947,8 @@ describe('notebook runtime service', () => {
     await teardown
 
     expect(shutdownExecutor).toHaveBeenCalledTimes(1)
-    expect(changedSessions).toHaveLength(changedCountBefore + 1)
+    // The drained persistence callback and the completed lane removal each invalidate activity.
+    expect(changedSessions).toHaveLength(changedCountBefore + 2)
   })
 
   it('clears a stale terminated status once a run completes on the transparently respawned kernel', async () => {
@@ -15502,6 +15503,21 @@ describe('v4 runtime bindings & agent tools', () => {
       idle: 0,
       dormant: 0
     })
+  })
+
+  it('notifies Project activity consumers after a Kernel lane is removed by shutdown', async () => {
+    const root = await createStorageRoot()
+    const { service, changedSessions } = lifecycleCallbackHarness(root)
+    const request = { projectId: 'project-a', sessionId: 'session-a', workspaceCwd: root }
+    await service.execute({ ...request, language: 'python', code: '1' })
+    expect(service.getProjectActivity({ projectId: 'project-a' }).kernels).toHaveLength(1)
+    changedSessions.length = 0
+    await service.shutdown(request)
+    expect(service.getProjectActivity({ projectId: 'project-a' }).kernels).toEqual([])
+    expect(changedSessions).toEqual(['session-a'])
+    // Repeated shutdown of an absent lane must not manufacture additional invalidations.
+    await service.shutdown(request)
+    expect(changedSessions).toEqual(['session-a'])
   })
 
   it('reports only live Kernels owned by the requested Project without materializing dormant Sessions', async () => {
