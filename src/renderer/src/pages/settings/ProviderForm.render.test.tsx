@@ -74,6 +74,11 @@ describe('ProviderForm field switching', () => {
     const onChange = vi.fn()
     render(createEmptyProviderFormValue({ type: 'custom' }), { onChange })
 
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-controls="provider-local-model-server"]')
+        ?.click()
+    })
     const ollama = [...container.querySelectorAll<HTMLButtonElement>('button[type="button"]')].find(
       (button) => button.textContent?.includes('Ollama')
     )
@@ -84,6 +89,38 @@ describe('ProviderForm field switching', () => {
       apiEndpoint: 'openai',
       name: 'Ollama'
     })
+  })
+
+  it('uses the shared disclosure for local model server presets', () => {
+    render(createEmptyProviderFormValue({ type: 'custom' }))
+
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[aria-controls="provider-local-model-server"]'
+    )
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('details')).toBeNull()
+
+    act(() => disclosure?.click())
+
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('true')
+    expect(
+      container.querySelector('[role="group"][aria-label="Local model server"]')
+    ).not.toBeNull()
+  })
+
+  it('opens local model presets for a loopback gateway', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'custom',
+        baseUrl: 'http://localhost:11434'
+      })
+    )
+
+    expect(
+      container
+        .querySelector<HTMLButtonElement>('button[aria-controls="provider-local-model-server"]')
+        ?.getAttribute('aria-expanded')
+    ).toBe('true')
   })
 
   it('marks the API key optional for a loopback custom gateway', () => {

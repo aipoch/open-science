@@ -122,24 +122,28 @@ const RequiredMark = (): React.JSX.Element => (
   </span>
 )
 
-type AdvancedSettingsDisclosureProps = {
+type SettingsDisclosureProps = {
   expanded: boolean
   label: string
   onToggle: () => void
   children: React.ReactNode
+  contentClassName?: string
+  contentId?: string
 }
 
-const AdvancedSettingsDisclosure = ({
+const SettingsDisclosure = ({
   expanded,
   label,
   onToggle,
-  children
-}: AdvancedSettingsDisclosureProps): React.JSX.Element => (
+  children,
+  contentClassName = 'mt-3 flex min-w-0 flex-col gap-4 pl-6',
+  contentId = 'provider-advanced-settings'
+}: SettingsDisclosureProps): React.JSX.Element => (
   <div>
     <button
       type="button"
       aria-expanded={expanded}
-      aria-controls="provider-advanced-settings"
+      aria-controls={contentId}
       onClick={onToggle}
       className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
     >
@@ -153,7 +157,7 @@ const AdvancedSettingsDisclosure = ({
     </button>
 
     {expanded ? (
-      <div id="provider-advanced-settings" className="mt-3 flex min-w-0 flex-col gap-4 pl-6">
+      <div id={contentId} className={contentClassName}>
         {children}
       </div>
     ) : null}
@@ -275,6 +279,7 @@ const ProviderForm = ({
       Boolean(value.maxInputTokens.trim()) ||
       Boolean(value.maxOutputTokens.trim())
   )
+  const [localModelOpen, setLocalModelOpen] = useState(false)
   const selectedKey = selectedKindKey(value)
   // Scope reveal state to the exact provider kind and draft value. Input events advance that scope
   // only while already revealed, so an externally replaced provider record starts masked.
@@ -522,7 +527,7 @@ const ProviderForm = ({
                   )}
             </p>
           </div>
-          <AdvancedSettingsDisclosure
+          <SettingsDisclosure
             expanded={advancedVisible}
             label={t('Advanced settings')}
             onToggle={() => setAdvancedOpen((open) => !open)}
@@ -562,7 +567,7 @@ const ProviderForm = ({
                 </SelectContent>
               </Select>
             </div>
-          </AdvancedSettingsDisclosure>
+          </SettingsDisclosure>
         </>
       ) : isClaudeSubscription ? (
         <>
@@ -645,10 +650,13 @@ const ProviderForm = ({
         </>
       ) : isCustom ? (
         <>
-          <details className="space-y-2" open={loopbackCustomGateway || undefined}>
-            <summary className="cursor-pointer text-xs font-medium">
-              {t('Local model server')}
-            </summary>
+          <SettingsDisclosure
+            expanded={localModelOpen || loopbackCustomGateway}
+            label={t('Local model server')}
+            onToggle={() => setLocalModelOpen((open) => !open)}
+            contentClassName="mt-2 flex min-w-0 flex-col gap-2 pl-6"
+            contentId="provider-local-model-server"
+          >
             <div className="flex flex-wrap gap-2" role="group" aria-label={t('Local model server')}>
               {LOCAL_MODEL_PRESETS.map((preset) => {
                 const active = value.baseUrl.trim() === preset.baseUrl
@@ -678,7 +686,7 @@ const ProviderForm = ({
                 'Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.'
               )}
             </p>
-          </details>
+          </SettingsDisclosure>
 
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">
@@ -790,7 +798,7 @@ const ProviderForm = ({
             ) : null}
           </div>
 
-          <AdvancedSettingsDisclosure
+          <SettingsDisclosure
             expanded={advancedVisible}
             label={t('Advanced settings')}
             onToggle={() => setAdvancedOpen((open) => !open)}
@@ -984,7 +992,7 @@ const ProviderForm = ({
                 t={t}
               />
             </div>
-          </AdvancedSettingsDisclosure>
+          </SettingsDisclosure>
         </>
       ) : isOfficial ? (
         <>
