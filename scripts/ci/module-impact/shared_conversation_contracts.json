@@ -35,6 +35,7 @@
     "src/shared/session-package.ts",
     "src/shared/session-pdf-context.ts",
     "src/shared/session-persistence-flush.ts",
+    "src/shared/session-persistence-envelope.ts",
     "src/shared/session-persistence.test.ts",
     "src/shared/session-persistence.ts",
     "src/shared/session-reproducibility.ts",
