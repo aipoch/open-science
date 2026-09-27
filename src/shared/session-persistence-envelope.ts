@@ -1,4 +1,7 @@
-import type { MaterializedPersistedChatSession, PersistedChatSession } from './session-persistence'
+import type {
+  MaterializedPersistedChatSession,
+  PersistedChatSession
+} from './session-persistence/session'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
 export const SESSION_FILE_VERSION = 2

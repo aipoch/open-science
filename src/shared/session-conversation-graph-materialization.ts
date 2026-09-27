@@ -10,9 +10,9 @@ import {
 } from './conversation-graph'
 import type {
   MaterializedPersistedChatSession,
-  PersistedChatSession,
-  PersistedToolActivity
-} from './session-persistence'
+  PersistedChatSession
+} from './session-persistence/session'
+import type { PersistedToolActivity } from './session-persistence/message'
 
 export type ConversationGraphMaterializationPhase = 'create' | 'messages' | 'activities'
 

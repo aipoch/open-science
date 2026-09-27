@@ -3,7 +3,7 @@ import type {
   PersistedActivityGroup,
   PersistedChatMessage,
   PersistedToolActivity
-} from './session-persistence'
+} from './session-persistence/message'
 import { parseNestedDelegateInvocationId } from './delegated-caller-source'
 
 export type PersistedRuntimeSegment = {

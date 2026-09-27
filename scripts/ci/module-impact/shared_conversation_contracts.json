@@ -38,6 +38,8 @@
     "src/shared/session-persistence-envelope.ts",
     "src/shared/session-persistence.test.ts",
     "src/shared/session-persistence.ts",
+    "src/shared/session-persistence/",
+    "src/shared/session-persistence.architecture.test.ts",
     "src/shared/session-reproducibility.ts",
     "src/shared/session-runtime-context.ts",
     "src/shared/session-conversation-graph-materialization.ts",
@@ -107,7 +109,9 @@
       "src/shared/runtime-session-projection.test.ts",
       "src/shared/session-conversation-command.test.ts"
     ],
-    "contract": [],
+    "contract": [
+      "src/shared/session-persistence.architecture.test.ts"
+    ],
     "consumer": []
   },
   "capabilityOverlays": [],
