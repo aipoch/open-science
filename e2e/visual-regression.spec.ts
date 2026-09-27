@@ -332,10 +332,7 @@ test('keeps representative conversation, project, and recovery states visually s
   await expectStableScreenshot(page, 'provenance-desktop-light.png')
   await provenance.getByRole('button', { name: 'Close Provenance' }).click()
   await preview.getByRole('button', { name: 'Close preview of provenance-evidence.txt' }).click()
-  await page
-    .getByRole('tablist', { name: 'Open previews' })
-    .getByRole('tab', { name: 'Files' })
-    .press('Delete')
+  await page.getByTestId('preview-tab-strip').getByRole('tab', { name: 'Files' }).press('Delete')
 
   await setVisualState(page, { theme: 'Dark', width: 1280 })
   await page.getByRole('button', { name: 'Settings', exact: true }).click()

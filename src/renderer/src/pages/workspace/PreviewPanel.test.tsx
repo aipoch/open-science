@@ -447,7 +447,7 @@ describe('PreviewPanel', () => {
     tabBounds: [number, number]
     scrollLeft?: number
   }): { tabBar: HTMLElement; scrollTo: ReturnType<typeof vi.fn> } => {
-    const tabBar = container.querySelector<HTMLElement>('[aria-label="Open previews"]')
+    const tabBar = container.querySelector<HTMLElement>('[data-testid="preview-tab-strip"]')
     const tabContainer = container.querySelectorAll<HTMLElement>('[role="presentation"]')[tabIndex]
     if (!tabBar || !tabContainer) throw new Error('Expected preview tab geometry targets')
 
@@ -470,7 +470,7 @@ describe('PreviewPanel', () => {
     await renderPanel()
 
     expect(container.textContent).toContain('No preview content')
-    expect(container.querySelector('[aria-label="Open previews"]')).toBeNull()
+    expect(container.querySelector('[data-testid="preview-tab-strip"]')).toBeNull()
     expect(container.querySelector('[data-testid="preview-panel-top-bar"]')).toBeNull()
   })
 
@@ -478,7 +478,7 @@ describe('PreviewPanel', () => {
     await renderTwoFileTabs()
 
     const chromeRow = container.querySelector('[data-testid="preview-panel-top-bar"]')
-    const tabBar = container.querySelector('[aria-label="Open previews"]')
+    const tabBar = container.querySelector('[data-testid="preview-tab-strip"]')
 
     expect(chromeRow).not.toBeNull()
     expect(chromeRow?.contains(tabBar)).toBe(true)
@@ -911,7 +911,7 @@ describe('PreviewPanel', () => {
     const card = container.querySelector('[data-testid="preview-card"]')
     const header = card?.querySelector('[data-testid="preview-card-header"]')
     const headerFileName = header?.querySelector('[data-testid="file-name-root"]')
-    const tabBar = container.querySelector('[aria-label="Open previews"]')
+    const tabBar = container.querySelector('[data-testid="preview-tab-strip"]')
     const fileTab = tabBar?.querySelector(`[role="tab"][title="${name}"]`)
     const fileTabContainer = fileTab?.parentElement
 
@@ -937,7 +937,7 @@ describe('PreviewPanel', () => {
       header?.querySelector(`[aria-label="Open full screen preview of ${name}"]`)
     ).not.toBeNull()
     expect(header?.querySelector(`[aria-label="Close preview of ${name}"]`)).not.toBeNull()
-    expect(tabBar?.getAttribute('role')).toBe('tablist')
+    expect(tabBar?.querySelector('[role="tablist"]')).not.toBeNull()
     expect(tabBar?.className).toContain('min-w-0')
     expect(tabBar?.className).toContain('flex-1')
     expect(fileTabContainer?.className).toContain('max-w-[160px]')
@@ -1195,8 +1195,16 @@ describe('PreviewPanel', () => {
     await renderPanel()
 
     const closeAffordances = container.querySelectorAll<HTMLElement>(
-      '[aria-label="Open previews"] [data-preview-close]'
+      '[data-testid="preview-tab-strip"] [data-preview-close]'
     )
+    const tabList = container.querySelector('[role="tablist"][aria-label="Open previews"]')!
+    const ownedTabs = tabList
+      .getAttribute('aria-owns')!
+      .split(' ')
+      .map((id) => document.getElementById(id))
+    expect(ownedTabs).toEqual(Array.from(container.querySelectorAll('[role="tab"]')))
+    expect(ownedTabs).toHaveLength(2)
+    expect(tabList.querySelector('button')).toBeNull()
     expect(Array.from(closeAffordances).map((element) => element.tabIndex)).toEqual([0, -1])
     expect(
       Array.from(closeAffordances).every(
@@ -1406,7 +1414,7 @@ describe('PreviewPanel', () => {
     await renderPanel()
 
     const closeInactiveTab = container.querySelector<HTMLElement>(
-      '[aria-label="Open previews"] [data-preview-close="file-2.pdf"]'
+      '[data-testid="preview-tab-strip"] [data-preview-close="file-2.pdf"]'
     )
     await act(async () => {
       closeInactiveTab?.dispatchEvent(new MouseEvent('click', { bubbles: true }))

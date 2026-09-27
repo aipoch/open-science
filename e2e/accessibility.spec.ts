@@ -277,10 +277,7 @@ test('reports accessibility violations across representative state combinations'
   await scanAccessibility(page, 'Artifact provenance')
   await provenance.getByRole('button', { name: 'Close Provenance' }).click()
   await preview.getByRole('button', { name: 'Close preview of provenance-evidence.txt' }).click()
-  await page
-    .getByRole('tablist', { name: 'Open previews' })
-    .getByRole('tab', { name: 'Files' })
-    .press('Delete')
+  await page.getByTestId('preview-tab-strip').getByRole('tab', { name: 'Files' }).press('Delete')
 
   await app.configureFileBrowserFixture()
   await page.getByRole('button', { name: 'Settings', exact: true }).click()

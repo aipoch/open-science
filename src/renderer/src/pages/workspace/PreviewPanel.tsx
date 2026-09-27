@@ -524,11 +524,17 @@ const PreviewTabBar = ({
   return (
     <div
       ref={attachTabListRef}
-      role="tablist"
-      aria-label={t('Open previews')}
-      aria-orientation="horizontal"
+      data-testid="preview-tab-strip"
       className="scroll-fade-x flex min-w-0 flex-1 basis-0 shrink-0 items-center gap-1 overflow-x-auto pb-2"
     >
+      {/* Keep sibling close buttons outside the tablist's accessible ownership. */}
+      <div
+        role="tablist"
+        aria-label={t('Open previews')}
+        aria-orientation="horizontal"
+        aria-owns={tabs.map((tab) => getPreviewTabId(tab.id)).join(' ')}
+        className="sr-only"
+      />
       {tabs.map((tab, index) => (
         <PreviewTab
           key={tab.id}

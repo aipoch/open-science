@@ -302,410 +302,416 @@ const LiteratureMetadataEditor = ({
 
   return (
     <div className={cn('flex min-h-0 min-w-0 max-h-[70vh] flex-col text-sm', className)}>
-      <fieldset disabled={locked} className="min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto p-5">
-        <div className="block space-y-1.5">
-          <label htmlFor="literature-reference-type" className="font-medium">
-            {t('Reference type')}
-          </label>
-          <Select
-            disabled={locked}
-            value={draft.itemType}
-            onValueChange={(value) =>
-              setDraft((current) => ({
-                ...current,
-                itemType: value as LiteratureItemType
-              }))
-            }
-          >
-            <SelectTrigger id="literature-reference-type" className="h-8">
-              <span className="truncate">{itemTypeLabels[draft.itemType]}</span>
-            </SelectTrigger>
-            <SelectContent>
-              {LITERATURE_ITEM_TYPES.map((itemType) => (
-                <SelectItem key={itemType} value={itemType}>
-                  {itemTypeLabels[itemType]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <label className="block space-y-1.5">
-          <span className="font-medium">{t('Title')}</span>
-          <Input
-            value={draft.title}
-            onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
-            autoFocus
-          />
-        </label>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block space-y-1.5">
-            <span className="font-medium">{t('Year')}</span>
-            <Input
-              ref={yearRef}
-              aria-label={t('Year')}
-              inputMode="numeric"
-              value={year}
-              aria-invalid={invalidField === 'year'}
-              aria-describedby={invalidField === 'year' ? `${id}-year-error` : undefined}
-              onChange={(event) => updateYear(event.target.value)}
-            />
-            {invalidField === 'year' ? (
-              <span id={`${id}-year-error`} role="alert" className="block text-destructive">
-                {t('Enter a whole year from 0 to 9999, or leave it blank.')}
-              </span>
-            ) : null}
-          </label>
-          <label className="block space-y-1.5">
-            <span className="font-medium">{t('Publication date')}</span>
-            <Input
-              ref={publicationRef}
-              aria-label={t('Publication date')}
-              value={publicationDate}
-              placeholder={t('YYYY-MM-DD')}
-              aria-invalid={invalidField === 'publication'}
-              aria-describedby={`${id}-date-help${invalidField === 'publication' ? ` ${id}-date-error` : ''}`}
-              onChange={(event) => updatePublicationDate(event.target.value)}
-            />
-            {invalidField === 'publication' ? (
-              <span id={`${id}-date-error`} role="alert" className="block text-destructive">
-                {t('Enter a valid publication date matching the year, or clear both fields.')}
-              </span>
-            ) : null}
-          </label>
-        </div>
-        <label className="flex items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            checked={useOriginalDate}
-            onChange={(event) => {
-              setUseOriginalDate(event.target.checked)
-              setInvalidField(undefined)
-            }}
-          />
-          {t('Use original date text')}
-        </label>
-        <p id={`${id}-date-help`} className="text-xs text-muted-foreground">
-          {useOriginalDate
-            ? t(
-                'Keep uncertain or seasonal dates as written. Set the searchable year separately, if known.'
-              )
-            : t(
-                'Use YYYY, YYYY-MM, or YYYY-MM-DD. Year and date stay in sync; clearing either clears both.'
-              )}
-        </p>
-        {legacyDateConflict ? (
-          <p className="text-xs text-status-warning-foreground">
-            {t(
-              'The saved year and publication date disagree. Editing either field will reconcile them.'
-            )}
-          </p>
-        ) : null}
-        <div>
-          <label className="block space-y-1.5">
-            <span className="font-medium">{t('Publication')}</span>
-            <Input
-              value={draft.containerTitle}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, containerTitle: event.target.value }))
-              }
-            />
-          </label>
-        </div>
-
-        <div>
-          <button
-            type="button"
-            className="flex items-center gap-1.5 font-medium"
-            aria-expanded={advancedOpen}
-            aria-controls="literature-advanced-fields"
-            onClick={() => setAdvancedOpen((open) => !open)}
-          >
-            <ChevronDown
-              className={`size-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
-              aria-hidden="true"
-            />
-            {t('Advanced settings')}
-          </button>
-          {advancedOpen ? (
-            <div id="literature-advanced-fields" className="mt-4 grid gap-4 sm:grid-cols-2">
-              {beforeFields ? <div className="sm:col-span-2">{beforeFields}</div> : null}
-              {[
-                ['volume', t('Volume')],
-                ['issue', t('Issue')],
-                ['pages', t('Pages')],
-                ['publisher', t('Publisher')],
-                ['publisherPlace', t('Place')],
-                ['edition', t('Edition')]
-              ].map(([key, label]) => (
-                <label key={key} className="block space-y-1.5">
-                  <span className="font-medium">{label}</span>
-                  <Input
-                    value={typeField(key)}
-                    onChange={(event) => updateTypeField(key, event.target.value)}
-                  />
-                </label>
-              ))}
-              {(
-                [
-                  ['shortTitle', t('Short title')],
-                  ['language', t('Language')],
-                  ['citationKey', t('Citation key')],
-                  ['rights', t('Rights')]
-                ] as const
-              ).map(([key, label]) => (
-                <label key={key} className="block space-y-1.5">
-                  <span className="font-medium">{label}</span>
-                  <Input
-                    value={draft[key] ?? ''}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, [key]: event.target.value }))
-                    }
-                  />
-                </label>
-              ))}
-              <label className="block space-y-1.5">
-                <span className="font-medium">{t('Date accessed')}</span>
-                <Input
-                  ref={accessRef}
-                  aria-label={t('Date accessed')}
-                  type="date"
-                  min="1970-01-01"
-                  value={accessDate}
-                  aria-invalid={invalidField === 'access'}
-                  aria-describedby={invalidField === 'access' ? `${id}-access-error` : undefined}
-                  onChange={(event) => {
-                    setAccessDate(event.target.value)
-                    setInvalidField(undefined)
-                  }}
-                />
-                {invalidField === 'access' ? (
-                  <span id={`${id}-access-error`} role="alert" className="block text-destructive">
-                    {t('Enter a valid access date on or after 1970-01-01, or leave it blank.')}
-                  </span>
-                ) : null}
-              </label>
-              <label className="block space-y-1.5 sm:col-span-2">
-                <span className="font-medium">{t('Extra')}</span>
-                <Textarea
-                  value={draft.extra}
-                  rows={3}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, extra: event.target.value }))
-                  }
-                />
-              </label>
-            </div>
-          ) : null}
-        </div>
-
-        <section className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="font-medium">{t('Creators')}</h3>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() =>
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <fieldset disabled={locked} className="min-w-0 space-y-5 p-5">
+          <div className="block space-y-1.5">
+            <label htmlFor="literature-reference-type" className="font-medium">
+              {t('Reference type')}
+            </label>
+            <Select
+              disabled={locked}
+              value={draft.itemType}
+              onValueChange={(value) =>
                 setDraft((current) => ({
                   ...current,
-                  creators: [...current.creators, emptyCreator()]
+                  itemType: value as LiteratureItemType
                 }))
               }
             >
-              <Plus className="size-3.5" aria-hidden="true" />
-              {t('Add creator')}
-            </Button>
+              <SelectTrigger id="literature-reference-type" className="h-8">
+                <span className="truncate">{itemTypeLabels[draft.itemType]}</span>
+              </SelectTrigger>
+              <SelectContent>
+                {LITERATURE_ITEM_TYPES.map((itemType) => (
+                  <SelectItem key={itemType} value={itemType}>
+                    {itemTypeLabels[itemType]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <div className="space-y-2">
-            {draft.creators.map((creator, index) => (
-              <div key={index} className="space-y-2">
-                <div className="flex items-center gap-2">
+
+          <label className="block space-y-1.5">
+            <span className="font-medium">{t('Title')}</span>
+            <Input
+              value={draft.title}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, title: event.target.value }))
+              }
+              autoFocus
+            />
+          </label>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block space-y-1.5">
+              <span className="font-medium">{t('Year')}</span>
+              <Input
+                ref={yearRef}
+                aria-label={t('Year')}
+                inputMode="numeric"
+                value={year}
+                aria-invalid={invalidField === 'year'}
+                aria-describedby={invalidField === 'year' ? `${id}-year-error` : undefined}
+                onChange={(event) => updateYear(event.target.value)}
+              />
+              {invalidField === 'year' ? (
+                <span id={`${id}-year-error`} role="alert" className="block text-destructive">
+                  {t('Enter a whole year from 0 to 9999, or leave it blank.')}
+                </span>
+              ) : null}
+            </label>
+            <label className="block space-y-1.5">
+              <span className="font-medium">{t('Publication date')}</span>
+              <Input
+                ref={publicationRef}
+                aria-label={t('Publication date')}
+                value={publicationDate}
+                placeholder={t('YYYY-MM-DD')}
+                aria-invalid={invalidField === 'publication'}
+                aria-describedby={`${id}-date-help${invalidField === 'publication' ? ` ${id}-date-error` : ''}`}
+                onChange={(event) => updatePublicationDate(event.target.value)}
+              />
+              {invalidField === 'publication' ? (
+                <span id={`${id}-date-error`} role="alert" className="block text-destructive">
+                  {t('Enter a valid publication date matching the year, or clear both fields.')}
+                </span>
+              ) : null}
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={useOriginalDate}
+              onChange={(event) => {
+                setUseOriginalDate(event.target.checked)
+                setInvalidField(undefined)
+              }}
+            />
+            {t('Use original date text')}
+          </label>
+          <p id={`${id}-date-help`} className="text-xs text-muted-foreground">
+            {useOriginalDate
+              ? t(
+                  'Keep uncertain or seasonal dates as written. Set the searchable year separately, if known.'
+                )
+              : t(
+                  'Use YYYY, YYYY-MM, or YYYY-MM-DD. Year and date stay in sync; clearing either clears both.'
+                )}
+          </p>
+          {legacyDateConflict ? (
+            <p className="text-xs text-status-warning-foreground">
+              {t(
+                'The saved year and publication date disagree. Editing either field will reconcile them.'
+              )}
+            </p>
+          ) : null}
+          <div>
+            <label className="block space-y-1.5">
+              <span className="font-medium">{t('Publication')}</span>
+              <Input
+                value={draft.containerTitle}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, containerTitle: event.target.value }))
+                }
+              />
+            </label>
+          </div>
+
+          <div>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 font-medium"
+              aria-expanded={advancedOpen}
+              aria-controls="literature-advanced-fields"
+              onClick={() => setAdvancedOpen((open) => !open)}
+            >
+              <ChevronDown
+                className={`size-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
+                aria-hidden="true"
+              />
+              {t('Advanced settings')}
+            </button>
+            {advancedOpen ? (
+              <div id="literature-advanced-fields" className="mt-4 grid gap-4 sm:grid-cols-2">
+                {beforeFields ? <div className="sm:col-span-2">{beforeFields}</div> : null}
+                {[
+                  ['volume', t('Volume')],
+                  ['issue', t('Issue')],
+                  ['pages', t('Pages')],
+                  ['publisher', t('Publisher')],
+                  ['publisherPlace', t('Place')],
+                  ['edition', t('Edition')]
+                ].map(([key, label]) => (
+                  <label key={key} className="block space-y-1.5">
+                    <span className="font-medium">{label}</span>
+                    <Input
+                      value={typeField(key)}
+                      onChange={(event) => updateTypeField(key, event.target.value)}
+                    />
+                  </label>
+                ))}
+                {(
+                  [
+                    ['shortTitle', t('Short title')],
+                    ['language', t('Language')],
+                    ['citationKey', t('Citation key')],
+                    ['rights', t('Rights')]
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="block space-y-1.5">
+                    <span className="font-medium">{label}</span>
+                    <Input
+                      value={draft[key] ?? ''}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, [key]: event.target.value }))
+                      }
+                    />
+                  </label>
+                ))}
+                <label className="block space-y-1.5">
+                  <span className="font-medium">{t('Date accessed')}</span>
+                  <Input
+                    ref={accessRef}
+                    aria-label={t('Date accessed')}
+                    type="date"
+                    min="1970-01-01"
+                    value={accessDate}
+                    aria-invalid={invalidField === 'access'}
+                    aria-describedby={invalidField === 'access' ? `${id}-access-error` : undefined}
+                    onChange={(event) => {
+                      setAccessDate(event.target.value)
+                      setInvalidField(undefined)
+                    }}
+                  />
+                  {invalidField === 'access' ? (
+                    <span id={`${id}-access-error`} role="alert" className="block text-destructive">
+                      {t('Enter a valid access date on or after 1970-01-01, or leave it blank.')}
+                    </span>
+                  ) : null}
+                </label>
+                <label className="block space-y-1.5 sm:col-span-2">
+                  <span className="font-medium">{t('Extra')}</span>
+                  <Textarea
+                    value={draft.extra}
+                    rows={3}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, extra: event.target.value }))
+                    }
+                  />
+                </label>
+              </div>
+            ) : null}
+          </div>
+
+          <section className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-medium">{t('Creators')}</h3>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  setDraft((current) => ({
+                    ...current,
+                    creators: [...current.creators, emptyCreator()]
+                  }))
+                }
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                {t('Add creator')}
+              </Button>
+            </div>
+            <div className="space-y-2">
+              {draft.creators.map((creator, index) => (
+                <div key={index} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Select
+                      disabled={locked}
+                      value={creator.creatorType}
+                      onValueChange={(creatorType) =>
+                        updateCreator(index, { ...creator, creatorType })
+                      }
+                    >
+                      <SelectTrigger aria-label={t('Creator role')} className="h-8 flex-1">
+                        <span>
+                          {creatorRoleLabels.get(creator.creatorType) ?? creator.creatorType}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {creatorRoles.map((role) => (
+                          <SelectItem key={role} value={role}>
+                            {creatorRoleLabels.get(role) ?? role}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      disabled={locked}
+                      value={creator.nameMode}
+                      onValueChange={(nameMode: CreatorDraft['nameMode']) =>
+                        updateCreator(index, { ...creator, nameMode })
+                      }
+                    >
+                      <SelectTrigger aria-label={t('Name type')} className="h-8 flex-1">
+                        <span>
+                          {creator.nameMode === 'person' ? t('Person') : t('Organization')}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="person">{t('Person')}</SelectItem>
+                        <SelectItem value="organization">{t('Organization')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {creator.nameMode === 'organization' ? (
+                      <Input
+                        aria-label={t('Organization')}
+                        value={creator.literalName}
+                        onChange={(event) =>
+                          updateCreator(index, { ...creator, literalName: event.target.value })
+                        }
+                      />
+                    ) : (
+                      <>
+                        <Input
+                          aria-label={t('Given name')}
+                          placeholder={t('Given name')}
+                          value={creator.givenName}
+                          onChange={(event) =>
+                            updateCreator(index, { ...creator, givenName: event.target.value })
+                          }
+                        />
+                        <Input
+                          aria-label={t('Family name')}
+                          placeholder={t('Family name')}
+                          value={creator.familyName}
+                          onChange={(event) =>
+                            updateCreator(index, { ...creator, familyName: event.target.value })
+                          }
+                        />
+                      </>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Remove creator')}
+                      onClick={() =>
+                        setDraft((current) => ({
+                          ...current,
+                          creators: current.creators.filter((_, entryIndex) => entryIndex !== index)
+                        }))
+                      }
+                    >
+                      <Trash2 className="size-3.5" aria-hidden="true" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-medium">{t('Identifiers')}</h3>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  setDraft((current) => ({
+                    ...current,
+                    identifiers: [...current.identifiers, emptyIdentifier()]
+                  }))
+                }
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                {t('Add identifier')}
+              </Button>
+            </div>
+            <div className="space-y-2">
+              {draft.identifiers.map((identifier, index) => (
+                <div key={index} className="flex items-center gap-2">
                   <Select
                     disabled={locked}
-                    value={creator.creatorType}
-                    onValueChange={(creatorType) =>
-                      updateCreator(index, { ...creator, creatorType })
+                    value={identifier.scheme}
+                    onValueChange={(value) =>
+                      updateIdentifier(index, {
+                        ...identifier,
+                        scheme: value as LiteratureIdentifierInput['scheme']
+                      })
                     }
                   >
-                    <SelectTrigger aria-label={t('Creator role')} className="h-8 flex-1">
-                      <span>
-                        {creatorRoleLabels.get(creator.creatorType) ?? creator.creatorType}
-                      </span>
+                    <SelectTrigger aria-label={t('Type')} className="h-8 w-24 text-xs">
+                      <span className="truncate">{identifier.scheme.toUpperCase()}</span>
                     </SelectTrigger>
                     <SelectContent>
-                      {creatorRoles.map((role) => (
-                        <SelectItem key={role} value={role}>
-                          {creatorRoleLabels.get(role) ?? role}
+                      {LITERATURE_IDENTIFIER_SCHEMES.map((scheme) => (
+                        <SelectItem key={scheme} value={scheme}>
+                          {scheme.toUpperCase()}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <Select
-                    disabled={locked}
-                    value={creator.nameMode}
-                    onValueChange={(nameMode: CreatorDraft['nameMode']) =>
-                      updateCreator(index, { ...creator, nameMode })
+                  <Input
+                    aria-label={identifier.scheme.toUpperCase()}
+                    className="h-8"
+                    value={identifier.value}
+                    onChange={(event) =>
+                      updateIdentifier(index, { ...identifier, value: event.target.value })
                     }
-                  >
-                    <SelectTrigger aria-label={t('Name type')} className="h-8 flex-1">
-                      <span>{creator.nameMode === 'person' ? t('Person') : t('Organization')}</span>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="person">{t('Person')}</SelectItem>
-                      <SelectItem value="organization">{t('Organization')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center gap-2">
-                  {creator.nameMode === 'organization' ? (
-                    <Input
-                      aria-label={t('Organization')}
-                      value={creator.literalName}
-                      onChange={(event) =>
-                        updateCreator(index, { ...creator, literalName: event.target.value })
-                      }
+                  />
+                  <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                    <input
+                      type="radio"
+                      name={`primary-literature-identifier-${identifier.scheme}`}
+                      checked={identifier.isPrimary}
+                      onChange={() => updateIdentifier(index, { ...identifier, isPrimary: true })}
                     />
-                  ) : (
-                    <>
-                      <Input
-                        aria-label={t('Given name')}
-                        placeholder={t('Given name')}
-                        value={creator.givenName}
-                        onChange={(event) =>
-                          updateCreator(index, { ...creator, givenName: event.target.value })
-                        }
-                      />
-                      <Input
-                        aria-label={t('Family name')}
-                        placeholder={t('Family name')}
-                        value={creator.familyName}
-                        onChange={(event) =>
-                          updateCreator(index, { ...creator, familyName: event.target.value })
-                        }
-                      />
-                    </>
-                  )}
+                    {t('Preferred for {{scheme}}', { scheme: identifier.scheme.toUpperCase() })}
+                  </label>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    aria-label={t('Remove creator')}
+                    aria-label={t('Remove identifier')}
                     onClick={() =>
                       setDraft((current) => ({
                         ...current,
-                        creators: current.creators.filter((_, entryIndex) => entryIndex !== index)
+                        identifiers: current.identifiers.filter(
+                          (_, entryIndex) => entryIndex !== index
+                        )
                       }))
                     }
                   >
                     <Trash2 className="size-3.5" aria-hidden="true" />
                   </Button>
                 </div>
-              </div>
-            ))}
-          </div>
-        </section>
+              ))}
+            </div>
+          </section>
 
-        <section className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="font-medium">{t('Identifiers')}</h3>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                setDraft((current) => ({
-                  ...current,
-                  identifiers: [...current.identifiers, emptyIdentifier()]
-                }))
+          <label className="block space-y-1.5">
+            <span className="font-medium">{t('URL')}</span>
+            <Input
+              value={draft.url}
+              onChange={(event) => setDraft((current) => ({ ...current, url: event.target.value }))}
+            />
+          </label>
+
+          <label className="block space-y-1.5">
+            <span className="font-medium">{t('Abstract')}</span>
+            <Textarea
+              value={draft.abstract}
+              rows={6}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, abstract: event.target.value }))
               }
-            >
-              <Plus className="size-3.5" aria-hidden="true" />
-              {t('Add identifier')}
-            </Button>
-          </div>
-          <div className="space-y-2">
-            {draft.identifiers.map((identifier, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <Select
-                  disabled={locked}
-                  value={identifier.scheme}
-                  onValueChange={(value) =>
-                    updateIdentifier(index, {
-                      ...identifier,
-                      scheme: value as LiteratureIdentifierInput['scheme']
-                    })
-                  }
-                >
-                  <SelectTrigger aria-label={t('Type')} className="h-8 w-24 text-xs">
-                    <span className="truncate">{identifier.scheme.toUpperCase()}</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LITERATURE_IDENTIFIER_SCHEMES.map((scheme) => (
-                      <SelectItem key={scheme} value={scheme}>
-                        {scheme.toUpperCase()}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  aria-label={identifier.scheme.toUpperCase()}
-                  className="h-8"
-                  value={identifier.value}
-                  onChange={(event) =>
-                    updateIdentifier(index, { ...identifier, value: event.target.value })
-                  }
-                />
-                <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                  <input
-                    type="radio"
-                    name={`primary-literature-identifier-${identifier.scheme}`}
-                    checked={identifier.isPrimary}
-                    onChange={() => updateIdentifier(index, { ...identifier, isPrimary: true })}
-                  />
-                  {t('Preferred for {{scheme}}', { scheme: identifier.scheme.toUpperCase() })}
-                </label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t('Remove identifier')}
-                  onClick={() =>
-                    setDraft((current) => ({
-                      ...current,
-                      identifiers: current.identifiers.filter(
-                        (_, entryIndex) => entryIndex !== index
-                      )
-                    }))
-                  }
-                >
-                  <Trash2 className="size-3.5" aria-hidden="true" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <label className="block space-y-1.5">
-          <span className="font-medium">{t('URL')}</span>
-          <Input
-            value={draft.url}
-            onChange={(event) => setDraft((current) => ({ ...current, url: event.target.value }))}
-          />
-        </label>
-
-        <label className="block space-y-1.5">
-          <span className="font-medium">{t('Abstract')}</span>
-          <Textarea
-            value={draft.abstract}
-            rows={6}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, abstract: event.target.value }))
-            }
-          />
-        </label>
-      </fieldset>
+            />
+          </label>
+        </fieldset>
+      </div>
       {error ? (
         <p role="alert" className="shrink-0 px-5 py-2 text-sm text-danger-000">
           {error}

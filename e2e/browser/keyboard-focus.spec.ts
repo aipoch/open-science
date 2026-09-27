@@ -166,6 +166,16 @@ for (const dark of [false, true]) {
     const agent = page.getByRole('combobox', { name: 'Filter notebook runs by Agent' })
     const python = page.getByTestId('kernel-switcher-python')
     await expect(python).toBeVisible()
+    await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+    const violations = await page.evaluate(async () => {
+      const axe = (window as unknown as { axe: typeof import('axe-core') }).axe
+      return (
+        await axe.run(document, {
+          runOnly: ['aria-required-children', 'aria-required-parent', 'aria-valid-attr-value']
+        })
+      ).violations
+    })
+    expect(violations).toEqual([])
     await page.getByRole('button', { name: 'Before preview' }).click()
     await page.keyboard.press('Tab')
     for (const target of [tab, close]) {

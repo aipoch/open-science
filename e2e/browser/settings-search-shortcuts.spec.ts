@@ -12,7 +12,6 @@ for (const platform of ['Win32', 'MacIntel']) {
     const navigation = settings.getByRole('navigation', { name: 'Settings', exact: true })
     const globalSearch = settings.getByRole('combobox', { name: 'Search settings' })
     const modifier = platform === 'MacIntel' ? 'Meta' : 'Control'
-    const hint = platform === 'MacIntel' ? '⌘⌥K' : 'CtrlAltK'
 
     for (const [panel, label] of [
       ['Specialists', 'Search specialists'],
@@ -25,19 +24,8 @@ for (const platform of ['Win32', 'MacIntel']) {
       await expect(localSearch).toBeVisible()
       await expect(globalSearch).toHaveAttribute('aria-keyshortcuts', `${modifier}+K`)
       await expect(localSearch).toHaveAttribute('aria-keyshortcuts', `${modifier}+Alt+K`)
-      await expect(localSearch.locator('..').locator('span[aria-hidden="true"]')).toHaveText(hint)
-      // The three-key hint has its own reserved area and stays inside the search field.
-      expect(
-        await localSearch.evaluate((input) => {
-          const hint = input.nextElementSibling!
-          const box = input.getBoundingClientRect()
-          const hintBox = hint.getBoundingClientRect()
-          return (
-            hintBox.right <= box.right &&
-            hintBox.left >= box.right - parseFloat(getComputedStyle(input).paddingRight)
-          )
-        })
-      ).toBe(true)
+      // Local hints were removed to keep narrow panel searches readable; the shortcut remains.
+      await expect(localSearch.locator('..').locator('kbd')).toHaveCount(0)
 
       await page.keyboard.press(`${modifier}+k`)
       await expect(globalSearch).toBeFocused()
