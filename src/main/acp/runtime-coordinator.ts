@@ -1235,7 +1235,7 @@ class AcpRuntimeCoordinator {
             acceptance,
             'sendAppContinuation',
             undefined,
-            true,
+            false,
             undefined,
             undefined,
             undefined,

@@ -2440,6 +2440,29 @@ describe('AcpRuntimeCoordinator', () => {
     expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0].permissionPrompts).toBeUndefined()
   })
 
+  it('preserves originating policy after startContinuation and an approved handoff', async () => {
+    let fake!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      fake = createFakeRuntime({ frameworkId: 'claude-code', sessionIds: ['session-1'], callbacks })
+      return fake.runtime
+    })
+    const { sessionId } = await coordinator.createSession()
+    await coordinator.sendPrompt({
+      sessionId,
+      text: 'Unattended',
+      permissionPrompts: 'none',
+      provenanceContext: { promptMessageId: 'original' }
+    })
+
+    await coordinator.startContinuation({ sessionId, text: 'App continuation' })
+    await coordinator.continueApprovedHandoff(sessionId, 'Continue original task')
+
+    expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0]).toMatchObject({
+      permissionPrompts: 'none',
+      provenanceContext: { promptMessageId: 'original' }
+    })
+  })
+
   it('routes app-owned continuations through the dedicated runtime operation', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
