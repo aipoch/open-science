@@ -57,8 +57,6 @@ import {
   projectConversationMessage,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
-  synchronizeActiveConversationActivities,
-  synchronizeActiveConversationMessages,
   validateConversationGraph,
   type PersistedAgentFrame,
   type PersistedBranchActivity,
@@ -68,7 +66,6 @@ import {
   type PersistedMessageNode,
   type PersistedRuntimeSegment
 } from './conversation-graph'
-import { parseNestedDelegateInvocationId } from './delegated-caller-source'
 import {
   EXACT_PERMISSION_QUALIFIER_PATTERN,
   PERMISSION_CAPABILITY_KINDS,
@@ -89,6 +86,10 @@ import {
   type SessionFileDecodeResult,
   type SessionFileReadOptions
 } from './session-persistence-envelope'
+import {
+  materializeSessionConversationGraph,
+  projectActiveNestedDelegateActivities
+} from './session-conversation-graph-materialization'
 import {
   getPersistedSideChats,
   MAX_SESSION_PDF_CONTEXTS,
@@ -131,6 +132,11 @@ export type {
   SessionFileDecodeResult,
   SessionFileReadOptions
 } from './session-persistence-envelope'
+export {
+  ConversationGraphMaterializationError,
+  materializeSessionConversationGraph
+} from './session-conversation-graph-materialization'
+export type { ConversationGraphMaterializationPhase } from './session-conversation-graph-materialization'
 export * from './session-runtime-context'
 
 export type PersistedSessionStatus =
@@ -3991,93 +3997,6 @@ const sanitizeConversationGraph = (
     return materializeNestedDelegateActivities(graph)
   } catch {
     return undefined
-  }
-}
-
-export type ConversationGraphMaterializationPhase = 'create' | 'messages' | 'activities'
-
-export class ConversationGraphMaterializationError extends Error {
-  readonly phase: ConversationGraphMaterializationPhase
-  override readonly cause: unknown
-
-  constructor(phase: ConversationGraphMaterializationPhase, cause: unknown) {
-    super('Conversation graph materialization failed.')
-    this.name = 'ConversationGraphMaterializationError'
-    this.phase = phase
-    this.cause = cause
-  }
-}
-
-const materializeGraphPhase = <Result>(
-  phase: ConversationGraphMaterializationPhase,
-  operation: () => Result
-): Result => {
-  try {
-    return operation()
-  } catch (error) {
-    throw new ConversationGraphMaterializationError(phase, error)
-  }
-}
-
-const projectActiveNestedDelegateActivities = (
-  graph: PersistedConversationGraph
-): PersistedToolActivity[] => {
-  const activeMessageIds = new Set(resolveActiveConversationMessages(graph).map(({ id }) => id))
-  return graph.activities.flatMap(
-    ({ agentFrameId, messageBranchId, runtimeSegmentId, ...activity }) => {
-      void agentFrameId
-      void messageBranchId
-      void runtimeSegmentId
-      return parseNestedDelegateInvocationId(activity.id) !== undefined &&
-        activeMessageIds.has(activity.promptMessageId)
-        ? [activity]
-        : []
-    }
-  )
-}
-
-export const materializeSessionConversationGraph = (
-  session: PersistedChatSession
-): MaterializedPersistedChatSession => {
-  const messageGraph = session.conversationGraph
-    ? materializeGraphPhase('messages', () =>
-        synchronizeActiveConversationMessages(
-          session.conversationGraph!,
-          session.messages,
-          session.updatedAt
-        )
-      )
-    : materializeGraphPhase('create', () =>
-        createLinearConversationGraph({
-          sessionId: session.id,
-          messages: session.messages,
-          frameworkId: session.agentFrameworkId,
-          providerId: session.agentConfiguration?.providerId,
-          backendId: session.agentBackendId,
-          model: session.agentModel,
-          createdAt: session.createdAt,
-          updatedAt: session.updatedAt
-        })
-      )
-  const graph = materializeGraphPhase('activities', () =>
-    materializeNestedDelegateActivities(
-      synchronizeActiveConversationActivities(
-        messageGraph,
-        session.activities ?? [],
-        session.activityGroups ?? []
-      )
-    )
-  )
-  const nestedDelegateActivities = projectActiveNestedDelegateActivities(graph)
-  const activityIds = new Set((session.activities ?? []).map(({ id }) => id))
-  return {
-    ...session,
-    conversationGraph: graph,
-    messages: resolveActiveConversationMessages(graph).map(projectConversationMessage),
-    activities: [
-      ...(session.activities ?? []),
-      ...nestedDelegateActivities.filter(({ id }) => !activityIds.has(id))
-    ]
   }
 }
 
