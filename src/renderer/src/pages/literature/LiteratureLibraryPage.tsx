@@ -48,9 +48,8 @@ import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT
 } from '../../../../shared/literature'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import { AlertDialog, Tabs } from 'radix-ui'
+import { AlertDialog, Checkbox, Tabs } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
-import * as Checkbox from '@radix-ui/react-checkbox'
 import {
   ArrowLeft,
   BookOpenText,

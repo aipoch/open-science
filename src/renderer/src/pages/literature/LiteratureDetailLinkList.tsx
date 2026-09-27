@@ -1,4 +1,4 @@
-import * as Checkbox from '@radix-ui/react-checkbox'
+import { Checkbox } from 'radix-ui'
 import { Check, Search } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
