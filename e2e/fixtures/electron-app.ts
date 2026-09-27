@@ -1445,8 +1445,14 @@ class ElectronAppHarness implements ElectronApp {
     )
     if (this.electronTraceArmed) {
       const heapProfile = process.env.OPEN_SCIENCE_PERF_ELECTRON_HEAP_PROFILE === '1'
-      await startElectronContentTrace(this.application, { heapProfile })
-      this.electronTrace = { heapProfile }
+      try {
+        await startElectronContentTrace(this.application, { heapProfile })
+        this.electronTrace = { heapProfile }
+      } catch (error) {
+        process.stderr.write(
+          `Electron content trace could not start; continuing without trace capture: ${error instanceof Error ? error.message : String(error)}\n`
+        )
+      }
     }
     await this.resourceProfiler?.attach(this.application)
     try {
