@@ -1083,6 +1083,7 @@ class AcpRuntimeCoordinator {
     }
     const run = (): Promise<Result> => {
       if (cancellation.cancelled) {
+        lease.release()
         return Promise.reject(
           new DelegateMessagePreAcceptanceError(
             'ACP prompt was superseded before provider dispatch during Session teardown'

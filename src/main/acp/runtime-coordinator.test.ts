@@ -3382,25 +3382,45 @@ describe('AcpRuntimeCoordinator', () => {
   it.each(['disconnect', 'shutdown'] as const)(
     'allows a resumed Session to send after %s cancels its queued admission',
     async (teardown) => {
+      const firstTurn = createDeferred<unknown>()
       const validation = createDeferred()
       const created: ReturnType<typeof createFakeRuntime>[] = []
       const coordinator = new AcpRuntimeCoordinator((callbacks) => {
         const fake = createFakeRuntime({
           frameworkId: 'codex',
           sessionIds: ['session-1'],
-          callbacks
+          callbacks,
+          prompt: vi
+            .fn()
+            .mockImplementationOnce(() => firstTurn.promise)
+            .mockResolvedValue({
+              stopReason: 'end_turn'
+            })
         })
         created.push(fake)
         return fake.runtime
       })
       const session = await coordinator.createSession()
+      const firstPrompt = coordinator.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'active user message'
+      })
+      await vi.waitFor(() => expect(created.at(-1)?.sendPrompt).toHaveBeenCalledOnce())
       const upward = coordinator.startContinuationWhen(
         { sessionId: session.sessionId, text: 'stale child message' },
         () => validation.promise
       )
       const settled = upward.catch(() => undefined)
-      if (teardown === 'disconnect') await coordinator.disconnect()
-      else coordinator.shutdown()
+      if (teardown === 'disconnect') await coordinator.disconnect().catch(() => undefined)
+      else {
+        try {
+          coordinator.shutdown()
+        } catch {
+          // The active prompt is intentionally interrupted by teardown.
+        }
+      }
+      firstTurn.resolve({ stopReason: 'end_turn' })
+      await firstPrompt.catch(() => undefined)
       await settled
       await coordinator.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
       const prompt = coordinator.sendPrompt({
@@ -3408,8 +3428,8 @@ describe('AcpRuntimeCoordinator', () => {
         text: 'new user message'
       })
       await prompt
-      expect(created.at(-1)?.sendPrompt).toHaveBeenCalledOnce()
-      validation.reject(new DelegateMessageParkedError('cancelled during teardown'))
+      expect(created.at(-1)?.sendPrompt).toHaveBeenCalledTimes(2)
+      validation.resolve()
     }
   )
 
