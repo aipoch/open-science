@@ -331,6 +331,9 @@ const sanitizedHostEnvironment = (): NodeJS.ProcessEnv => {
     env.SystemRoot = systemRoot
     env.WINDIR = systemRoot
   }
+  // WSL can emit localized, BOM-less UTF-16LE diagnostics when stdout/stderr is redirected.
+  // Keep host-side WSL calls consistent with the setup owner without forwarding the full host env.
+  env.WSL_UTF8 = '1'
   return env
 }
 
