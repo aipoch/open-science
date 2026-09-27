@@ -639,7 +639,8 @@ const createLaunchPathMapper = (
   request: Wsl2LaunchRequest
 ): ((path: string) => Promise<string>) => {
   const mapPath = request.mapPath ?? defaultPathMapper(request.target)
-  return async (path: string): Promise<string> => {
+  const mappedPaths = new Map<string, Promise<string>>()
+  const resolvePath = async (path: string): Promise<string> => {
     try {
       const mapped = await mapPath(path, request.signal)
       request.signal?.throwIfAborted()
@@ -649,6 +650,17 @@ const createLaunchPathMapper = (
       request.signal?.throwIfAborted()
       throw new Error('WSL2 sandbox path mapping failed.')
     }
+  }
+  // Share in-flight and completed mappings only within this launch. Later launches must observe
+  // the selected distro's current mounts instead of reusing a process-wide path cache.
+  return async (path: string): Promise<string> => {
+    request.signal?.throwIfAborted()
+    let mapped = mappedPaths.get(path)
+    if (!mapped) {
+      mapped = resolvePath(path)
+      mappedPaths.set(path, mapped)
+    }
+    return mapped
   }
 }
 
