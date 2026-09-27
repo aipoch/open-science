@@ -2120,6 +2120,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           </ErrorNotice>
                         ) : null}
                         <ProviderForm
+                          key={`${modelViewKey}:${providerBase?.configRevision ?? 'draft'}`}
                           value={formValue}
                           onChange={(patch) =>
                             setFormValue((current) => ({ ...current, ...patch }))

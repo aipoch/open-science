@@ -443,6 +443,7 @@ const ProviderStep = ({
             />
           ) : null}
           <ProviderForm
+            key={savedProviderId ?? 'new-provider'}
             value={formValue}
             onChange={(patch) =>
               setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
