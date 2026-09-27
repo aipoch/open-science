@@ -498,6 +498,9 @@ const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
 const NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT = 24_000
 const NOTEBOOK_MCP_STATE_RESULT_LIMIT = 6_000
 const NOTEBOOK_MCP_CONTROL_RESULT_LIMIT = 8_000
+// Setup diagnostics include the bundled guide as well as structured checks. The generic control
+// budget would turn even the normal handoff into a truncated preview with no usable schema fields.
+const WSL_DIAGNOSTICS_RESULT_LIMIT = 24_000
 const NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT = 8_000
 const NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT = 600
 const MIME_INLINE_LIMIT = 8_000
@@ -1746,7 +1749,7 @@ const WSL_SETUP_RPC_TOOLS: readonly NotebookRpcToolDefinition[] = [
       'Call this first in a WSL setup Session. It refreshes app-owned diagnostics and returns the bundled, version-matched setup guide markdown that governs the available setup tools.',
     method: 'wslSetupDiagnostics',
     inputSchema: {},
-    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+    resultLimitChars: WSL_DIAGNOSTICS_RESULT_LIMIT
   },
   {
     name: 'wsl_setup_install_platform',

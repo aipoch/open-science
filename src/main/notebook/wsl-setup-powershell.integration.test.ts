@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import { resolveWslExecutable } from '../wsl/wsl-setup-owner'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { runShellCommand } from './shell-process'
 
@@ -40,9 +41,9 @@ describe.runIf(enabled)('WSL setup PowerShell execution', () => {
     if (root) await rm(root, { recursive: true, force: true })
   })
 
-  it('reaches the real Windows WSL executable through the app process sandbox', async () => {
+  it('blocks nested WSL commands in the generic PowerShell shell', async () => {
     const result = await runShellCommand({
-      command: '& "$env:SystemRoot\\System32\\wsl.exe" --status; exit $LASTEXITCODE',
+      command: `& '${resolveWslExecutable().replaceAll("'", "''")}' --status; exit $LASTEXITCODE`,
       cwd: workspace,
       handoffDir: join(root, 'handoff'),
       runtimeRoot: join(root, 'runtime'),
@@ -56,7 +57,29 @@ describe.runIf(enabled)('WSL setup PowerShell execution', () => {
       timeoutMs: 30_000
     })
 
-    expect(result.exitCode).toBe(0)
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain('Access is denied')
+    expect(result.exitCode, JSON.stringify(result)).toBeNull()
+    expect(result.stderr).toContain(
+      'nested Windows shell execution requires a direct scoped PowerShell command'
+    )
+  }, 35_000)
+
+  it('executes a direct PowerShell command through the real app process sandbox', async () => {
+    const result = await runShellCommand({
+      command: "Write-Output 'open-science-powershell-live'; exit 0",
+      cwd: workspace,
+      handoffDir: join(root, 'handoff'),
+      runtimeRoot: join(root, 'runtime'),
+      notebookSessionRoot: root,
+      executionReference: 'wsl-setup-powershell-direct',
+      sessionId: 'wsl-setup-session',
+      projectId: 'wsl-setup-project',
+      platform: 'win32',
+      runtimeBinding: { kind: 'powershell', version: '5.1' },
+      processSandbox: sandbox,
+      timeoutMs: 30_000
+    })
+
+    expect(result.exitCode, JSON.stringify(result)).toBe(0)
+    expect(result.stdout.trim()).toBe('open-science-powershell-live')
   }, 35_000)
 })
