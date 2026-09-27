@@ -70,7 +70,6 @@
     "src/renderer/src/components/UpdateDialog.lifecycle.test.tsx",
     "src/renderer/src/components/UpdateDialog.render.test.tsx",
     "src/renderer/src/components/UpdateDialog.tsx",
-    "src/renderer/src/components/Versions.tsx",
     "src/renderer/src/components/WebEventRecoveryDialog.test.tsx",
     "src/renderer/src/components/WebEventRecoveryDialog.tsx",
     "src/renderer/src/components/application-error-boundary.test.tsx",

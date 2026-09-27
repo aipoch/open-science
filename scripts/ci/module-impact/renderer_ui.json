@@ -12,7 +12,6 @@
     "src/renderer/src/components/ui/editable-number-combobox.preview.tsx",
     "src/renderer/src/components/ui/editable-number-combobox.render.test.tsx",
     "src/renderer/src/components/ui/editable-number-combobox.tsx",
-    "src/renderer/src/components/ui/hover-card.tsx",
     "src/renderer/src/components/ui/inline-notice.tsx",
     "src/renderer/src/components/ui/input.tsx",
     "src/renderer/src/components/ui/label.tsx",

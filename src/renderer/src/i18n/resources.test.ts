@@ -1022,7 +1022,6 @@ describe('mandatory product glossary', () => {
       manualLower: de.renderer.manual,
       remote: de.renderer.Remote,
       proxy: de.renderer.Proxy,
-      nodeVersion: de.renderer['Node v'],
       nodeScript: de.renderer['node — script file'],
       nodePackage: de.renderer['npx — Node package'],
       bioconductor: de.renderer.Bioconductor,
@@ -1044,7 +1043,6 @@ describe('mandatory product glossary', () => {
       manualLower: 'manuell',
       remote: 'Remote',
       proxy: 'Proxy',
-      nodeVersion: 'Node v',
       nodeScript: 'Node – Skriptdatei',
       nodePackage: 'npx – Node-Paket',
       bioconductor: 'Bioconductor',
@@ -3613,7 +3611,6 @@ describe('Korean binding terminology', () => {
     ['Refreshing…', '새로고침 중…'],
     ['Application storage', '애플리케이션 저장소'],
     ['Anthropic approx.', 'Anthropic 근사치'],
-    ['Chromium v', 'Chromium v'],
     ['Add interpreter…', '인터프리터 추가…'],
     ['Could not add that interpreter.', '해당 인터프리터를 추가할 수 없습니다.'],
     [
