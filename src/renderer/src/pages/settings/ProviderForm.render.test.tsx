@@ -126,6 +126,24 @@ describe('ProviderForm field switching', () => {
     expect(disclosure?.getAttribute('aria-expanded')).toBe('false')
   })
 
+  it('opens local model presets when the base URL becomes loopback', () => {
+    const onChange = vi.fn()
+    render(createEmptyProviderFormValue({ type: 'custom' }), { onChange })
+
+    const baseUrl = container.querySelector<HTMLInputElement>('[aria-label="Base URL"]')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    act(() => {
+      setter?.call(baseUrl, 'http://localhost:11434')
+      baseUrl?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(
+      container
+        .querySelector<HTMLButtonElement>('button[aria-controls="provider-local-model-server"]')
+        ?.getAttribute('aria-expanded')
+    ).toBe('true')
+  })
+
   it('marks the API key optional for a loopback custom gateway', () => {
     render(
       createEmptyProviderFormValue({

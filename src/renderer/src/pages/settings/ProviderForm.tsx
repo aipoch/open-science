@@ -717,7 +717,13 @@ const ProviderForm = ({
               value={value.baseUrl}
               disabled={disabled}
               placeholder={t('https://gateway.example')}
-              onChange={(event) => onChange({ baseUrl: event.target.value })}
+              onChange={(event) => {
+                const baseUrl = event.target.value
+                if (!loopbackCustomGateway && !customProviderRequiresKey(baseUrl)) {
+                  setLocalModelOpen(true)
+                }
+                onChange({ baseUrl })
+              }}
             />
             {errors.baseUrl ? (
               <p id="provider-base-url-error" className={fieldErrorClassName} role="alert">
