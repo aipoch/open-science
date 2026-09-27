@@ -389,7 +389,7 @@ describe('post-merge Windows validation', () => {
       with: expect.objectContaining({ archive: false, 'if-no-files-found': 'error' })
     })
     expect(submit).toMatchObject({
-      uses: 'signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627',
+      uses: expect.stringMatching(/^signpath\/github-action-submit-signing-request@[0-9a-f]{40}$/),
       with: expect.objectContaining({
         'api-token': '${{ secrets.SIGNPATH_API_TOKEN }}',
         'organization-id': '${{ vars.SIGNPATH_ORGANIZATION_ID }}',

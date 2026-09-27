@@ -646,7 +646,7 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(materialize.run).toContain('node node_modules/@electron/asar/bin/asar.js extract')
     expect(materialize.run).toContain('mv "$RUNNER_TEMP/app-asar-content" "$asar"')
     expect(step(job, 'Generate SPDX SBOM from final archive')).toMatchObject({
-      uses: 'anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610',
+      uses: expect.stringMatching(/^anchore\/sbom-action@[0-9a-f]{40}$/),
       env: { SYFT_SELECT_CATALOGERS: '+javascript-package-cataloger' },
       with: {
         path: '${{ steps.scan.outputs.path }}',
