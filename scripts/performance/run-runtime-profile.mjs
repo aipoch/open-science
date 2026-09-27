@@ -10,12 +10,15 @@ Options:
   --interval-ms=<ms>     Sampling interval from 250 to 10000 (default: 1000)
   --stress-cycles=<n>    Sustained Session + Notebook cycles per run (default: 1)
   --output=<directory>   Local output root (default: test-results/performance)
+  --electron-trace       Capture an opt-in cross-process Electron content trace
+  --electron-heap-profile Capture an opt-in Electron 43 heap profile (implies --electron-trace)
   --skip-build           Reuse the existing Electron E2E build
   --help                 Show this help
 
 The profiler records process identity categories, CPU, memory, counts, and phase markers only. It
 does not record prompts, responses, command arguments, environment variables, paths, endpoints,
-credentials, or file contents.`
+credentials, or file contents. Opt-in Electron trace files are raw local diagnostics and must be
+reviewed before sharing.`
 
 const parsePositiveInteger = (name, value, fallback, { min = 1, max = 100 } = {}) => {
   if (value === undefined) return fallback
@@ -32,6 +35,8 @@ const options = {
   intervalMs: 1_000,
   stressCycles: 1,
   output: undefined,
+  electronTrace: false,
+  electronHeapProfile: false,
   skipBuild: false
 }
 
@@ -41,6 +46,11 @@ for (const argument of process.argv.slice(2)) {
     process.exit(0)
   } else if (argument === '--skip-build') {
     options.skipBuild = true
+  } else if (argument === '--electron-trace') {
+    options.electronTrace = true
+  } else if (argument === '--electron-heap-profile') {
+    options.electronTrace = true
+    options.electronHeapProfile = true
   } else if (argument.startsWith('--repeat=')) {
     options.repeat = parsePositiveInteger('--repeat', argument.slice('--repeat='.length), 3, {
       max: 20
@@ -102,6 +112,8 @@ const environment = {
   OPEN_SCIENCE_PERF_PHASE_MS: String(options.phaseMs),
   OPEN_SCIENCE_PERF_INTERVAL_MS: String(options.intervalMs),
   OPEN_SCIENCE_PERF_STRESS_CYCLES: String(options.stressCycles),
+  ...(options.electronTrace ? { OPEN_SCIENCE_PERF_ELECTRON_TRACE: '1' } : {}),
+  ...(options.electronHeapProfile ? { OPEN_SCIENCE_PERF_ELECTRON_HEAP_PROFILE: '1' } : {}),
   ...(options.output ? { OPEN_SCIENCE_PERF_OUTPUT_ROOT: options.output } : {})
 }
 

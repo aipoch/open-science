@@ -66,6 +66,16 @@ type WorkspaceRuntimeEventSnapshot = Pick<
 >
 
 const WORKSPACE_RUNTIME_EVENT_RETRY_DELAYS_MS = [250, 1_000] as const
+const RENDERER_RUNTIME_EVENT_BATCH_TIMING = 'open-science:renderer-runtime-event-batch'
+const RENDERER_RUNTIME_EVENT_APPLY_TIMING = 'open-science:renderer-runtime-event-apply'
+
+const measureRendererRuntime = (name: string, start: number): void => {
+  try {
+    performance.measure(name, { start })
+  } catch {
+    // Performance diagnostics must never change runtime event handling.
+  }
+}
 
 const processVisibleWorkspaceRuntimeEvents = async (
   events: AcpRuntimeEvent[],
@@ -444,44 +454,55 @@ const subscribeWorkspacePermissionLifecycle = (
 const createLiveWorkspaceRuntimeEventProcessor = (): WorkspaceRuntimeEventProcessor =>
   createWorkspaceRuntimeEventProcessor(
     async (event) => {
-      if (!(await ensureRuntimeWriter())) return true
-      const permissionLifecycleEvent = isWorkspacePermissionLifecycleEvent(event)
-        ? event
-        : undefined
-      if (
-        permissionLifecycleEvent &&
-        [...permissionLifecycleObservers].some(
-          (observer) => !observer.shouldApply(permissionLifecycleEvent)
-        )
-      ) {
-        return true
-      }
-      const writerOptions = runtimeWriterSaveOptions()
-      const applied = await applyWorkspaceRuntimeEvent(event, {
-        canProject: () =>
-          isRuntimeWriter() &&
-          runtimeWriterSaveOptions()?.runtimeWriterToken === writerOptions?.runtimeWriterToken,
-        saveSession: (session) => saveSessionInOrder(session, undefined, undefined, writerOptions),
-        // Read current authority when the lane applies the event, not when its batch was queued.
-        agentPromptInFlight: Boolean(
-          event.sessionId && agentPromptOwnershipSessionIds.has(event.sessionId)
-        )
-      })
-      if (applied && permissionLifecycleEvent) {
-        for (const observer of permissionLifecycleObservers) {
-          observer.onApplied(permissionLifecycleEvent)
+      const startedAt = performance.now()
+      try {
+        if (!(await ensureRuntimeWriter())) return true
+        const permissionLifecycleEvent = isWorkspacePermissionLifecycleEvent(event)
+          ? event
+          : undefined
+        if (
+          permissionLifecycleEvent &&
+          [...permissionLifecycleObservers].some(
+            (observer) => !observer.shouldApply(permissionLifecycleEvent)
+          )
+        ) {
+          return true
         }
+        const writerOptions = runtimeWriterSaveOptions()
+        const applied = await applyWorkspaceRuntimeEvent(event, {
+          canProject: () =>
+            isRuntimeWriter() &&
+            runtimeWriterSaveOptions()?.runtimeWriterToken === writerOptions?.runtimeWriterToken,
+          saveSession: (session) =>
+            saveSessionInOrder(session, undefined, undefined, writerOptions),
+          // Read current authority when the lane applies the event, not when its batch was queued.
+          agentPromptInFlight: Boolean(
+            event.sessionId && agentPromptOwnershipSessionIds.has(event.sessionId)
+          )
+        })
+        if (applied && permissionLifecycleEvent) {
+          for (const observer of permissionLifecycleObservers) {
+            observer.onApplied(permissionLifecycleEvent)
+          }
+        }
+        return applied
+      } finally {
+        measureRendererRuntime(RENDERER_RUNTIME_EVENT_APPLY_TIMING, startedAt)
       }
-      return applied
     },
     {
       applyEventBatch: async (events) => {
-        if (!(await ensureRuntimeWriter())) return true
-        const token = runtimeWriterSaveOptions()?.runtimeWriterToken
-        return applyWorkspaceRuntimeEventBatch(
-          events,
-          () => isRuntimeWriter() && runtimeWriterSaveOptions()?.runtimeWriterToken === token
-        )
+        const startedAt = performance.now()
+        try {
+          if (!(await ensureRuntimeWriter())) return true
+          const token = runtimeWriterSaveOptions()?.runtimeWriterToken
+          return applyWorkspaceRuntimeEventBatch(
+            events,
+            () => isRuntimeWriter() && runtimeWriterSaveOptions()?.runtimeWriterToken === token
+          )
+        } finally {
+          measureRendererRuntime(RENDERER_RUNTIME_EVENT_APPLY_TIMING, startedAt)
+        }
       },
       presentation: liveWorkspaceRuntimePresentation
     }
@@ -656,12 +677,18 @@ const processWorkspaceRuntimeEvents = (snapshot: WorkspaceRuntimeEventSnapshot):
 // while asynchronous presentation or persistence is still draining.
 const processIncrementalWorkspaceRuntimeEvents = (
   events: readonly AcpRuntimeEvent[]
-): Promise<void> =>
-  ensureRuntimeWriter().then(async (owner) => {
+): Promise<void> => {
+  const startedAt = performance.now()
+  return ensureRuntimeWriter().then(async (owner) => {
     if (!owner) return
-    await drainWriterBacklog()
-    await liveWorkspaceRuntimeEventProcessor.processIncremental(events)
+    try {
+      await drainWriterBacklog()
+      await liveWorkspaceRuntimeEventProcessor.processIncremental(events)
+    } finally {
+      measureRendererRuntime(RENDERER_RUNTIME_EVENT_BATCH_TIMING, startedAt)
+    }
   })
+}
 
 type WorkspaceRuntimeEventIngestRuntime = {
   state: AcpStateSnapshot

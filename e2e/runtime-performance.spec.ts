@@ -60,6 +60,7 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
 
     await app.markResourceProfilePhase('acp-turn')
     await sendPrompt(page, ACP_PROMPT, ACP_REPLY, RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS)
+    await app.captureResourceTimings('acp:')
     await app.sampleResourceProfileNow()
 
     for (let cycle = 0; cycle < stressCycles; cycle += 1) {
@@ -70,10 +71,12 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
         STRESS_REPLY,
         RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS
       )
+      await app.captureResourceTimings(`stress-${cycle + 1}:`)
       await app.sampleResourceProfileNow()
 
       await app.markResourceProfilePhase('notebook-tool')
       await sendPrompt(page, NOTEBOOK_PROMPT, NOTEBOOK_REPLY, RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS)
+      await app.captureResourceTimings(`notebook-${cycle + 1}:`)
       await app.sampleResourceProfileNow()
     }
 

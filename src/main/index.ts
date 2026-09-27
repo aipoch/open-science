@@ -53,6 +53,7 @@ import type { InterfaceScaleShortcut } from '../shared/interface-scale'
 
 const APP_NAME = 'Open-Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
+const STARTUP_IMPORTS_TIMING = 'open-science:startup-imports'
 const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG)
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
 const shouldRunReviewerMcpProxy = process.argv.includes(REVIEWER_MCP_PROXY_ARG)
@@ -686,25 +687,34 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         loadApplicationModules: async () => {
           await startupShellRendered
           startupDiagnostics?.phase('load-application-modules')
-          const loaded = await Promise.all([
-            import('./ipc'),
-            import('./storage/migration-state'),
-            import('./tray'),
-            import('./app-lifecycle'),
-            import('./ipc-handler-registry'),
-            import('./web-service'),
-            import('./second-instance-router'),
-            import('./window-close-confirm'),
-            import('./session-persistence/renderer-flush'),
-            import('./app-icon'),
-            import('./remote-access'),
-            import('./notifications/desktop-attention'),
-            import('./notifications/desktop-badge'),
-            import('./notifications/notification-inbox-controller'),
-            import('./notifications/unread-task-ipc')
-          ])
-          startupDiagnostics?.phase('application-modules-loaded')
-          return loaded
+          const startedAt = performance.now()
+          try {
+            const loaded = await Promise.all([
+              import('./ipc'),
+              import('./storage/migration-state'),
+              import('./tray'),
+              import('./app-lifecycle'),
+              import('./ipc-handler-registry'),
+              import('./web-service'),
+              import('./second-instance-router'),
+              import('./window-close-confirm'),
+              import('./session-persistence/renderer-flush'),
+              import('./app-icon'),
+              import('./remote-access'),
+              import('./notifications/desktop-attention'),
+              import('./notifications/desktop-badge'),
+              import('./notifications/notification-inbox-controller'),
+              import('./notifications/unread-task-ipc')
+            ])
+            startupDiagnostics?.phase('application-modules-loaded')
+            return loaded
+          } finally {
+            try {
+              performance.measure(STARTUP_IMPORTS_TIMING, { start: startedAt })
+            } catch {
+              // Diagnostics must not change startup import failure behavior.
+            }
+          }
         },
         composeRuntime: async (
           _,

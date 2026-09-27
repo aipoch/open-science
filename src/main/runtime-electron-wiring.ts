@@ -31,6 +31,8 @@ export type ElectronRuntimeAdapterInterfaces = {
   readonly afterAcp: readonly NamedElectronSurfaceAdapter[]
 }
 
+const IPC_SURFACE_TIMING_PREFIX = 'open-science:ipc-surface:'
+
 // Production transport wiring for application-owned runtimes. Compute and ACP are required named
 // interfaces rather than optional entries in a generic list, so composition cannot silently omit one.
 export const installElectronRuntimeAdapters = async ({
@@ -45,7 +47,16 @@ export const installElectronRuntimeAdapters = async ({
     name: string,
     operation: () => Awaitable<InstalledElectronSurfaceAdapter>
   ): Promise<void> => {
-    installed.push({ name, installation: await operation() })
+    const startedAt = performance.now()
+    try {
+      installed.push({ name, installation: await operation() })
+    } finally {
+      try {
+        performance.measure(`${IPC_SURFACE_TIMING_PREFIX}${name}`, { start: startedAt })
+      } catch {
+        // Diagnostics must not change IPC registration or rollback behavior.
+      }
+    }
   }
   const uninstall = async (): Promise<void> => {
     const failures: unknown[] = []
