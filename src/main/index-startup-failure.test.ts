@@ -381,9 +381,11 @@ vi.mock('./notifications/notification-inbox-controller', () => ({
 }))
 
 const monitorListeners = process.listeners('uncaughtExceptionMonitor')
+let stderrWrite: ReturnType<typeof vi.spyOn>
 beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
+  stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   fixture.bundles.clear()
   fixture.renameBundle.mockReset().mockImplementation((from, to) => {
     fixture.bundles.delete(String(from))
@@ -420,6 +422,7 @@ beforeEach(() => {
   fixture.disposeRuntime.mockReset().mockResolvedValue()
 })
 afterEach(() => {
+  stderrWrite.mockRestore()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
   for (const listener of process.listeners('uncaughtExceptionMonitor')) {
@@ -1016,16 +1019,11 @@ it('reports headless credential recovery on stderr without a blocking dialog', a
   fixture.selectCredentialIdentity.mockReset().mockImplementationOnce(() => {
     throw new CredentialIdentityError('probe-access-blocked')
   })
-  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-  try {
-    await import('./index')
-    await fixture.exited
-    expect(fixture.electron.dialog.showErrorBox).not.toHaveBeenCalled()
-    expect(stderr).toHaveBeenCalledWith(expect.stringContaining('CREDENTIAL_IDENTITY'))
-    expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
-  } finally {
-    stderr.mockRestore()
-  }
+  await import('./index')
+  await fixture.exited
+  expect(fixture.electron.dialog.showErrorBox).not.toHaveBeenCalled()
+  expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('CREDENTIAL_IDENTITY'))
+  expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
 })
 
 it('redacts secrets in detailed startup errors and identifies their phase', async () => {
