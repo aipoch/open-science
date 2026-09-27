@@ -6855,6 +6855,12 @@
     "Attach files in the conversation. Research tasks save generated files here.": "Прикрепляйте файлы в диалоге. Созданные в ходе исследования файлы сохраняются здесь.",
     "Predict regulatory signals from DNA sequences.": "Предсказание регуляторных сигналов по последовательностям ДНК.",
     "Added {{date}}": "Добавлено {{date}}",
-    "Choose your provider. Use Custom Gateway for a compatible endpoint or a local model server.": "Выберите поставщика. Для совместимой конечной точки или локального сервера моделей используйте пользовательский шлюз."
+    "Choose your provider. Use Custom Gateway for a compatible endpoint or a local model server.": "Выберите поставщика. Для совместимой конечной точки или локального сервера моделей используйте пользовательский шлюз.",
+    "A runtime operation is in progress. Wait for it to finish, then try again.": "Выполняется операция со средой выполнения. Дождитесь её завершения и повторите попытку.",
+    "This runtime is being set up. Wait for setup to finish, then try again.": "Эта среда выполнения настраивается. Дождитесь завершения настройки и повторите попытку.",
+    "Select a personal R library before allowing package installation. Use Advanced options to choose an existing folder.": "Выберите личную библиотеку R, прежде чем разрешать установку пакетов. Существующую папку можно выбрать в дополнительных параметрах.",
+    "Turn off Allow package install before changing the personal R library.": "Отключите «Разрешить установку пакета», прежде чем менять личную библиотеку R.",
+    "Enable this R runtime before authorizing access.": "Включите эту среду выполнения R, прежде чем разрешать доступ.",
+    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "Эта среда выполнения R не запускается. Устраните указанную проблему и нажмите «Повторить проверку»."
   }
 }

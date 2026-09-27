@@ -7,11 +7,14 @@ import type { NotebookNetworkStatus } from '../../../src/shared/notebook-network
 
 const fixtureLocale =
   new URLSearchParams(location.search).get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'
-const installLibraryScenario =
-  new URLSearchParams(location.search).get('scenario') === 'install-library'
+const scenario = new URLSearchParams(location.search).get('scenario')
+const installLibraryScenario = scenario === 'install-library'
+const disabledHintScenario = scenario === 'disabled-hint'
 const localeReady = Promise.resolve(prepareI18nLocale(fixtureLocale)).then(() =>
   initI18n(fixtureLocale)
 )
+let installAuthorized = false
+let personalLibrary: string | undefined
 let protection: NotebookNetworkStatus = {
   kind: 'setupRequired',
   platform: 'win32',
@@ -23,7 +26,7 @@ const environments = {
   r: [
     {
       language: 'r',
-      provenance: installLibraryScenario ? 'user-own' : 'app-managed',
+      provenance: installLibraryScenario || disabledHintScenario ? 'user-own' : 'app-managed',
       ...(installLibraryScenario ? { personalRLibraries: ['D:\\R\\personal-library'] } : {}),
       condaEnv: 'default-r',
       envId: 'C:\\OpenScience\\runtime\\envs\\default-r\\bin\\R.exe',
@@ -41,13 +44,29 @@ window.api = {
     getWsl2BashPreviewStatus: async () => ({ available: false, reason: 'assets-unavailable' }),
     getLocalShellRuntimePreference: async () => undefined
   },
+  storage: { pickDirectory: async () => 'D:\\R\\personal-library' },
   runtime: {
     listEnvironments: async () => environments,
     getEnablement: async () => ({
       enabled: { [environments.r[0].envId]: true },
-      installAuthorized: {}
+      installAuthorized: { [environments.r[0].envId]: installAuthorized },
+      installLibraries: personalLibrary ? { [environments.r[0].envId]: personalLibrary } : {}
     }),
-    setInstallAuthorized: async () => {
+    setInstallAuthorized: async (
+      _language: string,
+      _envId: string,
+      authorized: boolean,
+      library?: string
+    ) => {
+      if (disabledHintScenario) {
+        installAuthorized = authorized
+        personalLibrary = library
+        return {
+          enabled: { [environments.r[0].envId]: true },
+          installAuthorized: { [environments.r[0].envId]: authorized },
+          installLibraries: library ? { [environments.r[0].envId]: library } : {}
+        }
+      }
       throw new Error(
         "Error invoking remote method 'runtime:set-install-authorized': Error: Select an existing personal library visible to this R runtime."
       )

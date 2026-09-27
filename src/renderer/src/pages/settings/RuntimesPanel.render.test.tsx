@@ -224,6 +224,63 @@ const click = async (el: Element | null): Promise<void> => {
 }
 
 describe('RuntimesPanel', () => {
+  it.each(['missing-library', 'busy', 'setup', 'authorized'] as const)(
+    'explains %s on keyboard focus without changing authorization',
+    async (scenario) => {
+      getEnablement.mockResolvedValue({
+        enabled: { [rEnvs[0].envId]: true },
+        installAuthorized: { [rEnvs[0].envId]: scenario === 'authorized' }
+      })
+      await render()
+      await act(async () => {
+        if (scenario === 'busy') useRuntimeSettingsStore.setState({ busy: true })
+        if (scenario === 'setup')
+          useNotebookEnvStore.setState({ byLang: { r: { preparing: true } } })
+      })
+      const label =
+        scenario === 'authorized' ? 'Choose library folder…' : 'Allow package install for R 4.4.1'
+      if (scenario === 'authorized') container.querySelector('details')!.open = true
+      const wrapper = container.querySelector<HTMLElement>(`[role="group"][aria-label="${label}"]`)!
+      const control = wrapper.querySelector<HTMLButtonElement>('button')!
+      expect(control.disabled).toBe(true)
+      expect(wrapper.tabIndex).toBe(0)
+      await act(async () => wrapper.focus())
+      const hint = document.querySelector('[role="tooltip"]')!
+      const expected = {
+        'missing-library': 'Select a personal R library before allowing package installation.',
+        busy: 'A runtime operation is in progress.',
+        setup: 'This runtime is being set up.',
+        authorized: 'Turn off Allow package install before changing the personal R library.'
+      }
+      expect(hint.textContent).toContain(expected[scenario])
+      expect(wrapper.getAttribute('aria-describedby')).toBe(hint.id)
+      await act(async () => control.click())
+      expect(setInstallAuthorized).not.toHaveBeenCalled()
+      expect(window.api.storage.pickDirectory).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([false, true])(
+    'explains the R verification prerequisite with enabled=%s',
+    async (enabled) => {
+      Object.assign(window.api, { platform: 'win32' })
+      getEnablement.mockResolvedValue({
+        enabled: { [rEnvs[0].envId]: enabled },
+        installAuthorized: {}
+      })
+      await render()
+      const wrapper = container.querySelector<HTMLElement>(
+        '[role="group"][aria-label="Authorize and verify"]'
+      )!
+      await act(async () => wrapper.focus())
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+        enabled
+          ? 'This R runtime is not runnable.'
+          : 'Enable this R runtime before authorizing access.'
+      )
+    }
+  )
+
   it.each<NotebookNetworkStatus>([
     { kind: 'setupRequired', platform: 'win32', reasons: ['windowsProfileMissing'] },
     { kind: 'checking' },
@@ -854,7 +911,7 @@ describe('RuntimesPanel', () => {
       container.querySelector('[aria-label="Enable Agent analysis"]')?.getAttribute('data-state')
     ).toBe('checked')
     expect(
-      container.querySelector('[aria-label="Allow package install for Agent analysis"]')
+      container.querySelector('button[aria-label="Allow package install for Agent analysis"]')
     ).toBeNull()
   })
 
@@ -871,7 +928,7 @@ describe('RuntimesPanel', () => {
     await render()
 
     const installToggle = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Allow package install for System Python"]'
+      'button[aria-label="Allow package install for System Python"]'
     )
     expect(installToggle?.disabled).toBe(false)
 
@@ -897,7 +954,7 @@ describe('RuntimesPanel', () => {
     await render()
 
     const installToggle = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Allow package install for R 4.4.1"]'
+      'button[aria-label="Allow package install for R 4.4.1"]'
     )
     expect(installToggle?.disabled).toBe(false)
     expect(installToggle?.getAttribute('data-state')).toBe('checked')
@@ -945,7 +1002,7 @@ describe('RuntimesPanel', () => {
       })
       await render()
       const toggle = container.querySelector<HTMLButtonElement>(
-        '[aria-label="Allow package install for R 4.4.1"]'
+        'button[aria-label="Allow package install for R 4.4.1"]'
       )!
       if (libraries.length > 1) {
         expect(toggle.disabled).toBe(true)
@@ -980,7 +1037,7 @@ describe('RuntimesPanel', () => {
     )
     await render()
     const toggle = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Allow package install for R 4.4.1"]'
+      'button[aria-label="Allow package install for R 4.4.1"]'
     )!
     await click(toggle)
     expect(setInstallAuthorized).toHaveBeenCalledWith('r', rEnvs[0].envId, true, '/personal/R')

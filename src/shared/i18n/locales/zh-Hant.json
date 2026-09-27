@@ -6394,6 +6394,12 @@
     "Attach files in the conversation. Research tasks save generated files here.": "在對話中附加檔案。研究任務產生的檔案會儲存在這裡。",
     "Predict regulatory signals from DNA sequences.": "根據 DNA 序列預測調控訊號。",
     "Added {{date}}": "新增於 {{date}}",
-    "Choose your provider. Use Custom Gateway for a compatible endpoint or a local model server.": "選擇供應商。相容端點或本機模型服務可使用自訂閘道。"
+    "Choose your provider. Use Custom Gateway for a compatible endpoint or a local model server.": "選擇供應商。相容端點或本機模型服務可使用自訂閘道。",
+    "A runtime operation is in progress. Wait for it to finish, then try again.": "正在處理執行環境操作，請完成後重試。",
+    "This runtime is being set up. Wait for setup to finish, then try again.": "正在設定此執行環境，請設定完成後重試。",
+    "Select a personal R library before allowing package installation. Use Advanced options to choose an existing folder.": "請先選擇個人 R 套件庫，再允許安裝套件。可在「進階選項」中選擇現有資料夾。",
+    "Turn off Allow package install before changing the personal R library.": "請先關閉「允許安裝套件」，再更換個人 R 套件庫。",
+    "Enable this R runtime before authorizing access.": "請先啟用此 R 執行環境，再授權存取。",
+    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "此 R 執行環境無法執行。請解決顯示的問題，然後點選「重新偵測」。"
   }
 }

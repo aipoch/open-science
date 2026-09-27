@@ -6718,6 +6718,12 @@
     "Attach files in the conversation. Research tasks save generated files here.": "Joignez des fichiers dans la conversation. Les fichiers générés par les tâches de recherche sont enregistrés ici.",
     "Predict regulatory signals from DNA sequences.": "Prédire les signaux régulateurs à partir de séquences d’ADN.",
     "Added {{date}}": "Ajouté le {{date}}",
-    "Choose your provider. Use Custom Gateway for a compatible endpoint or a local model server.": "Choisissez votre fournisseur. Utilisez une passerelle personnalisée pour un endpoint compatible ou un serveur de modèle local."
+    "Choose your provider. Use Custom Gateway for a compatible endpoint or a local model server.": "Choisissez votre fournisseur. Utilisez une passerelle personnalisée pour un endpoint compatible ou un serveur de modèle local.",
+    "A runtime operation is in progress. Wait for it to finish, then try again.": "Une opération sur un environnement est en cours. Attendez sa fin, puis réessayez.",
+    "This runtime is being set up. Wait for setup to finish, then try again.": "Cet environnement est en cours de configuration. Attendez la fin de la configuration, puis réessayez.",
+    "Select a personal R library before allowing package installation. Use Advanced options to choose an existing folder.": "Sélectionnez une bibliothèque R personnelle avant d’autoriser l’installation de paquets. Utilisez les options avancées pour choisir un dossier existant.",
+    "Turn off Allow package install before changing the personal R library.": "Désactivez « Autoriser l’installation de paquets » avant de changer de bibliothèque R personnelle.",
+    "Enable this R runtime before authorizing access.": "Activez cet environnement R avant d’autoriser l’accès.",
+    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "Cet environnement R ne peut pas être exécuté. Résolvez le problème signalé, puis cliquez sur « Revérifier »."
   }
 }
