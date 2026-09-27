@@ -85,4 +85,21 @@ describe('runtime profile comparison', () => {
       json: true
     })
   })
+
+  it('rejects missing or invalid comparison metadata', () => {
+    const result = compareRuntimeProfiles({
+      baseline: summary({ schemaVersion: undefined, electronVersion: '' }),
+      candidate: summary({ schemaVersion: undefined, electronVersion: undefined }),
+      metrics: ['first-startup-ready'],
+      maxRelativeRegression: 0.2
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.metadataMismatches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'schemaVersion', reason: 'invalid-metadata' }),
+        expect.objectContaining({ key: 'electronVersion', reason: 'invalid-metadata' })
+      ])
+    )
+  })
 })

@@ -566,6 +566,14 @@ const openMainWindow = async (
   return page
 }
 
+const enableRendererRuntimeProfiling = async (page: Page): Promise<void> => {
+  await page.evaluate(() => {
+    ;(globalThis as typeof globalThis & { __OPEN_SCIENCE_PERF_PROFILE__?: boolean })[
+      '__OPEN_SCIENCE_PERF_PROFILE__'
+    ] = true
+  })
+}
+
 class ElectronAppHarness implements ElectronApp {
   private application: ElectronApplication | undefined
   private currentPage: Page | undefined
@@ -576,6 +584,7 @@ class ElectronAppHarness implements ElectronApp {
   private fakeRemoteItEnabled = false
   private readonly rendererFailures = new RendererFailureGate()
   private resourceProfiler: RuntimeResourceProfiler | undefined
+  private rendererRuntimeProfilingArmed = false
   private electronTraceArmed = false
   private electronTraceSequence = 0
   private electronTrace: { heapProfile: boolean } | undefined
@@ -660,6 +669,7 @@ class ElectronAppHarness implements ElectronApp {
     const traceRequested = process.env.OPEN_SCIENCE_PERF_ELECTRON_TRACE === '1'
     const heapProfileRequested = process.env.OPEN_SCIENCE_PERF_ELECTRON_HEAP_PROFILE === '1'
     this.electronTraceArmed = traceRequested || heapProfileRequested
+    this.rendererRuntimeProfilingArmed = true
     const profileDataRoot = join(this.testRoot, 'profile-data')
     await mkdir(profileDataRoot, { recursive: true })
     await this.close()
@@ -1461,9 +1471,12 @@ class ElectronAppHarness implements ElectronApp {
         this.application,
         this.rendererFailures,
         this.windowMode,
-        this.resourceProfiler
+        this.rendererRuntimeProfilingArmed || this.resourceProfiler
           ? async (page) => {
               this.currentPage = page
+              if (this.rendererRuntimeProfilingArmed) {
+                await enableRendererRuntimeProfiling(page)
+              }
               this.recordResourceTiming('first-' + timingName, performance.now() - launchStartedAt)
               await this.captureResourceTimings(
                 timingName === 'recovery-startup-ready' ? 'first-recovery:' : 'first:'

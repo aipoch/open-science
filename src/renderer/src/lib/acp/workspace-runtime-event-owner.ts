@@ -68,8 +68,16 @@ type WorkspaceRuntimeEventSnapshot = Pick<
 const WORKSPACE_RUNTIME_EVENT_RETRY_DELAYS_MS = [250, 1_000] as const
 const RENDERER_RUNTIME_EVENT_BATCH_TIMING = 'open-science:renderer-runtime-event-batch'
 const RENDERER_RUNTIME_EVENT_APPLY_TIMING = 'open-science:renderer-runtime-event-apply'
+const RENDERER_RUNTIME_PROFILE_FLAG = '__OPEN_SCIENCE_PERF_PROFILE__'
+
+type RendererRuntimeProfileGlobal = typeof globalThis & {
+  [RENDERER_RUNTIME_PROFILE_FLAG]?: boolean
+}
 
 const measureRendererRuntime = (name: string, start: number): void => {
+  // Runtime diagnostics are opt-in. Keeping the normal renderer timeline free of per-event
+  // measures prevents long-lived sessions from retaining an entry for every ACP event.
+  if ((globalThis as RendererRuntimeProfileGlobal)[RENDERER_RUNTIME_PROFILE_FLAG] !== true) return
   try {
     performance.measure(name, { start })
   } catch {

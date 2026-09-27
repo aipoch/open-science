@@ -70,12 +70,29 @@ const readSummary = async (path) => JSON.parse(await readFile(resolve(path), 'ut
 
 const metadataKeys = ['schemaVersion', 'platform', 'architecture', 'electronVersion']
 
+const isValidMetadataValue = (key, value) =>
+  key === 'schemaVersion'
+    ? Number.isInteger(value) && value > 0
+    : typeof value === 'string' && value.trim().length > 0
+
 const compareRuntimeProfiles = ({ baseline, candidate, metrics, maxRelativeRegression }) => {
-  const metadataMismatches = metadataKeys.flatMap((key) =>
-    baseline[key] === candidate[key]
+  const metadataMismatches = metadataKeys.flatMap((key) => {
+    const baselineValue = baseline[key]
+    const candidateValue = candidate[key]
+    if (!isValidMetadataValue(key, baselineValue) || !isValidMetadataValue(key, candidateValue)) {
+      return [
+        {
+          key,
+          baseline: baselineValue ?? null,
+          candidate: candidateValue ?? null,
+          reason: 'invalid-metadata'
+        }
+      ]
+    }
+    return baselineValue === candidateValue
       ? []
-      : [{ key, baseline: baseline[key] ?? null, candidate: candidate[key] ?? null }]
-  )
+      : [{ key, baseline: baselineValue, candidate: candidateValue, reason: 'mismatch' }]
+  })
   const incompleteSamples = [
     ['baseline', baseline.incompleteSampleCount],
     ['candidate', candidate.incompleteSampleCount]
