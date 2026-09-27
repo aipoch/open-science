@@ -56,6 +56,7 @@
     "src/main/index.ts",
     "src/main/ipc-handler-registry.test.ts",
     "src/main/ipc-handler-registry.ts",
+    "src/main/ipc-application-composition.ts",
     "src/main/ipc.ts",
     "src/main/lifecycle-broadcast.test.ts",
     "src/main/lifecycle-broadcast.ts",

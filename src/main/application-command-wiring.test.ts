@@ -17,7 +17,13 @@ const between = (source: string, start: string, end: string): string => {
   return source.slice(startIndex, endIndex)
 }
 
-const ipcSource = readSource('src/main/ipc.ts')
+// The registration facade and application composition are intentionally separate modules. Keep
+// these wiring assertions over their combined production source so the tests continue to verify
+// ordering and ownership without coupling them to the file split.
+const ipcSource = [
+  readSource('src/main/ipc.ts'),
+  readSource('src/main/ipc-application-composition.ts')
+].join('\n')
 const coreSurfaceSource = compact(readSource('src/main/ipc-surfaces/core.ts'))
 const indexSource = readSource('src/main/index.ts')
 const runtimeSource = readSource('src/main/application-runtime.ts')
