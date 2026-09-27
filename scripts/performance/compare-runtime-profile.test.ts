@@ -10,8 +10,8 @@ const summary = (overrides: Record<string, unknown> = {}) => ({
   electronVersion: '43.7.5',
   incompleteSampleCount: 0,
   timings: {
-    'first-startup-ready': { median: 1_000, p95: 1_100 },
-    'open-science:startup-imports': { median: 500, p95: 550 }
+    'first-startup-ready': { median: 1_000, p95: 1_100, count: 2 },
+    'open-science:startup-imports': { median: 500, p95: 550, count: 2 }
   },
   ...overrides
 })
@@ -22,8 +22,8 @@ describe('runtime profile comparison', () => {
       baseline: summary(),
       candidate: summary({
         timings: {
-          'first-startup-ready': { median: 1_100, p95: 1_200 },
-          'open-science:startup-imports': { median: 525, p95: 575 }
+          'first-startup-ready': { median: 1_100, p95: 1_200, count: 2 },
+          'open-science:startup-imports': { median: 525, p95: 575, count: 2 }
         }
       }),
       metrics: ['first-startup-ready', 'open-science:startup-imports'],
@@ -38,7 +38,7 @@ describe('runtime profile comparison', () => {
     const result = compareRuntimeProfiles({
       baseline: summary(),
       candidate: summary({
-        timings: { 'first-startup-ready': { median: 1_300, p95: 1_100 } },
+        timings: { 'first-startup-ready': { median: 1_300, p95: 1_100, count: 2 } },
         incompleteSampleCount: 1
       }),
       metrics: ['first-startup-ready', 'open-science:startup-imports'],
@@ -101,5 +101,27 @@ describe('runtime profile comparison', () => {
         expect.objectContaining({ key: 'electronVersion', reason: 'invalid-metadata' })
       ])
     )
+  })
+
+  it('rejects selected metrics without positive sample counts', () => {
+    const result = compareRuntimeProfiles({
+      baseline: summary({
+        timings: {
+          'first-startup-ready': { median: 1_000, p95: 1_100, count: 0 }
+        }
+      }),
+      candidate: summary({
+        timings: {
+          'first-startup-ready': { median: 1_000, p95: 1_100 }
+        }
+      }),
+      metrics: ['first-startup-ready'],
+      maxRelativeRegression: 0.2
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.failures).toEqual([
+      expect.objectContaining({ name: 'first-startup-ready', reason: 'invalid-sample-count' })
+    ])
   })
 })

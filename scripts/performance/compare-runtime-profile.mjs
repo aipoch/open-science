@@ -106,6 +106,20 @@ const compareRuntimeProfiles = ({ baseline, candidate, metrics, maxRelativeRegre
       failures.push({ name, reason: 'missing-metric' })
       continue
     }
+    if (
+      !Number.isInteger(baselineMetric.count) ||
+      baselineMetric.count <= 0 ||
+      !Number.isInteger(candidateMetric.count) ||
+      candidateMetric.count <= 0
+    ) {
+      failures.push({
+        name,
+        reason: 'invalid-sample-count',
+        baselineCount: baselineMetric.count ?? null,
+        candidateCount: candidateMetric.count ?? null
+      })
+      continue
+    }
     for (const field of ['median', 'p95']) {
       const baselineValue = baselineMetric[field]
       const candidateValue = candidateMetric[field]

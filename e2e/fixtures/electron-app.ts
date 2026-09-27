@@ -1317,6 +1317,7 @@ class ElectronAppHarness implements ElectronApp {
       process.platform === 'win32' && child.pid !== undefined
         ? await readProcessTree(child.pid)
         : undefined
+    await this.stopElectronTrace(application)
     const result = await terminateProcessTree(child, options.force ? 'SIGKILL' : undefined)
     let reaped = result.reaped
     // Windows termination is asynchronous even when taskkill succeeds. Playwright's child is
