@@ -39,6 +39,7 @@
     "src/shared/session-persistence.test.ts",
     "src/shared/session-persistence.ts",
     "src/shared/session-reproducibility.ts",
+    "src/shared/session-runtime-context.ts",
     "src/shared/session-usage.ts",
     "src/shared/side-chat.ts",
     "src/shared/source-preview.ts",
