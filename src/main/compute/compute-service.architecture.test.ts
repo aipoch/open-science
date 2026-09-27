@@ -283,72 +283,60 @@ describe('Compute service architecture', () => {
   })
 
   it('restores local owner barriers before runtime and defers remote recovery until after startup', () => {
-    const source = readSource(computePaths.mainIpc)
-    const projectBarriers = source.indexOf(
+    const root = readSource(computePaths.mainIpc)
+    const calls = [
+      'await composeComputeAdmission({',
+      'await composeSideChat({',
+      'await composeComputeRecovery({',
+      'await composeProjectRecovery({'
+    ]
+    let previous = -1
+    for (const call of calls) {
+      const index = root.indexOf(call)
+      expect(index, call).toBeGreaterThan(previous)
+      previous = index
+    }
+    const admission = readSource(resolve(mainRoot, 'composition/compute.ts'))
+    const projectBarriers = admission.indexOf(
       'projectDeletionCoordinator.restorePendingDeletionBarriers()'
     )
-    const jobBarriers = source.indexOf(
-      'await jobDeletionOwner.restoreOrphanJobDeletionBarriers',
-      projectBarriers
-    )
-    const runtimeStart = source.indexOf('const jobPoller = createComputeJobRuntime', jobBarriers)
-    const projectRuntimeReady = source.indexOf(
+    expect(projectBarriers).toBeGreaterThan(-1)
+    expect(
+      admission.indexOf('await jobDeletionOwner.restoreOrphanJobDeletionBarriers')
+    ).toBeGreaterThan(projectBarriers)
+    const sideChat = readSource(resolve(mainRoot, 'composition/side-chat.ts'))
+    expect(sideChat).toContain(
       'projectRuntimeQuiescenceRef.current = new ProjectRuntimeQuiescenceOwner'
     )
-    const backgroundRecovery = source.indexOf(
-      'const projectDeletionRecovery = new ProjectDeletionRecoveryLoop',
-      runtimeStart
-    )
-    const projectOrphanRecovery = source.indexOf(
+    expect(sideChat).toContain(
       'await deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)'
     )
-    const backgroundOrphanRecovery = source.indexOf(
+    const recovery = readSource(resolve(mainRoot, 'composition/project-lifecycle.ts'))
+    const ordered = [
+      'const projectDeletionRecovery = new ProjectDeletionRecoveryLoop',
       'recoverOrphanJobs: () => jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)',
-      backgroundRecovery
-    )
-    const backgroundSessionRecovery = source.indexOf(
       'replaySessionProjection: () => sessionRepository.reconcilePendingSessionProjection()',
-      backgroundOrphanRecovery
-    )
-    const backgroundProjectRecovery = source.indexOf(
       'recoverProjects: () => projectDeletionCoordinator.recoverPendingDeletions()',
-      backgroundSessionRecovery
-    )
-    const committedDeletionWake = source.indexOf(
       "event.payload.status === 'cleanup-pending'",
-      backgroundProjectRecovery
-    )
-    const wakeCall = source.indexOf('projectDeletionRecovery.wake()', committedDeletionWake)
-
-    expect(projectBarriers).toBeGreaterThan(-1)
-    expect(jobBarriers).toBeGreaterThan(projectBarriers)
-    expect(projectRuntimeReady).toBeGreaterThan(jobBarriers)
-    expect(runtimeStart).toBeGreaterThan(projectRuntimeReady)
-    expect(backgroundRecovery).toBeGreaterThan(runtimeStart)
-    expect(projectOrphanRecovery).toBeGreaterThan(-1)
-    expect(backgroundOrphanRecovery).toBeGreaterThan(backgroundRecovery)
-    expect(backgroundSessionRecovery).toBeGreaterThan(backgroundOrphanRecovery)
-    expect(backgroundProjectRecovery).toBeGreaterThan(backgroundSessionRecovery)
-    expect(committedDeletionWake).toBeGreaterThan(backgroundProjectRecovery)
-    expect(wakeCall).toBeGreaterThan(committedDeletionWake)
+      'projectDeletionRecovery.wake()'
+    ]
+    previous = -1
+    for (const step of ordered) {
+      const index = recovery.indexOf(step, previous + 1)
+      expect(index, step).toBeGreaterThan(previous)
+      previous = index
+    }
   })
 
   it('gives Compute Job shutdown the transport cancellation budget', () => {
-    const source = readSource(computePaths.mainIpc)
-    const runtimeStart = source.indexOf('const jobPoller = createComputeJobRuntime')
-    const runtimeEnd = source.indexOf(
-      'const projectDeletionRecovery = new ProjectDeletionRecoveryLoop',
-      runtimeStart
-    )
-    const runtimeRegistration = source.slice(runtimeStart, runtimeEnd)
-
-    expect(runtimeStart).toBeGreaterThan(-1)
-    expect(runtimeEnd).toBeGreaterThan(runtimeStart)
-    expect(runtimeRegistration).toContain('disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS')
+    const source = readSource(resolve(mainRoot, 'composition/compute-recovery.ts'))
+    expect(source).toContain('const jobPoller = createComputeJobRuntime')
+    expect(source).toContain('disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS')
+    expect(source).toContain('dispose: () => jobPoller.stop()')
   })
 
   it('resolves Compute policy without entering Session catalog hydration or coordinator locks', () => {
-    const source = readSource(computePaths.mainIpc)
+    const source = readSource(resolve(mainRoot, 'composition/compute.ts'))
     const start = source.indexOf('const sessionLimitPersistence = {')
     const write = source.indexOf('save: async', start)
     const resolver = source.slice(start, write)
@@ -359,7 +347,7 @@ describe('Compute service architecture', () => {
   })
 
   it('persists Session concurrency limits inside the data-root write boundary', () => {
-    const source = readSource(computePaths.mainIpc)
+    const source = readSource(resolve(mainRoot, 'composition/compute.ts'))
     const persistenceStart = source.indexOf('const sessionLimitPersistence = {')
     const persistenceEnd = source.indexOf(
       'const computeIpcModule = createComputeIpcModule',
@@ -378,7 +366,7 @@ describe('Compute service architecture', () => {
   })
 
   it('awaits Compute Job barrier rollback when a new Project deletion aborts', () => {
-    const source = readSource(computePaths.mainIpc)
+    const source = readSource(resolve(mainRoot, 'composition/project-lifecycle.ts'))
     const abortStart = source.indexOf('abortProjectDeletion: async (projectId) => {')
     const abortEnd = source.indexOf('const detectArchiveBlockingSessions', abortStart)
     const abortSource = source.slice(abortStart, abortEnd)
@@ -389,7 +377,7 @@ describe('Compute service architecture', () => {
   })
 
   it('treats unreadable Session authority as unknown during Compute Job recovery', () => {
-    const source = readSource(computePaths.mainIpc)
+    const source = readSource(resolve(mainRoot, 'composition/session-authority.ts'))
     const livenessStart = source.indexOf('const isComputeJobOwnerLive')
     const livenessEnd = source.indexOf('const computeJobDeletionRef', livenessStart)
     const livenessSource = source.slice(livenessStart, livenessEnd)
@@ -398,7 +386,9 @@ describe('Compute service architecture', () => {
     expect(livenessEnd).toBeGreaterThan(livenessStart)
     expect(livenessSource).toContain("return 'unknown'")
     expect(livenessSource).not.toContain('throw new Error')
-    expect(source).toContain('restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)')
+    expect(readSource(resolve(mainRoot, 'composition/compute.ts'))).toContain(
+      'restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)'
+    )
   })
 
   it('keeps every private owner behind the public facade', () => {
@@ -1151,7 +1141,7 @@ describe('Compute service architecture', () => {
   })
 
   it('filters Compute Host access when a lazy Session is opened', () => {
-    const mainIpc = readSource(computePaths.mainIpc)
+    const mainIpc = readSource(resolve(mainRoot, 'composition/session-projection.ts'))
     expect(mainIpc).toContain(
       'sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)'
     )

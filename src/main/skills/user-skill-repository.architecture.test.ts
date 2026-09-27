@@ -225,7 +225,10 @@ describe('User Skill repository architecture', () => {
       'src/main/skills/user-skill-repository.ts',
       'src/main/skills/user-skill-store.ts'
     ])
-    expect(importersOf(catalogObserverPath)).toEqual(['src/main/ipc-application-composition.ts'])
+    expect(importersOf(catalogObserverPath)).toEqual([
+      'src/main/composition/agent-activation.ts',
+      'src/main/composition/session-foundation.ts'
+    ])
     expect(readSource(repositoryPath)).not.toContain('skillMutationOwnerFor(')
     expect(readSource(repositoryPath)).toContain('mutationOwner?: SkillMutationOwner')
     expect(readSource(repositoryPath)).toContain(

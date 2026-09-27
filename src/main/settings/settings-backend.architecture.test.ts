@@ -513,7 +513,12 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks the current production importer graph at the public seams', () => {
     expect(importersOf(settingsPaths.repository)).toEqual([
-      'src/main/ipc-application-composition.ts',
+      'src/main/composition/compute.ts',
+      'src/main/composition/connectors.ts',
+      'src/main/composition/session-packages.ts',
+      'src/main/composition/settings-bootstrap.ts',
+      'src/main/composition/settings-effects.ts',
+      'src/main/composition/specialists.ts',
       'src/main/locale/owner.ts',
       'src/main/settings/agent-runtime-manager.ts',
       'src/main/settings/classification-settings.ts',
@@ -547,6 +552,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/repository.ts'
     ])
     expect(importersOf(settingsPaths.documentStore)).toEqual([
+      'src/main/composition/settings-bootstrap.ts',
       'src/main/ipc-application-composition.ts',
       'src/main/settings/repository.ts',
       'src/main/storage/initialize-location.ts'
@@ -598,8 +604,26 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/validate.ts'
     ])
     expect(importersOf(settingsPaths.service)).toEqual([
+      'src/main/composition/agent-completion.ts',
+      'src/main/composition/agent-controls.ts',
+      'src/main/composition/agent-runtime.ts',
+      'src/main/composition/connectors.ts',
+      'src/main/composition/delegation.ts',
+      'src/main/composition/handoff.ts',
+      'src/main/composition/managed-files.ts',
+      'src/main/composition/notebook-bridge.ts',
       'src/main/composition/notebook-environment.ts',
-      'src/main/ipc-application-composition.ts',
+      'src/main/composition/notebook-runtime.ts',
+      'src/main/composition/research-catalog.ts',
+      'src/main/composition/session-foundation.ts',
+      'src/main/composition/session-packages.ts',
+      'src/main/composition/session-projection.ts',
+      'src/main/composition/session-surfaces.ts',
+      'src/main/composition/settings-bootstrap.ts',
+      'src/main/composition/settings-effects.ts',
+      'src/main/composition/side-chat.ts',
+      'src/main/composition/specialists.ts',
+      'src/main/composition/storage-startup.ts',
       'src/main/settings/application-commands.ts',
       'src/main/settings/bootstrap-application-commands.ts',
       'src/main/settings/ipc.ts',
@@ -759,7 +783,7 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks one production Settings document owner and the narrow Compute legacy port', () => {
     expect(constructorSitesFor(settingsPaths.repository, 'SettingsRepository')).toEqual([
-      'src/main/ipc-application-composition.ts',
+      'src/main/composition/settings-bootstrap.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/service.ts',
       'src/main/specialist/package/transaction.ts',
@@ -771,23 +795,28 @@ describe('Settings backend ownership architecture', () => {
     expect(computeIpc).toContain('legacyComputeGrants && !permissionGrantRegistry')
     expect(computeIpc).toContain('legacyComputeGrants.hasComputeGrant(grant)')
     expect(computeIpc).toContain('legacyComputeGrants.addComputeGrant(grant)')
-    const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc-application-composition.ts'))
+    const settingsBootstrap = readSource(
+      resolve(projectRoot, 'src/main/composition/settings-bootstrap.ts')
+    )
+    const specialists = readSource(resolve(projectRoot, 'src/main/composition/specialists.ts'))
+    const handoff = readSource(resolve(projectRoot, 'src/main/composition/handoff.ts'))
+    const compute = readSource(resolve(projectRoot, 'src/main/composition/compute.ts'))
     const mainIndex = readSource(resolve(projectRoot, 'src/main/index.ts'))
     expect(mainIndex).toContain('const settingsStore = bootstrapLocations.settingsStore')
     expect(mainIndex).toContain('const startupSettingsRepository = bootstrapLocations.repository')
     expect(mainIndex).toMatch(
       /registerIpcHandlers\(\{\s+mainEntryPath,\s+settingsStore,\s+translate,/u
     )
-    expect(mainIpc).toContain('settingsStore ?? resolveConfigRoot()')
+    expect(settingsBootstrap).toContain('settingsStore ?? resolveConfigRoot()')
     // Package transactions use the shared production repository; their fallback supports standalone use.
-    expect(mainIpc).toContain('skillSettings: settingsRepository')
-    expect(mainIpc).toContain('await settingsService.migrateAgentHomeSkillIdentities()')
-    expect(mainIpc.indexOf('specialistPackageRecovery.current =')).toBeLessThan(
-      mainIpc.indexOf('await settingsService.migrateAgentHomeSkillIdentities()')
+    expect(specialists).toContain('skillSettings: settingsRepository')
+    expect(specialists).toContain('await settingsService.migrateAgentHomeSkillIdentities()')
+    expect(specialists.indexOf('specialistPackageRecovery.current =')).toBeLessThan(
+      specialists.indexOf('await settingsService.migrateAgentHomeSkillIdentities()')
     )
-    const settingsModule = mainIpc.slice(
-      mainIpc.indexOf('const settingsService = await modules.add('),
-      mainIpc.indexOf('settingsServiceRef.current = settingsService')
+    const settingsModule = settingsBootstrap.slice(
+      settingsBootstrap.indexOf('const settingsService = await modules.add('),
+      settingsBootstrap.indexOf('settingsServiceRef.current = settingsService')
     )
     expect(settingsModule).toContain(
       'const capability = new SettingsService({\n      repository: settingsRepository,\n      onProviderHealthChanged: async () => {\n        await settingsSnapshotCommits.projectAfter(Promise.resolve())\n      },\n      installCoordinator: settingsInstallCoordinator,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      openAlexFetch: netFetchStandard,\n      applyNetworkProxy:'
@@ -796,30 +825,30 @@ describe('Settings backend ownership architecture', () => {
     expect(settingsModule).toContain('rollback: () => capability.dispose()')
     expect(settingsModule).toContain('dispose: () => capability.dispose()')
     expect(settingsModule).toContain('disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS')
-    const updateBlockerDetector = mainIpc.slice(
-      mainIpc.indexOf('const detectResearchBlockers'),
-      mainIpc.indexOf('const durableDataRootHandoffGate')
+    const updateBlockerDetector = handoff.slice(
+      handoff.indexOf('const detectResearchBlockers'),
+      handoff.indexOf('const durableDataRootHandoffGate')
     )
     expect(updateBlockerDetector).toContain(
       "if (settingsService.hasActiveInstall()) blockers.push('settings-install')"
     )
-    const updateInstallHandoff = mainIpc.slice(
-      mainIpc.indexOf('let releaseSettingsInstallAdmission'),
-      mainIpc.indexOf('const updateCommandOwner')
+    const updateInstallHandoff = handoff.slice(
+      handoff.indexOf('let releaseSettingsInstallAdmission'),
+      handoff.indexOf('const updateCommandOwner')
     )
     expect(updateInstallHandoff).toContain(
       'releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()'
     )
     expect(updateInstallHandoff).toContain('releaseAdmission?.()')
-    const dataRootInstallHandoff = mainIpc.slice(
-      mainIpc.indexOf('let releaseDataRootInstallAdmission'),
-      mainIpc.indexOf("declareElectronAdapter('storage'")
+    const dataRootInstallHandoff = handoff.slice(
+      handoff.indexOf('let releaseDataRootInstallAdmission'),
+      handoff.indexOf("declareElectronAdapter('storage'")
     )
     expect(dataRootInstallHandoff).toContain(
       'releaseDataRootInstallAdmission ??= settingsService.holdInstallAdmission()'
     )
     expect(dataRootInstallHandoff).toContain('abortDataRootInstallAdmission()')
-    expect(mainIpc).toContain('permissionGrantRegistry,\n    settingsRepository')
+    expect(compute).toContain('permissionGrantRegistry,\n    settingsRepository')
   })
 
   it('locks dependency-aware impact owners and cross-surface evidence', () => {

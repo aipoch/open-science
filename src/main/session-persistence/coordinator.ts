@@ -1256,6 +1256,12 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
 }
 const sessionKey = (projectId: string, sessionId: string): string => `${projectId}:${sessionId}`
 
+// Public command surface for composition ports; internal owner fields never cross this boundary.
+type SessionPersistenceCommands = Pick<
+  SessionPersistenceCoordinator,
+  keyof SessionPersistenceCoordinator
+>
+
 type SessionCatalog = Pick<
   SessionPersistenceCoordinator,
   'containsMessageOnActiveBranch' | 'loadSessionForContinuation' | 'sessionProjectId'
@@ -1284,6 +1290,7 @@ type SessionDeletion = Pick<
 
 export { SessionPersistenceCoordinator, SessionRuntimeContextRevisionConflictError }
 export type {
+  SessionPersistenceCommands,
   ComputeJobDeletionParticipant,
   DelegatedWorkRecordCommands,
   PatchSessionRuntimeContextCommand,

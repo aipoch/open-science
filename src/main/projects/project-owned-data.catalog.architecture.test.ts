@@ -366,7 +366,7 @@ describe('Project-owned data catalog architecture', () => {
 
   it('locks the durable Project deletion composition and tail order', () => {
     const constructor = newExpression(
-      'src/main/ipc-application-composition.ts',
+      'src/main/composition/project-lifecycle.ts',
       'ProjectDeletionCoordinator'
     )
     if (!isNewExpression(constructor.node)) throw new Error('Expected constructor expression.')
@@ -429,11 +429,11 @@ describe('Project-owned data catalog architecture', () => {
     )
     expectCall(
       objectMethod(constructor.file, lifecycle, 'finalizeProjectDeletion'),
-      'notebookService.deleteProjectFileEvidence'
+      'getNotebookService().deleteProjectFileEvidence'
     )
     expectCall(
       objectMethod(constructor.file, lifecycle, 'finalizeProjectDeletion'),
-      'notebookService.deleteProjectInputs'
+      'getNotebookService().deleteProjectInputs'
     )
   })
 
@@ -459,7 +459,7 @@ describe('Project-owned data catalog architecture', () => {
     expect(acpDeletes[1]!.position).toBeGreaterThan(delegatedDelete.position)
 
     const composition = newExpression(
-      'src/main/ipc-application-composition.ts',
+      'src/main/composition/side-chat.ts',
       'ProjectRuntimeQuiescenceOwner'
     )
     if (!isNewExpression(composition.node)) throw new Error('Expected quiescence constructor.')
@@ -554,7 +554,7 @@ describe('Project-owned data catalog architecture', () => {
     expectCall(binding, 'dependencies.sessionPersistenceCoordinator.setSessionDeletionHandlers')
     expectCall(binding, 'dependencies.inbox.invalidateSessions')
 
-    const ipc = sourceFile('src/main/ipc-application-composition.ts')
+    const ipc = sourceFile('src/main/composition/project-lifecycle.ts')
     let bindCall: CallExpression | undefined
     visit(ipc, (node) => {
       if (
@@ -694,7 +694,7 @@ describe('Project-owned data catalog architecture', () => {
     })
 
     const constructor = newExpression(
-      'src/main/ipc-application-composition.ts',
+      'src/main/composition/project-lifecycle.ts',
       'ProjectDeletionCoordinator'
     )
     if (!isNewExpression(constructor.node)) throw new Error('Expected constructor expression.')

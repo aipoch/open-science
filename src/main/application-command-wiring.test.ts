@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -40,170 +40,167 @@ const webAdapterSources = [
   'src/main/web-service/index.ts',
   'src/main/web-service/task-api.ts'
 ].map(readSource)
-const legacyAdapterBlock = compact(
-  between(ipcSource, 'createDesktopUtilitiesElectronSurface({', 'const electronSenderFor')
-)
-const reviewerCompositionSource = compact(readSource('src/main/composition/reviewer.ts'))
+const domain = (name: string): string => readSource(`src/main/composition/${name}.ts`)
+const domainCompact = (name: string): string => compact(domain(name))
+const dependencyBlock = domainCompact('command-dependencies')
+const reviewerCompositionSource = domainCompact('reviewer')
 const notificationAdapterBlock = compact(readSource('src/main/ipc-surfaces/notifications.ts'))
-const dependencyBlock = compact(
-  between(
-    ipcSource,
-    'const applicationCommandDependencies:',
-    '// The shared coordinator remains the sole ACP + Notebook teardown owner.'
-  )
-)
+const legacyAdapterBlock = domainCompact('desktop-utilities')
+const afterAcp = (): string => between(ipcSource, 'surfaceAdapters = afterAcpAdapters', 'return {')
+const callBefore = (first: string, second: string): void => {
+  const firstIndex = ipcSource.indexOf(first)
+  const secondIndex = ipcSource.indexOf(second)
+  expect(firstIndex, first).toBeGreaterThan(-1)
+  expect(secondIndex, second).toBeGreaterThan(firstIndex)
+}
 
 describe('production application command wiring', () => {
+  it('constructs each domain once at the root without composing domains inside each other', () => {
+    const domains = readdirSync(resolve(projectRoot, 'src/main/composition'))
+      .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+      .map((name) => readSource(`src/main/composition/${name}`))
+    const factories = domains.flatMap((source) =>
+      [...source.matchAll(/export (?:async )?function (compose\w+)\(/gu)].map((match) => match[1])
+    )
+    expect(factories.length).toBeGreaterThan(0)
+    expect(new Set(factories).size).toBe(factories.length)
+    for (const factory of factories) {
+      expect(occurrences(ipcSource, `${factory}(`), `${factory} root construction`).toBe(1)
+      // The only occurrence in the domain sources is the function declaration itself.
+      expect(
+        domains.reduce((count, source) => count + occurrences(source, `${factory}(`), 0),
+        `${factory} nested construction`
+      ).toBe(1)
+    }
+    for (const source of domains) {
+      expect(source).not.toMatch(/from ['"]\.\.\/(?:ipc|ipc-application-composition)['"]/u)
+    }
+  })
+
   it('reads current global permissions when creating a fork', () => {
-    expect(compact(ipcSource)).toContain(
+    expect(domainCompact('session-packages')).toContain(
       'getDefaultPermissionProfile: async () => getDefaultPermissionProfile(await settingsRepository.getSettings())'
     )
   })
 
   it('adopts package publications into the live persistence owner before exposing desktop commands', () => {
-    expect(compact(ipcSource)).toContain(
+    expect(domainCompact('session-packages')).toContain(
       'await packagePublicationOwner.current?.adoptPublishedSession(projectId, sessionId)'
     )
-    const binding = ipcSource.indexOf(
-      'packagePublicationOwner.current = sessionPersistenceCoordinator'
-    )
-    expect(binding).toBeGreaterThan(ipcSource.indexOf('const sessionPersistenceCoordinator ='))
-    expect(binding).toBeLessThan(ipcSource.indexOf('const sessionPackageDesktop ='))
+    const authority = domain('session-authority')
+    expect(
+      authority.indexOf('packagePublicationOwner.current = sessionPersistenceCoordinator')
+    ).toBeGreaterThan(authority.indexOf('const sessionPersistenceCoordinator ='))
+    callBefore('await composeSessionAuthority({', 'composeSessionPackageSurfaces({')
   })
 
   it('constructs Session package desktop once with shared owners and retains lifecycle bindings', () => {
-    const phase = compact(
-      between(
-        ipcSource,
-        'surfaceAdapters = afterAcpAdapters',
-        'const reviewerCommandOwner = await registerReviewerComposition'
-      )
+    const source = domainCompact('session-packages')
+    expect(source).toContain(
+      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld.current, onSensitiveContentFailure: rememberSensitiveContentFailure })'
     )
-    expect(phase).toContain(
-      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld, onSensitiveContentFailure: rememberSensitiveContentFailure })'
-    )
-    expect(occurrences(ipcSource, 'createSessionPackageDesktop(')).toBe(1)
-    expect(ipcSource).not.toContain('new SessionPackageDesktop')
-    expect(phase).toContain(
+    expect(occurrences(source, 'createSessionPackageDesktop(')).toBe(1)
+    expect(source).toContain(
       'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active'
     )
-    expect(phase).toContain(
+    expect(source).toContain(
       'sessionPackageDesktopLifecycle.close = async () => { removePackageQuitGuard() await sessionPackageDesktop.close() }'
     )
-    expect(compact(ipcSource)).toContain(
+    expect(source).toContain(
       'await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])'
     )
     for (const call of [
       'sessionPackageDesktop.respond(',
       'sessionPackageDesktop.export(',
-      'sessionPackageDesktop.import(',
-      'sessionPackageDesktop.enqueueFile('
+      'sessionPackageDesktop.import('
     ]) {
-      expect(occurrences(ipcSource, call)).toBe(1)
+      expect(occurrences(dependencyBlock, call)).toBe(1)
     }
+    expect(ipcSource).toContain('sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(path)')
+    expect(afterAcp()).toContain('composeSessionPackageSurfaces({')
   })
 
   it('installs Session persistence once with shared owners after Notebook input preview', () => {
-    const phase = compact(
-      between(ipcSource, 'surfaceAdapters = afterAcpAdapters', 'const conversationExportService')
-    )
-    expect(phase).toContain(
+    const source = domainCompact('artifact-surfaces')
+    expect(source).toContain(
       'createSessionPersistenceElectronSurface({ runtimeWriter, sessionPersistenceBackend, reviewRepository, sessionPersistenceHandlers, sessionDetailsOwner, delegatedWork, sessionRepository })'
     )
-    expect(phase.indexOf("declareElectronAdapter('notebook-input-preview'")).toBeLessThan(
-      phase.indexOf('createSessionPersistenceElectronSurface(')
-    )
-    expect(occurrences(ipcSource, 'createSessionPersistenceElectronSurface(')).toBe(1)
-    expect(ipcSource).not.toContain('registerSessionPersistenceIpcHandlers')
-    expect(ipcSource).not.toContain('message wake after Session activation failed')
-    expect(ipcSource).not.toContain('Session recovery folder could not be opened.')
+    const preview = source.indexOf("declareElectronAdapter('notebook-input-preview'")
+    expect(preview).toBeGreaterThan(-1)
+    expect(source.indexOf('createSessionPersistenceElectronSurface(')).toBeGreaterThan(preview)
+    expect(occurrences(source, 'createSessionPersistenceElectronSurface(')).toBe(1)
+    expect(source).not.toContain('registerSessionPersistenceIpcHandlers')
+    callBefore('composeArtifactSurfaces({', 'composeSessionPackageSurfaces({')
   })
 
   it('installs Specialist once with shared owners before Notebook runtime in afterAcp', () => {
-    const phase = compact(
-      between(
-        ipcSource,
-        'surfaceAdapters = afterAcpAdapters',
-        "declareElectronAdapter('notebook-runtime'"
-      )
-    )
-    expect(phase).toContain(
+    const source = domainCompact('session-surfaces')
+    expect(source).toContain(
       'createSpecialistElectronSurface({ specialistService, sessionBindingService, sessionSpecialistReconfiguration, onProfilesChanged: () => void runtime.requestSkillsReload(), specialistPackageService, marketplaceService, specialistApplicationOwner, translate })'
     )
-    expect(occurrences(ipcSource, 'createSpecialistElectronSurface(')).toBe(1)
+    expect(occurrences(source, 'createSpecialistElectronSurface(')).toBe(1)
     expect(
-      occurrences(ipcSource, 'const specialistApplicationOwner = createSpecialistApplicationOwner(')
+      occurrences(source, 'const specialistApplicationOwner = createSpecialistApplicationOwner(')
     ).toBe(1)
-    expect(phase).toContain(
+    expect(source).toContain(
       "specialistService.subscribe(() => applicationEvents.publish('specialist:catalog-changed', undefined) )"
     )
-    expect(ipcSource).not.toContain('registerSpecialistIpcHandlers')
-    expect(ipcSource).not.toContain('selectSpecialistArchive')
-    expect(ipcSource).not.toContain('createContributionTemplateExporter')
+    expect(source).not.toContain('registerSpecialistIpcHandlers')
+    expect(afterAcp()).toContain('composeSessionSurfaces({')
+    callBefore('composeSessionSurfaces({', 'composeNotebookSurfaces({')
   })
 
   it('installs Office preview once with shared resources between managed preview and environment', () => {
-    const phase = compact(
-      between(
-        ipcSource,
-        'surfaceAdapters = afterAcpAdapters',
-        'const notebookEnvironmentLifecycle = await registerNotebookEnvironmentComposition'
-      )
+    const source = domainCompact('notebook-surfaces')
+    expect(source).toContain(
+      "...createOfficePreviewElectronSurfaces({ previewResources: managedFiles.previewResources, runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html') })"
     )
-    expect(phase).toContain(
-      "...createOfficePreviewElectronSurfaces({ previewResources, runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html') })"
-    )
-    expect(phase).toContain("declareElectronAdapter('managed-preview'")
-    expect(phase.indexOf("declareElectronAdapter('managed-preview'")).toBeLessThan(
-      phase.indexOf('createOfficePreviewElectronSurfaces(')
-    )
-    expect(occurrences(ipcSource, 'createOfficePreviewElectronSurfaces(')).toBe(1)
-    expect(ipcSource).not.toContain('new OfficePreviewSupervisor')
-    expect(ipcSource).not.toContain('registerOfficePreviewIpcHandlers')
-    expect(ipcSource).not.toContain('registerOfficePreviewRuntimeProtocol')
+    const preview = source.indexOf("declareElectronAdapter('managed-preview'")
+    const office = source.indexOf('...createOfficePreviewElectronSurfaces(')
+    const environment = source.indexOf('await registerNotebookEnvironmentComposition(')
+    expect(preview).toBeGreaterThan(-1)
+    expect(office).toBeGreaterThan(preview)
+    expect(environment).toBeGreaterThan(office)
+    expect(occurrences(source, 'createOfficePreviewElectronSurfaces(')).toBe(1)
+    expect(afterAcp()).toContain('composeNotebookSurfaces({')
   })
 
   it('installs Settings once with shared owners before Notebook in afterAcp', () => {
-    const phase = compact(
-      between(
-        ipcSource,
-        'surfaceAdapters = afterAcpAdapters',
-        "declareElectronAdapter('background-result-delivery'"
-      )
-    )
-    expect(phase).toContain(
+    const source = domainCompact('settings-effects')
+    expect(source).toContain(
       'createSettingsElectronSurface({ service: settingsService, workflows: settingsWorkflows, snapshotCommits: settingsSnapshotCommits, listAppIconPreviews, translate })'
     )
-    expect(phase.indexOf('createSettingsElectronSurface(')).toBeLessThan(
-      phase.indexOf("declareElectronAdapter('notebook',")
-    )
-    expect(occurrences(ipcSource, 'createSettingsElectronSurface(')).toBe(1)
-    expect(ipcSource).not.toContain('registerSettingsIpcHandlers')
-    expect(ipcSource).not.toContain('showSettingsSaveDialog')
+    const settings = source.indexOf('createSettingsElectronSurface(')
+    expect(settings).toBeGreaterThan(-1)
+    expect(source.indexOf("declareElectronAdapter('notebook',")).toBeGreaterThan(settings)
+    expect(occurrences(source, 'createSettingsElectronSurface(')).toBe(1)
+    expect(afterAcp()).toContain('composeSettingsEffects({')
   })
 
   it('installs desktop utilities with shared owners and retains find-event cleanup', () => {
-    const desktop = compact(
-      between(ipcSource, 'createDesktopUtilitiesElectronSurface({', '// ACP identity resolution')
-    )
+    const desktop = domainCompact('desktop-utilities')
     expect(desktop).toContain(
-      'resolveManagedFilePath, managedFileVersions: managedFileVersionService, notebookInputs: notebookInputRegistry, translate, logs: logsCommandOwner, github: githubCommandOwner, cli: cliCommandOwner'
+      'resolveManagedFilePath: managedFiles.resolveManagedFilePath, managedFileVersions: managedFileVersionService, notebookInputs: sessionAuthority.notebookInputRegistry, translate, logs: logsCommandOwner, github: githubCommandOwner, cli: cliCommandOwner'
     )
-    const phase = between(
-      ipcSource,
-      'surfaceAdapters = beforeAcpAdapters',
-      'surfaceAdapters = afterAcpAdapters'
-    )
-    expect(phase).toContain('createDesktopUtilitiesElectronSurface({')
-    expect(occurrences(ipcSource, 'createDesktopUtilitiesElectronSurface(')).toBe(1)
+    expect(
+      between(
+        ipcSource,
+        'surfaceAdapters = beforeAcpAdapters',
+        'surfaceAdapters = afterAcpAdapters'
+      )
+    ).toContain('composeDesktopUtilities({')
+    expect(occurrences(desktop, 'createDesktopUtilitiesElectronSurface(')).toBe(1)
     const surface = compact(readSource('src/main/ipc-surfaces/desktop-utilities.ts'))
-    expect(surface).toContain("createElectronSurfaceAdapter('desktop-utilities'")
-    expect(surface).toContain('registerLogsIpcHandlers(logs)')
-    expect(surface).toContain('registerGithubIpcHandlers({}, github)')
-    expect(surface).toContain('registerCliInstallIpcHandlers(cli)')
-    expect(surface).toContain('return registerWindowFindIpcHandlers()')
-    expect(ipcSource).not.toContain('registerWindowFindIpcHandlers')
-    expect(ipcSource).not.toContain('registerFileSaveHandlers')
+    for (const call of [
+      "createElectronSurfaceAdapter('desktop-utilities'",
+      'registerLogsIpcHandlers(logs)',
+      'registerGithubIpcHandlers({}, github)',
+      'registerCliInstallIpcHandlers(cli)',
+      'return registerWindowFindIpcHandlers()'
+    ])
+      expect(surface).toContain(call)
+    expect(desktop).not.toContain('registerWindowFindIpcHandlers')
+    expect(desktop).not.toContain('registerFileSaveHandlers')
   })
 
   it('installs approval handlers with the shared connector brokers in beforeAcp', () => {
@@ -215,10 +212,10 @@ describe('production application command wiring', () => {
       )
     )
     expect(phase).toContain(
-      'surfaceAdapters.push( createConnectorApprovalElectronSurface( approvalBroker, credentialRequestBroker, skillImportApprovalBroker ) )'
+      'surfaceAdapters.push( createConnectorApprovalElectronSurface( connectors.approvalBroker, connectors.credentialRequestBroker, connectors.skillImportApprovalBroker ) )'
     )
     expect(occurrences(ipcSource, 'createConnectorApprovalElectronSurface(')).toBe(1)
-    expect(compact(ipcSource)).toContain(
+    expect(domainCompact('connectors')).toContain(
       'connectorApprovals: approvalBroker, credentialRequests: credentialRequestBroker, skillImportApprovals: skillImportApprovalBroker } = connectorApplication'
     )
     const surface = compact(readSource('src/main/ipc-surfaces/connector-approvals.ts'))
@@ -230,174 +227,175 @@ describe('production application command wiring', () => {
   })
 
   it('keeps the upload owner and notification surface in its original installation phase', () => {
-    const uploadSurface = compact(readSource('src/main/ipc-surfaces/uploads.ts'))
-    expect(uploadSurface).toContain("import { registerUploadIpcHandlers } from '../uploads/ipc'")
-    expect(uploadSurface).toContain('registerUploadIpcHandlers(owner, {')
+    const surface = compact(readSource('src/main/ipc-surfaces/uploads.ts'))
+    expect(surface).toContain("import { registerUploadIpcHandlers } from '../uploads/ipc'")
+    expect(surface).toContain('registerUploadIpcHandlers(owner, {')
+    const source = domain('artifact-surfaces')
     expect(
-      between(
-        ipcSource,
-        'surfaceAdapters = afterAcpAdapters',
-        "declareElectronAdapter('notebook-input-preview'"
-      )
-    ).toContain('surfaceAdapters.push(createUploadElectronSurface(uploadCommandOwner))')
-    expect(occurrences(ipcSource, 'createUploadElectronSurface(uploadCommandOwner)')).toBe(1)
+      occurrences(source, 'surfaceAdapters.push(createUploadElectronSurface(uploadCommandOwner))')
+    ).toBe(1)
+    expect(source.indexOf('createUploadElectronSurface(uploadCommandOwner)')).toBeLessThan(
+      source.indexOf("declareElectronAdapter('notebook-input-preview'")
+    )
+    expect(afterAcp()).toContain('composeArtifactSurfaces({')
   })
 
   it('includes active reproducibility kernels in the Session export admission gate', () => {
-    expect(compact(ipcSource)).toContain(
+    expect(compact(domain('notebook-runtime'))).toContain(
       'const notebookLifecycle = withReproducibilityNotebookLifecycle( notebookService, () => artifactReproducibilityAttemptOwnerRef.current )'
     )
-    expect(compact(ipcSource)).toContain('notebookActivityRef.current = notebookLifecycle')
-    expect(occurrences(ipcSource, 'withReproducibilityNotebookLifecycle(')).toBe(1)
+    expect(compact(domain('notebook-runtime'))).toContain(
+      'notebookActivityRef.current = notebookLifecycle'
+    )
+    expect(occurrences(domain('notebook-runtime'), 'withReproducibilityNotebookLifecycle(')).toBe(1)
   })
 
   it('routes literature mutations through the tested catalog and cleanup orchestration', () => {
-    expect(compact(ipcSource)).toContain('literature: createLiteratureCommandOwner({')
+    expect(compact(domain('command-dependencies'))).toContain(
+      'literature: createLiteratureCommandOwner({'
+    )
     expect(literatureOwnerSource).toContain(
       'transact: (command) => transactLiterature(literatureCatalog, contentRepository, command)'
     )
   })
 
   it('routes background deletion through the tested owner recovery sequence', () => {
-    expect(compact(ipcSource)).toContain(
+    expect(compact(domain('project-lifecycle'))).toContain(
       'recoverDeletionWork({ recoverOrphanJobs: () => jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive), replaySessionProjection: () => sessionRepository.reconcilePendingSessionProjection(), recoverProjects: () => projectDeletionCoordinator.recoverPendingDeletions() })'
     )
   })
 
   it('restores durable deletion barriers before managed file version recovery', () => {
-    const deletionBarrierRestore = ipcSource.indexOf(
+    const deletionBarrierRestore = domain('compute').indexOf(
       'projectDeletionCoordinator.restorePendingDeletionBarriers()'
     )
-    const managedFileRecovery = ipcSource.indexOf(
+    const managedFileRecovery = domain('compute').indexOf(
       'managedFileVersionService.recoverPendingWrites()'
     )
     expect(deletionBarrierRestore).toBeGreaterThan(-1)
     expect(managedFileRecovery).toBeGreaterThan(deletionBarrierRestore)
-    expect(ipcSource).toMatch(
+    expect(domain('compute')).toMatch(
       /runDataRootStartupRecovery\(\s*\(\)\s*=>\s*projectDeletionCoordinator\.restorePendingDeletionBarriers\(\)\s*\)/
     )
-    expect(ipcSource).toMatch(
+    expect(domain('compute')).toMatch(
       /withDataRootWrite\(\(\)\s*=>\s*managedFileVersionService\.recoverPendingWrites\(\)\)/
     )
   })
 
   it('defers legacy data-path normalization behind data-root startup recovery', () => {
-    const normalizationBlock = compact(
+    const source = domain('session-packages')
+    const normalization = compact(
       between(
-        ipcSource,
+        source,
         'if (!storedSettings.pathsNormalizedAt)',
-        '// Share one repository and registry so runtime artifact claims and renderer finalization meet.'
+        'normalizationOperation?.fail(error)'
       )
     )
-
-    expect(normalizationBlock).toContain('await runDataRootStartupRecovery(')
-    expect(normalizationBlock).toContain('await normalizeLegacyDataPaths({')
+    expect(normalization).toContain('await runDataRootStartupRecovery(')
+    expect(normalization).toContain('await normalizeLegacyDataPaths({')
   })
 
   it('does not block application startup on managed file content integrity scanning', () => {
-    expect(ipcSource).toMatch(/managedFileVersionService\s*\.auditActiveVersionIntegrity\(\)/)
-    expect(ipcSource).not.toMatch(
+    expect(domain('compute')).toMatch(
+      /managedFileVersionService\s*\.auditActiveVersionIntegrity\(\)/
+    )
+    expect(domain('compute')).not.toMatch(
       /await\s+managedFileVersionService\s*\.auditActiveVersionIntegrity\(\)/
     )
   })
 
   it('installs the Artifact surface in its existing phase with the shared owners', () => {
-    expect(compact(ipcSource)).toContain(
+    const source = domainCompact('artifact-surfaces')
+    expect(source).toContain(
       'surfaceAdapters.push( createArtifactElectronSurface({ artifactRepository, artifactRunRegistry, artifactProvenanceRepository, artifactHandlers, artifactReproducibilityAttemptOwnerRef, archiveCoordinator, sessionPersistenceCoordinator, notebookService, translate }) )'
     )
-    const installation = ipcSource.indexOf('createArtifactElectronSurface({')
-    expect(installation).toBeGreaterThan(ipcSource.indexOf('surfaceAdapters = afterAcpAdapters'))
-    expect(installation).toBeGreaterThan(ipcSource.indexOf("declareElectronAdapter('storage'"))
-    expect(installation).toBeLessThan(
-      ipcSource.indexOf('createUploadElectronSurface(uploadCommandOwner)')
+    expect(source.indexOf('createArtifactElectronSurface(')).toBeLessThan(
+      source.indexOf('createUploadElectronSurface(uploadCommandOwner)')
     )
-    expect(ipcSource).not.toContain('registerArtifactIpcHandlers')
-    expect(ipcSource).not.toContain('registerArtifactReproducibilityIpcHandlers')
-    expect(ipcSource).not.toContain('createArtifactReproducibilityReceiptExporter')
+    expect(afterAcp()).toContain('composeArtifactSurfaces({')
+    callBefore('composeStorageHandoff({', 'composeArtifactSurfaces({')
+    expect(source).not.toContain('registerArtifactIpcHandlers')
+    expect(source).not.toContain('registerArtifactReproducibilityIpcHandlers')
   })
 
   it('injects each stateful owner into its Electron adapter and command composition', () => {
-    const sharedOwners = [
+    const bindings = [
       [
-        'managedPreviewOwners',
-        'installManagedPreviewElectronAdapter( previewResources, managedPreviewProtocol, managedPreviewOwners )',
-        'managedPreview: managedPreviewOwners'
+        'notebook-surfaces',
+        'managedFiles.managedPreviewOwners',
+        'managedPreview: managedFiles.managedPreviewOwners'
       ],
       [
-        'sessionPersistenceHandlers',
+        'artifact-surfaces',
         'reviewRepository, sessionPersistenceHandlers, sessionDetailsOwner, delegatedWork, sessionRepository',
-        '...sessionPersistenceHandlers'
+        '...sessionSurfaces.sessionPersistenceHandlers'
       ],
       [
-        'artifactHandlers',
+        'artifact-surfaces',
         'artifactHandlers, artifactReproducibilityAttemptOwnerRef,',
-        'artifacts: artifactHandlers'
+        'artifacts: artifactSurfaces.artifactHandlers'
       ],
-      ['storageCommandOwner', 'storageCommandOwner )', 'storage: storageCommandOwner'],
+      ['handoff', 'storageCommandOwner )', 'storage: storageHandoff.storageCommandOwner'],
       [
-        'reviewerCommandOwner',
+        'reviewer',
         'registerReviewerIpcHandlers(reviewerOptions, reviewerCommandOwner)',
         'reviewer: reviewerCommandOwner'
       ],
       [
-        'updateCommandOwner',
+        'handoff',
         'registerUpdateIpcHandlers(updateStrategy, updateCommandOwner)',
-        'update: updateCommandOwner'
+        'update: handoff.updateCommandOwner'
       ],
-      ['cliCommandOwner', 'cli: cliCommandOwner', 'cli: cliCommandOwner'],
-      ['githubCommandOwner', 'github: githubCommandOwner', 'github: githubCommandOwner'],
-      ['logsCommandOwner', 'logs: logsCommandOwner', 'logs: logsCommandOwner'],
+      ['desktop-utilities', 'cli: cliCommandOwner', 'cli: cliCommandOwner'],
+      ['desktop-utilities', 'github: githubCommandOwner', 'github: githubCommandOwner'],
+      ['desktop-utilities', 'logs: logsCommandOwner', 'logs: logsCommandOwner'],
       [
-        'uploadCommandOwner',
-        'surfaceAdapters.push(createUploadElectronSurface(uploadCommandOwner))',
-        'uploads: uploadCommandOwner'
+        'artifact-surfaces',
+        'createUploadElectronSurface(uploadCommandOwner)',
+        'uploads: projectLifecycle.uploadCommandOwner'
       ],
       [
-        'conversationExportService',
+        'session-packages',
         'registerConversationExportIpcHandler(conversationExportService)',
-        'conversationExportService.exportConversation('
+        'sessionPackageSurfaces.conversationExportService.exportConversation('
       ]
     ] as const
-
-    for (const [owner, electronUse, compositionUse] of sharedOwners) {
-      const adapterSource =
-        owner === 'reviewerCommandOwner' ? reviewerCompositionSource : legacyAdapterBlock
-      const adapterLabel =
-        owner === 'reviewerCommandOwner' ? 'reviewer composition' : 'legacy Electron adapter'
-      expect(adapterSource, `${owner} must be used by the ${adapterLabel}`).toContain(electronUse)
-      expect(dependencyBlock, `${owner} must be used by command composition`).toContain(
-        compositionUse
-      )
+    for (const [owner, adapter, command] of bindings) {
+      expect(domainCompact(owner), owner).toContain(adapter)
+      expect(dependencyBlock, owner).toContain(command)
     }
-
-    expect(dependencyBlock).toContain('projects: projectHandlers')
-    expect(dependencyBlock).toContain('tags: tagService')
-    expect(compact(ipcSource)).toContain('const tagService = new TagService( new TagRepository')
+    expect(dependencyBlock).toContain('projects: projectLifecycle.projectHandlers')
+    expect(dependencyBlock).toContain('tags: researchCatalog.tagService')
+    expect(domainCompact('research-catalog')).toContain(
+      'const tagService = new TagService( new TagRepository'
+    )
     expect(dependencyBlock).toContain(
-      'deleteSession: (request) => sessionDeletionOwner.delete(request)'
+      'deleteSession: (request) => artifactSurfaces.sessionDeletionOwner.delete(request)'
     )
     expect(commandRegistrationSource).toContain(
       "declareElectronAdapter('application-projects', () => registerApplicationCommandElectronAdapter(applicationCommandComposition.electron) )"
     )
-    expect(ipcSource).not.toContain('registerSessionDeletionIpcHandler')
-    expect(ipcSource).not.toContain("declareElectronAdapter('session-deletion'")
-    expect(ipcSource).not.toContain("ipcMainHandle('sessions:edit-details'")
-    expect(ipcSource).not.toContain("ipcMainHandle('sessions:export-package'")
-    expect(ipcSource).not.toContain("ipcMainHandle('sessions:import-package'")
-    expect(ipcSource).not.toContain('registerProjectIpcHandlers')
-    // Keep checking the shared owner identities at the composition root. The extracted module's
-    // actual registration/dispatch is covered by ipc-surfaces/core.test.ts.
-    const coreDependencies = compact(
-      between(ipcSource, '...createCoreElectronSurfaces({', '// Compute IPC handlers')
-    )
+    for (const forbidden of [
+      'registerSessionDeletionIpcHandler',
+      "declareElectronAdapter('session-deletion'",
+      "ipcMainHandle('sessions:edit-details'",
+      "ipcMainHandle('sessions:export-package'",
+      "ipcMainHandle('sessions:import-package'",
+      'registerProjectIpcHandlers'
+    ])
+      expect(dependencyBlock).not.toContain(forbidden)
     expect(occurrences(ipcSource, 'createCoreElectronSurfaces(')).toBe(1)
-    expect(coreDependencies).toContain('permissionGrantProjection,')
-    expect(coreDependencies).toContain(
-      'projectFiles: [ projectFilesRepository, sessionPersistenceCoordinator, projectDeletionCoordinator, projectFilesHandlers ]'
+    expect(compact(ipcSource)).toContain(
+      'permissionGrantProjection: settingsEffects.permissionGrantProjection'
     )
-    expect(coreDependencies).toContain('previewStateRepository')
-    expect(dependencyBlock).toContain('permissionGrants: permissionGrantProjection')
-    expect(dependencyBlock).toContain('projectFiles: projectFilesHandlers')
+    expect(compact(ipcSource)).toContain(
+      'projectFiles: [ sessionAuthority.projectFilesRepository, sessionAuthority.sessionPersistenceCoordinator, projectLifecycle.projectDeletionCoordinator, projectLifecycle.projectFilesHandlers ]'
+    )
+    expect(compact(ipcSource)).toContain(
+      'previewStateRepository: sessionPackages.previewStateRepository'
+    )
+    expect(dependencyBlock).toContain('permissionGrants: settingsEffects.permissionGrantProjection')
+    expect(dependencyBlock).toContain('projectFiles: projectLifecycle.projectFilesHandlers')
     expect(coreSurfaceSource).toContain(
       'registerPermissionGrantIpcAdapter(dependencies.permissionGrantProjection)'
     )
@@ -407,24 +405,25 @@ describe('production application command wiring', () => {
     expect(coreSurfaceSource).toContain(
       'registerPreviewStateIpcHandlers(dependencies.previewStateRepository)'
     )
-
     expect(compact(ipcSource)).toContain(
-      'electronAdapters: { beforeCompute: beforeComputeAdapters, compute: { handlers: computeIpcModule.handlers, enabledHosts: sessionEnabledComputeHostsOwner },'
+      'compute: { handlers: computeServices.computeIpcModule.handlers, enabledHosts: computeAdmission.sessionEnabledComputeHostsOwner }'
     )
-    expect(dependencyBlock).toContain('compute: computeIpcModule.handlers')
-    expect(ipcSource).toContain('await cliCommandOwner.ensureCurrent()')
-    expect(dependencyBlock).toContain('enabledHosts: sessionEnabledComputeHostsOwner')
-    expect(ipcSource).toContain(
+    expect(dependencyBlock).toContain('compute: computeServices.computeIpcModule.handlers')
+    expect(dependencyBlock).toContain(
+      'enabledHosts: computeAdmission.sessionEnabledComputeHostsOwner'
+    )
+    expect(domain('desktop-utilities')).toContain('await cliCommandOwner.ensureCurrent()')
+    expect(domain('desktop-utilities')).toContain(
       'const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })'
     )
   })
 
   it('holds side chat admission through the in-place update handoff', () => {
     const updateGate = compact(
-      between(ipcSource, 'const durableBackendHandoffGate', 'const detectResearchBlockers')
+      between(domain('handoff'), 'const durableBackendHandoffGate', 'const detectResearchBlockers')
     )
     const updateStrategy = compact(
-      between(ipcSource, 'const updateStrategy', 'const updateCommandOwner')
+      between(domain('handoff'), 'const updateStrategy', 'const updateCommandOwner')
     )
     expect(updateGate).toContain(
       'shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, { holdSideChatAdmission: true, legacyShellRecoveryToken: options?.legacyShellRecoveryToken })'
@@ -455,7 +454,7 @@ describe('production application command wiring', () => {
       'const reviewerCommandOwner = await registerReviewerComposition(modules, {'
     )
     expect(compact(ipcSource)).toContain(
-      'previewResources, runtimeShutdownOwner: reviewerModelRuntimeShutdown, declareElectronAdapter'
+      'previewResources: managedFiles.previewResources, runtimeShutdownOwner: handoff.reviewerModelRuntimeShutdown, declareElectronAdapter'
     )
     expect(reviewerCompositionSource).toContain(
       'pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources)'
@@ -472,18 +471,11 @@ describe('production application command wiring', () => {
   })
 
   it('installs every notification inbox request on the Electron adapter', () => {
-    expect(
-      compact(
-        between(
-          ipcSource,
-          'let surfaceAdapters = beforeComputeAdapters',
-          'surfaceAdapters = beforeAcpAdapters'
-        )
-      )
-    ).toContain(
-      'surfaceAdapters.push( createNotificationElectronSurface( notificationInbox, taskNotifications, taskNotificationDeliveryDeps ) )'
+    callBefore('composeNotifications({', 'composeComputeServices({')
+    expect(domainCompact('notifications')).toContain(
+      'surfaceAdapters.push( createNotificationElectronSurface( storageStartup.notificationInbox, taskNotifications, taskNotificationDeliveryDeps ) )'
     )
-    expect(occurrences(ipcSource, 'createNotificationElectronSurface(')).toBe(1)
+    expect(occurrences(domain('notifications'), 'createNotificationElectronSurface(')).toBe(1)
     expect(notificationAdapterBlock).toContain(
       "import { registerNotificationInboxIpcAdapter, type NotificationInboxIpcOwner } from '../notifications/notification-inbox-ipc'"
     )
@@ -507,7 +499,7 @@ describe('production application command wiring', () => {
   })
 
   it('adds transport adapters after composition and disposes the router before its owners', () => {
-    const backendModule = ipcSource.indexOf("name: 'backend-shutdown-coordinator'")
+    const backendModule = ipcSource.indexOf('await composeBackendLifecycle({')
     const commandModule = ipcSource.indexOf('await registerApplicationCommandComposition({')
     expect(backendModule).toBeGreaterThan(-1)
     expect(commandModule).toBeGreaterThan(backendModule)
@@ -558,8 +550,10 @@ describe('production application command wiring', () => {
     expect(compact(ipcSource)).toContain(
       "computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>"
     )
-    expect(compact(ipcSource)).toContain('computePreferences: sessionEnabledComputeHostsOwner')
     expect(compact(ipcSource)).toContain(
+      'computePreferences: computeAdmission.sessionEnabledComputeHostsOwner'
+    )
+    expect(domainCompact('agent-runtime')).toContain(
       'resolveComputeExecutionTargetIds: (sessionId) => hostsRegistry.getSelected(sessionId)'
     )
     const webServiceSource = readSource('src/main/web-service/index.ts')

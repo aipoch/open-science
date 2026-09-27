@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -18,6 +18,9 @@ const runtimeEventConsumerPaths = [
 
 const debugEntryPointPaths = [
   'src/main/ipc-application-composition.ts',
+  ...readdirSync(resolve(projectRoot, 'src/main/composition'))
+    .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+    .map((name) => `src/main/composition/${name}`),
   'src/main/windows.ts',
   'src/preload/index.ts',
   'src/preload/renderer-api.d.ts'

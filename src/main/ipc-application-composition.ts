@@ -1,454 +1,89 @@
-import { registerNotebookEnvironmentComposition } from './composition/notebook-environment'
-import createDiagnosticsWorker from './session-diagnostics/worker-entry?nodeWorker'
-import { createSessionDiagnosticsDesktop } from './session-diagnostics/desktop'
-import { LiteratureSmartCollections } from './literature/smart-collections'
-import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
-import { getDefaultPermissionProfile } from '../shared/permission-profiles'
-import { PackageLiteratureReader } from './session-package/literature-reader'
-import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
-import { createLiteratureCommandOwner } from './literature/command-owner'
-import { createPdfStructureOwner } from './literature/pdf-structure/owner'
-import { createPdfStructureEngine } from './literature/pdf-structure/engine'
-import { PdfStructureSourceAuthority } from './literature/pdf-structure/source'
-import { PdfStructureReader } from './literature/pdf-structure/reader'
-import { createSpecialistApplicationOwner } from './specialist/application-commands'
-import { dirname, join } from 'node:path'
-import { mkdir, realpath } from 'node:fs/promises'
-import { initializeDataLocation } from './storage/initialize-location'
+import { composeAgentActivation } from './composition/agent-activation'
+import { composeAgentCompletion, composeAgentWorkflows } from './composition/agent-completion'
+import { composeAgentControls } from './composition/agent-controls'
+import { composeAgentRuntime } from './composition/agent-runtime'
+import { composeArtifactSurfaces } from './composition/artifact-surfaces'
+import { composeBackendLifecycle } from './composition/backend-lifecycle'
+import { composeBackgroundResults } from './composition/background-results'
+import { composeCommandDependencies } from './composition/command-dependencies'
+import { composeComputeAdmission, composeComputeServices } from './composition/compute'
+import { composeComputeRecovery } from './composition/compute-recovery'
+import { composeConnectorRecovery, composeConnectors } from './composition/connectors'
+import { composeDelegation } from './composition/delegation'
+import { composeDesktopUtilities } from './composition/desktop-utilities'
+import { composeDocumentReading } from './composition/document-reading'
+import { composeHandoff, composeStorageHandoff } from './composition/handoff'
+import { composeManagedFiles } from './composition/managed-files'
+import { composeNotebookBridge } from './composition/notebook-bridge'
+import { composeNotebookRuntime } from './composition/notebook-runtime'
+import { composeNotebookSurfaces } from './composition/notebook-surfaces'
+import { composeNotifications } from './composition/notifications'
+import { composeProjectLifecycle, composeProjectRecovery } from './composition/project-lifecycle'
+import { composeResearchCatalog } from './composition/research-catalog'
+import { composeSessionAuthority } from './composition/session-authority'
+import { composeSessionFoundation } from './composition/session-foundation'
+import {
+  composeSessionPackageSurfaces,
+  composeSessionPackages
+} from './composition/session-packages'
+import { composeSessionProjection } from './composition/session-projection'
+import { composeSessionSurfaces } from './composition/session-surfaces'
+import { composeSettingsBootstrap } from './composition/settings-bootstrap'
+import { composeSettingsEffects } from './composition/settings-effects'
+import { composeSideChat } from './composition/side-chat'
+import {
+  composeSessionSpecialists,
+  composeSpecialistCatalog,
+  composeSpecialistPackages
+} from './composition/specialists'
+import { composeStorageStartup } from './composition/storage-startup'
+import { composeUploadStorage } from './composition/upload-storage'
 
-import {
-  app,
-  BrowserWindow,
-  dialog,
-  Notification,
-  session,
-  shell,
-  webContents,
-  type WebContents
-} from 'electron'
+import { app } from 'electron'
 
-import { ipcMainHandle } from './ipc-handler-registry'
-import {
-  APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
-  type ApplicationModuleBuilder
-} from './application-runtime'
-import {
-  type ApplicationCommandComposition,
-  type ApplicationCommandCompositionDependencies
-} from './application-command-composition'
-import { registerApplicationCommandComposition } from './composition/application-commands'
-import { isPathInsideWorkspace } from './acp/workspace-path'
-import { BookmarkRepository } from './bookmarks/repository'
-import { BookmarkService } from './bookmarks/service'
-import { PdfAnnotationRepository } from './pdf-annotations/repository'
-import { PdfAnnotationService } from './pdf-annotations/service'
-import type { ApplicationInvocation } from './application-command-router'
+import { type ApplicationCommandComposition } from './application-command-composition'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
-import type { JobSummary } from '../shared/compute'
-import { TagRepository } from './tags/repository'
-import { TagResourceCatalog } from './tags/resource-catalog'
-import { TagService } from './tags/service'
-import { MemoryRepository } from './memory/repository'
-import { MemoryService } from './memory/service'
-import { BackgroundResultDeliveryRepository } from './background-result-delivery/repository'
-import { BackgroundResultDeliveryOwner } from './background-result-delivery/owner'
-import { ComputeJobResultDeliveryAdapter } from './background-result-delivery/compute-adapter'
-import { NotebookRunResultDeliveryAdapter } from './background-result-delivery/notebook-adapter'
-import { registerBackgroundResultDeliveryIpcHandlers } from './background-result-delivery/ipc'
-import {
-  resolveBackgroundResultSources,
-  type ResolvedBackgroundResultSource
-} from './background-result-delivery/source-resolver'
-import {
-  buildAgentResultContinuationPrompt,
-  hasSavedAgentResultContinuation
-} from './background-result-delivery/continuation'
-import type {
-  BackgroundResultDelivery,
-  ProjectBackgroundActivityChangedEvent
-} from '../shared/background-result-delivery'
-import {
-  LIFECYCLE_CHANNELS,
-  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
-  MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,
-  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID,
-  MAIN_RUNTIME_TRANSCRIPT_LIFECYCLE_CLIENT_ID
-} from '../shared/lifecycle-events'
-import { parseLiteratureAttachmentVersionReference } from '../shared/literature'
+import { type ApplicationModuleBuilder } from './application-runtime'
+import { registerApplicationCommandComposition } from './composition/application-commands'
 
 import { createAcpRuntime } from './acp/runtime-composition'
-import { SideChatRelayOwner } from './acp/side-chat-relay-owner'
-import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
-import { createAcpHandlerWorkflows } from './acp/handler-workflows'
-import { createAcpTaskAgentPort } from './acp/task-agent-port'
-import {
-  resolveValidatedSessionAgentTarget,
-  shouldPersistSessionAgentConfiguration,
-  toSessionAgentConfiguration,
-  type SessionAgentTargetResolver
-} from './acp/session-agent-target'
-import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
-import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
-import { ImageInputCompatibilityOwner } from './acp/image-input-compatibility-owner'
-import { VisionEvidenceRepository } from './acp/vision-evidence-repository'
-import { ArtifactTurnOwner } from './acp/artifact-turn-owner'
 import { ArchiveCoordinator } from './archive/coordinator'
-import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
-import { withReproducibilityNotebookLifecycle } from './artifacts/reproducibility-notebook-lifecycle'
-import { ArtifactReproducibilityAttemptOwner } from './artifacts/artifact-reproducibility-lifecycle'
-import {
-  appendArtifactReproducibilityReceipt,
-  retainArtifactReproducibilityOutput,
-  pruneArtifactReproducibilityOutputs,
-  getArtifactReproducibilityCheckLog,
-  listArtifactReproducibilityReceipts,
-  recordFailedArtifactReproducibilityAttempt,
-  type ArtifactReproducibilityCheckLogDraft,
-  type ArtifactReproducibilityFailedAttemptDraft,
-  type ArtifactReproducibilityReceiptDraft
-} from './artifacts/artifact-reproducibility-receipts'
-import {
-  createArtifactHandlers,
-  createDefaultArtifactRepository,
-  type ArtifactHandlers
-} from './artifacts/ipc'
-import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
-import { readArtifactReproducibilityExecutionEvidence } from './artifacts/provenance-reproducibility-execution-evidence'
-import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
-import { ArtifactRunRegistry } from './artifacts/run-registry'
-import { broadcastJobUpdated, createComputeIpcModule, toJobSummary } from './compute/ipc'
-import { createComputeArtifactResolver } from './compute/compute-service'
-import { bindComputeApprovalSessionLifecycle } from './compute/approval-session-lifecycle'
-import type { ComputeJobOwnerLiveness } from './compute/job-deletion-owner'
-import { hasImmutableExecutionFileEvidenceReference } from '../shared/execution-file-evidence'
-import { AgentComputeService } from './compute/agent-compute-service'
-import { createSessionCatalogHydration } from './compute/session-catalog-hydration'
 import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
-import { createComputeJobRuntime } from './compute/job-runtime'
-import { LiteratureFullTextIndex } from './literature/full-text-index'
-import { LiteratureCatalog } from './literature/catalog'
-import { LiteratureAttachmentAuthority } from './literature/attachment-authority'
-import { LiteraturePdfImporter } from './literature/pdf-importer'
-import { LiteratureCitationFormatter } from './literature/citation-formatter'
-import { LiteratureCitationDocument } from './literature/citation-document'
-import { LiteratureCitationStyleLibrary } from './literature/citation-style-library'
-import { LiteratureReferenceResolver } from './literature/reference-resolver'
-import { LiteratureMetadataEnricher } from './literature/metadata-enricher'
-import { LiteratureFullTextFinder } from './literature/full-text-finder'
-import { LiteratureBatchJobs } from './literature/batch-jobs'
-import { AgentPdfAcquisition } from './literature/agent-pdf-acquisition'
-import { downloadFullText } from './literature/full-text-download'
-import { parseSystemProxyRules } from './settings/system-proxy'
-import { SessionPdfSourceResolver } from './literature/session-pdf-source-resolver'
-import { waitForInitialConnectorRefresh } from './connector-reload'
-import { createConnectorApplicationModule } from './connectors/application'
-import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp'
-import { createMoleculePreviewHandler } from './connectors/molecule'
-import { ALL_CONNECTOR_IDS } from './connectors/registry'
-import { connectorSkillSourceDir } from './connectors/provision'
-import { ImmutableInputAuthority } from './immutable-input-authority'
-import { createCliCommandOwner } from './cli-install/ipc'
 
-import { createGithubCommandOwner } from './github-ipc'
-import {
-  BackendShutdownOutcomeError,
-  BackendShutdownCoordinator,
-  QUIT_SHUTDOWN_BUDGET_MS,
-  UPDATE_SHUTDOWN_BUDGET_MS,
-  type ShutdownStepOutcome
-} from './lifecycle-shutdown'
-import {
-  createWebSessionPersistenceFlush,
-  rendererSessionPersistenceFlushBlocksShutdown,
-  type RendererSessionPersistenceFlushPolicy,
-  type RendererSessionPersistenceSurface,
-  type RendererSessionPersistenceTarget
-} from './session-persistence/renderer-flush'
-import { createLogsCommandOwner } from './logs-ipc'
-import { TaskNotificationService } from './notifications/task-notifications'
-import { createNotificationInboxController } from './notifications/notification-inbox-controller'
-import { createOfficePreviewElectronSurfaces } from './ipc-surfaces/office-preview'
-import { createSessionPersistenceElectronSurface } from './ipc-surfaces/session-persistence'
-import { createArtifactElectronSurface } from './ipc-surfaces/artifacts'
-import { createSettingsElectronSurface } from './ipc-surfaces/settings'
-import { createDesktopUtilitiesElectronSurface } from './ipc-surfaces/desktop-utilities'
-import { createConnectorApprovalElectronSurface } from './ipc-surfaces/connector-approvals'
-import { createNotificationElectronSurface } from './ipc-surfaces/notifications'
-import { NotificationInboxDbRepository } from './notifications/notification-inbox-repository'
-import { bindNotificationInboxDeletionRuntime } from './notifications/notification-inbox-runtime'
-import {
-  buildSkillImportApprovalBroadcast,
-  buildConnectorApprovalBroadcast,
-  buildConnectorCredentialRequestBroadcast,
-  buildTaskNotificationShow
-} from './notifications/electron-wiring'
-import { createLogger, diagnosticErrorFields, errorLogFields, getLogFilePath } from './logger'
-import { startDiagnosticOperation, type DiagnosticOperation } from './diagnostics/operation'
-import {
-  createNotebookApplicationModule,
-  createNotebookLocalRpcModule
-} from './notebook/application'
-import type { NotebookRuntimeService } from './notebook/runtime-service'
-import { PermissionApprovalPresence } from './permission-approval-presence'
-import { NotebookNetworkSandboxOwner } from './notebook/network-sandbox-owner'
-import { resolveNotebookTrustBundle } from './notebook/trust-bundle'
-import {
-  createManagedPreviewOwnerRegistry,
-  installManagedPreviewElectronAdapter
-} from './managed-preview-ipc'
-import { ManagedPreviewResources } from './managed-preview-resources'
-import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
-import type { ManagedPreviewSource } from '../shared/preview-resources'
-import { resolveEffectiveSpecialistSkills } from '../shared/specialist'
-import { registerNotebookIpcHandlers } from './notebook/ipc'
-import { registerRuntimeIpcHandlers } from './notebook/runtime-ipc'
-import { NotebookRunRepository, getRuntimeRoot } from './notebook/repository'
-import { NotebookDependencyAnalyzer } from './notebook/dependency-analysis'
-import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
-import { createNotebookArtifactSourceScopeProvider } from './notebook/artifact-source-scope'
-import {
-  reconcileComputeJobFileEvidence,
-  recoverPublishedComputeJobFileEvidence,
-  settleComputeJobFileEvidence
-} from './notebook/working-file-observer'
-import { NotebookInputRegistry } from './notebook/input-registry'
-import { createProductionMicromambaRunner } from './notebook/windows-micromamba-runner'
-import { createRuntimeWorkflows } from './notebook/runtime-workflows'
-import { runtimeRoot } from './notebook/runtime-paths'
-import { HostArtifactsService } from './notebook/host-artifacts-service'
-import { HostLineageService } from './notebook/host-lineage-service'
-import { HostFramesService } from './notebook/host-frames-service'
-import { HostSessionsService } from './notebook/host-sessions-service'
-import { HostModelService } from './notebook/host-model-service'
-import { HostViewImageService } from './notebook/host-view-image-service'
-import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
-import { PENDING_UPLOAD_SESSION_ID, parseUploadVersionReference } from '../shared/uploads'
-import { DEFAULT_ARTIFACT_PROJECT_ID } from '../shared/artifacts'
-import type {
-  ArtifactReproducibilityCheckRequest,
-  GetArtifactReproducibilityCheckLogRequest,
-  ListArtifactReproducibilityReceiptsRequest
-} from '../shared/artifact-reproducibility'
-import { MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID } from '../shared/lifecycle-events'
-import {
-  createDefaultPreviewStateRepository,
-  createDefaultProjectRepository,
-  createProjectHandlers
-} from './projects/ipc'
-import { type ReviewerCommandOwner } from './reviewer/ipc'
-import { ReviewerProjectRuntimeOwner } from './reviewer/project-runtime-owner'
-import {
-  registerReviewerComposition,
-  type ReviewerRuntimeShutdownOwner
-} from './composition/reviewer'
-import {
-  canReconcileSessionAbsences,
-  createDefaultReviewRepository,
-  createDefaultSessionRepository,
-  createSessionPersistenceHandlersWithAttributionAuthority,
-  loadSessionMetadataAfterProjectRecovery,
-  recoverProjectDeletionsForSessionRead,
-  withSessionDeletionCleanup
-} from './session-persistence/ipc'
-import {
-  createConversationExportService,
-  registerConversationExportIpcHandler
-} from './session-persistence/conversation-export'
-import { SessionProjectionDiagnostics } from './session-persistence/projection-diagnostics'
-import { createProjectFilesHandlers } from './project-files/ipc'
-import { createManagedFileIndexRepository } from './project-files/repository'
-import { createManagedFileVersionHandlers } from './managed-file-versions/ipc'
-import { ManagedFileVersionService } from './managed-file-versions/service'
-import {
-  ProjectDeletionCoordinator,
-  ProjectDeletionRecoveryLoop,
-  recoverDeletionWork
-} from './projects/deletion-coordinator'
-import { ProjectRuntimeQuiescenceOwner } from './projects/project-runtime-quiescence-owner'
-import { getProjectDbClient } from './projects/prisma-client'
-import { seedDefaultPermissionGrants } from './permission-grants/defaults'
-import { createPermissionGrantRegistry } from './permission-grants/registry'
-import { isPermissionGrantScopeLive } from './permission-grants/scope-liveness'
-import { createPermissionGrantProjectionController } from './permission-grants/projection-controller'
-import {
-  reconcilePendingCustomServerDeletions,
-  reconcilePermissionGrantOwners
-} from './permission-grants/reconciliation'
-import {
-  SessionPersistenceCoordinator,
-  type ComputeJobDeletionParticipant,
-  type SessionDeletion
-} from './session-persistence/coordinator'
-import { createSessionRuntimeLookup } from './session-persistence/runtime-lookup'
-import { withSessionCacheDeletion } from './compute/session-cache-owner'
-import { createMainPromptSideChatRelay } from './side-chat/main-prompt-relay'
-import { registerSideChatIpcHandlers } from './side-chat/ipc'
-import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
-import {
-  coordinateSessionPersistenceWithProjectDeletions,
-  type SessionPersistenceBackend
-} from './session-persistence/ipc'
-import { MainMessageAttributionAuthority } from './session-persistence/message-attribution-authority'
-import {
-  SessionAuxiliaryTurnUsageRecorder,
-  type SessionAuxiliaryTurnUsageRecord
-} from './session-persistence/auxiliary-turn-usage'
-import { SessionPdfContextOwner } from './session-persistence/pdf-context-owner'
-import { linkPdfContextWithCapability } from './session-persistence/pdf-context-link-workflow'
-import { LiteratureDocumentReader } from './literature/document-reader'
-import { SessionDeletionOwner } from './session-deletion/owner'
-import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from './session-details/owner'
-import { selectSessionDetailsStartupCandidates } from './session-details/startup-catalog'
-import { tryDecryptKey } from './settings/crypto'
-import { SETTINGS_INSTALL_LOG_CHANNEL } from './settings/ipc'
-import { createCoreElectronSurfaces } from './ipc-surfaces/core'
-import { createElectronSurfaceAdapter } from './ipc-surfaces/adapter'
-import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository'
-import { LocalFsService } from './local-fs/service'
-import { SettingsService } from './settings/service'
-import { SettingsInstallCoordinator } from './settings/settings-install-coordinator'
-import { SettingsRepository } from './settings/repository'
-import { WslSetupOwner } from './wsl/wsl-setup-owner'
-import { WslSetupSessionOwner } from './wsl/wsl-setup-session-owner'
-import { openWslSetupPowerShellTerminal } from './wsl/wsl-setup-terminal'
-import { FileWslSetupOperationJournal } from './wsl/wsl-setup-operation-journal'
-import { initializeWsl2BashPreview, wsl2BashPreviewStatus } from './wsl/wsl2-preview-gate'
-import { runPackagedWsl2RestartCertification } from './wsl/wsl2-packaged-restart-certification'
-import { certifyNativeShell } from './notebook/native-shell-certification'
-import { resolveAvailableShellRuntimeBinding } from './notebook/configured-shell-runtime'
-import type { WslSetupStatus } from '../shared/wsl-setup'
-import { probeWindowsVolume } from './wsl/windows-volume-probe'
-import { SettingsSnapshotCommitOwner } from './settings/settings-snapshot-commit-owner'
-import type { SettingsDocumentStore } from './settings/document-store'
-import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
-import type { NotebookRuntimeSettings } from './settings/capabilities'
-import type { WindowSettingsCapabilities } from './settings/service-capabilities'
-import { createProductionDelegatedWorkComposition } from './delegation/production-composition'
-import { createProductionDelegatedFrameworkRuntime } from './delegation/production-framework-runtime'
-import { finalizeDelegatedArtifactPublication } from './delegation/delegated-artifact-publication'
-import {
-  DelegateMessageParkedError,
-  DelegateMessagePreAcceptanceError
-} from './delegation/execution-port'
-import { createDelegationSettlementContinuationDispatch } from './delegation/settlement-continuation-dispatch'
-import { createSettingsWorkflows } from './settings/workflows'
-import { SpecialistService } from './specialist/service'
-import { SpecialistRepository } from './specialist/repository'
-import { BuiltinSpecialistRegistry } from './specialist/builtin-registry'
-import { composeBuiltinSkillCatalog } from './specialist/package/builtin-skill-catalog'
-import { SpecialistPackageService } from './specialist/package/service'
-import { OFFICIAL_MARKETPLACE_SOURCE } from './specialist/marketplace/official-source'
-import { MarketplaceRepository } from './specialist/marketplace/repository'
-import { MarketplaceService } from './specialist/marketplace/service'
-import { MarketplaceOperationCoordinator } from './specialist/marketplace/operation-coordinator'
-import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
-import { netFetchStandard, netFetchWithManualRedirect } from './skills/net-fetch'
-import { AgentsService } from './agents/agents-service'
-import {
-  CompletionGateCoordinator,
-  CompletionGateRuntimeRegistry,
-  createCompletionGatedControlToolInterceptor,
-  createCompletionGateSwitchNotifier
-} from './agents/completion-gate'
-import { createProductionAppHandoffRuntime } from './agents/app-handoff-runtime'
-import {
-  AcpSpecialistApprovalGateway,
-  createAcpBackedSpecialistBridge
-} from './agents/specialist-approval-gateway'
-import {
-  CompletionHandoffLifecycle,
-  FileCompletionHandoffRepository
-} from './agents/completion-handoff-lifecycle'
-import { registerCompletionHandoffIpcHandlers } from './agents/completion-handoff-ipc'
-import { createPersistedClaudeReplayPreparer } from './session-persistence/claude-replay'
-import { registerClaudeCodeCompletionGateRuntime } from './agents/claude-code-handoff'
-import { installCompletionGateDiagnostics } from './agents/completion-gate-diagnostics'
-import { PendingSessionSpecialistBindings } from './agents/pending-session-specialist-bindings'
-import { createCodexCompletionGateRuntime } from './acp/codex-completion-handoff'
-import { createOpenCodeImmediateHandoffRuntime } from './acp/opencode-immediate-handoff'
-import { createSpecialistElectronSurface } from './ipc-surfaces/specialist'
-import { SessionBindingService } from './specialist/session-binding'
-import {
-  SessionSpecialistReconfiguration,
-  type PersistedSessionSpecialistBinding
-} from './specialist/session-reconfiguration'
-import { SPECIALIST_IPC } from '../shared/specialist'
+import type { SessionSummary } from '../shared/session-persistence'
 import { type AppIconPreview, type AppIconVariant } from '../shared/settings'
-import type { AcpSessionAgentTarget } from '../shared/acp'
-import type {
-  LoadAllSessionsResult,
-  PersistedChatSession,
-  SessionSummary
-} from '../shared/session-persistence'
-import type {
-  SensitiveContentFailure,
-  SensitiveContentEvidence,
-  SensitiveContentSource
-} from '../shared/session-diagnostics'
-import type { PackageSensitiveContentSource } from './session-package/sensitive-content'
-import { registerStorageIpcHandlers } from './storage/ipc'
-import { createLocalModelOwner } from './local-models/owner'
-import { registerLocalModelIpcHandlers } from './local-models/ipc'
-import { createStorageCommandOwner } from './storage/command-owner'
-import {
-  initializeDataRootWriteAvailability,
-  isMigrationInProgress,
-  isMigrationPending,
-  runDataRootStartupRecovery,
-  withDataRootWrite
-} from './storage/migration-state'
-import { isDataRootMissing } from './storage/path-presence'
-import { SessionPackageService } from './session-package/service'
-import createInspectionWorker from './session-package/inspection-worker-entry?nodeWorker'
-import { createPackageInspector } from './session-package/inspection-worker'
-import { createSessionPackageDesktop } from './session-package/desktop-composition'
-import { installSessionPackageQuitGuard } from './session-package/quit-guard'
-import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
-import { createDataRootSourceCleanup, DataRootCleanupJournal } from './storage/data-root-cleanup'
-import {
-  markManagedProjectWorkspacesRetained,
-  markManagedWorkspaceRetained,
-  reconcileProvisionalManagedWorkspaces,
-  restoreManagedProjectWorkspacesActive,
-  restoreManagedWorkspaceActive
-} from './storage/managed-workspace-ownership'
-import { removeMicromambaCacheForRoot } from './notebook/micromamba-cache'
-import { removeNotebookWorkloadCache } from './notebook/notebook-workload-cache-paths'
-import { createDelegatedActivityProjection, detectActiveSessions } from './storage/detect-active'
-import {
-  computeDefaultDataRoot,
-  initDataRoot,
-  resolveConfigRoot,
-  resolveDataRoot,
-  samePath
-} from './storage-root'
-import { createUpdateCommandOwner, registerUpdateIpcHandlers } from './update/ipc'
-import { createUpdateStrategy } from './update/create-strategy'
-import {
-  createActiveResearchSafeInstallGate,
-  createDataRootResearchSafeInstallGate,
-  createDurableInstallGate,
-  type InstallReadiness
-} from './update/strategy'
-import type { UpdateBlocker } from '../shared/update'
-import { startUpdateScheduler } from './update/scheduler'
-import { createDefaultUploadRepository } from './uploads/ipc'
-import { createUploadElectronSurface } from './ipc-surfaces/uploads'
-import { createUploadCommandOwner } from './uploads/command-owner'
-import { ContentRepository } from './storage/content-repository'
-import { broadcastToRenderers, installRendererBroadcastEventHub } from './renderer-broadcast'
+import { registerReviewerComposition } from './composition/reviewer'
+import { type DiagnosticOperation } from './diagnostics/operation'
+import { createElectronSurfaceAdapter } from './ipc-surfaces/adapter'
+import { createConnectorApprovalElectronSurface } from './ipc-surfaces/connector-approvals'
+import { createCoreElectronSurfaces } from './ipc-surfaces/core'
+import { type ShutdownStepOutcome } from './lifecycle-shutdown'
+import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
+import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
+import { TaskNotificationService } from './notifications/task-notifications'
+import { PermissionApprovalPresence } from './permission-approval-presence'
+import { installRendererBroadcastEventHub } from './renderer-broadcast'
 import {
   type ElectronRuntimeAdapterInterfaces,
   type NamedElectronSurfaceAdapter
 } from './runtime-electron-wiring'
-import { HostSkillsService, type HostSkillsCatalog } from './skills/host-skills-service'
-import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
+import { type SessionDeletion } from './session-persistence/coordinator'
+import {
+  createWebSessionPersistenceFlush,
+  type RendererSessionPersistenceFlushPolicy,
+  type RendererSessionPersistenceSurface
+} from './session-persistence/renderer-flush'
+import type { SettingsDocumentStore } from './settings/document-store'
+import type { WindowSettingsCapabilities } from './settings/service-capabilities'
+import { detectActiveSessions } from './storage/detect-active'
+import {
+  isMigrationInProgress,
+  isMigrationPending,
+  withDataRootWrite
+} from './storage/migration-state'
 import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
-import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import type { TrayNavigationSession } from './tray-navigation'
-
-const permissionGrantsLog = createLogger('permission-grants')
 
 export type IpcRegistrationOptions = {
   mainEntryPath: string
@@ -546,4055 +181,446 @@ export const createApplicationModules = async (
   )
   const permissionApprovalPresence = new PermissionApprovalPresence()
   const webSessionPersistenceFlush = createWebSessionPersistenceFlush(applicationEvents)
-  // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
-  const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveConfigRoot())
-  const specialistPackageRecovery = {
-    current: undefined as (<T>(operation: () => Promise<T>) => Promise<T>) | undefined
-  }
-  const settingsRepository = new SettingsRepository(
-    settingsStore ?? resolveConfigRoot(),
-    (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
-  )
-  await initializeDataLocation(settingsRepository)
-  initializeWsl2BashPreview({
-    platform: process.platform,
-    arch: process.arch,
-    packaged: app.isPackaged,
-    resourcesPath: process.resourcesPath
-  })
-  const settingsInstallCoordinator = new SettingsInstallCoordinator()
-  const wslSetupSessions = new WslSetupSessionOwner(resolveConfigRoot())
-  const wslRuntimeReconciliation: { current?: (status: WslSetupStatus) => void } = {}
-  const wslSetup = new WslSetupOwner({
-    // Managed workspaces, handoff data, and caches live below this local NTFS mount root. The
-    // execution adapter will still validate each invocation's concrete authorized paths.
-    workspacePath: resolveDataRoot,
-    volumeProbe: probeWindowsVolume,
-    readSelection: async () => (await settingsRepository.getSettings()).wslSelection,
-    readActivation: async () => {
-      const settings = await settingsRepository.getSettings()
-      return {
-        runtime: settings.localShellRuntime,
-        selection: settings.activatedWslSelection
-      }
-    },
-    writeSelection: (selection) => settingsRepository.setWslSelection(selection),
-    installCoordinator: settingsInstallCoordinator,
-    operationJournal: new FileWslSetupOperationJournal(resolveConfigRoot()),
-    previewStatus: wsl2BashPreviewStatus,
-    onStatusChanged: (status) => {
-      applicationEvents.publish('settings:wsl-setup-changed', status)
-      wslRuntimeReconciliation.current?.(status)
-    }
-  })
-  const getAvailableShellRuntimeBinding = async (): Promise<
-    Awaited<ReturnType<typeof resolveAvailableShellRuntimeBinding>>
-  > =>
-    resolveAvailableShellRuntimeBinding(
-      await settingsRepository.getSettings(),
-      async (selection) => {
-        if (!wsl2BashPreviewStatus().available) return false
-        const snapshot = await wslSetup.probe(selection)
-        return (
-          snapshot.state === 'ready' &&
-          snapshot.selection?.distro === selection.distro &&
-          snapshot.selection?.user === selection.user
-        )
-      }
-    )
-  const networkProxyRuntime = new NetworkProxyRuntime({
-    setProxy: (config) => session.defaultSession.setProxy(config)
-  })
-  const settingsServiceRef: { current?: SettingsService } = {}
-  const grantedRootsRepositoryRef: { current?: GrantedLocalRootsRepository } = {}
-  const notebookPolicyLifecycle: {
-    current?: Pick<NotebookRuntimeService, 'shutdownAll'>
-  } = {}
-  const notebookPolicyLog = createLogger('notebook:policy')
-  const shutdownNotebooksBeforePolicyChange = async (
-    trigger: 'ca-bundle' | 'granted-roots'
-  ): Promise<{ reaped: boolean }> => {
-    const operation = startDiagnosticOperation(notebookPolicyLog, {
-      operation: 'notebook-policy-shutdown',
-      fields: { trigger }
-    })
-    if (!notebookPolicyLifecycle.current) {
-      const error = new Error('Notebook policy lifecycle is not ready.')
-      operation.fail(error)
-      throw error
-    }
-    try {
-      const result = await notebookPolicyLifecycle.current.shutdownAll()
-      operation.complete({ reaped: result.reaped })
-      return result
-    } catch (error) {
-      operation.fail(error)
-      throw error
-    }
-  }
-  const notebookNetworkSandbox = await modules.add(undefined, () => {
-    const capability = new NotebookNetworkSandboxOwner({
-      packaged: app.isPackaged,
-      allowRuntimeAccessPrompt: !headless,
-      resourceRoot: app.isPackaged
-        ? join(process.resourcesPath, 'notebook-network-sandbox')
-        : join(app.getAppPath(), 'packages', 'notebook-network-sandbox', 'vendor'),
-      // R rejects a TEMP path containing spaces. Electron's product-named userData directory
-      // includes them in both production and development; keep command temp under the fixed config root.
-      temporaryRoot: join(resolveConfigRoot(), 'notebook-command-temp'),
-      getSettings: async () => {
-        const service = settingsServiceRef.current
-        if (!service) throw new Error('Settings are not ready.')
-        return service.getNotebookNetwork()
-      },
-      getCaBundlePath: async () => {
-        const service = settingsServiceRef.current
-        if (!service) throw new Error('Settings are not ready.')
-        return (await service.getPackageMirror()).caBundle
-      },
-      getGrantedLocalRoots: async () => grantedRootsRepositoryRef.current?.list() ?? [],
-      persistAlwaysAllow: async (hostname) => {
-        const service = settingsServiceRef.current
-        if (!service) throw new Error('Settings are not ready.')
-        return service.allowNotebookNetworkDomain(hostname)
-      },
-      requestDecision: async ({
-        sessionId,
-        hostname,
-        port,
-        runtime,
-        reason,
-        allowOnce,
-        signal
-      }) => {
-        if (headless && !permissionApprovalPresence.isAvailable()) return 'unavailable'
-        const coordinator = runtimeRef.current
-        if (!coordinator || signal.aborted) return 'deny'
-        const selected = await coordinator
-          .requestAppPermission({
-            sessionId,
-            title: `Connect to ${hostname}?`,
-            rawInput: {
-              notebookNetworkApproval: {
-                hostname,
-                ...(port === undefined ? {} : { port }),
-                ...(runtime === undefined ? {} : { runtime }),
-                ...(reason === undefined ? {} : { reason })
-              }
-            },
-            options: [
-              ...(allowOnce
-                ? [
-                    {
-                      optionId: 'allow-once',
-                      name: 'Allow once',
-                      kind: 'allow_once' as const,
-                      scope: 'once' as const
-                    }
-                  ]
-                : []),
-              {
-                optionId: 'always-allow',
-                name: 'Global',
-                kind: 'allow_always',
-                scope: 'global'
-              },
-              { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
-            ],
-            signal
-          })
-          .catch(() => undefined)
-        return selected === 'always-allow'
-          ? 'alwaysAllow'
-          : selected === 'allow-once'
-            ? 'allowOnce'
-            : 'deny'
-      },
-      getParentProxy: async () => {
-        const environment = networkProxyRuntime.getChildProcessProxyEnvironment()
-        if (!environment) return undefined
-        const parentProxy = {
-          http: environment.HTTP_PROXY ?? environment.http_proxy ?? environment.ALL_PROXY,
-          https: environment.HTTPS_PROXY ?? environment.https_proxy ?? environment.ALL_PROXY,
-          noProxy: environment.NO_PROXY ?? environment.no_proxy
-        }
-        return parentProxy.http || parentProxy.https ? parentProxy : undefined
-      }
-    })
-    return {
-      capability,
-      rollback: () => capability.dispose(),
-      dispose: () => capability.dispose()
-    }
-  })
-  const settingsService = await modules.add(undefined, () => {
-    const capability = new SettingsService({
-      repository: settingsRepository,
-      onProviderHealthChanged: async () => {
-        await settingsSnapshotCommits.projectAfter(Promise.resolve())
-      },
-      installCoordinator: settingsInstallCoordinator,
-      skillRuntimeMcpEntryPath: mainEntryPath,
-      openAlexFetch: netFetchStandard,
-      applyNetworkProxy: async (settings) => {
-        await networkProxyRuntime.apply(settings)
-        await notebookNetworkSandbox.updateParentProxy()
-      },
-      readMarketplaceSpecialists: async (): Promise<
-        import('../shared/specialist').SpecialistListItem[]
-      > => {
-        const snapshot = await specialistService.listForSettingsSnapshot()
-        if (snapshot.integrity.status !== 'ok')
-          throw new Error('Specialist impact inspection is unavailable.')
-        return snapshot.items
-      },
-      withMarketplaceImpactLock: (operation) => specialistRepository.withReadLock(operation),
-      withUserSkillRecoveryBarrier: (operation) =>
-        specialistPackageRecovery.current?.(operation) ?? operation(),
-      applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
-      validatePackageMirror: async (settings) => {
-        await resolveNotebookTrustBundle(settings.caBundle)
-      },
-      applyPackageMirror: async () => {
-        await notebookNetworkSandbox.updateTrustBundle()
-      },
-      beforePackageMirrorCaBundleChange: async () => {
-        await shutdownNotebooksBeforePolicyChange('ca-bundle')
-      },
-      getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
-      installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
-      removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
-      wslSetup,
-      wslSetupSessions,
-      ensureDefaultWslSetupWorkspace: async () => {
-        const settings = await settingsRepository.getSettings()
-        if (!settings.dataRoot && settings.onboardingCompletedAt === undefined)
-          await mkdir(resolveDataRoot(), { recursive: true })
-      },
-      resolveCodexProxyEnvironment: () =>
-        Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
-    })
-    return {
-      name: 'settings-service',
-      capability,
-      rollback: () => capability.dispose(),
-      dispose: () => capability.dispose(),
-      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
-    }
-  })
-  settingsServiceRef.current = settingsService
-  const settingsSnapshotCommits = new SettingsSnapshotCommitOwner(
-    settingsService,
-    applicationEvents
-  )
-  const resolveSessionAgentTarget: SessionAgentTargetResolver = async (source) =>
-    resolveValidatedSessionAgentTarget(source, await settingsService.getSettingsView())
-  const resolveDefaultSessionAgentTarget = async (): Promise<AcpSessionAgentTarget> => {
-    const target = await settingsService.captureActiveExplicitAgentBackendTarget()
-    return {
-      frameworkId: target.frameworkId,
-      providerId: target.providerId,
-      ...(target.model.kind === 'required' ? { model: target.model.id } : {}),
-      reasoningEffort: target.reasoningEffort
-    }
-  }
-  const storedSettings = await settingsService.getStoredSettings()
-  const storageLog = createLogger('storage')
-  await networkProxyRuntime.apply(storedSettings.networkProxy)
-  await certifyNativeShell({
-    appPackaged: app.isPackaged,
+  const settingsBootstrap = await composeSettingsBootstrap({
+    applicationEvents,
+    permissionApprovalPresence,
+    getRuntimeRef: () => runtimeRef,
+    getSpecialistRepository: () => specialistCatalog.specialistRepository,
+    getSpecialistService: () => specialistCatalog.specialistService,
+    mainEntryPath,
+    settingsStore,
     headless,
-    storageRoot: resolveConfigRoot(),
-    environment: process.env,
-    processSandbox: notebookNetworkSandbox
+    modules
   })
-  await runPackagedWsl2RestartCertification({
-    appPackaged: app.isPackaged,
+  const storageStartup = await composeStorageStartup({
+    applicationEvents,
+    ...settingsBootstrap,
     headless,
-    platform: process.platform,
-    arch: process.arch,
-    previewAvailable: wsl2BashPreviewStatus().available,
-    storageRoot: resolveConfigRoot(),
-    environment: process.env,
-    processSandbox: notebookNetworkSandbox
+    composition
   })
-  // Prime the data-root cache from settings before any data repository is constructed below. A change
-  // to this value only takes effect after a restart, so reading it once here is sufficient.
-  initDataRoot(storedSettings.dataRoot, storedSettings.onboardingCompletedAt)
-  const configuredDataRootMissing =
-    (Boolean(storedSettings.dataRoot) || storedSettings.onboardingCompletedAt !== undefined) &&
-    (await isDataRootMissing(resolveDataRoot()))
-  initializeDataRootWriteAvailability(configuredDataRootMissing)
-  const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot())
-  const cleanupDataRootSources = createDataRootSourceCleanup((runtimeRoot) =>
-    notebookNetworkSandbox.revokeManagedRAccess(runtimeRoot)
-  )
-  await runDataRootStartupRecovery(
-    async () => {
-      const cleanup = await dataRootCleanupJournal.recover(
-        resolveDataRoot(),
-        cleanupDataRootSources,
-        (sourceRoot) => {
-          const runtimeRoot = join(sourceRoot, 'runtime')
-          const workloadRemoved = removeNotebookWorkloadCache(runtimeRoot)
-          const micromambaRemoved = removeMicromambaCacheForRoot(runtimeRoot)
-          return workloadRemoved && micromambaRemoved
-        }
-      )
-      if (cleanup.pending) {
-        storageLog.warn('old data root cleanup remains pending', {
-          cleanupFailureCount: cleanup.failureCount
-        })
-      }
-    },
-    {
-      reportFailure: (error) =>
-        storageLog.warn('old data root cleanup recovery failed', diagnosticErrorFields(error))
-    }
-  )
-  const notificationInbox = createNotificationInboxController({
-    headless,
-    repository: new NotificationInboxDbRepository(() => getProjectDbClient(resolveConfigRoot())),
-    onChanged: (event) => applicationEvents.publish('notifications:changed', event),
-    onError: (error) =>
-      createLogger('notifications').warn('message center operation failed', errorLogFields(error))
-  })
-  await notificationInbox.restore()
-  // Record only the location class. Absolute paths (including reversible code-point renderings) can
-  // expose usernames and folder names in a support bundle.
-  storageLog.info('data root resolved', {
-    location: samePath(resolveDataRoot(), computeDefaultDataRoot()) ? 'default' : 'custom'
-  })
-  composition.phase('data-root')
-
-  // Constructed once here (rather than left to each register*IpcHandlers' own default) so the
-  // one-time legacy-path normalization pass below can share the exact instances the IPC surface uses.
-  const pdfUploadImporter: { current?: PdfAnnotationService } = {}
-  const uploadRepository = createDefaultUploadRepository((projectId, sessionId, attachments) => {
-    for (const attachment of attachments) {
-      if (!attachment.versionId || !attachment.originalName.toLowerCase().endsWith('.pdf')) continue
-      // Enrichment starts after publication. Do not await it while the upload caller still owns
-      // the Session mutation barrier; the annotation service acquires that barrier itself.
-      void pdfUploadImporter.current
-        ?.importNative({
-          operationId: crypto.randomUUID(),
-          projectId,
-          sessionId,
-          sourceKind: 'upload-version',
-          sourceFileId: attachment.id,
-          versionId: attachment.versionId
-        })
-        .catch((error) =>
-          storageLog.warn('Native PDF annotation import failed', errorLogFields(error))
-        )
-    }
-  })
-  await runDataRootStartupRecovery(() => uploadRepository.recoverStagingUploads(), {
-    reportFailure: (error) => {
-      // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
-      // the next launch can retry any recoverable staging Version.
-      storageLog.error(
-        'staging upload recovery incomplete; will retry next launch',
-        diagnosticErrorFields(error)
-      )
-    }
-  })
-  const managedFileVersionService = new ManagedFileVersionService({
-    storageRoot: resolveDataRoot(),
-    getClient: () => getProjectDbClient(resolveConfigRoot())
-  })
+  const uploadStorage = await composeUploadStorage({ storageStartup })
   // Session reads and permission scope validation both need a late-bound view of ACP ownership:
   // startup runs before the runtime exists, while later reads must preserve live prompt state.
   const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
     current: undefined
   }
-  const backgroundResultDeliveryRepository = new BackgroundResultDeliveryRepository(() =>
-    getProjectDbClient(resolveConfigRoot())
-  )
-  let markNotebookResultAuthorityReady!: () => void
-  let markComputeResultAuthorityReady!: () => void
-  const notebookResultAuthorityReady = new Promise<void>((resolve) => {
-    markNotebookResultAuthorityReady = resolve
-  })
-  const computeResultAuthorityReady = new Promise<void>((resolve) => {
-    markComputeResultAuthorityReady = resolve
-  })
-  const resolveDeliverySources = (
-    deliveries: readonly BackgroundResultDelivery[]
-  ): Promise<ResolvedBackgroundResultSource[]> =>
-    resolveBackgroundResultSources(deliveries, {
-      loadNotebookRuns: async (group) => {
-        const state = await notebookCommands.state({
-          projectId: group.projectId,
-          sessionId: group.sessionId,
-          workspaceCwd: '',
-          runIds: group.sources.map(({ sourceId }) => sourceId)
-        })
-        return state.runs
-      },
-      loadComputeJobs: async (sources) =>
-        new Map(
-          (
-            await Promise.all(
-              sources.map(async ({ sourceId }) => {
-                const job = await jobRepository.get(sourceId)
-                if (!job) return undefined
-                const host = await hostRepository.get(job.provider_id).catch(() => null)
-                return [
-                  sourceId,
-                  await toJobSummary(job, host?.displayName ?? job.provider_id, resolveDataRoot())
-                ] as const
-              })
-            )
-          ).filter((entry): entry is readonly [string, JobSummary] => entry !== undefined)
-        )
-    })
-  const backgroundResultDelivery: BackgroundResultDeliveryOwner = await modules.add(
-    {
-      repository: backgroundResultDeliveryRepository,
-      resolveSources: resolveDeliverySources,
-      waitForAuthoritiesReady: () =>
-        Promise.all([notebookResultAuthorityReady, computeResultAuthorityReady]).then(
-          () => undefined
-        ),
-      loadSessionCatalog: async () => {
-        const catalog = await sessionRepository.loadAllWithDiagnostics({ mode: 'read-only' })
-        return {
-          complete: catalog.isComplete,
-          sessions: catalog.result.sessions.map(({ projectId, id }) => ({
-            projectId,
-            sessionId: id
-          }))
-        }
-      },
-      sendContinuation: (request: {
-        sessionId: string
-        text: string
-        deliveryIds: readonly string[]
-        continuationMessageId: string
-      }) => {
-        let settleAdmitted!: () => void
-        let rejectAdmission!: (error: unknown) => void
-        let admissionSettled = false
-        const admitted = new Promise<void>((resolve, reject) => {
-          settleAdmitted = () => {
-            if (admissionSettled) return
-            admissionSettled = true
-            resolve()
-          }
-          rejectAdmission = (error) => {
-            if (admissionSettled) return
-            admissionSettled = true
-            reject(error)
-          }
-        })
-        const result = (async () => {
-          try {
-            const runtime = runtimeRef.current
-            if (!runtime) throw new Error('Agent runtime is unavailable for result delivery.')
-            const projectId = await sessionPersistenceCoordinator.sessionProjectId(
-              request.sessionId
-            )
-            if (!projectId) throw new Error('Background result delivery Session is unavailable.')
-            let session = await sessionPersistenceCoordinator.loadSessionForContinuation(
-              projectId,
-              request.sessionId
-            )
-            const agentTarget = await resolveSessionAgentTarget(session)
-            if (
-              agentTarget &&
-              shouldPersistSessionAgentConfiguration(session.agentConfiguration, agentTarget)
-            ) {
-              session = await sessionPersistenceCoordinator.saveSession({
-                ...session,
-                agentConfiguration: toSessionAgentConfiguration(agentTarget)
-              })
-            }
-            if (!runtime.hasLiveSession(session.projectId, session.id) || agentTarget) {
-              await runtime.resumeSession({
-                sessionId: session.id,
-                cwd: session.cwd,
-                projectId: session.projectId,
-                ...(session.permissionProfile
-                  ? { permissionProfile: session.permissionProfile }
-                  : {}),
-                memoryEnabled: session.memoryEnabled !== false,
-                ...(session.agentFrameworkId
-                  ? { previousFrameworkId: session.agentFrameworkId }
-                  : {}),
-                ...(session.agentBackendId ? { previousBackendId: session.agentBackendId } : {}),
-                ...(session.specialistId ? { specialistId: session.specialistId } : {}),
-                ...(session.specialistBindingPending === true
-                  ? { specialistBindingPending: true }
-                  : {}),
-                ...(session.providerSessionId
-                  ? { providerSessionId: session.providerSessionId }
-                  : {}),
-                ...(session.providerContinuityToken
-                  ? { providerContinuityToken: session.providerContinuityToken }
-                  : {}),
-                ...(agentTarget ? { agentTarget } : {})
-              })
-            }
-            const response = await runtime.sendApplicationPrompt(
-              buildAgentResultContinuationPrompt(session, {
-                sessionId: request.sessionId,
-                text: request.text,
-                continuationMessageId: request.continuationMessageId
-              }),
-              {
-                kind: 'application',
-                feature: 'background-results',
-                purpose: 'agent-result-delivery',
-                deliveryKey: `agent-result-delivery:${request.continuationMessageId}`,
-                deliveryIds: [...request.deliveryIds]
-              },
-              undefined,
-              (prompt) => {
-                void prompt.then(settleAdmitted, rejectAdmission)
-                setImmediate(settleAdmitted)
-              }
-            )
-            settleAdmitted()
-            return {
-              stopReason: response.stopReason,
-              continuationMessageId: request.continuationMessageId
-            }
-          } catch (error) {
-            rejectAdmission(error)
-            throw error
-          }
-        })()
-        return { admitted, result }
-      },
-      isContinuationSaved: async (request: {
-        sessionId: string
-        continuationMessageId: string
-        deliveryIds: readonly string[]
-      }) => {
-        const projectId = await sessionPersistenceCoordinator.sessionProjectId(request.sessionId)
-        if (!projectId) return false
-        const saved = await sessionPersistenceCoordinator.loadSessionForContinuation(
-          projectId,
-          request.sessionId
-        )
-        const messages = [...(saved.conversationGraph?.messages ?? []), ...saved.messages]
-        return hasSavedAgentResultContinuation(messages, request)
-      },
-      canStartSessionTurn: (sessionId: string) => {
-        const runtime = runtimeRef.current
-        return runtime ? !runtime.getState().promptInFlightSessionIds.includes(sessionId) : false
-      },
-      onChanged: (event: ProjectBackgroundActivityChangedEvent) =>
-        applicationEvents.publish('background-result-delivery:changed', event)
-    },
-    (options) => {
-      const owner = new BackgroundResultDeliveryOwner(options)
-      return {
-        name: 'background-result-delivery',
-        capability: owner,
-        dispose: () => owner.dispose()
-      }
-    }
-  )
-  const computeJobResultDelivery = new ComputeJobResultDeliveryAdapter({
-    register: (source) => backgroundResultDelivery.register(source),
-    enqueue: (source) => backgroundResultDelivery.enqueue(source),
-    acknowledgeObserved: (source) => backgroundResultDelivery.acknowledgeObserved(source),
-    listWaiting: () => backgroundResultDeliveryRepository.listWaiting('compute-job'),
-    hasDeliveryPath: (sourceKind, sourceId) =>
-      backgroundResultDeliveryRepository.hasDeliveryPath(sourceKind, sourceId)
-  })
-  const notebookRunResultDelivery = new NotebookRunResultDeliveryAdapter({
-    listWaiting: () => backgroundResultDeliveryRepository.listWaiting('local-run'),
-    enqueue: (source) => backgroundResultDelivery.enqueue(source)
-  })
-  const userSkillCatalogObserverRef: { current: UserSkillCatalogObserver | undefined } = {
-    current: undefined
-  }
-  const requestSkillCatalogRefresh = (): void => {
-    const observer = userSkillCatalogObserverRef.current
-    if (observer) {
-      void observer.notifyCatalogChanged()
-      return
-    }
-    if (runtimeRef.current) {
-      void settingsService
-        .registeredHelperCatalog()
-        .refresh()
-        .then(() => {
-          broadcastToRenderers('skills:catalog-changed', undefined)
-          return runtimeRef.current?.requestSkillsReload()
-        })
-        .catch((error) => {
-          createLogger('skills').warn(
-            'Skill catalog reconciliation failed',
-            diagnosticErrorFields(error)
-          )
-        })
-    }
-  }
-  const sideChatOwnerRef: { current: SideChatRuntimeOwner | undefined } = {
-    current: undefined
-  }
-  const sessionRepository = createDefaultSessionRepository(
-    (projectId, sessionId) =>
-      (runtimeRef.current?.getActivePromptSessions() ?? []).some(
-        (session) => session.projectId === projectId && session.sessionId === sessionId
-      ),
-    (projectId, sessionId) => runtimeRef.current?.hasLiveSession(projectId, sessionId) ?? false
-  )
-  const auxiliaryUsageLog = createLogger('session-usage:auxiliary')
-  const auxiliaryUsageRecorder = new SessionAuxiliaryTurnUsageRecorder(() =>
-    getProjectDbClient(resolveConfigRoot())
-  )
-  const recordAuxiliaryUsage = async (record: SessionAuxiliaryTurnUsageRecord): Promise<void> => {
-    try {
-      await auxiliaryUsageRecorder.record(record)
-    } catch (error) {
-      auxiliaryUsageLog.warn('auxiliary turn Usage persistence failed', {
-        source: record.source,
-        ...diagnosticErrorFields(error)
-      })
-    }
-  }
-  const sensitiveContentFailures = new Map<
-    string,
-    { failure: SensitiveContentFailure; sources: SensitiveContentSource[] }
-  >()
-  const sensitiveContentKey = (projectId: string, sessionId: string): string =>
-    `${projectId}\0${sessionId}`
-  const rememberSensitiveContentFailure = (
-    request: { projectId: string; sessionId: string },
-    evidence: SensitiveContentEvidence[],
-    sources: PackageSensitiveContentSource[]
-  ): void => {
-    sensitiveContentFailures.set(sensitiveContentKey(request.projectId, request.sessionId), {
-      failure: {
-        occurredAt: new Date().toISOString(),
-        evidence: evidence.slice(0, 20)
-      },
-      sources: sources.slice(0, 20).map((source) => ({ ...source }))
-    })
-    while (sensitiveContentFailures.size > 128) {
-      const oldest = sensitiveContentFailures.keys().next().value
-      if (oldest === undefined) break
-      sensitiveContentFailures.delete(oldest)
-    }
-  }
-  const sessionDiagnosticsDesktop = await modules.add(undefined, () => {
-    const owner = createSessionDiagnosticsDesktop({
-      createWorker: createDiagnosticsWorker,
-      resolveSources: (identity) => {
-        const sensitiveContent = sensitiveContentFailures.get(
-          sensitiveContentKey(identity.projectId, identity.sessionId)
-        )
-        return {
-          dataRoot: resolveDataRoot(),
-          configRoot: resolveConfigRoot(),
-          logPath: getLogFilePath(),
-          appVersion: app.getVersion(),
-          sensitiveContent: sensitiveContent?.failure,
-          sensitiveContentSources: sensitiveContent?.sources
-        }
-      },
-      chooseDestination: async (defaultName) => {
-        const result = await dialog.showSaveDialog({ defaultPath: defaultName })
-        return result.canceled ? undefined : result.filePath
-      }
-    })
-    return { name: 'session-diagnostics', capability: owner, dispose: () => owner.close() }
-  })
-  const projectRepository = createDefaultProjectRepository()
-  const sessionPackageDesktopLifecycle = {
-    close: async (): Promise<void> => undefined,
-    isActive: () => false
-  }
-  let packageHandoffHeld = false
-  // Startup package recovery precedes catalog construction. After construction every live
-  // publication must update the same owner consulted by resume/save admission.
-  const packagePublicationOwner: {
-    current?: Pick<SessionPersistenceCoordinator, 'adoptPublishedSession'>
-  } = {}
-  const sessionPackageService = await modules.add(undefined, () => {
-    const service = new SessionPackageService({
-      getDefaultPermissionProfile: async () =>
-        getDefaultPermissionProfile(await settingsRepository.getSettings()),
-      onSessionPublished: async ({ projectId, sessionId }) => {
-        await packagePublicationOwner.current?.adoptPublishedSession(projectId, sessionId)
-      },
-      inspectPackage: createPackageInspector(createInspectionWorker),
-      configRoot: resolveConfigRoot(),
-      storageRoot: resolveDataRoot(),
-      getClient: () => getProjectDbClient(resolveConfigRoot()),
-      isSessionActive: (projectId, sessionId) =>
-        detectSessionExportBlockingSessions().some(
-          (item) => item.projectId === projectId && item.sessionId === sessionId
-        )
-    })
-    return {
-      name: 'session-package',
-      capability: service,
-      dispose: async () => {
-        await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])
-      }
-    }
-  })
-  // Finish or roll back private imports before any renderer or background owner hydrates catalogs.
-  let beforePackageHydration = true
-  await runDataRootStartupRecovery(() =>
-    sessionPackageService.recover({ collectDeletedPackages: beforePackageHydration })
-  )
-  // Reconnecting a missing data root can replay this callback after runtimes exist. Import
-  // recovery still runs behind its write gate, but package collection waits for the next launch.
-  beforePackageHydration = false
-  const previewStateRepository = createDefaultPreviewStateRepository()
-
-  // One-time conversion of any legacy absolute data-root paths on disk (pre-$DATA-sentinel installs)
-  // into the portable "$DATA/..." form, guarded so it only ever runs once. Never allowed to block
-  // startup on failure: an error is logged and the marker stays unset, so the pass simply retries on
-  // the next launch.
-  if (!storedSettings.pathsNormalizedAt) {
-    let normalizationOperation: DiagnosticOperation | undefined
-    await runDataRootStartupRecovery(
-      async () => {
-        normalizationOperation = startDiagnosticOperation(storageLog, {
-          operation: 'legacy-data-root-normalization',
-          fields: { mode: 'legacy-normalize' }
-        })
-        normalizationOperation.phase('rewrite-paths')
-        await normalizeLegacyDataPaths({
-          sessionRepository,
-          sessionUploads: uploadRepository,
-          previewStateRepository,
-          projectRepository,
-          dataRoot: resolveDataRoot()
-        })
-        normalizationOperation.phase('persist-marker')
-        await settingsService.markPathsNormalized()
-        normalizationOperation.complete()
-      },
-      {
-        reportFailure: (error) => normalizationOperation?.fail(error)
-      }
-    )
-  }
-
-  // Share one repository and registry so runtime artifact claims and renderer finalization meet.
-  const artifactRepository = createDefaultArtifactRepository()
-  const notebookRepository = new NotebookRunRepository(resolveDataRoot())
-  const notebookDependencyAnalyzer = new NotebookDependencyAnalyzer({
-    storageRoot: resolveDataRoot(),
-    repository: notebookRepository
-  })
-  const immutableInputAuthority = new ImmutableInputAuthority({
-    storageRoot: resolveDataRoot(),
-    managedFileVersions: managedFileVersionService
-  })
-  const artifactProvenanceRepository = new ArtifactProvenanceRepository({
-    storageRoot: resolveDataRoot(),
-    getClient: () => getProjectDbClient(resolveConfigRoot()),
-    inputAuthority: immutableInputAuthority,
-    managedFileVersions: managedFileVersionService,
-    compatibilityRepository: artifactRepository,
-    notebookRepository,
-    dependencyAnalyzer: notebookDependencyAnalyzer,
-    loadSession: (projectId, appSessionId) => sessionRepository.loadSession(projectId, appSessionId)
-  })
-  const contentRepository = new ContentRepository({
-    storageRoot: resolveDataRoot(),
-    getClient: () => getProjectDbClient(resolveConfigRoot())
-  })
-  const literatureAttachmentAuthority = new LiteratureAttachmentAuthority({
-    getClient: () => getProjectDbClient(resolveConfigRoot()),
-    content: contentRepository,
-    packages: new PackageLiteratureReader({
-      storageRoot: resolveDataRoot(),
-      getClient: () => getProjectDbClient(resolveConfigRoot()),
-      files: managedFileVersionService
-    })
-  })
-  const sessionPdfSourceResolver = new SessionPdfSourceResolver({
-    inputs: immutableInputAuthority,
-    literature: literatureAttachmentAuthority
-  })
-  const bookmarkRepository = new BookmarkRepository(() => getProjectDbClient(resolveConfigRoot()))
-  const provenanceMessageSnapshots = new ProvenanceMessageSnapshotRepository({
-    storageRoot: resolveDataRoot(),
-    getClient: () => getProjectDbClient(resolveConfigRoot())
-  })
-  const artifactRunRegistry = new ArtifactRunRegistry()
-  // The upload repository above is shared so staging recovery, Session upgrade, prompt finalization,
-  // and previews all observe one durable Version authority.
-  // Shared local-fs service backs both the "This computer" browser IPC and the managed-preview
-  // resolver below, so path validation stays identical across both entry points. Granted folder
-  // roots persist in the SQLite project DB behind the local-fs:granted-roots:* channels; the
-  // settings service is passed as the legacy store so a pre-existing settings.json
-  // grantedLocalRoots field is imported into the DB once on first use.
-  const grantedRootsRepository = new GrantedLocalRootsRepository(
-    () => getProjectDbClient(resolveConfigRoot()),
-    settingsService
-  )
-  grantedRootsRepositoryRef.current = grantedRootsRepository
-  const localFsService = new LocalFsService(grantedRootsRepository, () =>
-    shutdownNotebooksBeforePolicyChange('granted-roots')
-  )
-  // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
-  const resolveManagedFilePath = (
-    source: Extract<ManagedPreviewSource, 'literature' | 'local'>,
-    request: {
-      path: string
-      projectId?: string
-      sessionId?: string
-      fileId?: string
-      versionId?: string
-    }
-  ): Promise<string> => {
-    if (source === 'literature') {
-      const versionId = parseLiteratureAttachmentVersionReference(request.path)
-      if (!versionId) return Promise.reject(new Error('Invalid Literature attachment reference.'))
-      return literatureAttachmentAuthority.resolveVersion(versionId).then((version) => {
-        if (!version) throw new Error('Literature attachment Version is unavailable.')
-        return version.path
-      })
-    }
-    return localFsService.resolveFilePath(request)
-  }
-  // One registry owns short-lived capability URLs for both managed artifact repositories.
-  const previewResources = new ManagedPreviewResources({
-    resolvePath: resolveManagedFilePath,
-    openLiterature: (reference) => literatureAttachmentAuthority.openReference(reference),
-    openLatestManagedFile: (source, request) =>
-      managedFileVersionService.openLatest({ source, ...request }),
-    openManagedFileVersion: (source, request) =>
-      managedFileVersionService.openVersion(
-        { source, projectId: request.projectId, fileId: request.fileId },
-        request.versionId
-      ),
-    openNotebookInput: (request) => notebookInputRegistry.openPreviewKey(request.path)
-  })
-  const managedPreviewOwners = createManagedPreviewOwnerRegistry(previewResources)
-
-  // Permission scope validation starts before the ACP coordinator is constructed. Keep the late-bound
-  // reference here so a first-turn Session grant can recognize its live owner before the renderer's
-  // asynchronous session persistence finishes.
-  const artifactHandlersRef: { current: ArtifactHandlers | undefined } = { current: undefined }
-  const reviewerCommandOwnerRef: { current: ReviewerCommandOwner | undefined } = {
-    current: undefined
-  }
-  const reviewerProjectRuntime = new ReviewerProjectRuntimeOwner()
-  const messageAttributionAuthority = new MainMessageAttributionAuthority()
-  const notebookActivityRef: {
-    current: { getActiveNotebookSessions(): { projectId: string; sessionId: string }[] } | undefined
-  } = { current: undefined }
-
-  // Construct one storage/index/deletion graph for every related IPC surface. Sharing these instances
-  // is essential: separate coordinators would have independent queues and recovery gates.
-  const configRoot = resolveConfigRoot()
-  const permissionGrantRegistry = await createPermissionGrantRegistry({
-    getClient: () => getProjectDbClient(configRoot),
-    isScopeLive: (scope) =>
-      isPermissionGrantScopeLive(scope, {
-        projectExists: async (projectId) => (await projectRepository.get(projectId)) !== undefined,
-        persistedSessionExists: async (projectId, sessionId) =>
-          (await sessionRepository.loadSession(projectId, sessionId)) !== undefined,
-        liveSessionExists: (projectId, sessionId) =>
-          runtimeRef.current?.hasLiveSession(projectId, sessionId) ?? false
-      })
-  })
-  await seedDefaultPermissionGrants(permissionGrantRegistry, await getProjectDbClient(configRoot))
-  composition.phase('permission-grants')
-  const projectFilesRepository = createManagedFileIndexRepository(
-    getProjectDbClient,
-    configRoot,
-    resolveDataRoot(),
-    managedFileVersionService,
-    uploadRepository
-  )
-  const notebookInputRegistry = new NotebookInputRegistry({
-    storageRoot: resolveDataRoot(),
-    inputAuthority: immutableInputAuthority,
-    resolveArtifactVersionIdentity: async (projectId, versionId) => {
-      const [artifact] = await projectFilesRepository.readHostArtifactCatalog({
-        projectId,
-        versionId,
-        finalizedArtifactsOnly: true
-      })
-      return artifact?.source === 'artifact' ? { sourceFileId: artifact.sourceFileId } : undefined
-    }
-  })
-  const isComputeJobOwnerLive = async ({
-    projectId,
-    sessionId
-  }: {
-    projectId: string
-    sessionId: string
-  }): Promise<ComputeJobOwnerLiveness> => {
-    if (!(await projectRepository.get(projectId))) return false
-    const owner = await sessionRepository.loadSessionWithDiagnostics(projectId, sessionId)
-    if (owner.status === 'unreadable') return 'unknown'
-    return owner.status === 'found'
-  }
-  const computeJobDeletionRef: {
-    current?: Required<ComputeJobDeletionParticipant> & {
-      reconcileProjectOrphanJobs(
-        projectId: string,
-        isOwnerLive: typeof isComputeJobOwnerLive
-      ): Promise<void>
-    }
-  } = {}
-  const computeJobActivityRef: {
-    current?: {
-      findNonTerminal(): Promise<Array<{ project_id: string }>>
-      countNonTerminalBySession(sessionId: string): Promise<number>
-    }
-  } = {}
-  const sessionCacheOwnerRef: {
-    current?: {
-      removeSession(projectId: string, sessionId: string): Promise<void>
-      removeProject(projectId: string): Promise<void>
-      reconcileActiveSessions(
-        sessions: ReadonlyArray<{ projectId: string; sessionId: string }>
-      ): Promise<void>
-    }
-  } = {}
-  const projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner } = {}
-  const artifactReproducibilityAttemptOwnerRef: {
-    current?: ArtifactReproducibilityAttemptOwner
-  } = {}
-  const computeJobDeletionPort = {
-    restoreProjectJobDeletion: (projectId: string): Promise<void> => {
-      if (!computeJobDeletionRef.current) {
-        throw new Error('Compute Job deletion is not initialized.')
-      }
-      return computeJobDeletionRef.current.restoreProjectJobDeletion(projectId)
-    },
-    prepareSessionJobDeletion: (projectId: string, sessionId: string): Promise<void> => {
-      if (!computeJobDeletionRef.current) {
-        throw new Error('Compute Job deletion is not initialized.')
-      }
-      return computeJobDeletionRef.current.prepareSessionJobDeletion(projectId, sessionId)
-    },
-    commitSessionJobDeletion: (projectId: string, sessionId: string): Promise<void> => {
-      if (!computeJobDeletionRef.current) {
-        throw new Error('Compute Job deletion is not initialized.')
-      }
-      return computeJobDeletionRef.current.commitSessionJobDeletion(projectId, sessionId)
-    },
-    prepareProjectJobDeletion: (projectId: string): Promise<void> => {
-      if (!computeJobDeletionRef.current) {
-        throw new Error('Compute Job deletion is not initialized.')
-      }
-      return computeJobDeletionRef.current.prepareProjectJobDeletion(projectId)
-    },
-    commitProjectJobDeletion: (projectId: string): Promise<void> => {
-      if (!computeJobDeletionRef.current) {
-        throw new Error('Compute Job deletion is not initialized.')
-      }
-      return computeJobDeletionRef.current.commitProjectJobDeletion(projectId)
-    },
-    abortSessionJobDeletion: (projectId: string, sessionId: string): Promise<void> => {
-      if (!computeJobDeletionRef.current) {
-        throw new Error('Compute Job deletion is not initialized.')
-      }
-      return computeJobDeletionRef.current.abortSessionJobDeletion(projectId, sessionId)
-    },
-    abortProjectJobDeletion: (projectId: string): Promise<void> => {
-      if (!computeJobDeletionRef.current) {
-        throw new Error('Compute Job deletion is not initialized.')
-      }
-      return computeJobDeletionRef.current.abortProjectJobDeletion(projectId)
-    }
-  }
-  // Delegated execution can outlive its root Turn and therefore is absent from the ACP runtime's
-  // active-prompt list. Keep a synchronous projection of durable delegated mutations for the
-  // close/quit and storage-migration safety gates. The selector deliberately ignores active routes:
-  // inactive-branch work still owns processes/files and must block disruptive operations.
-  const delegatedActivity = createDelegatedActivityProjection()
-  const getActiveDelegatedSessions = (): { projectId: string; sessionId: string }[] =>
-    delegatedActivity.getActiveDelegatedSessions()
-  // Side Chat prompts remain activity for disruptive archive, migration and shutdown operations.
-  // Package export uses a narrower projection because auxiliary transcripts are excluded; delivered
-  // relays already live in the main conversation graph independently of this activity projection.
-  const getActiveSideChatSessions = (): { projectId: string; sessionId: string }[] =>
-    (sideChatOwnerRef.current?.list().chats ?? [])
-      .filter((chat) => chat.running)
-      .map((chat) => ({ projectId: chat.projectId, sessionId: chat.parentSessionId }))
-
-  const managedWorkspaceRecoveryCutoff = Date.now()
-  const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
-    sessionRepository,
-    projectFilesRepository,
-    (event) => broadcastToRenderers('project-files:changed', event),
-    provenanceMessageSnapshots,
-    uploadRepository,
-    artifactProvenanceRepository,
-    {
-      reconcileSessions: async (sessions) => {
-        await reconcilePermissionGrantOwners(permissionGrantRegistry, { sessions })
-        await sessionCacheOwnerRef.current?.reconcileActiveSessions(sessions)
-      }
-    },
-    undefined,
-    computeJobDeletionPort,
-    (session, owner) => {
-      if (owner === 'runtime-context') {
-        broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
-          session,
-          originClientId: MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
-        })
-        return
-      }
-      if (owner === 'runtime-transcript') {
-        broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
-          session,
-          originClientId: MAIN_RUNTIME_TRANSCRIPT_LIFECYCLE_CLIENT_ID
-        })
-        return
-      }
-      delegatedActivity.recordSession(session)
-      broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
-        session,
-        originClientId: MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID
-      })
-    },
-    (session) => {
-      // Re-enabling Delegation invalidates the last admission rejection, so the Subagent
-      // availability notice disappears instead of waiting for the next successful delegation.
-      if (session.delegationPolicy === 'allow') {
-        delegatedWorkRef.current?.root.clearUnavailableReason?.(session.id)
-      }
-    },
-    {
-      reconcileProvisional: (sessions) =>
-        reconcileProvisionalManagedWorkspaces(sessions, managedWorkspaceRecoveryCutoff),
-      markProjectRetained: markManagedProjectWorkspacesRetained,
-      restoreProjectActive: restoreManagedProjectWorkspacesActive,
-      markRetained: markManagedWorkspaceRetained,
-      restoreActive: restoreManagedWorkspaceActive
-    },
-    (session) => sessionPackageService.prepareSessionDeletion(session)
-  )
-  packagePublicationOwner.current = sessionPersistenceCoordinator
-  const bookmarkService = new BookmarkService({
-    repository: bookmarkRepository,
-    sessions: sessionRepository,
-    pdfVersions: sessionPdfSourceResolver,
-    runWithSessionAuthority: (projectId, sessionId, operation) =>
-      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, operation),
-    validateProjectFile: async (source, owningSession) => {
-      if (source.kind !== 'project-file' || source.sessionId !== owningSession.id) return false
-      try {
-        const [canonicalRoot, canonicalSource] = await Promise.all([
-          realpath(owningSession.cwd),
-          realpath(source.path)
-        ])
-        return isPathInsideWorkspace(canonicalRoot, canonicalSource)
-      } catch {
-        return false
-      }
-    }
-  })
-  const pdfAnnotationTagEvents: { notify?: () => Promise<void> } = {}
-  const pdfAnnotationRepository = new PdfAnnotationRepository(
-    () => getProjectDbClient(resolveConfigRoot()),
-    async (event, tagsChanged) => {
-      if (event) applicationEvents.publish('pdf-annotations:changed', event)
-      if (tagsChanged) await pdfAnnotationTagEvents.notify?.()
-    }
-  )
-  const pdfAnnotationService = new PdfAnnotationService({
-    literature: literatureAttachmentAuthority,
-    repository: pdfAnnotationRepository,
-    sessions: sessionRepository,
-    runWithSessionAuthority: (projectId, sessionId, operation) =>
-      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, operation),
-    resolveSessionPdfVersion: (request) =>
-      sessionPdfSourceResolver.resolveVersion({
-        projectId: request.projectId,
-        sourceKind: request.sourceKind,
-        sourceVersionId: request.versionId,
-        expectedSourceFileId: request.sourceFileId
-      }),
-    onNativeImportProgress: (progress) =>
-      applicationEvents.publish('pdf-annotations:import-progress', progress)
-  })
-  pdfUploadImporter.current = pdfAnnotationService
-  await modules.add(undefined, () => ({
-    name: 'pdf-native-annotation-imports',
-    capability: undefined,
-    dispose: async () => {
-      pdfUploadImporter.current = undefined
-      await pdfAnnotationService.dispose()
-    }
-  }))
-  const sessionPdfContextOwner = new SessionPdfContextOwner({
-    sources: sessionPdfSourceResolver,
-    pendingUploads: {
-      resolveContent: ({ projectId, path }) =>
-        uploadRepository.resolveManagedUploadPath(
-          { path },
-          { projectId, sessionId: PENDING_UPLOAD_SESSION_ID }
-        )
-    },
-    sessions: sessionPersistenceCoordinator
-  })
-  const literatureContextLog = createLogger('literature-reading-context')
-  let stopLiteratureIndexRetention: (() => Promise<void>) | undefined
-  await modules.add(undefined, () => ({
-    name: 'literature-index-retention',
-    capability: undefined,
-    start: () => {
-      stopLiteratureIndexRetention = LiteratureFullTextIndex.startRetentionSweep(
-        resolveDataRoot(),
-        (error) => {
-          literatureContextLog.error('Literature index maintenance failed', errorLogFields(error))
-        }
-      )
-    },
-    dispose: () => stopLiteratureIndexRetention?.()
-  }))
-  const localModelOwner = createLocalModelOwner()
-  await modules.add({ localModelOwner }, ({ localModelOwner: owner }) => ({
-    name: 'local-models',
-    capability: undefined,
-    dispose: async () => {
-      await owner.close()
-    }
-  }))
-  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModelOwner))
-  const pdfStructureSources = new PdfStructureSourceAuthority({
-    literature: literatureAttachmentAuthority,
-    sources: sessionPdfSourceResolver,
-    sessions: sessionPersistenceCoordinator
-  })
-  const pdfStructureOwner = createPdfStructureOwner({
-    models: localModelOwner,
-    sources: pdfStructureSources,
-    engine: createPdfStructureEngine(
-      join(
-        app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'),
-        'resources',
-        'pdf-structure'
-      )
-    )
-  })
-  const pdfStructureReader = new PdfStructureReader(pdfStructureOwner)
-  await modules.add({ pdfStructureOwner }, ({ pdfStructureOwner: owner }) => ({
-    name: 'pdf-structure',
-    capability: undefined,
-    dispose: () => owner.close()
-  }))
-
-  const pdfElementReader = new PdfElementAgentReader({
-    owner: pdfStructureOwner,
-    sources: pdfStructureSources,
-    sessions: sessionPersistenceCoordinator
-  })
-
-  const literatureDocumentReader = new LiteratureDocumentReader({
-    storageRoot: resolveDataRoot(),
-    sources: sessionPdfSourceResolver,
-    sessions: sessionPersistenceCoordinator
-  })
-  const sideChatRelay = new SideChatRelayOwner({
-    targetState: (parentSessionId) => {
-      const runtime = runtimeRef.current
-      if (!runtime) return 'completed'
-      const snapshot = runtime.getSnapshot()
-      if (snapshot.promptInFlightSessionIds.includes(parentSessionId)) {
-        return runtime.hasPendingSideChatInteraction(parentSessionId) ? 'waiting' : 'running'
-      }
-      return runtime.liveSessionProjectId(parentSessionId) ? 'idle' : 'completed'
-    }
-  })
-  const mainPromptSideChatRelay = createMainPromptSideChatRelay({
-    relay: sideChatRelay,
-    steerAdvisory: async (request) =>
-      runtimeRef.current
-        ? runtimeRef.current.steerSideChatAdvisory(request)
-        : Object.freeze({ injected: false }),
-    commitSideChatRelays: (command) => sessionPersistenceCoordinator.commitSideChatRelays(command),
-    onDelivered: (event) => broadcastToRenderers('side-chat:relay-delivered', event)
-  })
-  const uploadCommandOwner = createUploadCommandOwner(uploadRepository, {
-    openLatestManagedFile: (request) =>
-      managedFileVersionService.openLatest({
-        source: 'upload',
-        projectId: request.projectId!,
-        fileId: request.fileId!
-      }),
-    openManagedFileVersion: (request) =>
-      managedFileVersionService.openVersion(
-        { source: 'upload', projectId: request.projectId!, fileId: request.fileId! },
-        request.versionId
-      ),
-    withSessionMutation: (projectId, sessionId, mutation) =>
-      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
-  })
-  const reviewRepository = createDefaultReviewRepository()
-  const projectDeletionCoordinator = new ProjectDeletionCoordinator(
-    projectRepository,
-    sessionPersistenceCoordinator,
-    reviewRepository,
-    artifactProvenanceRepository,
-    permissionGrantRegistry,
-    {
-      beforeProjectDelete: async (projectId) => {
-        const owner = projectRuntimeQuiescenceRef.current
-        if (!owner) throw new Error('Project runtime cleanup is not initialized.')
-        await archiveCoordinator.withProjectDeletion(projectId, async () => {
-          notebookService.beginProjectDeletion(projectId)
-          await artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId)
-          await owner.quiesceProject(projectId)
-        })
-      },
-      restoreProjectDeletion: async (projectId) => {
-        await backgroundResultDelivery.prepareProjectDeletion(projectId)
-        archiveCoordinator.restoreProjectDeletion(projectId)
-        notebookService.beginProjectDeletion(projectId)
-        reviewerProjectRuntime.restoreProjectDeletion(projectId)
-        await computeJobDeletionPort.restoreProjectJobDeletion(projectId)
-      },
-      finalizeProjectDeletion: async (projectId) => {
-        const owner = sideChatOwnerRef.current
-        if (!owner) throw new Error('Side chat runtime cleanup is not initialized.')
-        await owner.completeProjectDeletion(projectId)
-        await notebookService.deleteProjectFileEvidence(projectId)
-        await notebookService.deleteProjectInputs(projectId)
-        await backgroundResultDelivery.commitProjectDeletion(projectId)
-      },
-      completeProjectDeletion: (projectId) => {
-        archiveCoordinator.releaseProjectDeletion(projectId)
-        notebookService.releaseProjectDeletion(projectId)
-        reviewerProjectRuntime.releaseProjectDeletion(projectId)
-      },
-      abortProjectDeletion: async (projectId) => {
-        archiveCoordinator.releaseProjectDeletion(projectId)
-        notebookService.releaseProjectDeletion(projectId)
-        reviewerProjectRuntime.releaseProjectDeletion(projectId)
-        sideChatOwnerRef.current?.restoreProject(projectId)
-        backgroundResultDelivery.abortProjectDeletion(projectId)
-        await computeJobDeletionPort.abortProjectJobDeletion(projectId)
-      }
-    },
-    applicationEvents
-  )
-  const detectBlockingSessions = (
-    includeSideChat: boolean
-  ): ReturnType<typeof detectActiveSessions> =>
-    detectActiveSessions({
-      runtime: {
-        getActivePromptSessions: () => runtimeRef.current?.getActivePromptSessions() ?? []
-      },
-      sideChat: {
-        getActivePromptSessions: () => (includeSideChat ? getActiveSideChatSessions() : [])
-      },
-      delegated: { getActiveDelegatedSessions },
-      notebook: {
-        getActiveNotebookSessions: () =>
-          notebookActivityRef.current?.getActiveNotebookSessions() ?? []
-      }
-    })
-  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
-    detectBlockingSessions(true)
-  const detectSessionExportBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
-    detectBlockingSessions(false)
-  const archiveCoordinator = new ArchiveCoordinator(
-    projectRepository,
-    sessionPersistenceCoordinator,
-    {
-      isSessionBusy: async (projectId, sessionId) => {
-        const computeJobs = computeJobActivityRef.current
-        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
-        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
-        // Read synchronous activity after the database await so a newly active runtime is visible.
-        return (
-          jobs > 0 ||
-          sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
-          detectArchiveBlockingSessions().some(
-            (session) => session.projectId === projectId && session.sessionId === sessionId
-          )
-        )
-      },
-      isSessionExportBusy: async (projectId, sessionId) => {
-        const computeJobs = computeJobActivityRef.current
-        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
-        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
-        return (
-          jobs > 0 ||
-          detectSessionExportBlockingSessions().some(
-            (session) => session.projectId === projectId && session.sessionId === sessionId
-          )
-        )
-      },
-      isProjectBusy: async (projectId) => {
-        if (
-          reviewerProjectRuntime.isProjectBusy(projectId) ||
-          detectArchiveBlockingSessions().some((session) => session.projectId === projectId)
-        ) {
-          return true
-        }
-        const computeJobs = computeJobActivityRef.current
-        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
-        return (await computeJobs.findNonTerminal()).some((job) => job.project_id === projectId)
-      },
-      liveSessionProjectId: (sessionId) => runtimeRef.current?.liveSessionProjectId(sessionId)
-    },
-    {
-      cancelProject: async (projectId) =>
-        artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId),
-      cancelSession: async (projectId, sessionId) =>
-        artifactReproducibilityAttemptOwnerRef.current?.cancelSession(projectId, sessionId)
-    }
-  )
-  notificationInbox.setSessionAvailability((sessionId) =>
-    archiveCoordinator.isSessionAvailableById(sessionId)
-  )
-  archiveCoordinator.setMarkReadSessions((sessionIds) =>
-    notificationInbox.markSessionsRead(sessionIds)
-  )
-  const sessionEnabledComputeHostsOwnerRef: { current?: SessionEnabledComputeHostsOwner } = {}
-  const visionEvidenceRepository = new VisionEvidenceRepository(() =>
-    getProjectDbClient(configRoot)
-  )
-  bindNotificationInboxDeletionRuntime({
-    inbox: notificationInbox,
-    sessionPersistenceCoordinator,
-    onSessionsDeleted: async (sessionIds) => {
-      await Promise.all([
-        sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
-        sideChatOwnerRef.current?.invalidateParents(sessionIds),
-        visionEvidenceRepository.deleteSessions(sessionIds),
-        bookmarkRepository.deleteSessions(sessionIds)
-      ])
-    },
-    onSessionsReconciled: async (sessionIds) => {
-      await visionEvidenceRepository.reconcileSessions(sessionIds)
-    }
-  })
-  const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
-    updateArchive: (request) => archiveCoordinator.updateProjectArchive(request),
-    onAgentContextChanged: (projectId) => {
-      // Runtime generations capture Project Agent Context during Session setup. Retiring them marks
-      // idle Sessions for resume immediately; an in-flight turn drains before its next prompt.
-      void runtimeRef.current?.requestProjectAgentContextReload(projectId)
-    }
-  })
-  const projectFilesHandlers = createProjectFilesHandlers(
-    projectFilesRepository,
-    sessionPersistenceCoordinator,
-    projectDeletionCoordinator,
-    (file) =>
-      managedFileVersionService.openVersion(
-        {
-          source: file.source,
-          projectId: file.projectId,
-          fileId: file.sourceFileId
-        },
-        file.sourceVersionId
-      )
-  )
-  const managedFileVersionHandlers = createManagedFileVersionHandlers(managedFileVersionService, {
-    withDataRootWrite,
-    onChanged: (event) => broadcastToRenderers('project-files:changed', event)
-  })
-  // Stashed host.agents.switch bindings for sessions that are not yet durable (fresh unsent drafts),
-  // flushed to disk on the session's first save so an approved switch survives an app restart before
-  // the next message. Shared by persistSessionSpecialist (stash) and saveSession (flush).
-  const pendingSpecialistBindings = new PendingSessionSpecialistBindings()
-  const sessionCatalogHydration = createSessionCatalogHydration({
-    owner: () => {
-      if (!sessionEnabledComputeHostsOwnerRef.current) {
-        throw new Error('Session enabled Compute Host ownership is not initialized.')
-      }
-      return sessionEnabledComputeHostsOwnerRef.current
-    },
-    projectRecovery: projectDeletionCoordinator,
-    sessionLoader: sessionPersistenceCoordinator
-  })
-  const sessionProjectionDiagnostics = new SessionProjectionDiagnostics()
-  const loadAllSessions = async (): Promise<LoadAllSessionsResult> => {
-    const result = await sessionCatalogHydration.loadAll()
-    // Startup and non-renderer readers can recover historical files before the first list call.
-    // Retain their warnings in the same cache used by subsequent projection-only reads.
-    sessionProjectionDiagnostics.resolve(result.diagnostics)
-    return result
-  }
-  // Consume only during composition, before client adapters are installed. Keep just details
-  // recovery candidates, not a long-lived cache of every historical transcript.
-  let startupSessionDetails: LoadAllSessionsResult['sessions'] | undefined
-  let wslSetupSessionsReconciliation: Promise<void> | undefined
-  const reconcileWslSetupSessions = async (sessions: readonly SessionSummary[]): Promise<void> => {
-    wslSetupSessionsReconciliation ??= wslSetupSessions.reconcileBoundSessions(
-      new Set(sessions.map((session) => session.id))
-    )
-    try {
-      await wslSetupSessionsReconciliation
-    } catch (error) {
-      wslSetupSessionsReconciliation = undefined
-      throw error
-    }
-  }
-  const ensureSessionProjection = async (): Promise<{
-    result?: LoadAllSessionsResult
-    sessions: SessionSummary[]
-  }> => {
-    // Reconcile a JSON write from a committed Project tombstone before deletion recovery removes
-    // that temporary authority. Its SQLite facts remain part of retained Project history.
-    await sessionRepository.reconcilePendingSessionProjection()
-    const recovery = await sessionCatalogHydration.recoverProjectDeletions()
-    if (!recovery.isComplete) {
-      const result = recovery.result
-      const sessions = await sessionRepository.summarizeReadOnlyAuthority(result)
-      await sessionPersistenceCoordinator.replaceSessionMetadata(sessions, false)
-      return { result, sessions: await wslSetupSessions.projectSessionSummaries(sessions) }
-    }
-    const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
-    const result = projection.result
-    const catalogComplete = result ? canReconcileSessionAbsences(result) : true
-    await sessionPersistenceCoordinator.replaceSessionMetadata(projection.sessions, catalogComplete)
-    if (catalogComplete) await reconcileWslSetupSessions(projection.sessions)
-    return {
-      ...projection,
-      result,
-      sessions: await wslSetupSessions.projectSessionSummaries(projection.sessions)
-    }
-  }
-  const uncoordinatedSessionPersistenceBackend: SessionPersistenceBackend = {
-    loadAll: loadAllSessions,
-    list: async () => {
-      const projection = await ensureSessionProjection()
-      return {
-        sessions: projection.sessions,
-        manifest: projection.result?.manifest ?? (await sessionRepository.loadManifest()),
-        diagnostics: sessionProjectionDiagnostics.resolve(projection.result?.diagnostics)
-      }
-    },
-    loadUsage: async () => {
-      await ensureSessionProjection()
-      await auxiliaryUsageRecorder.flush()
-      await settingsService.classification.flushUsage()
-      return sessionRepository.loadSessionUsageProjection()
-    },
-    loadOne: async ({ projectId, sessionId }) => {
-      const recovery = await recoverProjectDeletionsForSessionRead(
-        projectDeletionCoordinator,
-        sessionPersistenceCoordinator
-      )
-      if (!recovery.isComplete) {
-        return recovery.result.sessions.find(
-          (session) => session.projectId === projectId && session.id === sessionId
-        )
-      }
-      const session = await sessionRepository.loadSession(projectId, sessionId)
-      return session && sessionEnabledComputeHostsOwnerRef.current
-        ? sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
-        : session
-    },
-    saveSession: async (session, options, authority) => {
-      const created =
-        (await sessionRepository.loadSession(session.projectId, session.id)) === undefined
-      const save = (candidate: PersistedChatSession): Promise<PersistedChatSession> =>
-        authority
-          ? sessionPersistenceCoordinator.saveSession(candidate, options, authority)
-          : sessionPersistenceCoordinator.saveSession(candidate, options)
-      let durableSession = created
-        ? await (() => {
-            if (!sessionEnabledComputeHostsOwnerRef.current) {
-              throw new Error('Session enabled Compute Host ownership is not initialized.')
-            }
-            return sessionEnabledComputeHostsOwnerRef.current.createSession(session, save)
-          })()
-        : await save(session)
-      // Flush any approved host.agents.switch binding stashed while this session was not yet durable,
-      // so the approved target survives a restart before the next message (the in-memory binding
-      // alone does not persist across restart).
-      durableSession = await pendingSpecialistBindings.flush(
-        durableSession.id,
-        durableSession,
-        (binding) =>
-          sessionPersistenceCoordinator.saveSessionSpecialistBinding(
-            durableSession,
-            binding.specialistId,
-            binding.specialistBindingPending
-          )
-      )
-      return { created, session: durableSession }
-    },
-    setDelegationPolicy: async (projectId, sessionId, policy) => {
-      return sessionPersistenceCoordinator.setSessionDelegationPolicy(projectId, sessionId, policy)
-    },
-    updateArchive: async (request) => {
-      return archiveCoordinator.updateSessionArchive(request)
-    },
-    deleteSession: withSessionDeletionCleanup(
-      (projectId, sessionId) => sessionPersistenceCoordinator.deleteSession(projectId, sessionId),
-      (projectId, sessionId) =>
-        permissionGrantRegistry.prune({ kind: 'session', projectId, sessionId })
-    ),
-    saveManifest: async (request) => {
-      return sessionPersistenceCoordinator.saveManifest(request)
-    }
-  }
-  const sessionPersistenceBackend = coordinateSessionPersistenceWithProjectDeletions(
-    uncoordinatedSessionPersistenceBackend,
-    projectDeletionCoordinator
-  )
-  let backendTeardownOwnedByCoordinator = false
-  const provisioningRoot = runtimeRoot(resolveDataRoot())
-  // One runner owns Windows integrity/preflight/fallback state for every production micromamba
-  // consumer in this main-process generation. Each consumer receives only its narrow resolve seam.
-  const micromambaRunner = createProductionMicromambaRunner({
-    packaged: app.isPackaged,
-    configHome: app.getPath('home'),
-    home: dirname(dirname(provisioningRoot)),
-    resourcesPath: process.resourcesPath
-  })
-  const notebookRuntimeSettings: Pick<
-    NotebookRuntimeSettings,
-    'getSnapshot' | 'setEnvironmentEnabled'
-  > = {
-    getSnapshot: async (language) => {
-      const [runtimeEnablement, manualInterpreters, packageMirror] = await Promise.all([
-        settingsService.getRuntimeEnablement(language),
-        settingsService.getManualInterpreters(language),
-        settingsService.getPackageMirror()
-      ])
-      return {
-        language,
-        runtimeEnablement,
-        manualInterpreters,
-        packageMirror
-      }
-    },
-    setEnvironmentEnabled: (language, envId, enabled) =>
-      settingsService.setEnvironmentEnabled(language, envId, enabled)
-  }
-  const notebookApplication = await modules.add(
-    {
-      admitSessionWork: (projectId: string, sessionId: string) =>
-        archiveCoordinator.admitSessionWork(projectId, sessionId),
-      configRoot: resolveConfigRoot(),
-      dataRoot: resolveDataRoot(),
-      projectId: DEFAULT_ARTIFACT_PROJECT_ID,
-      repository: notebookRepository,
-      dependencyAnalyzer: notebookDependencyAnalyzer,
-      getPackageMirror: () => settingsService.getPackageMirror(),
-      getAgentEnvironmentCreationEnabled: () =>
-        settingsService.getAgentEnvironmentCreationEnabled(),
-      notebookRuntimeSettings,
-      micromambaRunner,
-      locale: app.getLocale(),
-      appVersion: app.getVersion(),
-      translate,
-      helperModuleCatalog: settingsService.registeredHelperCatalog(),
-      processSandbox: notebookNetworkSandbox,
-      getGrantedLocalRoots: () => grantedRootsRepository.list(),
-      onBackgroundRunTerminal: (source) =>
-        backgroundResultDelivery.enqueue(source).then(() => undefined),
-      onBackgroundRunAdmitted: (source) =>
-        backgroundResultDelivery.register(source).then(() => undefined),
-      onBackgroundRunObserved: (source) => backgroundResultDelivery.acknowledgeObserved(source),
-      events: applicationEvents,
-      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
-      isBackendTeardownOwned: () => backendTeardownOwnedByCoordinator
-    },
-    createNotebookApplicationModule
-  )
-  const {
-    runtime: notebookService,
-    commands: notebookCommands,
-    localRpc: notebookLocalRpc
-  } = notebookApplication
-  notebookPolicyLifecycle.current = notebookService
-  const notebookLifecycle = withReproducibilityNotebookLifecycle(
-    notebookService,
-    () => artifactReproducibilityAttemptOwnerRef.current
-  )
-  notebookActivityRef.current = notebookLifecycle
-  composition.phase('notebook-runtime')
-
-  // Builtins are validated once at startup from read-only repository resources. Package imports use
-  // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.
-  const specialistRepository = new SpecialistRepository(resolveConfigRoot())
-  const appVersion = app.getVersion()
-  const specialistSkills = await settingsService.listSpecialistSkillCatalog({ bundledOnly: true })
-  composition.phase('specialist-catalog')
-  const builtinRegistry = new BuiltinSpecialistRegistry({
-    appVersion,
-    builtinSkills: composeBuiltinSkillCatalog(appVersion, specialistSkills),
-    skills: specialistSkills.map((skill) => {
-      return {
-        id: skill.id,
-        name: skill.frameworkName,
-        builtin: skill.source === 'featured',
-        displayName: skill.displayName,
-        source: skill.source,
-        mainEnabled: skill.mainEnabled
-      }
-    }),
-    connectorIds: ALL_CONNECTOR_IDS,
-    protectedSpecialistIds: ['reviewer'],
-    protectedSpecialistNames: ['Reviewer']
-  })
-  const specialistService = new SpecialistService(
-    specialistRepository,
-    builtinRegistry,
-    (operation) => specialistPackageRecovery.current?.(operation) ?? operation()
-  )
-  const marketplaceRepository = new MarketplaceRepository(resolveConfigRoot())
-  const marketplaceOperationCoordinator = new MarketplaceOperationCoordinator()
-  await specialistService.ensureBuiltinCatalogReady()
-  composition.phase('builtin-specialists')
-  const tagService = new TagService(
-    new TagRepository(() => getProjectDbClient(configRoot)),
-    new TagResourceCatalog({
-      listSkills: () => settingsService.listSkills(),
-      listConnectors: () => settingsService.listConnectors(),
-      listSpecialists: async () =>
-        (await specialistService.listForSettings()).filter(({ kind }) => kind !== 'reviewer'),
-      listPdfAnnotations: async () =>
-        (await getProjectDbClient(configRoot)).pdfAnnotation.findMany({ select: { id: true } }),
-      listLiteratureItems: async () => {
-        const database = await getProjectDbClient(configRoot)
-        return database.literatureItem.findMany({
-          select: { id: true }
-        })
-      }
-    }),
+  const backgroundResults = await composeBackgroundResults({
     applicationEvents,
-    (request) => pdfAnnotationService.setTagAssignment(request)
-  )
-  pdfAnnotationTagEvents.notify = () => tagService.notifyAssignmentsChanged()
-  const memoryService = new MemoryService(
-    new MemoryRepository(() => getProjectDbClient(configRoot)),
-    applicationEvents
-  )
-  let smartCollectionRevision = 0
-  const smartCollections = new LiteratureSmartCollections(
-    () => getProjectDbClient(configRoot),
-    settingsService.classification,
-    (id) =>
-      applicationEvents.publish('literature:changed', {
-        revision: ++smartCollectionRevision,
-        collectionIds: [id]
-      }),
-    (request) => literatureDocumentReader.classificationEvidence(request)
-  )
-  await modules.add({ smartCollections }, ({ smartCollections: owner }) => ({
-    name: 'literature-smart-collections',
-    capability: owner,
-    start: () => owner.start(),
-    dispose: () => owner.dispose()
-  }))
-  const literatureCatalog = new LiteratureCatalog(
-    () => getProjectDbClient(configRoot),
-    () => tagService.notifyAssignmentsChanged(),
-    contentRepository,
-    (remove) => sessionPersistenceCoordinator.withLiteratureAttachmentRemoval(remove),
-    (event) =>
-      applicationEvents.publish('literature:changed', {
-        ...event,
-        revision: ++smartCollectionRevision
-      }),
-    smartCollections
-  )
-  const literatureCitationStyles = new LiteratureCitationStyleLibrary(
-    join(resolveDataRoot(), 'literature', 'citation-styles')
-  )
-  const literatureCitationFormatter = new LiteratureCitationFormatter(literatureCitationStyles)
-  const literatureCitationDocument = new LiteratureCitationDocument(
-    literatureCatalog,
-    literatureCitationFormatter
-  )
-  const literatureReferenceResolver = new LiteratureReferenceResolver(netFetchStandard)
-  const literatureMetadataEnricher = new LiteratureMetadataEnricher(
-    literatureCatalog,
-    netFetchStandard
-  )
-  const downloadLiteraturePdf: typeof downloadFullText = (
-    url,
-    maxBytes,
-    onProgress,
-    _resolveProxy,
-    signal
-  ) =>
-    downloadFullText(
-      url,
-      maxBytes,
-      onProgress,
-      async (target) => {
-        const environment = parseSystemProxyRules(await session.defaultSession.resolveProxy(target))
-        return environment.HTTPS_PROXY ?? environment.ALL_PROXY
-      },
-      signal
-    )
-  const literatureFullTextFinder = new LiteratureFullTextFinder({
-    catalog: literatureCatalog,
-    content: contentRepository,
-    download: downloadLiteraturePdf,
-    openAlexKey: async () =>
-      tryDecryptKey((await settingsService.getConnectors())?.openAlexApiKeyRef),
-    contactEmail: async () => (await settingsService.getConnectors())?.contactEmail
+    ...settingsBootstrap,
+    runtimeRef,
+    getSessionRepository: () => sessionFoundation.sessionRepository,
+    getSessionPersistenceCoordinator: () => sessionAuthority.sessionPersistenceCoordinator,
+    getNotebookCommands: () => notebookRuntime.notebookCommands,
+    getJobRepository: () => computeAdmission.jobRepository,
+    getHostRepository: () => computeAdmission.hostRepository,
+    modules
   })
-  const literaturePdfImporter = new LiteraturePdfImporter({
-    uploads: uploadRepository,
-    content: contentRepository,
-    catalog: literatureCatalog,
-    annotations: pdfAnnotationRepository,
-    onNativeImportProgress: (progress) =>
-      applicationEvents.publish('pdf-annotations:import-progress', progress)
+  const sessionFoundation = await composeSessionFoundation({
+    ...settingsBootstrap,
+    runtimeRef,
+    modules
   })
-  const literaturePdfAcquisition = new AgentPdfAcquisition({
-    catalog: literatureCatalog,
-    fullText: literatureFullTextFinder,
-    content: contentRepository,
-    download: downloadLiteraturePdf
+  const sessionPackages = await composeSessionPackages({
+    ...settingsBootstrap,
+    ...storageStartup,
+    uploadRepository: uploadStorage.uploadRepository,
+    ...sessionFoundation,
+    getDetectSessionExportBlockingSessions: () =>
+      projectLifecycle.detectSessionExportBlockingSessions,
+    modules
   })
-  const literatureBatchJobs = new LiteratureBatchJobs({
-    path: join(resolveDataRoot(), 'literature', 'batch-jobs.json'),
-    catalog: literatureCatalog,
-    metadata: literatureMetadataEnricher,
-    fullText: literatureFullTextFinder,
-    onError: (error) =>
-      literatureContextLog.error('Literature batch task failed', errorLogFields(error))
+  const managedFiles = composeManagedFiles({
+    ...settingsBootstrap,
+    managedFileVersionService: uploadStorage.managedFileVersionService,
+    ...sessionFoundation,
+    getNotebookInputRegistry: () => sessionAuthority.notebookInputRegistry
   })
-  await modules.add(undefined, () => ({
-    name: 'literature-batch-jobs',
-    capability: undefined,
-    dispose: () => literatureBatchJobs.close()
-  }))
-  const tagCleanupLog = createLogger('tags:cleanup')
-  const removeResourceTagsOrThrow = async (
-    resources: Parameters<TagService['removeResources']>[0]
-  ): Promise<void> => tagService.removeResources(resources)
-  const removeResourceTags = async (
-    resources: Parameters<TagService['removeResources']>[0]
-  ): Promise<void> => {
-    try {
-      await removeResourceTagsOrThrow(resources)
-    } catch (error) {
-      tagCleanupLog.warn('resource deletion Tag cleanup failed', { error, resources })
-    }
-  }
-  const specialistPackageService = new SpecialistPackageService({
-    storageDir: resolveConfigRoot(),
-    repository: specialistRepository,
-    catalog: async () => {
-      const appVersion = app.getVersion()
-      const [skills, packageSkills, connectorSettings] = await Promise.all([
-        settingsService.listSpecialistSkillCatalog(),
-        specialistPackageSkillAdapter.snapshot(),
-        settingsService.getConnectors()
-      ])
-      const customMcpServers = connectorSettings?.customMcpServers ?? []
-      const baseCatalog = {
-        appVersion,
-        builtinSkills: composeBuiltinSkillCatalog(appVersion, skills),
-        skills: skills.map((skill) => {
-          const packageSkill = packageSkills.find((candidate) => candidate.id === skill.id)
-          return {
-            id: skill.id,
-            name: skill.frameworkName,
-            builtin: skill.source === 'featured',
-            displayName: skill.displayName,
-            source: skill.source,
-            mainEnabled: skill.mainEnabled,
-            ...(packageSkill ?? {})
-          }
-        }),
-        connectorIds: [
-          ...ALL_CONNECTOR_IDS,
-          ...customMcpServers
-            .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
-            .map((server) => server.id)
-        ],
-        connectorAliases: Object.fromEntries([
-          ...ALL_CONNECTOR_IDS.map((id) => [id, id] as const),
-          ...customMcpServers
-            .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
-            .map((server) => [server.id, server.name] as const)
-        ]),
-        protectedSpecialistIds: ['reviewer'],
-        protectedSpecialistNames: ['Reviewer']
-      }
-      const builtinSpecialists = await new BuiltinSpecialistRegistry(baseCatalog).load()
-      return {
-        ...baseCatalog,
-        protectedSpecialistIds: [
-          ...baseCatalog.protectedSpecialistIds,
-          ...builtinSpecialists.entries.map((entry) => entry.id)
-        ],
-        protectedSpecialistNames: [
-          ...(baseCatalog.protectedSpecialistNames ?? []),
-          ...builtinSpecialists.entries.flatMap((entry) => [
-            entry.name,
-            entry.displayName ?? entry.name
-          ])
-        ]
-      }
-    },
-    skillPort: specialistPackageSkillAdapter,
-    skillSettings: settingsRepository,
-    marketplaceOperationCoordinator,
-    onSpecialistDeleted: (specialistId) =>
-      marketplaceRepository.removeInstallationsForSpecialist(specialistId),
-    onSkillsDeleted: async (skillIds) => {
-      if (skillIds.length > 0) {
-        // User Skills are default-on. Remove disabled-ID tombstones so reinstalling the same
-        // package does not inherit the deleted Skill's old Main Agent state.
-        await settingsRepository.setSkillsEnabled([...skillIds], true)
-      }
-    },
-    onResourcesDeleted: (specialistId, skillIds) =>
-      removeResourceTagsOrThrow([
-        { resourceType: 'catalog.specialist', resourceId: specialistId },
-        ...skillIds.map((resourceId) => ({
-          resourceType: 'catalog.skill' as const,
-          resourceId
-        }))
-      ]),
-    onCommitted: () => {
-      broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
-      requestSkillCatalogRefresh()
-    }
+  const sessionAuthority = await composeSessionAuthority({
+    uploadRepository: uploadStorage.uploadRepository,
+    managedFileVersionService: uploadStorage.managedFileVersionService,
+    runtimeRef,
+    ...sessionFoundation,
+    ...sessionPackages,
+    ...managedFiles,
+    getDelegatedWorkRef: () => delegation.delegatedWorkRef,
+    composition
   })
-  specialistPackageRecovery.current = (operation) =>
-    specialistPackageService.withRecoveryBarrier(operation)
-  await settingsService.migrateAgentHomeSkillIdentities()
-  composition.phase('agent-home-skill-identity-migration')
-  const marketplaceService = new MarketplaceService({
-    repository: marketplaceRepository,
-    operationCoordinator: marketplaceOperationCoordinator,
-    packages: specialistPackageService,
-    fetch: netFetchWithManualRedirect,
-    officialSource: OFFICIAL_MARKETPLACE_SOURCE,
-    getInstalledSpecialists: async () =>
-      (await specialistService.list()).map((profile) => ({
-        id: profile.id,
-        revision: profile.revision,
-        ...(profile.modifiedSinceImport === undefined
-          ? {}
-          : { modifiedSinceImport: profile.modifiedSinceImport }),
-        ...(profile.origin ? { origin: profile.origin } : {}),
-        ...(profile.importBaseline?.archiveDigest
-          ? { archiveDigest: profile.importBaseline.archiveDigest }
-          : {})
-      })),
-    markMarketplaceManaged: async (id, expectedRevision) => {
-      await specialistService.markMarketplaceManaged(id, expectedRevision)
-    },
-    setSkillsMainEnabled: async (ids, enabled) => {
-      await settingsRepository.setSkillsEnabled([...new Set(ids)], enabled)
-      // Startup recovery runs before the ACP runtime exists, so its initial catalog reads the
-      // restored settings directly. Later recovery must refresh the already-live catalog.
-      requestSkillCatalogRefresh()
-    }
+  const documentReading = await composeDocumentReading({
+    declareElectronAdapter,
+    applicationEvents,
+    pdfUploadImporter: uploadStorage.pdfUploadImporter,
+    uploadRepository: uploadStorage.uploadRepository,
+    ...sessionFoundation,
+    ...managedFiles,
+    ...sessionAuthority,
+    modules
   })
-  try {
-    await marketplaceService.recover()
-  } catch (error) {
-    createLogger('specialist:marketplace').error(
-      'Marketplace install recovery incomplete; Marketplace remains fail-closed',
-      diagnosticErrorFields(error)
-    )
-  }
-  composition.phase('marketplace-recover')
-  settingsService.setSkillDeletionGuard((request) =>
-    specialistPackageService.assertSkillDeletionAllowed(
-      request.id,
-      request.source,
-      request.directoryName
-    )
-  )
-  // Per-session specialist binding store. Shared between the SET_SESSION_SPECIALIST barrier
-  // (validate + record) and the runtime switch so a hot-switch lands on the same source of truth.
-  const sessionBindingService = new SessionBindingService(specialistService)
-  const specialistPersistLog = createLogger('specialist:persist')
-  const findRuntimeSessions = createSessionRuntimeLookup({
-    repository: sessionRepository,
-    coordinator: sessionPersistenceCoordinator
+  const projectLifecycle = composeProjectLifecycle({
+    applicationEvents,
+    ...storageStartup,
+    uploadRepository: uploadStorage.uploadRepository,
+    managedFileVersionService: uploadStorage.managedFileVersionService,
+    runtimeRef,
+    ...backgroundResults,
+    ...sessionFoundation,
+    ...sessionPackages,
+    ...managedFiles,
+    ...sessionAuthority,
+    getNotebookService: () => notebookRuntime.notebookService
   })
-  const loadSessionSpecialistBinding = async (
-    sessionId: string
-  ): Promise<PersistedSessionSpecialistBinding | undefined> => {
-    const session = (await findRuntimeSessions(sessionId))[0]
-    return session
-      ? {
-          specialistId: session.specialistId,
-          specialistBindingPending: session.specialistBindingPending
-        }
-      : undefined
-  }
-  const persistSessionSpecialistBinding = async (
-    sessionId: string,
-    specialistId: string | undefined,
-    pending: boolean
-  ): Promise<void> => {
-    const session = (await findRuntimeSessions(sessionId))[0]
-    if (!session) {
-      // Fresh unsent drafts are not durable yet. Carry both the desired ID and pending marker into
-      // their first save; the marker can also be cleared here when runtime applies before that save.
-      pendingSpecialistBindings.stash(sessionId, specialistId, pending)
-      specialistPersistLog.debug('session not yet durable; stashed Specialist binding state', {
-        sessionId,
-        specialistId,
-        pending
-      })
-      return
-    }
-    pendingSpecialistBindings.take(sessionId)
-    await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId, pending)
-  }
-  const sessionSpecialistReconfiguration = new SessionSpecialistReconfiguration({
-    sessionBinding: sessionBindingService,
-    loadBinding: loadSessionSpecialistBinding,
-    persistBinding: persistSessionSpecialistBinding,
-    discardPendingBinding: (sessionId) => {
-      pendingSpecialistBindings.take(sessionId)
-    },
-    applyRuntime: async (sessionId, specialistId) => {
-      const runtime = runtimeRef.current
-      if (!runtime) throw new Error('Agent runtime is not initialized.')
-      return runtime.switchSpecialist(sessionId, specialistId)
-    }
+  const sessionProjection = composeSessionProjection({
+    ...settingsBootstrap,
+    ...sessionFoundation,
+    ...sessionAuthority,
+    ...projectLifecycle
   })
-  // Compose the interceptor before ACP because Notebook construction precedes runtime construction.
-  // Startup registers the complete production adapter below before any IPC surface becomes callable.
-  const completionGateRuntimeRegistry = new CompletionGateRuntimeRegistry()
-  const completionHandoffLifecycle = new CompletionHandoffLifecycle(
-    new FileCompletionHandoffRepository(join(resolveConfigRoot(), 'specialist-handoffs')),
-    completionGateRuntimeRegistry,
-    Date.now,
-    (event) => broadcastToRenderers(SPECIALIST_IPC.HANDOFF_LIFECYCLE_CHANGED, event),
-    async ({ targetName }) => {
-      if (targetName === null) return undefined
-      const profile = await specialistService.resolveRunnableByName(targetName)
-      return { specialistId: profile.id, revision: profile.revision }
-    }
-  )
-  registerCompletionHandoffIpcHandlers(completionHandoffLifecycle)
-  const completionGateCoordinator = new CompletionGateCoordinator(
-    completionGateRuntimeRegistry,
-    completionHandoffLifecycle
-  )
-  await modules.add({ completionGateCoordinator }, ({ completionGateCoordinator: coordinator }) => {
-    let disposeDiagnostics: (() => void) | undefined
-    return {
-      name: 'completion-handoff-diagnostics',
-      capability: undefined,
-      start: () => {
-        disposeDiagnostics = installCompletionGateDiagnostics(coordinator, {
-          log: createLogger('completion-handoff'),
-          broadcast: (event) => broadcastToRenderers(SPECIALIST_IPC.HANDOFF_LIFECYCLE, event)
-        })
-      },
-      dispose: () => disposeDiagnostics?.()
-    }
+  const backendTeardownOwnedByCoordinator: { current: boolean } = { current: false }
+  const notebookRuntime = await composeNotebookRuntime({
+    applicationEvents,
+    ...settingsBootstrap,
+    ...backgroundResults,
+    ...managedFiles,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    backendTeardownOwnedByCoordinator,
+    translate,
+    modules,
+    composition
   })
-  // The delivery callback is intentionally a no-op: the Notebook runtime itself returns a normal
-  // disposition to the existing repl_execute caller. Captured dispositions never return that value.
-  notebookService.setControlCompletionInterceptor(
-    createCompletionGatedControlToolInterceptor(completionGateCoordinator, async () => undefined)
-  )
-  // Desktop notifications for finished/failed agent tasks and approval waits. Delivery is
-  // Electron's Notification (Notification Center on macOS, toasts on Windows, libnotify on Linux);
-  // the service itself stays Electron-free so its filtering rules are unit-testable. The click
-  // handler is bound later, in index.ts, where showMainWindow exists. Constructed before the
-  // connector approval broker, which nudges through it.
-  //
-  // The wiring is extracted into electron-wiring helpers so the headless gate and the broker→service
-  // sessionId pass-through have a unit-level home — inline closures were untestable, and a
-  // regression on either of those contracts would not be caught by TaskNotificationService tests.
-  const notificationsLog = createLogger('notifications')
-  const liveNotifications = new Set<Notification>()
-  const taskNotificationDeliveryDeps = {
-    notificationCtor: Notification,
-    liveNotifications,
-    log: notificationsLog,
+  const specialistCatalog = await composeSpecialistCatalog({ ...settingsBootstrap, composition })
+  const researchCatalog = await composeResearchCatalog({
+    applicationEvents,
+    ...settingsBootstrap,
+    uploadRepository: uploadStorage.uploadRepository,
+    ...managedFiles,
+    ...sessionAuthority,
+    ...documentReading,
+    ...specialistCatalog,
+    modules
+  })
+  const specialistPackages = await composeSpecialistPackages({
+    ...settingsBootstrap,
+    ...sessionFoundation,
+    ...specialistCatalog,
+    ...researchCatalog,
+    composition
+  })
+  const sessionSpecialists = composeSessionSpecialists({
+    runtimeRef,
+    ...sessionFoundation,
+    ...sessionAuthority,
+    ...sessionProjection,
+    ...specialistCatalog
+  })
+  const agentCompletion = await composeAgentCompletion({
+    ...notebookRuntime,
+    ...specialistCatalog,
+    modules
+  })
+  const notifications = composeNotifications({
+    surfaceAdapters,
+    settingsBootstrap,
+    storageStartup,
+    sessionAuthority,
     headless,
     translate
-  }
-  const taskNotifications = new TaskNotificationService({
-    isEnabled: () => settingsService.getNotificationsEnabled(),
-    showContent: () => settingsService.getShowNotificationContent(),
-    isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
-    translate,
-    show: buildTaskNotificationShow(taskNotificationDeliveryDeps),
-    onDeliveryError: (error) =>
-      notificationsLog.warn('task notification delivery failed', errorLogFields(error)),
-    onAttentionError: (error) =>
-      notificationsLog.warn('desktop attention handler failed', errorLogFields(error)),
-    hasNonTerminalComputeJobs: async (sessionId) => {
-      const computeJobs = computeJobActivityRef.current
-      if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
-      return (await computeJobs.countNonTerminalBySession(sessionId)) > 0
-    },
-    inbox: notificationInbox,
-    onInboxError: (error) =>
-      notificationsLog.warn('message center recording failed', errorLogFields(error))
   })
-  surfaceAdapters.push(
-    createNotificationElectronSurface(
-      notificationInbox,
-      taskNotifications,
-      taskNotificationDeliveryDeps
-    )
-  )
-  // The connector application owns MCP, connector/skill approval, runtime projection, and service
-  // construction. Late-bound local tools remain composition-root dependencies and are passed in.
-  const moleculePreviewHandler = createMoleculePreviewHandler({
-    writeArtifactForCurrentRun: (sessionId, input) => {
-      if (!runtimeRef.current) throw new Error('Artifact runtime is not initialized.')
-      return runtimeRef.current.writeArtifactForCurrentRun(sessionId, input)
-    }
+  const connectors = await composeConnectors({
+    ...settingsBootstrap,
+    uploadRepository: uploadStorage.uploadRepository,
+    managedFileVersionService: uploadStorage.managedFileVersionService,
+    runtimeRef,
+    ...sessionFoundation,
+    ...sessionAuthority,
+    ...specialistCatalog,
+    notificationsLog: notifications.notificationsLog,
+    taskNotifications: notifications.taskNotifications,
+    headless,
+    modules,
+    composition
   })
-  const connectorApplication = await modules.add(
-    {
-      settings: settingsService,
-      skillsDir: connectorSkillSourceDir(resolveConfigRoot()),
-      openExternal: (url) => shell.openExternal(url),
-      notifyStatusChanged: () =>
-        broadcastToRenderers('settings:connector-runtime-changed', undefined),
-      broadcastConnectorApproval: buildConnectorApprovalBroadcast({
-        broadcastToRenderers,
-        taskNotifications,
-        onNotificationError: (error) =>
-          notificationsLog.warn('connector approval notification failed', errorLogFields(error))
-      }),
-      onConnectorApprovalSettled: (id, state) => {
-        try {
-          broadcastToRenderers('connectors:approval-settled', id)
-        } finally {
-          void taskNotifications.settleAuthorization('connector', id, state)
-        }
-      },
-      replayConnectorApproval: (request) =>
-        broadcastToRenderers('connectors:approval-request', request),
-      broadcastCredentialRequest: buildConnectorCredentialRequestBroadcast({
-        broadcastToRenderers,
-        taskNotifications,
-        onNotificationError: (error) =>
-          notificationsLog.warn('connector credential notification failed', errorLogFields(error))
-      }),
-      replayCredentialRequest: (request) =>
-        broadcastToRenderers('connectors:credential-request', request),
-      onCredentialRequestSettled: (id, configured) => {
-        try {
-          broadcastToRenderers('connectors:credential-settled', id)
-        } finally {
-          void taskNotifications.settleConnectorCredentialRequest(id, configured)
-        }
-      },
-      broadcastSkillImportApproval: buildSkillImportApprovalBroadcast({
-        broadcastToRenderers,
-        taskNotifications,
-        onNotificationError: (error) =>
-          notificationsLog.warn('skill import approval notification failed', errorLogFields(error))
-      }),
-      onSkillImportSettled: (id) => broadcastToRenderers('skills:conversation-import-settled', id),
-      onSkillImportLifecycleSettled: (id, state) =>
-        void taskNotifications.settleAuthorization('skill-import', id, state),
-      uploads: uploadRepository,
-      managedFileVersions: managedFileVersionService,
-      fetchImpl: netFetchStandard,
-      resolveApiKey: (ref) => tryDecryptKey(ref),
-      canRequestCredential: () => !headless && BrowserWindow.getAllWindows().length > 0,
-      permissionGrantRegistry,
-      resolveSpecialistProfile: async (specialistId) => {
-        try {
-          return await specialistService.resolveRunnableById(specialistId)
-        } catch {
-          return undefined
-        }
-      },
-      localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler },
-      onSkillsChanged: requestSkillCatalogRefresh
-    } satisfies Parameters<typeof createConnectorApplicationModule>[0],
-    createConnectorApplicationModule
-  )
-  const {
-    connectorService,
-    runtimeSettings: connectorRuntimeSettings,
-    mcpClientManager,
-    skillImporter: conversationSkillImporter,
-    connectorApprovals: approvalBroker,
-    credentialRequests: credentialRequestBroker,
-    skillImportApprovals: skillImportApprovalBroker
-  } = connectorApplication
-  composition.phase('connectors')
-  // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
-  // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
-  // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
-  // Absolute Compute inputs may be legacy managed artifacts or exact immutable files staged for
-  // the submitting Notebook Session. Both resolvers enforce their own storage boundary.
-  const computeArtifactResolver = createComputeArtifactResolver(resolveDataRoot(), (path) =>
-    artifactRepository.resolveManagedFilePath({ path })
-  )
-  const sessionLimitPersistence = {
-    resolve: (sessionId: string, expectedProjectId?: string) =>
-      sessionRepository.loadComputePolicy(expectedProjectId, sessionId),
-    save: async (sessionId: string, limit: number): Promise<void> => {
-      const session = await withDataRootWrite(async () => {
-        const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
-        if (!projectId)
-          throw new Error(`Cannot persist concurrency for missing Session ${sessionId}.`)
-        return sessionPersistenceCoordinator.setSessionComputeConcurrencyLimit(
-          projectId,
-          sessionId,
-          limit
-        )
-      })
-      applicationEvents.publish('session:updated', {
-        session,
-        originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
-      })
-    }
-  }
-  const computeIpcModule = createComputeIpcModule(
-    undefined,
-    undefined,
-    computeArtifactResolver,
-    undefined,
-    taskNotifications,
-    permissionGrantRegistry,
-    settingsRepository,
-    {
-      pruneSessionEnabledHosts: async (providerId, afterPrune) => {
-        if (!sessionEnabledComputeHostsOwnerRef.current) {
-          throw new Error('Session enabled Compute Host ownership is not initialized.')
-        }
-        const sessions = await sessionEnabledComputeHostsOwnerRef.current.pruneProvider(
-          providerId,
-          afterPrune
-        )
-        for (const session of sessions) {
-          try {
-            applicationEvents.publish('session:updated', {
-              session,
-              originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
-            })
-          } catch {
-            // The durable repair and cache projection have committed; lifecycle delivery is best effort.
-          }
-        }
-      }
-    },
-    sessionLimitPersistence,
-    computeJobResultDelivery,
-    (projectId, sessionId) => archiveCoordinator.admitSessionWork(projectId, sessionId)
-  )
+  const computeServices = composeComputeServices({
+    applicationEvents,
+    ...settingsBootstrap,
+    ...backgroundResults,
+    ...sessionFoundation,
+    ...managedFiles,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    taskNotifications: notifications.taskNotifications
+  })
   surfaceAdapters = beforeAcpAdapters
-  const {
-    computeService,
-    connectionBroker,
-    jobDeletionOwner,
-    jobRepository,
-    operationRepository,
-    hostRepository,
-    sessionCacheOwner,
-    enabledComputeHostsRegistry: hostsRegistry
-  } = computeIpcModule
-  computeJobActivityRef.current = jobRepository
-  const sessionEnabledComputeHostsOwner = new SessionEnabledComputeHostsOwner({
-    registry: hostsRegistry,
-    hostExists: async (providerId) => (await hostRepository.get(providerId)) !== null,
-    listHostIds: async () => (await hostRepository.list()).map((host) => host.providerId),
-    sessionAuthority: sessionPersistenceCoordinator,
-    projectSessionConcurrencyLimit: async (sessionId, limit) => {
-      const concurrencyManager = computeIpcModule.handlers.concurrencyManager
-      if (!concurrencyManager) throw new Error('Session concurrency ownership is not initialized.')
-      await concurrencyManager.projectPersistedSessionLimit(sessionId, limit)
-    },
-    clearSessionConcurrencyLimits: async (sessionIds) => {
-      const concurrencyManager = computeIpcModule.handlers.concurrencyManager
-      if (!concurrencyManager) throw new Error('Session concurrency ownership is not initialized.')
-      await concurrencyManager.clearProjectedSessionLimits(sessionIds)
-    },
-    withDataRootWrite
+  const computeAdmission = await composeComputeAdmission({
+    ...storageStartup,
+    managedFileVersionService: uploadStorage.managedFileVersionService,
+    ...backgroundResults,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    ...computeServices,
+    composition
   })
-  sessionEnabledComputeHostsOwnerRef.current = sessionEnabledComputeHostsOwner
-  sessionCacheOwnerRef.current = sessionCacheOwner
-  computeJobDeletionRef.current = withSessionCacheDeletion(jobDeletionOwner, sessionCacheOwner)
-  await runDataRootStartupRecovery(() =>
-    projectDeletionCoordinator.restorePendingDeletionBarriers()
-  )
-  await runDataRootStartupRecovery(
-    async () => {
-      await withDataRootWrite(() => managedFileVersionService.recoverPendingWrites())
-    },
-    {
-      reportFailure: (error) => {
-        storageLog.error(
-          'managed file version recovery incomplete; will retry next launch',
-          diagnosticErrorFields(error)
-        )
-      }
-    }
-  )
-  void managedFileVersionService
-    .auditActiveVersionIntegrity()
-    .then((integrityErrors) => {
-      if (integrityErrors.length > 0) {
-        storageLog.error('managed file version integrity audit found corrupt active content', {
-          count: integrityErrors.length
-        })
-      }
-    })
-    .catch((error) =>
-      storageLog.error(
-        'managed file version integrity audit incomplete; will retry next launch',
-        diagnosticErrorFields(error)
-      )
-    )
-  await jobDeletionOwner.restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)
-  composition.phase('deletion-barriers')
-  const dataRoot = resolveDataRoot()
-  // The Notebook RPC receives only this Session-admitted facade, never the unrestricted service
-  // used by Settings and internal runtimes.
-  const agentComputeService = new AgentComputeService(computeService, hostsRegistry, {
-    onFinalJobObserved: async (_context, _providerId, snapshot) => {
-      const job = await jobRepository.get(snapshot.job_id)
-      if (!job) return 'pending'
-      const host = await hostRepository.get(job.provider_id).catch(() => null)
-      const summary = await toJobSummary(job, host?.displayName ?? job.provider_id, dataRoot)
-      return computeJobResultDelivery.observeResult({
-        ...summary,
-        status: snapshot.status,
-        cancellation_status: snapshot.cancellation_status,
-        exit_code: snapshot.exit_code,
-        stdout_tail: snapshot.stdout_tail,
-        stderr_tail: snapshot.stderr_tail,
-        remote_workdir: snapshot.remote_workdir,
-        harvest_error: snapshot.harvest_error,
-        ...('featured_files' in snapshot ? { featured_files: snapshot.featured_files } : {}),
-        ...('left_on_remote' in snapshot ? { left_on_remote: snapshot.left_on_remote } : {})
-      })
-    }
+  const agentControls = composeAgentControls({
+    ...settingsBootstrap,
+    runtimeRef,
+    ...specialistCatalog,
+    ...specialistPackages,
+    ...sessionSpecialists,
+    ...agentCompletion,
+    ...connectors,
+    getRuntime: () => agentRuntime.runtime
   })
-  // host.agents control-plane SDK (issue 02/05): read Specialist/catalog surface plus the durable
-  // immediate-handoff lifecycle. The catalog adapter delegates to the authoritative
-  // SettingsService + SpecialistService; switch() reuses the SAME SessionBindingService and durable
-  // session-file persistence seam the SET_SESSION_SPECIALIST IPC handler uses (no parallel switch
-  // service). The runtime reconfigure callback is intentionally NOT wired here — it runs at the safe
-  // next-message boundary, not inside the SDK call. Privileged operations use the existing ACP
-  // permission broker/card; its response is the only approve/decline authority.
-  const specialistApprovalGateway = new AcpSpecialistApprovalGateway({
-    bridge: createAcpBackedSpecialistBridge({
-      request: async (payload, session) => {
-        const sessionId = session.sessionId
-        const runtime = runtimeRef.current
-        if (!sessionId || !runtime) {
-          return { outcome: 'declined', reason: 'The approval surface is unavailable.' }
-        }
-        const target = payload.kind === 'switch' ? payload.targetName : undefined
-        const approved = await runtime.requestAppApproval({
-          sessionId,
-          title:
-            payload.kind === 'switch'
-              ? target === null
-                ? 'Switch to Main Agent?'
-                : `Switch to ${target}?`
-              : payload.kind === 'delete'
-                ? `Delete ${payload.name}?`
-                : `Rename ${payload.name} to ${payload.newName}?`,
-          rawInput: { specialistApproval: payload }
-        })
-        return approved ? { outcome: 'approved' } : { outcome: 'declined' }
-      }
-    })
+  const delegation = composeDelegation({
+    ...settingsBootstrap,
+    uploadRepository: uploadStorage.uploadRepository,
+    managedFileVersionService: uploadStorage.managedFileVersionService,
+    runtimeRef,
+    ...sessionFoundation,
+    ...managedFiles,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    ...notebookRuntime,
+    ...specialistCatalog,
+    ...sessionSpecialists,
+    ...connectors,
+    ...computeAdmission,
+    mainEntryPath
   })
-  const agentsService = new AgentsService({
-    specialistService,
-    catalog: {
-      listSkillCatalog: () => settingsService.listSpecialistSkillCatalog(),
-      getConnectors: () => settingsService.getConnectors()
-    },
-    customServerAvailability: (id) => connectorRuntimeSettings.customServerAvailability(id),
-    sessionBinding: sessionBindingService,
-    approvalGateway: specialistApprovalGateway,
-    approvalLifecycle: completionHandoffLifecycle,
-    // The completion gate is the sole execution authority. The legacy pending-switch renderer
-    // broadcast is intentionally not emitted: lifecycle events are a read-only projection and can
-    // neither delay nor re-run the approved continuation.
-    switchNotifier: createCompletionGateSwitchNotifier(completionGateCoordinator),
-    deleteSpecialist: (request) => specialistPackageService.deleteSpecialist(request),
-    // Catalog invalidation after a successful privileged mutation: reconnect live sessions so the
-    // agent respawns (re-provisioning skills) and re-applies the updated Specialist whitelist. The
-    // SpecialistService already broadcasts specialist:catalog-changed on update/delete; this refreshes the
-    // RUNTIME capability resolution (mirrors the Settings IPC path's onProfilesChanged callback).
-    invalidateCatalog: () => void runtime.requestSkillsReload(),
-    persistSessionSpecialist: (sessionId, specialistId) =>
-      sessionSpecialistReconfiguration.commitDesired(sessionId, specialistId)
+  const notebookBridge = await composeNotebookBridge({
+    ...settingsBootstrap,
+    managedFileVersionService: uploadStorage.managedFileVersionService,
+    runtimeRef,
+    ...sessionFoundation,
+    ...sessionPackages,
+    ...managedFiles,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    ...notebookRuntime,
+    ...specialistCatalog,
+    ...researchCatalog,
+    ...agentCompletion,
+    ...connectors,
+    ...computeAdmission,
+    ...agentControls,
+    ...delegation,
+    modules,
+    composition
   })
-  const notebookRpcServerRef: { current?: NotebookLocalRpcServer } = {}
-  const requireNotebookRpcServer = (): NotebookLocalRpcServer => {
-    if (!notebookRpcServerRef.current) throw new Error('Notebook RPC server is not composed yet.')
-    return notebookRpcServerRef.current
-  }
-  const delegatedFrameworks = createProductionDelegatedFrameworkRuntime({
-    capacity: 4,
-    dataRoot: resolveDataRoot(),
-    runtime: {
-      appVersion: app.getVersion(),
-      mcpEntryPath: mainEntryPath,
-      repository: artifactRepository,
-      runRegistry: artifactRunRegistry,
-      provenanceRepository: artifactProvenanceRepository,
-      managedFileVersions: managedFileVersionService,
-      uploadRepository,
-      peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
-      authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
-        conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
-      settingsService,
-      permissionGrantRegistry,
-      grantedRootsRepository,
-      specialistService,
-      sessionPersistenceCoordinator,
-      getShellRuntimeBinding: getAvailableShellRuntimeBinding
-    },
-    notebookRpcServer: requireNotebookRpcServer,
-    readSession: ({ projectId, sessionId }) => sessionRepository.loadSession(projectId, sessionId),
-    resolvePermissionProfile: (sessionId) =>
-      runtimeRef.current?.getSnapshot().permissionProfiles[sessionId]?.selectedProfile
-  })
-  const delegatedArtifactTurns = new ArtifactTurnOwner({
-    dataRoot,
-    repository: artifactRepository,
-    runRegistry: artifactRunRegistry,
-    notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
-    issueRpcCapability: (binding) => requireNotebookRpcServer().issueArtifactRunCapability(binding),
-    revokeRpcCapability: (token) => requireNotebookRpcServer().revokeArtifactRunCapability(token),
-    provenance: artifactProvenanceRepository
-  })
-  const delegatedWorkRef: {
-    current?: ReturnType<typeof createProductionDelegatedWorkComposition>
-  } = {}
-  const delegatedWork = createProductionDelegatedWorkComposition({
-    resolvePermissionPrompts: (sessionId) => runtimeRef.current?.getPermissionPrompts(sessionId),
-    dataRoot: resolveDataRoot(),
-    resolveExecutionModel: async (session) => {
-      if (!session.agentFrameworkId) {
-        throw new Error('The originating Session has no Agent Framework identity.')
-      }
-      const backend = runtimeRef.current?.captureSessionBackend(session.id)
-      if (!backend) throw new Error('The originating Session runtime is unavailable.')
-      return settingsService.admitSubagentExecutionModel(session.agentFrameworkId, {
-        providerId: backend.providerId,
-        backendId: backend.backendId,
-        modelRoute: backend.modelRoute,
-        model: backend.context.model,
-        reasoningEffort: backend.session.effort
-      })
-    },
-    onAgentRuntimeUpdate: (update) => broadcastToRenderers('acp:agent-runtime-update', update),
-    settlementContinuations: {
-      dispatch: createDelegationSettlementContinuationDispatch({
-        sendAppContinuationObserved: (request, onProviderPromptAccepted) => {
-          const activeRuntime = runtimeRef.current
-          if (!activeRuntime) {
-            throw new DelegateMessagePreAcceptanceError('The Main Agent runtime is unavailable.')
-          }
-          return activeRuntime.sendAppContinuationObserved(request, onProviderPromptAccepted)
-        },
-        onPromptEnded: (sessionId, promptId) =>
-          delegatedWorkRef.current?.root.settlementPromptEnded?.(sessionId, promptId)
-      })
-    },
-    sessions: {
-      commands: sessionPersistenceCoordinator,
-      readSession: ({ projectId, sessionId }) =>
-        sessionRepository.loadSession(projectId, sessionId),
-      findSessions: findRuntimeSessions
-    },
-    async resolveInput(identity, session) {
-      const artifact = parseArtifactVersionLocator(identity)
-      const upload = parseUploadVersionReference(identity)
-      if (!artifact && !upload) {
-        throw new Error('Delegated input is not an immutable Version identity.')
-      }
-      const source = artifact ? 'artifact' : 'upload'
-      const projectId = artifact?.projectId ?? upload?.projectId
-      const sessionId = artifact?.appSessionId ?? upload?.sessionId
-      const fileId = artifact?.artifactId ?? upload?.fileId
-      const versionId = artifact?.versionId ?? upload?.versionId
-      if (
-        projectId !== session.projectId ||
-        sessionId !== session.sessionId ||
-        !fileId ||
-        !versionId
-      ) {
-        throw new Error('Managed Version input has incomplete or mismatched logical identity.')
-      }
-      const lease = await managedFileVersionService.openVersion(
-        { source, projectId, fileId },
-        versionId
-      )
-      if (lease.logicalFile.sessionId !== session.sessionId) {
-        await lease.close().catch(() => undefined)
-        throw new Error('Managed Version belongs to a different Session.')
-      }
-      return {
-        path: lease.path,
-        filename: lease.logicalFile.displayName,
-        copyTo: (destinationPath: string) => lease.copyTo(destinationPath),
-        close: () => lease.close()
-      }
-    },
-    frameworks: delegatedFrameworks,
-    resolveSpecialist: (profileId) => specialistService.resolveRunnableById(profileId),
-    resolveSpecialistReference: (profileReference) =>
-      specialistService.resolveRunnableByReference(profileReference),
-    artifactEvidence: {
-      turns: delegatedArtifactTurns,
-      artifactStorageSessionId: ({ sessionId }) => sessionId,
-      finalizePublication: async (publication, terminalMessageId, scope) => {
-        const handlers = artifactHandlersRef.current
-        if (!handlers) throw new Error('Artifact finalization owner is not available.')
-        await finalizeDelegatedArtifactPublication({
-          publication,
-          terminalMessageId,
-          scope,
-          commands: sessionPersistenceCoordinator,
-          handlers
-        })
-      },
-      project: (scope) =>
-        scope.terminalMessageId
-          ? artifactRepository.listMessageFiles({
-              projectId: scope.session.projectId,
-              sessionId: scope.session.sessionId,
-              messageId: scope.terminalMessageId
-            })
-          : Promise.resolve([])
-    },
-    reviewEvidence: {
-      loadSession: ({ projectId, sessionId }) =>
-        sessionRepository.loadSession(projectId, sessionId),
-      reviews: {
-        run: (request) => {
-          const owner = reviewerCommandOwnerRef.current
-          if (!owner) return Promise.reject(new Error('Reviewer owner is not available.'))
-          return owner.run(request)
-        },
-        getForSession: (request) => {
-          const owner = reviewerCommandOwnerRef.current
-          if (!owner) return Promise.reject(new Error('Reviewer owner is not available.'))
-          return owner.getForSession(request)
-        }
-      }
-    },
-    parentMessages: {
-      async deliver(delivery) {
-        const runtime = runtimeRef.current
-        if (!runtime) throw new Error('ACP runtime is not available.')
-        const session = await sessionRepository.loadSession(
-          delivery.session.projectId,
-          delivery.session.sessionId
-        )
-        const graph = session?.conversationGraph
-        const rootFrame = graph?.frames.find((frame) => frame.id === delivery.targetFrameId)
-        const rootBranch = graph?.branches.find((branch) => branch.id === rootFrame?.activeBranchId)
-        if (
-          !session ||
-          session.id !== delivery.session.sessionId ||
-          session.projectId !== delivery.session.projectId ||
-          graph?.rootFrameId !== delivery.targetFrameId ||
-          !rootBranch ||
-          !graph.messages.some((message) => message.id === delivery.originMessageId)
-        ) {
-          throw new Error('Parent message durable root provenance is unavailable.')
-        }
-        return runtime.startContinuationWhenDispatchAdmitted(
-          {
-            sessionId: delivery.session.sessionId,
-            text:
-              `[Delegated ${delivery.kind} from Frame ${delivery.sourceFrameId}, ` +
-              `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
-            suppressUserMessage: true,
-            provenanceContext: {
-              // Suppressed continuations create no user node; replies retain the durable origin.
-              promptMessageId: delivery.originMessageId,
-              originMessageId: delivery.originMessageId,
-              rootFrameId: graph.rootFrameId,
-              agentFrameId: graph.rootFrameId,
-              messageBranchId: delivery.rootBranchId,
-              messageBranchAncestry: [delivery.rootBranchId],
-              messageAncestry: [delivery.originMessageId],
-              runtimeSegmentId: `delegated-message-${delivery.messageId}`
-            }
-          },
-          async () => {
-            let latest = await sessionRepository.loadSession(
-              delivery.session.projectId,
-              delivery.session.sessionId
-            )
-            const latestGraph = latest?.conversationGraph
-            const latestRoot = latestGraph?.frames.find(({ id }) => id === delivery.targetFrameId)
-            const latestBranch = latestGraph?.branches.find(
-              ({ id }) => id === latestRoot?.activeBranchId
-            )
-            if (
-              !latest ||
-              latestBranch?.id !== delivery.rootBranchId ||
-              `${latestBranch.id}:${latestBranch.createdAt}` !== delivery.rootBranchRevision
-            ) {
-              throw new DelegateMessageParkedError(
-                'Parent message root Branch changed before dispatch.'
-              )
-            }
-            const agentTarget = await resolveSessionAgentTarget(latest)
-            if (
-              agentTarget &&
-              shouldPersistSessionAgentConfiguration(latest.agentConfiguration, agentTarget)
-            ) {
-              latest = await sessionPersistenceCoordinator.saveSession({
-                ...latest,
-                agentConfiguration: toSessionAgentConfiguration(agentTarget)
-              })
-            }
-            if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
-              await runtime.resumeSession({
-                sessionId: latest.id,
-                cwd: latest.cwd,
-                projectId: latest.projectId,
-                ...(latest.permissionProfile
-                  ? { permissionProfile: latest.permissionProfile }
-                  : {}),
-                memoryEnabled: latest.memoryEnabled !== false,
-                ...(latest.agentFrameworkId
-                  ? { previousFrameworkId: latest.agentFrameworkId }
-                  : {}),
-                ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
-                ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
-                ...(latest.specialistBindingPending === true
-                  ? { specialistBindingPending: true }
-                  : {}),
-                ...(latest.providerSessionId
-                  ? { providerSessionId: latest.providerSessionId }
-                  : {}),
-                ...(latest.providerContinuityToken
-                  ? { providerContinuityToken: latest.providerContinuityToken }
-                  : {}),
-                ...(agentTarget ? { agentTarget } : {})
-              })
-            }
-            const started = await delivery.startDispatch()
-            if (started !== 'started') {
-              throw new DelegateMessageParkedError(
-                'Parent message dispatch fence was not acquired.'
-              )
-            }
-          },
-          delivery.messageId,
-          delivery.onRootAdmissionQueued,
-          (operation) =>
-            archiveCoordinator.withProjectDeletionAdmission(delivery.session.projectId, operation)
-        )
-      }
-    }
-  })
-
-  const hostSkillsCatalog: HostSkillsCatalog = {
-    list: () => settingsService.listHostSkills(),
-    withSkillRead: (id, read) => settingsService.withHostSkillRead(id, read),
-    publishPersonalDirectory: (name, sourcePath, overwrite) =>
-      settingsService.publishHostSkill(name, sourcePath, overwrite),
-    deletePublished: async (id) => {
-      await settingsService.deleteSkill({ id })
-      await removeResourceTags([{ resourceType: 'catalog.skill', resourceId: id }])
-    }
-  }
-  const hostSkillsService = new HostSkillsService({
-    storageRoot: configRoot,
-    catalog: hostSkillsCatalog,
-    approveDelete: async (payload, session) => {
-      const runtime = runtimeRef.current
-      if (!session.sessionId || !runtime) return false
-      return runtime.requestAppApproval({
-        sessionId: session.sessionId,
-        title: `Delete ${payload.name}?`,
-        rawInput: { skillApproval: { kind: 'delete', ...payload } }
-      })
-    },
-    onPublishedSkillsChanged: requestSkillCatalogRefresh
-  })
-  const hostLlmLog = createLogger('notebook:host-llm')
-  const hostModelService = new HostModelService({
-    captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
-    captureSessionModel: (sessionId) => runtimeRef.current?.captureSessionModel(sessionId),
-    captureModelCatalog: async () => {
-      const settings = await settingsService.getSettingsView()
-      return {
-        providers: settings.providers,
-        claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId
-      }
-    },
-    runner: new RestrictedInferenceRunner({
-      appVersion: app.getVersion(),
-      configRoot,
-      profileNamespace: 'host-llm',
-      resolveTarget: (target, context) =>
-        settingsService.resolveExplicitAgentBackend(target, context)
-    }),
-    recordUsage: recordAuxiliaryUsage
-  })
-  const hostViewImageService = new HostViewImageService({
-    catalog: projectFilesRepository,
-    managedFileVersions: managedFileVersionService,
-    captureBackend: (sessionId) => {
-      const backend = runtimeRef.current?.captureSessionBackend(sessionId)
-      return backend
-        ? {
-            frameworkId: backend.framework.id,
-            backendId: backend.backendId,
-            modelRoute: backend.modelRoute,
-            model: backend.context.model ?? backend.session.model,
-            supportsImageInput: backend.context.supportsImageInput,
-            generationToken: backend
-          }
-        : undefined
-    }
-  })
-  const resolveHostReferencedSession = async (
-    context: { sessionId: string },
-    referencedSessionId: string
-  ): Promise<{ projectId: string } | undefined> => {
-    if (!runtimeRef.current?.isSessionReferenceAllowed(context.sessionId, referencedSessionId)) {
-      return undefined
-    }
-    const summary = (await sessionRepository.loadSessionSummaries()).find(
-      (candidate) => candidate.id === referencedSessionId && candidate.archivedAt === undefined
-    )
-    if (!summary) return undefined
-    const project = await projectRepository.get(summary.projectId)
-    return project && project.archivedAt === undefined
-      ? { projectId: summary.projectId }
-      : undefined
-  }
-  const notebookRpcServer = await modules.add(
-    new NotebookLocalRpcServer(notebookLocalRpc, {
-      // The Notebook REPL runs in a process sandbox whose only TCP egress is the approval gateway.
-      // Keep its privileged Host SDK channel on an explicitly shared local socket instead.
-      transport: 'pipe',
-      onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
-      isHostSkillsAvailable: (sessionId) =>
-        runtimeRef.current?.getSessionFramework(sessionId) !== 'codebuddy',
-      resolveSpecialistSkillIds: async (specialistId) => {
-        const profile = await specialistService.resolveRunnableById(specialistId)
-        if (!profile.enabled) return []
-        const effective = resolveEffectiveSpecialistSkills(
-          profile,
-          await settingsService.listSpecialistSkillCatalog()
-        )
-        return effective.kind === 'specialist' ? [...new Set(effective.skillIds)] : []
-      },
-      connectorService,
-      computeService: agentComputeService,
-      memoryService,
-      // The Memory service checks the global gate inside its own queue.
-      isMemoryEnabledForSession: (sessionId) =>
-        runtimeRef.current?.isSessionMemoryEnabled(sessionId) ?? false,
-      sessionMemorySignal: (sessionId) => runtimeRef.current?.sessionMemorySignal(sessionId),
-      skillImporter: conversationSkillImporter,
-      planService: {
-        call: (input) => {
-          const runtime = runtimeRef.current
-          if (!runtime) return Promise.reject(new Error('ACP runtime is not available.'))
-          return runtime.callSessionPlan(input)
-        }
-      },
-      requestUserInput: (request) => {
-        const runtime = runtimeRef.current
-        if (!runtime) throw new Error('ACP runtime is not initialized.')
-        return runtime.requestUserInput(request)
-      },
-      artifactProvenance: {
-        saveVersion: (request, sourceScope, signal, onMetadataBytes) =>
-          artifactProvenanceRepository.saveVersion(request, sourceScope, signal, onMetadataBytes),
-        reserveWrite: (request) => artifactProvenanceRepository.reserveWrite(request),
-        releaseWriteReservation: (request) =>
-          artifactProvenanceRepository.releaseWriteReservation(request),
-        releaseRunWriteReservations: (request) =>
-          artifactProvenanceRepository.releaseRunWriteReservations(request),
-        releaseAllWriteReservations: () =>
-          artifactProvenanceRepository.releaseAllWriteReservations(),
-        createVersion: (request, signal) =>
-          sessionPersistenceCoordinator.runSessionMutation(
-            request.projectId,
-            request.appSessionId,
-            () => artifactProvenanceRepository.createVersion(request, signal)
-          ),
-        replayVersion: (request) =>
-          sessionPersistenceCoordinator.runSessionMutation(
-            request.projectId,
-            request.appSessionId,
-            () => artifactProvenanceRepository.replayVersion(request)
-          )
-      },
-      hostArtifacts: new HostArtifactsService(projectFilesRepository, immutableInputAuthority),
-      delegationInputCatalog: projectFilesRepository,
-      hostLineage: new HostLineageService({
-        catalog: projectFilesRepository,
-        provenance: artifactProvenanceRepository
-      }),
-      hostFrames: new HostFramesService(
-        {
-          readProject: (projectId) =>
-            sessionRepository.loadProjectWithDiagnostics(projectId, { mode: 'read-only' }),
-          readSession: (projectId, sessionId) =>
-            sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
-              mode: 'read-only'
-            })
-        },
-        resolveHostReferencedSession
-      ),
-      hostSessions: new HostSessionsService(
-        {
-          readProject: (projectId) =>
-            sessionRepository.loadProjectWithDiagnostics(projectId, { mode: 'read-only' }),
-          readSession: (projectId, sessionId) =>
-            sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
-              mode: 'read-only'
-            })
-        },
-        { getSnapshot: () => runtimeRef.current?.getSnapshot() },
-        resolveHostReferencedSession
-      ),
-      inputRegistry: notebookInputRegistry,
-      agentsService,
-      delegatedWorkService: delegatedWork.host,
-      skillsService: hostSkillsService,
-      hostModel: hostModelService,
-      hostViewImage: hostViewImageService,
-      wslSetup,
-      wslSetupSessions,
-      wslSetupPreviewAvailable: () => wsl2BashPreviewStatus().available,
-      openWslSetupPowerShellTerminal
-    }),
-    createNotebookLocalRpcModule
-  )
-  // Reverse module disposal cancels active inference before the RPC server waits for its handlers.
-  await modules.add(hostModelService, (service) => ({
-    name: 'host-model-service',
-    capability: service,
-    dispose: () => service.shutdown()
-  }))
-  void hostModelService
-    .sweepStaleProfiles()
-    .catch((error) =>
-      hostLlmLog.error('stale host.llm profile cleanup failed', diagnosticErrorFields(error))
-    )
-  const visionInferenceRunner = new RestrictedInferenceRunner({
-    appVersion: app.getVersion(),
-    configRoot,
-    profileNamespace: 'vision-evidence',
-    resolveTarget: (target, context) =>
-      settingsService.resolveExplicitAgentBackend(target, context),
-    allowNativeCodexSubscription: true
-  })
-  void visionInferenceRunner
-    .sweepStaleProfiles()
-    .catch((error) =>
-      hostLlmLog.error('stale Vision model profile cleanup failed', diagnosticErrorFields(error))
-    )
-  const imageInputCompatibility = await modules.add(
-    new ImageInputCompatibilityOwner({
-      captureTarget: () => settingsService.admitVisionModel(),
-      runner: visionInferenceRunner,
-      evidenceRepository: visionEvidenceRepository,
-      recordUsage: recordAuxiliaryUsage
-    }),
-    (owner) => ({
-      name: 'image-input-compatibility',
-      capability: owner,
-      dispose: () => {
-        owner.clear()
-        return visionInferenceRunner.shutdown()
-      }
-    })
-  )
-  notebookRpcServerRef.current = notebookRpcServer
-  composition.phase('notebook-rpc')
-  // Register ownership before ACP construction. Reverse disposal therefore drains ACP + Notebook
-  // through the coordinator first, then releases the local bridge without creating a second runtime
-  // shutdown owner; rollback also closes a server started during partial composition.
-  // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
-  // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
-  // avoid a construction cycle.
-  notebookService.setMcpRpcConnectionResolver(
-    ({ sessionId, projectId, agentFrameId, attemptId, executionCwd }) =>
-      notebookRpcServer.issueControlConnection(
-        sessionId,
-        projectId,
-        agentFrameId,
-        attemptId ? { role: 'delegate', attemptId } : { role: 'main' },
-        executionCwd
-      )
-  )
   surfaceAdapters.push(
     createConnectorApprovalElectronSurface(
-      approvalBroker,
-      credentialRequestBroker,
-      skillImportApprovalBroker
+      connectors.approvalBroker,
+      connectors.credentialRequestBroker,
+      connectors.skillImportApprovalBroker
     )
   )
-
-  const recoverPendingCustomServerDeletions = async (): Promise<void> => {
-    const pendingCustomServerDeletionIds =
-      (await settingsRepository.getSettings()).connectors?.pendingCustomServerDeletionIds ?? []
-    await reconcilePendingCustomServerDeletions(permissionGrantRegistry, {
-      pendingCustomServerDeletionIds,
-      removeTagsForConnector: (serverId) =>
-        removeResourceTagsOrThrow([{ resourceType: 'catalog.connector', resourceId: serverId }]),
-      completeCustomServerDeletion: (serverId) =>
-        settingsRepository.completeCustomServerDeletion(serverId)
-    })
-  }
-  const initialConnectorSkillsReady = waitForInitialConnectorRefresh(
-    recoverPendingCustomServerDeletions()
-      .catch((error) =>
-        permissionGrantsLog.error(
-          'pending Connector relationship cleanup failed',
-          errorLogFields(error)
-        )
-      )
-      .then(() => connectorRuntimeSettings.refresh()),
-    {
-      // If custom MCP discovery outlives the startup barrier, the first agent may already have
-      // materialized the old connector docs. Rotate it once the late refresh settles so the next
-      // session/prompt uses the refreshed skills instead of waiting for another settings change.
-      onLateSettled: () => runtimeRef.current?.requestSkillsReload()
-    }
-  )
-
-  // Repair legacy UUID Connector grants and ComputeHost grants left behind without a deletion
-  // journal. A failed/timeout Connector refresh leaves that owner class untouched; app-owned MCP
-  // catalog ids are non-UUID and are never guessed to be stale.
-  void initialConnectorSkillsReady
-    .then(async () => {
-      const hosts = await hostRepository.list()
-      await reconcilePermissionGrantOwners(permissionGrantRegistry, {
-        ...(connectorRuntimeSettings.current()
-          ? {
-              customServerIds:
-                connectorRuntimeSettings.current()?.customMcpServers?.map((server) => server.id) ??
-                []
-            }
-          : {}),
-        computeProviderIds: hosts.map((host) => host.providerId)
-      })
-    })
-    .catch((error) =>
-      permissionGrantsLog.error(
-        'permission grant owner reconciliation failed',
-        errorLogFields(error)
-      )
-    )
-
-  const cliCommandOwner = createCliCommandOwner()
-  // Reconcile an existing legacy AppImage shim before startup completes. The owner scopes the
-  // operation to Linux AppImage and records any filesystem failure without aborting the app.
-  await cliCommandOwner.ensureCurrent()
-  const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })
-  const logsCommandOwner = createLogsCommandOwner()
-  surfaceAdapters.push(
-    createDesktopUtilitiesElectronSurface({
-      resolveManagedFilePath,
-      managedFileVersions: managedFileVersionService,
-      notebookInputs: notebookInputRegistry,
-      translate,
-      logs: logsCommandOwner,
-      github: githubCommandOwner,
-      cli: cliCommandOwner
-    })
-  )
-  // ACP identity resolution and the Specialist settings IPC must use the same service instance.
-  // Creating it only for settings leaves create-session unable to resolve a selected UUID.
-  const approvalSessionLifecycle = bindComputeApprovalSessionLifecycle(
-    {
-      onSessionTurnStarted: (sessionId, turnToken) =>
-        skillImportApprovalBroker.beginSessionTurn(sessionId, turnToken),
-      onSessionTurnEnded: (sessionId, turnToken) =>
-        skillImportApprovalBroker.endSessionTurn(sessionId, turnToken),
-      onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) =>
-        skillImportApprovalBroker.allowSessionTurnAttachment(sessionId, turnToken, attachmentUri),
-      onSessionCancellationRequested: (sessionId) =>
-        skillImportApprovalBroker.cancelSession(sessionId),
-      onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
-      onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll()
-    },
-    computeIpcModule.handlers
-  )
-  const runtime = await modules.add(
-    {
-      appVersion: app.getVersion(),
-      mcpEntryPath: mainEntryPath,
-      repository: artifactRepository,
-      runRegistry: artifactRunRegistry,
-      provenanceRepository: artifactProvenanceRepository,
-      managedFileVersions: managedFileVersionService,
-      uploadRepository,
-      notebookRpcServer,
-      wslSetupSessions,
-      getShellRuntimeBinding: getAvailableShellRuntimeBinding,
-      peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
-      authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
-        conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
-      settingsService,
-      grantedRootsRepository,
-      permissionGrantRegistry,
-      taskNotifications,
-      notificationInbox,
-      onSessionTurnStarted: approvalSessionLifecycle.onSessionTurnStarted,
-      onSessionTurnEnded: approvalSessionLifecycle.onSessionTurnEnded,
-      onSkillImportAttachmentEligible: approvalSessionLifecycle.onSkillImportAttachmentEligible,
-      onTrustedMessageAttribution: (projectId, event) =>
-        messageAttributionAuthority.recordRuntimeEvent(projectId, event),
-      onSessionCancellationRequested: approvalSessionLifecycle.onSessionCancellationRequested,
-      onSessionUnavailable: approvalSessionLifecycle.onSessionUnavailable,
-      onAllSessionsCancellationRequested:
-        approvalSessionLifecycle.onAllSessionsCancellationRequested,
-      onSessionDeleteStarted: (sessionId) =>
-        computeIpcModule.handlers.approvalBeginSessionDeletion(sessionId),
-      beforeSessionDelete: async (sessionId) => {
-        await sideChatOwnerRef.current?.invalidateParents([sessionId])
-        const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
-        const operation = async (): Promise<void> => {
-          await notebookService.shutdownSession(sessionId)
-          if (projectId) await notebookService.deleteSessionInputs(projectId, sessionId)
-        }
-        const owner = artifactReproducibilityAttemptOwnerRef.current
-        if (projectId && owner) await owner.withSessionStopped(projectId, sessionId, operation)
-        else await operation()
-      },
-      afterSessionDelete: (sessionId, retained) =>
-        computeIpcModule.handlers.approvalFinishSessionDeletion(sessionId, retained),
-      initializationBarrier: initialConnectorSkillsReady,
-      specialistService,
-      sessionPersistenceCoordinator,
-      finalizeRuntimeArtifacts: async (request) => {
-        const handlers = artifactHandlersRef.current
-        if (!handlers) throw new Error('Artifact finalization is not initialized.')
-        return handlers.finalizeRunArtifacts(request)
-      },
-      literatureReader: literatureDocumentReader,
-      pdfElementReader,
-      literatureAttachments: literatureAttachmentAuthority,
-      literatureCatalog,
-      literaturePdfAcquisition,
-      delegatedWork: delegatedWork.root,
-      sideChatRelays: mainPromptSideChatRelay,
-      hasPendingCredentialRequest: (sessionId) =>
-        credentialRequestBroker.hasPendingForSession(sessionId),
-      imageInputCompatibility,
-      memory: memoryService,
-      classifySkills: settingsService.classification.selectSkills,
-      classifyReadingRoute: settingsService.classification.selectReadingRoute,
-      auxiliaryUsage: {
-        projectIdForSession: (sessionId) =>
-          sessionPersistenceCoordinator.sessionProjectId(sessionId),
-        record: recordAuxiliaryUsage
-      },
-      resolveComputeExecutionTargetIds: (sessionId) => hostsRegistry.getSelected(sessionId)
-    } satisfies Parameters<typeof createAcpRuntime>[0],
-    (options) => {
-      const runtime = createAcpRuntime(options)
-      return {
-        name: 'acp-runtime',
-        capability: runtime,
-        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
-        rollback: () =>
-          backendTeardownOwnedByCoordinator
-            ? undefined
-            : runtime.shutdownForQuit().then(() => undefined)
-      }
-    }
-  )
+  const connectorRecovery = composeConnectorRecovery({
+    ...settingsBootstrap,
+    runtimeRef,
+    ...sessionAuthority,
+    ...researchCatalog,
+    ...connectors,
+    ...computeAdmission
+  })
+  const desktopUtilities = await composeDesktopUtilities({
+    surfaceAdapters,
+    ...uploadStorage,
+    managedFiles,
+    sessionAuthority,
+    translate
+  })
+  const agentRuntime = await composeAgentRuntime({
+    ...settingsBootstrap,
+    ...storageStartup,
+    uploadRepository: uploadStorage.uploadRepository,
+    managedFileVersionService: uploadStorage.managedFileVersionService,
+    ...sessionFoundation,
+    ...managedFiles,
+    ...sessionAuthority,
+    ...documentReading,
+    ...projectLifecycle,
+    backendTeardownOwnedByCoordinator,
+    ...notebookRuntime,
+    ...specialistCatalog,
+    ...researchCatalog,
+    taskNotifications: notifications.taskNotifications,
+    ...connectors,
+    ...computeServices,
+    ...computeAdmission,
+    ...delegation,
+    ...notebookBridge,
+    ...connectorRecovery,
+    mainEntryPath,
+    modules
+  })
   surfaceAdapters = afterAcpAdapters
-  runtimeRef.current = runtime
-  void backgroundResultDelivery
-    .recover()
-    .catch((error) =>
-      createLogger('background-result-delivery').warn(
-        'Background result delivery recovery failed',
-        diagnosticErrorFields(error)
-      )
-    )
-  composition.phase('acp-runtime')
-  runtime.setSessionResumeObserver(async (request) => {
-    if (request.specialistBindingPending !== true) return
-    await sessionSpecialistReconfiguration.completeResume(request.sessionId, request.specialistId)
+  await composeAgentActivation({
+    settingsBootstrap,
+    runtimeRef,
+    backgroundResults,
+    sessionFoundation,
+    sessionAuthority,
+    sessionSpecialists,
+    agentRuntime,
+    modules,
+    composition
   })
-  const userSkillCatalogObserver = await modules.add(
-    {
-      storageRoot: configRoot,
-      catalog: { list: () => settingsService.listUserSkills() },
-      onCatalogChanged: async () => {
-        await settingsService.registeredHelperCatalog().refresh()
-        broadcastToRenderers('skills:catalog-changed', undefined)
-        await runtime.requestSkillsReload()
-      }
-    } satisfies ConstructorParameters<typeof UserSkillCatalogObserver>[0],
-    (options) => {
-      const observer = new UserSkillCatalogObserver(options)
-      return {
-        name: 'user-skill-catalog-observer',
-        capability: observer,
-        start: () => observer.start(),
-        rollback: () => observer.dispose(),
-        dispose: () => observer.dispose()
-      }
-    }
-  )
-  userSkillCatalogObserverRef.current = userSkillCatalogObserver
-  composition.phase('skills')
-  const sideChatLog = createLogger('side-chat')
-  const sideChatRuntime = await modules.add(
-    {
-      appVersion: app.getVersion(),
-      configRoot,
-      captureTarget: async (selection) => {
-        if (!selection) return settingsService.captureActiveExplicitAgentBackendTarget()
-        const { frameworkId } = await settingsService.captureActiveAgentBackendSelection()
-        return {
-          frameworkId,
-          providerId: selection.providerId,
-          model: selection.model
-            ? { kind: 'required', id: selection.model }
-            : { kind: 'provider-default' },
-          reasoningEffort: selection.reasoningEffort ?? 'default'
-        }
-      },
-      resolveTarget: (target, context) =>
-        settingsService.resolveExplicitAgentBackend(target, context),
-      relay: sideChatRelay,
-      deliverRelay: (parentSessionId, queued) =>
-        mainPromptSideChatRelay.tryInject(parentSessionId, queued),
-      recordUsage: recordAuxiliaryUsage,
-      onEvent: (event) => broadcastToRenderers('side-chat:event', event)
-    } satisfies ConstructorParameters<typeof SideChatRuntimeOwner>[0],
-    (options) => {
-      const owner = new SideChatRuntimeOwner(options)
-      return {
-        name: 'side-chat-runtime',
-        capability: owner,
-        dispose: () => owner.shutdown()
-      }
-    }
-  )
-  sideChatOwnerRef.current = sideChatRuntime
-  projectRuntimeQuiescenceRef.current = new ProjectRuntimeQuiescenceOwner({
-    acp: {
-      listSessionIds: () => runtime.getOwnedSessionIds(),
-      liveSessionProjectId: (sessionId) => runtime.liveSessionProjectId(sessionId),
-      deleteSession: (sessionId) => runtime.deleteSession({ sessionId })
-    },
-    delegation: {
-      deleteProject: (projectId) => delegatedWork.root.deleteProject(projectId)
-    },
-    notebook: {
-      shutdownProject: (projectId) => notebookService.shutdownProject(projectId)
-    },
-    reviewer: reviewerProjectRuntime,
-    sideChat: sideChatRuntime,
-    compute: {
-      reconcileProject: async (projectId) => {
-        const deletionOwner = computeJobDeletionRef.current
-        if (!deletionOwner) throw new Error('Compute Job deletion is not initialized.')
-        await deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)
-      }
-    }
+  const sideChat = await composeSideChat({
+    ...settingsBootstrap,
+    ...sessionFoundation,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    ...notebookRuntime,
+    ...delegation,
+    ...agentRuntime,
+    modules,
+    composition
   })
-  // Side chats and undelivered advisories belong to this application run only. Never scan
-  // Session JSON to recover them. Profile cleanup is independent of startup readiness.
-  void sideChatRuntime.sweepStaleProfiles().catch((error) => {
-    sideChatLog.warn('temporary Side chat profile cleanup failed', diagnosticErrorFields(error))
+  await composeComputeRecovery({
+    ...backgroundResults,
+    ...sessionProjection,
+    ...computeServices,
+    ...computeAdmission,
+    modules,
+    composition
   })
-  composition.phase('side-chat')
-  // Start the JobPoller wired to the shared broadcaster only after Project runtime quiescence and
-  // Side Chat ownership are available. Queue startup loads the Session catalog, which may first need
-  // to finish a pending Project deletion through those owners before restoring concurrency limits.
-  await modules.add(
-    {
-      computeService,
-      connectionBroker,
-      jobDeletionOwner,
-      hostRepository,
-      jobRepository,
-      operationRepository,
-      storageRoot: dataRoot
-    },
-    (dependencies) => {
-      const jobPoller = createComputeJobRuntime(dependencies, {
-        broadcast: (summary) => {
-          void (async () => {
-            let owned = false
-            try {
-              await computeJobResultDelivery.observeNotification(summary)
-              owned = await computeJobResultDelivery.hasDeliveryPath(summary.job_id)
-            } catch (error) {
-              createLogger('agent-result-delivery').warn(
-                'Compute Job result delivery observation failed',
-                diagnosticErrorFields(error)
-              )
-              return
-            }
-            broadcastJobUpdated(
-              owned ? { ...summary, result_delivery_path: 'agent-result-delivery' } : summary
-            )
-          })()
-        }
-      })
-      return {
-        name: 'compute-job-runtime',
-        capability: undefined,
-        start: async () => {
-          composition.phase('compute-file-evidence')
-          try {
-            const owners = await jobRepository.listOwners()
-            const jobs = (
-              await Promise.all(owners.map((owner) => jobRepository.findByOwner(owner)))
-            ).flat()
-            for (const [index, job] of jobs.entries()) {
-              if (
-                job.status !== 'error' ||
-                hasImmutableExecutionFileEvidenceReference(job.file_evidence)
-              ) {
-                continue
-              }
-              const fileEvidence = await recoverPublishedComputeJobFileEvidence({
-                storageRoot: dataRoot,
-                projectId: job.project_id,
-                sessionId: job.session_id,
-                jobId: job.job_id,
-                producerRunId: job.producer_run_id
-              })
-              if (!fileEvidence) continue
-              const updated = await jobRepository.update(job.job_id, { fileEvidence })
-              jobs[index] = updated
-              await settleComputeJobFileEvidence({
-                storageRoot: dataRoot,
-                projectId: job.project_id,
-                sessionId: job.session_id,
-                jobId: job.job_id,
-                producerRunId: job.producer_run_id,
-                fileEvidence
-              }).catch((error) =>
-                createLogger('compute:file-evidence').warn(
-                  'Recovered Compute Job file-evidence receipt remains for reconciliation.',
-                  { jobId: job.job_id, ...errorLogFields(error) }
-                )
-              )
-            }
-            await reconcileComputeJobFileEvidence(dataRoot, jobs)
-          } catch (error) {
-            createLogger('compute:file-evidence').warn(
-              'Compute Job file-evidence startup reconciliation failed closed.',
-              diagnosticErrorFields(error)
-            )
-          }
-          composition.phase('compute-result-delivery')
-          try {
-            await computeJobResultDelivery.takeOver(
-              await computeIpcModule.handlers.jobsList({ nonTerminal: true })
-            )
-            await computeJobResultDelivery.recoverWaiting(async (jobId) => {
-              const job = await jobRepository.get(jobId)
-              if (!job) return undefined
-              const host = await hostRepository.get(job.provider_id).catch(() => null)
-              return toJobSummary(job, host?.displayName ?? job.provider_id, dataRoot)
-            })
-          } catch (error) {
-            createLogger('agent-result-delivery').warn(
-              'Compute Job result delivery recovery failed; Compute lifecycle will continue',
-              diagnosticErrorFields(error)
-            )
-          } finally {
-            markComputeResultAuthorityReady()
-          }
-          // Catalog hydration also restores non-Compute projections and enabled Host selections.
-          // Keep those startup effects, but never make dispatch depend on catalog completeness.
-          composition.phase('session-catalog')
-          await Promise.all([
-            jobPoller.start(),
-            loadAllSessions()
-              .then((catalog) => {
-                startupSessionDetails = selectSessionDetailsStartupCandidates(catalog)
-              })
-              .catch((error) => {
-                createLogger('session-persistence').warn(
-                  'Startup Session hydration failed',
-                  errorLogFields(error)
-                )
-              })
-          ])
-        },
-        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
-        dispose: () => jobPoller.stop()
-      }
-    }
-  )
-  composition.phase('compute-runtime-ready')
-  // Recovery quiesces every runtime owner, so do not start its first attempt until ACP, Delegation,
-  // Notebook, Side Chat, and the composed quiescence boundary are all initialized. The bounded
-  // durable barrier restoration above still runs early enough to block admission during startup.
-  const projectDeletionRecovery = new ProjectDeletionRecoveryLoop(
-    () =>
-      recoverDeletionWork({
-        recoverOrphanJobs: () => jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive),
-        replaySessionProjection: () => sessionRepository.reconcilePendingSessionProjection(),
-        recoverProjects: () => projectDeletionCoordinator.recoverPendingDeletions()
-      }),
-    {
-      onError: (error) =>
-        createLogger('compute-job-deletion').error(
-          'background deletion recovery failed; retry scheduled',
-          diagnosticErrorFields(error)
-        ),
-      onStatusChanged: () =>
-        applicationEvents.publish(LIFECYCLE_CHANNELS.projectDeletionCleanupChanged, undefined)
-    }
-  )
-  projectDeletionCoordinator.setRecoveryLoop(projectDeletionRecovery)
-  const removeProjectDeletionRecoveryWake = applicationEvents.subscribe((event) => {
-    if (event.channel === 'project:deleted' && event.payload.status === 'cleanup-pending') {
-      projectDeletionRecovery.wake()
-    }
-  })
-  await modules.add(projectDeletionRecovery, (recovery) => ({
-    name: 'project-deletion-recovery',
-    capability: undefined,
-    start: () => recovery.start(),
-    dispose: async () => {
-      removeProjectDeletionRecoveryWake()
-      await recovery.stop()
-    }
-  }))
-  declareElectronAdapter('side-chat', () =>
-    registerSideChatIpcHandlers(sideChatRuntime, {
-      loadParentSession: (projectId, sessionId) =>
-        sessionRepository.loadSession(projectId, sessionId),
-      hasLiveParentSession: (projectId, sessionId) => runtime.hasLiveSession(projectId, sessionId),
-      withParentAvailable: (sessionId, operation) =>
-        archiveCoordinator.withSessionAvailableById(sessionId, operation)
-    })
-  )
-  // Archive availability is checked at the final admission point, rather than trusting renderer
-  // visibility, so an archived Project/Session cannot restart work through another surface.
-  runtime.setPromptAdmissionGuard(async (sessionId) => {
-    await archiveCoordinator.assertSessionAvailableById(sessionId)
-    await sessionSpecialistReconfiguration.assertUserPromptReady(sessionId)
-    if (!(await completionHandoffLifecycle.canStartUserPrompt(sessionId))) {
-      throw new Error('The approved Specialist handoff must finish or be cancelled before sending.')
-    }
-  })
-  runtime.setPromptDispatchAdmissionGuard((sessionId, dispatch, requireAvailable) =>
-    archiveCoordinator.withSessionDeletionAdmissionById(sessionId, dispatch, requireAvailable)
-  )
-  const codeReconstructionLog = createLogger('artifacts:code-reconstruction')
-  const codeReconstructionRunner = await modules.add(
-    {
-      appVersion: app.getVersion(),
-      configRoot,
-      captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
-      resolveTarget: (target, context) =>
-        settingsService.resolveExplicitAgentBackend(target, context),
-      recordUsage: recordAuxiliaryUsage
-    } satisfies ConstructorParameters<typeof ArtifactCodeReconstructionRunner>[0],
-    (options) => {
-      const runner = new ArtifactCodeReconstructionRunner(options)
-      return {
-        name: 'artifact-code-reconstruction-runner',
-        capability: runner,
-        dispose: () => runner.shutdown()
-      }
-    }
-  )
-  void codeReconstructionRunner
-    .sweepStaleProfiles()
-    .catch((error) =>
-      codeReconstructionLog.error(
-        'stale reconstruction profile cleanup failed',
-        diagnosticErrorFields(error)
-      )
-    )
-  const codeReconstruction = new ArtifactCodeReconstructionService({
-    provenance: artifactProvenanceRepository,
-    runner: codeReconstructionRunner
-  })
-  const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime, {
-    withProjectAvailable: (projectId, operation) =>
-      archiveCoordinator.withProjectAvailable(projectId, operation)
-  })
-  const acpHandlerWorkflows = createAcpHandlerWorkflows(
-    runtime,
-    createSessionWorkflow,
-    taskNotifications,
-    archiveCoordinator,
-    {
-      loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
-      prepareRuntimeResume: (projectId, sessionId) =>
-        sessionPersistenceCoordinator.prepareRuntimeResume(projectId, sessionId)
-    },
-    (sessionId) => {
-      if (sideChatRuntime.hasForParent(sessionId)) {
-        throw new Error('Close Side chat before saving this conversation as a Skill.')
-      }
-    }
-  )
-  const taskAgent = createAcpTaskAgentPort(
-    runtime,
-    createSessionWorkflow,
-    taskNotifications,
-    archiveCoordinator,
-    resolveSessionAgentTarget,
-    resolveDefaultSessionAgentTarget
-  )
-  {
-    // Framework-specific adapters declare their own session selector. The registry resolves those
-    // selectors before its generic fallback, so registration order cannot route a Codex/OpenCode
-    // completion through the wrong continuation path.
-    completionGateRuntimeRegistry.register(
-      createCodexCompletionGateRuntime({
-        runtime: {
-          isSessionUsingFramework: (sessionId, frameworkId) =>
-            runtime.isSessionUsingFramework(sessionId, frameworkId),
-          cancelPrompt: (request) => runtime.cancelPrompt(request),
-          waitForPromptRelease: (sessionId) => runtime.waitForPromptRelease(sessionId),
-          switchSpecialist: (sessionId, specialistId) =>
-            sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
-          continueApprovedHandoff: (sessionId, text) =>
-            runtime.continueApprovedHandoff(sessionId, text)
-        },
-        resolveApprovedSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId)
-      })
-    )
-    completionGateRuntimeRegistry.register(
-      createOpenCodeImmediateHandoffRuntime({
-        runtime: {
-          getSessionFramework: (sessionId) => runtime.getSessionFramework(sessionId),
-          capturePromptForHandoff: (sessionId) => runtime.capturePromptForHandoff(sessionId),
-          cancelPrompt: (request) => runtime.cancelPrompt(request),
-          waitForPromptOwnershipRelease: (sessionId) =>
-            runtime.waitForPromptOwnershipRelease(sessionId),
-          switchSpecialist: (sessionId, specialistId) =>
-            sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
-          startContinuation: (request) => runtime.startContinuation(request)
-        },
-        resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
-        reportHandoffFailure: async (failure) =>
-          runtime.reportApprovedHandoffFailure(failure.sessionId)
-      })
-    )
-    completionGateRuntimeRegistry.register(
-      createProductionAppHandoffRuntime({
-        runtime: {
-          cancelPrompt: (request) => runtime.cancelPrompt(request),
-          waitForPromptOwnershipRelease: (sessionId) =>
-            runtime.waitForPromptOwnershipRelease(sessionId),
-          switchSpecialist: (sessionId, specialistId) =>
-            sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
-          sendAppContinuation: (request) => runtime.sendAppContinuation(request)
-        },
-        sessionBinding: sessionBindingService
-      })
-    )
-  }
-  // Claude's Specialist identity is baked into agent session creation. Its selector joins the Codex
-  // and OpenCode selectors above; the generic runtime remains fallback-only.
-  registerClaudeCodeCompletionGateRuntime(completionGateRuntimeRegistry, {
-    sessionFramework: (sessionId) => runtime.getSessionFramework(sessionId),
-    cancelPrompt: (request) => runtime.cancelPrompt(request),
-    waitForPromptOwnershipRelease: (sessionId) => runtime.waitForPromptOwnershipRelease(sessionId),
-    resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
-    resolveSwitchReadBack: async (sessionId, targetName) => {
-      const specialistId = sessionBindingService.getBinding(sessionId)
-      const revision = specialistId
-        ? (await specialistService.resolveRunnableById(specialistId)).revision
-        : undefined
-      return {
-        status: 'approved',
-        operation: 'switch',
-        binding: {
-          sessionId,
-          specialistId,
-          targetName,
-          ...(revision === undefined ? {} : { revision })
-        }
-      }
-    },
-    prepareReplayContext: createPersistedClaudeReplayPreparer({
-      repository: sessionRepository,
-      coordinator: sessionPersistenceCoordinator,
-      prepareReplay: (input) => runtime.prepareClaudeCodeHandoffReplay(input)
-    }),
-    discardReplayContext: async (sessionId) => runtime.discardClaudeCodeHandoffReplay(sessionId),
-    switchSpecialist: (sessionId, specialistId) =>
-      sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
-    createContinuationRequest: (input) => runtime.createClaudeCodeContinuationRequest(input),
-    sendAppContinuation: (request) => runtime.sendAppContinuation(request),
-    reportHandoffFailure: async (_error, _handoff, context) => {
-      runtime.reportApprovedHandoffFailure(context.sessionId)
-    }
-  })
-  void completionHandoffLifecycle.recover().catch((error: unknown) => {
-    createLogger('completion-handoff').error(
-      'failed to recover approved handoffs',
-      errorLogFields(error)
-    )
-  })
-  delegatedWorkRef.current = delegatedWork
-  permissionGrantRegistry.subscribe(() => runtime.notifyPermissionGrantsChanged())
-  // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
-  // gate. Update handling is deliberately constructed below, after this dependency is complete.
-  const reviewerModelRuntimeShutdown: { current: ReviewerRuntimeShutdownOwner | undefined } = {
-    current: undefined
-  }
-  const shutdownCoordinator = new BackendShutdownCoordinator({
-    runtime: {
-      shutdownForQuit: async () => {
-        const [main, reviewer] = await Promise.all([
-          runtime.shutdownForQuit(),
-          reviewerModelRuntimeShutdown.current
-            ? reviewerModelRuntimeShutdown.current.shutdown()
-            : Promise.resolve({ reaped: true })
-        ])
-        return { reaped: main.reaped && reviewer.reaped }
-      },
-      shutdownForUpdateGate: async () => {
-        const [main, reviewer] = await Promise.all([
-          runtime.shutdownForUpdateGate(),
-          reviewerModelRuntimeShutdown.current
-            ? reviewerModelRuntimeShutdown.current.shutdownForUpdateGate()
-            : Promise.resolve({ reaped: true })
-        ])
-        return { reaped: main.reaped && reviewer.reaped }
-      }
-    },
-    notebook: notebookLifecycle,
-    sideChat: {
-      shutdown: () => sideChatRuntime.shutdown(),
-      suspendAll: (options) => sideChatRuntime.suspendAll(options)
-    },
-    log: createLogger('shutdown')
-  })
-  const durableBackendHandoffGate = createDurableInstallGate(
-    (options) =>
-      shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
-        holdSideChatAdmission: true,
-        legacyShellRecoveryToken: options?.legacyShellRecoveryToken
-      }),
-    () => confirmRendererDurability()
-  )
-  const detectResearchBlockers = (): UpdateBlocker[] => {
-    const blockers: UpdateBlocker[] = detectActiveSessions({
-      runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
-      sideChat: { getActivePromptSessions: getActiveSideChatSessions },
-      delegated: { getActiveDelegatedSessions },
-      notebook: notebookLifecycle
-    }).map((session) => session.kind)
-    if (reviewerModelRuntimeShutdown.current?.hasActiveWork()) blockers.push('reviewer')
-    if (settingsService.hasActiveInstall()) blockers.push('settings-install')
-    return blockers
-  }
-  const durableDataRootHandoffGate = (
-    target: RendererSessionPersistenceTarget,
-    confirmedInterruption: boolean
-  ): Promise<InstallReadiness> =>
-    createDurableInstallGate(
-      createDataRootResearchSafeInstallGate(
-        detectResearchBlockers,
-        () =>
-          shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
-            holdSideChatAdmission: true
-          }),
-        confirmedInterruption
-      ),
-      async () => {
-        if (target.surface !== 'web-renderer') {
-          return confirmRendererDurability('data-root-handoff', target.surface)
-        }
-        const outcome = await webSessionPersistenceFlush.flush(target.lifecycleClientId)
-        const blocked = rendererSessionPersistenceFlushBlocksShutdown(outcome, 'data-root-handoff')
-        if (blocked) webSessionPersistenceFlush.notifyAborted()
-        return !blocked
-      }
-    )()
-  // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
-  // this immutable dependency from construction; the manifest fallback ignores it because it does not
-  // quit the running app to install.
-  let releaseSettingsInstallAdmission: (() => void) | undefined
-  const abortUpdateHandoff = (): void => {
-    packageHandoffHeld = false
-    const releaseAdmission = releaseSettingsInstallAdmission
-    releaseSettingsInstallAdmission = undefined
-    releaseAdmission?.()
-    try {
-      sideChatRuntime.resumeAfterHandoff()
-    } finally {
-      notifyRendererDurabilityAborted()
-    }
-  }
-  const updateInstallGate = createActiveResearchSafeInstallGate(
-    detectResearchBlockers,
-    durableBackendHandoffGate,
-    () => isMigrationInProgress() || isMigrationPending()
-  )
-  const updateStrategy = createUpdateStrategy(process.platform, {
-    translate,
-    installGate: async (options) => {
-      packageHandoffHeld = true
-      if (sessionPackageDesktopLifecycle.isActive())
-        throw new Error('Wait for the Session package operation to finish before updating.')
-      releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()
-      return updateInstallGate(options)
-    },
-    releaseInstallHandoff: abortUpdateHandoff
-  })
-  const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
-  let stopUpdateScheduler: (() => void) | undefined
-  await modules.add(undefined, () => ({
-    name: 'update-scheduler',
-    capability: undefined,
-    dispose: () => stopUpdateScheduler?.()
-  }))
-  declareElectronAdapter('update', () => {
-    registerUpdateIpcHandlers(updateStrategy, updateCommandOwner)
-    stopUpdateScheduler = startUpdateScheduler(updateStrategy)
-  })
-  const permissionGrantProjection = await modules.add(
-    {
-      registry: permissionGrantRegistry,
-      projects: {
-        list: async () => {
-          await projectDeletionCoordinator.recoverPendingDeletions()
-          return projectRepository.list()
-        }
-      },
-      sessions: {
-        metadataSnapshot: () =>
-          loadSessionMetadataAfterProjectRecovery(
-            projectDeletionCoordinator,
-            sessionPersistenceCoordinator
-          )
-      },
-      connectors: {
-        get: async () => ({
-          ...(await settingsService.getConnectors()),
-          bundledConnectorIds: ALL_CONNECTOR_IDS
-        })
-      }
-    },
-    (dependencies) => {
-      const owner = createPermissionGrantProjectionController({
-        ...dependencies,
-        publishChanged: (payload) => broadcastToRenderers('permissions:changed', payload)
-      })
-      return {
-        name: 'permission-grant-projection',
-        capability: owner,
-        dispose: () => owner.dispose()
-      }
-    }
-  )
-  // Framework changes rotate future runtime ownership; provider edits and authentication changes
-  // reconnect generations that use the affected provider. Active provider/model/effort selections are
-  // persisted defaults only and never flow through this effects port to mutate existing Sessions.
-  const settingsWorkflows = createSettingsWorkflows(settingsService, {
-    runtime: {
-      requestProviderReconnect: (providerIds, includeDefault = true) => {
-        void runtime.requestProviderReconnect(providerIds, includeDefault)
-        if (includeDefault) void sideChatRuntime.requestProviderReconnect()
-      },
-      requestAgentFrameworkSwitch: (frameworkId) => {
-        void runtime.requestAgentFrameworkSwitch(frameworkId)
-        void sideChatRuntime.requestProviderReconnect()
-      }
-    },
-    localShell: {
-      requestShellRuntimeRefresh: () => runtime.requestShellCapabilityRefresh()
-    },
-    skills: {
-      requestSkillsReload: () => void runtime.requestSkillsReload(),
-      notifySkillCatalogChanged: requestSkillCatalogRefresh,
-      removeTagsForSkill: (resourceId) =>
-        removeResourceTags([{ resourceType: 'catalog.skill', resourceId }])
-    },
-    connectors: {
-      invalidatePermissionProjection: () => permissionGrantProjection.invalidateProjection(),
-      refreshConnectorSkillDocs: (customServerId) =>
-        customServerId
-          ? connectorRuntimeSettings.refreshCustomServer(customServerId)
-          : connectorRuntimeSettings.refresh(),
-      requestSkillsReload: () => void runtime.requestSkillsReload(),
-      pruneCustomServerPermissions: (serverId) =>
-        permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
-      removeTagsForConnector: (resourceId) =>
-        removeResourceTagsOrThrow([{ resourceType: 'catalog.connector', resourceId }]),
-      beginCustomServerSecurityChange: (serverId) =>
-        connectorService.beginCustomServerSecurityChange(serverId),
-      clearCustomServerFailure: (serverId) => connectorService.clearCustomServerFailure(serverId),
-      resetCustomServerClient: (serverId) => mcpClientManager.close(serverId)
-    },
-    appearance: { applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined) }
-  })
-  wslRuntimeReconciliation.current = (status) => {
-    if (!status.snapshot || status.operation.state === 'running') return
-    void settingsWorkflows.localShell
-      .fallbackAfterWslProbe(status.snapshot, async () => {
-        // Discard an observation superseded while the serialized Shell switch was queued.
-        if (wslSetup.getStatus().revision !== status.revision) return {}
-        return settingsRepository.getSettings()
-      })
-      .then(async (changed) => {
-        if (changed) {
-          await settingsSnapshotCommits.currentSnapshotAfter(Promise.resolve())
-          await wslSetup.probe()
-        }
-      })
-      .catch((error) => createLogger('wsl-setup').warn('PowerShell fallback failed', { error }))
-  }
-  wslRuntimeReconciliation.current(wslSetup.getStatus())
-  surfaceAdapters.push(
-    createSettingsElectronSurface({
-      service: settingsService,
-      workflows: settingsWorkflows,
-      snapshotCommits: settingsSnapshotCommits,
-      listAppIconPreviews,
-      translate
-    })
-  )
-  declareElectronAdapter('notebook', () => registerNotebookIpcHandlers(notebookCommands))
-  declareElectronAdapter('background-result-delivery', () =>
-    registerBackgroundResultDeliveryIpcHandlers(backgroundResultDeliveryRepository, {
-      resolveSources: resolveDeliverySources
-    })
-  )
-  // Wire Session deletion to the binding stores so stale capabilities cannot reappear on restart.
-  // The renderer calls sessions:delete-session (via sessionPersistenceBackend) and acp:delete-session
-  // separately; both paths should clear the binding. Override the backend deleteSession callback here
-  // so all durable-path deletions — regardless of whether the ACP session was attached — clear the
-  // binding in one place.
-  const originalDeleteSession =
-    sessionPersistenceBackend.deleteSession.bind(sessionPersistenceBackend)
-  const deleteSessionWithCleanup = withSessionDeletionCleanup(
-    withSessionDeletionCleanup(originalDeleteSession, (_projectId, sessionId) =>
-      sessionSpecialistReconfiguration.clearSession(sessionId)
-    ),
-    (_projectId, sessionId) => wslSetupSessions.forget(sessionId)
-  )
-  sessionPersistenceBackend.deleteSession = async (projectId, sessionId) => {
-    const owner = artifactReproducibilityAttemptOwnerRef.current
-    const operation = (): Promise<void> => deleteSessionWithCleanup(projectId, sessionId)
-    if (owner) await owner.withSessionStopped(projectId, sessionId, operation)
-    else await operation()
-  }
-  const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
-    sessionPersistenceBackend,
-    reviewRepository,
-    messageAttributionAuthority,
-    async () => {
-      try {
-        await computeService.startQueueReconciliation({ retryFailedOnly: true })
-      } catch (error) {
-        // Keep the catalog diagnostics and affected-file recovery UI readable while dispatch is blocked.
-        createLogger('compute-integrity').warn(
-          'Compute queue recovery remains blocked',
-          errorLogFields(error)
-        )
-      }
-    }
-  )
-  const sessionDetailsOwner = await modules.add(
-    {
-      appVersion: app.getVersion(),
-      configRoot,
-      settingsService,
-      sessionPersistenceBackend,
-      sessionPersistenceCoordinator
-    },
-    (dependencies) => {
-      const log = createLogger('session-details')
-      const inference = new RestrictedInferenceRunner({
-        appVersion: dependencies.appVersion,
-        configRoot: dependencies.configRoot,
-        profileNamespace: 'session-details',
-        resolveTarget: (target, context) =>
-          dependencies.settingsService.resolveExplicitAgentBackend(target, context)
-      })
-      const owner = createSessionDetailsOwner({
-        sessions: {
-          listSessions: async () =>
-            (await dependencies.sessionPersistenceBackend.loadAll()).sessions,
-          mutateSession: (projectId, sessionId, mutation) =>
-            dependencies.sessionPersistenceCoordinator.mutateSessionDetailsAuthority(
-              projectId,
-              sessionId,
-              (session) => {
-                const result = mutation(session)
-                return result.kind === 'write' ? result.session : undefined
-              }
-            )
-        },
-        targets: {
-          resolve: async (session) => {
-            const admission =
-              await dependencies.settingsService.admitSessionDetailsExecutionTarget(session)
-            if (admission.mode === 'disabled') return { mode: 'disabled' }
-            if (!inference.supportsTarget(admission.target)) return { mode: 'unavailable' }
-            return {
-              mode: 'admitted',
-              frameworkId: admission.target.frameworkId,
-              providerId: admission.target.providerId,
-              model:
-                admission.target.model.kind === 'required'
-                  ? admission.target.model.id
-                  : 'provider-default',
-              reasoningEffort: admission.target.reasoningEffort
-            }
-          }
-        },
-        inference: {
-          generate: async (request) => {
-            if (!request.target.providerId) {
-              throw new Error('Session details inference requires a provider target.')
-            }
-            const result = await inference.run({
-              prompt: buildSessionDetailsUserPrompt(request.firstMessage),
-              target: {
-                frameworkId: request.target.frameworkId,
-                providerId: request.target.providerId,
-                model: { kind: 'required', id: request.target.model },
-                reasoningEffort: request.target.reasoningEffort
-              },
-              systemPrompt: request.systemInstruction,
-              agentName: 'Session details',
-              description: 'Generate a Session title and description',
-              signal: request.signal,
-              outputLimitBytes: 8_192
-            })
-            return { output: result.text, usage: result.usage, stopReason: result.stopReason }
-          }
-        },
-        lifecycle: {
-          publish: (session) =>
-            applicationEvents.publish(LIFECYCLE_CHANNELS.sessionUpdated, {
-              session,
-              originClientId: MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID
-            })
-        },
-        log
-      })
-      return {
-        name: 'session-details',
-        capability: owner,
-        start: async () => {
-          await inference
-            .sweepStaleProfiles()
-            .catch((error) =>
-              log.warn('stale Session details profile cleanup failed', diagnosticErrorFields(error))
-            )
-          composition.phase('session-details-recovery')
-          const candidates = startupSessionDetails
-          startupSessionDetails = undefined
-          await owner.start(candidates)
-          composition.phase('session-details-ready')
-        },
-        dispose: async () => {
-          await owner.shutdown()
-          await inference.shutdown()
-        }
-      }
-    }
-  )
-  const specialistApplicationOwner = createSpecialistApplicationOwner({
-    service: specialistService,
-    packages: specialistPackageService,
-    uploads: uploadCommandOwner,
-    onProfilesChanged: () => void runtime.requestSkillsReload()
-  })
-  specialistService.subscribe(() =>
-    applicationEvents.publish('specialist:catalog-changed', undefined)
-  )
-  surfaceAdapters.push(
-    createSpecialistElectronSurface({
-      specialistService,
-      sessionBindingService,
-      sessionSpecialistReconfiguration,
-      onProfilesChanged: () => void runtime.requestSkillsReload(),
-      specialistPackageService,
-      marketplaceService,
-      specialistApplicationOwner,
-      translate
-    })
-  )
-  // Runtime Settings UI: discover managed/external environments and pick an interpreter file. The
-  // runtime root MUST match the executor/service's
-  // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.
-  const runtimeWorkflows = createRuntimeWorkflows({
-    settingsService,
-    onPolicyChanged: () => broadcastToRenderers('runtime:policy-changed', undefined),
-    ...(notebookNetworkSandbox.supportsWindowsRuntimeAccess
-      ? {
-          setWindowsRuntimeAccess: (executable: string, authorized: boolean) =>
-            notebookNetworkSandbox.setWindowsRuntimeAccess(executable, authorized)
-        }
-      : {}),
-    runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
-    micromambaRunner,
-    // WS10: revoke a disabled runtime from any live session bound to it (mark binding unavailable).
-    onRuntimeDisabled: (language, envId, force) =>
-      notebookService.revokeRuntime(language, envId, {
-        force,
-        waitForDrain: notebookNetworkSandbox.supportsWindowsRuntimeAccess && language === 'r'
-      }),
-    // WS11: live-session usage of a runtime, for the disable-impact warning.
-    describeRuntimeUsage: (language, envId) => notebookService.describeRuntimeUsage(language, envId)
-  })
-  declareElectronAdapter('notebook-runtime', () => registerRuntimeIpcHandlers(runtimeWorkflows))
-  declareElectronAdapter('managed-preview', () =>
-    installManagedPreviewElectronAdapter(
-      previewResources,
-      managedPreviewProtocol,
-      managedPreviewOwners
-    )
-  )
-  surfaceAdapters.push(
-    ...createOfficePreviewElectronSurfaces({
-      previewResources,
-      runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html')
-    })
-  )
-
-  const notebookEnvironmentLifecycle = await registerNotebookEnvironmentComposition({
-    settingsService,
-    provisioningRoot,
-    notebookNetworkSandbox,
-    micromambaRunner,
-    notebookService,
-    notebookCommands,
-    notebookRunResultDelivery,
-    markNotebookResultAuthorityReady,
-    declareElectronAdapter
-  })
-  composition.phase('notebook-provisioner')
-
-  // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
-  let releaseDataRootInstallAdmission: (() => void) | undefined
-  const abortDataRootInstallAdmission = (): void => {
-    const releaseAdmission = releaseDataRootInstallAdmission
-    releaseDataRootInstallAdmission = undefined
-    releaseAdmission?.()
-  }
-
-  const storageCommandOwner = createStorageCommandOwner({
-    hasActivePackageOperation: () => sessionPackageDesktopLifecycle.isActive(),
-    runtime,
-    notebook: notebookLifecycle,
-    getActivePromptSessions: () => runtime.getActivePromptSessions(),
-    getActiveSideChatSessions,
-    getActiveDelegatedSessions,
-    hasActiveReviewerWork: () => reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
-    settingsService,
-    micromambaRunner,
-    acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
-    notifyDataRootHandoffAborted: () => {
-      abortDataRootInstallAdmission()
-      try {
-        sideChatRuntime.resumeAfterHandoff()
-      } finally {
-        try {
-          notifyRendererDurabilityAborted()
-        } finally {
-          webSessionPersistenceFlush.notifyAborted()
-        }
-      }
-    },
-    prepareDataRootHandoff: async (target, confirmedInterruption) => {
-      let prepared = false
-      releaseDataRootInstallAdmission ??= settingsService.holdInstallAdmission()
-      try {
-        const readiness = await durableDataRootHandoffGate(target, confirmedInterruption)
-        prepared = readiness.completed && readiness.reaped
-        return prepared
-      } finally {
-        if (!prepared) {
-          abortDataRootInstallAdmission()
-          sideChatRuntime.resumeAfterHandoff()
-        }
-      }
-    },
-    cleanupJournal: dataRootCleanupJournal,
-    deleteSources: cleanupDataRootSources
-  })
-  declareElectronAdapter('storage', () =>
-    registerStorageIpcHandlers(
-      {
-        runtime,
-        notebook: notebookLifecycle,
-        getActivePromptSessions: () => runtime.getActivePromptSessions(),
-        getActiveSideChatSessions,
-        getActiveDelegatedSessions,
-        hasActiveReviewerWork: () => reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
-        settingsService
-      },
-      storageCommandOwner
-    )
-  )
-  const artifactHandlers = createArtifactHandlers(artifactRepository, artifactRunRegistry, {
-    onPublished: (artifacts) => {
-      for (const artifact of artifacts) {
-        if (
-          !artifact.projectId ||
-          !artifact.artifactId ||
-          !artifact.versionId ||
-          !(artifact.mimeType === 'application/pdf' || artifact.name.toLowerCase().endsWith('.pdf'))
-        )
-          continue
-        void pdfAnnotationService
-          .importNative({
-            operationId: crypto.randomUUID(),
-            projectId: artifact.projectId,
-            sessionId: artifact.sessionId,
-            sourceKind: 'artifact-version',
-            sourceFileId: artifact.artifactId,
-            versionId: artifact.versionId
-          })
-          .catch((error) =>
-            storageLog.warn('Native PDF annotation import failed', errorLogFields(error))
-          )
-      }
-    },
-    provenance: artifactProvenanceRepository,
-    openLatestManagedFile: (request) =>
-      managedFileVersionService.openLatest({
-        source: 'artifact',
-        projectId: request.projectId!,
-        fileId: request.fileId!
-      }),
-    openManagedFileVersion: (request) =>
-      managedFileVersionService.openVersion(
-        { source: 'artifact', projectId: request.projectId!, fileId: request.fileId! },
-        request.versionId
-      ),
-    codeReconstruction,
-    withSessionMutation: (projectId, sessionId, mutation) =>
-      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
-    recoverPendingArtifacts: (request) =>
-      sessionPersistenceCoordinator.retryArtifactFinalization(request)
-  })
-  artifactHandlersRef.current = artifactHandlers
-  surfaceAdapters.push(
-    createArtifactElectronSurface({
-      artifactRepository,
-      artifactRunRegistry,
-      artifactProvenanceRepository,
-      artifactHandlers,
-      artifactReproducibilityAttemptOwnerRef,
-      archiveCoordinator,
-      sessionPersistenceCoordinator,
-      notebookService,
-      translate
-    })
-  )
-  surfaceAdapters.push(createUploadElectronSurface(uploadCommandOwner))
-  declareElectronAdapter('notebook-input-preview', () => {
-    ipcMainHandle('notebook:read-input-preview', (_event, request) =>
-      notebookInputRegistry.readPreview(request)
-    )
-  })
-  const sessionDeletionOwner = new SessionDeletionOwner({
-    runtime,
-    backgroundResults: backgroundResultDelivery,
-    withStoppedWork: (request, operation) => {
-      const owner = artifactReproducibilityAttemptOwnerRef.current
-      return owner
-        ? owner.withSessionStopped(request.projectId, request.sessionId, operation)
-        : operation()
-    },
-    withAdmission: (request, work) =>
-      archiveCoordinator.withSessionDeletionAdmissionById(request.sessionId, work),
-    persistence: {
-      deleteSession: (request) =>
-        withDataRootWrite(() =>
-          sessionPersistenceBackend.deleteSession(request.projectId, request.sessionId)
-        )
-    }
-  })
-  const runtimeWriter = new RuntimeWriterOwner(undefined, undefined, (clientId) => {
-    if (!clientId.startsWith('electron:')) return undefined
-    const sender = webContents.fromId(Number(clientId.slice('electron:'.length)))
-    return Boolean(sender && !sender.isDestroyed() && !sender.isCrashed())
-  })
-  surfaceAdapters.push(
-    createSessionPersistenceElectronSurface({
-      runtimeWriter,
-      sessionPersistenceBackend,
-      reviewRepository,
-      sessionPersistenceHandlers,
-      sessionDetailsOwner,
-      delegatedWork,
-      sessionRepository
-    })
-  )
-  const conversationExportService = createConversationExportService({
-    translate,
-    loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
-    isSessionActive: (projectId, sessionId) =>
-      runtime
-        .getActivePromptSessions()
-        .some(
-          (activeSession) =>
-            activeSession.projectId === projectId && activeSession.sessionId === sessionId
-        )
-  })
-  declareElectronAdapter('conversation-export', () =>
-    registerConversationExportIpcHandler(conversationExportService)
-  )
-  const sessionPackageDesktop = createSessionPackageDesktop({
-    sessionPackageService,
-    translate,
-    archiveCoordinator,
-    sessionPersistenceCoordinator,
+  await composeProjectRecovery({
+    declareElectronAdapter,
     applicationEvents,
-    projectRepository,
-    sessionRepository,
-    isPackageHandoffHeld: () => packageHandoffHeld,
-    onSensitiveContentFailure: rememberSensitiveContentFailure
+    ...sessionFoundation,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    ...computeAdmission,
+    ...agentRuntime,
+    ...sideChat,
+    modules
   })
-  sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active
-  const removePackageQuitGuard = installSessionPackageQuitGuard(
-    app,
-    () => sessionPackageDesktop.hasActiveTransfer(),
-    () => {
-      dialog.showMessageBoxSync({
-        type: 'info',
-        title: translate('Session package operation in progress'),
-        message: translate(
-          'Wait for the package operation to finish, or cancel it from the progress window before quitting.'
-        ),
-        buttons: [translate('OK')]
-      })
-    }
-  )
-  sessionPackageDesktopLifecycle.close = async () => {
-    removePackageQuitGuard()
-    await sessionPackageDesktop.close()
-  }
+  const agentWorkflows = await composeAgentWorkflows({
+    ...settingsBootstrap,
+    ...sessionFoundation,
+    ...managedFiles,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    ...specialistCatalog,
+    ...sessionSpecialists,
+    ...agentCompletion,
+    taskNotifications: notifications.taskNotifications,
+    ...delegation,
+    ...agentRuntime,
+    ...sideChat,
+    modules
+  })
+  const handoff = await composeHandoff({
+    declareElectronAdapter,
+    webSessionPersistenceFlush,
+    ...settingsBootstrap,
+    ...sessionPackages,
+    ...sessionAuthority,
+    ...notebookRuntime,
+    ...agentRuntime,
+    ...sideChat,
+    translate,
+    confirmRendererDurability,
+    notifyRendererDurabilityAborted,
+    modules
+  })
+  const settingsEffects = await composeSettingsEffects({
+    surfaceAdapters,
+    declareElectronAdapter,
+    ...settingsBootstrap,
+    ...backgroundResults,
+    ...sessionFoundation,
+    ...sessionPackages,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    ...notebookRuntime,
+    ...researchCatalog,
+    ...connectors,
+    ...agentRuntime,
+    ...sideChat,
+    translate,
+    onAppIconVariantChanged,
+    listAppIconPreviews,
+    modules
+  })
+  const sessionSurfaces = await composeSessionSurfaces({
+    surfaceAdapters,
+    applicationEvents,
+    ...settingsBootstrap,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    ...sessionProjection,
+    ...specialistCatalog,
+    ...specialistPackages,
+    ...sessionSpecialists,
+    ...computeAdmission,
+    ...agentRuntime,
+    translate,
+    modules,
+    composition
+  })
+  const notebookSurfaces = await composeNotebookSurfaces({
+    surfaceAdapters,
+    declareElectronAdapter,
+    settingsBootstrap,
+    backgroundResults,
+    managedFiles,
+    notebookRuntime,
+    managedPreviewProtocol,
+    composition
+  })
+  const storageHandoff = composeStorageHandoff({
+    declareElectronAdapter,
+    webSessionPersistenceFlush,
+    ...settingsBootstrap,
+    ...storageStartup,
+    ...sessionPackages,
+    ...sessionAuthority,
+    ...notebookRuntime,
+    ...agentRuntime,
+    ...sideChat,
+    ...handoff,
+    notifyRendererDurabilityAborted
+  })
+  const artifactSurfaces = composeArtifactSurfaces({
+    surfaceAdapters,
+    declareElectronAdapter,
+    ...storageStartup,
+    managedFileVersionService: uploadStorage.managedFileVersionService,
+    ...backgroundResults,
+    ...sessionFoundation,
+    ...managedFiles,
+    ...sessionAuthority,
+    ...documentReading,
+    ...projectLifecycle,
+    ...sessionProjection,
+    ...notebookRuntime,
+    ...delegation,
+    ...agentRuntime,
+    ...agentWorkflows,
+    ...sessionSurfaces,
+    translate
+  })
+  const sessionPackageSurfaces = composeSessionPackageSurfaces({
+    declareElectronAdapter,
+    applicationEvents,
+    ...sessionFoundation,
+    ...sessionPackages,
+    ...sessionAuthority,
+    ...projectLifecycle,
+    ...agentRuntime,
+    translate
+  })
   surfaceAdapters.push(
     ...createCoreElectronSurfaces({
-      permissionGrantProjection,
+      permissionGrantProjection: settingsEffects.permissionGrantProjection,
       projectFiles: [
-        projectFilesRepository,
-        sessionPersistenceCoordinator,
-        projectDeletionCoordinator,
-        projectFilesHandlers
+        sessionAuthority.projectFilesRepository,
+        sessionAuthority.sessionPersistenceCoordinator,
+        projectLifecycle.projectDeletionCoordinator,
+        projectLifecycle.projectFilesHandlers
       ],
-      managedFileVersionHandlers,
-      localFsService,
-      previewStateRepository
+      managedFileVersionHandlers: projectLifecycle.managedFileVersionHandlers,
+      localFsService: managedFiles.localFsService,
+      previewStateRepository: sessionPackages.previewStateRepository
     })
   )
   // Compute IPC handlers are registered earlier (before the notebook RPC server) so computeService
@@ -4607,354 +633,104 @@ export const createApplicationModules = async (
     modelRuntime: {
       appVersion: app.getVersion(),
       isDataRootHandoffActive: () => isMigrationInProgress() || isMigrationPending(),
-      captureModel: () => settingsService.admitReviewerExecutionModel(),
+      captureModel: () => settingsBootstrap.settingsService.admitReviewerExecutionModel(),
       resolveTarget: (target, context) =>
-        settingsService.resolveExplicitAgentBackend(target, context)
+        settingsBootstrap.settingsService.resolveExplicitAgentBackend(target, context)
     },
     options: {
-      acpRuntime: runtime,
-      projectRuntime: reviewerProjectRuntime,
+      acpRuntime: agentRuntime.runtime,
+      projectRuntime: sessionAuthority.reviewerProjectRuntime,
       admitSessionWork: (projectId, sessionId) =>
-        archiveCoordinator.admitSessionWork(projectId, sessionId),
+        projectLifecycle.archiveCoordinator.admitSessionWork(projectId, sessionId),
       withProjectAvailable: (projectId, operation) =>
-        archiveCoordinator.withProjectAvailable(projectId, operation),
+        projectLifecycle.archiveCoordinator.withProjectAvailable(projectId, operation),
       mcpEntryPath: mainEntryPath,
-      managedFileVersions: managedFileVersionService,
-      artifactCatalog: projectFilesRepository,
-      artifactProvenanceRepository,
-      resolveSessionAgentTarget,
+      managedFileVersions: uploadStorage.managedFileVersionService,
+      artifactCatalog: sessionAuthority.projectFilesRepository,
+      artifactProvenanceRepository: managedFiles.artifactProvenanceRepository,
+      resolveSessionAgentTarget: settingsBootstrap.resolveSessionAgentTarget,
       sessionReader: {
         loadSession: (projectId, sessionId) =>
-          sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId),
+          sessionAuthority.sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId),
         findSessionById: async (sessionId) => {
-          const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+          const projectId =
+            await sessionAuthority.sessionPersistenceCoordinator.sessionProjectId(sessionId)
           if (!projectId) return undefined
-          return sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId)
+          return sessionAuthority.sessionPersistenceCoordinator.readSessionSnapshot(
+            projectId,
+            sessionId
+          )
         }
       },
       saveSessionAgentConfiguration: (session, configuration) =>
-        sessionPersistenceCoordinator.saveSession({
+        sessionAuthority.sessionPersistenceCoordinator.saveSession({
           ...session,
           agentConfiguration: configuration
         }),
       withSessionMutation: (projectId, sessionId, mutation) =>
-        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
-      recordUsage: recordAuxiliaryUsage
+        sessionAuthority.sessionPersistenceCoordinator.runSessionMutation(
+          projectId,
+          sessionId,
+          mutation
+        ),
+      recordUsage: sessionFoundation.recordAuxiliaryUsage
     },
-    previewResources,
-    runtimeShutdownOwner: reviewerModelRuntimeShutdown,
+    previewResources: managedFiles.previewResources,
+    runtimeShutdownOwner: handoff.reviewerModelRuntimeShutdown,
     declareElectronAdapter
   })
-  reviewerCommandOwnerRef.current = reviewerCommandOwner
-
-  const electronSenderFor = (
-    invocation: ApplicationInvocation<readonly unknown[]>
-  ): WebContents => {
-    const senderId = Number(invocation.callerContext.clientId)
-    const sender =
-      Number.isSafeInteger(senderId) && senderId > 0 ? webContents.fromId(senderId) : null
-    if (!sender || sender.isDestroyed()) {
-      throw new Error('Electron command caller is no longer available.')
-    }
-    return sender
-  }
-  const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
-    specialist: specialistApplicationOwner,
-    bookmarks: bookmarkService,
-    pdfAnnotations: pdfAnnotationService,
-    acp: {
-      runtime,
-      workflows: acpHandlerWorkflows,
-      archiveAvailability: archiveCoordinator,
-      respondDelegatedQuestion: (input) => {
-        if (!delegatedWork.root.respondQuestion) {
-          throw new Error('Delegated question response owner is unavailable.')
-        }
-        return delegatedWork.root.respondQuestion(input)
-      }
-    },
-    notebook: {
-      workflows: notebookCommands,
-      readInputPreview: (request) => notebookInputRegistry.readPreview(request)
-    },
-    notebookEnvironment: notebookEnvironmentLifecycle,
-    notebookRuntime: {
-      workflows: runtimeWorkflows,
-      pickInterpreter: async () => {
-        const result = await dialog.showOpenDialog({ properties: ['openFile'] })
-        return result.filePaths[0] ?? null
-      }
-    },
-    settingsCore: {
-      runtime: settingsWorkflows.runtime,
-      service: settingsService,
-      appearance: settingsWorkflows.appearance,
-      localShell: settingsWorkflows.localShell,
-      snapshotCommits: settingsSnapshotCommits,
-      emitInstallEvent: (event) => broadcastToRenderers(SETTINGS_INSTALL_LOG_CHANNEL, event),
-      listAppIconPreviews
-    },
-    settingsIntegration: {
-      skills: settingsWorkflows.skills,
-      connectors: settingsWorkflows.connectors,
-      snapshotCommits: settingsSnapshotCommits,
-      connectorApprovals: approvalBroker,
-      skillImportApprovals: skillImportApprovalBroker
-    },
-    settingsRuntime: {
-      workflows: settingsWorkflows.runtime,
-      snapshotCommits: settingsSnapshotCommits
-    },
-    compute: {
-      compute: computeIpcModule.handlers,
-      bookmarks: {
-        get: (providerId) => settingsService.getComputeBookmarks(providerId),
-        set: (providerId, folders) => settingsService.setComputeBookmarks(providerId, folders)
-      },
-      enabledHosts: sessionEnabledComputeHostsOwner,
-      events: applicationEvents
-    },
-    permissionGrants: permissionGrantProjection,
-    tags: tagService,
-    literature: createLiteratureCommandOwner({
-      literatureBatchJobs,
-      literatureCitationStyles,
-      literatureCitationFormatter,
-      literatureReferenceResolver,
-      literatureMetadataEnricher,
-      literatureFullTextFinder,
-      artifactProvenanceRepository,
-      managedFileVersionService,
-      literatureCitationDocument,
-      literatureCatalog,
-      literaturePdfImporter,
-      contentRepository
-    }),
-    memory: {
-      snapshot: () => memoryService.snapshot(),
-      setEnabled: async (request) => {
-        const before = await memoryService.isEnabled()
-        const snapshot = await memoryService.setEnabled(request)
-        if (before !== snapshot.enabled) await runtime.requestSkillsReload()
-        return snapshot
-      },
-      createCategory: (request) => memoryService.createCategory(request),
-      updateCategory: (request) => memoryService.updateCategory(request),
-      deleteCategory: (request) => memoryService.deleteCategory(request),
-      createEntry: (request) => memoryService.createEntry(request),
-      updateEntry: (request) => memoryService.updateEntry(request),
-      deleteEntry: (request) => memoryService.deleteEntry(request),
-      clearAll: () => memoryService.clearAll()
-    },
-    dataContent: {
-      runtimeWriter,
-      artifacts: artifactHandlers,
-      electron: {
-        inspectSessionDiagnostics: (invocation) =>
-          sessionDiagnosticsDesktop.inspect(invocation.args[0]),
-        exportSessionDiagnostics: (invocation) =>
-          sessionDiagnosticsDesktop.export(invocation.args[0]),
-        cancelSessionDiagnostics: (invocation) =>
-          sessionDiagnosticsDesktop.cancel(invocation.args[0]),
-        sessionPackageOperation: async (invocation) =>
-          sessionPackageDesktop.respond(invocation.args[0]),
-        forkSession: (invocation) =>
-          sessionPackageDesktop.fork(
-            invocation.args[0],
-            invocation.callerContext.lifecycleClientId
-          ),
-        exportSessionPackage: (invocation) =>
-          sessionPackageDesktop.export(
-            invocation.args[0],
-            BrowserWindow.fromWebContents(electronSenderFor(invocation)) ?? undefined
-          ),
-        importSessionPackage: (invocation) =>
-          sessionPackageDesktop.import(
-            BrowserWindow.fromWebContents(electronSenderFor(invocation)) ?? undefined,
-            invocation.callerContext.lifecycleClientId,
-            invocation.args[0],
-            invocation.args[1]
-          ),
-        exportConversationFromInvokingWindow: (invocation) => {
-          const sender = electronSenderFor(invocation)
-          return conversationExportService.exportConversation(
-            invocation.args[0],
-            BrowserWindow.fromWebContents(sender) ?? undefined
-          )
-        },
-        stageLocalFileWithProgress: (invocation) => {
-          const sender = electronSenderFor(invocation)
-          return uploadCommandOwner.stageLocalFile(invocation, {
-            report: (progress) => sender.send('uploads:transfer-progress', progress)
-          })
-        }
-      },
-      events: applicationEvents,
-      managedPreview: managedPreviewOwners,
-      preview: {
-        load: (request) => previewStateRepository.get(request.projectId),
-        save: (request) =>
-          previewStateRepository.save(request.projectId, request.state, request.expectedRevision),
-        delete: (request) => previewStateRepository.delete(request.projectId)
-      },
-      projectFiles: projectFilesHandlers,
-      projects: projectHandlers,
-      sessions: {
-        ...sessionPersistenceHandlers,
-        filterPdfContextCandidates: (request) => sessionPdfContextOwner.filterCandidates(request),
-        linkPdfContext: (request) =>
-          linkPdfContextWithCapability({
-            read: () =>
-              sessionPersistenceCoordinator.readSessionRuntimeContext(
-                request.projectId,
-                request.sessionId
-              ),
-            link: () => sessionPdfContextOwner.linkWithResult(request),
-            enable: () =>
-              runtimeRef.current?.enableLiteratureContext(request.sessionId) ?? Promise.resolve(),
-            rollback: (linked, previous) =>
-              sessionPersistenceCoordinator
-                .patchSessionRuntimeContext({
-                  projectId: request.projectId,
-                  sessionId: request.sessionId,
-                  expectedRevision: linked.revision,
-                  patch: { pdfContext: previous.pdfContext }
-                })
-                .then(() => undefined),
-            onRollbackError: (error) => {
-              literatureContextLog.error('PDF context link rollback failed', {
-                sessionId: request.sessionId,
-                ...errorLogFields(error)
-              })
-            }
-          }),
-        unlinkPdfContext: async (request) => {
-          const context = await sessionPdfContextOwner.unlink(request)
-          if ((context.pdfContext?.bindings.length ?? 0) === 0) {
-            try {
-              await runtimeRef.current?.disableLiteratureContext(request.sessionId)
-            } catch (error) {
-              literatureContextLog.warn('Literature capability disable failed after PDF unlink', {
-                sessionId: request.sessionId,
-                ...errorLogFields(error)
-              })
-            }
-          }
-          return context
-        },
-        editDetails: (request) => sessionDetailsOwner.edit(request),
-        bindTaskSession: (request) => sessionPersistenceCoordinator.bindTaskSession(request),
-        admitTaskTurn: (request) => sessionPersistenceCoordinator.admitTaskTurn(request),
-        stageTaskCompletion: (request) =>
-          sessionPersistenceCoordinator.stageTaskCompletion(request),
-        settleTaskCompletion: (request) =>
-          sessionPersistenceCoordinator.settleTaskCompletion(request),
-        failTaskRun: (request) => sessionPersistenceCoordinator.failTaskRun(request),
-        updateSessionConfiguration: (session, expectedRevision) =>
-          sessionPersistenceCoordinator.updateSessionConfiguration(session, expectedRevision),
-        saveSession: async (session, options, authority) => {
-          const result = authority
-            ? await sessionPersistenceHandlers.saveSession(session, options, authority)
-            : await sessionPersistenceHandlers.saveSession(session, options)
-          sessionDetailsOwner.afterSessionSaved(result.session)
-          return result
-        },
-        deleteSession: (request) => sessionDeletionOwner.delete(request)
-      },
-      uploads: uploadCommandOwner,
-      withDataRootWrite
-    },
-    host: {
-      localModels: localModelOwner,
-      pdfStructure: pdfStructureReader,
-      cli: cliCommandOwner,
-      github: githubCommandOwner,
-      localFs: localFsService,
-      logs: logsCommandOwner,
-      notifications: {
-        getSnapshot: () => notificationInbox.getSnapshot(),
-        markRead: (request) => notificationInbox.markRead(request.ids),
-        markAllRead: (request) => notificationInbox.markAllRead(request.throughSequence),
-        markSessionCompletionsRead: (request) =>
-          notificationInbox.markSessionCompletionsRead(request.sessionIds),
-        peekPendingOpenSession: () => taskNotifications.peekPendingOpenSession(),
-        takePendingOpenSession: (expectedToken) =>
-          taskNotifications.takePendingOpenSession(expectedToken)
-      },
-      reviewer: reviewerCommandOwner,
-      storage: storageCommandOwner,
-      update: updateCommandOwner
-    }
-  }
-
-  // The shared coordinator remains the sole ACP + Notebook teardown owner.
-  // It also coordinates Side Chat suspension/shutdown. Register command routing after it so reverse
-  // disposal removes adapters, then the router, before any underlying owner stops.
-  await modules.add({ shutdownCoordinator }, ({ shutdownCoordinator: coordinator }) => ({
-    name: 'backend-shutdown-coordinator',
-    capability: undefined,
-    disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS + APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
-    dispose: async () => BackendShutdownOutcomeError.assertClean(await coordinator.runForQuit())
-  }))
-  backendTeardownOwnedByCoordinator = true
-  artifactReproducibilityAttemptOwnerRef.current = await modules.add(
-    {
-      storageRoot: resolveDataRoot(),
-      processSandbox: notebookNetworkSandbox,
-      retainOutput: (request: ArtifactReproducibilityCheckRequest, bytes: Buffer) =>
-        retainArtifactReproducibilityOutput(artifactProvenanceRepository, request, bytes),
-      pruneOutputs: (request: ArtifactReproducibilityCheckRequest) =>
-        pruneArtifactReproducibilityOutputs(artifactProvenanceRepository, request),
-      loadExecution: (request: ArtifactReproducibilityCheckRequest) =>
-        readArtifactReproducibilityExecutionEvidence(artifactProvenanceRepository, request),
-      persistReceipt: (
-        request: ArtifactReproducibilityCheckRequest,
-        receipt: ArtifactReproducibilityReceiptDraft,
-        checkLog: ArtifactReproducibilityCheckLogDraft
-      ) =>
-        appendArtifactReproducibilityReceipt(
-          artifactProvenanceRepository,
-          request,
-          receipt,
-          checkLog
-        ),
-      persistFailure: (
-        request: ArtifactReproducibilityCheckRequest,
-        attempt: ArtifactReproducibilityFailedAttemptDraft,
-        checkLog: ArtifactReproducibilityCheckLogDraft
-      ) =>
-        recordFailedArtifactReproducibilityAttempt(
-          artifactProvenanceRepository,
-          request,
-          attempt,
-          checkLog
-        ),
-      listReceipts: (request: ListArtifactReproducibilityReceiptsRequest) =>
-        listArtifactReproducibilityReceipts(artifactProvenanceRepository, request),
-      getCheckLog: (request: GetArtifactReproducibilityCheckLogRequest) =>
-        getArtifactReproducibilityCheckLog(artifactProvenanceRepository, request),
-      withStorageLease: withDataRootWrite
-    },
-    (dependencies) => {
-      const owner = new ArtifactReproducibilityAttemptOwner(dependencies)
-      return {
-        name: 'artifact-reproducibility-lifecycle',
-        capability: owner,
-        dispose: () => owner.dispose()
-      }
-    }
-  )
+  sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
+  const commandDependencies = composeCommandDependencies({
+    applicationEvents,
+    settingsBootstrap,
+    storageStartup,
+    ...uploadStorage,
+    runtimeRef,
+    sessionFoundation,
+    sessionPackages,
+    managedFiles,
+    sessionAuthority,
+    documentReading,
+    projectLifecycle,
+    notebookRuntime,
+    researchCatalog,
+    ...notifications,
+    connectors,
+    computeServices,
+    computeAdmission,
+    delegation,
+    ...desktopUtilities,
+    agentRuntime,
+    agentWorkflows,
+    handoff,
+    settingsEffects,
+    sessionSurfaces,
+    ...notebookSurfaces,
+    storageHandoff,
+    artifactSurfaces,
+    sessionPackageSurfaces,
+    reviewerCommandOwner,
+    listAppIconPreviews
+  })
+  await composeBackendLifecycle({
+    settingsBootstrap,
+    managedFiles,
+    sessionAuthority,
+    backendTeardownOwnedByCoordinator,
+    handoff,
+    modules
+  })
   const applicationCommandComposition = await registerApplicationCommandComposition({
     modules,
-    dependencies: applicationCommandDependencies,
+    dependencies: commandDependencies.applicationCommandDependencies,
     declareElectronAdapter
   })
   composition.phase('commands')
 
   return {
     openSessionPackageFile: (path) => {
-      if (path === null) sessionPackageDesktop.reportOpenOverflow()
-      else sessionPackageDesktop.enqueueFile(path)
+      if (path === null) sessionPackageSurfaces.sessionPackageDesktop.reportOpenOverflow()
+      else sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(path)
     },
     applicationCommands: {
       localWeb: applicationCommandComposition.localWeb,
@@ -4964,42 +740,45 @@ export const createApplicationModules = async (
     applicationEvents,
     permissionApprovalPresence,
     bindRemoteAccess: applicationCommandComposition.bindRemoteAccess,
-    taskNotifications,
-    notificationInbox,
-    settingsService,
+    taskNotifications: notifications.taskNotifications,
+    notificationInbox: storageStartup.notificationInbox,
+    settingsService: settingsBootstrap.settingsService,
     commitClosePreference: async (preference) => {
-      await settingsSnapshotCommits.currentSnapshotAfter(
-        settingsService.setClosePreference(preference)
+      await settingsBootstrap.settingsSnapshotCommits.currentSnapshotAfter(
+        settingsBootstrap.settingsService.setClosePreference(preference)
       )
     },
-    taskAgent,
+    taskAgent: agentWorkflows.taskAgent,
     taskControls: {
       specialists: {
-        resolve: (reference) => specialistService.resolveRunnableByReference(reference)
+        resolve: (reference) =>
+          specialistCatalog.specialistService.resolveRunnableByReference(reference)
       }
     },
-    computePreferences: sessionEnabledComputeHostsOwner,
-    sessionDeletionCapability: sessionPersistenceCoordinator,
-    archiveCapability: archiveCoordinator,
+    computePreferences: computeAdmission.sessionEnabledComputeHostsOwner,
+    sessionDeletionCapability: sessionAuthority.sessionPersistenceCoordinator,
+    archiveCapability: projectLifecycle.archiveCoordinator,
     detectActiveSessions: () =>
       detectActiveSessions({
-        runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
-        sideChat: { getActivePromptSessions: getActiveSideChatSessions },
-        delegated: { getActiveDelegatedSessions },
-        notebook: notebookLifecycle
+        runtime: {
+          getActivePromptSessions: () => agentRuntime.runtime.getQuitBlockingPromptSessions()
+        },
+        sideChat: { getActivePromptSessions: sessionAuthority.getActiveSideChatSessions },
+        delegated: { getActiveDelegatedSessions: sessionAuthority.getActiveDelegatedSessions },
+        notebook: notebookRuntime.notebookLifecycle
       }),
     listTrayNavigationSessions: () =>
       withDataRootWrite(async () => {
         let summaries: SessionSummary[]
         try {
-          summaries = await sessionRepository.loadSessionSummaries()
+          summaries = await sessionFoundation.sessionRepository.loadSessionSummaries()
         } catch (error) {
           if (!(error instanceof Error) || error.message !== 'Session projection is not ready.')
             throw error
-          await ensureSessionProjection()
-          summaries = await sessionRepository.loadSessionSummaries()
+          await sessionProjection.ensureSessionProjection()
+          summaries = await sessionFoundation.sessionRepository.loadSessionSummaries()
         }
-        const projects = await projectRepository.list()
+        const projects = await sessionPackages.projectRepository.list()
         const projectsById = new Map(
           projects
             .filter((project) => project.archivedAt === undefined)
@@ -5020,29 +799,34 @@ export const createApplicationModules = async (
           ]
         })
       }),
-    hasActiveReviewerWork: () => reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
-    getActiveSettingsInstallId: () => settingsService.getActiveInstallId(),
-    holdSettingsInstallAdmission: () => settingsService.holdInstallAdmission(),
-    prepareForQuit: () => runtime.prepareForQuit(),
-    abortQuitPreparation: () => runtime.abortQuitPreparation(),
+    hasActiveReviewerWork: () =>
+      handoff.reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
+    getActiveSettingsInstallId: () => settingsBootstrap.settingsService.getActiveInstallId(),
+    holdSettingsInstallAdmission: () => settingsBootstrap.settingsService.holdInstallAdmission(),
+    prepareForQuit: () => agentRuntime.runtime.prepareForQuit(),
+    abortQuitPreparation: () => agentRuntime.runtime.abortQuitPreparation(),
     electronAdapters: {
       beforeCompute: beforeComputeAdapters,
       compute: {
-        handlers: computeIpcModule.handlers,
-        enabledHosts: sessionEnabledComputeHostsOwner
+        handlers: computeServices.computeIpcModule.handlers,
+        enabledHosts: computeAdmission.sessionEnabledComputeHostsOwner
       },
       beforeAcp: beforeAcpAdapters,
       acp: {
-        runtime,
-        workflows: acpHandlerWorkflows,
+        runtime: agentRuntime.runtime,
+        workflows: agentWorkflows.acpHandlerWorkflows,
         sessionAdmission: {
           withSessionAvailableById: (sessionId, operation) =>
-            archiveCoordinator.withSessionAvailableById(sessionId, operation)
+            projectLifecycle.archiveCoordinator.withSessionAvailableById(sessionId, operation)
         },
         resolveMemoryEnabled: async ({ sessionId }) => {
-          const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+          const projectId =
+            await sessionAuthority.sessionPersistenceCoordinator.sessionProjectId(sessionId)
           if (!projectId) return undefined
-          const session = await sessionRepository.loadSession(projectId, sessionId)
+          const session = await sessionFoundation.sessionRepository.loadSession(
+            projectId,
+            sessionId
+          )
           return session ? session.memoryEnabled !== false : undefined
         }
       },

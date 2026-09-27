@@ -80,7 +80,7 @@ describe('storage root routing architecture', () => {
       /constructor\(\s*dataRoot: string,\s*private readonly options: UploadRepositoryOptions = \{\}/
     )
 
-    const notebookComposition = source('src/main/ipc-application-composition.ts')
+    const notebookComposition = source('src/main/composition/notebook-runtime.ts')
     expect(notebookComposition).toMatch(
       /configRoot: resolveConfigRoot\(\),\s+dataRoot: resolveDataRoot\(\)/
     )

@@ -374,7 +374,7 @@ const constructionSites = (className: string): string[] => {
 const concreteCoordinatorConsumerFiles = (): string[] =>
   findTypeScriptFiles(resolve(projectRoot, 'src/main'))
     .filter((path) => !path.endsWith('/session-persistence/coordinator.ts'))
-    .filter((path) => path !== resolve(projectRoot, 'src/main/ipc-application-composition.ts'))
+    .filter((path) => path !== resolve(projectRoot, 'src/main/composition/session-authority.ts'))
     .filter((path) => {
       const sourceFile = createSourceFile(
         path,
@@ -538,6 +538,7 @@ describe('Session persistence coordinator architecture', () => {
         'PatchSessionRuntimeContextCommand',
         'ProjectSessionDeletionResult',
         'SessionCatalog',
+        'SessionPersistenceCommands',
         'SessionDeletion',
         'SessionDeletionHandlers',
         'SessionFileIndex',
@@ -646,7 +647,7 @@ describe('Session persistence coordinator architecture', () => {
     }
 
     expect(constructionSites('SessionPersistenceCoordinator')).toEqual([
-      'src/main/ipc-application-composition.ts:module'
+      'src/main/composition/session-authority.ts:module'
     ])
     expect(constructionSites('SessionPersistenceStateOwner')).toEqual([
       'src/main/session-persistence/coordinator.ts:constructor'
