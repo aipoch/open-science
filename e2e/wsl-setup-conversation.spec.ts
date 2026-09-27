@@ -122,4 +122,95 @@ test.describe('WSL setup conversation', () => {
     )
     await expect(page.getByTestId('wsl-setup-conversation-actions')).toHaveCount(0)
   })
+
+  test('updates real WSL background activity from events and cancels through the UI after restart', async ({
+    app
+  }, testInfo) => {
+    const distro = process.env.OPEN_SCIENCE_WSL_DISTRO
+    const user = process.env.OPEN_SCIENCE_WSL_USER
+    test.skip(!distro || !user, 'A real WSL profile is required')
+    test.setTimeout(240_000)
+    await app.completeOnboarding()
+    let page = await app.configureFakeAgent()
+    const status = await page.evaluate((profile) => window.api.settings.selectWslProfile(profile), {
+      distro: distro!,
+      user: user!
+    })
+    expect(status.state).toBe('ready')
+    await page.evaluate(() => window.api.settings.useWsl2Bash())
+    const projectName = 'WSL lifecycle events'
+    const prompt = 'Verify WSL background cancellation.'
+    await createProject(page, projectName)
+    for (const round of ['initial', 'restarted']) {
+      if (round === 'restarted') {
+        page = await app.restart()
+        await openProjectSession(page, projectName, prompt)
+      }
+      // Observe the public Electron event bridge while the real renderer consumes the same events.
+      await page.evaluate(() => {
+        const probe = {
+          events: [] as Array<{ projectId: string; sessionId: string; workspaceCwd: string }>,
+          stop: () => {}
+        }
+        probe.stop = window.api.notebook.onChanged(({ projectId, sessionId, workspaceCwd }) =>
+          probe.events.push({ projectId, sessionId, workspaceCwd })
+        )
+        Object.assign(window, { wslEventProbe: probe })
+      })
+      await sendPrompt(page, prompt, 'WSL background task submitted for cancellation.', 90_000)
+      const chip = page.getByTestId('background-tasks-chip')
+      await expect(chip).toHaveAttribute('data-active', 'true')
+      if ((await chip.getAttribute('aria-expanded')) !== 'true') await chip.click()
+      const ledger = page.getByTestId('session-background-activity')
+      await expect(ledger.getByText('Running', { exact: true })).toBeVisible({ timeout: 30_000 })
+      await page.screenshot({
+        path: testInfo.outputPath(`wsl-events-${round}-running.png`),
+        fullPage: true
+      })
+      await ledger.getByRole('button', { name: 'Cancel', exact: true }).click()
+      await expect(chip).not.toHaveAttribute('data-active', 'true', { timeout: 25_000 })
+      await expect(ledger.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0)
+      const evidence = await page.evaluate(async () => {
+        const probe = (
+          window as unknown as {
+            wslEventProbe: {
+              events: Array<{ projectId: string; sessionId: string; workspaceCwd: string }>
+              stop: () => void
+            }
+          }
+        ).wslEventProbe
+        probe.stop()
+        const scope = probe.events.at(-1)
+        if (!scope) throw new Error('No Notebook lifecycle events reached the renderer')
+        const reference = await window.api.notebook.getReference(scope)
+        if (!reference) throw new Error('Missing Notebook after WSL execution')
+        const state = await window.api.notebook.state(reference)
+        return {
+          events: probe.events,
+          runs: state.runs.map(({ runId, status, cancellationRequestedAt }) => ({
+            runId,
+            status,
+            cancellationRequestedAt
+          }))
+        }
+      })
+      expect(evidence.events.length).toBeGreaterThanOrEqual(3)
+      expect(evidence.runs.filter(({ status }) => status === 'cancelled')).toHaveLength(
+        round === 'initial' ? 1 : 2
+      )
+      expect(
+        evidence.runs.every(({ cancellationRequestedAt }) => cancellationRequestedAt !== undefined)
+      ).toBe(true)
+      await testInfo.attach(`wsl-events-${round}`, {
+        contentType: 'application/json',
+        body: JSON.stringify(evidence)
+      })
+      const screenshot = testInfo.outputPath(`wsl-events-${round}-cancelled.png`)
+      await page.screenshot({ path: screenshot, fullPage: true })
+      await testInfo.attach(`WSL cancellation ${round}`, {
+        path: screenshot,
+        contentType: 'image/png'
+      })
+    }
+  })
 })

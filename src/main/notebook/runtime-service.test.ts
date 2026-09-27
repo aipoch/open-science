@@ -4172,7 +4172,9 @@ describe('notebook runtime service', () => {
           expect(executions).toBe(1)
           await expect(
             service.cancelBackgroundRun({ ...request, runId: first.runId })
-          ).resolves.toMatchObject({ run: { status: 'cancelled' } })
+          ).resolves.toMatchObject({
+            run: { status: 'cancelled', cancellationRequestedAt: expect.any(Number) }
+          })
           await expect(
             service.cancelBackgroundRun({ ...request, runId: first.runId })
           ).resolves.toMatchObject({ run: { status: 'cancelled' } })
@@ -4186,6 +4188,52 @@ describe('notebook runtime service', () => {
         }
       }
     )
+
+    it('still stops an explicitly cancelled background Shell when saving intent fails', async () => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const started = createDeferred<void>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository,
+        backgroundExecutionEnabled: true,
+        shellProcess: {
+          execute: async (request) => {
+            started.resolve()
+            await new Promise<void>((resolve) =>
+              request.signal?.addEventListener('abort', () => resolve(), { once: true })
+            )
+            return { stdout: '', stderr: 'cancelled', exitCode: null, cancelled: true }
+          }
+        }
+      })
+      const input = {
+        sessionId: 'shell-cancel-write-failure',
+        workspaceCwd: root,
+        command: 'wait-for-cancel',
+        background: true,
+        executionInvocationId: 'cancel-write-failure'
+      }
+      const receipt = await service.executeShellBackground(input)
+      await started.promise
+      const write = vi
+        .spyOn(repository, 'requestRunCancellation')
+        .mockRejectedValueOnce(new Error('disk unavailable'))
+      try {
+        await expect(
+          service.cancelBackgroundRun({ ...input, runId: receipt.runId })
+        ).rejects.toThrow('Shell cancellation intent could not be persisted')
+        await service.waitForBackgroundRun(receipt.runId)
+        expect(
+          (await service.getBackgroundRun({ ...input, runId: receipt.runId })).run.status
+        ).toBe('cancelled')
+      } finally {
+        write.mockRestore()
+        await service.dispose()
+      }
+    })
 
     it('keeps a background Shell Run retryable when its durable result is temporarily unreadable', async () => {
       const root = await createStorageRoot()

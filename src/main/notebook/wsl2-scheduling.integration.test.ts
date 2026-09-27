@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,12 +6,16 @@ import { performance } from 'node:perf_hooks'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ExecuteShellRequest } from '../../shared/notebook'
+import type {
+  ExecuteShellRequest,
+  NotebookRunDocument,
+  NotebookSessionReference
+} from '../../shared/notebook'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
 import { initializeWsl2BashPreview } from '../wsl/wsl2-preview-gate'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { NotebookRuntimeService } from './runtime-service'
-import { getNotebookDataRoot } from './repository'
+import { getNotebookDataRoot, getNotebookRunJsonPath } from './repository'
 
 const distro = process.env.OPEN_SCIENCE_WSL_DISTRO
 const user = process.env.OPEN_SCIENCE_WSL_USER
@@ -63,7 +67,13 @@ describe.runIf(enabled)('WSL2 real Notebook scheduling', () => {
     }
   }, 30_000)
 
-  const runtime = (limit: number): NotebookRuntimeService => {
+  const runtime = (
+    limit: number,
+    onNotebookChanged?: (event: NotebookSessionReference) => void,
+    onBackgroundRunTerminal?: ConstructorParameters<
+      typeof NotebookRuntimeService
+    >[0]['onBackgroundRunTerminal']
+  ): NotebookRuntimeService => {
     service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -72,6 +82,8 @@ describe.runIf(enabled)('WSL2 real Notebook scheduling', () => {
       processSandbox: sandbox!,
       shellConcurrencyLimit: limit,
       backgroundExecutionEnabled: true,
+      callbacks: { onNotebookChanged },
+      onBackgroundRunTerminal,
       shellRuntimeBinding: {
         kind: 'wsl2-bash',
         profileId: 'live-test',
@@ -99,6 +111,75 @@ describe.runIf(enabled)('WSL2 real Notebook scheduling', () => {
   }
   const release = (name: string, sessionId = name): Promise<void> =>
     writeFile(`${marker(name, sessionId)}.release`, '')
+
+  it('publishes durable running, cancellation-intent and terminal states for a real guest process', async () => {
+    const snapshots: NotebookRunDocument[] = []
+    const references: NotebookSessionReference[] = []
+    const errors: unknown[] = []
+    const terminal = vi.fn().mockResolvedValue(undefined)
+    const owner = runtime(
+      2,
+      (event) => {
+        if (event.sessionId !== 'event-cancel') return
+        references.push(event)
+        try {
+          // Read synchronously at publication, before another lifecycle transition can occur.
+          snapshots.push(
+            JSON.parse(
+              readFileSync(getNotebookRunJsonPath(root, event.projectId, event.sessionId), 'utf8')
+            ) as NotebookRunDocument
+          )
+        } catch (error) {
+          errors.push(error)
+        }
+      },
+      terminal
+    )
+    const input = request('event-cancel')
+    const admitted = await owner.executeShellBackground(input)
+    await started('event-cancel')
+    const unrelatedInput = request('unrelated')
+    const unrelated = await owner.executeShellBackground(unrelatedInput)
+    await started('unrelated')
+    await owner.cancelBackgroundRun({ ...input, runId: admitted.runId })
+    await owner.waitForBackgroundRun(admitted.runId)
+    expect(
+      (await owner.getBackgroundRun({ ...unrelatedInput, runId: unrelated.runId })).run.status
+    ).toBe('running')
+    await release('unrelated')
+    await owner.waitForBackgroundRun(unrelated.runId)
+    const runs = snapshots.flatMap((snapshot) =>
+      snapshot.runs.filter(({ runId }) => runId === admitted.runId)
+    )
+    expect(errors).toEqual([])
+    expect(references.length).toBeGreaterThanOrEqual(4)
+    expect(references.every(({ projectId }) => projectId === 'wsl-scheduling')).toBe(true)
+    expect(
+      runs
+        .filter((run, index) => run.status !== runs[index - 1]?.status)
+        .map(({ status }) => status)
+    ).toEqual(['queued', 'running', 'cancelled'])
+    expect(
+      runs.some((run) => run.status === 'running' && run.cancellationRequestedAt !== undefined)
+    ).toBe(true)
+    expect(runs.at(-1)).toMatchObject({
+      status: 'cancelled',
+      cancellationRequestedAt: expect.any(Number)
+    })
+    expect(
+      terminal.mock.calls.filter(([source]) => source.sourceId === admitted.runId)
+    ).toHaveLength(1)
+    expect(existsSync(marker('event-cancel.release', 'event-cancel'))).toBe(false)
+    console.info(
+      'WSL durable event sequence',
+      JSON.stringify(
+        runs.map(({ status, cancellationRequestedAt }) => ({
+          status,
+          cancellationRequested: cancellationRequestedAt !== undefined
+        }))
+      )
+    )
+  }, 60_000)
 
   it('deduplicates background submissions and cancels queued work without guest side effects', async () => {
     const owner = runtime(1)

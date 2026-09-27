@@ -554,15 +554,18 @@ class NotebookExecutionOwner {
   }
 
   async cancelShellRuns(
-    scope: { projectId?: string; sessionId?: string; laneKey?: string },
+    scope: { projectId?: string; sessionId?: string; laneKey?: string; runId?: string },
     reason: unknown
   ): Promise<{ reaped: boolean }> {
-    const runs = Array.from(this.liveShellRuns.values()).filter(
-      (run) =>
-        (scope.projectId === undefined || run.projectId === scope.projectId) &&
-        (scope.sessionId === undefined || run.sessionId === scope.sessionId) &&
-        (scope.laneKey === undefined || run.laneKey === scope.laneKey)
-    )
+    const runs = Array.from(this.liveShellRuns.entries())
+      .filter(
+        ([runId, run]) =>
+          (scope.runId === undefined || runId === scope.runId) &&
+          (scope.projectId === undefined || run.projectId === scope.projectId) &&
+          (scope.sessionId === undefined || run.sessionId === scope.sessionId) &&
+          (scope.laneKey === undefined || run.laneKey === scope.laneKey)
+      )
+      .map(([, run]) => run)
     const cancellationWrites = await Promise.allSettled(
       runs.map((run) => run.requestCancellation(reason))
     )

@@ -1350,6 +1350,21 @@ if (process.argv.includes('--version')) {
             '  A[begin] --> B[a node with a fairly long label] --> C[another node with an even longer label here] --> D[end]',
             '```'
           ].join('\n')
+        } else if (prompt.includes('Verify WSL background cancellation.')) {
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const run = toolResult(
+              'bash_execute',
+              await client.callTool({
+                name: 'bash_execute',
+                arguments: {
+                  command: "printf 'background-completion-e2e\\n'; sleep 60",
+                  background: true
+                }
+              })
+            )
+            if (!run.runId) throw new Error('WSL background admission has no runId')
+          })
+          reply = 'WSL background task submitted for cancellation.'
         } else if (prompt.includes('Verify real WSL Bash execution.')) {
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
             const execution = toolResult(
