@@ -270,6 +270,9 @@ const ProviderForm = ({
   const isClaudeSubscription = value.type === 'claude-shared' || value.type === 'claude-isolated'
   const isXaiSubscription = value.type === 'xai-subscription'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
+  // A loopback custom gateway starts with the local-server presets visible, but the user can still
+  // collapse them after that automatic reveal.
+  const loopbackCustomGateway = isCustom && !customProviderRequiresKey(value.baseUrl)
   const [advancedOpen, setAdvancedOpen] = useState(
     () =>
       value.codexTransport !== 'auto' ||
@@ -279,7 +282,7 @@ const ProviderForm = ({
       Boolean(value.maxInputTokens.trim()) ||
       Boolean(value.maxOutputTokens.trim())
   )
-  const [localModelOpen, setLocalModelOpen] = useState(false)
+  const [localModelOpen, setLocalModelOpen] = useState(loopbackCustomGateway)
   const selectedKey = selectedKindKey(value)
   // Scope reveal state to the exact provider kind and draft value. Input events advance that scope
   // only while already revealed, so an externally replaced provider record starts masked.
@@ -290,7 +293,6 @@ const ProviderForm = ({
   const keyVisible = revealedKeyDraft?.kind === selectedKey && revealedKeyDraft.key === value.key
   // A loopback custom gateway (local model server) serves without a key, so the key field reads as
   // optional and the required-field guard below stays quiet for it.
-  const loopbackCustomGateway = isCustom && !customProviderRequiresKey(value.baseUrl)
   const keyRequired = !loopbackCustomGateway && (needsKey || !hasStoredKey)
   // Whether the active framework can drive this draft as configured. Undefined while the caller
   // supplies no framework context, or before the framework list has loaded (compatibility
@@ -651,7 +653,7 @@ const ProviderForm = ({
       ) : isCustom ? (
         <>
           <SettingsDisclosure
-            expanded={localModelOpen || loopbackCustomGateway}
+            expanded={localModelOpen}
             label={t('Local model server')}
             onToggle={() => setLocalModelOpen((open) => !open)}
             contentClassName="mt-2 flex min-w-0 flex-col gap-2 pl-6"
@@ -666,9 +668,10 @@ const ProviderForm = ({
                     type="button"
                     aria-pressed={active}
                     disabled={disabled}
-                    onClick={() =>
+                    onClick={() => {
+                      setLocalModelOpen(true)
                       onChange(localModelPresetPatch(preset, value, defaultCustomApiEndpoint))
-                    }
+                    }}
                     className={cn(
                       'inline-flex min-h-8 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150 outline-none motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
                       active

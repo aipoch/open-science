@@ -116,11 +116,14 @@ describe('ProviderForm field switching', () => {
       })
     )
 
-    expect(
-      container
-        .querySelector<HTMLButtonElement>('button[aria-controls="provider-local-model-server"]')
-        ?.getAttribute('aria-expanded')
-    ).toBe('true')
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[aria-controls="provider-local-model-server"]'
+    )
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('true')
+
+    act(() => disclosure?.click())
+
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('marks the API key optional for a loopback custom gateway', () => {
