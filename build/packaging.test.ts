@@ -14,19 +14,21 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { finished } from 'node:stream/promises'
 
-import { createPackageWithOptions, listPackage } from '@electron/asar'
 import { describe, expect, it } from 'vitest'
 
 const repoRoot = join(__dirname, '..')
-const appBuilderLibRoot = dirname(
-  createRequire(import.meta.url).resolve('app-builder-lib/package.json')
-)
+// Exercise the same packaging dependencies as the installed electron-builder.
+const require = createRequire(import.meta.url)
+const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
+const appBuilderLibPath = builderRequire.resolve('app-builder-lib/package.json')
+const appBuilderLibRoot = dirname(appBuilderLibPath)
+const appBuilderRequire = createRequire(appBuilderLibPath)
+const { createPackageWithOptions, listPackage } = appBuilderRequire('@electron/asar')
 
 describe('packaging config', () => {
   it('loads both tiktoken WASM encodings from a packed ASAR in Electron', async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'tiktoken-asar-')))
     try {
-      const require = createRequire(import.meta.url)
       const source = join(root, 'source')
       const archive = join(root, 'app.asar')
       mkdirSync(source)
@@ -51,7 +53,7 @@ process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tikto
       // ASAR resolves with a writable stream before its queued writes finish.
       const archiveStream = await createPackageWithOptions(source, archive, {})
       await finished(archiveStream)
-      expect(listPackage(archive).map((entry) => entry.replaceAll('\\', '/'))).toContain(
+      expect(listPackage(archive).map((entry: string) => entry.replaceAll('\\', '/'))).toContain(
         '/node_modules/tiktoken/tiktoken_bg.wasm'
       )
       // Remove the source tree so the child can only load the archived JavaScript and WASM.

@@ -21,6 +21,8 @@ import { buildManifest } from './generate-version-manifest.mjs'
 
 const repo = process.cwd()
 const require = createRequire(join(repo, 'package.json'))
+const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
+const appBuilderRequire = createRequire(builderRequire.resolve('app-builder-lib/package.json'))
 const directories: string[] = []
 const temporaryDirectory = (): string => {
   const dir = mkdtempSync(join(tmpdir(), 'release-publication-'))
@@ -47,7 +49,7 @@ const installer = (name: string, digest?: string): string => {
 }
 
 it('excludes local worktrees and tool state through the real packaging filter', () => {
-  const { getMainFileMatchers } = require('app-builder-lib/out/fileMatcher')
+  const { getMainFileMatchers } = builderRequire('app-builder-lib/out/fileMatcher')
   const filter = getMainFileMatchers(
     repo,
     join(temporaryDirectory(), 'out'),
@@ -77,8 +79,8 @@ it('excludes local worktrees and tool state through the real packaging filter', 
 })
 
 it('includes the AppImage filename produced by the installed builder', () => {
-  const { Arch, getArtifactArchName } = require('builder-util')
-  const { expandMacro } = require('app-builder-lib/out/util/macroExpander')
+  const { Arch, getArtifactArchName } = appBuilderRequire('builder-util')
+  const { expandMacro } = builderRequire('app-builder-lib/out/util/macroExpander')
   const name = expandMacro(
     config.appImage.artifactName,
     getArtifactArchName(Arch.x64, 'AppImage'),
@@ -264,7 +266,7 @@ for (const file of args.slice(3, args.indexOf('--repo'))) {
 
 it('packages required runtime files without local tool directories in a harmless ASAR sample', async () => {
   const { cpSync, existsSync } = await import('node:fs')
-  const { createPackage, listPackage } = require('@electron/asar')
+  const { createPackage, listPackage } = appBuilderRequire('@electron/asar')
   const source = temporaryDirectory(),
     staged = temporaryDirectory(),
     dest = join(temporaryDirectory(), 'app.asar')
@@ -280,7 +282,7 @@ it('packages required runtime files without local tool directories in a harmless
     mkdirSync(join(source, name, '..'), { recursive: true })
     writeFileSync(join(source, name), 'harmless test fixture')
   }
-  const { getMainFileMatchers } = require('app-builder-lib/out/fileMatcher')
+  const { getMainFileMatchers } = builderRequire('app-builder-lib/out/fileMatcher')
   const filter = getMainFileMatchers(
     source,
     staged,

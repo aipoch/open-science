@@ -10,10 +10,12 @@ import { load } from 'js-yaml'
 const { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } = fs
 const { dirname, join, posix } = nodePath
 const require = createRequire(import.meta.url)
+const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
+const appBuilderRequire = createRequire(builderRequire.resolve('app-builder-lib/package.json'))
 
 it('edits the Windows launcher before signing and signs each bundled PE only once', async () => {
-  const { NtExecutable } = require('resedit')
-  const { editWindowsResources } = require('app-builder-lib/out/util/resEdit')
+  const { NtExecutable } = appBuilderRequire('resedit')
+  const { editWindowsResources } = builderRequire('app-builder-lib/out/util/resEdit')
   const config = load(readFileSync('electron-builder.yml', 'utf8')) as {
     afterPack: string
     afterSign?: string
