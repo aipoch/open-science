@@ -113,7 +113,7 @@ describe('LibraryPreview', () => {
     expect(screen.getByText('Your library is empty')).toBeTruthy()
     expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: undefined }))
     fireEvent.click(screen.getAllByRole('button', { name: 'Open in Literature' })[1])
-    expect(navigation.openLibrary).toHaveBeenCalledWith('user')
+    expect(navigation.openLibrary).toHaveBeenCalledWith('user', { section: 'library' })
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'missing' } })
     await settle()
     expect(screen.getByText('No matching references')).toBeTruthy()

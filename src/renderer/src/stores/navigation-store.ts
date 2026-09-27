@@ -88,6 +88,9 @@ type NavigationStore = {
   // and opens its detail without encoding transient UI selection into a route or persisted state.
   pendingLiteratureItemId: string | undefined
   pendingLiteratureAnnotation: PdfAnnotation | undefined
+  // One explicit user-level Literature section selected outside the Library. Library consumes this
+  // once after routing so a user-level open can land on All references instead of the Inbox.
+  pendingLiteratureLibrarySection: 'library' | undefined
   // One explicit Project scope selected outside the Library. Library consumes this once instead of
   // inferring scope from the retained activeProjectId, which also survives user-level Library opens.
   pendingLiteratureProjectId: string | undefined
@@ -99,7 +102,7 @@ type NavigationStore = {
   recordUserNavigation: () => void
   goHome: (origin: NavigationOrigin) => void
   returnFromLibrary: (origin: NavigationOrigin) => void
-  openLibrary: (origin: NavigationOrigin) => void
+  openLibrary: (origin: NavigationOrigin, options?: { section?: 'library' }) => void
   openLiteratureItem: (
     itemId: string,
     origin: NavigationOrigin,
@@ -160,6 +163,7 @@ type NavigationStore = {
   requestArtifactMention: (file: ProjectFileItem) => void
   consumeArtifactMention: () => ProjectFileItem | undefined
   consumeLiteratureItem: (expectedItemId?: string) => string | undefined
+  consumeLiteratureLibrarySection: () => 'library' | undefined
   consumeLiteratureProject: (expectedProjectId?: string) => string | undefined
   consumeLiteratureCollection: (expectedCollectionId?: string) => string | undefined
   setArtifactMentionAvailability: (availability: ArtifactMentionAvailability | undefined) => void
@@ -242,6 +246,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   pendingArtifactMention: undefined,
   pendingLiteratureItemId: undefined,
   pendingLiteratureAnnotation: undefined,
+  pendingLiteratureLibrarySection: undefined,
   pendingLiteratureProjectId: undefined,
   pendingLiteratureCollectionId: undefined,
   artifactMentionAvailability: undefined,
@@ -277,10 +282,11 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     usePreviewWorkbenchStore.getState().activateProject(activeProjectId, undefined, true)
   },
 
-  openLibrary: (origin) =>
+  openLibrary: (origin, options) =>
     requestPreviewLeaveForNavigation({ view: 'library' }, () =>
       set((state) => ({
         ...navigationState(state, origin, { view: 'library' }),
+        pendingLiteratureLibrarySection: options?.section === 'library' ? 'library' : undefined,
         pendingLiteratureProjectId: undefined,
         pendingLiteratureCollectionId: undefined
       }))
@@ -292,6 +298,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         ...navigationState(state, origin, { view: 'library' }),
         pendingLiteratureItemId: itemId,
         pendingLiteratureAnnotation: annotation,
+        pendingLiteratureLibrarySection: undefined,
         pendingLiteratureProjectId: undefined,
         pendingLiteratureCollectionId: undefined
       }))
@@ -306,6 +313,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
           view: 'library',
           activeProjectId: projectId
         }),
+        pendingLiteratureLibrarySection: undefined,
         pendingLiteratureProjectId: projectId,
         pendingLiteratureCollectionId: undefined
       }))
@@ -316,6 +324,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     requestPreviewLeaveForNavigation({ view: 'library' }, () =>
       set((state) => ({
         ...navigationState(state, origin, { view: 'library' }),
+        pendingLiteratureLibrarySection: undefined,
         pendingLiteratureProjectId: undefined,
         pendingLiteratureCollectionId: collectionId
       }))
@@ -555,6 +564,12 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     if (expectedItemId !== undefined && itemId !== expectedItemId) return undefined
     set({ pendingLiteratureItemId: undefined, pendingLiteratureAnnotation: undefined })
     return itemId
+  },
+
+  consumeLiteratureLibrarySection: () => {
+    const section = get().pendingLiteratureLibrarySection
+    set({ pendingLiteratureLibrarySection: undefined })
+    return section
   },
 
   consumeLiteratureProject: (expectedProjectId) => {

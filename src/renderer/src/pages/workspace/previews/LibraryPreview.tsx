@@ -764,7 +764,7 @@ export default function LibraryPreview({
     const navigation = useNavigationStore.getState()
     if (selection.collectionId) navigation.openCollectionLiterature(selection.collectionId, 'user')
     else if (!selection.all && projectId) navigation.openProjectLiterature(projectId, 'user')
-    else navigation.openLibrary('user')
+    else navigation.openLibrary('user', { section: 'library' })
   }
   return (
     <section

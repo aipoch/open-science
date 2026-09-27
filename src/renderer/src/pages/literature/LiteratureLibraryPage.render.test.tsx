@@ -271,6 +271,7 @@ describe('LiteratureLibraryPage', () => {
       activeProjectId: undefined,
       pendingLiteratureItemId: undefined,
       pendingLiteratureAnnotation: undefined,
+      pendingLiteratureLibrarySection: undefined,
       pendingLiteratureProjectId: undefined,
       pendingLiteratureCollectionId: undefined,
       startPdfReadingConversation,
@@ -552,6 +553,21 @@ describe('LiteratureLibraryPage', () => {
       expect(useSessionStore.getState().selectedSessionId).toBe('older')
     }
   )
+
+  it('opens All references for an explicit user-level Literature section intent', async () => {
+    search.mockImplementation(async ({ scope }: { scope?: string }) =>
+      scope === 'library' ? { entries: [libraryItem], totalCount: 1 } : { entries: [] }
+    )
+    useNavigationStore.setState({ pendingLiteratureLibrarySection: 'library' })
+
+    render(<LiteratureLibraryPage />)
+
+    expect(await screen.findByRole('heading', { name: 'All references' })).not.toBeNull()
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(expect.objectContaining({ scope: 'library' }))
+    )
+    expect(useNavigationStore.getState().pendingLiteratureLibrarySection).toBeUndefined()
+  })
 
   it.each(['home', 'deleted', 'archived'] as const)('returns Home for a %s origin', (kind) => {
     useNavigationStore.setState({ activeProjectId: kind === 'home' ? undefined : 'project-1' })

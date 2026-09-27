@@ -1730,6 +1730,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const pendingLiteratureAnnotation = useNavigationStore(
     (state) => state.pendingLiteratureAnnotation
   )
+  const pendingLiteratureLibrarySection = useNavigationStore(
+    (state) => state.pendingLiteratureLibrarySection
+  )
+  const consumeLiteratureLibrarySection = useNavigationStore(
+    (state) => state.consumeLiteratureLibrarySection
+  )
   const consumeLiteratureItem = useNavigationStore((state) => state.consumeLiteratureItem)
   const pendingLiteratureProjectId = useNavigationStore((state) => state.pendingLiteratureProjectId)
   const consumeLiteratureProject = useNavigationStore((state) => state.consumeLiteratureProject)
@@ -2344,6 +2350,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       active = false
     }
   }, [annotationToReveal, previewItem, t])
+
+  useEffect(() => {
+    if (pendingLiteratureLibrarySection !== 'library') return
+    queueMicrotask(() => {
+      setDuplicatesOpen(false)
+      setSection('library')
+      setCollectionId(undefined)
+      setProjectId(undefined)
+      clearSelection()
+      consumeLiteratureLibrarySection()
+    })
+  }, [clearSelection, consumeLiteratureLibrarySection, pendingLiteratureLibrarySection])
 
   useEffect(() => {
     if (!pendingLiteratureProjectId) return

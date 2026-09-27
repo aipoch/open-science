@@ -70,6 +70,7 @@ beforeEach(() => {
     pendingArtifactMention: undefined,
     pendingLiteratureItemId: undefined,
     pendingLiteratureAnnotation: undefined,
+    pendingLiteratureLibrarySection: undefined,
     pendingLiteratureProjectId: undefined,
     pendingLiteratureCollectionId: undefined,
     artifactMentionAvailability: undefined
@@ -552,7 +553,19 @@ describe('navigation store', () => {
     expect(useNavigationStore.getState().view).toBe('library')
     expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
     expect(useNavigationStore.getState().pendingLiteratureProjectId).toBeUndefined()
+    expect(useNavigationStore.getState().pendingLiteratureLibrarySection).toBeUndefined()
     expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
+  })
+
+  it('routes a user-level Literature Library open to All references when requested', () => {
+    useNavigationStore.getState().openLibrary('user', { section: 'library' })
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'library',
+      pendingLiteratureLibrarySection: 'library'
+    })
+    expect(useNavigationStore.getState().consumeLiteratureLibrarySection()).toBe('library')
+    expect(useNavigationStore.getState().consumeLiteratureLibrarySection()).toBeUndefined()
   })
 
   it('routes a Project Literature view through a one-shot explicit scope', () => {
