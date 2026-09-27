@@ -5023,6 +5023,12 @@ const NOT_TRANSLATABLE = new Set([
   'GitHub',
   'PubMed',
   'Crossref',
+  // Provider brand names rendered inside decorative/internal SVG marks.
+  'Claude',
+  'Codex',
+  'opencode',
+  'Nvidia',
+  'TencentCloud',
   // A literal DOI example; translating its suffix would change the identifier.
   '10.1000/example',
   'SKILL.md',
