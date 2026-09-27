@@ -25,6 +25,7 @@
     "src/renderer/src/assets/provider-icons/volcengine.svg",
     "src/renderer/src/assets/provider-icons/xiaomimimo.svg",
     "src/renderer/src/assets/provider-icons/zhipu.svg",
+    "src/renderer/src/assets/provider-icons/LobeHub-icons-LICENSE",
     "src/renderer/src/assets/wavy-lines.svg"
   ],
   "interfacePaths": ["src/renderer/src/assets/agent-markdown.css"],

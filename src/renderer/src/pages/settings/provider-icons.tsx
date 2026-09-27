@@ -1,11 +1,12 @@
 import { CirclePlus, Sparkles } from 'lucide-react'
 
-// Import the bare icon components so this shared renderer stays free of @lobehub/ui.
-import ClaudeColor from '@lobehub/icons/es/Claude/components/Color'
-import Codex from '@lobehub/icons/es/Codex/components/Mono'
-import NvidiaColor from '@lobehub/icons/es/Nvidia/components/Color'
-import OpenCode from '@lobehub/icons/es/OpenCode/components/Mono'
-import TencentCloudColor from '@lobehub/icons/es/TencentCloud/components/Color'
+import {
+  ClaudeColor,
+  CodexMono,
+  NvidiaColor,
+  OpenCodeMono,
+  TencentCloudColor
+} from './provider-brand-icons'
 
 import { cn } from '@/lib/utils'
 import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
@@ -42,12 +43,12 @@ export const AgentFrameworkIcon = ({
 }): React.JSX.Element => {
   if (frameworkId === 'claude-code') return <ClaudeColor size={size} className={className} />
   if (frameworkId === 'opencode') {
-    return <OpenCode size={size} className={cn('text-foreground', className)} />
+    return <OpenCodeMono size={size} className={cn('text-foreground', className)} />
   }
   if (frameworkId === 'codebuddy') {
     return <img src={codebuddyLogo} alt="" width={size} height={size} className={className} />
   }
-  return <Codex size={size} className={cn('text-foreground', className)} />
+  return <CodexMono size={size} className={cn('text-foreground', className)} />
 }
 
 export const TypeSafeIcon = ({ className }: { className?: string }): React.JSX.Element => (
@@ -119,7 +120,7 @@ export const ProviderKindIcon = ({
 
   if (kindKey === 'official:opencode-go' || kindKey === 'official:opencode') {
     return (
-      <OpenCode
+      <OpenCodeMono
         size={20}
         className={cn('size-5 shrink-0 text-foreground', className)}
         aria-hidden="true"

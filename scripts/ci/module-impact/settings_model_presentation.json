@@ -18,6 +18,7 @@
     "src/renderer/src/pages/settings/ProviderList.tsx",
     "src/renderer/src/pages/settings/ProvidersPanel.race.test.tsx",
     "src/renderer/src/pages/settings/ProvidersPanel.tsx",
+    "src/renderer/src/pages/settings/provider-brand-icons.tsx",
     "src/renderer/src/pages/settings/ReasoningEffortSelect.render.test.tsx",
     "src/renderer/src/pages/settings/ReasoningEffortSelect.tsx",
     "src/renderer/src/pages/settings/ScenarioModelList.render.test.tsx",

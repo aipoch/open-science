@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { ProviderKindIcon, TypeSafeIcon } from './provider-icons'
+import { AgentFrameworkIcon, ProviderKindIcon, TypeSafeIcon } from './provider-icons'
 
 describe('ProviderKindIcon', () => {
   it('renders the bundled Apodex provider logo', () => {
@@ -43,6 +43,26 @@ describe('ProviderKindIcon', () => {
     expect(html).toContain('<title>Nvidia</title>')
     expect(html).toContain('#74B71B')
     expect(html).not.toContain('text-muted-foreground')
+  })
+})
+
+describe('AgentFrameworkIcon', () => {
+  it.each([
+    ['claude-code', 'Claude', '#D97757'],
+    ['opencode', 'opencode', 'currentColor'],
+    ['codex', 'Codex', 'currentColor']
+  ] as const)('renders the internal %s mark', (frameworkId, title, fill) => {
+    const html = renderToStaticMarkup(<AgentFrameworkIcon frameworkId={frameworkId} />)
+
+    expect(html).toContain('<svg')
+    expect(html).toContain(`<title>${title}</title>`)
+    expect(html).toContain(fill)
+  })
+
+  it('keeps CodeBuddy on its existing bundled asset', () => {
+    const html = renderToStaticMarkup(<AgentFrameworkIcon frameworkId="codebuddy" />)
+
+    expect(html).toContain('<img')
   })
 })
 
