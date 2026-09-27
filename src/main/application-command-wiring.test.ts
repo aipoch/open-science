@@ -22,7 +22,8 @@ const between = (source: string, start: string, end: string): string => {
 // ordering and ownership without coupling them to the file split.
 const ipcSource = [
   readSource('src/main/ipc.ts'),
-  readSource('src/main/ipc-application-composition.ts')
+  readSource('src/main/ipc-application-composition.ts'),
+  readSource('src/main/composition/application-commands.ts')
 ].join('\n')
 const coreSurfaceSource = compact(readSource('src/main/ipc-surfaces/core.ts'))
 const indexSource = readSource('src/main/index.ts')
@@ -495,7 +496,7 @@ describe('production application command wiring', () => {
     const commandModule = ipcSource.indexOf("name: 'application-command-composition'")
     expect(backendModule).toBeGreaterThan(-1)
     expect(commandModule).toBeGreaterThan(backendModule)
-    expect(compact(ipcSource)).toContain('dispose: () => composition.dispose()')
+    expect(compact(ipcSource)).toContain('dispose: () => capability.dispose()')
 
     const build = runtimeSource.indexOf('const built = await createModules(modules)')
     const install = runtimeSource.indexOf(

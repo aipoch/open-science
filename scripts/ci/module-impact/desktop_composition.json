@@ -21,6 +21,7 @@
     "src/main/application-events.ts",
     "src/main/application-runtime.test.ts",
     "src/main/application-runtime.ts",
+    "src/main/composition/application-commands.ts",
     "src/main/application-shutdown-trigger.ts",
     "src/main/artifact-execution-authority.architecture.test.ts",
     "src/main/bounded-file-io.test.ts",

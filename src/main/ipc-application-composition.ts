@@ -32,11 +32,10 @@ import {
   type ApplicationModuleBuilder
 } from './application-runtime'
 import {
-  createApplicationCommandComposition,
   type ApplicationCommandComposition,
   type ApplicationCommandCompositionDependencies
 } from './application-command-composition'
-import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
+import { registerApplicationCommandComposition } from './composition/application-commands'
 import { isPathInsideWorkspace } from './acp/workspace-path'
 import { BookmarkRepository } from './bookmarks/repository'
 import { BookmarkService } from './bookmarks/service'
@@ -5256,20 +5255,11 @@ export const createApplicationModules = async (
       }
     }
   )
-  const applicationCommandComposition = await modules.add(
-    applicationCommandDependencies,
-    (dependencies) => {
-      const composition = createApplicationCommandComposition(dependencies)
-      return {
-        name: 'application-command-composition',
-        capability: composition,
-        dispose: () => composition.dispose()
-      }
-    }
-  )
-  declareElectronAdapter('application-projects', () =>
-    registerApplicationCommandElectronAdapter(applicationCommandComposition.electron)
-  )
+  const applicationCommandComposition = await registerApplicationCommandComposition({
+    modules,
+    dependencies: applicationCommandDependencies,
+    declareElectronAdapter
+  })
   composition.phase('commands')
 
   return {
