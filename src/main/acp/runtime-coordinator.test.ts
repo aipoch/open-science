@@ -3487,6 +3487,41 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created.sendAppContinuation).not.toHaveBeenCalled()
   })
 
+  it('retains the root lease until a started provider dispatch settles', async () => {
+    const providerStarted = createDeferred<void>()
+    const firstTurn = createDeferred<unknown>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: vi.fn(async () => {
+          providerStarted.resolve()
+          return firstTurn.promise
+        })
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const session = await coordinator.createSession()
+    const first = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'first prompt' })
+    const firstSettled = first.catch(() => undefined)
+    await providerStarted.promise
+
+    await coordinator.disconnect().catch(() => undefined)
+    await coordinator.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+    const next = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'next prompt' })
+    await Promise.resolve()
+    expect(created[0].sendPrompt).toHaveBeenCalledOnce()
+    expect(created.at(-1)?.sendPrompt).not.toHaveBeenCalled()
+
+    firstTurn.resolve({ stopReason: 'end_turn' })
+    await firstSettled
+    await next
+    expect(created.at(-1)?.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('does not dispatch an activity prompt when teardown races its admission guard', async () => {
     const guardGate = createDeferred<void>()
     const guardEntered = createDeferred<void>()

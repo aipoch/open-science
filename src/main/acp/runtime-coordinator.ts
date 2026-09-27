@@ -1251,16 +1251,19 @@ class AcpRuntimeCoordinator {
     const admission = this.linearizeRootAdmission(request.sessionId, async (cancellation) => {
       if (!admitDispatch) return dispatch(cancellation)
       let completion!: Promise<void>
-      await Promise.race([
-        admitDispatch(async () => {
-          cancellation.throwIfCancelled()
-          completion = dispatch(cancellation)
-          void completion.catch((error) => acceptance.reject(error))
-          // Release the Project gate at acceptance, while root admission still owns the whole turn.
-          await accepted
-        }),
-        cancellation.promise
-      ])
+      const guardedAdmission = admitDispatch(async () => {
+        cancellation.throwIfCancelled()
+        completion = dispatch(cancellation)
+        void completion.catch((error) => acceptance.reject(error))
+        // Release the Project gate at acceptance, while root admission still owns the whole turn.
+        await accepted
+      })
+      try {
+        await Promise.race([guardedAdmission, cancellation.promise])
+      } catch (error) {
+        if (completion) await completion.catch(() => undefined)
+        throw error
+      }
       await completion
     })
     onAdmissionQueued?.()
@@ -1310,7 +1313,12 @@ class AcpRuntimeCoordinator {
       guarded,
       cancellation?.promise ?? new Promise<never>(() => undefined)
     ]).catch((error) => {
-      if (dispatchStarted || error instanceof DelegateMessagePreAcceptanceError) throw error
+      if (dispatchStarted && cancellation?.cancelled) {
+        return guarded.finally(() => {
+          throw error
+        })
+      }
+      if (error instanceof DelegateMessagePreAcceptanceError) throw error
       throw new DelegateMessagePreAcceptanceError(
         error instanceof Error ? error.message : String(error),
         error
