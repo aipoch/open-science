@@ -1,9 +1,11 @@
 import { EventEmitter } from 'node:events'
-import { homedir } from 'node:os'
+import { spawn as spawnProcess } from 'node:child_process'
+import { mkdtemp, writeFile, unlink, rmdir } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ClaudeInstallEvent } from '../../shared/settings'
+import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
 import {
   detectNpmAvailable,
   getInstallSpawnSpec,
@@ -112,7 +114,9 @@ describe('claude-install: command construction', () => {
     const spec = getInstallSpawnSpec('official-script', 'win32')
 
     expect(spec.command).toBe('powershell')
-    expect(spec.args.at(-1)).toContain('irm https://claude.ai/install.ps1 | iex')
+    expect(spec.args.at(-1)).toContain(
+      "Invoke-WebRequest -UseBasicParsing -Uri 'https://claude.ai/install.ps1'"
+    )
   })
 })
 
@@ -142,8 +146,115 @@ describe('claude-install: custom install target (opencode)', () => {
   })
 })
 
+describe.skipIf(process.platform !== 'win32')('claude-install: Windows response guard', () => {
+  const runResponse = async (
+    body: string,
+    contentType: string,
+    npmAvailable = false,
+    binary = false
+  ): Promise<{ result: ClaudeInstallResult; output: string; commands: string[] }> => {
+    const output: string[] = []
+    const commands: string[] = []
+    const fixture = [
+      `$fixtureBody = '${body.replaceAll("'", "''")}'`,
+      `function Invoke-WebRequest { [pscustomobject]@{ Content = ${binary ? '[Text.Encoding]::UTF8.GetBytes($fixtureBody)' : '$fixtureBody'}; Headers = @{ 'Content-Type' = '${contentType}' } } }`,
+      'function Invoke-RestMethod { $fixtureBody }'
+    ].join('; ')
+    const fixtureDir = await mkdtemp(join(tmpdir(), 'claude-install-response-'))
+    const fixturePath = join(fixtureDir, 'response.ps1')
+    const spec = getInstallSpawnSpec('official-script', 'win32')
+    await writeFile(fixturePath, `\uFEFF${fixture}; ${spec.args.at(-1)}; if (-not $?) { exit 1 }`)
+    try {
+      const result = await runInstallWithFallback({
+        source: 'official-script',
+        installId: 'windows-response',
+        platform: 'win32',
+        onEvent: (event) => {
+          if (event.kind === 'log' && event.stream !== 'system') output.push(event.chunk)
+        },
+        npmProbe: async () => {
+          if (!npmAvailable) throw new Error('npm unavailable')
+        },
+        spawnImpl: (command, args) => {
+          commands.push(command)
+          if (command === 'npm')
+            return scriptedSpawn({ npm: { exit: 0 } }).spawn(command, args) as never
+          return spawnProcess(
+            command,
+            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fixturePath],
+            {
+              windowsHide: true
+            }
+          )
+        },
+        maxNetworkRetries: 0
+      })
+      return { result, output: output.join(''), commands }
+    } finally {
+      await unlink(fixturePath)
+      await rmdir(fixtureDir)
+    }
+  }
+
+  it.each([
+    ['<!doctype html><html>App unavailable in region</html>', 'text/html; charset=utf-8'],
+    ["Write-Output 'unexpected-execution'", 'text/html'],
+    ['\uFEFF  <HTML><body>blocked</body></HTML>', 'application/octet-stream']
+  ])(
+    'rejects HTML before invoking it: %s',
+    async (body, contentType) => {
+      const { result, output, commands } = await runResponse(body, contentType)
+      expect(result).toMatchObject({ ok: false, regionBlocked: true })
+      expect(commands).toEqual(['powershell'])
+      expect(output).toContain('Official installer returned HTML instead of PowerShell')
+      expect(output).not.toMatch(/unexpected-execution|ParserError|ParseException/)
+    },
+    15_000
+  )
+
+  it('runs a legitimate script even if it mentions an HTML tag in a string', async () => {
+    const { result, output } = await runResponse(
+      "Write-Output 'installer-ran <html>'",
+      'application/octet-stream'
+    )
+    expect(result.ok, JSON.stringify({ result, output })).toBe(true)
+    expect(output).toContain('installer-ran <html>')
+  }, 15_000)
+
+  it('preserves the npm fallback after rejecting HTML', async () => {
+    const { result, commands } = await runResponse(
+      '<html>App unavailable in region</html>',
+      'text/html',
+      true
+    )
+    expect(result.ok).toBe(true)
+    expect(commands).toEqual(['powershell', 'npm'])
+  }, 15_000)
+
+  it('decodes an octet-stream script before execution', async () => {
+    const { result, output } = await runResponse(
+      "Write-Output 'binary-script-ran'",
+      'application/octet-stream',
+      false,
+      true
+    )
+    expect(result.ok, JSON.stringify({ result, output })).toBe(true)
+    expect(output).toContain('binary-script-ran')
+  }, 15_000)
+
+  it('does not classify a legitimate installer failure as an HTML response', async () => {
+    const { result, commands } = await runResponse("throw 'installer-failed'", 'text/plain', true)
+    expect(result.ok).toBe(false)
+    expect(result.regionBlocked).toBeUndefined()
+    expect(commands).toEqual(['powershell'])
+  }, 15_000)
+})
+
 describe('claude-install: region-block detection', () => {
   it('flags piped-HTML region-block output', () => {
+    expect(isRegionBlockedOutput('Official installer returned HTML instead of PowerShell.')).toBe(
+      true
+    )
     expect(isRegionBlockedOutput('<!DOCTYPE html><html>App unavailable in region</html>')).toBe(
       true
     )

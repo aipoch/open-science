@@ -10,7 +10,7 @@ import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchWithManualRedirect } from '../skills/net-fetch'
 
 // App-managed Claude installer. The `@anthropic-ai/claude-code` npm package is a thin wrapper whose
 // real payload is a per-platform native binary shipped as an optionalDependency
@@ -752,7 +752,10 @@ const fetchSuccessfulResponse = async (url: string, init?: RequestInit): Promise
   }
 
   for (let redirects = 0; ; redirects += 1) {
-    const response = await netFetchStandard(target.toString(), { ...init, redirect: 'manual' })
+    const response = await netFetchWithManualRedirect(target.toString(), {
+      ...init,
+      redirect: 'manual'
+    })
     if (!REDIRECT_STATUSES.has(response.status)) {
       if (!response.ok) throw new Error(`HTTP ${response.status} for ${target.toString()}`)
       return response
