@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 
-const { refineTable } = await import(
+const { refineTable, reconcileResolvedSpanDiagnostics } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
 )
 const token = (text: string, rect: number[]): object => ({
@@ -99,6 +99,107 @@ it('preserves empty cells without inventing merges', () => {
     ['', '', ''],
     ['', '', '42']
   ])
+})
+
+it.each([
+  { span: [0, 0, 200, 30], issue: 'span-conflicts-with-source-columns' },
+  { span: [0, 0, 100, 60], issue: 'span-conflicts-with-source-rows' }
+])('retains $issue even when a dense singleton grid is complete', ({ span, issue }) => {
+  const rows = Array.from({ length: 12 }, (_, row) => ({
+    label: 'table row',
+    rect: [0, row * 30, 400, (row + 1) * 30]
+  }))
+  const columns = Array.from({ length: 4 }, (_, column) => ({
+    label: 'table column',
+    rect: [column * 100, 0, (column + 1) * 100, 360]
+  }))
+  const items = rows.flatMap((_, row) =>
+    columns.map((_, column) =>
+      token(
+        column ? ['Low', 'Medium', 'High'][column - 1] : `Label ${String.fromCharCode(65 + row)}`,
+        [column * 100 + 10, row * 30 + 10, column * 100 + 70, row * 30 + 20]
+      )
+    )
+  )
+  const result = refineTable(
+    {
+      id: 'dense-unresolved-merge',
+      cropRect: [0, 0, 400, 360],
+      structure: {
+        objects: [...rows, ...columns, { label: 'table spanning cell', rect: span }]
+      }
+    },
+    items
+  )
+  expect(result.grid).toHaveLength(12)
+  expect(result.cells).toHaveLength(48)
+  expect(result.unassigned).toEqual([])
+  expect(result.issues).toContain(issue)
+  expect(result.reviewCandidate).toBe(false)
+})
+
+it('clears source-span diagnostics after trusted repairs settle a complete grid', () => {
+  const issues = new Set([
+    'overlapping-predicted-columns',
+    'span-conflicts-with-source-columns',
+    'span-conflicts-with-source-rows',
+    'conflicting-spanning-cells',
+    'nonrectangular-spanning-cell'
+  ])
+  const repairs = ['header-span-inferred', 'text-supported-row-recovered']
+  const cells = [
+    { row: 0, column: 0, rowSpan: 1, colSpan: 2 },
+    { row: 0, column: 2, rowSpan: 1, colSpan: 1 },
+    { row: 1, column: 0, rowSpan: 1, colSpan: 1 },
+    { row: 1, column: 1, rowSpan: 1, colSpan: 1 },
+    { row: 1, column: 2, rowSpan: 1, colSpan: 1 }
+  ]
+  expect(
+    reconcileResolvedSpanDiagnostics({
+      cells,
+      rows: [{}, {}],
+      columns: [{}, {}, {}],
+      unassigned: [],
+      issues,
+      repairs
+    })
+  ).toBe(true)
+  expect(issues).toEqual(new Set())
+  expect(repairs).toContain('resolved-span-conflicts-discarded')
+})
+
+it('retains source-span diagnostics without trusted repair evidence', () => {
+  const issues = new Set(['span-conflicts-with-source-rows'])
+  const repairs: string[] = []
+  expect(
+    reconcileResolvedSpanDiagnostics({
+      cells: [{ row: 0, column: 0, rowSpan: 1, colSpan: 1 }],
+      rows: [{}],
+      columns: [{}],
+      unassigned: [],
+      issues,
+      repairs
+    })
+  ).toBe(false)
+  expect(issues).toEqual(new Set(['span-conflicts-with-source-rows']))
+})
+
+it('retains source conflicts while an unresolved span remains', () => {
+  const issues = new Set(['span-conflicts-with-source-columns', 'unresolved-spanning-cells'])
+  const repairs = ['wrapped-header-recovered', 'ruled-final-continuation-recovered']
+  expect(
+    reconcileResolvedSpanDiagnostics({
+      cells: [{ row: 0, column: 0, rowSpan: 1, colSpan: 1 }],
+      rows: [{}],
+      columns: [{}],
+      unassigned: [],
+      issues,
+      repairs
+    })
+  ).toBe(false)
+  expect(issues).toEqual(
+    new Set(['span-conflicts-with-source-columns', 'unresolved-spanning-cells'])
+  )
 })
 
 it('deduplicates a rectangular merge and retains its text exactly once', () => {

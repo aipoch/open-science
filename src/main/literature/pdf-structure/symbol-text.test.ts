@@ -8,6 +8,29 @@ const { repairPdfSymbolText, splitPdfNumericRuns, removeBackgroundNumericPadding
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-symbol-text.mjs')).href
 )
 
+it('repairs legacy ligatures inside table labels', async () => {
+  const content = {
+    items: [{ str: 'Modi¢ed mastectomy; Sleep e⁄ciency; Hot £ashes', fontName: 'source' }]
+  }
+  const page = { commonObjs: { get: () => ({ name: 'ABCDEF+AdvT041' }) } }
+  const operators = {
+    fnArray: [OPS.setFont, OPS.showText],
+    argsArray: [
+      ['source', 12],
+      [
+        [
+          { originalCharCode: 162, unicode: '¢', width: 500 },
+          { originalCharCode: 135, unicode: '⁄', width: 770 },
+          { originalCharCode: 163, unicode: '£', width: 500 }
+        ]
+      ]
+    ]
+  }
+  expect((await repairPdfSymbolText(page, content, operators)).items[0].str).toBe(
+    'Modified mastectomy; Sleep efficiency; Hot flashes'
+  )
+})
+
 it.each([
   'native',
   'shifted-slots',
@@ -54,7 +77,21 @@ it.each([
   ['AdvTir_symb', 67, 'C', '≥', 750],
   ['AdvOT463cc31e', 53, '5', '=', 822],
   ['AdvPS586B', 54, '6', '±', 833],
+  ['AdvPS586B', 49, '1', '+', 833],
+  ['AdvPS586B', 50, '2', '−', 833],
+  ['AdvPS586B', 44, ',', '<', 833],
+  ['AdvP80675', 54, '6', '±', 833],
+  ['AdvPS7DED', 53, '5', '=', 833],
   ['AdvPS586B', 53, '5', '=', 833],
+  ['AdvMPi-One', 53, '5', '=', 833],
+  ['AdvPSSPS-AS', 41, ')', '−', 635],
+  ['AdvPi1', 123, '{', '†', 500],
+  ['AdvT041', 135, '⁄', 'ffi', 770],
+  ['AdvT041', 161, '¡', 'ff', 562],
+  ['AdvT041', 162, '¢', 'fi', 500],
+  ['AdvT041', 163, '£', 'fl', 500],
+  ['AdvPSSym', 135, '⁄', '/', 166],
+  ['AdvT678', 162, '¢', 'fi', 500],
   ['AdvMT_SY', 188, '¼', '=', 770],
   ['MinionMathSymbols', 136, '�', '=', 583],
   ['TeX_CM_Bold_Maths_Symbols', 136, '¼', '=', 885],
@@ -65,6 +102,8 @@ it.each([
   ['AdvPS44A44B', 67, 'C', '+', 1000],
   ['AdvTT454a7a89', 98, 'b', '<', 562],
   ['TeX_CM_Maths_Symbols', 0, '\u0000', '−', 250],
+  ['TeX_CM_Maths_Symbols', 133, 'ð', '(', 385],
+  ['TeX_CM_Maths_Symbols', 134, 'Þ', ')', 385],
   ['AdvPS3F4C13', 117, 'u', 'ω', 718],
   ['AdvP0DE0', 177, '±', '–', 552],
   ['AdvP0DE0', 174, 'Æ', 'fi', 614],
@@ -619,6 +658,57 @@ it('recovers case only from a consistent subset encoding and exact glyph stream 
   }
 })
 
+it('splits mixed counts and probabilities only at measured native gutters', () => {
+  const f = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/mixed-count-statistics-with-native-gutters.jsonl'
+    )
+  )
+  const original = structuredClone(f)
+  const result = splitPdfNumericRuns(f.content, f.operators).items
+  expect(result.map((i: { str: string }) => i.str)).toEqual([
+    '25 (27.2%)',
+    '47 (52.2%)',
+    '48 (56.4%)',
+    '<0.001',
+    '10 (22.2%)',
+    '29 (64.4%)',
+    '30 (73.2%)',
+    '<0.001',
+    '15 (31.9%)',
+    '18 (40%)'
+  ])
+  expect(result[3].transform[4]).toBeCloseTo(211.7467446, 6)
+  expect(result[4].transform[4]).toBeCloseTo(234.42345006, 6)
+  expect(result.at(-1).transform[4] + result.at(-1).width).toBeCloseTo(
+    f.content.items[0].transform[4] + f.content.items[0].width,
+    6
+  )
+  expect(f).toEqual(original)
+  const inconsistent = structuredClone(f.content)
+  inconsistent.items[0].width += 1
+  expect(splitPdfNumericRuns(inconsistent, f.operators)).toEqual(inconsistent)
+  // The same words with ordinary inline spaces do not establish columns.
+  const glyphs = [...'12 (20%) 24 (40%) 0.123'].map((unicode) => ({
+    unicode,
+    width: unicode === ' ' ? 250 : 500
+  }))
+  const item = {
+    str: '12 (20%) 24 (40%) 0.123',
+    fontName: 'inline',
+    transform: [10, 0, 0, 10, 0, 0],
+    dir: 'ltr',
+    height: 10,
+    width: glyphs.reduce((n, g) => n + g.width / 100, 0)
+  }
+  expect(
+    splitPdfNumericRuns(
+      { items: [item] },
+      { fnArray: [OPS.setFont, OPS.showText], argsArray: [['inline', 10], [glyphs]] }
+    ).items
+  ).toEqual([item])
+})
+
 it('splits fraction-valued runs using unequal TJ advances and text spacing', () => {
   const parts = ['1 (2/3)', '4 (5/6)', '7 (8/9)']
   const glyphs = (text: string): object[] =>
@@ -721,9 +811,12 @@ it.each([
 )
 
 it.each([
+  ['MathematicalPi-Three', 115, 's', 333, '('],
+  ['MathematicalPi-Three', 100, 'd', 333, ')'],
   ['AdvMacMthSyN', 188, '¼', 781, '='],
   ['AdvMacMthSyN', 2, '\u0002', 781, '−'],
   ['AdvEls-ent4', 111, 'o', 979, '<'],
+  ['AdvEls-ent4', 114, 'r', 979, '≤'],
   ['AdvEls-ent5', 90, 'Z', 979, '≥'],
   ['AdvPSMP13', 97, 'a', 552, 'α'],
   ['AdvPSMP13', 98, 'b', 552, 'β'],
@@ -748,6 +841,29 @@ it.each([
       ['Times-Roman', unicode]
     ]) {
       const page = { commonObjs: { get: () => ({ name: font, differences: { 2: 'C0' } }) } }
+      expect((await repairPdfSymbolText(page, content, ops)).items[0].str).toBe(value)
+    }
+  }
+)
+
+it.each([
+  [107, 'k', 500, '‖'],
+  [106, 'j', 270, '|']
+] as const)(
+  'recovers verified footnote bar slot %s without changing Latin letters',
+  async (code, unicode, width, expected) => {
+    const content = { items: [{ str: unicode, fontName: 'math' }] }
+    for (const [name, advance, slot, value] of [
+      ['ICLIDA+AdvP4C4E74', width, unicode, expected],
+      ['AdvPSSAB-R', width, unicode, unicode],
+      ['AdvP4C4E74', width + 1, unicode, unicode],
+      ['AdvP4C4E74', width, 'unknown', unicode]
+    ] as const) {
+      const page = { commonObjs: { get: () => ({ name, differences: { [code]: slot } }) } }
+      const ops = {
+        fnArray: [OPS.setFont, OPS.showText],
+        argsArray: [['math', 8], [[{ originalCharCode: code, unicode, width: advance }]]]
+      }
       expect((await repairPdfSymbolText(page, content, ops)).items[0].str).toBe(value)
     }
   }
@@ -1286,6 +1402,7 @@ it.each(['native', 'wrong-font', 'wrong-width', 'wrong-slot', 'wrong-name', 'wro
 it.each([
   ['AdvPSMP10', 118, 'v', 'χ', 500],
   ['AdvPSMP11', 108, 'l', 'μ', 552],
+  ['AdvGreek_B', 108, 'l', 'μ', 552],
   ['AdvP7DED', 53, '5', '=', 833]
 ])(
   'repairs the native clinical-font slot %s/%s without guessing prose',
@@ -1588,5 +1705,19 @@ it.each([250, 500, 900])(
       expect(result[1].transform[4]).toBe(100 + a.length * 5 + gap / 100)
       expect(result[0].width + gap / 100 + result[1].width).toBe(item.width)
     }
+  }
+)
+
+it.each([100, 115])(
+  'requires the verified glyph width for MathematicalPi-Three slot %s',
+  async (code) => {
+    const unicode = String.fromCharCode(code)
+    const content = { items: [{ str: unicode, fontName: 'math' }] }
+    const page = { commonObjs: { get: () => ({ name: 'ABCDEF+MathematicalPi-Three' }) } }
+    const operators = {
+      fnArray: [OPS.setFont, OPS.showText],
+      argsArray: [['math', 10], [[{ originalCharCode: code, unicode, width: 334 }]]]
+    }
+    expect((await repairPdfSymbolText(page, content, operators)).items[0].str).toBe(unicode)
   }
 )

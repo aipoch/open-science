@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Candidate extractor adapted from the reviewed offline experiment. Main owns authorization/cache.
-// Usage: node scripts/spikes/literature-pdf-extract.mjs PDF ASSETS ORT_PACKAGE PAGES NEW_OUTPUT
+// Usage: node resources/pdf-structure/literature-pdf-extract.mjs PDF ASSETS ORT_PACKAGE PAGES NEW_OUTPUT
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
@@ -16,6 +16,7 @@ import {
 } from './literature-pdf-caption-group.mjs'
 import {
   associateFigures,
+  deduplicateFigureCaptions,
   associateUnnumberedFigure,
   associateGraphicalTables,
   resolveFigureCaption,
@@ -33,11 +34,15 @@ import {
   recoverCaptionedRuledTables
 } from './literature-pdf-table-refine.mjs'
 import { deduplicateTableRegions } from './literature-pdf-table-regions.mjs'
-import { tableCaptionCropTop } from './literature-pdf-table-geometry.mjs'
+import { tableCaptionCropTop, tableMarginCropTop } from './literature-pdf-table-geometry.mjs'
 import { recoverWrappedCountTable } from './literature-pdf-wrapped-count-grid.mjs'
 import { groupTableParts } from './literature-pdf-table-group.mjs'
 import { renderPdfCrop, recoverScannedFigures } from './literature-pdf-crop.mjs'
-import { collectTableRules, excludeRepeatedMarginContent } from './literature-pdf-graphics.mjs'
+import {
+  collectTableRules,
+  excludeRepeatedMarginContent,
+  excludeRemovedMarginTokens
+} from './literature-pdf-graphics.mjs'
 import { repairPdfSymbolText, splitPdfNumericRuns } from './literature-pdf-symbol-text.mjs'
 import { isUprightText, originalRect, rotatedTextRect } from './literature-pdf-orientation.mjs'
 import { readFigureSequence } from './literature-pdf-figure-sequence.mjs'
@@ -91,6 +96,7 @@ await run('./literature-pdf-onnx.mjs', [
   'production'
 ])
 const geometry = JSON.parse(await readFile(join(output, 'geometry/probe.json'), 'utf8'))
+const originalPages = new Map(geometry.pages.map((page) => [page.pageNumber, page]))
 geometry.pages = excludeRepeatedMarginContent(geometry.pages)
 const inference = JSON.parse(await readFile(join(output, 'inference/onnx-probe.json'), 'utf8'))
 assert.equal(geometry.summary.checksum, inference.sourceSha256)
@@ -231,22 +237,27 @@ try {
         ),
         await page.getOperatorList()
       )
-      const tokens = content.items
-        .filter((i) => 'str' in i && i.str.trim())
-        .map((i) => {
-          const [x, baseline] = viewport.convertToViewportPoint(i.transform[4], i.transform[5])
-          const horizontal = isUprightText(i, pageGeometry.renderRotation)
-          return {
-            text: i.str,
-            inlineSymbol: i.inlineSymbol === true,
-            baseline,
-            height: i.height * 1.5,
-            rect: horizontal
-              ? [x, baseline - i.height * 1.5, x + i.width * 1.5, baseline]
-              : rotatedTextRect(i, viewport),
-            horizontal
-          }
-        })
+      const tokens = excludeRemovedMarginTokens(
+        content.items
+          .filter((i) => 'str' in i && i.str.trim())
+          .map((i) => {
+            const [x, baseline] = viewport.convertToViewportPoint(i.transform[4], i.transform[5])
+            const horizontal = isUprightText(i, pageGeometry.renderRotation)
+            return {
+              text: i.str,
+              inlineSymbol: i.inlineSymbol === true,
+              baseline,
+              height: i.height * 1.5,
+              rect: horizontal
+                ? [x, baseline - i.height * 1.5, x + i.width * 1.5, baseline]
+                : rotatedTextRect(i, viewport),
+              horizontal
+            }
+          }),
+        originalPages.get(pageNumber),
+        pageGeometry,
+        1.5
+      )
       const rules = collectTableRules(await page.getOperatorList(), viewport)
       // Native table rules disambiguate headers styled like the caption above.
       // Refine only existing table candidates; figure associations keep their input.
@@ -524,7 +535,8 @@ try {
         const plateLabels = pageGeometry.lines
           .filter(
             (l) =>
-              !/^(?:Figure|Fig\.)\s*\d+\.?$/i.test(l.text.trim()) &&
+              !/^(?:Figure|Fig\.)\s*\d+[A-Z]?\.?$/i.test(l.text.trim()) &&
+              !(/^\d+$/.test(l.text.trim()) && l.y > pageGeometry.height * 0.9) &&
               l.y + l.height > 0 &&
               l.y + l.height < Math.min(footerTop, pageGeometry.height * 0.99)
           )
@@ -632,10 +644,20 @@ try {
         const cropRect = [...table.cropRect]
         const caption = association.caption
         if (!acceptedTables[index]) continue
+        cropRect[1] = tableMarginCropTop(
+          table,
+          originalPages.get(pageNumber),
+          pageGeometry,
+          rules,
+          1.5
+        )
         // Glyph outlines can extend beyond their font-metric boxes. Cut inside
         // the measured caption/content gap instead of hugging the caption.
         if (caption && caption.rect[3] <= contentRects[index][1])
-          cropRect[1] = tableCaptionCropTop(table, caption.rect[3] * 1.5, rules)
+          cropRect[1] = Math.max(
+            cropRect[1],
+            tableCaptionCropTop(table, caption.rect[3] * 1.5, rules)
+          )
         if (caption && caption.rect[1] >= contentRects[index][3])
           cropRect[3] = Math.min(cropRect[3], (caption.rect[1] - 1) * 1.5)
         for (const note of notes[index]) {
@@ -675,6 +697,7 @@ try {
     }
     console.log(JSON.stringify({ phase: 'assembled', page: pageNumber }))
   }
+  figures.splice(0, figures.length, ...deduplicateFigureCaptions(figures))
   geometry.pages.sort((a, b) => a.pageNumber - b.pageNumber)
   // Keep the original PDF's coordinate system at the worker boundary. Analysis
   // and thumbnails are upright, while source jumps still point into the original.

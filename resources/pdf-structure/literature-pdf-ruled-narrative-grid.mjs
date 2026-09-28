@@ -33,6 +33,8 @@ export function recoverRuledNarrativeGrid(table, items, captions, rules, sourceR
   if (segmented) return segmented
   const paragraphs = recoverParagraphColumns(table, items, predicted, sourceRules)
   if (paragraphs) return paragraphs
+  const durationParagraphs = recoverDurationParagraphs(table, items, predicted, sourceRules)
+  if (durationParagraphs) return durationParagraphs
   const centered = recoverCenteredBulletedGroups(table, items, predicted)
   if (centered) return centered
   const parallelLists = recoverParallelNumberedLists(table, items, predicted, rules)
@@ -213,6 +215,80 @@ export function recoverRuledNarrativeGrid(table, items, captions, rules, sourceR
     ],
     spans,
     completeSpans: true
+  }
+}
+
+// A numeric duration anchors each instruction paragraph independently of the
+// number of wrapped lines in its label or description.
+function recoverDurationParagraphs(table, items, predicted, rules) {
+  if (predicted.length !== 3) return
+  const [left, top, right, bottom] = table.cropRect
+  const cuts = [
+    left,
+    ...predicted.slice(1).map((c, n) => left + (predicted[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const nativeBands = rules.filter((r) => r[1] === r[3] && r[1] >= top && r[1] <= bottom)
+  for (const r of nativeBands) {
+    const band = nativeBands.filter((s) => Math.abs(s[1] - r[1]) < 0.01).sort((a, b) => a[0] - b[0])
+    if (
+      band.length === 3 &&
+      Math.abs(band[0][0] - left) < 16 &&
+      Math.abs(band[2][2] - right) < 16 &&
+      band.slice(1).every((s, n) => Math.abs(s[0] - band[n][2]) < 1)
+    ) {
+      cuts.splice(1, 2, ...band.slice(1).map((s, n) => (s[0] + band[n][2]) / 2))
+      break
+    }
+  }
+  const source = tableSourceItems(items, table.cropRect)
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const anchors = source.filter((i) => col(i) === 1 && /^\d+(?:\.\d+)?$/.test(i.text))
+  if (anchors.length < 3 || anchors.length > 20) return
+  const header = source.filter((i) => i.baseline < anchors[0].baseline - anchors[0].height)
+  const heading = readSourceRow(header, cuts)
+  if (!heading || !/^Duration\((?:min|minutes?|hours?|s|seconds?)\)$/i.test(heading[1])) return
+  const body = source.filter((i) => !header.includes(i))
+  if (body.some((i) => col(i) === 1 && !anchors.includes(i))) return
+  const groups = anchors.map((a, n) =>
+    body.filter(
+      (i) =>
+        i.baseline >= a.baseline - a.height * 0.35 &&
+        (!anchors[n + 1] || i.baseline < anchors[n + 1].baseline - a.height * 0.35)
+    )
+  )
+  if (
+    !hasUniqueRecordTokens(source, [header, ...groups]) ||
+    groups.some((g) => {
+      const v = readSourceRow(g, cuts, { multiline: true })
+      return !v || !/\p{L}/u.test(v[0]) || !/\p{L}/u.test(v[2])
+    }) ||
+    !groups.some((g) => g.filter((i) => col(i) === 2).length >= 3)
+  )
+    return
+  const extent = union(source),
+    height = anchors[0].height
+  if (
+    !rules.some(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] >= extent[3] &&
+        r[1] - extent[3] < height &&
+        r[0] <= cuts[2] &&
+        r[2] >= right - height
+    )
+  )
+    return
+  return {
+    rows: [header, ...groups].map((g) => {
+      const r = union(g)
+      return [left, r[1], right, r[3]]
+    }),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
+    headerRows: [0],
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }
 

@@ -56,6 +56,13 @@ it('uses native follow-up underlines without including the independent baseline 
   expect(t.cells).toContainEqual(
     expect.objectContaining({ text: 'Eight-week follow-up', row: 0, column: 7, colSpan: 5 })
   )
+  expect(t.grid[13][2]).toContain('(100.35)')
+  expect(t.grid[13][7]).toContain('(91.43)')
+  expect(t.grid.at(-1)?.[1]).toContain('(26.16)')
+  expect(t.grid.at(-1)?.[8]).toContain('(8.09)')
+  expect(t.unassigned).toEqual([])
+  expect(t.repairs).toContain('intermediate-parenthesized-continuation-recovered')
+  expect(t.repairs).toContain('terminal-parenthesized-continuation-recovered')
 })
 it('separates a ruled baseline parent from visit headers and keeps independent time columns', () => {
   const t = parse(load('assessment-schedule'))
@@ -64,6 +71,9 @@ it('separates a ruled baseline parent from visit headers and keeps independent t
     0, 2, 1, 2
   ])
   expect(t.grid[1].slice(2, 4)).toEqual(['Enrollment Visit', 'Research Visit'])
+  expect(t.grid[10][2]).toContain('Assessment)')
+  expect(t.unassigned).toEqual([])
+  expect(t.repairs).toContain('intermediate-text-continuation-recovered')
 })
 it('associates an isolated centered table number with the larger prose title above the column headers', async () => {
   const { findCaptionCandidates } = await import(
@@ -209,4 +219,12 @@ it('includes the first treatment week under the native underline in a wide sched
     'wk 2 wk 3',
     'Weekly for 4 weeks post-RT'
   ])
+  expect(t.grid[0][6]).toBe('Follow-up (all taken from date of randomisation except where shown)')
+  expect(t.grid[6][2]).toBe(
+    'Prior to centre initiation and throughout the trial recruitment period'
+  )
+  expect(t.unassigned).toEqual([])
+  expect(
+    t.repairs.filter((repair: string) => repair === 'source-wide-text-span-recovered')
+  ).toHaveLength(2)
 })

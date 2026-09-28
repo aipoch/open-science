@@ -17,6 +17,7 @@ export function recoverRegressionGrid(table, items, captions) {
   const predicted = table.structure.objects
     .filter((o) => o.label === 'table column')
     .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length === 4) return recoverCategoricalRiskRecords(table, items, predicted)
   if (predicted.length !== 9) return
   const cuts = [
     left,
@@ -98,6 +99,8 @@ export function recoverRegressionGrid(table, items, captions) {
 // Explicit statistical headings and ruled section bands distinguish these
 // tables from arbitrary number-rich prose; no values are filled or calculated.
 export function recoverSectionedCoefficientsGrid(table, items, rules) {
+  const identifiers = recoverIdentifierCoefficientGrid(table, items, rules)
+  if (identifiers) return identifiers
   const inline = recoverInlineCoefficientSections(table, items, rules)
   if (inline) return inline
   const [left, top, right, bottom] = table.cropRect
@@ -188,10 +191,126 @@ export function recoverSectionedCoefficientsGrid(table, items, rules) {
   }
 }
 
+// Complete identifier/value records establish baselines independently of
+// model rows. Top-aligned nested stubs end at the next label in their own or
+// an outer tier; a missing label at a hierarchy boundary is not filled down.
+function recoverIdentifierCoefficientGrid(table, items, rules) {
+  const [left, top, right, bottom] = table.cropRect
+  const predicted = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length < 7 || predicted.length > 15) return
+  const cuts = [
+    left,
+    ...predicted.slice(1).map((c, n) => left + (predicted[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const source = tableSourceItems(items, table.cropRect)
+  const identifiers = source.filter((i) => /^[A-Za-z]{1,8}\d{4,}$/.test(i.text.trim()))
+  if (identifiers.length < 12) return
+  const idColumn = col(identifiers[0]),
+    height = identifiers[0].height
+  if (
+    idColumn < 2 ||
+    idColumn > 4 ||
+    predicted.length - idColumn < 5 ||
+    identifiers.some((i) => col(i) !== idColumn)
+  )
+    return
+  const divider = rules.find(
+    (r) =>
+      r[1] === r[3] &&
+      r[0] <= left + 15 &&
+      r[2] >= right - 15 &&
+      r[1] > top &&
+      r[1] < identifiers[0].rect[1] &&
+      identifiers[0].rect[1] - r[1] < height * 2
+  )
+  if (!divider) return
+  const header = source.filter((i) => i.rect[3] < divider[1]),
+    body = source.filter((i) => i.rect[1] > divider[1])
+  if (!hasUniqueRecordTokens(source, [header, body])) return
+  const ci = header.filter((i) => /^\d{2}%\s*CI$/i.test(i.text)),
+    lower = header.filter((i) => /^Lower$/i.test(i.text)),
+    upper = header.filter((i) => /^Upper$/i.test(i.text))
+  if (ci.length !== 1 || lower.length !== 1 || upper.length !== 1) return
+  const ciColumn = col(lower[0])
+  if (ciColumn <= idColumn || col(upper[0]) !== ciColumn + 1) return
+  const underline = rules.find(
+    (r) =>
+      r[1] === r[3] &&
+      r[0] <= lower[0].rect[0] &&
+      r[2] >= upper[0].rect[2] &&
+      r[0] >= cuts[ciColumn] &&
+      r[2] <= cuts[ciColumn + 2] &&
+      r[1] >= ci[0].rect[3] &&
+      r[1] < lower[0].rect[1]
+  )
+  if (!underline || ci[0].rect[0] < cuts[ciColumn] || ci[0].rect[2] > cuts[ciColumn + 2]) return
+  const ordinary = header.filter((i) => !ci.includes(i) && !lower.includes(i) && !upper.includes(i))
+  const headings = readSourceRow(ordinary, cuts, { multiline: true })
+  if (
+    !headings ||
+    headings.slice(idColumn).some((s, n) => !s && ![ciColumn, ciColumn + 1].includes(n + idColumn))
+  )
+    return
+  const groups = groupSourceRowsWithScripts(body, height, 0.35)
+  if (!groups || groups.length !== identifiers.length || !hasUniqueRecordTokens(body, groups))
+    return
+  const values = groups.map((g) => readSourceRow(g, cuts))
+  if (
+    values.some(
+      (v) =>
+        !v ||
+        !/^[A-Za-z]{1,8}\d{4,}$/.test(v[idColumn]) ||
+        v.slice(idColumn + 1).some((s) => !/^[<>≤≥−+-]?(?:\d+(?:\.\d+)?|\.\d+)\*{0,3}$/.test(s))
+    )
+  )
+    return
+  const bounds = groups.map(union)
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  const spans = [{ row: 0, column: ciColumn, rowSpan: 1, colSpan: 2 }]
+  for (let c = 0; c < predicted.length; c++)
+    if (![ciColumn, ciColumn + 1].includes(c))
+      spans.push({ row: 0, column: c, rowSpan: 2, colSpan: 1 })
+  let shared = 0
+  for (let c = 0; c < idColumn; c++) {
+    if (!values[0][c]) return
+    for (let n = 0; n < values.length; n++) {
+      if (values[n].slice(0, c).some(Boolean) && !values[n][c]) return
+      if (!values[n][c]) continue
+      if (!/\p{L}/u.test(values[n][c])) return
+      let end = n + 1
+      while (end < values.length && values[end].slice(0, c + 1).every((s) => !s)) end++
+      if (end - n > 1) {
+        spans.push({ row: n + 2, column: c, rowSpan: end - n, colSpan: 1 })
+        shared++
+      }
+    }
+  }
+  if (shared < 3) return
+  return {
+    rows: [
+      [left, top, right, underline[1]],
+      [left, underline[1], right, divider[1]],
+      ...bounds.map((r) => [left, r[1] - 0.1, right, r[3] + 0.1])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans,
+    completeSpans: true,
+    headerRows: [0, 1],
+    ownedTokens: new Set(source),
+    cropRect: [...table.cropRect]
+  }
+}
+
 // Repeated Estimate / CI / P blocks establish their own columns independently
 // of the detector. Higher headings must partition those same blocks evenly;
 // every native token, including reference rows and wrapped CIs, keeps one owner.
 export function recoverRepeatedRegressionGrid(table, items, captions, rules) {
+  const effects = recoverRepeatedEffectRecords(table, items, captions, rules)
+  if (effects) return effects
   const coefficients = recoverPairedCoefficientRows(table, items, captions, rules)
   if (coefficients) return coefficients
   const paired = recoverPairedRiskGrid(table, items, captions, rules)
@@ -390,6 +509,121 @@ export function recoverRepeatedRegressionGrid(table, items, captions, rules) {
     headerRows: headerGroups.map((_, n) => n),
     ownedTokens: new Set(source),
     repair: 'repeated-regression-blocks-recovered'
+  }
+}
+
+// Coefficient/CI, P and ratio/CI blocks use explicit zero/one reference rows.
+// Blank P cells are source omissions, not missing records or values to fill.
+function recoverRepeatedEffectRecords(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length < 7 || columns.length > 13 || (columns.length - 1) % 3) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const full = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        Math.abs(r[0] - left) < 16 &&
+        Math.abs(r[2] - right) < 16 &&
+        r[1] >= top - 2 &&
+        r[1] <= bottom + 16
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (full.length !== 3) return
+  const source = tableSourceItems(items, [left, top, right, full[2][1]])
+  const body = source.filter((i) => i.rect[1] > full[1][1]),
+    header = source.filter((i) => !body.includes(i))
+  const height = body[0]?.height,
+    groups = groupSourceRowsWithScripts(body, height, 0.3),
+    heads = groupSourceRowsWithScripts(header, height, 0.3)
+  if (!groups || groups.length < 6 || !heads || heads.length !== 3) return
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const parts = cuts.slice(1).map((_, c) => body.filter((i) => col(i) === c))
+  if (parts.some((g) => !g.length)) return
+  for (let c = 1; c < cuts.length - 1; c++) {
+    const a = Math.max(...parts[c - 1].map((i) => i.rect[2])),
+      b = Math.min(...parts[c].map((i) => i.rect[0]))
+    if (a >= b) return
+    cuts[c] = (a + b) / 2
+  }
+  const leaves = readSourceRow(heads[2], cuts)
+  if (
+    !leaves ||
+    leaves[0] ||
+    !leaves
+      .slice(1)
+      .every((v, n) =>
+        [/^(?:β|B|Coef\.?)\(\d{2}%CI\)$/i, /^P[- ]?value$/i, /^(?:OR|HR|RR)\(\d{2}%CI\)$/i][
+          n % 3
+        ].test(v)
+      )
+  )
+    return
+  const interval = (s) =>
+    /^[−–+-]?(?:\d+(?:\.\d+)?|\.\d+)\([−–+-]?(?:\d+(?:\.\d+)?|\.\d+),[−–+-]?(?:\d+(?:\.\d+)?|\.\d+)\)$/.test(
+      s
+    )
+  const probability = (s) => /^[<≤>]?(?:0?\.\d+|1(?:\.0+)?)$/.test(s)
+  let references = 0,
+    records = 0
+  for (const g of groups) {
+    const v = readSourceRow(g, cuts)
+    if (!v || !/^\p{L}/u.test(v[0])) return
+    let reference = true
+    for (let c = 1; c < v.length; c += 3) {
+      const [a, p, b] = v.slice(c, c + 3)
+      if (a === '0' && !p && b === '1') continue
+      if (!interval(a) || !probability(p) || !interval(b)) return
+      reference = false
+    }
+    if (reference) references++
+    else records++
+  }
+  if (records < 4 || references < 1) return
+  const count = (columns.length - 1) / 3
+  if (heads[0].length !== 1 || heads[1].length !== count) return
+  const parents = [...heads[1]].sort((a, b) => a.rect[0] - b.rect[0])
+  const underlined = (group, a, b) => {
+    const r = union(group)
+    return (
+      r[0] >= cuts[a] &&
+      r[2] <= cuts[b] &&
+      rules.some(
+        (line) =>
+          line[1] === line[3] &&
+          line[1] > r[3] &&
+          line[1] - r[3] < height &&
+          line[0] <= r[0] &&
+          line[2] >= r[2]
+      )
+    )
+  }
+  if (
+    !underlined(heads[0], 1, columns.length) ||
+    parents.some((p, n) => !underlined([p], 1 + n * 3, 4 + n * 3)) ||
+    !hasUniqueRecordTokens(source, [...heads, ...groups])
+  )
+    return
+  const rects = [...heads, ...groups].map(union)
+  if (rects.some((r, n) => n && r[1] <= rects[n - 1][3])) return
+  return {
+    cropRect: [left, top, right, full[2][1]],
+    rows: rects.map((r) => [left, r[1], right, r[3]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, full[2][1]]),
+    headerRows: [0, 1, 2],
+    spans: [
+      { row: 0, column: 1, rowSpan: 1, colSpan: columns.length - 1 },
+      ...parents.map((_, n) => ({ row: 1, column: 1 + n * 3, rowSpan: 1, colSpan: 3 }))
+    ],
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }
 
@@ -784,5 +1018,73 @@ function recoverInlineCoefficientSections(table, items, rules) {
     spans,
     completeSpans: true,
     ownedTokens: new Set(source)
+  }
+}
+
+// Categorical regression summaries put a section-level P beside an outdented
+// label; indented levels contain an estimate/interval and a ratio or reference.
+function recoverCategoricalRiskRecords(table, items, predicted) {
+  const [left, top, right, bottom] = table.cropRect
+  const cuts = [
+    left,
+    ...predicted.slice(1).map((c, n) => left + (predicted[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const source = tableSourceItems(items, table.cropRect)
+  const heights = source.map((i) => i.height).sort((a, b) => a - b),
+    height = heights[Math.floor(heights.length / 2)]
+  const groups = groupSourceRowsWithScripts(
+    [...source].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+    height,
+    0.35
+  )
+  if (!groups || groups.length < 10) return
+  const header = readSourceRow(groups[0], cuts)
+  if (
+    !header ||
+    !/95%CI/.test(header[1]) ||
+    !/(?:OR|HR|RR).*95%CI/.test(header[2]) ||
+    !/^P[*†‡]?$/i.test(header[3])
+  )
+    return
+  const interval = (s) =>
+    /^[−-]?\d+(?:\.\d+)?\([−-]?\d+(?:\.\d+)?[–−-][−-]?\d+(?:\.\d+)?\)$/.test(s)
+  let sections = 0,
+    records = 0,
+    refs = 0,
+    sectionLeft
+  const spans = []
+  for (let n = 1; n < groups.length; n++) {
+    const g = groups[n],
+      v = readSourceRow(g, cuts)
+    if (!v || !v[0]) return
+    if (!v[1] && !v[2] && /^[<>≤≥]?(?:0?\.\d+|1(?:\.0+)?)$/.test(v[3]) && /\p{L}/u.test(v[0])) {
+      sections++
+      sectionLeft = Math.min(...g.filter((i) => i.rect[0] < cuts[1]).map((i) => i.rect[0]))
+      spans.push({ row: n, column: 0, rowSpan: 1, colSpan: 3 })
+    } else if (
+      sectionLeft !== undefined &&
+      interval(v[1]) &&
+      (interval(v[2]) || /^Ref(?:erent)?$/i.test(v[2])) &&
+      ((!v[3] &&
+        g
+          .filter((i) => i.rect[0] < cuts[1])
+          .every((i) => i.rect[0] - sectionLeft >= height * 0.5)) ||
+        (/^[<>≤≥]?(?:0?\.\d+|1(?:\.0+)?)$/.test(v[3]) &&
+          g.filter((i) => i.rect[0] < cuts[1]).every((i) => Math.abs(i.rect[0] - sectionLeft) < 1)))
+    ) {
+      records++
+      if (/^Ref/i.test(v[2])) refs++
+    } else return
+  }
+  if (sections < 3 || records < 8 || refs < 2 || !hasUniqueRecordTokens(source, groups)) return
+  return {
+    rows: groups.map((g) => {
+      const r = union(g)
+      return [left, r[1], right, r[3]]
+    }),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
+    spans,
+    completeSpans: true
   }
 }

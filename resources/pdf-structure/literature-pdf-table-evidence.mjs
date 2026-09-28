@@ -45,6 +45,150 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     return false
   const measurement = (text) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(text.trim())
   const hasMeasurement = table.grid.some((row) => row.some(measurement))
+  // Section outlines contain numbered prose headings, sometimes with a
+  // completely empty detector column. Those ordinals are not measurements.
+  if (
+    table.grid.length <= 4 &&
+    table.grid.length >= 2 &&
+    table.grid.every(
+      (row) =>
+        /^\d+(?:\.\d+)*\.$/.test(row[0]?.trim() ?? '') &&
+        row.slice(1).filter((text) => text.trim()).length === 1 &&
+        row.slice(1).some((text) => /^[\p{L} -]+$/u.test(text.trim()))
+    ) &&
+    table.issues?.includes('text-crosses-crop-boundary')
+  )
+    return false
+  // A detector can turn a reference column or a prose section outline into a
+  // two-column grid. These candidates commonly cross the crop boundary and
+  // leave source text unassigned. Keep a measured comparison or a captioned
+  // table above, but reject the unstructured shapes before they reach output.
+  const referenceHeading = pageItems.some((item) =>
+    /^(?:References|Bibliography)\s*:?$/i.test(item.text.trim())
+  )
+  const numberedReferenceMarkers = pageItems.filter((item) =>
+    /^\d+[.)]?$/.test(item.text.trim())
+  ).length
+  const sourceReferenceMarkers = (sourceText.match(/(?:^|\s)\d+\.\s/g) ?? []).length
+  const citationYears = (sourceText.match(/\b(?:19|20)\d{2}\b/g) ?? []).length
+  const citationUrls = (cropText.match(/https?:\/\/|doi\.org/gi) ?? []).length
+  const referenceLikeGrid = table.grid.every((row) => row.length <= 6)
+  const numberedCitationRows = table.grid.filter((row) => {
+    const marker = row[0]?.trim() ?? ''
+    const citation = row.slice(1).join(' ').trim()
+    return (
+      /^\d+[.)]?$/.test(marker) &&
+      words(citation) >= 8 &&
+      /(?:19|20)\d{2}\b/.test(citation) &&
+      /\b(?:Journal|Cancer|BMJ|Eur|doi|et al\.)\b/i.test(citation)
+    )
+  }).length
+  if (
+    !hasMeasurement &&
+    referenceLikeGrid &&
+    table.issues?.includes('text-crosses-crop-boundary') &&
+    ((referenceHeading && numberedReferenceMarkers >= 3) ||
+      (numberedReferenceMarkers >= 3 && citationYears >= 3) ||
+      (citationUrls >= 2 && citationYears >= 2) ||
+      (sourceReferenceMarkers >= 3 && citationYears >= 3))
+  )
+    return false
+  // A two-column detector crop can also treat a short bibliography tail as a
+  // table. Numeric-only left cells are ordinals in this shape, not measured
+  // values; require every row to carry a long citation before rejecting it.
+  if (
+    !caption &&
+    table.issues?.includes('text-crosses-crop-boundary') &&
+    numberedCitationRows >= 2 &&
+    numberedCitationRows === table.grid.length
+  )
+    return false
+  // Multi-column review questions often resemble a sparse table because each
+  // answer option lands in a separate detector column. Repeated question
+  // numbers, option markers, and question punctuation identify the outline;
+  // measured or captioned tables remain eligible.
+  const questionRows = table.grid.filter((row) => /\b\d+\.\s+/u.test(row.join(' '))).length
+  const questionMarks = (cropText.match(/\?/g) ?? []).length
+  const optionCount = (cropText.match(/(?:^|\s)[a-c][.)]\s/giu) ?? []).length
+  if (
+    !caption &&
+    table.issues?.includes('text-crosses-crop-boundary') &&
+    !hasMeasurement &&
+    questionRows >= 2 &&
+    (questionMarks >= 2 || (questionMarks === 1 && questionRows >= 4)) &&
+    optionCount >= 6
+  )
+    return false
+  // Detector spans can merge footnotes or prose notes into a wide cell and
+  // then split the following paragraph into two columns. Without a caption or
+  // measured records, a majority of full-width model spans is stronger
+  // evidence of a page note than of a data table. Keep this generic so real
+  // qualitative tables with a coherent row grid remain eligible.
+  if (
+    !caption &&
+    table.issues?.includes('text-crosses-crop-boundary') &&
+    table.issues?.includes('unassigned-source-text') &&
+    table.cells?.length &&
+    table.grid.length >= 4 &&
+    table.grid.length <= 12 &&
+    !hasMeasurement
+  ) {
+    const columnCount = Math.max(...table.grid.map((row) => row.length))
+    const fullWidthSpanRows = new Set(
+      table.cells
+        .filter((cell) => cell.origin === 'model-span' && (cell.colSpan ?? 1) >= columnCount)
+        .map((cell) => cell.row)
+    )
+    const longProseRows = table.grid.filter((row) => row.some((text) => words(text) >= 8)).length
+    if (
+      fullWidthSpanRows.size >= 3 &&
+      fullWidthSpanRows.size >= Math.ceil(table.grid.length * 0.5) &&
+      longProseRows >= 2
+    )
+      return false
+  }
+  // A small detector crop at the end of a prose column can look like a two
+  // column table when the adjacent sentence and journal furniture are split
+  // into separate cells. Require a caption or measured content for this
+  // ambiguous shape; quoted narrative tables remain eligible.
+  if (
+    !caption &&
+    table.cropRect &&
+    table.issues?.includes('text-crosses-crop-boundary') &&
+    table.issues?.includes('unassigned-source-text') &&
+    table.grid.length <= 3 &&
+    table.grid.every((row) => row.length <= 2 && !row.some(measurement)) &&
+    (table.unassigned?.length ?? 0) >= 2
+  ) {
+    const populated = table.grid.flat().filter((text) => text.trim())
+    const hasQuotedNarrative = populated.some((text) => /^[“"']/u.test(text.trim()))
+    if (!hasQuotedNarrative && populated.filter((text) => words(text) >= 4).length >= 2)
+      return false
+  }
+  // A displayed equation followed by parameter bullets is explanatory prose.
+  // Require repeated bullet markers, a mathematical expression, long prose
+  // cells and no measured record; retain captioned and numeric tables above.
+  if (
+    !hasMeasurement &&
+    table.grid.every((row) => row.length <= 2) &&
+    table.grid.filter((row) => /^[•◦]$/.test(row[0]?.trim() ?? '')).length >= 3 &&
+    table.grid.filter((row) => row.some((text) => words(text) >= 8)).length >= 3 &&
+    /[=∈]/u.test(cropText) &&
+    (cropText.match(/[α-ω]/gu) ?? []).length >= 3
+  )
+    return false
+  const sectionLabelRows = table.grid.filter(
+    (row) => !row[0]?.trim() || /^\d+\.\d+(?:\.\d+)*$/.test(row[0].trim())
+  ).length
+  const sectionProseRows = table.grid.filter((row) => words(row[1] ?? '') >= 8).length
+  if (
+    table.grid.length >= 3 &&
+    table.grid.every((row) => row.length === 2) &&
+    !table.grid.some((row) => measurement(row[1])) &&
+    sectionLabelRows >= table.grid.length * 0.6 &&
+    sectionProseRows >= table.grid.length * 0.6
+  )
+    return false
   // Quoted callouts are frequently boxed like a small two-column table. Keep
   // them in the source document unless a real table caption or measurement
   // column provides explicit structure evidence.
@@ -179,7 +323,7 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   if (
     table.cropRect &&
     table.grid.length <= 3 &&
-    table.grid[0]?.length >= 4 &&
+    table.grid[0]?.length >= 3 &&
     table.grid.every((row) => row.filter((s) => s.trim()).length <= 4 && !row.some(measurement)) &&
     pageItems.filter(
       (i) =>
@@ -253,6 +397,17 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   // Small fragments of a bibliography may contain only one citation. Require
   // multiple complete journal references in the source and no numeric columns.
   const journalReference = /\b(?:19|20)\d{2}\s*;\s*\d+(?:\(\d+\))?\s*:\s*\d+/g
+  const journalCitations = (cropText.match(journalReference) ?? []).length
+  if (
+    journalCitations >= 3 &&
+    table.issues?.includes('text-crosses-crop-boundary') &&
+    table.grid.every((row) => row.length <= 3) &&
+    table.grid.every((row) =>
+      row.filter((text) => measurement(text)).every((text) => /^\d{1,3}$/.test(text.trim()))
+    ) &&
+    table.grid.filter((row) => row.some((text) => words(text) >= 20)).length >= 2
+  )
+    return false
   if (
     table.grid.length <= 3 &&
     table.grid.every((r) => r.length <= 3) &&
@@ -550,10 +705,12 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   // tables. Require the template marker and a form section, not common row labels.
   if (
     pageItems.some((item) =>
-      /^nature(?: portfolio)?\s*\|\s*reporting summary$/i.test(item.text.trim())
+      /^nature(?: portfolio| research)?\s*\|\s*(?:life sciences )?reporting summary$/i.test(
+        item.text.trim()
+      )
     ) &&
     pageItems.some((item) =>
-      /^(?:Field-specific reporting|Life sciences study design|Reporting for specific materials, systems and methods)$/i.test(
+      /^(?:Experimental design|Field-specific reporting|Life sciences study design|Reporting for specific materials, systems and methods)$/i.test(
         item.text.trim()
       )
     )

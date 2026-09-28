@@ -18,8 +18,8 @@ export function recoverRuledHeaderGrid(table, items, captions, rules) {
   const heights = native.map((i) => i.height).sort((a, b) => a - b)
   const font = heights[Math.floor(heights.length / 2)]
   crop[3] += font * 1.5
-  crop[0] -= font * 1.5
-  crop[2] += font * 1.5
+  crop[0] -= font * 2.5
+  crop[2] += font * 2.5
   let local = rules.filter(
     (r) => r[0] >= crop[0] && r[1] >= crop[1] && r[2] <= crop[2] && r[3] <= crop[3]
   )
@@ -42,7 +42,7 @@ export function recoverRuledHeaderGrid(table, items, captions, rules) {
         (r) =>
           r[0] === x &&
           vertical.some(
-            (p) => p[0] === group[0] && Math.abs(p[1] - r[1]) < 1 && Math.abs(p[3] - r[3]) < 1
+            (p) => p[0] === group[0] && Math.abs(p[1] - r[1]) < 3 && Math.abs(p[3] - r[3]) < 3
           )
       ).length >= Math.max(4, vertical.filter((r) => r[0] === x).length * 0.8)
     )
@@ -59,6 +59,39 @@ export function recoverRuledHeaderGrid(table, items, captions, rules) {
       ? [normalized.get(r[0]), r[1], normalized.get(r[0]), r[3]]
       : [snap(r[0]), r[1], snap(r[2]), r[3]]
   )
+  // A double outer border can also appear as several parallel horizontal
+  // segments. Collapse its empty strip only when both strokes have matching
+  // endpoints; an actual narrow row with text remains a separate face.
+  const horizontal = local.filter((r) => r[1] === r[3])
+  const ordinates = [...new Set(horizontal.map((r) => r[1]))].sort((a, b) => a - b)
+  const bands = []
+  for (const y of ordinates) {
+    const band = bands.at(-1)
+    if (
+      band &&
+      y - band[0] <= Math.min(3.5, font * 0.22) &&
+      !sourceInStrip(band[0], y) &&
+      horizontal.filter(
+        (r) =>
+          r[1] === y &&
+          horizontal.some(
+            (p) => p[1] === band[0] && Math.abs(p[0] - r[0]) < 3 && Math.abs(p[2] - r[2]) < 3
+          )
+      ).length >= 2
+    )
+      band.push(y)
+    else bands.push([y])
+  }
+  function sourceInStrip(top, bottom) {
+    return native.some(
+      (i) => (i.rect[1] + i.rect[3]) / 2 > top && (i.rect[1] + i.rect[3]) / 2 < bottom
+    )
+  }
+  const snapY = (y) => {
+    const band = bands.find((b) => b.length > 1 && y >= b[0] - 1 && y <= b.at(-1) + 1)
+    return band ? (band[0] + band.at(-1)) / 2 : y
+  }
+  local = local.map((r) => [r[0], snapY(r[1]), r[2], snapY(r[3])])
   rules = local
   const xs = clusterTableRulePositions(local.filter((r) => r[0] === r[2]).map((r) => r[0]))
   const ys = local.filter((r) => r[1] === r[3]).map((r) => r[1])
@@ -67,7 +100,15 @@ export function recoverRuledHeaderGrid(table, items, captions, rules) {
   if (!narrative && !captions.some((c) => captionKind(c.lines[0]) === 'table')) return
   const top = Math.min(...ys),
     bottom = Math.max(...ys)
-  if (native.some((i) => (i.rect[1] + i.rect[3]) / 2 > bottom)) return
+  if (
+    native.some(
+      (i) =>
+        (i.rect[1] + i.rect[3]) / 2 > bottom ||
+        (i.rect[0] + i.rect[2]) / 2 < xs[0] ||
+        (i.rect[0] + i.rect[2]) / 2 > xs.at(-1)
+    )
+  )
+    return
   const columns = xs.slice(1).map((x, c) => ({ rect: [xs[c], top, x, bottom] }))
   // Font boxes can straddle a horizontal stroke; cell assignment uses their
   // centers, while full horizontal containment keeps neighboring prose out.
@@ -131,6 +172,53 @@ export function recoverRuledHeaderGrid(table, items, captions, rules) {
   const grouped = Boolean(grid)
   if (!grid) {
     grid = readRuledGrid(crop, columns, source, rules, 'records')
+    // Enclosed nested stubs can span many records. Their data columns must
+    // remain independent numeric faces, and every nonempty stub must contain
+    // text. The source borders, not model spans, define the hierarchy.
+    const cellText = (c) =>
+      source
+        .filter(
+          (i) =>
+            (i.rect[0] + i.rect[2]) / 2 > c.rect[0] &&
+            (i.rect[0] + i.rect[2]) / 2 < c.rect[2] &&
+            (i.rect[1] + i.rect[3]) / 2 > c.rect[1] &&
+            (i.rect[1] + i.rect[3]) / 2 < c.rect[3]
+        )
+        .map((i) => i.text)
+        .join(' ')
+        .trim()
+    const stubWidth =
+      grid &&
+      Math.min(
+        ...grid.cells.filter((c) => c.row === 0 && /\p{L}/u.test(cellText(c))).map((c) => c.column)
+      )
+    const nestedStubs =
+      grid &&
+      stubWidth >= 2 &&
+      stubWidth <= 3 &&
+      columns.length - stubWidth >= 2 &&
+      grid.cells.some((c) => c.row > 0 && c.column < stubWidth && c.rowSpan > 1) &&
+      grid.cells.every((c) => {
+        const text = cellText(c)
+        if (c.row === 0)
+          return c.rowSpan === 1 && (c.column < stubWidth ? !text : /\p{L}/u.test(text))
+        if (c.column < stubWidth) return c.column + c.colSpan <= stubWidth && /\p{L}/u.test(text)
+        return (
+          (c.rowSpan === 1 || c.column === columns.length - 1) &&
+          c.colSpan === 1 &&
+          /^[<>≤≥−+-]?\s*\d[\d\s.,()%±–−+*-]*$/.test(text)
+        )
+      })
+    if (nestedStubs)
+      return {
+        cropRect: [xs[0], top, xs.at(-1), bottom],
+        rows: grid.ys.slice(1).map((y, r) => [xs[0], grid.ys[r], xs.at(-1), y]),
+        columns: columns.map((c) => c.rect),
+        headerRows: [0],
+        spans: grid.cells.filter((c) => c.rowSpan > 1 || c.colSpan > 1),
+        completeSpans: true,
+        ownedTokens: new Set(source)
+      }
     const statistical =
       grid &&
       columns.length === 4 &&

@@ -1,5 +1,116 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { intersection } from './literature-pdf-page-geometry.mjs'
+import { intersection, area, lineRect } from './literature-pdf-page-geometry.mjs'
+
+// A frame may be painted as dozens of thin paths, none large enough to be a
+// panel alone. Require all four enclosing edges, a nearby caption, and actual
+// interior content; a disconnected underline cannot establish ownership.
+export function enclosedFigureFrame(page, caption, captions, tables) {
+  const dx = page.width / 128,
+    dy = page.height / 128
+  const paths = [
+    ...page.graphicsBounds.filter((g) => g.kind === 'path').map((g) => g.normalizedRect),
+    ...(page.marginRuleBounds ?? [])
+  ].map((r) => r.map((v, n) => v * (n % 2 ? page.height : page.width)))
+  const horizontal = paths.filter((r) => r[2] - r[0] > page.width * 0.25 && r[3] - r[1] <= dy * 2)
+  const candidates = []
+  for (const bottom of horizontal.filter(
+    (r) => r[1] < caption.rect[1] && r[3] - caption.rect[1] < dy && caption.rect[1] - r[3] < 24
+  )) {
+    for (const top of horizontal.filter(
+      (r) => r[3] < bottom[1] - page.height * 0.12 && Math.abs(r[2] - bottom[2]) <= dx
+    )) {
+      const left = bottom[0],
+        right = bottom[2],
+        upper = top[1],
+        lower = bottom[3]
+      const covers = (ranges, start, end) => {
+        let edge = start
+        for (const [a, b] of ranges
+          .filter(([a, b]) => b >= start && a <= end)
+          .sort((a, b) => a[0] - b[0])) {
+          if (a > edge + dy) return false
+          edge = Math.max(edge, b)
+        }
+        return edge >= end - dy
+      }
+      if (
+        ![left, right].every((x) =>
+          covers(
+            paths
+              .filter(
+                (r) =>
+                  r[2] - r[0] <= dx * 1.1 &&
+                  x >= r[0] - dx &&
+                  x <= r[2] + dx &&
+                  r[1] >= upper - dy &&
+                  r[3] <= lower + dy
+              )
+              .map((r) => [r[1], r[3]]),
+            upper,
+            lower
+          )
+        )
+      )
+        continue
+      // The top edge can have a short first segment at a table-cell corner.
+      if (
+        !covers(
+          paths
+            .filter((r) => r[3] - r[1] <= dy * 2 && Math.abs(r[1] - upper) <= dy)
+            .map((r) => [r[0], r[2]]),
+          left,
+          right
+        )
+      )
+        continue
+      const rect = [left, upper, right, Math.min(lower, caption.rect[1] - 2)]
+      if (caption.rect[0] < left - 24 || caption.rect[2] > right + 24) continue
+      const labels = page.lines.filter(
+        (l) => intersection(lineRect(l), rect) / area(lineRect(l)) > 0.95
+      )
+      const images = page.graphicsBounds.filter(
+        (g) =>
+          g.kind === 'image' &&
+          intersection(g.normalizedRect, [
+            left / page.width,
+            upper / page.height,
+            right / page.width,
+            lower / page.height
+          ]) /
+            area(g.normalizedRect) >
+            0.95
+      )
+      if (labels.filter((l) => /\d/.test(l.text)).length < 8 && !images.length) continue
+      candidates.push(rect)
+    }
+  }
+  const unique = candidates.filter(
+    (r, n) =>
+      !candidates.slice(0, n).some((b) => r.every((v, i) => Math.abs(v - b[i]) < (i % 2 ? dy : dx)))
+  )
+  unique.sort((a, b) => area(b) - area(a))
+  if (!unique.length || unique.slice(1).some((r) => intersection(r, unique[0]) / area(r) < 0.98))
+    return
+  const rect = unique[0]
+  if (
+    captions.some((c) => c !== caption && intersection(c.rect, rect) > 0) ||
+    tables.some((t) => intersection(t, rect) > 0)
+  )
+    return
+  return {
+    caption,
+    rect,
+    graphicsCount: page.graphicsBounds.filter(
+      (g) =>
+        intersection(
+          g.normalizedRect,
+          rect.map((v, n) => v / (n % 2 ? page.height : page.width))
+        ) /
+          area(g.normalizedRect) >
+        0.95
+    ).length
+  }
+}
 
 // Spatial bins accelerate the existing eight-point adjacency traversal. Large
 // rectangles use a bounded fallback, so indexing never expands a page-sized
@@ -10,7 +121,7 @@ export function connectFigureGraphics(connected, pending) {
     locations = new Map()
   const order = new Map([...pending].map((item, n) => [item, n]))
   const keys = (rect) => {
-    const [left, top, right, bottom] = rect.map((v) => Math.floor(v / 32))
+    const [left, top, right, bottom] = rect.map((v) => Math.floor(v / 8))
     if ((right - left + 1) * (bottom - top + 1) > 64) return
     const result = []
     for (let x = left; x <= right; x++) for (let y = top; y <= bottom; y++) result.push(`${x},${y}`)
@@ -27,6 +138,37 @@ export function connectFigureGraphics(connected, pending) {
       }
   }
   const visited = new Set()
+  // Each spatial bin is populated in source order. Merge the few bins touched
+  // by a query instead of materializing and sorting every candidate on every
+  // traversal step. This matters for dense vector chains where neighbouring
+  // queries repeat the same small bins tens of thousands of times.
+  const orderedCandidates = (cells) => {
+    if (!cells) return [...pending]
+    const sets = [large, ...cells.map((key) => bins.get(key)).filter(Boolean)]
+    const active = sets.map((set) => {
+      const iterator = set.values()
+      const next = iterator.next()
+      return { iterator, item: next.done ? undefined : next.value }
+    })
+    const result = []
+    const seen = new Set()
+    while (active.some(({ item }) => item)) {
+      let selected = -1
+      for (let index = 0; index < active.length; index++) {
+        const item = active[index].item
+        if (item && (selected < 0 || order.get(item) < order.get(active[selected].item)))
+          selected = index
+      }
+      const item = active[selected].item
+      if (!seen.has(item)) {
+        seen.add(item)
+        result.push(item)
+      }
+      const next = active[selected].iterator.next()
+      active[selected].item = next.done ? undefined : next.value
+    }
+    return result
+  }
   for (let cursor = 0; cursor < connected.length && pending.size; cursor++) {
     const r = connected[cursor].rect
     // Quantized scatter marks often repeat a box thousands of times. The
@@ -36,12 +178,8 @@ export function connectFigureGraphics(connected, pending) {
     visited.add(identity)
     const rect = [r[0] - 8, r[1] - 8, r[2] + 8, r[3] + 8]
     const cells = keys(rect)
-    const candidates = cells ? new Set(large) : pending
-    if (cells) for (const key of cells) for (const item of bins.get(key) ?? []) candidates.add(item)
     // Preserve source order for downstream side-caption propagation.
-    const matches = [...candidates]
-      .filter((item) => intersection(item.rect, rect) > 0)
-      .sort((a, b) => order.get(a) - order.get(b))
+    const matches = orderedCandidates(cells).filter((item) => intersection(item.rect, rect) > 0)
     for (const item of matches) {
       pending.delete(item)
       large.delete(item)

@@ -127,6 +127,219 @@ export function repairWrappedTableRows({
       0.35
     ) ?? []
   const sourceCuts = [columnRects[0]?.[0], ...columnRects.map((r) => r[2])]
+  // Wrapped comparison records retain the numeric columns of their opening
+  // line. Repeated, shorter line leading distinguishes label/statistic tails
+  // from new records; an open bracket supplies independent continuation proof.
+  const continuations = []
+  const balance = (text) => (text.match(/[([]/g) ?? []).length - (text.match(/[)\]]/g) ?? []).length
+  for (let r = 1; columnRects.length >= 3 && r < rows.length; r++) {
+    const prior = items.filter((i) => inside(rows[r - 1].rect, i))
+    const values = readSourceRow(prior, sourceCuts, { multiline: true })
+    if (!values || values.slice(1).filter((v) => /^\d/.test(v)).length < 2) continue
+    const members = [...prior]
+    for (let n = r; n < rows.length; n++) {
+      const tail = items.filter((i) => inside(rows[n].rect, i))
+      const head = members.filter((i) => columnOf(i) === 0)
+      const label = tail.filter((i) => columnOf(i) === 0)
+      const a = readSourceRow(members, sourceCuts, { multiline: true })
+      const b = readSourceRow(tail, sourceCuts, { multiline: true })
+      if (!a || !b || !head.length || !label.length) break
+      const gap =
+        Math.min(...label.map((i) => i.baseline)) - Math.max(...head.map((i) => i.baseline))
+      const bracketed = balance(a[0]) > 0 && balance(a[0] + b[0]) >= 0
+      if (
+        (!bracketed && !/^(?:[a-z]|\(?M±SD\))/.test(b[0])) ||
+        gap < font * 0.9 ||
+        gap > font * 1.6 ||
+        Math.abs(
+          Math.min(...label.map((i) => i.rect[0])) - Math.min(...head.map((i) => i.rect[0]))
+        ) > font ||
+        tail.some(
+          (i) =>
+            Math.abs(i.height - font) > font * 0.1 && !tail.some((j) => isAdjacentTableScript(i, j))
+        ) ||
+        b
+          .slice(1)
+          .some(
+            (v, c) =>
+              v &&
+              !(
+                /^\(\d+(?:\.\d+)?\)$/.test(v) &&
+                /^\d[\d./]*$/.test(a[c + 1]) &&
+                a.slice(1).some((s) => /^\d.*\(\d/.test(s))
+              )
+          ) ||
+        hasHorizontalTableRuleBetween(
+          rules,
+          Math.max(...head.map((i) => i.rect[3])),
+          Math.min(...label.map((i) => i.rect[1]))
+        )
+      )
+        break
+      const next =
+        rows[n + 1] && items.filter((i) => inside(rows[n + 1].rect, i) && columnOf(i) === 0)
+      const nextGap = next?.length
+        ? Math.min(...next.map((i) => i.baseline)) - Math.max(...label.map((i) => i.baseline))
+        : Infinity
+      continuations.push({ index: n, gap, bracketed, separated: nextGap > gap + font * 0.2 })
+      members.push(...tail)
+      r = n + 1
+    }
+  }
+  for (const candidate of continuations.reverse()) {
+    if (
+      !candidate.bracketed &&
+      continuations.filter(
+        (peer) => Math.abs(peer.gap - candidate.gap) < font * 0.05 && peer.separated
+      ).length < 3
+    )
+      continue
+    rows[candidate.index - 1].rect[3] = rows[candidate.index].rect[3]
+    rows.splice(candidate.index, 1)
+    repairs.push('wrapped-comparison-record-recovered')
+  }
+  // Wide repeated-measure tables may wrap every SD/SE and the stub together.
+  // Repeated parenthesized-summary columns prove the continuation; a stub-only
+  // tail also needs an identical complete label elsewhere in the same table.
+  if (columnRects.length >= 9) {
+    for (let n = 1; n < rows.length; n++) {
+      const before = rows[n - 1],
+        after = rows[n]
+      const nextItems = rows[n + 1] ? items.filter((i) => inside(rows[n + 1].rect, i)) : []
+      const nextScripts = items.filter((i) =>
+        nextItems.some((anchor) => anchor !== i && isAdjacentTableScript(i, anchor))
+      )
+      const mergedBottom = Math.min(
+        after.rect[3],
+        rows[n + 1]?.rect[1] ?? after.rect[3],
+        ...nextScripts.map((i) => i.rect[1])
+      )
+      const head = items.filter((i) => inside(before.rect, i)),
+        tail = items.filter(
+          (i) =>
+            inside([after.rect[0], after.rect[1], after.rect[2], mergedBottom], i) &&
+            !head.includes(i)
+        )
+      const a = readSourceRow(head, sourceCuts, { multiline: true }),
+        b = readSourceRow(tail, sourceCuts, { multiline: true })
+      if (
+        !a ||
+        !b ||
+        !a[0] ||
+        !b[0] ||
+        !/^\p{Ll}/u.test(b[0]) ||
+        a.slice(1).filter(Boolean).length < 8 ||
+        union(tail)[1] - union(head)[3] > font * 1.4 ||
+        hasHorizontalTableRuleBetween(rules, union(head)[3], union(tail)[1])
+      )
+        continue
+      const continuations = b.slice(1).flatMap((v, c) => (v ? [c + 1] : []))
+      const completeLabel = rows.some(
+        (r) =>
+          r !== before &&
+          r !== after &&
+          readSourceRow(
+            items.filter((i) => inside(r.rect, i)),
+            sourceCuts,
+            { multiline: true }
+          )?.[0] ===
+            a[0] + b[0]
+      )
+      const wrapped =
+        continuations.length >= 3 &&
+        continuations.every(
+          (c) =>
+            /^\([−–-]?\d+(?:\.\d+)?\)$/.test(b[c]) &&
+            /^[−–-]?\d+(?:\.\d+)?$/.test(a[c]) &&
+            items.some((i) => inside(columnRects[c], i) && /\((?:SD|SE)\)/.test(i.text))
+        )
+      if (!wrapped && !(continuations.length === 0 && completeLabel)) continue
+      if (
+        head.some((i) => tail.includes(i)) ||
+        items.some(
+          (i) =>
+            inside([sourceCuts[0], before.rect[1], right, mergedBottom], i) &&
+            !head.includes(i) &&
+            !tail.includes(i)
+        )
+      )
+        continue
+      before.rect[3] = mergedBottom
+      rows.splice(n--, 1)
+      repairs.push('overlapping-wrapped-summary-recovered')
+    }
+  }
+  // Some journal tables print a single observation across two baselines when
+  // a value contains a slash (for example mean/SD followed by a second
+  // measure). The continuation has no stub, while every populated cell on
+  // the first line ends in a slash. Require the next labelled numeric record,
+  // adjacent owners, and no intervening rule before folding the bands.
+  if (columnRects.length >= 3) {
+    const compact = (value) => value?.replace(/\s+/g, '') ?? ''
+    const numeric = (value) => /^[<>≤≥−+-]?(?:\d|\.\d)[\d.,()%±*–—−+\-/]*$/u.test(compact(value))
+    for (let n = 0; n + 2 < sourceRows.length; n++) {
+      const head = sourceRows[n],
+        tail = sourceRows[n + 1],
+        next = sourceRows[n + 2]
+      const headValues = readSourceRow(head, sourceCuts),
+        tailValues = readSourceRow(tail, sourceCuts),
+        nextValues = readSourceRow(next, sourceCuts)
+      if (
+        !headValues ||
+        !tailValues ||
+        !nextValues ||
+        !/\p{L}/u.test(headValues[0] ?? '') ||
+        tailValues[0] ||
+        !/\p{L}/u.test(nextValues[0] ?? '') ||
+        headValues.slice(1).length < 2 ||
+        !headValues.slice(1).every((value) => /\/$/.test(compact(value))) ||
+        !tailValues.slice(1).every((value) => numeric(value)) ||
+        nextValues.slice(1).filter((value) => numeric(value)).length < 2 ||
+        union(tail)[1] < union(head)[3] ||
+        union(next)[1] < union(tail)[3] ||
+        tail[0].baseline - head[0].baseline > head[0].height * 1.8 ||
+        next[0].baseline - tail[0].baseline > tail[0].height * 2.2 ||
+        hasHorizontalTableRuleBetween(rules, union(head)[3], union(tail)[1])
+      )
+        continue
+      // Detector rows can overlap around wrapped records. Pick the row whose
+      // center is closest to each source baseline instead of discarding the
+      // continuation whenever two model bands both touch the same glyphs.
+      const owners = [head, tail, next].map((group) => {
+        const center = (union(group)[1] + union(group)[3]) / 2
+        return rows
+          .map((row, index) => ({
+            row,
+            index,
+            distance: Math.abs((row.rect[1] + row.rect[3]) / 2 - center)
+          }))
+          .sort((a, b) => a.distance - b.distance)
+      })
+      if (owners.some((matches) => !matches.length)) continue
+      const [previous, continuation, following] = owners.map((matches) => matches[0].row)
+      const [previousIndex, continuationIndex, followingIndex] = owners.map(
+        (matches) => matches[0].index
+      )
+      if (
+        previous === continuation ||
+        continuation === following ||
+        continuationIndex !== previousIndex + 1 ||
+        followingIndex !== continuationIndex + 1 ||
+        items.some(
+          (item) =>
+            !head.includes(item) &&
+            !tail.includes(item) &&
+            item.rect[1] < union(tail)[3] &&
+            item.rect[3] > union(head)[1]
+        )
+      )
+        continue
+      previous.rect[3] = Math.max(previous.rect[3], union(tail)[3])
+      rows.splice(continuationIndex, 1)
+      repairs.push('wrapped-slash-values-recovered')
+      break
+    }
+  }
   // A detector may label the first data record as the header and omit the
   // actual labels immediately above it. Require independent text-only labels
   // and a complete numeric record below, rather than borrowing caption prose.
@@ -173,7 +386,9 @@ export function repairWrappedTableRows({
     const populated = values.slice(stub + 1).flatMap((s, n) => (s ? [n + stub + 1] : []))
     if (
       populated.length < 2 ||
-      populated.some((c) => !/^[<>≤≥−+-]?(?:\d|\.\d)[\d.,()%±*–—−+\s/-]*[a-d*]*$/.test(values[c]))
+      populated.some(
+        (c) => !/^[<>≤≥−+,-]?(?:\d|\.\d)[\d.,()%±*–—−+\s/-]*[a-d*†‡§]*$/.test(values[c])
+      )
     )
       return
     return stub + ':' + populated.join(',')
@@ -243,9 +458,20 @@ export function repairWrappedTableRows({
   }
   for (const g of sourceRows) {
     const key = signature(g)
+    const terminalRuledRecord =
+      columnRects.length === 4 &&
+      g === sourceRows.at(-1) &&
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[0] <= sourceCuts[0] + font &&
+          r[2] >= right - font &&
+          r[1] >= union(g)[3] &&
+          r[1] - union(g)[3] < font
+      )
     if (
       !captioned ||
-      columnRects.length < 5 ||
+      (columnRects.length < 5 && !terminalRuledRecord) ||
       !key ||
       g.some((i) => i.height >= font * 0.8 && rows.some((r) => inside(r.rect, i))) ||
       sourceRows.filter(
@@ -253,7 +479,7 @@ export function repairWrappedTableRows({
           peer !== g &&
           signature(peer) === key &&
           peer.every((i) => rows.some((r) => inside(r.rect, i)))
-      ).length < 3
+      ).length < (terminalRuledRecord ? 2 : 3)
     )
       continue
     const b = union(g)
@@ -1505,6 +1731,34 @@ export function recoverProjectedSectionRows({
   headers,
   repairs
 }) {
+  // Two-column grading/definition lists can begin with an omitted section.
+  // Require a later matching section style and repeated numbered labels.
+  if (columnRects.length === 2 && rows.length >= 5 && groups.length) {
+    const lead = groups[0]
+    if (
+      lead.length === 1 &&
+      /:$/u.test(lead[0].text) &&
+      /\p{L}/u.test(lead[0].text) &&
+      lead[0].rect[3] < rows[0].rect[1] &&
+      rows[0].rect[1] - lead[0].rect[3] < lead[0].height * 2 &&
+      groups.some(
+        (g) =>
+          g !== lead &&
+          g.length === 1 &&
+          /:$/u.test(g[0].text) &&
+          Math.abs(g[0].rect[0] - lead[0].rect[0]) < 2 &&
+          rows.some((row) => inside(row.rect, g[0]))
+      ) &&
+      items.filter((i) => inside(columnRects[0], i) && /^[\p{L} ]+ \d+$/u.test(i.text)).length >= 4
+    ) {
+      rows.unshift({
+        rect: [columnRects[0][0], lead[0].rect[1], columnRects[1][2], lead[0].rect[3]],
+        origin: 'source-text',
+        section: true
+      })
+      repairs.push('projected-section-row-recovered')
+    }
+  }
   // A complete count record followed by a projected section and another
   // complete record supplies both sides of a lost row boundary.
   if (columnRects.length >= 3 && rows.length) {
@@ -1863,6 +2117,7 @@ export function recoverRepeatedMeasurementSections({ rows, groups, items, column
   recoverIndentedSummarySections({ rows, groups, items, columnRects, repairs })
   recoverRepeatedUnitSections({ rows, groups, items, columnRects, repairs })
   recoverRepeatedStatisticRows({ rows, groups, items, columnRects, repairs })
+  recoverSectionedMeanCycles({ rows, groups, items, columnRects, repairs })
   if (columnRects.length < 4) return
   const left = columnRects[0][0],
     right = columnRects.at(-1)[2]
@@ -2721,4 +2976,70 @@ function recoverRepeatedStatisticRows({ rows, groups, items, columnRects, repair
     rows.splice(split.index, 1, ...split.rows)
     repairs.push('repeated-statistic-row-separated')
   }
+}
+
+// Repeated outcome sections with two measured arms and a separate test line.
+// A matching P/F pair belongs to the section's final column, not another arm.
+function recoverSectionedMeanCycles({ rows, groups, items, columnRects, repairs }) {
+  if (columnRects.length < 5 || columnRects.length > 10) return
+  const cuts = [columnRects[0][0], ...columnRects.map((c) => c[2])]
+  const values = groups.map((g) => readSourceRow(g, cuts))
+  const probability = (s) => /^[<>≤≥]?(?:0?\.\d+|1(?:\.0+)?)[*†‡]*$/.test(s)
+  const section = (v) =>
+    v &&
+    /\p{L}/u.test(v[0]) &&
+    v.slice(1, -1).every((s) => !s) &&
+    /^P[=<>≤≥](?:0?\.\d+|1(?:\.0+)?)[*†‡]*$/.test(v.at(-1))
+  const starts = values.flatMap((v, n) => (section(v) ? [n] : []))
+  if (
+    starts.length < 3 ||
+    starts.some((n, k) => k && n !== starts[k - 1] + 4) ||
+    starts.at(-1) + 4 !== groups.length
+  )
+    return
+  const labels = []
+  for (const n of starts) {
+    const [first, second, test] = values.slice(n + 1, n + 4)
+    if (
+      ![first, second, test].every((v) => v && /\p{L}/u.test(v[0])) ||
+      ![first, second].every((v) =>
+        v.slice(1, -1).every((s) => /^[−-]?\d+(?:\.\d+)?±\d+(?:\.\d+)?$/.test(s))
+      ) ||
+      !/^F=\d+(?:\.\d+)?$/.test(first.at(-1)) ||
+      second.at(-1) ||
+      test.at(-1) ||
+      !test.slice(1, -1).every(probability)
+    )
+      return
+    labels.push([first[0], second[0], test[0]].join('|'))
+  }
+  if (new Set(labels).size !== 1) return
+  const body = groups.slice(starts[0]),
+    bounds = body.map(union)
+  if (bounds.some((b, n) => n && b[1] <= bounds[n - 1][3])) return
+  const first = bounds[0][1],
+    last = bounds.at(-1)[3]
+  if (
+    items.some(
+      (i) => inside([cuts[0], first, cuts.at(-1), last], i) && !body.some((g) => g.includes(i))
+    )
+  )
+    return
+  const preceding = rows.filter((r) => r.rect[3] <= first)
+  if (!preceding.length) return
+  rows.splice(
+    0,
+    rows.length,
+    ...preceding,
+    ...bounds.map((b, n) => ({
+      rect: [
+        cuts[0],
+        n ? (bounds[n - 1][3] + b[1]) / 2 : b[1],
+        cuts.at(-1),
+        n + 1 < bounds.length ? (b[3] + bounds[n + 1][1]) / 2 : b[3]
+      ],
+      origin: 'source-text'
+    }))
+  )
+  repairs.push('repeated-measurement-section-separated')
 }

@@ -9,6 +9,7 @@ import {
   groupSourceRowsWithScripts
 } from './literature-pdf-source-records.mjs'
 import { area, intersection as intersect } from './literature-pdf-page-geometry.mjs'
+import { recoverRepeatedVisitGrid } from './literature-pdf-repeated-visit-grid.mjs'
 
 // Consecutive source identifiers anchor case records, including wrapped assay
 // or stage descriptions. Centered section titles require enclosing full-width
@@ -26,6 +27,7 @@ export function recoverNumberedCaseGrid(table, items, captions, rules) {
       0.9
     )
       predicted.splice((predicted[n].score ?? 1) > (predicted[n - 1].score ?? 1) ? n - 1 : n, 1)
+  if (predicted.length >= 9) return recoverNumberedAssayCycles(table, items, rules)
   if (predicted.length < 4 || predicted.length > 8) return
   const cuts = [
     left,
@@ -461,6 +463,8 @@ export function recoverEnrichmentGrid(table, items, captions) {
 // columns in every block. Rebuild their row bands only when every body line is
 // accounted for; model spans must not flatten a measurement into a section.
 export function recoverAlignedNumericGrid(table, items, captions, rules = []) {
+  const visits = recoverRepeatedVisitGrid(table, items, captions, rules)
+  if (visits) return visits
   const sharedTests = recoverSharedClinicalStatistics(table, items, captions, rules)
   if (sharedTests) return sharedTests
   const followup = recoverDatedFollowupColumns(table, items, captions, rules)
@@ -2111,5 +2115,105 @@ function recoverSharedClinicalStatistics(table, items, captions, rules) {
     completeSpans: true,
     headerRows: [0],
     ownedTokens: new Set([...header, ...body])
+  }
+}
+
+// Numbered cases can contain the same qualitative assay cycle in a nested
+// column pair. Cycle boundaries, not the vertically centered ID, own wrapped
+// descriptions. Native header starts independently validate shifted columns.
+function recoverNumberedAssayCycles(table, items, rules) {
+  const [left, top, right, bottom] = table.cropRect,
+    source = tableSourceItems(items, table.cropRect)
+  const id = source.find((i) => /^ID$/i.test(i.text.trim()))
+  if (!id) return
+  const headers = source
+    .filter((i) => i.height >= id.height * 0.9 && Math.abs(i.baseline - id.baseline) < 1)
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (headers.length < 8 || headers.length > 15 || headers[0] !== id) return
+  const firstBody = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] > id.rect[3] &&
+        r[1] - id.rect[3] < 30 &&
+        r[0] <= left + 12 &&
+        r[2] - r[0] > (right - left) * 0.65
+    )
+    .sort((a, b) => a[1] - b[1])[0]?.[1]
+  if (!firstBody) return
+  const body = source.filter((i) => i.rect[1] > firstBody),
+    head = source.filter((i) => i.rect[3] <= firstBody)
+  const ids = body
+    .filter((i) => i.rect[0] < headers[1].rect[0] - 1 && /^\d+$/.test(i.text))
+    .sort((a, b) => a.baseline - b.baseline)
+  if (ids.length < 8 || ids.some((i, n) => Number(i.text) !== n + 1)) return
+  const cuts = [left, ...headers.slice(1).map((i) => i.rect[0] - 1), right]
+  for (let c = 1; c < headers.length - 1; c++) {
+    const region = body.filter((i) => i.rect[0] >= cuts[c] && i.rect[2] <= cuts[c + 1])
+    const labels = region
+      .filter((i) => /^[A-Za-z][A-Za-z0-9-]*$/.test(i.text))
+      .sort((a, b) => a.baseline - b.baseline)
+    if (
+      labels.length !== ids.length * 3 ||
+      new Set(labels.map((i) => i.text)).size !== 3 ||
+      labels.some((i, n) => i.text !== labels[n % 3].text)
+    )
+      continue
+    const values = region.filter((i) => !labels.includes(i)),
+      edge = Math.max(...labels.map((i) => i.rect[2])),
+      start = Math.min(...values.map((i) => i.rect[0]))
+    if (!values.length || start - edge < 3 || !values.every((i) => /^[+−, 0-9.-]+$/.test(i.text)))
+      continue
+    const inner = (edge + start) / 2,
+      leafCuts = [...cuts.slice(0, c + 1), inner, ...cuts.slice(c + 1)]
+    const caseStarts = labels.filter((_, n) => n % 3 === 0),
+      caseEnds = caseStarts.slice(1).map((i, n) => (labels[n * 3 + 2].rect[3] + i.rect[1]) / 2)
+    caseEnds.push(Math.max(...body.map((i) => i.rect[3])))
+    const records = caseStarts.map((a, n) =>
+      body.filter(
+        (i) =>
+          (i.rect[1] + i.rect[3]) / 2 >= a.rect[1] && (i.rect[1] + i.rect[3]) / 2 <= caseEnds[n]
+      )
+    )
+    if (
+      !hasUniqueRecordTokens(body, records) ||
+      records.some(
+        (g, n) => !g.includes(ids[n]) || !readSourceRow(g, leafCuts, { multiline: true })
+      )
+    )
+      continue
+    const rows = [[left, union(head)[1], right, firstBody]],
+      spans = [{ row: 0, column: c, rowSpan: 1, colSpan: 2 }]
+    let valid = true
+    for (let n = 0; n < records.length; n++) {
+      const cycle = labels.slice(n * 3, n * 3 + 3),
+        ys = [
+          caseStarts[n].rect[1],
+          ...cycle.slice(1).map((i, k) => (cycle[k].rect[3] + i.rect[1]) / 2),
+          caseEnds[n]
+        ]
+      if (
+        cycle.some(
+          (a) =>
+            !values.some(
+              (i) => i.rect[0] > inner && Math.abs(i.baseline - a.baseline) < a.height * 0.3
+            )
+        )
+      ) {
+        valid = false
+        break
+      }
+      rows.push(...ys.slice(1).map((y, k) => [left, ys[k], right, y]))
+      for (let col = 0; col < leafCuts.length - 1; col++)
+        if (col !== c && col !== c + 1)
+          spans.push({ row: 1 + n * 3, column: col, rowSpan: 3, colSpan: 1 })
+    }
+    if (!valid) continue
+    return {
+      rows,
+      columns: leafCuts.slice(1).map((x, n) => [leafCuts[n], top, x, bottom]),
+      spans,
+      completeSpans: true
+    }
   }
 }

@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { area, intersection as intersect } from './literature-pdf-page-geometry.mjs'
+import { area, intersection as intersect, union } from './literature-pdf-page-geometry.mjs'
 import { inside, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
+
+const BACKSPACE = String.fromCharCode(8)
 
 // Mutates resolved cells and diagnostics, preserving source-token identity while
 // assigning wrapped labels and scripts. Returns text that still has no owner.
@@ -15,12 +17,25 @@ export function populateTableCellText({
   bottom,
   recordGrid,
   scheduleGrid,
+  rotatedContinuation = false,
   issues,
   repairs
 }) {
   const columnOf = (item) => columnRects.findIndex((column) => inside(column, item))
   const assignments = new Map()
   const ambiguousAssignments = new Set()
+  const numericContinuation = (text) =>
+    /^[<>≤≥−+-]?(?:\d|\.\d)[\d\s.,()%±–—+/<>=-]*$/.test(text.trim())
+  const sectionHeading = (text) => {
+    const value = text.trim()
+    return (
+      value.length >= 12 &&
+      /\p{L}/u.test(value) &&
+      /\(/.test(value) &&
+      /\d\s*[–−-]\s*\d/.test(value) &&
+      !/[.!?]$/.test(value)
+    )
+  }
   for (const item of items) {
     const candidates = cells
       .map((cell) => ({ cell, overlap: intersect(cell.rect, item.rect) / area(item.rect) }))
@@ -29,12 +44,278 @@ export function populateTableCellText({
     if (!item.horizontal || !candidates.length) {
       continue
     }
+    if (numericContinuation(item.text) && candidates.length) {
+      const candidate = candidates[0].cell
+      const column = candidate.column
+      const previous = cells.find(
+        (cell) => cell.row === candidate.row - 1 && cell.column === column
+      )
+      const previousAnchor =
+        previous &&
+        items
+          .filter(
+            (anchor) =>
+              assignments.get(anchor) === previous &&
+              anchor.rect[3] <= item.rect[1] + item.height * 0.4 &&
+              /(?:\/|±)\s*$/.test(anchor.text.trim())
+          )
+          .sort((a, b) => b.baseline - a.baseline)[0]
+      const futureStub = items.find(
+        (stub) =>
+          assignments.get(stub)?.row === candidate.row &&
+          assignments.get(stub)?.column === 0 &&
+          stub.baseline > item.baseline &&
+          /\p{L}/u.test(stub.text)
+      )
+      const overlappingPrevious = candidates.find(({ cell }) => cell === previous)
+      if (
+        previousAnchor &&
+        overlappingPrevious &&
+        candidates[0].overlap - overlappingPrevious.overlap < 0.08 &&
+        item.rect[1] - previousAnchor.rect[3] <= item.height * 2.5 &&
+        (!futureStub || futureStub.rect[1] >= item.rect[3])
+      ) {
+        const row = rows[previous.row]
+        const bottom = futureStub
+          ? Math.min(item.rect[3] + 1, futureStub.rect[1] - 1)
+          : item.rect[3] + 1
+        row.rect[3] = Math.max(row.rect[3], bottom)
+        for (const sibling of cells.filter((cell) => cell.row === previous.row))
+          sibling.rect[3] = Math.max(sibling.rect[3], bottom)
+        assignments.set(item, previous)
+        ambiguousAssignments.add(item)
+        continue
+      }
+    }
     if (candidates[1] && candidates[0].overlap - candidates[1].overlap < 0.1) {
+      const preferred = candidates
+        .filter(({ cell }) => {
+          if (sectionHeading(item.text))
+            return (
+              cell.colSpan > 1 ||
+              cells
+                .filter((candidate) => candidate.row === cell.row)
+                .every((candidate) => !candidate.items.length)
+            )
+          if (!numericContinuation(item.text) || cell.column <= 0) return false
+          const sameRowAnchor = items.some(
+            (anchor) =>
+              anchor !== item &&
+              assignments.get(anchor)?.row === cell.row &&
+              assignments.get(anchor)?.column === cell.column &&
+              anchor.rect[3] <= item.rect[1] + item.height * 0.4 &&
+              /(?:\/|±)\s*$/.test(anchor.text.trim())
+          )
+          if (sameRowAnchor) return true
+          const previousRowAnchor = items.some(
+            (anchor) =>
+              anchor !== item &&
+              assignments.get(anchor)?.row === cell.row - 1 &&
+              assignments.get(anchor)?.column === cell.column &&
+              anchor.rect[3] <= item.rect[1] + item.height * 0.4 &&
+              /(?:\/|±)\s*$/.test(anchor.text.trim())
+          )
+          return previousRowAnchor
+        })
+        .sort((a, b) => b.overlap - a.overlap)
+      if (preferred.length) {
+        assignments.set(item, preferred[0].cell)
+        ambiguousAssignments.add(item)
+        continue
+      }
       issues.add('ambiguous-cell-assignment')
       ambiguousAssignments.add(item)
       continue
     }
     assignments.set(item, candidates[0].cell)
+  }
+  // Source-backed section spans can begin a few pixels below a wrapped label's
+  // glyph box. Let only those explicit spans claim a descriptive heading when
+  // the normal 50% overlap test would otherwise leave it unassigned.
+  for (const item of items.filter(
+    (candidate) =>
+      !assignments.has(candidate) &&
+      candidate.horizontal &&
+      candidate.text.trim().length >= 18 &&
+      /(?:well-being|subscale|score)/iu.test(candidate.text)
+  )) {
+    const match = cells
+      .map((cell) => ({ cell, overlap: intersect(cell.rect, item.rect) / area(item.rect) }))
+      .filter(
+        ({ cell, overlap }) => cell.origin === 'source-section' && cell.colSpan > 1 && overlap > 0.2
+      )
+      .sort((a, b) => b.overlap - a.overlap)[0]
+    if (!match) continue
+    assignments.set(item, match.cell)
+    match.cell.rect[1] = Math.min(match.cell.rect[1], item.rect[1])
+    rows[match.cell.row].rect[1] = Math.min(rows[match.cell.row].rect[1], item.rect[1])
+    repairs.push('statistical-section-label-recovered')
+  }
+  // A confidence interval may be split into three source baselines. The model
+  // can place the closing token on the boundary between two overlapping rows;
+  // an immediately preceding same-column token ending in `to` is stronger
+  // evidence than the geometric overlap. Keep this recovery narrow so a
+  // standalone negative value is never moved across a real record boundary.
+  const intervalTail = (text) =>
+    /^(?:[–−-]\s*\d[\d.,]*|to\s+[–−-]?\s*\d[\d.,]*)\)$/.test(text.trim())
+  for (const item of items.filter(
+    (candidate) => !assignments.has(candidate) && intervalTail(candidate.text)
+  )) {
+    const candidates = cells
+      .map((cell) => ({ cell, overlap: intersect(cell.rect, item.rect) / area(item.rect) }))
+      .filter(({ cell, overlap }) => cell.column > 0 && overlap > 0.2)
+    let matches = candidates
+      .map(({ cell }) => {
+        const anchor = items
+          .filter(
+            (previous) =>
+              assignments.get(previous) === cell &&
+              previous.rect[3] <= item.rect[1] + item.height * 0.25 &&
+              /\bto\s*$/u.test(previous.text.trim())
+          )
+          .sort((a, b) => b.baseline - a.baseline)[0]
+        return { cell, anchor }
+      })
+      .filter(({ anchor }) => anchor)
+      .sort((a, b) => b.anchor.baseline - a.anchor.baseline)
+    if (!matches.length) {
+      matches = cells
+        .filter((cell) => cell.column > 0)
+        .map((cell) => {
+          const anchor = items
+            .filter(
+              (previous) =>
+                assignments.get(previous) === cell &&
+                previous.rect[3] <= item.rect[1] + item.height * 0.25 &&
+                item.rect[1] - previous.rect[3] <= item.height * 1.2 &&
+                /\bto\s*$/u.test(previous.text.trim())
+            )
+            .sort((a, b) => b.baseline - a.baseline)[0]
+          return { cell, anchor }
+        })
+        .filter(({ anchor }) => anchor)
+        .sort((a, b) => item.rect[1] - a.anchor.rect[3] - (item.rect[1] - b.anchor.rect[3]))
+    }
+    const match = matches[0]
+    if (!match) continue
+    const competing = matches.filter(({ cell }) => cell.row !== match.cell.row)
+    if (
+      competing.some(
+        ({ anchor }) => Math.abs(anchor.baseline - match.anchor.baseline) < item.height * 0.35
+      )
+    )
+      continue
+    assignments.set(item, match.cell)
+    const row = rows[match.cell.row]
+    const bottom = item.rect[3] + 0.1
+    row.rect[3] = Math.max(row.rect[3], bottom)
+    for (const sibling of cells.filter((cell) => cell.row === match.cell.row))
+      sibling.rect[3] = Math.max(sibling.rect[3], bottom)
+    ambiguousAssignments.delete(item)
+    repairs.push('confidence-interval-tail-recovered')
+  }
+  // Some statistical tables lose an entire time-point record from the model
+  // grid while retaining a continuation fragment in the next model row. A
+  // source baseline containing a T0/T1/T2 stub and several numeric peers can
+  // be restored only when the target row is empty in column zero, follows the
+  // preceding time-point row, and already owns the continuation fragment.
+  const recordValue = (text) => /^(?:[<>≤≥−+-]?\d|\.\d)[\d\s.,()%±–—+/<>=-]*$/.test(text.trim())
+  const recordGroups = []
+  for (const item of items.filter(
+    (candidate) => !assignments.has(candidate) && candidate.horizontal
+  )) {
+    const group = items.filter(
+      (candidate) =>
+        !assignments.has(candidate) &&
+        candidate.horizontal &&
+        Math.abs(candidate.baseline - item.baseline) <= item.height * 0.3
+    )
+    if (!recordGroups.some((existing) => existing.includes(item))) recordGroups.push(group)
+  }
+  for (const group of recordGroups) {
+    const stub = group.find((item) => /^T[012](?:[a-z])?$/u.test(item.text.trim()))
+    const values = group.filter((item) => columnOf(item) > 0 && recordValue(item.text))
+    if (!stub || values.length < 3) continue
+    const rowsByColumn = new Map()
+    for (const item of [stub, ...values]) {
+      const matches = cells
+        .filter(
+          (cell) =>
+            cell.column === columnOf(item) &&
+            intersect(cell.rect, item.rect) / area(item.rect) > 0.2
+        )
+        .map((cell) => cell.row)
+      for (const row of matches) rowsByColumn.set(row, (rowsByColumn.get(row) ?? 0) + 1)
+    }
+    const targetRows = [...rowsByColumn.entries()]
+      .filter(([, count]) => count >= Math.min(group.length, 4))
+      .map(([row]) => row)
+      .filter((row) => {
+        const stubCell = cells.find((cell) => cell.row === row && cell.column === 0)
+        const previousStubCell = cells.find((cell) => cell.row === row - 1 && cell.column === 0)
+        const assignedStub =
+          stubCell && [...assignments.entries()].some(([, cell]) => cell === stubCell)
+        const previousText =
+          previousStubCell &&
+          items
+            .filter((item) => assignments.get(item) === previousStubCell)
+            .map((item) => item.text)
+            .join('')
+        const continuation = items.some(
+          (item) =>
+            assignments.get(item)?.row === row &&
+            /(?:to|\bfrom)\s+[–−-]?\d[\d.]*\)$/u.test(item.text.trim())
+        )
+        return stubCell && !assignedStub && /^T[012]/u.test(previousText) && continuation
+      })
+    if (targetRows.length !== 1) continue
+    const targetRow = targetRows[0]
+    const targetCells = new Map(
+      cells.filter((cell) => cell.row === targetRow).map((cell) => [cell.column, cell])
+    )
+    const targetTop = Math.min(...group.map((item) => item.rect[1]))
+    const row = rows[targetRow]
+    row.rect[1] = Math.min(row.rect[1], targetTop)
+    for (const cell of targetCells.values()) cell.rect[1] = Math.min(cell.rect[1], targetTop)
+    const previousRow = rows[targetRow - 1]
+    const previousItems = previousRow
+      ? items.filter((item) => assignments.get(item)?.row === targetRow - 1)
+      : []
+    if (previousRow && previousItems.length) {
+      const boundary = (Math.max(...previousItems.map((item) => item.rect[3])) + targetTop) / 2
+      previousRow.rect[3] = Math.min(previousRow.rect[3], boundary)
+      for (const cell of cells.filter((candidate) => candidate.row === targetRow - 1))
+        cell.rect[3] = Math.min(cell.rect[3], boundary)
+    }
+    for (const item of group) {
+      const cell = targetCells.get(columnOf(item))
+      if (!cell || intersect(cell.rect, item.rect) / area(item.rect) <= 0.05) continue
+      assignments.set(item, cell)
+      ambiguousAssignments.delete(item)
+    }
+    repairs.push('complete-statistical-record-recovered')
+  }
+  // Statistical glyphs can straddle a narrow empty model row beside the
+  // section row that owns the statistic. Defer only math/stat fragments and
+  // use the already populated row context to choose the owner.
+  const deferredStatFragments = [...ambiguousAssignments].filter(
+    (item) => !assignments.has(item) && /^(?:χ|\(|df|\)|=)/u.test(item.text.trim())
+  )
+  for (const item of deferredStatFragments) {
+    const candidates = cells
+      .map((cell) => ({ cell, overlap: intersect(cell.rect, item.rect) / area(item.rect) }))
+      .filter((match) => match.overlap > 0.5)
+    if (candidates.length < 2) continue
+    const score = (cell) =>
+      [...assignments.values()].filter((assigned) => assigned.row === cell.row).length
+    const ranked = candidates
+      .map((match) => ({ ...match, score: score(match.cell) }))
+      .sort((a, b) => b.score - a.score || b.overlap - a.overlap)
+    const best = ranked[0]
+    const next = ranked[1]
+    if (!best || best.score <= 0 || (next && best.score === next.score)) continue
+    assignments.set(item, best.cell)
+    repairs.push('statistical-fragment-reassigned')
   }
   // Repeated mean/SD headings may overhang the empty stub. Require the same
   // heading over the next value column and several paired numeric body rows.
@@ -259,6 +540,63 @@ export function populateTableCellText({
     const matches = cells.filter((c) => intersect(c.rect, item.rect) / area(item.rect) > 0.5)
     if (matches.length === 1 && extendedCells.has(matches[0])) assignments.set(item, matches[0])
   }
+  // A final narrative cell can continue below the model's last row. Require a
+  // native closing rule, an already owned prefix and uninterrupted, aligned
+  // lowercase continuations in the same column. A new record or a note below
+  // the rule cannot extend this cell.
+  const lastRow = rows.at(-1)
+  if (lastRow) {
+    const closing = rules
+      .filter(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] > lastRow.rect[3] &&
+          r[1] <= bottom &&
+          Math.abs(r[0] - columnRects[0][0]) < 16 &&
+          Math.abs(r[2] - columnRects.at(-1)[2]) < 16
+      )
+      .sort((a, b) => a[1] - b[1])[0]
+    const tails =
+      closing &&
+      items
+        .filter(
+          (i) =>
+            i.horizontal && i.rect[1] >= lastRow.rect[3] - i.height * 0.1 && i.rect[3] < closing[1]
+        )
+        .sort((a, b) => a.baseline - b.baseline)
+    if (tails?.length && tails.length <= 5) {
+      const pending = new Map()
+      for (const item of tails) {
+        const previous = items
+          .filter((anchor) => {
+            const cell = pending.get(anchor) ?? assignments.get(anchor)
+            return (
+              cell?.row === rows.length - 1 &&
+              cell.column > 0 &&
+              /\p{L}/u.test(anchor.text) &&
+              !/[.!?]$/u.test(anchor.text.trim()) &&
+              item.rect[0] >= anchor.rect[0] - item.height * 0.1 &&
+              item.rect[0] - anchor.rect[0] <= item.height * 1.05 &&
+              Math.abs(anchor.height - item.height) < item.height * 0.1 &&
+              item.baseline - anchor.baseline > item.height * 0.8 &&
+              item.baseline - anchor.baseline < item.height * 1.7 &&
+              item.rect[2] <= columnRects[cell.column][2] + item.height * 0.5
+            )
+          })
+          .sort((a, b) => b.baseline - a.baseline)[0]
+        if (assignments.has(item) || !/^[a-z]/u.test(item.text) || !previous) break
+        pending.set(item, pending.get(previous) ?? assignments.get(previous))
+      }
+      if (pending.size === tails.length) {
+        for (const [item, cell] of pending) {
+          assignments.set(item, cell)
+          cell.rect[3] = Math.max(cell.rect[3], item.rect[3])
+        }
+        lastRow.rect[3] = Math.max(lastRow.rect[3], ...tails.map((i) => i.rect[3]))
+        repairs.push('wrapped-row-label-recovered')
+      }
+    }
+  }
   // Small raised/lowered fragments may straddle a predicted row boundary. Attach only to an
   // adjacent larger source token with an assigned cell in the same column, never by text content.
   const anchors = new Map()
@@ -377,11 +715,139 @@ export function populateTableCellText({
   // A complete native record grid owns a verified token set. Padding may
   // contain the first raised footnote; leave it for review, not in a data cell.
   if (recordGrid?.ownedTokens)
-    for (const item of assignments.keys())
-      if (!recordGrid.ownedTokens.has(item)) assignments.delete(item)
-  const unassigned = items.filter((item) => !assignments.has(item)).map((item) => item.text)
+    for (const item of assignments.keys()) {
+      const anchor = anchors.get(item)
+      // Native row grouping can omit a raised header marker. Preserve the
+      // independently verified adjacent script with its owned source anchor.
+      if (
+        !recordGrid.ownedTokens.has(item) &&
+        !(anchor && recordGrid.ownedTokens.has(anchor) && isAdjacentTableScript(item, anchor))
+      )
+        assignments.delete(item)
+    }
+  // A footnote marker can share the same digit as a unit exponent. Native
+  // record ownership intentionally drops the repeated marker, but the
+  // adjacent small glyph is still part of the label (for example `mL−1`).
+  // Reattach only a single digit immediately following an already anchored
+  // mathematical sign; ordinary data values and standalone notes remain out.
+  if (recordGrid?.ownedTokens) {
+    for (const item of items.filter((candidate) => !assignments.has(candidate))) {
+      if (!/^\d$/u.test(item.text)) continue
+      const continuation = items
+        .filter(
+          (candidate) =>
+            assignments.has(candidate) &&
+            anchors.has(candidate) &&
+            /^[−+±]$/u.test(candidate.text) &&
+            candidate.rect[2] <= item.rect[0] + 0.2 &&
+            item.rect[0] - candidate.rect[2] <= item.height * 0.6 &&
+            Math.abs(candidate.baseline - item.baseline) <= item.height * 0.2 &&
+            Math.abs(candidate.height - item.height) <= item.height * 0.25
+        )
+        .sort((a, b) => b.rect[2] - a.rect[2])[0]
+      if (!continuation) continue
+      assignments.set(item, assignments.get(continuation))
+      anchors.set(item, continuation)
+      repairs.push('multi-glyph-script-recovered')
+    }
+  }
+  // A captionless continuation can be rasterized upright only after the page
+  // is rotated. Its source boxes may still straddle two predicted columns by
+  // a fraction of a glyph, leaving otherwise unambiguous numeric fragments
+  // detached. Recover this bounded shape from the source centerline: require
+  // a dense rectangular body and repeated numeric rows. Narrative text and
+  // merged headers remain diagnostic; this path is limited to rotated pages.
+  const continuationRows = rows.filter((row, index) => !headerRows.includes(index))
+  const numericRows = continuationRows.filter((row) => {
+    const source = items.filter(
+      (item) =>
+        item.horizontal &&
+        intersect(row.rect, item.rect) / area(item.rect) > 0.5 &&
+        /\d/.test(item.text)
+    )
+    return source.length >= 3
+  })
+  const denseUnmergedContinuation =
+    rotatedContinuation &&
+    !recordGrid &&
+    continuationRows.length >= 8 &&
+    columnRects.length >= 6 &&
+    numericRows.length >= 5 &&
+    cells.length >= continuationRows.length * columnRects.length * 0.5
+  if (denseUnmergedContinuation) {
+    const bodyRows = rows.map((row, rowIndex) => ({ row, rowIndex }))
+    const sourceColumn = (item) => {
+      const center = (item.rect[0] + item.rect[2]) / 2
+      return columnRects.findIndex((column) => center >= column[0] && center <= column[2])
+    }
+    const sourceRow = (item) => {
+      const center = (item.rect[1] + item.rect[3]) / 2
+      return bodyRows.find(({ row }) => center >= row.rect[1] && center <= row.rect[3])?.row
+    }
+    const recoverable = items.filter(
+      (item) =>
+        !assignments.has(item) &&
+        item.horizontal &&
+        item.text.trim().length <= 36 &&
+        (/\d/.test(item.text) ||
+          /^[−+-]$/u.test(item.text.trim()) ||
+          /^\p{L}[\p{L}\s-]{2,}$/u.test(item.text.trim()))
+    )
+    const recovered = []
+    for (const item of recoverable) {
+      const row = sourceRow(item)
+      const column = sourceColumn(item)
+      if (!row || column < 0) continue
+      const cell = cells.find(
+        (candidate) => candidate.row === rows.indexOf(row) && candidate.column === column
+      )
+      if (!cell) continue
+      assignments.set(item, cell)
+      recovered.push(item)
+    }
+    if (recovered.length) repairs.push('rotated-continuation-source-column-recovered')
+  }
+  // A confidence-interval tail can be split exactly at a predicted boundary
+  // when the minus sign is a separate glyph. If the preceding cell already
+  // ends in `to`, move the short numeric tail back into that interval cell.
+  for (const row of rows) {
+    for (let column = 1; column < columnRects.length; column++) {
+      const previous = cells.find(
+        (cell) => cell.row === rows.indexOf(row) && cell.column === column - 1
+      )
+      const current = cells.find((cell) => cell.row === rows.indexOf(row) && cell.column === column)
+      if (!previous || !current) continue
+      const priorItems = items
+        .filter((item) => assignments.get(item) === previous)
+        .sort((a, b) => a.rect[0] - b.rect[0])
+      const currentItems = items
+        .filter((item) => assignments.get(item) === current)
+        .sort((a, b) => a.rect[0] - b.rect[0])
+      if (
+        !/\bto\s*$/u.test(
+          priorItems
+            .map((item) => item.text)
+            .join('')
+            .trim()
+        )
+      )
+        continue
+      let moving = true
+      for (const item of currentItems) {
+        if (
+          moving &&
+          (/^[−+-]$/u.test(item.text.trim()) || /^\d[\d.,]*\)?$/u.test(item.text.trim()))
+        ) {
+          assignments.set(item, previous)
+          repairs.push('rotated-continuation-interval-tail-recovered')
+          if (/\)$/.test(item.text.trim())) moving = false
+        } else moving = false
+      }
+    }
+  }
+  const unassignedItems = items.filter((item) => !assignments.has(item))
   for (const [item, cell] of assignments) cell.items.push(item)
-  if (unassigned.length) issues.add('unassigned-source-text')
+  if (unassignedItems.length) issues.add('unassigned-source-text')
   for (const cell of cells) {
     const lines = []
     const lineOf = new Map()
@@ -433,7 +899,7 @@ export function populateTableCellText({
       )
     const runs = []
     const append = (text, position = 'normal') => {
-      text = text.replace(/\s+/g, ' ')
+      text = text.split(BACKSPACE).join(' ').replace(/\s+/g, ' ')
       if (!runs.length || runs.at(-1).text.endsWith(' ')) text = text.trimStart()
       if (!text) return
       if (runs.at(-1)?.position === position) runs.at(-1).text += text
@@ -465,12 +931,32 @@ export function populateTableCellText({
           else runs.push({ text: '\n', position: 'normal' })
         } else append(' ')
       for (const [index, item] of line.entries()) {
-        // Compact treatment schedules use smaller inter-word spaces than the
+        // Compact count schedules use smaller inter-word spaces than the
         // regular table grid. Preserve those gaps after source-backed recovery.
+        const gap = index ? item.rect[0] - line[index - 1].rect[2] : 0
+        const prefixBeforeEquals = index
+          ? line
+              .slice(0, index - 1)
+              .map((entry) => entry.text)
+              .join('')
+              .trim()
+          : ''
+        const tightSampleSize =
+          index &&
+          /=$/.test(line[index - 1].text) &&
+          /^\d/u.test(item.text) &&
+          /\(\s*[nN]$|,\s*n$/u.test(prefixBeforeEquals) &&
+          gap <= item.height * 0.13
         if (
           index &&
           !joinedUrl &&
-          item.rect[0] - line[index - 1].rect[2] > item.height * (scheduleGrid ? 0.08 : 0.15)
+          ((!tightSampleSize &&
+            item.rect[0] - line[index - 1].rect[2] > item.height * (scheduleGrid ? 0.08 : 0.15)) ||
+            (/=$/.test(line[index - 1].text) &&
+              prefixBeforeEquals === '(n' &&
+              /^\d/u.test(item.text) &&
+              gap > item.height * 0.08 &&
+              gap <= item.height * 0.11))
         )
           append(' ')
         const anchor = anchors.get(item)
@@ -499,6 +985,29 @@ export function populateTableCellText({
       }
     }
     if (runs.length) runs.at(-1).text = runs.at(-1).text.trimEnd()
+    // A superscript sign and its following digit can be emitted by different
+    // PDF fonts. If the digit was kept in the source cell but did not join the
+    // model script run, restore it only when the glyph boxes form one compact
+    // exponent. This preserves labels such as `ng mL−1` beside footnote `1`.
+    for (const sign of cell.items.filter((item) => /^[−+±]$/u.test(item.text))) {
+      const digit = cell.items
+        .filter(
+          (item) =>
+            /^\d$/u.test(item.text) &&
+            item.rect[0] >= sign.rect[2] - 0.2 &&
+            item.rect[0] - sign.rect[2] <= item.height * 0.6 &&
+            Math.abs(item.baseline - sign.baseline) <= item.height * 0.2 &&
+            Math.abs(item.height - sign.height) <= item.height * 0.25
+        )
+        .sort((a, b) => a.rect[0] - b.rect[0])[0]
+      const run = runs.find(
+        (candidate) => candidate.position === 'superscript' && candidate.text.endsWith(sign.text)
+      )
+      if (digit && !anchors.has(digit) && run && !run.text.endsWith(digit.text)) {
+        run.text += digit.text
+        repairs.push('multi-glyph-script-recovered')
+      }
+    }
     cell.text = runs.map((run) => run.text).join('')
     if (runs.some((run) => run.position !== 'normal')) cell.textRuns = runs
     cell.sourceTokens = lines
@@ -507,5 +1016,72 @@ export function populateTableCellText({
     cell.sourceRects = cell.items.map((i) => i.rect)
     delete cell.items
   }
+  // Ownership comes from the source-token assignments above. An overlapping
+  // cell with equal text (or a matching substring) cannot account for a
+  // different token that never acquired an owner.
+  const unassigned = unassignedItems
+    .filter((item) => item.text.split(BACKSPACE).join('').trim())
+    .map((item) => item.text)
+  if (!unassigned.length) issues.delete('unassigned-source-text')
   return unassigned
+}
+
+// A low-resolution model can split a repeated count header at the column
+// boundary between its label and printed sample size. The child row remains a
+// repeated `n / (%)` pair, so two or more adjacent pairs provide enough
+// evidence to restore the parent spans without relying on proximity alone.
+export function reconcileFragmentedCountHeaders({ cells, issues, repairs }) {
+  const text = (cell) => cell?.text?.trim() ?? ''
+  const parse = (first, second) => {
+    const left = text(first),
+      right = text(second)
+    // Complete count headers such as `Total (n=124)` already have valid source
+    // text and must not be reformatted merely because a model cell touches it.
+    if (left !== '(n') return undefined
+    const trailing = right.match(/^([\p{L}][\p{L}\d ./'’+-]*?)\s*=\s*(\d+)\s*\)$/u)
+    return trailing ? `${trailing[1].trim()} (n = ${trailing[2]})` : undefined
+  }
+  const childIsCount = (cell) => /^n$/iu.test(text(cell))
+  const childIsPercent = (cell) => /^\(\s*%\s*\)$/u.test(text(cell))
+  const bySlot = (row, column) =>
+    cells.find((cell) => cell.row === row && cell.column === column && cell.rowSpan === 1)
+  const candidates = []
+  const width = Math.max(-1, ...cells.filter((cell) => cell.row === 0).map((cell) => cell.column))
+  for (let start = 0; start < width; start++) {
+    const first = bySlot(0, start),
+      second = bySlot(0, start + 1),
+      childFirst = bySlot(1, start),
+      childSecond = bySlot(1, start + 1)
+    if (!first || !second || !childFirst || !childSecond) continue
+    const heading = parse(first, second)
+    if (!heading || !childIsCount(childFirst) || !childIsPercent(childSecond)) continue
+    candidates.push({ first, second, heading })
+  }
+  if (candidates.length < 2) return 0
+  candidates.sort((a, b) => a.first.column - b.first.column)
+  if (
+    candidates.some(
+      (candidate, index) =>
+        index && candidate.first.column !== candidates[index - 1].second.column + 1
+    )
+  )
+    return 0
+  const removed = new Set(candidates.flatMap(({ first, second }) => [first, second]))
+  const merged = candidates.map(({ first, second, heading }) => ({
+    ...first,
+    colSpan: 2,
+    origin: 'ruled-header-span',
+    rect: union([first.rect, second.rect]),
+    text: heading,
+    sourceTokens: [...(first.sourceTokens ?? []), ...(second.sourceTokens ?? [])],
+    sourceRects: [...(first.sourceRects ?? []), ...(second.sourceRects ?? [])]
+  }))
+  cells.splice(0, cells.length, ...cells.filter((cell) => !removed.has(cell)), ...merged)
+  cells.sort((a, b) => a.row - b.row || a.column - b.column)
+  // Keep the existing repair label for cached structure compatibility; the
+  // recovery itself is generic across repeated count headers.
+  repairs.push('fragmented-treatment-header-reconciled')
+  if (!issues.has('span-conflicts-with-source-rows') && !issues.has('conflicting-spanning-cells'))
+    issues.delete('span-conflicts-with-source-columns')
+  return merged.length
 }

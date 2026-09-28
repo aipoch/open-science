@@ -545,6 +545,42 @@ it('rejects bibliographies whose publication years fell into unassigned text', (
   expect(hasTableEvidence(table, { text: 'Table 1. Publications' })).toBe(true)
 })
 
+it('rejects a short numbered citation tail cut into a detector crop', () => {
+  const table = {
+    grid: [
+      [
+        '25',
+        'Brandt A, Bermejo JL, Sundquist J, Hemminki K. Familial risks of breast and prostate cancers: does the definition of the at risk period matter? Eur J Cancer 2010;46:752–757.'
+      ],
+      [
+        '26',
+        'Tulinius H, Egilsson V, Olafsdottir GH, Sigvaldason H. Risk of prostate, ovarian, and endometrial cancer among relatives of women with breast cancer. BMJ 1992;305:855–857.'
+      ]
+    ],
+    issues: ['text-crosses-crop-boundary']
+  }
+  expect(hasTableEvidence(table)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. References' })).toBe(true)
+})
+
+it('rejects a multiple-choice question outline mistaken for a table', () => {
+  const table = {
+    grid: [
+      ['', 'a. early morning awakenings', 'a. adolescent and premenopausal'],
+      ['', '14. Subjective sleep can be summarized as?', 'b. peri and postmenopausal'],
+      ['', 'b. fairly poor', '18. Sleep can be measured using?'],
+      ['', 'c. very poor', 'a. actigraph'],
+      ['', '15. The outcome was?', 'b. questionnaire'],
+      ['', 'a. hot flashes', 'c. polysomnography'],
+      ['', 'b. sleep efficiency', ''],
+      ['', 'c. total sleep time', '']
+    ],
+    issues: ['text-crosses-crop-boundary']
+  }
+  expect(hasTableEvidence(table)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Questions' })).toBe(true)
+})
+
 it('rejects a paragraph split through ordinary word spaces but retains real prose columns', () => {
   const grid = Array.from({ length: 4 }, () => [
     'treatment assigned to participants',
@@ -816,4 +852,78 @@ it('rejects uncaptioned quoted callouts and article metadata blocks', () => {
   expect(hasTableEvidence(metadata)).toBe(false)
   for (const table of [quote, metadata])
     expect(hasTableEvidence(table, { lines: ['Table 1. Explicitly captioned content'] })).toBe(true)
+})
+
+it('rejects uncaptioned section prose that uses numbered headings as a fake table column', () => {
+  const table = {
+    grid: [
+      ['', 'experienced between zero and three social stressors in the prior 24 hours'],
+      ['3.2', 'Manipulation Check: Injection Type and Inflammatory Response'],
+      ['', 'As reported in our initial publication, both inflammatory responses increased']
+    ],
+    repairs: ['text-supported-row-recovered'],
+    issues: ['text-crosses-crop-boundary', 'unassigned-source-text']
+  }
+  expect(hasTableEvidence(table)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Results' })).toBe(true)
+})
+
+it('rejects mixed full-width notes and prose columns without a caption', () => {
+  const table = {
+    grid: [
+      ['e Higher education or equivalent.', ''],
+      ['f Not applicable.', ''],
+      ['g Definition of the abbreviated outcome measure.', ''],
+      ['h Additional explanatory note for the preceding section.', ''],
+      ['Section heading', 'Follow-up responses were collected at the first assessment point.'],
+      [
+        'The study had adequate power to detect the prespecified effect size.',
+        'Completion rates remained stable across the later assessments.'
+      ]
+    ],
+    cells: [0, 1, 2, 3].map((row) => ({
+      row,
+      column: 0,
+      colSpan: 2,
+      origin: 'model-span'
+    })),
+    issues: ['text-crosses-crop-boundary', 'unassigned-source-text']
+  }
+  expect(hasTableEvidence(table)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Explanatory outcomes' })).toBe(true)
+})
+
+it('rejects a small prose crop with detached source fragments', () => {
+  const table = {
+    cropRect: [80, 900, 400, 1100],
+    grid: [
+      ['the study was completed after the final assessment', ''],
+      ['the journal issue continued on the next page', ''],
+      ['volume 87 - no. 7', 'Journal title']
+    ],
+    unassigned: ['preceding sentence fragment', 'clipped footer text'],
+    issues: ['text-crosses-crop-boundary', 'unassigned-source-text']
+  }
+  expect(hasTableEvidence(table)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Narrative outcomes' })).toBe(true)
+})
+
+it('rejects reference columns detected across a crop boundary', () => {
+  const table = {
+    grid: [
+      ['First citation author', 'First citation title'],
+      ['Second citation author', 'Second citation title'],
+      ['Third citation author', 'Third citation title']
+    ],
+    issues: ['text-crosses-crop-boundary', 'unassigned-source-text']
+  }
+  const source = [
+    { text: 'References' },
+    { text: '1.' },
+    { text: '2.' },
+    { text: '3.' },
+    { text: '2019 2020 2021' }
+  ]
+  expect(hasTableEvidence(table, undefined, source)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Included studies' }, source)).toBe(true)
 })

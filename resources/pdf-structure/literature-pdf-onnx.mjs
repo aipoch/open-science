@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Offline experiment, not a production extractor or the official Table Transformer postprocessor.
-// Usage: node scripts/spikes/literature-pdf-onnx.mjs PDF ASSET_DIR ORT_PACKAGE_OR_ENTRY PAGES OUT_DIR
+// Usage: node resources/pdf-structure/literature-pdf-onnx.mjs PDF ASSET_DIR ORT_PACKAGE_OR_ENTRY PAGES OUT_DIR
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
@@ -250,6 +250,7 @@ try {
         tables.push({
           id,
           detection: object,
+          readingRotation: rotation,
           cropRect: [left, top, right, bottom],
           structure,
           rowCount: rows.length,
@@ -285,6 +286,7 @@ try {
         )
       results.push({
         page: pageNumber,
+        readingRotation: rotation,
         coordinateSystem: 'PDF.js scale-1.5 viewport pixels',
         detection,
         tables

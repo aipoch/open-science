@@ -38,6 +38,75 @@ export const rotatedTextRect = (item, viewport) => {
   ]
 }
 
+// A captionless continuation can occupy only a strip beside upright prose.
+// Require repeated, separated measurement columns in several aligned rows;
+// isolated axis labels, page numbers and narrative columns are not evidence.
+const hasRepeatedMeasurementRows = (items, rotation) => {
+  const angle = (rotation * Math.PI) / 180
+  const numeric = items
+    .filter(
+      (item) =>
+        isUprightText(item, rotation) &&
+        item.height > 0 &&
+        item.width > 0 &&
+        /^[+−-]?\d[\d\s.,±%()[\]+−*–-]*(?:to[\d\s.,+−–-]*)?\)?\**$/u.test(item.str.trim())
+    )
+    .map((item) => ({
+      ...item,
+      x: item.transform[4] * Math.cos(angle) + item.transform[5] * Math.sin(angle),
+      y: -item.transform[4] * Math.sin(angle) + item.transform[5] * Math.cos(angle)
+    }))
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+  const rows = []
+  for (const item of numeric) {
+    const row = rows.at(-1)
+    if (row && Math.abs(row[0].y - item.y) < item.height * 0.25) row.push(item)
+    else rows.push([item])
+  }
+  // Short descriptive continuations may have count, mean (SD), and range
+  // rather than two treatment columns. Repeated aligned triples still prove
+  // a table orientation, even when manuscript furniture dominates the page.
+  const summaries = rows.filter(
+    (row) =>
+      row.length === 3 &&
+      /^\d+$/.test(row[0].str.trim()) &&
+      /\d\s*\([^)]*\)/.test(row[1].str) &&
+      /^\d+(?:\.\d+)?[–−-]\d+(?:\.\d+)?$/.test(row[2].str.trim()) &&
+      row.slice(1).every((i, n) => i.x - row[n].x - row[n].width > i.height)
+  )
+  if (
+    summaries.some(
+      (anchor) =>
+        summaries.filter((row) =>
+          row.every(
+            (item, n) =>
+              Math.abs(item.x - anchor[n].x) <= item.height &&
+              Math.abs(item.height - anchor[n].height) <= item.height * 0.1
+          )
+        ).length >= 4
+    )
+  )
+    return true
+  const measurements = rows
+    .filter((row) => row.length >= 4)
+    .map((row) => row.filter((item) => /\d\s*(?:±|\(|\[)/u.test(item.str)))
+    .filter((row) => row.length >= 2)
+  return measurements.some(
+    (anchor) =>
+      measurements.filter((row) =>
+        anchor
+          .slice(0, 2)
+          .every((item) =>
+            row.some(
+              (peer) =>
+                Math.abs(peer.x - item.x) <= item.height &&
+                Math.abs(peer.height - item.height) <= item.height * 0.1
+            )
+          )
+      ).length >= 4 && anchor[1].x - anchor[0].x - anchor[0].width > anchor[0].height
+  )
+}
+
 // Whole-page sideways tables use rotated text even when /Rotate is zero.
 // Require a strong majority or an explicit sideways table caption, so isolated
 // chart axes cannot rotate a normal page. A short continued table can share a
@@ -47,7 +116,7 @@ export const readingRotation = (page, content) => {
   const weight = (item) => item.str.replace(/\s/gu, '').length
   const total = items.reduce((sum, item) => sum + weight(item), 0)
   const caption = (item) =>
-    /^(?:Table|Tab\.|Figure|Fig\.)\s+(?:\d+|[IVXLCDM]+)(?:[.:\s]|$)/i.test(item.str)
+    /^(?:Table|Tab\.|Figure|Fig\.)\s+(?:\d+[A-Z]?|[IVXLCDM]+)(?:[.:\s]|$)/i.test(item.str)
   // A bold caption label and its number can be separate PDF text runs.
   // Require adjacency along the same baseline, not merely a nearby digit.
   const splitCaption = (item, rotation) => {
@@ -80,7 +149,13 @@ export const readingRotation = (page, content) => {
         (/^Table\s+(?:\d+|[IVXLCDM]+)(?:[.:\s]|$)/i.test(item.str) ||
           (/^Table$/i.test(item.str.trim()) && splitCaption(item, rotation)))
     )
-    if (aligned >= 100 && (aligned >= total * 0.8 || tableCaption)) return rotation
+    if (
+      aligned >= 100 &&
+      (aligned >= total * 0.8 ||
+        tableCaption ||
+        ((rotation === 90 || rotation === 270) && hasRepeatedMeasurementRows(items, rotation)))
+    )
+      return rotation
   }
   return page.rotate
 }

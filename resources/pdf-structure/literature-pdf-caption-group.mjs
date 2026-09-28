@@ -156,7 +156,31 @@ export function captionKind(text) {
   text = (text ?? '')
     .replace(/^TaggedEnd(?=Table\s+\d)/, '')
     .replace(/^Appendix\s+(?=(?:Figure|Fig\.|Table)\b)/i, '')
+  // A closing parenthesis ends an inline cross-reference, not a caption.
+  if (
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+\d+(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+\d+)?\)\./i.test(
+      text
+    )
+  )
+    return undefined
+  // Hungarian captions place the ordinal before the figure/table noun.
+  // Require the complete noun, retaining inflected in-text references as prose.
+  const ordinalLabel = /^\d+\.\s+(ábra|táblázat)(?=\s|$)/i.exec(text)
+  if (ordinalLabel) return ordinalLabel[1].toLowerCase() === 'ábra' ? 'figure' : 'table'
   if (/^(?:Figure|Fig\.?)\s+\d+\s+(?:but\b|\(available\b)/i.test(text)) return undefined
+  // A numbered table reference can look like a caption when a PDF stream
+  // starts a new line at the reference. These finite-verb forms introduce
+  // surrounding prose, not a table title; keep them out of ownership and
+  // crop matching. Descriptive titles remain eligible after the label.
+  if (
+    /^(?:Table|Tab\.?)\s+[AS]?\d+\s+(?:reports?|reported|shows?|shown|presents?|presented|describes?|contains?|lists?|summari[sz](?:es|ed|ing)?|indicates?|demonstrates?)\b/i.test(
+      text
+    ) ||
+    /^(?:Table|Tab\.?)\s+[AS]?\d+[.:]\s+(?:It|This|These|Those)\s+(?:should|is|are|was|were|has|have|had|contains?|includes?)\b/i.test(
+      text
+    )
+  )
+    return undefined
   if (
     /^(?:Table|Fig\.?|Figure)\s+(?:[AS]?\d+|[IVXLCDM]+)\s+in\s+(?:Appendix|Supplement(?:ary)?|Section)\b/i.test(
       text
@@ -164,7 +188,7 @@ export function captionKind(text) {
   )
     return undefined
   if (
-    /^(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?)\b/i.test(
+    /^(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?)\b/i.test(
       text ?? ''
     )
   )
@@ -182,7 +206,9 @@ export function captionKind(text) {
   if (/^(?:❚Image\s+\d+❚\s+[A-Z]|Image\s+\d+[.:]\s+)/.test(text ?? '')) return 'figure'
   if (/^(?:Table|Fig\.?|Figure)\s*\(\d+\)\s*[:.]/i.test(text ?? ''))
     return /^Table/i.test(text) ? 'table' : 'figure'
-  if (/^(?:Fig\.?|Figure)\s+\d+[A-Z][.:]\s/i.test(text ?? '')) return 'figure'
+  if (/^(?:Fig\.?|Figure)\s+\d+[A-Z]$/i.test(text)) return 'figure'
+  if (/^(?:Fig\.?|Figure)\s+\d+\.?[A-Z](?:[-–][A-Z])?[.:](?:\s|$)/i.test(text ?? ''))
+    return 'figure'
   if (/^(?:Table|Tab\.)\s+[IVXLCDM]+(?=[\s.:：．、]|$)/i.test(text ?? '')) return 'table'
   const match =
     /^(?:(?:Supplementary|Supplemental|Supplement|Extended\s+Data)\s+)?(F\s*I\s*G\s*U\s*R\s*E|F\s*I\s*G\.?|C\s*H\s*A\s*R\s*T|T\s*A\s*B\s*L\s*E|T\s*A\s*B\.?|图|圖|表)\s*[AS]?\d+(?:[.-]\d+)*(?=[\s.:：．、。]|$)/i.exec(
@@ -347,10 +373,12 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // Require its preceding source line, matching typography and tight leading.
       if (
         (/^Table\s+\d+\s+for\s+[a-z]/.test(start.text) ||
-          /^(?:(?:Figure|Fig\.)\s+\d+|Table\s+[IVXLCDM]+)[.:]\s+[A-Z]/.test(start.text)) &&
+          /^(?:(?:Supplementary|Supplemental)\s+)?(?:(?:Figure|Fig\.)\s+\d+|Table\s+(?:\d+|[IVXLCDM]+))[.:]\s+[A-Z]/.test(
+            start.text
+          )) &&
         runs.some(
           (line) =>
-            /(?:\b(?:listed|shown|provided|presented|reported|conditions) in|\bbetween conditions,)$/.test(
+            /(?:\b(?:listed|shown|provided|presented|reported|conditions) in|\bbetween conditions,|\bin (?:Supplemental|Supplementary)|\b(?:Supplementary |Supplemental )?(?:Table|Figure|Fig\.) \d+ and)$/.test(
               line.text
             ) &&
             Math.abs(line.x - start.x) <= 2 &&
@@ -364,7 +392,9 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // A bare reference wrapped onto the final line of a prose paragraph
       // retains that paragraph's font, leading and small indentation.
       if (
-        /^(?:Fig\.?|Figure)\s+\d+\s*\.$/i.test(start.text) &&
+        /^(?:Fig\.?|Figure)\s+\d+(?:\s+and\s+Table\s+\d+|(?:\s+\d+)?,\s*(?:left|right|middle))?\s*\.$/i.test(
+          start.text
+        ) &&
         runs.some(
           (line) =>
             line.text.length > 40 &&
@@ -374,6 +404,25 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             start.x - line.x < start.fontSize &&
             line.bottom <= start.y &&
             start.y - line.bottom < start.fontSize * 0.5
+        )
+      )
+        continue
+      // A bare table number at the end of a paragraph is an inline
+      // reference, even when the PDF stream emits it as a separate line.
+      // Keep standalone table numbers eligible when they have their own
+      // descriptive title or native table-boundary evidence below.
+      if (
+        /^Table\s+\d+\s*\.$/i.test(start.text) &&
+        runs.some(
+          (line) =>
+            line.text.length > 24 &&
+            /(?:shown|reported|presented|listed|summari[sz]ed|described)\s+in$/i.test(
+              line.text.trim()
+            ) &&
+            Math.abs(line.fontSize - start.fontSize) <= 0.7 &&
+            Math.abs(start.x - line.x) < 2 &&
+            line.bottom <= start.y &&
+            start.y - line.bottom < start.fontSize * 0.6
         )
       )
         continue
@@ -498,9 +547,9 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             lines.push(...strip)
         }
       }
-      // A centered, standalone manuscript table number may precede a left-aligned
-      // title. Require a single prose block ending at the table's top rule.
-      if (/^Table\s+\d+[.:]$/i.test(start.text.trim())) {
+      // A standalone table number may precede a left-aligned title, with or
+      // without punctuation. Require one prose block ending at the top rule.
+      if (/^Table\s+\d+[.:]?$/i.test(start.text.trim())) {
         const border = (rulesByPage.get(page.pageNumber) ?? [])
           .filter(
             (r) =>
@@ -661,7 +710,19 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           /^Table\s+\d+\s*[.:]\s*\S.{15}/i.test(start.text) &&
           !/[.!?]$/.test(previous.text.trim()) &&
           !/^Tabelle\s+\d+/i.test(next.text) &&
-          next.text.length >= 20 &&
+          (next.text.length >= 20 ||
+            // A single-word tail in a double-spaced title still needs an
+            // opening table rule; an ordinary short heading is insufficient.
+            (/^[a-z]{4,}(?:[ .-][a-z]+)*$/.test(next.text.trim()) &&
+              previous.text.length >= 60 &&
+              (separators.get(page.pageNumber) ?? []).some(
+                (r) =>
+                  r[1] === r[3] &&
+                  r[1] >= next.bottom &&
+                  r[1] - next.bottom <= start.fontSize * 3.5 &&
+                  r[0] <= start.x + 2 &&
+                  r[2] >= start.right
+              ))) &&
           Math.abs(next.x - start.x) <= 2 &&
           (separators.get(page.pageNumber) ?? []).some(
             (r) =>
@@ -684,16 +745,32 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
                   r[0] <= next.x &&
                   r[2] >= next.right
               )))
+        const spacedFigureTail =
+          next &&
+          captionKind(start.text) === 'figure' &&
+          Math.abs(next.x - start.x) <= 2 &&
+          /^[a-z]/.test(next.text) &&
+          (/\b(?:in|and|of|the|with|by)$/i.test(previous.text) ||
+            (lines.length > 1 &&
+              Math.abs(next.y - previous.y - previous.y + lines.at(-2).y) < start.fontSize * 0.2))
         if (
           !next ||
           next.y - previous.y >
-            start.fontSize * (legendPage || boundedTableTail ? 2.5 : centeredTitle ? 1.8 : 1.6) ||
+            start.fontSize *
+              (legendPage || boundedTableTail
+                ? 2.5
+                : centeredTitle || spacedFigureTail
+                  ? 1.8
+                  : 1.6) ||
           Math.abs(next.fontSize - start.fontSize) >
             (participantLine(next)
               ? start.fontSize * 0.35
               : centeredTitle
                 ? 1.5
-                : sideLegend || /^(?:Fig\.?|Figure)\s+\d+[.:]$/i.test(start.text.trim())
+                : sideLegend ||
+                    /^(?:Fig\.?|Figure)\s+\d+(?:\.?[A-Z](?:[-–][A-Z])?)?[.:]$/i.test(
+                      start.text.trim()
+                    )
                   ? 1.1
                   : 0.7) ||
           captionKind(next.text) ||
@@ -826,6 +903,21 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             lines.push(...parts)
         }
       }
+      // Supplementary-material indexes are laid out like a wrapped caption,
+      // but enumerate several tables and figures in one prose block. Once the
+      // continuation contains multiple supplementary labels and the matching
+      // section heading is nearby, keep it out of caption ownership entirely.
+      const candidateText = lines.map((line) => line.text).join(' ')
+      const supplementaryLabels = [...candidateText.matchAll(/\b(?:Table|Figure)\s+S\d+\s*[:.]/gi)]
+      const supplementaryHeading = runs.some(
+        (line) =>
+          /^Supplement(?:ary|al)\s+Materials$/i.test(line.text.trim()) &&
+          line.y < start.y &&
+          Math.abs(line.x - start.x) <= 2 &&
+          start.y - line.bottom <= start.fontSize * 8
+      )
+      const supplementaryStart = /^(?:Table|Figure)\s+S\d+\s*[:.]/i.test(start.text.trim())
+      if (supplementaryHeading && supplementaryStart && supplementaryLabels.length >= 2) continue
       candidates.push({
         page: page.pageNumber,
         lines: lines.map(({ text }) => text),

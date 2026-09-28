@@ -4,9 +4,12 @@ import { pathToFileURL } from 'node:url'
 import { createCanvas } from '@napi-rs/canvas'
 import { expect, it } from 'vitest'
 
-const { collectTableRules, collectGraphicsBounds, excludeRepeatedMarginContent } = await import(
-  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-graphics.mjs')).href
-)
+const {
+  collectTableRules,
+  collectGraphicsBounds,
+  excludeRepeatedMarginContent,
+  excludeRemovedMarginTokens
+} = await import(pathToFileURL(resolve('resources/pdf-structure/literature-pdf-graphics.mjs')).href)
 const { getDocument, OPS } = await import(
   pathToFileURL(createRequire(import.meta.url).resolve('pdfjs-dist/legacy/build/pdf.mjs')).href
 )
@@ -45,6 +48,12 @@ it('excludes repeated running headers near an image but keeps labels inside its 
   }
   const [clean] = excludeRepeatedMarginContent([page, { ...page, pageNumber: 2 }])
   expect(clean.lines).toEqual([label])
+  const tokens = page.lines.map((l) => ({
+    text: l.text,
+    rect: [l.x, l.y, l.x + l.width, l.y + l.height].map((v) => v * 1.5)
+  }))
+  expect(excludeRemovedMarginTokens(tokens, page, clean, 1.5)).toEqual([tokens[2]])
+  expect(excludeRemovedMarginTokens(tokens, page, page, 1.5)).toEqual(tokens)
   expect(
     associateFigures(clean, [{ page: 1, lines: ['Fig. 1. Results'], rect: [60, 410, 540, 440] }])[0]
       .rect

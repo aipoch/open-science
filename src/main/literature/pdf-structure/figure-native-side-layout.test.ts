@@ -16,6 +16,144 @@ const associate = (f: ReturnType<typeof fixture>): ReturnType<typeof JSON.parse>
 const rect = (g: { normalizedRect: number[] }, page: { width: number; height: number }): number[] =>
   g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
 
+it.each([
+  ['raster-flowchart-above-wrapped-heading-and-quotation', 90, 580],
+  ['flowchart-below-repeated-outlined-author-title', 65, 307]
+])('excludes external running text and prose from %s', async (name, top, bottom) => {
+  const { excludeRepeatedMarginContent } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-graphics.mjs')).href
+  )
+  const f = fixture(name as string),
+    original = structuredClone(f)
+  const pages = excludeRepeatedMarginContent(f.pages)
+  const page = pages.find((p: { pageNumber: number }) => p.pageNumber === f.pageNumber)
+  const figure = associateFigures(page, findCaptionCandidates(pages))[0]
+  expect(figure.rect[1]).toBeGreaterThan(top)
+  expect(figure.rect[3]).toBeLessThan(bottom)
+  // Preserve every complete image; removing text must not trim painted figure content.
+  for (const g of page.graphicsBounds.filter((g: { kind: string }) => g.kind === 'image')) {
+    const r = rect(g, page)
+    expect(figure.rect[0]).toBeLessThanOrEqual(r[0])
+    expect(figure.rect[1]).toBeLessThanOrEqual(r[1])
+    expect(figure.rect[2]).toBeGreaterThanOrEqual(r[2])
+    expect(figure.rect[3]).toBeGreaterThanOrEqual(r[3])
+  }
+  expect(f).toEqual(original)
+})
+
+it.each([
+  ['tall-outlined-flowchart-with-upstream-exclusions', [78.89, 64.97, 503.48, 605.13]],
+  ['side-legend-flowchart-with-detached-root', [176.72, 339.83, 546.44, 716.72]],
+  ['flowchart-with-terminal-nodes-below-side-legend', [41.41, 408.15, 370.53, 680.25]],
+  ['independent-raster-panels-inside-page-sized-overlay', [95.63, 77.34, 578.53, 597.01]]
+])('retains the visually verified complete plate in %s', (name, extent) => {
+  const f = fixture(name as string),
+    original = structuredClone(f)
+  const g = associateFigures(f.page, findCaptionCandidates([f.page]), f.tables, f.rules)[0]
+  expect(g.rect).toBeDefined()
+  g.rect.forEach((v: number, n: number) => expect(Math.abs(v - extent[n])).toBeLessThan(0.1))
+  expect(f).toEqual(original)
+})
+
+it('recognizes ordinal Hungarian figure captions while removing repeated running bands', async () => {
+  const { excludeRepeatedMarginContent } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-graphics.mjs')).href
+  )
+  const f = fixture('ordinal-captions-inside-repeated-running-bands'),
+    original = structuredClone(f)
+  const pages = excludeRepeatedMarginContent(f.pages),
+    captions = findCaptionCandidates(pages)
+  const figures = pages.flatMap((p: unknown) => associateFigures(p, captions))
+  expect(figures).toHaveLength(2)
+  expect(figures[0].rect[1]).toBeCloseTo(72.3378, 3)
+  expect(figures[1].rect[3]).toBeCloseTo(516.3828, 3)
+  expect(f).toEqual(original)
+})
+
+it.each([
+  ['bar-chart-with-axis-title-longer-than-ticks', [49, 421, 291, 609]],
+  ['side-captioned-survival-raster-with-outlined-risk-counts', [191, 453, 515, 681]],
+  ['flowchart-with-detached-boxed-abbreviation-key', [67, 71, 368, 683]],
+  ['vector-flowchart-beside-fragmented-publisher-strip', [132, 389, 447, 680]]
+])('retains the full source extent of %s', (name, expected) => {
+  const f = fixture(name as string),
+    original = structuredClone(f)
+  const result = associateFigures(f.page, findCaptionCandidates([f.page]), f.tables, f.rules)[0]
+  result.rect.forEach((v: number, n: number) => expect(Math.abs(v - expected[n])).toBeLessThan(1))
+  expect(f).toEqual(original)
+})
+
+it('uses separate native column rules to retain panels with unequal legends', () => {
+  const f = fixture('parallel-ruled-figure-columns-with-unequal-legends'),
+    original = structuredClone(f)
+  const captions = findCaptionCandidates([f.page])
+  expect(captions.map((c: { lines: string[] }) => c.lines.length)).toEqual([3, 3])
+  const result = associateFigures(f.page, captions, f.tables, f.rules)
+  expect(result[0].rect[0]).toBeGreaterThan(340)
+  expect(result[0].rect[3]).toBeCloseTo(239.568, 2)
+  expect(result[1].rect[2]).toBeLessThan(340)
+  expect(result[1].rect[3]).toBeCloseTo(460.8971, 2)
+  expect(f).toEqual(original)
+})
+
+it('includes every connected branch when a side title spells flow chart as two words', () => {
+  const f = fixture('spaced-flow-chart-title-beside-connected-branches'),
+    original = structuredClone(f)
+  const result = associate(f)[0]
+  expect(result.rect).toEqual([41.4140625, 45.3515625, 364.0078125, 371.8828125])
+  expect(result.graphicsCount).toBe(36)
+  expect(result.rect[3]).toBeLessThan(390)
+  expect(f).toEqual(original)
+})
+
+it('finds a letter-range figure label and includes both raster panels above its complete legend', () => {
+  const f = fixture('letter-range-caption-below-two-raster-panels'),
+    original = structuredClone(f)
+  const captions = findCaptionCandidates([f.page])
+  expect(captions).toHaveLength(1)
+  expect(captions[0].lines).toHaveLength(5)
+  expect(captions[0].lines[0]).toBe('Figure 1A-B.')
+  const result = associateFigures(f.page, captions, f.tables)[0]
+  expect(result.rect).toEqual([83.671875, 61.875, 590.484375, 572.34375])
+  expect(result.graphicsCount).toBe(2)
+  expect(f).toEqual(original)
+})
+
+it.each([
+  [
+    'forest-plot-enclosed-by-fragmented-thin-paths',
+    [50.226421875, 62.007890625, 564.4493125, 347.2441875]
+  ],
+  [
+    'raster-flowchart-inside-detached-vector-frame',
+    [67.43360937499999, 331.74221484375, 541.794171875, 703.78955859375]
+  ]
+])('recovers the complete native enclosure in %s', (name, bounds) => {
+  const f = fixture(name as string),
+    original = structuredClone(f)
+  expect(associate(f)[0].rect).toEqual(bounds)
+  expect(f).toEqual(original)
+})
+
+it.each(['missing-side', 'competing-caption', 'table-ownership'])(
+  'requires an unambiguous complete frame with %s',
+  async (variant) => {
+    const { enclosedFigureFrame } = await import(
+      pathToFileURL(resolve('resources/pdf-structure/literature-pdf-figure-connectivity.mjs')).href
+    )
+    const f = fixture('forest-plot-enclosed-by-fragmented-thin-paths')
+    if (variant === 'missing-side')
+      f.page.graphicsBounds = f.page.graphicsBounds.filter(
+        (g: { normalizedRect: number[] }) =>
+          !(g.normalizedRect[0] < 0.1 && g.normalizedRect[2] < 0.1)
+      )
+    if (variant === 'competing-caption')
+      f.captions.push({ page: 1, lines: ['Figure 2. Another result'], rect: [60, 80, 200, 90] })
+    if (variant === 'table-ownership') f.tables.push([60, 80, 200, 150])
+    expect(enclosedFigureFrame(f.page, f.captions[0], f.captions, f.tables)).toBeUndefined()
+  }
+)
+
 it('keeps a confirmed duplicate page number below the raster letter outside its crop', () => {
   const f = fixture('framed-letter-above-confirmed-page-number')
   const number = f.page.lines.find((l: { text: string }) => l.text === '32')

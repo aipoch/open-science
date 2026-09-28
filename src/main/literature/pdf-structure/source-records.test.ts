@@ -29,6 +29,23 @@ it('declines unattached or ambiguously owned scripts without losing a source tok
   expect(groupSourceRowsWithScripts([first, first], 10, 0.2)).toBeUndefined()
 })
 
+it('attaches split signed exponents only along the same tight raised baseline', () => {
+  const base = { ...token('10', 1, 20, 20), height: 10, rect: [1, 10, 20, 20] }
+  const sign = { ...token('−', 20, 23, 15), height: 5, rect: [20, 10, 23, 15] }
+  const digit = { ...token('5', 23.5, 26, 15), height: 5, rect: [23.5, 10, 26, 15] }
+  expect(groupSourceRowsWithScripts([sign, digit, base], 10, 0.3)).toEqual([[base, sign, digit]])
+  expect(
+    groupSourceRowsWithScripts([sign, { ...digit, rect: [28, 10, 31, 15] }, base], 10, 0.3)
+  ).toBeUndefined()
+  expect(
+    groupSourceRowsWithScripts(
+      [{ ...digit, baseline: 12, rect: [23.5, 7, 26, 12] }, sign, base],
+      10,
+      0.3
+    )
+  ).toBeUndefined()
+})
+
 function token(
   text: string,
   left: number,

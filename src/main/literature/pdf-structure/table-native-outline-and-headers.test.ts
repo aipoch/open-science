@@ -9,12 +9,452 @@ const { refineTable, hasTableEvidence } = await import(
 const { recoverRuledNarrativeGrid } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-ruled-narrative-grid.mjs')).href
 )
+const { recoverNativeHeaderGrid } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-native-header-grid.mjs')).href
+)
+const { recoverSectionedCoefficientsGrid } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-regression-grid.mjs')).href
+)
 const fixture = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(
     resolve('src/main/literature/pdf-structure/fixtures/source-grids', name + '.jsonl')
   )
 const refine = (f: ReturnType<typeof fixture>): ReturnType<typeof JSON.parse> =>
   refineTable(f.models[0], f.tokens, f.captions, f.notes ?? [], f.rules)
+
+it('recovers an unambiguous section without guessing an adjacent printed offset record', () => {
+  const t = refine(fixture('native-section-beside-offset-regression-records'))
+  expect(t.grid.some((r: string[]) => r[0] === 'Sedentary time (h/d)')).toBe(true)
+  expect(t.unassigned).not.toContain('Sedentary time (h/d)')
+  expect(t.unassigned).toContain('−0.22')
+  expect(t.issues).toContain('ambiguous-cell-assignment')
+})
+
+it('rejects incomplete cohort pairs and unindented section children', () => {
+  const missing = fixture('indented-treatment-sections-with-nested-counts')
+  missing.tokens.splice(
+    missing.tokens.findIndex((i: { text: string }) => i.text === '3 (3.5%)'),
+    1
+  )
+  expect(
+    recoverNativeHeaderGrid(missing.models[0], missing.tokens, missing.captions, missing.rules)
+  ).toBeUndefined()
+  const flat = fixture('indented-treatment-sections-with-nested-counts')
+  const parent = flat.tokens.find((i: { text: string }) => i.text === 'Type of surgery')
+  const child = flat.tokens.find((i: { text: string }) => i.text === 'BCS')
+  child.rect = [
+    parent.rect[0],
+    child.rect[1],
+    child.rect[2] - child.rect[0] + parent.rect[0],
+    child.rect[3]
+  ]
+  expect(
+    recoverNativeHeaderGrid(flat.models[0], flat.tokens, flat.captions, flat.rules)
+  ).toBeUndefined()
+})
+
+it.each(['−1.954', '95% CI'])('rejects identifier coefficient recovery without %s', (text) => {
+  const f = fixture('nested-outcome-stubs-beside-complete-identifier-records')
+  f.tokens = f.tokens.filter((i: { text: string }) => i.text !== text)
+  expect(recoverSectionedCoefficientsGrid(f.models[0], f.tokens, f.rules)).toBeUndefined()
+})
+
+it('retains summary conflicts when one measurement is missing', () => {
+  const f = fixture('wide-followup-records-with-wrapped-summary-lines')
+  f.tokens = f.tokens.filter((i: { text: string }) => i.text !== '7.03')
+  expect(refine(f).issues).toContain('overlapping-predicted-columns')
+})
+
+it('keeps indented clinical sections and their raised bar markers outside numeric records', () => {
+  const t = refine(fixture('indented-clinical-sections-with-raised-bar-footnotes'))
+  expect(t.cells.find((c: { text: string }) => c.text === 'Pain severity‖|')).toMatchObject({
+    row: 16,
+    column: 0,
+    rowSpan: 1,
+    colSpan: 5
+  })
+  expect(t.grid[17].slice(1)).toEqual([
+    '0.0 (0.0–0.8) (N = 104)',
+    '0.0 (0.0–0.0) (N = 104)',
+    'Median D = 0.0 (0.0–0.0)',
+    '0.087'
+  ])
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+
+it('anchors nested outcome stubs to complete identifier records', () => {
+  const t = refine(fixture('nested-outcome-stubs-beside-complete-identifier-records'))
+  expect(t.cells.find((c: { text: string }) => c.text === 'Total')).toMatchObject({
+    row: 4,
+    column: 1,
+    rowSpan: 10
+  })
+  expect(t.cells.find((c: { text: string }) => c.text === 'PAOFI§')).toMatchObject({
+    row: 4,
+    column: 0,
+    rowSpan: 30
+  })
+  expect(t.cells.find((c: { text: string }) => c.text === 'SM')).toMatchObject({
+    row: 14,
+    column: 1,
+    rowSpan: 6
+  })
+  expect(t.grid).toHaveLength(34)
+  expect(t.grid[4].slice(3, 7)).toEqual(['cg20108357', '−1.246', '−1.954', '−0.539'])
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+
+it('recovers repeated cohort category stubs and centered group probabilities', () => {
+  const t = refine(fixture('cohort-categories-with-centered-shared-probabilities'))
+  expect(t.cells.find((c: { text: string }) => c.text === 'Race, n (%)')).toMatchObject({
+    row: 2,
+    column: 0,
+    rowSpan: 3,
+    colSpan: 1
+  })
+  expect(t.cells.find((c: { text: string }) => c.text === '0.318')).toMatchObject({
+    row: 2,
+    column: 4,
+    rowSpan: 3,
+    colSpan: 1
+  })
+  expect(t.cells.find((c: { text: string }) => c.text === '0.838')).toMatchObject({
+    row: 7,
+    column: 4,
+    rowSpan: 5
+  })
+  // Individual subscale tests keep separate owners even under a shared stub.
+  expect(t.cells.find((c: { text: string }) => c.text === '0.610')).toMatchObject({ rowSpan: 1 })
+  expect(t.unassigned).toEqual([])
+})
+
+it.each([
+  [
+    'ruled-comparison-sections-below-two-tier-means',
+    35,
+    'Baseline Physical Activity (hours per week)'
+  ],
+  ['indented-treatment-sections-with-nested-counts', 43, 'Type of surgery'],
+  ['terminal-record-below-four-column-count-sections', 11, 'Extent of surgery*']
+])('separates native section headings from complete paired records in %s', (name, rows, label) => {
+  const f = fixture(name as string),
+    original = structuredClone(f),
+    t = refine(f)
+  expect(t.grid).toHaveLength(rows as number)
+  const cell = t.cells.find((c: { text: string }) => c.text === label)
+  expect(cell).toMatchObject({ column: 0, rowSpan: 1, colSpan: 3 })
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+  expect(f).toEqual(original)
+})
+
+it.each([
+  ['clinical-followups-with-wrapped-negative-intervals', 56, '0.6482'],
+  ['short-continued-clinical-followup-cycle', 6, '0.3289']
+])(
+  'retains clinical visit cycles, three header tiers and signed intervals in %s',
+  (name, count, last) => {
+    const f = fixture(name as string),
+      original = structuredClone(f),
+      t = refine(f)
+    expect(t.grid).toHaveLength(count as number)
+    expect(t.grid[0][1]).toBe('Observed information')
+    expect(t.grid[1][1]).toBe('Intervention group')
+    expect(t.grid[2][1]).toBe('Mean')
+    expect(t.grid.at(-1).at(-1)).toBe(last)
+    expect(t.grid.at(-1)[7]).toMatch(/^−0\.\d+ \(−0\.\d+; −0\.\d+\)$/)
+    expect(t.unassigned).toEqual([])
+    expect(t.issues).toEqual([])
+    expect(f).toEqual(original)
+  }
+)
+
+it('keeps all instruction lines with their duration anchor', () => {
+  const t = refine(fixture('duration-anchors-with-wrapped-instruction-paragraphs'))
+  expect(t.grid).toHaveLength(4)
+  expect(t.grid[2].slice(0, 2)).toEqual(['Tai Chi Ruler movements', '35'])
+  expect(t.grid[2][2]).toContain(
+    '12 in total, synchronized with breathing technique and visualization'
+  )
+  expect(t.grid[2][2]).toMatch(/movement in each class$/)
+  expect(t.grid[3][0]).toBe('Cool-down')
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+
+it('retains a terminal narrative line partly overlapping the predicted last band', () => {
+  const t = refine(fixture('review-record-with-partially-overlapping-terminal-line'))
+  expect(t.grid.at(-1)[6]).toMatch(/lower proportion of bone metastasis$/)
+  expect(t.unassigned).toEqual([])
+})
+
+it('uses complete native cells to restore a clipped units column', () => {
+  const f = fixture('fully-ruled-parameters-with-clipped-units'),
+    t = refine(f)
+  expect(t.grid).toHaveLength(19)
+  expect(t.grid[0]).toEqual(['Parameters', 'Values', 'Units'])
+  expect(t.grid[1][2]).toBe('1/mmZ')
+  expect(t.grid.flat()).toContain('years old')
+  expect(t.cropRect[2]).toBeGreaterThan(f.models[0].cropRect[2] + 60)
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+
+it('retains the final ruled schedule and its raised ordinals outside the detected right edge', () => {
+  const t = refine(fixture('fully-ruled-schedules-with-clipped-ordinal-values'))
+  expect(t.grid).toHaveLength(8)
+  expect(t.grid.at(-1)[0]).toMatch(/^Physical examination schedule for women aged 50–59/)
+  expect(t.grid.at(-1)[1]).toBe('{0th, 1st, 2nd, 3rd, 4th}')
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+
+it('separates wrapped treatment parents from their count and percentage leaves', () => {
+  const t = refine(fixture('multiline-treatment-parents-above-paired-leaves'))
+  expect(t.grid).toHaveLength(7)
+  expect(t.grid[1]).toEqual(['', 'n', '(%)', 'n', '(%)'])
+  expect(
+    t.cells.filter((c: { row: number; colSpan: number }) => c.row === 0 && c.colSpan === 2)
+  ).toHaveLength(2)
+  expect(t.issues).toEqual([])
+})
+
+it('separates the header from the first record of a captionless descriptive continuation', () => {
+  const t = refine(fixture('captionless-descriptive-continuation-with-merged-header'))
+  expect(t.grid).toHaveLength(7)
+  expect(t.grid[0]).toEqual(['Variable', 'N', 'Mean (SD) or N (%)', 'Range'])
+  expect(t.grid[1]).toEqual(['TENSE angry interactions', '150', '6.57 (8.06)', '0–36'])
+  expect(t.issues).toEqual([])
+})
+
+it('uses native nested faces without losing the clipped final test column', () => {
+  const f = fixture('closed-nested-domains-with-clipped-test-column'),
+    original = structuredClone(f),
+    t = refine(f)
+  expect(t.grid).toHaveLength(12)
+  expect(t.grid.every((r: string[]) => r.length === 6)).toBe(true)
+  expect(t.cells).toContainEqual(
+    expect.objectContaining({ text: 'Quality of Life by SF-36', row: 1, rowSpan: 10 })
+  )
+  expect(t.cells).toContainEqual(
+    expect.objectContaining({ text: 'Physical health', row: 1, rowSpan: 5 })
+  )
+  expect(t.cells).toContainEqual(
+    expect.objectContaining({ text: 'Mental health', row: 6, rowSpan: 5 })
+  )
+  expect(t.grid[1].slice(2)).toEqual(['Pre', '71.94 ± 18.64', '70.37 ± 21.93', '0.748'])
+  expect(t.grid.at(-1).at(-1)).toBe('0.091')
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+  expect(f).toEqual(original)
+})
+
+it('normalizes empty double borders and retains shared tests without merging adjacent stubs', () => {
+  const t = refine(fixture('double-bordered-demographics-with-shared-tests'))
+  expect(t.grid).toHaveLength(8)
+  expect(t.grid[1]).toEqual(['Age (years)', '', '50.37 ± 10.13', '45.34 ± 11.79', '0.060'])
+  expect(t.cells).toContainEqual(
+    expect.objectContaining({ text: 'ASA physical status', rowSpan: 2 })
+  )
+  expect(t.cells).toContainEqual(expect.objectContaining({ text: '0.632', rowSpan: 2 }))
+  expect(t.grid.at(-1)[0]).toBe('GSNP')
+  expect(t.issues).toEqual([])
+})
+
+it('retains all toxicity records and treats explicit missing statistics as source values', () => {
+  const t = refine(fixture('ruled-toxicity-records-with-dropped-symptoms'))
+  expect(t.grid).toHaveLength(15)
+  expect(t.grid).toContainEqual(['Myalgia/asthenia', '16 (29.6)', '3 (5.5)', '–', '–'])
+  expect(t.grid.at(-1)).toEqual(['Lung fibrosis', '1 (1.8)', '–', '–', '–'])
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+
+it('keeps a stub-only heading and interleaved count sections in source order', () => {
+  const t = refine(fixture('stub-only-count-heading-with-section-gaps'))
+  expect(t.grid).toHaveLength(26)
+  expect(t.grid[0]).toEqual(['Characteristic', ''])
+  expect(t.grid[8]).toEqual(['Number of disease sites per patient', ''])
+  expect(t.grid.slice(9, 12)).toEqual([
+    ['1', '24'],
+    ['2', '19'],
+    ['≥ 3', '11']
+  ])
+  expect(t.unassigned).toEqual([])
+})
+
+it('preserves regression sections and source-defined missing estimates', () => {
+  const t = refine(fixture('outdented-regression-sections-with-missing-values'))
+  expect(t.grid).toHaveLength(15)
+  expect(t.grid[3]).toEqual(['Taxane treatment', '', '', '', '', ''])
+  expect(t.grid[4].slice(-2)).toEqual(['Not estimated', '0.998'])
+  expect(t.grid.at(-1)[0]).toBe('Premenopause')
+  expect(t.issues).toEqual([])
+})
+
+it('separates every ruled count section even when only one record follows', () => {
+  const t = refine(fixture('terminal-count-section-before-single-record'))
+  expect(t.grid).toHaveLength(39)
+  expect(t.grid[20]).toEqual(['Metabolism and nutrition disorders, n (%)', '', '', '', '', '', ''])
+  expect(t.grid[21]).toEqual([
+    'Decreased appetite',
+    '28 (18.92)',
+    '28 (25.93)',
+    '0.22',
+    '0 (0.00)',
+    '0 (0.00)',
+    'NA'
+  ])
+  expect(t.grid.at(-2)[0]).toBe('Psychiatric disorders, n (%)')
+  expect(t.grid.at(-1)[0]).toBe('Insomnia')
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+
+it('extends the crop to retain the full range endpoint supported by a native border', () => {
+  const f = fixture('range-endpoint-clipped-by-detector'),
+    t = refine(f)
+  const token = f.tokens.find((i: { text: string }) => i.text === '121.04–1991.10')
+  expect(t.cropRect[2]).toBeGreaterThanOrEqual(token.rect[2])
+  expect(t.grid.flat()).toContain(token.text)
+  expect(t.issues).toEqual([])
+})
+
+it.each(['uncaptioned-numbered-section-outline', 'bibliography-columns-with-journal-volume-runs'])(
+  'rejects the unstructured detector candidate in %s without rejecting captioned data',
+  (name) => {
+    const f = fixture(name),
+      t = refine(f)
+    expect(hasTableEvidence(t, undefined, f.tokens)).toBe(false)
+    expect(hasTableEvidence(t, { lines: ['Table 1. Comparisons'] }, f.tokens)).toBe(true)
+  }
+)
+
+it('keeps a single-column parent separate from its child and spans centered statistic sections', () => {
+  const f = fixture('ruled-statistic-faces-with-single-column-parent-header'),
+    original = structuredClone(f),
+    t = refine(f)
+  expect(t.grid).toHaveLength(22)
+  expect(t.grid[0][7]).toBe('Three-Way Interaction')
+  expect(t.grid[1][7]).toBe('Time×Menopausal Status×Group')
+  expect(t.cells.find((c: { text: string }) => c.text === 'Wake after sleep onset').colSpan).toBe(8)
+  expect(t.grid[11].slice(1)).toEqual([
+    '2,176',
+    '2,183',
+    '1,186',
+    '4,173',
+    '2,183',
+    '2,176',
+    '4,173'
+  ])
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+  expect(f).toEqual(original)
+})
+
+it('joins wrapped cohort leaves below a native group underline without joining records', () => {
+  const f = fixture('wrapped-cohort-leaves-beneath-native-group-underline'),
+    original = structuredClone(f),
+    t = refine(f)
+  expect(t.grid[1]).toEqual([
+    '',
+    'No family history',
+    'Prostate cancer',
+    'Breast cancer',
+    'Prostate and breast cancer',
+    'P-value'
+  ])
+  expect(t.grid[2].slice(1)).toEqual(['5008 (77.9)', '717 (11.1)', '581 (9.0)', '121 (1.9)', ''])
+  expect(t.issues).toEqual([])
+  expect(f).toEqual(original)
+})
+
+it('recovers native cohort tiers without a duplicate count column', () => {
+  const f = fixture('nested-cohorts-with-duplicate-count-columns'),
+    original = structuredClone(f)
+  const t = refine(f)
+  expect(t.grid).toHaveLength(19)
+  expect(t.grid.every((r: string[]) => r.length === 19)).toBe(true)
+  expect(t.grid[4].slice(7, 13)).toEqual(['445.00', '66.80', '13', '434.90', '29.67', '5'])
+  expect(
+    t.cells.filter((c: { row: number; colSpan: number }) => c.row === 0 && c.colSpan === 6)
+  ).toHaveLength(3)
+  expect(
+    t.cells.filter((c: { row: number; colSpan: number }) => c.row === 1 && c.colSpan === 3)
+  ).toHaveLength(6)
+  expect(t.unassigned).toEqual([])
+  expect(t.issues).toEqual([])
+  expect(f).toEqual(original)
+})
+
+it.each([
+  'visit-sections-with-wrapped-joint-statistics',
+  'continued-visits-with-multilevel-effect-headers'
+])('preserves source header tiers and complete statistic records in %s', (name) => {
+  const f = fixture(name),
+    original = structuredClone(f),
+    t = refine(f)
+  expect(t.grid[2].slice(4)).toEqual([
+    'Score (95% Cl)',
+    'P value',
+    'F test (df)',
+    'P value',
+    'F test (df)',
+    'P value',
+    'F test (df)',
+    'P value'
+  ])
+  expect(
+    t.cells.filter((c: { row: number; colSpan: number }) => c.row === 1 && c.colSpan === 2)
+  ).toHaveLength(4)
+  if (name === 'visit-sections-with-wrapped-joint-statistics') {
+    expect(t.grid).toHaveLength(25)
+    const row = t.grid.findIndex((r: string[]) => r[0] === 'FACT-Bh total score')
+    expect(t.grid[row].slice(6)).toEqual([
+      '6.55 (1,96)',
+      '.01',
+      '36.49 (2,100)',
+      '<.001',
+      '14.82 (2,100)',
+      '<.001'
+    ])
+    expect(t.grid[row - 1].slice(6)).toEqual(['', '', '', '', '', ''])
+    expect(t.grid[5][4]).toBe('–11.67 (–16.99 to –6.36)')
+  } else {
+    expect(t.grid).toHaveLength(17)
+    expect(t.grid[3][0]).toBe('T1')
+    expect(t.grid[4][0]).toBe('T2')
+    expect(t.grid[5][0]).toBe('Functional well-being')
+  }
+  expect(t.unassigned).toEqual([])
+  expect(t.issues).toEqual([])
+  expect(f).toEqual(original)
+})
+
+it('rejects a columnless prose detection without dereferencing an absent stub', () => {
+  const f = fixture('columnless-prose-detection-with-wide-headings')
+  const t = refine(f)
+  expect(hasTableEvidence(t, undefined, f.tokens)).toBe(false)
+})
+
+it.each(['broken-cycle', 'crossing-gutter', 'duplicate-source-token'])(
+  'declines repeated-record recovery with %s',
+  async (variant) => {
+    const { recoverRepeatedVisitGrid } = await import(
+      pathToFileURL(resolve('resources/pdf-structure/literature-pdf-repeated-visit-grid.mjs')).href
+    )
+    const f = fixture('nested-cohorts-with-duplicate-count-columns')
+    if (variant === 'broken-cycle')
+      f.tokens.find((i: { text: string }) => i.text === 'T4').text = 'T5'
+    if (variant === 'crossing-gutter')
+      f.tokens.find((i: { text: string }) => i.text === '421.78').rect[2] += 50
+    if (variant === 'duplicate-source-token')
+      f.tokens.push(f.tokens.find((i: { text: string }) => i.text === 'T4'))
+    expect(recoverRepeatedVisitGrid(f.models[0], f.tokens, f.captions, f.rules)).toBeUndefined()
+  }
+)
 
 it('retains every entry in a captioned three-level theme outline', () => {
   const f = fixture('indented-theme-outline'),
@@ -627,5 +1067,149 @@ it('keeps the common count heading and wrapped interval sample size together', (
     ''
   ])
   expect(t.grid.filter((r: string[]) => r[0] === '' && r[1] === 'n=121')).toHaveLength(0)
+  expect(t.unassigned).toEqual([])
+})
+it('restores an underlined confidence-interval parent in a captionless continuation', () => {
+  const f = fixture('captionless-interval-parent-with-native-underline'),
+    t = refine(f)
+  expect(t.cells).toContainEqual(
+    expect.objectContaining({ row: 0, column: 3, colSpan: 2, text: '95% CI' })
+  )
+  expect(t.grid[1].slice(3, 5)).toEqual(['Lower', 'Upper'])
+  expect(t.unassigned).toEqual([])
+  const noUnderline = structuredClone(f)
+  noUnderline.rules = []
+  expect(refine(noUnderline).unassigned).toContain('95% CI')
+})
+it('recovers a missing leading heading in a two-column grading list', () => {
+  const t = refine(fixture('leading-section-before-repeated-grading-records'))
+  expect(t.grid).toHaveLength(12)
+  expect(t.grid[0][0]).toBe('Acute nausea grade:')
+  expect(t.grid[5][0]).toBe('Acute vomiting grade:')
+  expect(t.unassigned).toEqual([])
+})
+it('pairs left-aligned timepoint parents with each count and mean leaf', () => {
+  const t = refine(fixture('left-aligned-timepoints-above-count-and-mean-leaves'))
+  for (const [n, column] of [1, 3, 5, 7].entries())
+    expect(t.cells).toContainEqual(
+      expect.objectContaining({ row: 0, column, colSpan: 2, text: `T${n}` })
+    )
+  expect(t.grid).toHaveLength(4)
+  expect(t.issues).toEqual([])
+})
+it('separates repeated mean cycles from their section-level ANOVA values', () => {
+  const t = refine(fixture('repeated-mean-cycles-with-section-level-anova'))
+  expect(t.grid).toHaveLength(13)
+  expect(t.grid[9]).toEqual(['Well-being score', '', '', '', '', 'P = 0.001**'])
+  expect(t.grid[11].slice(0, 3)).toEqual(['Sham group', '3.3 ± 1.6', '3.3 ± 1.8'])
+  expect(t.grid[12]).toEqual(['Student t test', '0.338', '0.001**', '0.001**', '0.001**', ''])
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+it('retains numeric category labels and standalone records in sectioned risk estimates', () => {
+  const t = refine(fixture('categorical-risk-records-with-section-probabilities'))
+  expect(t.grid).toHaveLength(49)
+  expect(t.grid).toContainEqual(['2010', '30.1 (28.5–31.8)', '0.64 (0.49–0.83)', ''])
+  expect(t.grid).toContainEqual([
+    'Comorbidities present',
+    '20.6 (19.2–22.1)',
+    '1.25 (0.97–1.59)',
+    '.08'
+  ])
+  expect(t.grid.at(-1)).toEqual(['IV', '43.6 (41.9–45.4)', 'Ref', ''])
+  expect(t.issues).toEqual([])
+})
+it('switches merged descriptive stubs to nested category pairs without losing NA records', () => {
+  const t = refine(fixture('cohort-counts-switching-to-paired-category-stubs'))
+  expect(t.grid).toHaveLength(48)
+  expect(t.grid).toContainEqual([
+    'Eltávolított nem SLN száma – átlag (szórás)',
+    '',
+    '12,5 (5–31)',
+    'NA',
+    ''
+  ])
+  expect(t.cells).toContainEqual(expect.objectContaining({ text: 'ER-státusz', rowSpan: 2 }))
+  expect(t.grid.at(-1)).toEqual(['', 'Negatív', '216 (88)', '190 (83)', ''])
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+it('owns wrapped case descriptions and every nested qualitative assay result', () => {
+  const f = fixture('numbered-cases-with-qualitative-assay-cycles'),
+    original = structuredClone(f),
+    t = refine(f)
+  expect(t.grid).toHaveLength(31)
+  expect(t.cells).toContainEqual(
+    expect.objectContaining({ text: '10', row: 28, column: 0, rowSpan: 3 })
+  )
+  expect(t.grid[1][5]).toMatch(/spindle cell differentiation& focal squamous differentiation$/)
+  expect(t.grid.at(-1).slice(6, 8)).toEqual(['Her2neu', '−'])
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+  expect(f).toEqual(original)
+})
+it('keeps terminal four-column records after source-backed section recovery', () => {
+  const t = refine(fixture('terminal-record-below-four-column-count-sections'))
+  expect(t.grid).toHaveLength(11)
+  expect(t.grid.at(-1).slice(0, 3)).toEqual(['Length of stay (d)', '5 (4–7)', '4 (2–6)'])
+  expect(t.unassigned).toEqual([])
+  expect(t.issues).toEqual([])
+})
+it('preserves both native header tiers and section rows inside a closed grid', () => {
+  const t = refine(fixture('closed-grid-with-two-header-tiers-and-section-rows'))
+  expect(t.grid).toHaveLength(8)
+  expect(t.grid[0]).toEqual(['', 'Mean', 'Range'])
+  expect(t.grid[1]).toEqual(['', 'Simulated (recorded)', 'Simulated (recorded)'])
+  expect(t.grid.at(-1)[0]).toBe('In control arm')
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+it('rejects incomplete source cycles and categorical estimates instead of inventing missing values', async () => {
+  const { recoverNumberedCaseGrid } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-aligned-numeric-grid.mjs')).href
+  )
+  const cases = fixture('numbered-cases-with-qualitative-assay-cycles')
+  const last = cases.tokens.findLastIndex((i: { text: string }) => i.text === 'Her2neu')
+  cases.tokens.splice(last, 1)
+  expect(
+    recoverNumberedCaseGrid(cases.models[0], cases.tokens, cases.captions, cases.rules)
+  ).toBeUndefined()
+  const { recoverRegressionGrid } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-regression-grid.mjs')).href
+  )
+  const risk = fixture('categorical-risk-records-with-section-probabilities')
+  risk.tokens = risk.tokens.filter((i: { text: string }) => i.text !== '0.64 (0.49–0.83)')
+  expect(recoverRegressionGrid(risk.models[0], risk.tokens, risk.captions)).toBeUndefined()
+})
+it('validates complete paired summaries after recovering wrapped SD and SE lines', () => {
+  const t = refine(fixture('wide-followup-records-with-wrapped-summary-lines'))
+  expect(t.grid.at(-1)).toEqual([
+    'Return of PRO results',
+    '74',
+    '3.05 (0.39)',
+    '62',
+    '3.11 (0.40)',
+    '53',
+    '3.13 (0.42)',
+    '29',
+    '3.14 (0.35)',
+    '0.06 (0.07)',
+    '.36',
+    '–0.02 (0.07)',
+    '.78',
+    '0.09 (0.09)',
+    '.31'
+  ])
+  expect(t.issues).toEqual([])
+  expect(t.unassigned).toEqual([])
+})
+
+it('keeps fragmented section qualifiers and repeated wrapped group labels in their source records', () => {
+  const t = refine(fixture('wide-followup-records-with-wrapped-summary-lines'))
+  expect(t.grid[2][0]).toBe('Psychological distress (HADSa total; P=.94b)')
+  expect(t.grid[2].slice(1).every((s: string) => !s)).toBe(true)
+  const record = t.grid.find((r: string[]) => r[1] === '76' && r[2] === '3.22 (0.44)')
+  expect(record[0]).toBe('Return of PRO results + Living with lymphoma')
+  expect(t.grid.some((r: string[]) => r[0] === 'with lymphoma')).toBe(false)
   expect(t.unassigned).toEqual([])
 })

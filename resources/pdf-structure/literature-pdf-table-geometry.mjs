@@ -34,21 +34,56 @@ export function tableCaptionCropTop(table, captionBottom, rules) {
   return Math.max(table.cropRect[1], top)
 }
 
+// Repeated page furniture has already been excluded from source tokens. Use
+// that same ownership evidence to trim detector padding above a continuation.
+export function tableMarginCropTop(table, originalPage, contentPage, rules, scale) {
+  const source = table.cells.flatMap((cell) => cell.sourceRects)
+  if (table.unassigned.length || !source.length) return table.cropRect[1]
+  const firstText = Math.min(...source.map((r) => r[1]))
+  const retained = new Set(contentPage.lines)
+  const headers = (originalPage.lines ?? []).filter(
+    (line) =>
+      !retained.has(line) &&
+      (line.y + line.height) / originalPage.height < 0.1 &&
+      line.width > line.height * 2 &&
+      (line.y + line.height) * scale > table.cropRect[1] &&
+      (line.y + line.height) * scale < firstText &&
+      line.x * scale < table.cropRect[2] &&
+      (line.x + line.width) * scale > table.cropRect[0]
+  )
+  if (!headers.length) return table.cropRect[1]
+  return tableCaptionCropTop(
+    table,
+    Math.max(...headers.map((line) => (line.y + line.height) * scale)),
+    rules
+  )
+}
+
 // Geometry shared by script assignment and row recovery. A baseline offset
 // alone is insufficient: the glyph must tightly adjoin a larger source token.
 export function isAdjacentTableScript(item, anchor) {
   const gap = item.rect[0] - anchor.rect[2]
   const shift = Math.abs(item.baseline - anchor.baseline)
+  // Italic font matrices can report a full em for a visibly raised marker.
+  // Its baseline and near-touching advance still establish script placement.
+  const raisedFullEm =
+    /^[a-z](?:,[a-z])*$/.test(item.text) &&
+    item.height >= anchor.height * 0.8 &&
+    item.height <= anchor.height * 1.1 &&
+    anchor.baseline - item.baseline > anchor.height * 0.5 &&
+    anchor.baseline - item.baseline < anchor.height * 0.7 &&
+    Math.abs(gap) <= anchor.height * 0.05
   return (
     item.horizontal &&
     anchor.horizontal &&
-    (item.height < anchor.height * 0.8 ||
+    (raisedFullEm ||
+      item.height < anchor.height * 0.8 ||
       (/^[a-z]$/.test(item.text) && item.height < anchor.height * 0.9) ||
       ((item.inlineSymbol || /^[′″]$/.test(item.text)) &&
         !anchor.inlineSymbol &&
         item.height <= anchor.height * 1.1)) &&
     shift > anchor.height * 0.08 &&
-    shift <= anchor.height * 0.5 &&
+    shift <= anchor.height * (raisedFullEm ? 0.7 : 0.5) &&
     gap >=
       -Math.max(
         anchor.height * 0.1,

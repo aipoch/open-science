@@ -13,6 +13,167 @@ const fixture = (name: string): ReturnType<typeof JSON.parse> =>
 const refine = (f: ReturnType<typeof fixture>): ReturnType<typeof JSON.parse> =>
   refineTable(f.table, f.tokens, f.captions, [], f.rules)
 
+it('recovers a compact record that crosses adjacent model bands', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const table = {
+    cropRect: [0, 0, 500, 130],
+    structure: {
+      objects: [
+        ...[0, 100, 200, 300, 400].map((x, index, columns) => ({
+          label: 'table column',
+          rect: [x, 0, columns[index + 1] ?? 500, 130]
+        })),
+        ...[
+          [0, 20, 500, 35],
+          [0, 35, 500, 55],
+          [0, 53, 500, 70],
+          [0, 70, 500, 90]
+        ].map((rect) => ({ label: 'table row', rect }))
+      ]
+    }
+  }
+  const result = refineTable(
+    table,
+    [
+      token('Characteristic', 10, 22),
+      token('Grade 1', 110, 22),
+      token('Grade 2', 210, 22),
+      token('Grade 3', 310, 22),
+      token('Myalgia', 10, 37),
+      token('16 (29.6)', 210, 37),
+      token('3 (5.5)', 310, 37),
+      token('Alopecia', 10, 49),
+      token('12 (23.0)', 210, 49),
+      token('4 (7.6)', 310, 49),
+      token('1 (1.8)', 410, 49),
+      token('Dyspnea', 10, 72),
+      token('15 (27.7)', 210, 72),
+      token('5 (9.2)', 310, 72),
+      token('2 (3.7)', 410, 72)
+    ],
+    [{ page: 1, lines: ['Table 1. Toxicity'], rect: [0, -15, 160, -5] }],
+    [],
+    []
+  )
+  expect(result.grid).toContainEqual(['Alopecia', '', '12 (23.0)', '4 (7.6)', '1 (1.8)'])
+  expect(result.unassigned).toEqual([])
+  expect(result.repairs).toContain('compact-source-record-recovered')
+})
+
+it('recovers a detached confidence-interval parent above adjacent leaf headers', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const result = refineTable(
+    {
+      cropRect: [0, 0, 400, 100],
+      structure: {
+        objects: [
+          ...[0, 100, 200, 300].map((x) => ({
+            label: 'table column',
+            rect: [x, 0, x + 100, 100]
+          })),
+          { label: 'table row', rect: [0, 30, 400, 58] },
+          { label: 'table row', rect: [0, 58, 400, 78] },
+          { label: 'table column header', rect: [0, 0, 400, 58] }
+        ]
+      }
+    },
+    [
+      token('Characteristic', 10, 36),
+      token('Value', 110, 36),
+      token('Lower', 210, 36),
+      token('Upper', 310, 36),
+      token('95% CI', 245, 15),
+      token('Study', 10, 62),
+      token('1.0', 110, 62),
+      token('0.8', 210, 62),
+      token('1.2', 310, 62)
+    ],
+    [{ page: 1, lines: ['Table 1. Confidence intervals'], rect: [0, -15, 180, -5] }],
+    [],
+    []
+  )
+  expect(result.grid[0][2]).toBe('95% CI')
+  expect(result.grid[1].slice(2, 4)).toEqual(['Lower', 'Upper'])
+  expect(result.unassigned).toEqual([])
+  expect(result.repairs).toContain('detached-parent-header-recovered')
+})
+
+it('recovers the terminal diagonal row of a triangular correlation matrix', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const columns = Array.from({ length: 8 }, (_, column) => ({
+    label: 'table column',
+    rect: [column * 50, 0, (column + 1) * 50, 140]
+  }))
+  const result = refineTable(
+    {
+      cropRect: [0, 0, 400, 140],
+      structure: {
+        objects: [
+          ...columns,
+          { label: 'table column header', rect: [0, 0, 400, 35] },
+          ...[20, 35, 55, 75, 95].map((top) => ({
+            label: 'table row',
+            rect: [0, top, 400, top + 20]
+          }))
+        ]
+      }
+    },
+    [
+      token('Processing', 105, 22),
+      token('PAOFI', 155, 22),
+      token('SM', 205, 22),
+      token('MEM', 255, 22),
+      token('LC', 305, 22),
+      token('HCIF', 355, 22),
+      token('Processing Speed', 5, 40),
+      token('1', 105, 40),
+      token('0.04', 155, 40),
+      token('0.09', 205, 40),
+      token('0.01', 255, 40),
+      token('0.05', 305, 40),
+      token('−0.09', 355, 40),
+      token('SM', 55, 60),
+      token('1', 205, 60),
+      token('0.41', 255, 60),
+      token('0.43', 305, 60),
+      token('0.53', 355, 60),
+      token('MEM', 55, 80),
+      token('1', 255, 80),
+      token('0.76', 305, 80),
+      token('0.69', 355, 80),
+      token('LC', 55, 100),
+      token('1', 305, 100),
+      token('0.75', 355, 100),
+      token('HCIF', 55, 120),
+      token('1', 355, 120)
+    ],
+    [{ page: 1, lines: ['Table 1. Correlations'], rect: [0, -15, 160, -5] }],
+    [],
+    []
+  )
+  expect(result.grid.at(-1)).toEqual(['', 'HCIF', '', '', '', '', '', '1'])
+  expect(result.unassigned).toEqual([])
+  expect(result.repairs).toContain('terminal-triangular-record-recovered')
+})
+
 it('preserves the final in-table regression summary and its superscript', () => {
   const t = refine(fixture('regression-summary'))
   expect(t.unassigned).toEqual([])
@@ -136,6 +297,59 @@ it('joins a leading wrapped stub line with its numeric record', () => {
   )
   expect(result.unassigned).toEqual([])
   expect(result.grid).toContainEqual(['Duration of surgery', '76.3', '30.3'])
+})
+
+it('realigns a split code row without absorbing the next record', () => {
+  const token = (
+    text: string,
+    x: number,
+    y: number,
+    width = 40
+  ): { text: string; rect: number[]; baseline: number; height: number; horizontal: boolean } => ({
+    text,
+    rect: [x, y, x + width, y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const table = {
+    cropRect: [0, 0, 400, 140],
+    structure: {
+      objects: [
+        { label: 'table column', rect: [0, 0, 200, 140] },
+        { label: 'table column', rect: [200, 0, 400, 140] },
+        ...[0, 20, 40, 60, 90, 110].map((y, index) => ({
+          label: 'table row',
+          rect: [0, y, 400, index === 3 ? 80 : y + 20]
+        }))
+      ]
+    }
+  }
+  const result = refineTable(
+    table,
+    [
+      token('Type', 10, 5),
+      token('Code', 220, 5),
+      token('Alpha', 10, 25),
+      token('1000', 220, 25, 30),
+      token('Beta', 10, 45),
+      token('2000', 220, 45, 30),
+      token('Gamma', 10, 65),
+      token('3000', 220, 65, 30),
+      token('Delta', 10, 82),
+      token('4000', 220, 82, 30),
+      token('carcinoma', 22, 95),
+      token('Epsilon', 10, 112),
+      token('5000', 220, 112, 30)
+    ],
+    [{ page: 1, lines: ['Table 1. Codes'], rect: [0, -15, 200, -5] }],
+    [],
+    []
+  )
+  expect(result.grid).toContainEqual(['Delta carcinoma', '4000'])
+  expect(result.grid).toContainEqual(['Epsilon', '5000'])
+  expect(result.unassigned).toEqual([])
+  expect(result.repairs).toContain('text-supported-row-realigned')
 })
 
 it('recovers a numeric range row crossing model bands', () => {

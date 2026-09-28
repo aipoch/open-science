@@ -10,6 +10,27 @@ import { isUprightText } from './literature-pdf-orientation.mjs'
 const isLegendHeading = (text) =>
   /^(?:figure\s+(?:legends|captions)|List of Figures)\s*:?\s*$/i.test(text.trim())
 
+const citedPanelLetters = (text) => {
+  const cited = new Set()
+  for (const [, contents] of text.matchAll(/\(([^()]*)\)/g)) {
+    const list = contents.trim()
+    // Only complete letter lists count as panel references, not parenthetical
+    // prose or units. Expand ranges before checking exact page coverage.
+    if (
+      !/^[A-Z](?:\s*[-–—]\s*[A-Z])?(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+|\s*&\s*)[A-Z](?:\s*[-–—]\s*[A-Z])?)*$/.test(
+        list
+      )
+    )
+      continue
+    for (const [, first, last = first] of list.matchAll(/([A-Z])(?:\s*[-–—]\s*([A-Z]))?/g)) {
+      if (last < first) return
+      for (let code = first.charCodeAt(0); code <= last.charCodeAt(0); code++)
+        cited.add(String.fromCharCode(code))
+    }
+  }
+  return [...cited].sort()
+}
+
 // Accepted manuscripts can put all legends before a consecutive block of plates.
 // Match only an explicit legend section, ordered 1..N, followed by exactly N
 // text-free or explicitly numbered pages. Cropping still requires native graphic evidence.
@@ -87,21 +108,39 @@ export function matchFigureSequence(pages) {
     }
   }
   const plates = []
+  const groups = []
+  const labelPattern = /^(?:Figure|Fig\.)\s*(\d+)([A-Z])?\.?$/i
   for (let i = firstPlate; i < pages.length; i++) {
     if (pages[i].lines.some((line) => isLegendHeading(line.text))) break
     const labels = pages[i].lines.filter(
-      (l) => /^(?:Figure|Fig\.)\s*\d+\.?$/i.test(l.text.trim()) || repeatsCaption(l, plates.length)
+      (l) => labelPattern.test(l.text.trim()) || repeatsCaption(l, groups.length)
     )
-    if (
-      pages[i].lines.length &&
-      !isExportedPlate(pages[i]) &&
-      !(labels.length === 1 && Number(/\d+/.exec(labels[0].text)[0]) === plates.length + 1)
-    )
-      break
-    plates.push(pages[i])
+    const label = labels.length === 1 ? labelPattern.exec(labels[0].text.trim()) : undefined
+    const number = label ? Number(label[1]) : groups.length + 1
+    const panel = label?.[2]?.toUpperCase()
+    if (pages[i].lines.length && !isExportedPlate(pages[i]) && labels.length !== 1) break
+    if (panel) {
+      if (!label || pages[i].graphicCount < 1 || pages[i].lines.length !== 1) return new Map()
+      if (number === groups.length + 1 && panel === 'A') groups.push([])
+      const group = groups[number - 1]
+      if (number !== groups.length || !group || panel !== String.fromCharCode(65 + group.length))
+        return new Map()
+      group.push(panel)
+    } else {
+      if (number !== groups.length + 1) break
+      groups.push([])
+    }
+    plates.push({ page: pages[i], caption: number - 1 })
   }
-  if (captions.length < 2 || plates.length !== captions.length) return new Map()
-  return new Map(plates.map((page, i) => [page.pageNumber, captions[i]]))
+  if (captions.length < 2 || groups.length !== captions.length) return new Map()
+  for (const [index, panels] of groups.entries()) {
+    if (!panels.length) continue
+    // Panel pages must exactly cover the explicit panel references in their
+    // legend. A missing or duplicated page must not shift later associations.
+    const cited = citedPanelLetters(captions[index].lines.join(' '))
+    if (!cited || panels.length < 2 || panels.join('') !== cited.join('')) return new Map()
+  }
+  return new Map(plates.map(({ page, caption }) => [page.pageNumber, captions[caption]]))
 }
 
 export async function readFigureSequence(document) {
