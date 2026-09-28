@@ -418,6 +418,25 @@ describe('provider registry', () => {
     expect(resolveVendorOpenAiBaseUrl('minimax', 'nope')).toBe('https://api.minimax.io/v1')
   })
 
+  it('offers the MiniMax M3.1 Token Plan preview without replacing the pay-as-you-go default', () => {
+    const model = 'MiniMax-M3.1-Flash-Preview'
+    for (const region of ['global', 'china']) {
+      expect(getOfficialVendorModelIds('minimax', region)).toContain(model)
+      expect(defaultVendorModel('minimax', region)).toBe('MiniMax-M3')
+    }
+    expect(resolveModelContextWindow('minimax', model)).toBe(1_000_000)
+    expect(isVendorModelMultimodal('minimax', model)).toBe(true)
+    expect(resolveVendorModelApiEndpoints('minimax', model)).toEqual([
+      'anthropic',
+      'openai',
+      'responses'
+    ])
+    expect(resolveVendorModelReasoningEffort('minimax', model)).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
+  })
+
   it('routes GLM to Z.AI overseas and BigModel in China, on both endpoints', () => {
     expect(vendorHasRegions('zhipu')).toBe(true)
     expect(resolveVendorBaseUrl('zhipu', 'global')).toBe('https://api.z.ai/api/anthropic')
