@@ -1,0 +1,19 @@
+{
+  "ownerPaths": [
+    "src/main/connectors/descriptors/pathway-commons.test.ts",
+    "src/main/connectors/descriptors/pathway-commons.ts"
+  ],
+  "interfacePaths": ["src/main/connectors/descriptors/pathway-commons.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/connectors/descriptors/pathway-commons.test.ts"],
+    "contract": [
+      "src/preload/index.test.ts",
+      "src/renderer/web/api-installer.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts"
+    ],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

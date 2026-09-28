@@ -6858,6 +6858,22 @@
     "Select a personal R library before allowing package installation. Use Advanced options to choose an existing folder.": "Выберите личную библиотеку R, прежде чем разрешать установку пакетов. Существующую папку можно выбрать в дополнительных параметрах.",
     "Turn off Allow package install before changing the personal R library.": "Отключите «Разрешить установку пакета», прежде чем менять личную библиотеку R.",
     "Enable this R runtime before authorizing access.": "Включите эту среду выполнения R, прежде чем разрешать доступ.",
-    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "Эта среда выполнения R не запускается. Устраните указанную проблему и нажмите «Повторить проверку»."
+    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "Эта среда выполнения R не запускается. Устраните указанную проблему и нажмите «Повторить проверку».",
+    "Search Pathway Commons pathways, genes, and proteins.": "Поиск путей, генов и белков в Pathway Commons.",
+    "Find top-level Pathway Commons pathways with optional filters.": "Поиск путей верхнего уровня Pathway Commons с необязательными фильтрами.",
+    "Query Pathway Commons gene neighborhoods and network paths.": "Запрос соседств генов и сетевых путей в Pathway Commons.",
+    "Export Pathway Commons entities in BioPAX, GSEA, SIF, TXT, SBGN, or JSON-LD.": "Экспорт сущностей Pathway Commons в форматах BioPAX, GSEA, SIF, TXT, SBGN или JSON-LD.",
+    "List or retrieve species in the Bgee expression atlas.": "Список или получение видов из атласа экспрессии Bgee.",
+    "Retrieve Bgee expression calls for one gene and species.": "Получение данных об экспрессии Bgee для одного гена и вида.",
+    "Run a bounded Bgee SPARQL expression query.": "Выполнение ограниченного SPARQL-запроса Bgee об экспрессии.",
+    "Build official Bgee expression download links.": "Создание официальных ссылок для загрузки данных об экспрессии Bgee.",
+    "List cBioPortal samples in a study.": "Список образцов cBioPortal в исследовании.",
+    "List cBioPortal patients in a study.": "Список пациентов cBioPortal в исследовании.",
+    "Fetch cBioPortal clinical data for selected patients or samples.": "Получение клинических данных cBioPortal для выбранных пациентов или образцов.",
+    "Fetch cBioPortal molecular expression data for selected samples.": "Получение данных о молекулярной экспрессии cBioPortal для выбранных образцов.",
+    "Search FAERS adverse-event reports with bounded filters.": "Поиск сообщений FAERS о нежелательных явлениях с ограниченными фильтрами.",
+    "Count matching FAERS adverse-event reports by selected buckets.": "Подсчёт совпадающих сообщений FAERS о нежелательных явлениях по выбранным группам.",
+    "Search FDA drug enforcement and recall reports.": "Поиск сообщений FDA о мерах контроля и отзывах лекарств.",
+    "List result-file metadata and download URLs for an MGnify analysis.": "Список метаданных файлов результатов и URL загрузки для анализа MGnify."
   }
 }

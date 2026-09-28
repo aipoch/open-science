@@ -75,6 +75,18 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
+    id: 'pathway-commons',
+    displayName: 'Pathway Commons',
+    aliases: ['Pathway Commons', 'PC2', 'BioPAX pathways', 'pathway network'],
+    description:
+      'Integrated pathway and molecular interaction network queries via the Pathway Commons PC2 v14 REST API, including Reactome-filtered pathways, gene neighborhoods, paths between gene sets, and BioPAX/GSEA/SIF exports.',
+    useWhen:
+      'Use for Pathway Commons BioPAX discovery and network analysis — search pathways, genes, proteins, and interactions; find top-level pathways; query a gene neighborhood, paths between source genes, directed paths from source to target genes, or common streams; and export pathway subsets as BioPAX, JSON-LD, GSEA GMT, SIF, TXT, or SBGN. Use datasource filters such as Reactome when a cross-source pathway view is needed; use the Protein Annotation connector for STRING-specific networks.',
+    sources: ['Pathway Commons', 'Reactome'],
+    termsUrl: 'https://www.pathwaycommons.org/pc2/',
+    requiresNcbi: false
+  },
+  {
     id: 'genomes',
     displayName: 'Genomes',
     description:

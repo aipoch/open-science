@@ -6555,6 +6555,22 @@
     "Select a personal R library before allowing package installation. Use Advanced options to choose an existing folder.": "Wählen Sie eine persönliche R-Bibliothek aus, bevor Sie die Paketinstallation erlauben. Unter „Erweiterte Optionen“ können Sie einen vorhandenen Ordner auswählen.",
     "Turn off Allow package install before changing the personal R library.": "Deaktivieren Sie „Paketinstallation zulassen“, bevor Sie die persönliche R-Bibliothek ändern.",
     "Enable this R runtime before authorizing access.": "Aktivieren Sie diese R-Laufzeit, bevor Sie den Zugriff autorisieren.",
-    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "Diese R-Laufzeit ist nicht ausführbar. Beheben Sie das angezeigte Problem und klicken Sie auf „Erneut prüfen“."
+    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "Diese R-Laufzeit ist nicht ausführbar. Beheben Sie das angezeigte Problem und klicken Sie auf „Erneut prüfen“.",
+    "Search Pathway Commons pathways, genes, and proteins.": "Pathway-Commons-Pfade, Gene und Proteine durchsuchen.",
+    "Find top-level Pathway Commons pathways with optional filters.": "Übergeordnete Pathway-Commons-Pfade mit optionalen Filtern finden.",
+    "Query Pathway Commons gene neighborhoods and network paths.": "Gen-Nachbarschaften und Netzwerkpfade in Pathway Commons abfragen.",
+    "Export Pathway Commons entities in BioPAX, GSEA, SIF, TXT, SBGN, or JSON-LD.": "Pathway-Commons-Entitäten als BioPAX, GSEA, SIF, TXT, SBGN oder JSON-LD exportieren.",
+    "List or retrieve species in the Bgee expression atlas.": "Arten im Bgee-Expressionsatlas auflisten oder abrufen.",
+    "Retrieve Bgee expression calls for one gene and species.": "Bgee-Expressionsaufrufe für ein Gen und eine Art abrufen.",
+    "Run a bounded Bgee SPARQL expression query.": "Eine begrenzte Bgee-SPARQL-Abfrage zur Expression ausführen.",
+    "Build official Bgee expression download links.": "Offizielle Bgee-Downloadslinks für Expressionen erstellen.",
+    "List cBioPortal samples in a study.": "cBioPortal-Proben in einer Studie auflisten.",
+    "List cBioPortal patients in a study.": "cBioPortal-Patienten in einer Studie auflisten.",
+    "Fetch cBioPortal clinical data for selected patients or samples.": "Klinische cBioPortal-Daten für ausgewählte Patienten oder Proben abrufen.",
+    "Fetch cBioPortal molecular expression data for selected samples.": "Molekulare cBioPortal-Expressionsdaten für ausgewählte Proben abrufen.",
+    "Search FAERS adverse-event reports with bounded filters.": "FAERS-Berichte zu unerwünschten Ereignissen mit begrenzten Filtern durchsuchen.",
+    "Count matching FAERS adverse-event reports by selected buckets.": "Passende FAERS-Berichte zu unerwünschten Ereignissen nach ausgewählten Gruppen zählen.",
+    "Search FDA drug enforcement and recall reports.": "FDA-Arzneimittelvollzugs- und Rückrufberichte durchsuchen.",
+    "List result-file metadata and download URLs for an MGnify analysis.": "Dateimetadaten und Download-URLs für eine MGnify-Analyse auflisten."
   }
 }

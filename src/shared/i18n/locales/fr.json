@@ -6721,6 +6721,22 @@
     "Select a personal R library before allowing package installation. Use Advanced options to choose an existing folder.": "Sélectionnez une bibliothèque R personnelle avant d’autoriser l’installation de paquets. Utilisez les options avancées pour choisir un dossier existant.",
     "Turn off Allow package install before changing the personal R library.": "Désactivez « Autoriser l’installation de paquets » avant de changer de bibliothèque R personnelle.",
     "Enable this R runtime before authorizing access.": "Activez cet environnement R avant d’autoriser l’accès.",
-    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "Cet environnement R ne peut pas être exécuté. Résolvez le problème signalé, puis cliquez sur « Revérifier »."
+    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "Cet environnement R ne peut pas être exécuté. Résolvez le problème signalé, puis cliquez sur « Revérifier ».",
+    "Search Pathway Commons pathways, genes, and proteins.": "Rechercher des voies, des gènes et des protéines dans Pathway Commons.",
+    "Find top-level Pathway Commons pathways with optional filters.": "Trouver les voies de premier niveau de Pathway Commons avec des filtres facultatifs.",
+    "Query Pathway Commons gene neighborhoods and network paths.": "Interroger les voisinages de gènes et les chemins de réseau dans Pathway Commons.",
+    "Export Pathway Commons entities in BioPAX, GSEA, SIF, TXT, SBGN, or JSON-LD.": "Exporter des entités Pathway Commons en BioPAX, GSEA, SIF, TXT, SBGN ou JSON-LD.",
+    "List or retrieve species in the Bgee expression atlas.": "Lister ou récupérer les espèces de l’atlas d’expression Bgee.",
+    "Retrieve Bgee expression calls for one gene and species.": "Récupérer les appels d’expression Bgee pour un gène et une espèce.",
+    "Run a bounded Bgee SPARQL expression query.": "Exécuter une requête SPARQL Bgee bornée sur l’expression.",
+    "Build official Bgee expression download links.": "Créer des liens officiels de téléchargement d’expression Bgee.",
+    "List cBioPortal samples in a study.": "Lister les échantillons cBioPortal d’une étude.",
+    "List cBioPortal patients in a study.": "Lister les patients cBioPortal d’une étude.",
+    "Fetch cBioPortal clinical data for selected patients or samples.": "Récupérer les données cliniques cBioPortal pour les patients ou échantillons sélectionnés.",
+    "Fetch cBioPortal molecular expression data for selected samples.": "Récupérer les données d’expression moléculaire cBioPortal pour les échantillons sélectionnés.",
+    "Search FAERS adverse-event reports with bounded filters.": "Rechercher des rapports d’événements indésirables FAERS avec des filtres bornés.",
+    "Count matching FAERS adverse-event reports by selected buckets.": "Compter les rapports d’événements indésirables FAERS correspondants par catégorie sélectionnée.",
+    "Search FDA drug enforcement and recall reports.": "Rechercher les rapports d’application et de rappel de médicaments de la FDA.",
+    "List result-file metadata and download URLs for an MGnify analysis.": "Lister les métadonnées des fichiers de résultats et les URL de téléchargement d’une analyse MGnify."
   }
 }

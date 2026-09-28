@@ -48,6 +48,38 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'expression/bgee_species':
+      return t('List or retrieve species in the Bgee expression atlas.')
+    case 'expression/bgee_expression_calls':
+      return t('Retrieve Bgee expression calls for one gene and species.')
+    case 'expression/bgee_sparql_expression':
+      return t('Run a bounded Bgee SPARQL expression query.')
+    case 'expression/bgee_download_links':
+      return t('Build official Bgee expression download links.')
+    case 'cancer-models/cbioportal_get_samples':
+      return t('List cBioPortal samples in a study.')
+    case 'cancer-models/cbioportal_get_patients':
+      return t('List cBioPortal patients in a study.')
+    case 'cancer-models/cbioportal_get_clinical_data':
+      return t('Fetch cBioPortal clinical data for selected patients or samples.')
+    case 'cancer-models/cbioportal_get_molecular_data':
+      return t('Fetch cBioPortal molecular expression data for selected samples.')
+    case 'drug-regulatory/search_drug_adverse_events':
+      return t('Search FAERS adverse-event reports with bounded filters.')
+    case 'drug-regulatory/count_drug_adverse_events':
+      return t('Count matching FAERS adverse-event reports by selected buckets.')
+    case 'drug-regulatory/search_drug_recalls':
+      return t('Search FDA drug enforcement and recall reports.')
+    case 'omics-archives/mgnify_get_analysis_files':
+      return t('List result-file metadata and download URLs for an MGnify analysis.')
+    case 'pathway-commons/pathway_commons_search':
+      return t('Search Pathway Commons pathways, genes, and proteins.')
+    case 'pathway-commons/pathway_commons_top_pathways':
+      return t('Find top-level Pathway Commons pathways with optional filters.')
+    case 'pathway-commons/pathway_commons_graph':
+      return t('Query Pathway Commons gene neighborhoods and network paths.')
+    case 'pathway-commons/pathway_commons_export':
+      return t('Export Pathway Commons entities in BioPAX, GSEA, SIF, TXT, SBGN, or JSON-LD.')
     case 'interproscan/status':
       return t('Check an InterProScan job once. Wait at least 10 seconds between checks.')
     case 'interproscan/results':

@@ -6395,6 +6395,22 @@
     "Select a personal R library before allowing package installation. Use Advanced options to choose an existing folder.": "패키지 설치를 허용하기 전에 개인 R 라이브러리를 선택하세요. 고급 옵션에서 기존 폴더를 선택할 수 있습니다.",
     "Turn off Allow package install before changing the personal R library.": "개인 R 라이브러리를 변경하기 전에 패키지 설치 허용을 끄세요.",
     "Enable this R runtime before authorizing access.": "접근을 허용하기 전에 이 R 런타임을 활성화하세요.",
-    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "이 R 런타임을 실행할 수 없습니다. 표시된 문제를 해결한 후 재확인을 클릭하세요."
+    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "이 R 런타임을 실행할 수 없습니다. 표시된 문제를 해결한 후 재확인을 클릭하세요.",
+    "Search Pathway Commons pathways, genes, and proteins.": "Pathway Commons의 경로, 유전자 및 단백질을 검색합니다.",
+    "Find top-level Pathway Commons pathways with optional filters.": "선택적 필터를 사용해 Pathway Commons의 최상위 경로를 찾습니다.",
+    "Query Pathway Commons gene neighborhoods and network paths.": "Pathway Commons의 유전자 이웃과 네트워크 경로를 조회합니다.",
+    "Export Pathway Commons entities in BioPAX, GSEA, SIF, TXT, SBGN, or JSON-LD.": "Pathway Commons 엔터티를 BioPAX, GSEA, SIF, TXT, SBGN 또는 JSON-LD로 내보냅니다.",
+    "List or retrieve species in the Bgee expression atlas.": "Bgee 발현 아틀라스의 종을 나열하거나 조회합니다.",
+    "Retrieve Bgee expression calls for one gene and species.": "한 유전자와 종에 대한 Bgee 발현 호출을 조회합니다.",
+    "Run a bounded Bgee SPARQL expression query.": "제한된 Bgee SPARQL 발현 쿼리를 실행합니다.",
+    "Build official Bgee expression download links.": "공식 Bgee 발현 다운로드 링크를 생성합니다.",
+    "List cBioPortal samples in a study.": "연구의 cBioPortal 샘플을 나열합니다.",
+    "List cBioPortal patients in a study.": "연구의 cBioPortal 환자를 나열합니다.",
+    "Fetch cBioPortal clinical data for selected patients or samples.": "선택한 환자 또는 샘플의 cBioPortal 임상 데이터를 조회합니다.",
+    "Fetch cBioPortal molecular expression data for selected samples.": "선택한 샘플의 cBioPortal 분자 발현 데이터를 조회합니다.",
+    "Search FAERS adverse-event reports with bounded filters.": "제한된 필터로 FAERS 이상 사례 보고서를 검색합니다.",
+    "Count matching FAERS adverse-event reports by selected buckets.": "선택한 범주별로 일치하는 FAERS 이상 사례 보고서를 집계합니다.",
+    "Search FDA drug enforcement and recall reports.": "FDA 의약품 집행 및 리콜 보고서를 검색합니다.",
+    "List result-file metadata and download URLs for an MGnify analysis.": "MGnify 분석의 결과 파일 메타데이터와 다운로드 URL을 나열합니다."
   }
 }

@@ -6397,6 +6397,22 @@
     "Select a personal R library before allowing package installation. Use Advanced options to choose an existing folder.": "请先选择个人 R 包库，再允许安装软件包。可在“高级选项”中选择已有文件夹。",
     "Turn off Allow package install before changing the personal R library.": "请先关闭“允许安装软件包”，再更换个人 R 包库。",
     "Enable this R runtime before authorizing access.": "请先启用此 R 运行时，再授权访问。",
-    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "此 R 运行时无法运行。请解决显示的问题，然后点击“重新检测”。"
+    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "此 R 运行时无法运行。请解决显示的问题，然后点击“重新检测”。",
+    "Search Pathway Commons pathways, genes, and proteins.": "搜索 Pathway Commons 中的通路、基因和蛋白质。",
+    "Find top-level Pathway Commons pathways with optional filters.": "使用可选筛选条件查找 Pathway Commons 顶层通路。",
+    "Query Pathway Commons gene neighborhoods and network paths.": "查询 Pathway Commons 基因邻域和网络路径。",
+    "Export Pathway Commons entities in BioPAX, GSEA, SIF, TXT, SBGN, or JSON-LD.": "将 Pathway Commons 实体导出为 BioPAX、GSEA、SIF、TXT、SBGN 或 JSON-LD。",
+    "List or retrieve species in the Bgee expression atlas.": "列出或获取 Bgee 表达图谱中的物种。",
+    "Retrieve Bgee expression calls for one gene and species.": "获取一个基因和物种的 Bgee 表达调用。",
+    "Run a bounded Bgee SPARQL expression query.": "运行有界的 Bgee SPARQL 表达查询。",
+    "Build official Bgee expression download links.": "生成官方 Bgee 表达下载链接。",
+    "List cBioPortal samples in a study.": "列出研究中的 cBioPortal 样本。",
+    "List cBioPortal patients in a study.": "列出研究中的 cBioPortal 患者。",
+    "Fetch cBioPortal clinical data for selected patients or samples.": "获取所选患者或样本的 cBioPortal 临床数据。",
+    "Fetch cBioPortal molecular expression data for selected samples.": "获取所选样本的 cBioPortal 分子表达数据。",
+    "Search FAERS adverse-event reports with bounded filters.": "使用有界筛选条件搜索 FAERS 不良事件报告。",
+    "Count matching FAERS adverse-event reports by selected buckets.": "按所选分组统计匹配的 FAERS 不良事件报告。",
+    "Search FDA drug enforcement and recall reports.": "搜索 FDA 药品执法和召回报告。",
+    "List result-file metadata and download URLs for an MGnify analysis.": "列出 MGnify 分析的结果文件元数据和下载 URL。"
   }
 }

@@ -251,6 +251,52 @@ describe('ConnectorAddForm copy', () => {
     expect(connectorDescription({ id: 'custom', description: fallback }, t)).toBe(fallback)
 
     const toolCases = [
+      ['expression/bgee_species', 'List or retrieve species in the Bgee expression atlas.'],
+      [
+        'expression/bgee_expression_calls',
+        'Retrieve Bgee expression calls for one gene and species.'
+      ],
+      ['expression/bgee_sparql_expression', 'Run a bounded Bgee SPARQL expression query.'],
+      ['expression/bgee_download_links', 'Build official Bgee expression download links.'],
+      ['cancer-models/cbioportal_get_samples', 'List cBioPortal samples in a study.'],
+      ['cancer-models/cbioportal_get_patients', 'List cBioPortal patients in a study.'],
+      [
+        'cancer-models/cbioportal_get_clinical_data',
+        'Fetch cBioPortal clinical data for selected patients or samples.'
+      ],
+      [
+        'cancer-models/cbioportal_get_molecular_data',
+        'Fetch cBioPortal molecular expression data for selected samples.'
+      ],
+      [
+        'drug-regulatory/search_drug_adverse_events',
+        'Search FAERS adverse-event reports with bounded filters.'
+      ],
+      [
+        'drug-regulatory/count_drug_adverse_events',
+        'Count matching FAERS adverse-event reports by selected buckets.'
+      ],
+      ['drug-regulatory/search_drug_recalls', 'Search FDA drug enforcement and recall reports.'],
+      [
+        'omics-archives/mgnify_get_analysis_files',
+        'List result-file metadata and download URLs for an MGnify analysis.'
+      ],
+      [
+        'pathway-commons/pathway_commons_search',
+        'Search Pathway Commons pathways, genes, and proteins.'
+      ],
+      [
+        'pathway-commons/pathway_commons_top_pathways',
+        'Find top-level Pathway Commons pathways with optional filters.'
+      ],
+      [
+        'pathway-commons/pathway_commons_graph',
+        'Query Pathway Commons gene neighborhoods and network paths.'
+      ],
+      [
+        'pathway-commons/pathway_commons_export',
+        'Export Pathway Commons entities in BioPAX, GSEA, SIF, TXT, SBGN, or JSON-LD.'
+      ],
       [
         'interproscan/status',
         'Check an InterProScan job once. Wait at least 10 seconds between checks.'

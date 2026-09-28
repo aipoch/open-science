@@ -6397,6 +6397,22 @@
     "Select a personal R library before allowing package installation. Use Advanced options to choose an existing folder.": "請先選擇個人 R 套件庫，再允許安裝套件。可在「進階選項」中選擇現有資料夾。",
     "Turn off Allow package install before changing the personal R library.": "請先關閉「允許安裝套件」，再更換個人 R 套件庫。",
     "Enable this R runtime before authorizing access.": "請先啟用此 R 執行環境，再授權存取。",
-    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "此 R 執行環境無法執行。請解決顯示的問題，然後點選「重新偵測」。"
+    "This R runtime is not runnable. Resolve its reported issue, then click Recheck.": "此 R 執行環境無法執行。請解決顯示的問題，然後點選「重新偵測」。",
+    "Search Pathway Commons pathways, genes, and proteins.": "搜尋 Pathway Commons 中的路徑、基因和蛋白質。",
+    "Find top-level Pathway Commons pathways with optional filters.": "使用可選篩選條件尋找 Pathway Commons 頂層路徑。",
+    "Query Pathway Commons gene neighborhoods and network paths.": "查詢 Pathway Commons 基因鄰域和網路路徑。",
+    "Export Pathway Commons entities in BioPAX, GSEA, SIF, TXT, SBGN, or JSON-LD.": "將 Pathway Commons 實體匯出為 BioPAX、GSEA、SIF、TXT、SBGN 或 JSON-LD。",
+    "List or retrieve species in the Bgee expression atlas.": "列出或取得 Bgee 表現圖譜中的物種。",
+    "Retrieve Bgee expression calls for one gene and species.": "取得一個基因和物種的 Bgee 表現呼叫。",
+    "Run a bounded Bgee SPARQL expression query.": "執行有界的 Bgee SPARQL 表現查詢。",
+    "Build official Bgee expression download links.": "建立官方 Bgee 表現下載連結。",
+    "List cBioPortal samples in a study.": "列出研究中的 cBioPortal 樣本。",
+    "List cBioPortal patients in a study.": "列出研究中的 cBioPortal 患者。",
+    "Fetch cBioPortal clinical data for selected patients or samples.": "取得所選患者或樣本的 cBioPortal 臨床資料。",
+    "Fetch cBioPortal molecular expression data for selected samples.": "取得所選樣本的 cBioPortal 分子表現資料。",
+    "Search FAERS adverse-event reports with bounded filters.": "使用有界篩選條件搜尋 FAERS 不良事件報告。",
+    "Count matching FAERS adverse-event reports by selected buckets.": "按所選分組統計相符的 FAERS 不良事件報告。",
+    "Search FDA drug enforcement and recall reports.": "搜尋 FDA 藥品執法和回收報告。",
+    "List result-file metadata and download URLs for an MGnify analysis.": "列出 MGnify 分析的結果檔案中繼資料和下載 URL。"
   }
 }
