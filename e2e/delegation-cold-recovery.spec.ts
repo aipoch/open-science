@@ -1,11 +1,11 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 
 const PROMPT = 'Run delegated cold recovery regression.'
 
-test('continues a child after app restart with a retained real process receipt', async ({
+test('continues a child after force quit without rewriting persisted state', async ({
   app
 }, testInfo) => {
   test.skip(process.platform !== 'darwin', 'Exercises the macOS cold process scan.')
@@ -49,14 +49,9 @@ test('continues a child after app restart with a retained real process receipt',
   expect(JSON.parse(receipt).ownership.leader.birthToken).toMatch(/^darwin-proc-uniqueid:/)
   const originalAttempt = interrupted.runtimeContext!.delegatedWork!.records[0].attempts[0].id
 
-  // End the actual processes before restarting the isolated app, then preserve their genuine
-  // receipt to reproduce an app exit that missed the last cleanup acknowledgement. This avoids
-  // fabricating process identity or leaving a test-owned orphan on the developer's machine.
-  await page.getByRole('button', { name: 'Cancel run', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toBeVisible()
-  page = await app.restartWithSessionFixture(interrupted)
-  await mkdir(receiptRoot, { recursive: true })
-  await writeFile(join(receiptRoot, filename), receipt)
+  // Keep the real persisted session and receipt untouched. Terminate the isolated app while
+  // its child is running, then exercise recovery from exactly what survived on disk.
+  page = await app.restartAfterCrash({ force: true })
   await page
     .getByRole('region', { name: 'Recent sessions' })
     .getByRole('button', { name: PROMPT })

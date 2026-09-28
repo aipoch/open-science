@@ -23,7 +23,7 @@ required for the stale `owned` receipt that triggered this fix.
 
 Validation includes portable native-observation tests, real macOS process receipt reconstruction,
 existing process-tree/Notebook consumer tests, and an Electron restart regression using a genuine
-spawn receipt. The UI fixture ends its test-owned processes, restores an in-flight session after
-relaunch, and reinstates the retained receipt before exercising the production lazy recovery path.
+spawn receipt. The UI fixture force-terminates the isolated application while its child is running and resumes
+the on-disk session after relaunch without rewriting the session or restoring a receipt.
 It asserts that explicit continuation creates a new attempt and preserves the old cancelled attempt.
 The test does not claim to simulate every possible force-quit timing or arbitrary descendant program.
