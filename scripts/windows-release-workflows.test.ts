@@ -848,6 +848,13 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
             options: ['backfill', 'promote'],
             default: 'backfill'
           },
+          bootstrap_linux_arm64: {
+            description:
+              'First ARM64 promotion only: allow a confirmed missing ARM64 feed (requires promote)',
+            required: false,
+            type: 'boolean',
+            default: false
+          },
           dry_run: {
             description: 'Run local release transforms without AWS credentials or uploads',
             required: false,
