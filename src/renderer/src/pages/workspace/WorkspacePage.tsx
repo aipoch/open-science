@@ -75,6 +75,7 @@ import {
   starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
+import { useConversationSubmissions } from './use-conversation-submissions'
 import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
 import { ConversationExportDialog } from './ConversationExportDialog'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
@@ -145,6 +146,7 @@ const WorkspacePage = ({
   isPreviewPresentationActive = true
 }: WorkspacePageProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const conversationSubmissions = useConversationSubmissions()
   // The active project scopes which sessions are visible and stamps newly created ones. The workspace
   // is only reachable via openProject/openSession (which set it); '' is a defensive sentinel that
   // matches no session and triggers the redirect below.
@@ -1674,6 +1676,7 @@ const WorkspacePage = ({
             }) => (
               <ConversationPanel
                 key={JSON.stringify([scopedProjectId, activeSession?.id])}
+                submissions={conversationSubmissions}
                 view={{
                   activeSession,
                   composerFocusKey: currentDraftKey,

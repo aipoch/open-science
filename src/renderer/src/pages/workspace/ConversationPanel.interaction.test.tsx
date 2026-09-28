@@ -14,6 +14,7 @@ vi.mock('@/lib/session-fork', () => ({
 }))
 
 import { ConversationPanel } from './ConversationPanel'
+import { useConversationSubmissions } from './use-conversation-submissions'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { subscribeAnnotationReveal } from './annotations/annotation-reveal'
 import { docFromText, emptyDoc, type ComposerDoc } from './composer/composer-doc'
@@ -794,6 +795,12 @@ const createPanelDefaults = (): PanelProps => ({
   },
   subagents: {
     stop: vi.fn()
+  },
+  submissions: {
+    stopBySessionId: new Map(),
+    resumePendingSessionIds: new Set(),
+    submitStop: vi.fn(),
+    submitResume: vi.fn()
   }
 })
 
@@ -817,10 +824,15 @@ const mergePanelProps = (defaults: PanelProps, overrides: DeepPartial<PanelProps
   return merge(defaults, overrides) as PanelProps
 }
 
+const PanelHarness = (props: PanelProps): React.JSX.Element => {
+  const submissions = useConversationSubmissions()
+  return <ConversationPanel {...props} submissions={submissions} />
+}
+
 const renderPanel = (props: DeepPartial<PanelProps> = {}): void => {
   const panelProps = mergePanelProps(createPanelDefaults(), props)
   act(() => {
-    root.render(<ConversationPanel {...panelProps} />)
+    root.render(<PanelHarness {...panelProps} />)
   })
 }
 

@@ -641,6 +641,70 @@ describe('WorkspacePage draft preservation', () => {
     expect(conversationProps.composer.view.doc).toEqual(textDoc('draft for A'))
   })
 
+  it('keeps pending Stop and Resume guards across a Session round trip', async () => {
+    await renderPage()
+    let finishStop: (() => void) | undefined
+    let finishResume: (() => void) | undefined
+    const stop = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishStop = resolve
+        })
+    )
+    const resume = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishResume = resolve
+        })
+    )
+
+    await act(async () => {
+      conversationProps.submissions.submitStop('sess-a', stop)
+      void conversationProps.submissions.submitResume('sess-a', resume)
+    })
+    await openSession('sess-b')
+    await openSession('sess-a')
+    expect(conversationProps.submissions.stopBySessionId.get('sess-a')?.pending).toBe(true)
+    expect(conversationProps.submissions.resumePendingSessionIds.has('sess-a')).toBe(true)
+
+    await act(async () => {
+      conversationProps.submissions.submitStop('sess-a', stop)
+      void conversationProps.submissions.submitResume('sess-a', resume)
+    })
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(resume).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      finishStop!()
+      finishResume!()
+    })
+    expect(conversationProps.submissions.stopBySessionId.has('sess-a')).toBe(false)
+    expect(conversationProps.submissions.resumePendingSessionIds.has('sess-a')).toBe(false)
+  })
+
+  it('keeps a late Stop error visible after returning to its Session', async () => {
+    await renderPage()
+    let failStop: ((error: Error) => void) | undefined
+    await act(async () => {
+      conversationProps.submissions.submitStop(
+        'sess-a',
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            failStop = reject
+          })
+      )
+    })
+    await openSession('sess-b')
+    await act(async () => {
+      failStop!(new Error('Stop request failed'))
+    })
+    await openSession('sess-a')
+    expect(conversationProps.submissions.stopBySessionId.get('sess-a')).toEqual({
+      pending: false,
+      error: 'Stop request failed'
+    })
+  })
+
   it('uses the configured profile only for new conversations', async () => {
     useSettingsStore.setState({ defaultPermissionProfile: 'auto' })
     useSessionStore.setState((state) => ({
