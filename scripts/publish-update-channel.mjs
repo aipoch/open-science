@@ -42,11 +42,12 @@ const upload = (source, target, immutable, type) =>
 const manifest = JSON.parse(readFileSync('version.json', 'utf8'))
 if (manifest.version !== version) throw new Error('Manifest does not match the requested version')
 const feeds = readdirSync('dist-assets')
-  .filter((name) => /^(latest(?:-linux)?|.*-mac)\.yml$/.test(name))
+  .filter((name) => /^(latest(?:-linux(?:-arm64)?)?|.*-mac)\.yml$/.test(name))
   .sort()
 const required = [
   'latest.yml',
   'latest-linux.yml',
+  'latest-linux-arm64.yml',
   'latest-mac.yml',
   'arm64-mac.yml',
   'x64-mac.yml'
