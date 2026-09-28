@@ -468,7 +468,11 @@
       "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx",
       "src/renderer/src/pages/literature/SmartCollectionProcess.test.tsx",
       "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
-      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
+      "src/renderer/src/pages/literature/JournalAlignment.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalDatasetActions.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
+      "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

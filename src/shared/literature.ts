@@ -20,6 +20,7 @@ import { z } from 'zod'
 
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 import { uploadedAttachmentSchema } from './uploads'
+import { JOURNAL_ATTRIBUTE_FILTER_MAX, journalAttributeFilterSchema } from './journal-attributes'
 
 const LITERATURE_ITEM_TYPES = [
   'journalArticle',
@@ -174,7 +175,11 @@ const literatureFilterSchema = z
     itemTypes: z.array(z.enum(LITERATURE_ITEM_TYPES)).max(LITERATURE_ITEM_TYPES.length).optional(),
     hasFullText: z.boolean().optional(),
     collectionId: optionalTextSchema,
-    projectId: optionalTextSchema
+    projectId: optionalTextSchema,
+    journalAttributes: z
+      .array(journalAttributeFilterSchema)
+      .max(JOURNAL_ATTRIBUTE_FILTER_MAX)
+      .optional()
   })
   .strict()
   .refine(

@@ -1,3 +1,4 @@
+import { JournalAttributes } from '@/pages/literature/JournalAttributes'
 /* Hallmark · component: library preview · genre: modern-minimal · theme: existing workspace
  * Pre-emit critique: P5 H4 E4 S5 R5 V4. Preserve project tokens and native control states.
  */
@@ -230,6 +231,7 @@ function ReferenceRow({
           </span>
         </button>
       </div>
+      <JournalAttributes item={entry.item} itemId={entry.id} />
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-2 pb-3">
         <div className="flex items-center gap-1">
           <Button

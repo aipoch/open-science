@@ -545,7 +545,8 @@
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/literature/smart-collections.test.ts",
       "src/main/acp/library-auto-policy.test.ts",
-      "src/main/notebook/wsl2-scheduling.integration.test.ts"
+      "src/main/notebook/wsl2-scheduling.integration.test.ts",
+      "src/main/literature/journal-attributes.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

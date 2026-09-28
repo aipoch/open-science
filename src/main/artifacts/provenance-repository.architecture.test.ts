@@ -962,7 +962,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/notebook/runtime-service.macos-isolation.integration.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts',
       'src/main/acp/library-auto-policy.test.ts',
-      'src/main/reviewer/correction-resume.test.ts'
+      'src/main/reviewer/correction-resume.test.ts',
+      'src/main/literature/journal-attributes.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

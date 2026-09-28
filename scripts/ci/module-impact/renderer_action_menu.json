@@ -92,7 +92,10 @@
       "src/renderer/src/pages/workspace/previews/renderers/scientific-preview.test.tsx",
       "src/renderer/src/pages/workspace/session-action-menu.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/literature/JournalColumnHeader.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalDatasetActions.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalManager.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

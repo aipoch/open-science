@@ -644,7 +644,10 @@
     "src/main/literature/smart-evidence.ts",
     "src/main/literature/smart-rule-history.ts",
     "src/main/literature/smart-run-progress.ts",
-    "src/main/literature/metadata-merge.ts"
+    "src/main/literature/metadata-merge.ts",
+    "src/main/literature/journal-attributes.test.ts",
+    "src/main/literature/journal-attributes.ts",
+    "src/main/literature/journal-attributes.scale.test.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -673,7 +676,8 @@
     "src/main/literature/pdf-structure/source.ts",
     "src/main/literature/reference-resolver.ts",
     "src/main/literature/session-pdf-source-resolver.ts",
-    "src/main/literature/transact.ts"
+    "src/main/literature/transact.ts",
+    "src/main/literature/journal-attributes.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -842,7 +846,9 @@
       "src/main/literature/session-pdf-source-resolver.test.ts",
       "src/main/literature/citation-exchange.test.ts",
       "src/main/literature/pdf-structure/table-native-record-boundaries.test.ts",
-      "src/main/literature/smart-collections.test.ts"
+      "src/main/literature/smart-collections.test.ts",
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/literature/journal-attributes.scale.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

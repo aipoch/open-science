@@ -1,7 +1,7 @@
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: citation style manager · genre: modern-minimal · theme: existing Open-Science tokens · enrichment: none */
-import { ArrowLeft, BookOpenText, FileText, LoaderCircle, Trash2, Upload } from 'lucide-react'
+import { ArrowLeft, BookOpenText, Eye, FileText, LoaderCircle, Trash2, Upload } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -23,6 +23,7 @@ type CitationStylesViewProps = Readonly<{
   styles?: LiteratureCitationStyleView[]
   onBack: () => void
   onStylesChange: (styles: LiteratureCitationStyleView[]) => void
+  embedded?: boolean
 }>
 
 type CitationStylePreview = NonNullable<LiteratureCitationStyleView['preview']>
@@ -33,7 +34,8 @@ type CitationStylePreviewState =
 const CitationStylesView = ({
   styles,
   onBack,
-  onStylesChange
+  onStylesChange,
+  embedded = false
 }: CitationStylesViewProps): React.JSX.Element => {
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -421,6 +423,10 @@ const CitationStylesView = ({
             ) : null}
           </PopoverContent>
         </Popover>
+        <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <Eye className="size-3.5" aria-hidden="true" />
+          {t('Preview')}
+        </span>
         {style.source === 'custom' ? (
           <Button
             type="button"
@@ -450,13 +456,21 @@ const CitationStylesView = ({
 
   return (
     <>
-      <div className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto px-4 py-6 [scrollbar-width:none] lg:px-6 lg:py-8 [&::-webkit-scrollbar]:hidden">
+      <div className="flex h-full w-full flex-col overflow-y-auto px-4 py-6 [scrollbar-width:none] lg:px-6 lg:py-8 [&::-webkit-scrollbar]:hidden">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <Button type="button" variant="ghost" size="sm" className="-ml-2 mb-3" onClick={onBack}>
-              <ArrowLeft className="size-4" aria-hidden="true" />
-              {t('Back to references')}
-            </Button>
+            {!embedded ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="-ml-2 mb-3"
+                onClick={onBack}
+              >
+                <ArrowLeft className="size-4" aria-hidden="true" />
+                {t('Back to references')}
+              </Button>
+            ) : null}
             <h2 className="text-2xl font-semibold tracking-tight">{t('Citation styles')}</h2>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
               {t('Choose the styles available when formatting references and documents.')}

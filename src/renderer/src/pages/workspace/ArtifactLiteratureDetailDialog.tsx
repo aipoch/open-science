@@ -1,3 +1,4 @@
+import { JournalAttributes } from '@/pages/literature/JournalAttributes'
 import { ErrorNotice } from '@/components/error-notice'
 import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
@@ -216,6 +217,18 @@ const ArtifactLiteratureDetailDialog = ({
                     {item.abstract}
                   </p>
                 </section>
+              ) : null}
+
+              {!snapshotOnly ? (
+                <JournalAttributes
+                  item={item}
+                  itemId={
+                    liveMetadata && resolvedReference?.status === 'ready'
+                      ? resolvedReference.itemId
+                      : undefined
+                  }
+                  detail
+                />
               ) : null}
 
               <section className="py-4">

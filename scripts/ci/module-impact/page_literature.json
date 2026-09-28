@@ -89,7 +89,27 @@
     "src/renderer/src/pages/literature/useSmartDecisionBatch.test.tsx",
     "src/renderer/src/pages/literature/useSmartDecisionBatch.ts",
     "src/renderer/src/pages/literature/SmartCollectionProcess.tsx",
-    "src/renderer/src/pages/literature/SmartCollectionProcess.test.tsx"
+    "src/renderer/src/pages/literature/SmartCollectionProcess.test.tsx",
+    "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
+    "src/renderer/src/pages/literature/JournalAttributes.tsx",
+    "src/renderer/src/pages/literature/JournalManager.tsx",
+    "src/renderer/src/pages/literature/journal-attribute-store.ts",
+    "src/renderer/src/pages/literature/journal-import-file.test.ts",
+    "src/renderer/src/pages/literature/journal-import-file.ts",
+    "src/renderer/src/pages/literature/journal-import.worker.ts",
+    "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
+    "src/renderer/src/pages/literature/JournalAlignment.tsx",
+    "src/renderer/src/pages/literature/JournalAlignment.render.test.tsx",
+    "src/renderer/src/pages/literature/JournalFieldRow.tsx",
+    "src/renderer/src/pages/literature/JournalColumnHeader.tsx",
+    "src/renderer/src/pages/literature/JournalColumnHeader.render.test.tsx",
+    "src/renderer/src/pages/literature/JournalDatasetActions.tsx",
+    "src/renderer/src/pages/literature/JournalDatasetActions.render.test.tsx",
+    "src/renderer/src/pages/literature/LiteraturePagination.tsx",
+    "src/renderer/src/pages/literature/JournalEntryRow.tsx",
+    "src/renderer/src/pages/literature/journal-bundle.ts",
+    "src/renderer/src/pages/literature/LiteratureFilters.tsx",
+    "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/LiteratureBatchLookupDialog.tsx",
@@ -99,7 +119,8 @@
     "src/renderer/src/pages/literature/literature-merge.ts",
     "src/renderer/src/pages/literature/literature-read-pages.ts",
     "src/renderer/src/pages/literature/literature-reading.ts",
-    "src/renderer/src/pages/literature/useLiteratureChanges.ts"
+    "src/renderer/src/pages/literature/useLiteratureChanges.ts",
+    "src/renderer/src/pages/literature/JournalAttributes.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -137,7 +158,14 @@
       "src/renderer/src/pages/literature/reconcile-literature-page.test.ts",
       "src/renderer/src/pages/literature/smart-collection-state.test.ts",
       "src/renderer/src/pages/literature/useSmartDecisionBatch.test.tsx",
-      "src/renderer/src/pages/literature/SmartCollectionProcess.test.tsx"
+      "src/renderer/src/pages/literature/SmartCollectionProcess.test.tsx",
+      "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
+      "src/renderer/src/pages/literature/journal-import-file.test.ts",
+      "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalAlignment.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalColumnHeader.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalDatasetActions.render.test.tsx",
+      "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -332,7 +360,9 @@
       "src/renderer/src/stores/settings-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
+      "src/main/literature/journal-attributes.scale.test.ts",
+      "src/main/literature/journal-attributes.test.ts"
     ]
   },
   "capabilityOverlays": [],

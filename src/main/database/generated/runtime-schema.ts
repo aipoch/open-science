@@ -1145,6 +1145,41 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     PRIMARY KEY ("runId", "itemId"),
     CONSTRAINT "LiteratureSmartRunItem_runId_fkey" FOREIGN KEY ("runId") REFERENCES "LiteratureSmartRun" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "LiteratureSmartRunItem_values_check" CHECK ("state" IN ('pending', 'done', 'error') AND ("failure" IS NULL OR "failure" IN ('auth', 'rate-limit', 'timeout', 'network', 'invalid-response', 'configuration', 'service', 'unknown')) AND ("resultJson" IS NULL OR (json_valid("resultJson") AND json_type("resultJson") = 'object')))
+);`,
+  `CREATE TABLE IF NOT EXISTS "Journal" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "name" TEXT NOT NULL,
+    "normalizedName" TEXT NOT NULL,
+    "aliasesJson" TEXT NOT NULL DEFAULT '[]',
+    "issnsJson" TEXT NOT NULL DEFAULT '[]',
+    "externalIdsJson" TEXT NOT NULL DEFAULT '[]'
+);`,
+  `CREATE TABLE IF NOT EXISTS "JournalDataset" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "name" TEXT,
+    "source" TEXT NOT NULL,
+    "year" INTEGER NOT NULL,
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "fieldsJson" TEXT NOT NULL,
+    "importedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`,
+  `CREATE TABLE IF NOT EXISTS "JournalDatasetEntry" (
+    "datasetId" TEXT NOT NULL,
+    "journalId" TEXT NOT NULL,
+    "valuesJson" TEXT NOT NULL,
+    "sourceRow" INTEGER NOT NULL,
+
+    PRIMARY KEY ("datasetId", "journalId"),
+    CONSTRAINT "JournalDatasetEntry_datasetId_fkey" FOREIGN KEY ("datasetId") REFERENCES "JournalDataset" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "JournalDatasetEntry_journalId_fkey" FOREIGN KEY ("journalId") REFERENCES "Journal" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "JournalItemBinding" (
+    "itemId" TEXT NOT NULL PRIMARY KEY,
+    "journalId" TEXT NOT NULL,
+    "identityFingerprint" TEXT NOT NULL,
+    "revision" TEXT NOT NULL,
+    CONSTRAINT "JournalItemBinding_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "LiteratureItem" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "JournalItemBinding_journalId_fkey" FOREIGN KEY ("journalId") REFERENCES "Journal" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );`
 ] as const
 
@@ -1297,6 +1332,10 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "ClassificationUsage_runId_idx" ON "ClassificationUsage"("runId");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureSmartRunItem_runId_state_idx" ON "LiteratureSmartRunItem"("runId", "state");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureSmartRunItem_itemId_evaluatedAt_idx" ON "LiteratureSmartRunItem"("itemId", "evaluatedAt");`,
+  `CREATE INDEX IF NOT EXISTS "Journal_normalizedName_idx" ON "Journal"("normalizedName");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "JournalDataset_source_year_key" ON "JournalDataset"("source", "year");`,
+  `CREATE INDEX IF NOT EXISTS "JournalDatasetEntry_journalId_idx" ON "JournalDatasetEntry"("journalId");`,
+  `CREATE INDEX IF NOT EXISTS "JournalItemBinding_journalId_idx" ON "JournalItemBinding"("journalId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`,
   `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_project_visible_idx" ON "BackgroundResultDelivery"("projectId", "updatedAt" DESC, "id") WHERE "state" IN ('waiting-result', 'pending', 'claimed', 'dispatching', 'needs-attention')`,
@@ -1377,7 +1416,11 @@ const RUNTIME_SCHEMA_TABLES = [
   'LiteratureSmartRun',
   'ClassificationUsage',
   'LiteratureSmartRuleRevision',
-  'LiteratureSmartRunItem'
+  'LiteratureSmartRunItem',
+  'Journal',
+  'JournalDataset',
+  'JournalDatasetEntry',
+  'JournalItemBinding'
 ] as const
 
 export {

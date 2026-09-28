@@ -418,7 +418,13 @@
       "src/renderer/src/office-preview/office-preview-controller.test.ts",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
-      "src/renderer/src/pages/workspace/EmptyConversationBanner.render.test.tsx"
+      "src/renderer/src/pages/workspace/EmptyConversationBanner.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalAlignment.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalColumnHeader.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalDatasetActions.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
+      "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],
