@@ -274,17 +274,18 @@ const NetworkPanel = ({
                   </ol>
                 </div>
               ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-3"
-                onClick={handleRetry}
-                disabled={isChecking}
-              >
-                <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
-                {isChecking ? t('Checking…') : t('Check again')}
-              </Button>
+              <div className="mt-3 flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRetry}
+                  disabled={isChecking}
+                >
+                  <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
+                  {isChecking ? t('Checking…') : t('Check again')}
+                </Button>
+              </div>
             </div>
           </div>
         </SettingsSection>
