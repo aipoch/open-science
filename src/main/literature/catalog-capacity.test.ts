@@ -38,19 +38,27 @@ it('allows a small catalog write while a large library search is running', async
     // Clone a public-command record to seed scale without tying this regression to derived columns.
     phase('seed-start')
     const n = 50000
-    for (let offset = 0; offset < n; offset += 500) {
-      if (offset % 5000 === 0) phase(`seed-${offset}`)
-      const ids = Array.from({ length: 500 }, (_, i) => `row-${offset + i}`)
-      await client.literatureItem.createMany({ data: ids.map((id) => ({ ...template, id })) })
-      await client.literatureItemCreator.createMany({
-        data: ids.map((itemId) => ({
-          itemId,
-          creatorId: creators[0]!.creatorId,
-          creatorType: 'author',
-          ordinal: 0
-        }))
-      })
-    }
+    // Fixture creation is one atomic batch; avoid one durable disk flush per 500 rows.
+    await client.$transaction(
+      async (transaction) => {
+        for (let offset = 0; offset < n; offset += 500) {
+          if (offset % 5000 === 0) phase(`seed-${offset}`)
+          const ids = Array.from({ length: 500 }, (_, i) => `row-${offset + i}`)
+          await transaction.literatureItem.createMany({
+            data: ids.map((id) => ({ ...template, id }))
+          })
+          await transaction.literatureItemCreator.createMany({
+            data: ids.map((itemId) => ({
+              itemId,
+              creatorId: creators[0]!.creatorId,
+              creatorType: 'author',
+              ordinal: 0
+            }))
+          })
+        }
+      },
+      { timeout: 120_000 }
+    )
     await client.literatureItem.delete({ where: { id: receipt.id } })
     phase('seed-complete')
     const start = performance.now()

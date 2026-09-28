@@ -1,10 +1,10 @@
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   createLiteratureIdentifierUrl,
@@ -73,6 +73,20 @@ const candidate = (
   })
 
 describe('LiteratureCatalog', () => {
+  let schemaRoot: string
+  beforeAll(async () => {
+    schemaRoot = await mkdtemp(join(tmpdir(), 'open-science-literature-schema-'))
+    const schemaClient = createProjectDbClient(schemaRoot)
+    try {
+      await migrateApplicationDatabase(schemaClient)
+    } finally {
+      // Close SQLite before copying, including its WAL checkpoint.
+      await schemaClient.$disconnect()
+    }
+  })
+  afterAll(async () => {
+    if (schemaRoot) await rm(schemaRoot, { recursive: true, force: true })
+  })
   let storageRoot: string | undefined
   let client: PrismaClient | undefined
 
@@ -83,8 +97,10 @@ describe('LiteratureCatalog', () => {
 
   const setup = async (): Promise<LiteratureCatalog> => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-literature-catalog-'))
+    // Migration history is covered by the database module; each catalog case gets a pristine,
+    // independently writable copy of the current schema produced by the real migration service.
+    await copyFile(join(schemaRoot, 'open-science.db'), join(storageRoot, 'open-science.db'))
     client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Research' } })
     return new LiteratureCatalog(async () => client!)
   }
