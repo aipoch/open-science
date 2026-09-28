@@ -803,6 +803,38 @@ it('associates raised numeric and mixed markers without accepting numbered body 
 })
 
 it.each([
+  'Data expressed as mean ± standard deviation or number (%).',
+  'Mean (standard deviation); chi-square test; similar letters denote similar results.',
+  'Mixed ANOVA; outcome values are expressed as mean [standard deviation].',
+  'Fixed effects were visit and group; the dependent variable was the score.',
+  'AC—assessment cycles; NT—normalized time;'
+])('preserves a previously omitted statistical definition near its table: %s', (text) => {
+  const line = { text, x: 20, y: 110, width: 300, height: 8, fontSize: 8 }
+  const tables = [{ rect: [10, 20, 340, 100] }]
+  expect(associateTableNotes({ lines: [line] }, tables)[0][0]?.text).toBe(text)
+  expect(associateTableNotes({ lines: [{ ...line, y: 180 }] }, tables)).toEqual([[]])
+})
+
+it('requires a nearby closing rule for a compact mixed-case acronym definition', () => {
+  const body = { text: 'Assessment 12 24', x: 20, y: 85, width: 290, height: 10, fontSize: 10 }
+  const note = {
+    text: 'ABC s : adjusted baseline score.',
+    x: 20,
+    y: 102,
+    width: 140,
+    height: 8,
+    fontSize: 8
+  }
+  const tables = [{ rect: [20, 20, 320, 98] }]
+  expect(
+    associateTableNotes({ lines: [body, note] }, tables, [[20, 100, 320, 100]])[0].map(
+      (n: { text: string }) => n.text
+    )
+  ).toEqual([note.text])
+  expect(associateTableNotes({ lines: [body, note] }, tables)).toEqual([[]])
+})
+
+it.each([
   'Values are mean (SD), number (proportion), or median [q1, q3].',
   'Data represented as n (%) or mean (SD).',
   'Comparisons between the two study groups were performed using the Student’s t-test.',
@@ -1059,3 +1091,43 @@ it('attaches nearby mixed-case abbreviation pairs only when every key is cited i
     []
   ])
 })
+it.each([
+  ['inline-lettered-notes-below-closing-rule', 'a None of the group differences', 'lean mass)).'],
+  ['short-separator-before-cited-acronym-note', 'ADLs =', 'activities of daily living.']
+])(
+  'associates complete external notes through both production refinement passes: %s',
+  async (name, prefix, suffix) => {
+    const { readPdfFixture } = await import('./read-fixture')
+    const f = readPdfFixture(
+      resolve('src/main/literature/pdf-structure/fixtures/source-grids', name + '.jsonl')
+    )
+    const first = refineTable(f.models[0], f.tokens, f.captions, [], f.rules)
+    const rect = [
+      first.cropRect[0],
+      Math.min(...first.rows.map((r: { rect: number[] }) => r.rect[1])),
+      first.cropRect[2],
+      Math.max(...first.rows.map((r: { rect: number[] }) => r.rect[3]))
+    ].map((v) => v / 1.5)
+    const notes = associateTableNotes(
+      f.page,
+      [{ rect }],
+      f.rules.map((r: number[]) => r.map((v) => v / 1.5))
+    )[0]
+    expect(notes).toHaveLength(1)
+    expect(notes[0].text.startsWith(prefix)).toBe(true)
+    expect(notes[0].text.endsWith(suffix)).toBe(true)
+    const t = refineTable(
+      f.models[0],
+      f.tokens,
+      f.captions,
+      notes.map((n: { text: string; rect: number[] }) => ({
+        ...n,
+        rect: n.rect.map((v) => v * 1.5)
+      })),
+      f.rules
+    )
+    expect(t.grid.flat().join(' ')).not.toContain(prefix)
+    expect(t.issues).toEqual([])
+    expect(t.unassigned).toEqual([])
+  }
+)

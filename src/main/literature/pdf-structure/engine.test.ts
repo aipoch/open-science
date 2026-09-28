@@ -61,7 +61,9 @@ it('joins main-process result conversion before deleting scratch after cancellat
     signal: controller.signal,
     onProgress: () => undefined
   })
-  await vi.waitFor(() => expect(readWorkerResult).toHaveBeenCalledOnce())
+  // This waits for a real Node process; startup under suite load can exceed
+  // waitFor's one-second default before result conversion even begins.
+  await vi.waitFor(() => expect(readWorkerResult).toHaveBeenCalledOnce(), { timeout: 5_000 })
   controller.abort()
   let stopped = false
   const stopping = handle.stop().then(() => {
@@ -74,4 +76,4 @@ it('joins main-process result conversion before deleting scratch after cancellat
   await expect(handle.result).rejects.toThrow('conversion cancelled')
   await stopping
   await expect(stat(join(root, 'job/extractor'))).rejects.toMatchObject({ code: 'ENOENT' })
-})
+}, 10_000)

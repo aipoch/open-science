@@ -23,6 +23,8 @@ export type MessageAttribution =
       feature: 'reviewer'
       purpose: 'correction'
       causeReviewId: string
+      // Durable ownership of this correction round; Resume must not replenish its budget.
+      continuation?: { round: number; maxRounds: number; findingIds: string[] }
     }>
   | Readonly<{
       kind: 'application'

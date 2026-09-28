@@ -866,6 +866,48 @@ describe('Responses-compatible bridge conversion', () => {
     expect(request).not.toHaveProperty('reasoning_effort')
   })
 
+  it.each(['low', 'medium', 'high', 'xhigh', 'max'] as const)(
+    'preserves MiniMax M3.1 %s effort through the Chat bridge',
+    (effort) => {
+      const request = responsesToChatRequest(
+        { model: 'catalog', input: 'hi' },
+        'MiniMax-M3.1-Flash-Preview',
+        undefined,
+        [],
+        { vendorId: 'minimax', reasoningEffortOverride: effort }
+      )
+      expect(request).toMatchObject({
+        model: 'MiniMax-M3.1-Flash-Preview',
+        reasoning_effort: effort,
+        thinking: { type: 'adaptive' }
+      })
+    }
+  )
+
+  it('leaves MiniMax M3.1 default effort to the provider', () => {
+    const request = responsesToChatRequest(
+      { model: 'catalog', input: 'hi' },
+      'MiniMax-M3.1-Flash-Preview',
+      undefined,
+      [],
+      { vendorId: 'minimax' }
+    )
+    expect(request).not.toHaveProperty('reasoning_effort')
+    expect(request).not.toHaveProperty('thinking')
+  })
+
+  it('keeps the explicit custom MiniMax transport independent of model names', () => {
+    const request = responsesToChatRequest(
+      { model: 'catalog', input: 'hi' },
+      'MiniMax-M3.1-Flash-Preview',
+      undefined,
+      [],
+      { reasoningEffortTransport: 'minimax', reasoningEffortOverride: 'none' }
+    )
+    expect(request).toMatchObject({ thinking: { type: 'disabled' } })
+    expect(request).not.toHaveProperty('reasoning_effort')
+  })
+
   it('does not infer the built-in OpenRouter Qwen toggle for a custom gateway', () => {
     expect(
       responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'qwen/qwen3.7-max', undefined, [], {
@@ -2685,44 +2727,53 @@ describe('Responses bridge Skill selector', () => {
     expect(upstreamFetch).toHaveBeenCalledOnce()
   })
 
-  it('disables provider-native reasoning for bounded Skill routing', async () => {
-    let upstreamBody: Record<string, unknown> = {}
-    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>
-      return new Response(
-        JSON.stringify({
-          choices: [
-            {
-              message: {
-                tool_calls: [
-                  {
-                    function: {
-                      name: 'select_skills',
-                      arguments: JSON.stringify({ skill_names: ['literature-review'] })
+  it.each([
+    ['MiniMax-M3', { type: 'disabled' }, undefined],
+    ['MiniMax-M3.1-Flash-Preview', { type: 'adaptive' }, 'low']
+  ] as const)(
+    'uses the lowest supported reasoning for %s Skill routing',
+    async (model, thinking, effort) => {
+      let upstreamBody: Record<string, unknown> = {}
+      const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  tool_calls: [
+                    {
+                      function: {
+                        name: 'select_skills',
+                        arguments: JSON.stringify({ skill_names: ['literature-review'] })
+                      }
                     }
-                  }
-                ]
+                  ]
+                }
               }
-            }
-          ]
-        })
+            ]
+          })
+        )
+      })
+      const bridge = new ResponsesBridge(
+        {
+          baseUrl: 'https://vendor.example/v1',
+          model,
+          vendorId: 'minimax'
+        },
+        upstreamFetch
       )
-    })
-    const bridge = new ResponsesBridge(
-      {
-        baseUrl: 'https://vendor.example/v1',
-        model: 'MiniMax-M3',
-        vendorId: 'minimax'
-      },
-      upstreamFetch
-    )
 
-    await expect(
-      bridge.selectSkills('Prepare a compact evidence map for river restoration options.', catalog)
-    ).resolves.toEqual([{ name: 'literature-review', path: '/private/review/SKILL.md' }])
-    expect(upstreamBody).toMatchObject({ thinking: { type: 'disabled' } })
-    expect(upstreamBody).not.toHaveProperty('reasoning_effort')
-  })
+      await expect(
+        bridge.selectSkills(
+          'Prepare a compact evidence map for river restoration options.',
+          catalog
+        )
+      ).resolves.toEqual([{ name: 'literature-review', path: '/private/review/SKILL.md' }])
+      expect(upstreamBody).toMatchObject({ thinking })
+      expect(upstreamBody.reasoning_effort).toBe(effort)
+    }
+  )
 
   it.each([
     ['Codex', undefined],

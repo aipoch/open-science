@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { captionKind, joinCaptionLines, groupPageLines } from './literature-pdf-caption-group.mjs'
 import { union, intersection, lineRect } from './literature-pdf-page-geometry.mjs'
+import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+import { findDoubleSpacedNoteBlocks, isNotePageMargin } from './literature-pdf-note-blocks.mjs'
 
 // Text-only classifiers are shared across pages; source ownership and
 // consumed-line state remain local to each association call below.
@@ -8,6 +10,13 @@ const symbolDefinitions = (text) =>
   /^[α-ωΑ-Ω]\s+\p{L}/u.test(text.trim()) &&
   (text.match(/,\s*[A-Z]{2,4}\s+[a-z]/g) ?? []).length >= 3
 const statisticDefinition = (text) =>
+  /^(?:Numbers|Values) represent (?:least[- ]square[ds]? )?means? \(standard errors?\)(?=[;. ]|$)/i.test(
+    text.trim()
+  ) ||
+  /^Data (?:are )?expressed as mean\s*±\s*standard deviation\b/i.test(text.trim()) ||
+  /^Mean \(standard deviation\);\s*(?:chi-square|Fisher|Student|Tukey)\b/i.test(text.trim()) ||
+  /^(?:Mixed|Repeated[- ]measures) ANOVA;.*\bvalues are expressed as mean\b/i.test(text.trim()) ||
+  /^Fixed effects were\b.+\b(?:dependent variable|random effects)\b/i.test(text.trim()) ||
   /^Standard errors (?:in|appear in) parentheses\./i.test(text.trim()) ||
   /^Data are numbers? of (?:patients|participants)\s*\(%\)(?:[,.]|$)/i.test(text.trim()) ||
   /^These are (?:coefficients|(?:the average |estimated )?marginal effects) from [\p{L} -]+ (?:regressions|models)\. Standard errors\b/iu.test(
@@ -16,7 +25,12 @@ const statisticDefinition = (text) =>
   /^Values are medians? except those in parenthes(?:is|es), which are minimum to maximum\.?$/i.test(
     text.trim()
   ) ||
-  /^Data are reported as mean\s*±\s*SD(?:[;,.]|$)/i.test(text.trim()) ||
+  // The spelled-out statistic establishes the note even if the source uses
+  // an unfamiliar abbreviation. Recognition must not rewrite that spelling.
+  /^Data (?:are )?reported as mean\s*±\s*(?:SD|standard (?:deviation|error)(?: \([A-Z]{2,8}\))?)(?:[;,.]|$)/i.test(
+    text.trim()
+  ) ||
+  /^Values are means?\s*±\s*SD(?:[;,.]|$)/i.test(text.trim()) ||
   /^Valid percent was reported\.?$/i.test(text.trim()) ||
   /^(?:Subjective|Behavioral) sleep data was derived from\b.*\*p\s*[<≤]\s*0?\.\d+/i.test(
     text.trim()
@@ -32,7 +46,7 @@ const statisticDefinition = (text) =>
     text.trim()
   )
 const abbreviationPrefix = (text) =>
-  /^[A-Z][A-Z0-9.-]*[:,]\s*\p{L}/u.test(text) || /^[A-Z]{2,8}\s+indicates\s+\p{L}/u.test(text)
+  /^[A-Z][A-Z0-9.‐‑-]*[:,]\s*\p{L}/u.test(text) || /^[A-Z]{2,8}\s+indicates\s+\p{L}/u.test(text)
 const comparisonNote = (text) =>
   /^Compared (?:with|to) (?:the )?[\p{L}\d -]{1,60} group,\s*p\s*[=<>≤≥]\s*(?:0?\.\d+|1(?:\.0+)?)\.?$/iu.test(
     text.trim()
@@ -61,6 +75,8 @@ const colonDefinitions = (text) => {
 }
 const definitionList = (text) =>
   expandedDefinitions(text) ||
+  (/^[A-Z0-9][A-Za-z0-9 -]{0,12}[—–]\s*\p{L}/u.test(text.trim()) &&
+    (text.match(/(?:^|;\s*)[A-Z0-9][A-Za-z0-9 -]{0,12}[—–]\s*\p{L}/gu) ?? []).length >= 2) ||
   /^(?:[+^#$&]\s*\p{L}[\p{L}\s%-]*(?:\([\p{L}\d\s%.-]+\))?(?:,\s*|$)){3,}$/u.test(text.trim()) ||
   (/^[A-Z][A-Za-z0-9-]{1,7}\s*=\s*\p{L}/u.test(text.trim()) &&
     (text.match(/(?:^|[;,]\s*)[A-Z][A-Za-z0-9-]{1,7}\s*=\s*\p{L}/gu) ?? []).length >= 2) ||
@@ -104,8 +120,8 @@ const startsNote = (text) =>
     (text.match(/\bn\s*=\s*\d+/g) ?? []).length >= 3) ||
   // Unnumbered abbreviation keys below a table need several explicit pairs;
   // a single acronym in ordinary prose does not establish a table note.
-  (/^[A-Z][A-Z0-9.-]*[:,]\s*\p{L}/u.test(text.trim()) &&
-    (text.match(/(?:^|;\s*)[A-Z][A-Z0-9.-]*[:,]\s*\p{L}/gu) ?? []).length >= 3) ||
+  (/^[A-Z][A-Z0-9.‐‑-]*[:,]\s*\p{L}/u.test(text.trim()) &&
+    (text.match(/(?:^|;\s*)[A-Z][A-Z0-9.‐‑-]*[:,]\s*\p{L}/gu) ?? []).length >= 3) ||
   (/^[A-Z]{2,8}\s+indicates\s+\p{L}/u.test(text.trim()) &&
     (text.match(/;\s*[A-Z][A-Za-z0-9/’'.-]{1,11}(?: ratio)?,\s*\p{L}/gu) ?? []).length >= 2) ||
   colonDefinitions(text) ||
@@ -117,6 +133,9 @@ const startsNote = (text) =>
     text.trim()
   ) ||
   /^Fisher[’']s exact test\.$/i.test(text.trim()) ||
+  /^Reported data (?:of|from) (?:Fisher[’']s exact|Student[’']s t|Mann[–-]Whitney(?: U)?|chi[–-]square) test\./i.test(
+    text.trim()
+  ) ||
   (/^(?:AUC[\d–∞a-z]*|APA)\b/.test(text.trim()) &&
     /(?:area under the|apalutamide, BCRP)/i.test(text)) ||
   /^Different superscript letters indicate significant difference\b/i.test(text.trim()) ||
@@ -138,11 +157,41 @@ const startsNote = (text) =>
   (/^[A-Z]{2,5}\s+\d{2,3},/.test(text.trim()) &&
     (text.match(/(?:^|;\s*)[A-Z]{2,5}\s+\d{2,3},\s*\d+\s*mg\/m/gu) ?? []).length >= 3)
 
-// Some continuations contain only the prior table's lettered notes. Reuse the
-// page-local note parser, anchored at an explicit matching continuation title.
+// Notes-only continuations need either a cited, consecutive raised-number
+// sequence or an explicit matching title and cited lettered notes.
 export function associateContinuedTableNotes(table, page, nextPage) {
   if (!nextPage || nextPage.pageNumber !== page.pageNumber + 1) return []
   const cells = (table.parts ?? [table]).flatMap((part) => part.cells ?? [])
+  const blocks = findDoubleSpacedNoteBlocks(nextPage)
+  const numbered = (table.notes ?? []).filter((n) => /^\d+\s+\p{L}/u.test(n.text))
+  if (
+    blocks.length >= 2 &&
+    numbered.length >= 2 &&
+    numbered.every(
+      (note, n) =>
+        !n || Number(/^\d+/.exec(note.text)[0]) === Number(/^\d+/.exec(numbered[n - 1].text)[0]) + 1
+    ) &&
+    blocks[0].number === Number(/^\d+/.exec(numbered.at(-1).text)[0]) + 1 &&
+    blocks[0].lines[0].y < nextPage.height * 0.15 &&
+    numbered.at(-1).rect[3] > page.height * 0.8 &&
+    Math.abs(blocks[0].lines[0].x / nextPage.width - numbered.at(-1).rect[0] / page.width) < 0.01 &&
+    blocks.filter((b) =>
+      cells.some((c) =>
+        (c.textRuns ?? []).some(
+          (r) => r.position === 'superscript' && r.text.trim() === String(b.number)
+        )
+      )
+    ).length >= 2 &&
+    groupPageLines({
+      ...nextPage,
+      lines: nextPage.lines.filter((l) => !isNotePageMargin(l, nextPage))
+    }).every((l) => blocks.some((b) => b.lines.some((p) => p.text === l.text && p.y === l.y)))
+  )
+    return blocks.map((b) => ({
+      text: joinCaptionLines(b.lines.map((l) => l.text)),
+      rect: union(b.lines.map((l) => [l.x, l.y, l.right, l.bottom])),
+      page: nextPage.pageNumber
+    }))
   const number = /^Table\s+([A-Z]?\d+)\b/i.exec(table.caption?.text ?? '')?.[1]
   if (!number) return []
   const titles = groupPageLines(nextPage).filter((line) => {
@@ -187,13 +236,8 @@ export function associateContinuedTableNotes(table, page, nextPage) {
 // A note must begin with a footnote marker or explicit notes label and have one
 // nearest preceding table. Continuations retain their original source region.
 export function associateTableNotes(page, tables, rules = []) {
-  const horizontal = []
-  for (const r of rules.filter((r) => r[1] === r[3]).sort((a, b) => a[1] - b[1] || a[0] - b[0])) {
-    const last = horizontal.at(-1)
-    if (last && Math.abs(last[1] - r[1]) < 0.01 && r[0] - last[2] < 0.01)
-      last[2] = Math.max(last[2], r[2])
-    else horizontal.push([...r])
-  }
+  const manuscriptBlocks = findDoubleSpacedNoteBlocks(page)
+  const horizontal = joinHorizontalTableRules(rules)
   rules = [...rules.filter((r) => r[1] !== r[3]), ...horizontal]
   const notes = tables.map(() => [])
   const lines = groupPageLines(page)
@@ -386,6 +430,28 @@ export function associateTableNotes(page, tables, rules = []) {
     return next
   }
   const touchesRuledBottom = (line, rect) => {
+    // Only a raised marker may cross a padded crop while its full-size note
+    // text starts below it. A nearby full-width closing rule proves ownership.
+    if (
+      raisedMarker(line) &&
+      line.y <= rect[3] &&
+      line.y >= rect[3] - line.fontSize * 0.2 &&
+      page.lines.some(
+        (part) =>
+          part.y >= rect[3] &&
+          part.y < line.y + line.fontSize * 0.3 &&
+          part.fontSize === line.fontSize &&
+          Math.abs(part.x - line.x) < line.fontSize
+      ) &&
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] <= line.y &&
+          line.y - r[1] < line.fontSize &&
+          Math.min(r[2], rect[2]) - Math.max(r[0], rect[0]) > (rect[2] - rect[0]) * 0.85
+      )
+    )
+      return true
     // A model's final row can swallow a cited note whose font box touches
     // the native closing rule. Use that rule, not the predicted row bottom.
     if (
@@ -429,9 +495,10 @@ export function associateTableNotes(page, tables, rules = []) {
   const ruledExplanation = (line, rect) => {
     const abbreviation =
       (/^[A-Z]{2,8} [a-z][a-z -]+(?:, [A-Z]{2,8} [a-z][a-z -]+)+\.?$/.test(line.text) ||
+        /^[A-Z]{2,8}(?:\s?[a-z])?\s*:\s*\p{Ll}[^:]+\.$/u.test(line.text) ||
         /^[a-z]?[A-Z]{2,8},\s+\p{L}[\p{L}\s-]+\.$/u.test(line.text) ||
-        (/^[A-Z][A-Z0-9.-]*,\s*\p{L}/u.test(line.text) &&
-          (line.text.match(/(?:^|;\s*)[A-Z][A-Z0-9.-]*,\s*\p{L}/gu) ?? []).length >= 2)) &&
+        (/^[A-Z][A-Z0-9.‐‑-]*,\s*\p{L}/u.test(line.text) &&
+          (line.text.match(/(?:^|;\s*)[A-Z][A-Z0-9.‐‑-]*,\s*\p{L}/gu) ?? []).length >= 2)) &&
       line.width < (rect[2] - rect[0]) * 0.6
     if (
       line.y - rect[3] < 0 ||
@@ -503,11 +570,28 @@ export function associateTableNotes(page, tables, rules = []) {
           Math.abs(next.x - line.x) <= 2 &&
           Math.abs(next.fontSize - line.fontSize) <= 0.8
       )
+    // A plain introductory sentence can precede a wrapped statistical note.
+    // Require both an explicit interval/significance continuation and repeated
+    // table terms; nearby body prose without this evidence remains separate.
+    const tableTerms = new Set(body.flatMap((l) => l.text.toLowerCase().match(/[a-z]{4,}/g) ?? []))
+    const statisticalPreface =
+      line.fontSize <= bodySize * 1.05 &&
+      new Set((line.text.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((s) => tableTerms.has(s)))
+        .size >= 2 &&
+      lines.some(
+        (next) =>
+          next.y > line.y &&
+          next.y - line.y < line.fontSize * 1.8 &&
+          Math.abs(next.x - line.x) < 2 &&
+          Math.abs(next.fontSize - line.fontSize) < 0.5 &&
+          /(?:\b\d{2}%\s*CI\b|\bconfidence intervals?\b).+\bP\s*[<≤]\s*0?\.\d+/i.test(next.text)
+      )
     if (
       line.fontSize >= bodySize * 0.95 &&
       !countedExplanation &&
       !referenceLocation &&
       !statisticalExplanation &&
+      !statisticalPreface &&
       !headerDefinition &&
       !tableDescription &&
       !(comparisonNote(line.text) && line.fontSize <= bodySize * 1.05) &&
@@ -515,7 +599,7 @@ export function associateTableNotes(page, tables, rules = []) {
     )
       return false
     const borders = rules.filter(
-      (r) => Math.abs(r[3] - r[1]) < 1 && r[1] > rect[3] && r[1] < line.y + line.fontSize * 0.1
+      (r) => Math.abs(r[3] - r[1]) < 1 && r[1] > rect[3] && r[1] < line.y + line.fontSize * 0.2
     )
     return borders.some((border) => {
       const segments = borders
@@ -672,17 +756,30 @@ export function associateTableNotes(page, tables, rules = []) {
         )
       const singleDefinition =
         ruledSingle ||
-        (/^[A-Z]{2,8}, [A-Z][a-z].*[.]$/.test(start.text) && start.text.split(/\s+/).length >= 5)
+        (/^[A-Z][A-Z0-9.‐‑-]{1,11}, [A-Z][a-z].*[.]$/.test(start.text) &&
+          start.text.split(/\s+/).length >= 5) ||
+        // Acronym definitions often start with a lowercase expansion (for example,
+        // `E2, estradiol.`). Keep the same closing-rule and in-table citation gates.
+        (/^[A-Z][A-Z0-9.‐‑-]{1,7}, \p{Ll}[\p{L}\s-]*\.$/u.test(start.text) &&
+          start.text.split(/\s+/).length >= 2) ||
+        (/^[A-Z]{2,7}s?\s*=\s*\p{Ll}[\p{L}\s-]*\.$/u.test(start.text) &&
+          start.text.split(/\s+/).length >= 4)
       // A source bottom rule can separate a slightly more distant glossary.
       // Keep the original unruled gap limit and require a wide native separator.
       const ruledGap =
-        gap <= start.fontSize * 1.5 &&
+        gap <= start.fontSize * 3 &&
         rules.some(
           (r) =>
             r[1] === r[3] &&
             r[1] > rect[3] &&
             r[1] < start.y &&
-            Math.min(r[2], rect[2]) - Math.max(r[0], rect[0]) > (rect[2] - rect[0]) * 0.85
+            ((gap <= start.fontSize * 1.5 &&
+              Math.min(r[2], rect[2]) - Math.max(r[0], rect[0]) > (rect[2] - rect[0]) * 0.85) ||
+              (singleDefinition &&
+                start.text.includes('=') &&
+                Math.abs(r[0] - rect[0]) < start.fontSize &&
+                r[2] - r[0] > (rect[2] - rect[0]) * 0.1 &&
+                r[2] - r[0] < (rect[2] - rect[0]) * 0.4))
         )
       if (
         gap < 0 ||
@@ -691,7 +788,7 @@ export function associateTableNotes(page, tables, rules = []) {
       )
         return false
       const pairs = [
-        ...start.text.matchAll(/(?:^|;\s*)([A-Za-z][A-Za-z0-9.-]{0,7})\s*[:,]\s*\p{L}/gu)
+        ...start.text.matchAll(/(?:^|;\s*)([A-Za-z][A-Za-z0-9.‐‑-]{0,7})\s*[:,=]\s*\p{L}/gu)
       ]
       if (!pairs.length && /^[A-Z]{2,8} [A-Za-z]/.test(start.text))
         pairs.push(...start.text.matchAll(/(?:^|,\s*)([A-Z]{2,8}) [A-Za-z]/g))
@@ -700,7 +797,7 @@ export function associateTableNotes(page, tables, rules = []) {
           (l) =>
             l.y >= rect[1] && l.bottom <= rect[3] && l.x >= rect[0] - 2 && l.right <= rect[2] + 2
         )
-        .flatMap((l) => l.text.toLowerCase().split(/[^a-z0-9.-]+/))
+        .flatMap((l) => l.text.toLowerCase().split(/[^a-z0-9.‐‑-]+/))
       return (
         (pairs.length >= 2 || (pairs.length === 1 && singleDefinition)) &&
         pairs[0].index === 0 &&
@@ -749,7 +846,16 @@ export function associateTableNotes(page, tables, rules = []) {
           (!changeDefinition(start.text) || citedSymbol(start, rect)) &&
           (!requiresCitation || citedDefinitions[index]) &&
           (!noteTailDefinitions.some(Boolean) || noteTailDefinitions[index]) &&
-          gap <= Math.max(36, start.fontSize * 3) &&
+          gap <=
+            Math.max(
+              36,
+              start.fontSize *
+                (manuscriptBlocks.some(
+                  (b) => b.lines[0].text === start.text && b.lines[0].y === start.y
+                ) && colonDefinitions(notes[index].at(-1)?.text ?? '')
+                  ? 4
+                  : 3)
+            ) &&
           (Math.min(rect[2], start.x + start.width) - Math.max(rect[0], start.x)) /
             Math.min(rect[2] - rect[0], start.width) >=
             0.7
@@ -823,6 +929,35 @@ export function associateTableNotes(page, tables, rules = []) {
         : []
     const comparison = ruledDefinitionTail(start, candidates[0].rect)
     if (comparison) doubleSpacedTail = [comparison]
+    const manuscript = manuscriptBlocks.find(
+      (b) => b.lines[0].text === start.text && b.lines[0].y === start.y
+    )
+    if (manuscript)
+      doubleSpacedTail = manuscript.lines
+        .slice(1)
+        .map((p) => lines.find((l) => l.text === p.text && l.y === p.y))
+        .filter(Boolean)
+    if (colonDefinitions(start.text)) {
+      const glossary = []
+      let previous = start,
+        spacing
+      for (const next of lines.filter((l) => l.y > start.y + 2)) {
+        const gap = next.bottom - previous.bottom
+        if (
+          Math.abs(next.x - start.x) > 2 ||
+          Math.abs(next.fontSize - start.fontSize) > 0.7 ||
+          gap <= start.fontSize * 1.8 ||
+          gap > start.fontSize * 2.5 ||
+          (spacing !== undefined && Math.abs(gap - spacing) > 1) ||
+          (next.text.match(/(?:^|[,;]\s*)[A-Za-z][A-Za-z.-]{1,7}:\s*\p{L}/gu) ?? []).length < 2
+        )
+          break
+        spacing ??= gap
+        glossary.push(next)
+        previous = next
+      }
+      if (glossary.length >= 2) doubleSpacedTail = glossary
+    }
     // A cited symbol at the bottom rule may introduce a longer manuscript
     // note. Require one uniform double-spaced block with a short final line;
     // unrelated captions, changed indentation and new notes stop the scan.
@@ -890,7 +1025,10 @@ export function associateTableNotes(page, tables, rules = []) {
           next.text.trim()
         )
       if (
-        (startsNote(next.text) && !definitionList(next.text) && !methodContinuation) ||
+        (startsNote(next.text) &&
+          !definitionList(next.text) &&
+          !methodContinuation &&
+          !doubleSpacedTail.includes(next)) ||
         raisedMarker(next) ||
         detachedMarker(next) ||
         next.y - previous.y > start.fontSize * (doubleSpacedTail.includes(next) ? 2.5 : 1.8) ||

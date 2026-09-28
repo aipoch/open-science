@@ -40,6 +40,7 @@ export type ReviewerCorrectionRequest = Readonly<{
   projectId: string
   sessionId: string
   causeReviewId: string
+  continuation?: { round: number; maxRounds: number; findingIds: string[] }
   checks: readonly ReviewCheck[]
   provenanceContext: AgentTurnProvenanceContext
   abortSignal?: AbortSignal
@@ -93,7 +94,8 @@ export class ReviewerCorrectionOwner {
           kind: 'application',
           feature: 'reviewer',
           purpose: 'correction',
-          causeReviewId: input.causeReviewId
+          causeReviewId: input.causeReviewId,
+          ...(input.continuation ? { continuation: input.continuation } : {})
         },
         ...(input.onPromptAdmitted
           ? [

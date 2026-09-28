@@ -7,21 +7,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatSession } from '@/stores/session-store'
 import type { AcpAgentRuntimeUpdate } from '../../../../shared/acp'
 
-const runtimeUpdateHarness = vi.hoisted(() => {
-  const listeners = new Set<(update: AcpAgentRuntimeUpdate) => void>()
-  return {
-    publish(update: AcpAgentRuntimeUpdate) {
-      for (const listener of listeners) listener(update)
-    },
-    reset() {
-      listeners.clear()
-    },
-    subscribe(listener: (update: AcpAgentRuntimeUpdate) => void) {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    }
+const runtimeUpdateHarness = {
+  owner: createSubagentTranscriptOwner(),
+  publish(update: AcpAgentRuntimeUpdate) {
+    this.owner.ingest(update)
+  },
+  reset() {
+    this.owner = createSubagentTranscriptOwner()
   }
-})
+}
 
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', async () => {
   const { useSubagentRuntimePresentation } =
@@ -30,7 +24,7 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', async () => {
     useWorkspaceSubagentRuntimeSession: (
       session: ChatSession,
       detail: Parameters<typeof useSubagentRuntimePresentation>[2]
-    ) => useSubagentRuntimePresentation(runtimeUpdateHarness.subscribe, session, detail)
+    ) => useSubagentRuntimePresentation(runtimeUpdateHarness.owner, session, detail)
   }
 })
 
@@ -41,7 +35,10 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
-import { useSubagentRuntimePresentation } from '@/lib/acp/workspace-subagent-runtime-presentation'
+import {
+  createSubagentTranscriptOwner,
+  useSubagentRuntimePresentation
+} from '@/lib/acp/workspace-subagent-runtime-presentation'
 
 import {
   SubagentAvailabilityNotice,
@@ -618,7 +615,7 @@ describe('release-gate Subagent surfaces', () => {
         ) ?? []
     }
     const presentation = renderHook(() =>
-      useSubagentRuntimePresentation(runtimeUpdateHarness.subscribe, session, detail)
+      useSubagentRuntimePresentation(runtimeUpdateHarness.owner, session, detail)
     )
 
     renderSurface(
@@ -637,6 +634,25 @@ describe('release-gate Subagent surfaces', () => {
 
     expect(screen.getByText('Thinking')).toBeTruthy()
     await act(async () => {
+      runtimeUpdateHarness.publish({
+        scope: {
+          projectId: 'project-1',
+          sessionId: 'other-session',
+          agentFrameId: 'child-a',
+          attemptId: 'attempt-a',
+          runtimeSegmentId: 'runtime-a',
+          promptMessageId: 'child-a-prompt'
+        },
+        event: {
+          id: 'other-session-message',
+          timestamp: 1_700_000_000_011,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'child-stream',
+          text: 'Other session output'
+        }
+      })
       runtimeUpdateHarness.publish({
         scope: {
           projectId: 'project-1',
@@ -699,9 +715,58 @@ describe('release-gate Subagent surfaces', () => {
       })
     })
 
-    expect(await screen.findByText('Live child evidence')).toBeTruthy()
+    expect(await screen.findByText('Live child evidence', {}, { timeout: 5000 })).toBeTruthy()
     expect(screen.queryByText('Stale child output')).toBeNull()
     expect(useSessionStore.getState().sessions[0]).toEqual(rootBefore)
+
+    await act(async () => {
+      runtimeUpdateHarness.publish({
+        scope: {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          agentFrameId: 'child-b',
+          attemptId: 'attempt-b',
+          runtimeSegmentId: 'runtime-b',
+          promptMessageId: 'child-b-prompt'
+        },
+        event: {
+          id: 'other-child-message',
+          timestamp: 1_700_000_000_011,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'child-stream',
+          text: 'Other child output'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope: {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          agentFrameId: 'child-a',
+          attemptId: 'attempt-a',
+          runtimeSegmentId: 'runtime-a',
+          promptMessageId: 'child-a-prompt'
+        },
+        event: {
+          id: 'child-message-2',
+          timestamp: 1_700_000_000_012,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'child-stream',
+          text: ' and updated findings'
+        }
+      })
+    })
+    expect(presentation.result.current.messages.at(-1)?.content).toBe(
+      'Live child evidence and updated findings'
+    )
+    expect(
+      await screen.findByText('Live child evidence and updated findings', {}, { timeout: 5000 })
+    ).toBeTruthy()
+    expect(screen.queryByText('Other child output')).toBeNull()
+    expect(screen.queryByText('Other session output')).toBeNull()
 
     await act(async () => {
       runtimeUpdateHarness.publish({
@@ -737,6 +802,9 @@ describe('release-gate Subagent surfaces', () => {
 
     expect(screen.getByRole('button', { name: 'Token usage for this response' })).toBeTruthy()
     expect(screen.queryByText('Thinking')).toBeNull()
+    expect(presentation.result.current.messages.at(-1)?.content).toBe(
+      'Live child evidence and updated findings'
+    )
     expect(presentation.result.current.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -751,6 +819,350 @@ describe('release-gate Subagent surfaces', () => {
       ])
     )
     expect(useSessionStore.getState().sessions[0]).toEqual(rootBefore)
+  })
+
+  it('shows the latest child output after a hidden preview reopens', async () => {
+    const session = createSession()
+    session.conversationGraph!.messages = session.conversationGraph!.messages.filter(
+      ({ id }) => id !== 'child-a-answer'
+    )
+    session.conversationGraph!.branches.find(({ id }) => id === 'child-a-branch')!.headMessageId =
+      'child-a-prompt'
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
+    const item = createSessionSubagentsPreviewItem(session.id, session.projectId, 'child-a')
+    const view = renderSurface(
+      <section hidden>
+        <SubagentPreview item={item} isActive={false} />
+      </section>
+    )
+    const publish = async (id: string, text: string): Promise<void> => {
+      await act(async () => {
+        runtimeUpdateHarness.publish({
+          scope: {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            agentFrameId: 'child-a',
+            attemptId: 'attempt-a',
+            runtimeSegmentId: 'runtime-a',
+            promptMessageId: 'child-a-prompt'
+          },
+          event: {
+            id,
+            timestamp: 1_700_000_000_020,
+            kind: 'message',
+            level: 'info',
+            role: 'assistant',
+            messageId: 'hidden-child-stream',
+            text
+          }
+        })
+      })
+    }
+    await publish('hidden-child-1', 'Hidden child output')
+    await publish('hidden-child-2', ' then more')
+
+    view.rerender(
+      <section>
+        <SubagentPreview item={item} isActive />
+      </section>
+    )
+    expect(
+      await screen.findByText('Hidden child output then more', {}, { timeout: 5000 })
+    ).toBeTruthy()
+    view.unmount()
+  })
+
+  it('keeps every live child chunk when a newer root Session snapshot arrives mid-run', async () => {
+    const session = createSession()
+    session.conversationGraph!.messages = session.conversationGraph!.messages.filter(
+      ({ id }) => id !== 'child-a-answer'
+    )
+    session.conversationGraph!.branches.find(({ id }) => id === 'child-a-branch')!.headMessageId =
+      'child-a-prompt'
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
+    const item = createSessionSubagentsPreviewItem(session.id, session.projectId, 'child-a')
+    const view = renderSurface(<SubagentPreview item={item} />)
+
+    const publish = (id: string, text: string): void => {
+      runtimeUpdateHarness.publish({
+        scope: {
+          projectId: session.projectId,
+          sessionId: session.id,
+          agentFrameId: 'child-a',
+          attemptId: 'attempt-a',
+          runtimeSegmentId: 'runtime-a',
+          promptMessageId: 'child-a-prompt'
+        },
+        event: {
+          id,
+          timestamp: 1_700_000_000_020,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'child-stream',
+          text
+        }
+      })
+    }
+    await act(async () => {
+      publish('refresh-chunk-1', 'First')
+      publish('refresh-chunk-2', ' second')
+    })
+    expect(await screen.findByText('First second')).toBeTruthy()
+
+    view.rerender(<SubagentPreview item={item} isActive={false} />)
+    act(() => {
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...session,
+            revision: (session.revision ?? 0) + 1,
+            updatedAt: Date.now() + 1
+          }
+        ]
+      })
+    })
+    view.rerender(<SubagentPreview item={item} isActive />)
+    expect(screen.getByText('First second')).toBeTruthy()
+
+    await act(async () => publish('refresh-chunk-3', ' third'))
+    expect(await screen.findByText('First second third')).toBeTruthy()
+
+    const staged = structuredClone(session)
+    staged.revision = (session.revision ?? 0) + 2
+    staged.updatedAt = Date.now() + 2
+    staged.conversationGraph!.branches.find(({ id }) => id === 'child-a-branch')!.headMessageId =
+      'durable-refresh-answer'
+    staged.conversationGraph!.messages.push({
+      id: 'durable-refresh-answer',
+      role: 'agent',
+      content: 'First second third',
+      status: 'complete',
+      eventIds: ['refresh-chunk-1', 'refresh-chunk-2', 'refresh-chunk-3'],
+      responseToMessageId: 'child-a-prompt',
+      createdAt: staged.updatedAt,
+      updatedAt: staged.updatedAt,
+      agentFrameId: 'child-a',
+      introducedOnBranchId: 'child-a-branch',
+      parentMessageId: 'child-a-prompt',
+      runtimeSegmentId: 'runtime-a'
+    })
+    act(() => useSessionStore.setState({ sessions: [staged] }))
+    expect(screen.getAllByText('First second third')).toHaveLength(1)
+    expect(document.querySelector('[data-message-id="durable-refresh-answer"]')).not.toBeNull()
+
+    const completed = structuredClone(staged)
+    completed.revision = (session.revision ?? 0) + 3
+    completed.updatedAt = staged.updatedAt + 1
+    const frame = completed.conversationGraph!.frames.find(({ id }) => id === 'child-a')!
+    const attempt = completed.runtimeContext!.delegatedWork!.records.find(
+      ({ agentFrameId }) => agentFrameId === 'child-a'
+    )!.attempts[0]
+    frame.status = 'completed'
+    frame.completedAt = completed.updatedAt
+    Object.assign(attempt, {
+      status: 'completed',
+      endedAt: completed.updatedAt,
+      terminalMessageId: 'durable-refresh-answer'
+    })
+    act(() => useSessionStore.setState({ sessions: [completed] }))
+    expect(screen.getAllByText('First second third')).toHaveLength(1)
+    expect(document.querySelector('[data-message-id="durable-refresh-answer"]')).not.toBeNull()
+    expect(document.querySelector('[data-message-id^="agent-runtime:"]')).toBeNull()
+  })
+
+  it('keeps a live child tool through a root snapshot and applies its later completion', () => {
+    const session = createSession()
+    const prompt = session.conversationGraph!.messages.find(({ id }) => id === 'child-a-prompt')!
+    const detail: Parameters<typeof useSubagentRuntimePresentation>[2] = {
+      frameId: 'child-a',
+      status: 'running',
+      attempt: session.runtimeContext!.delegatedWork!.records.find(
+        ({ agentFrameId }) => agentFrameId === 'child-a'
+      )!.attempts[0],
+      messages: [prompt]
+    }
+    const view = renderHook(
+      ({ currentSession }) =>
+        useSubagentRuntimePresentation(runtimeUpdateHarness.owner, currentSession, detail),
+      { initialProps: { currentSession: session } }
+    )
+    const publishTool = (id: string, status: 'in_progress' | 'completed'): void => {
+      runtimeUpdateHarness.publish({
+        scope: {
+          projectId: session.projectId,
+          sessionId: session.id,
+          agentFrameId: detail.frameId,
+          attemptId: detail.attempt!.id,
+          runtimeSegmentId: 'runtime-a',
+          promptMessageId: prompt.id
+        },
+        event: {
+          id,
+          timestamp: 1_700_000_000_020,
+          kind: 'tool',
+          level: 'info',
+          toolCallId: 'review-tool',
+          title: 'Review evidence',
+          status
+        }
+      })
+    }
+    act(() => {
+      runtimeUpdateHarness.publish({
+        scope: {
+          projectId: session.projectId,
+          sessionId: session.id,
+          agentFrameId: detail.frameId,
+          attemptId: detail.attempt!.id,
+          runtimeSegmentId: 'runtime-a',
+          promptMessageId: prompt.id
+        },
+        event: {
+          id: 'review-group-start',
+          timestamp: 1_700_000_000_019,
+          kind: 'tool',
+          level: 'info',
+          toolCallId: 'review-group',
+          providerToolName: 'mcp__open-science-activity__begin_activity_group',
+          rawInput: { title: 'Evidence review' },
+          status: 'completed'
+        }
+      })
+      publishTool('review-start', 'in_progress')
+    })
+    expect(view.result.current.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: 'Review evidence', status: 'in_progress' })
+      ])
+    )
+
+    view.rerender({
+      currentSession: {
+        ...session,
+        revision: (session.revision ?? 0) + 1,
+        updatedAt: Date.now() + 1
+      }
+    })
+    expect(view.result.current.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: 'Review evidence', status: 'in_progress' })
+      ])
+    )
+    act(() => publishTool('review-stop', 'completed'))
+    expect(view.result.current.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: 'Review evidence', status: 'completed' })
+      ])
+    )
+    expect(view.result.current.activityGroups).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'review-group' })])
+    )
+
+    const staged = structuredClone(session)
+    staged.revision = (session.revision ?? 0) + 2
+    staged.updatedAt = Date.now() + 2
+    staged.conversationGraph!.activities.push({
+      id: 'durable-review-tool',
+      kind: 'tool',
+      title: 'Review evidence',
+      status: 'completed',
+      activityGroupId: 'agent-runtime:runtime-a:review-group',
+      promptMessageId: prompt.id,
+      eventIds: ['review-start', 'review-stop'],
+      sortIndex: 1,
+      createdAt: staged.updatedAt,
+      updatedAt: staged.updatedAt,
+      agentFrameId: 'child-a',
+      messageBranchId: 'child-a-branch',
+      runtimeSegmentId: 'runtime-a'
+    })
+    staged.conversationGraph!.activityGroups.push({
+      id: 'agent-runtime:runtime-a:review-group',
+      title: 'Evidence review',
+      promptMessageId: prompt.id,
+      sortIndex: 1,
+      activityIds: ['durable-review-tool'],
+      createdAt: staged.updatedAt,
+      updatedAt: staged.updatedAt,
+      agentFrameId: 'child-a',
+      messageBranchId: 'child-a-branch'
+    })
+    view.rerender({ currentSession: staged })
+    expect(
+      view.result.current.activities?.filter(({ title }) => title === 'Review evidence')
+    ).toEqual([expect.objectContaining({ id: 'durable-review-tool', status: 'completed' })])
+    expect(view.result.current.activityGroups).toEqual([
+      expect.objectContaining({ id: 'agent-runtime:runtime-a:review-group' })
+    ])
+  })
+
+  it('rejects updates from the previous prompt after a child branch changes', () => {
+    const session = createSession()
+    const prompt = session.conversationGraph!.messages.find(({ id }) => id === 'child-a-prompt')!
+    const attempt = session.runtimeContext!.delegatedWork!.records.find(
+      ({ agentFrameId }) => agentFrameId === 'child-a'
+    )!.attempts[0]
+    const detail: Parameters<typeof useSubagentRuntimePresentation>[2] = {
+      frameId: 'child-a',
+      status: 'running',
+      attempt,
+      messages: [prompt]
+    }
+    const nextDetail = {
+      ...detail,
+      messages: [
+        {
+          ...prompt,
+          id: 'next-child-prompt',
+          content: 'Next child branch',
+          updatedAt: prompt.updatedAt + 100
+        }
+      ]
+    }
+    const nextSession = { ...session, updatedAt: session.updatedAt + 100 }
+    const view = renderHook(
+      ({ currentSession, currentDetail }) =>
+        useSubagentRuntimePresentation(runtimeUpdateHarness.owner, currentSession, currentDetail),
+      { initialProps: { currentSession: session, currentDetail: detail } }
+    )
+    const publish = (id: string, promptMessageId: string, text: string): void => {
+      runtimeUpdateHarness.publish({
+        scope: {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          agentFrameId: 'child-a',
+          attemptId: 'attempt-a',
+          runtimeSegmentId: 'runtime-a',
+          promptMessageId
+        },
+        event: {
+          id,
+          timestamp: 1_700_000_000_030,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: `stream-${promptMessageId}`,
+          text
+        }
+      })
+    }
+    act(() => publish('old-1', 'child-a-prompt', 'Old branch output'))
+    view.rerender({ currentSession: nextSession, currentDetail: nextDetail })
+    act(() => {
+      publish('old-2', 'child-a-prompt', ' stale update')
+      publish('new-1', 'next-child-prompt', 'New branch output')
+    })
+    expect(view.result.current.messages.map(({ content }) => content)).toContain(
+      'New branch output'
+    )
+    expect(view.result.current.messages.map(({ content }) => content)).not.toContain(
+      'Old branch output stale update'
+    )
+    expect(view.result.current.messages.map(({ content }) => content)).not.toContain(
+      'Old branch output'
+    )
+    view.unmount()
   })
 
   it('reconciles a newer durable projection for the same running Attempt', async () => {
@@ -893,6 +1305,60 @@ describe('release-gate Subagent surfaces', () => {
     expect(loadOne).toHaveBeenCalledTimes(1)
     expect(loadAll).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('keeps an opened transcript visible when its Session becomes a summary between tab visits', async () => {
+    const durable = createSession()
+    useSessionStore.setState({ sessions: [durable] })
+    const item = createSessionSubagentsPreviewItem(durable.id, durable.projectId, 'child-a')
+    let fail!: (reason: Error) => void
+    const loadOne = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<ChatSession>((_resolve, reject) => {
+            fail = reject
+          })
+      )
+      .mockResolvedValue(durable)
+    vi.stubGlobal('api', {
+      ...window.api,
+      sessions: { ...window.api.sessions, loadOne }
+    })
+    const view = renderSurface(<SubagentPreview item={item} isActive />)
+    expect(screen.getByText('Fourteen strong studies remain.')).toBeTruthy()
+
+    view.rerender(<SubagentPreview item={item} isActive={false} />)
+    act(() => {
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...durable,
+            contentLoaded: false,
+            conversationGraph: undefined,
+            runtimeContext: undefined
+          }
+        ]
+      })
+    })
+    expect(loadOne).not.toHaveBeenCalled()
+    view.rerender(<SubagentPreview item={item} isActive />)
+    expect(loadOne).toHaveBeenCalledExactlyOnceWith({
+      projectId: durable.projectId,
+      sessionId: durable.id
+    })
+    expect(screen.getByText('Fourteen strong studies remain.')).toBeTruthy()
+    expect(screen.queryByText('Loading…')).toBeNull()
+
+    await act(async () => fail(new Error('read failed')))
+    expect(screen.getByText('Fourteen strong studies remain.')).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('could not be read')
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Retry Subagent preview' }))
+    )
+    expect(loadOne).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('Fourteen strong studies remain.')).toBeTruthy()
   })
 
   it('automatically loads an initially visible restored tab and retries only on request after failure', async () => {

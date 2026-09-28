@@ -94,7 +94,7 @@ export const platformDownloadKey = (platform: NodeJS.Platform, arch: string): st
     if (arch === 'x64') return 'mac-x64'
   }
   if (platform === 'win32' && arch === 'x64') return 'win-x64'
-  if (platform === 'linux' && arch === 'x64') return 'linux-x64-deb'
+  if (platform === 'linux' && (arch === 'x64' || arch === 'arm64')) return `linux-${arch}-deb`
   return null
 }
 
@@ -105,8 +105,8 @@ export const selectDownload = (
 ): PlatformDownload | null => {
   const key = platformDownloadKey(platform, arch)
   if (key && manifest.downloads[key]) return manifest.downloads[key]
-  if (platform === 'linux' && arch === 'x64' && manifest.downloads['linux-x64-appimage']) {
-    return manifest.downloads['linux-x64-appimage']
+  if (platform === 'linux' && key) {
+    return manifest.downloads[`linux-${arch}-appimage`] ?? null
   }
   return null
 }

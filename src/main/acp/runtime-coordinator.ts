@@ -2150,6 +2150,11 @@ class AcpRuntimeCoordinator {
             !attempt.cancelled &&
             attempt.globalCancellationGeneration === this.globalCancellationGeneration
           ) {
+            const prompt = this.activePromptRequests.get(sessionId)
+            const promptId = prompt?.request.provenanceContext?.promptMessageId
+            if (prompt?.attemptId === promptAttemptId && promptId) {
+              this.delegatedWork?.rootExecutionStarted?.(sessionId, promptId, turnToken)
+            }
             attempt.startAdmission?.resolve()
             this.teardownCallbacks.onSessionTurnStarted?.(sessionId, turnToken)
           } else {

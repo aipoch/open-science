@@ -38,6 +38,15 @@ export const resolveChatReasoningTransport = (
   }
 
   if (transport === 'minimax') {
+    if (vendorId === 'minimax' && model === 'MiniMax-M3.1-Flash-Preview') {
+      // The preview always thinks. Auxiliary callers requesting no thinking use its lowest tier;
+      // sending `none` or disabled thinking would fail with HTTP 400.
+      // https://platform.minimax.io/docs/api-reference/text-openai-api
+      return {
+        reasoningEffort: effort === 'none' ? 'low' : effort,
+        thinking: { type: 'adaptive' }
+      }
+    }
     return { thinking: { type: effort === 'none' ? 'disabled' : 'adaptive' } }
   }
 

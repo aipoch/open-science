@@ -42,13 +42,23 @@ export const isReviewerCorrectionAttribution = (
   if (!isRecord(value)) return false
   return !(
     Object.keys(value).some(
-      (key) => !['kind', 'feature', 'purpose', 'causeReviewId'].includes(key)
+      (key) => !['kind', 'feature', 'purpose', 'causeReviewId', 'continuation'].includes(key)
     ) ||
     value.kind !== 'application' ||
     value.feature !== 'reviewer' ||
     value.purpose !== 'correction' ||
     typeof value.causeReviewId !== 'string' ||
-    value.causeReviewId.length === 0
+    value.causeReviewId.length === 0 ||
+    (value.continuation !== undefined &&
+      (!isRecord(value.continuation) ||
+        !hasOnlyFields(value.continuation, ['round', 'maxRounds', 'findingIds']) ||
+        !Number.isInteger(value.continuation.round) ||
+        !Number.isInteger(value.continuation.maxRounds) ||
+        Number(value.continuation.round) < 0 ||
+        Number(value.continuation.maxRounds) <= Number(value.continuation.round) ||
+        !Array.isArray(value.continuation.findingIds) ||
+        value.continuation.findingIds.length === 0 ||
+        value.continuation.findingIds.some((id) => typeof id !== 'string' || !id)))
   )
 }
 
@@ -100,7 +110,12 @@ export const sanitizeMessageAttribution = (value: unknown): MessageAttribution |
       kind: value.kind,
       feature: value.feature,
       purpose: value.purpose,
-      causeReviewId: value.causeReviewId
+      causeReviewId: value.causeReviewId,
+      ...(value.continuation
+        ? {
+            continuation: { ...value.continuation, findingIds: [...value.continuation.findingIds] }
+          }
+        : {})
     }
   }
   if (isComputeJobCompletionAttribution(value)) {

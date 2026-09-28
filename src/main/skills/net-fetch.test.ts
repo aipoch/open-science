@@ -46,8 +46,10 @@ describe('netFetch', () => {
 
   it('streams direct responses and propagates cancellation while awaiting headers', async () => {
     const request = outgoing()
+    const completedController = new AbortController()
     const response = netFetchWithManualRedirect('https://github.com/example', {
-      redirect: 'manual'
+      redirect: 'manual',
+      signal: completedController.signal
     })
     const incoming = Object.assign(new PassThrough(), {
       statusCode: 200,
@@ -56,15 +58,40 @@ describe('netFetch', () => {
     request.emit('response', incoming)
     incoming.end('package')
     expect(await (await response).text()).toBe('package')
+    completedController.abort()
+    expect(request.abort).not.toHaveBeenCalled()
     const aborted = outgoing()
     const controller = new AbortController()
     const pending = netFetchWithManualRedirect('https://github.com/example', {
       redirect: 'manual',
       signal: controller.signal
     })
+    aborted.emit('close')
     controller.abort(new Error('cancelled'))
     await expect(pending).rejects.toThrow('cancelled')
     expect(aborted.abort).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a stalled response body when cancelled after receiving headers', async () => {
+    const request = outgoing()
+    const controller = new AbortController()
+    const pending = netFetchWithManualRedirect('https://registry.npmjs.org/example', {
+      redirect: 'manual',
+      signal: controller.signal
+    })
+    const incoming = Object.assign(new PassThrough(), {
+      statusCode: 200,
+      headers: { 'content-type': ['application/json'] }
+    })
+    // Electron may close the outgoing request before exposing the response body.
+    request.emit('close')
+    request.emit('response', incoming)
+    incoming.write('{"partial":')
+    const body = (await pending).json()
+    const rejected = expect(body).rejects.toThrow('cancelled during download')
+    controller.abort(new Error('cancelled during download'))
+    await rejected
+    expect(request.abort).toHaveBeenCalledOnce()
   })
 
   it('delegates to Electron net.fetch with the given url and init', async () => {

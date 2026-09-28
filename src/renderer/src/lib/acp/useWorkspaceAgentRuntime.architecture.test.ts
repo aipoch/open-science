@@ -485,7 +485,7 @@ const hookKeys = [
   'sendPreparationInFlightSessionIds',
   'saveAsSkillInFlightSessionIds',
   'nativeContextCompactionSessionIds',
-  'subscribeToSubagentRuntimeUpdates',
+  'subagentTranscripts',
   'compactContext',
   'ensureSessionReady',
   'saveAsSkill',
@@ -567,7 +567,7 @@ const privateOwnerBoundaryViolations = (path: string, source?: string): string[]
 }
 describe('workspace runtime architecture', () => {
   const facadeFile = sourceFileFor(facadePath)
-  it('keeps the established runtime interface plus readiness and the child-update selector', () => {
+  it('keeps the established runtime interface plus readiness and the owned child transcripts', () => {
     const runtimeType = typeLiteralAlias(facadeFile, 'WorkspaceAgentRuntime')
     const owner = variableArrow(facadeFile, 'useOwnedWorkspaceAgentRuntime')
     const consumer = variableArrow(facadeFile, 'useWorkspaceAgentRuntime')
@@ -866,6 +866,7 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts',
       'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.test.ts',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',

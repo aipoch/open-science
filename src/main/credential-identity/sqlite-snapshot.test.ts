@@ -66,6 +66,26 @@ const createWal = (path: string): void => {
   expect(existsSync(`${path}-wal`)).toBe(true)
 }
 
+const createRollback = (path: string): void => {
+  const result = spawnSync(process.execPath, [
+    '--no-warnings',
+    '-e',
+    `
+    const { DatabaseSync } = require('node:sqlite')
+    const db = new DatabaseSync(process.argv[1])
+    db.exec("PRAGMA journal_mode=DELETE; PRAGMA cache_size=5; CREATE TABLE secrets(value TEXT, padding BLOB); INSERT INTO secrets VALUES ('committed-ciphertext', zeroblob(65536)); BEGIN IMMEDIATE; UPDATE secrets SET value='uncommitted-ciphertext', padding=randomblob(65536)")
+    require('node:fs').writeSync(1, 'rollback-pending')
+    process.kill(process.pid, 'SIGKILL')
+  `,
+    path
+  ])
+  expect(result.error).toBeUndefined()
+  expect(result.stdout.toString()).toBe('rollback-pending')
+  expect(result.signal).toBe(process.platform === 'win32' ? null : 'SIGKILL')
+  expect(result.status).toBe(process.platform === 'win32' ? 1 : null)
+  expect(readFileSync(`${path}-journal`).subarray(0, 8).toString('hex')).toBe('d9d505f920a163d7')
+}
+
 afterEach(() => {
   hooks.afterRead = undefined
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
@@ -103,6 +123,81 @@ describe('isolated SQLite ciphertext snapshots', () => {
       expect(existsSync(dirname(snapshot))).toBe(false)
     }
   )
+
+  it('recovers only the private copy after a writer crash and exposes committed ciphertexts read-only', () => {
+    const { root, path } = fixture()
+    createRollback(path)
+    const before = contents(root)
+    let snapshot = ''
+    withReadOnlySqliteSnapshot(path, (db) => {
+      expect(db.prepare('SELECT value FROM secrets').get()?.value).toBe('committed-ciphertext')
+      snapshot = String(db.prepare('PRAGMA database_list').get()?.file)
+      expect(dirname(snapshot)).not.toBe(root)
+      expect(() => db.exec("UPDATE secrets SET value='forbidden'")).toThrow()
+    })
+    expect(contents(root)).toEqual(before)
+    expect(existsSync(dirname(snapshot))).toBe(false)
+  })
+
+  it.each(['replace', 'change', 'remove'])(
+    'rejects rollback journal changes while copying: %s',
+    (mutation) => {
+      const { path } = fixture()
+      createRollback(path)
+      const journal = `${path}-journal`
+      const original = readFileSync(journal)
+      hooks.afterRead = () => {
+        if (mutation === 'remove') unlinkSync(journal)
+        else if (mutation === 'replace') {
+          renameSync(journal, `${journal}.old`)
+          writeFileSync(journal, original)
+        } else writeFileSync(journal, Buffer.concat([original, Buffer.from('changed')]))
+      }
+      const read = vi.fn()
+      expect(() => withReadOnlySqliteSnapshot(path, read)).toThrow(/changed|recovery|recovered/i)
+      expect(read).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects rollback journals referencing a super-journal outside the private copy', () => {
+    const { root, path } = fixture()
+    createRollback(path)
+    const journal = `${path}-journal`
+    const external = join(root, 'external-super-journal')
+    writeFileSync(external, 'must not be opened or deleted')
+    const name = Buffer.from(external)
+    const length = Buffer.alloc(4)
+    length.writeUInt32BE(name.length)
+    const checksum = Buffer.alloc(4)
+    checksum.writeUInt32BE([...name].reduce((sum, byte) => sum + byte, 0))
+    writeFileSync(
+      journal,
+      Buffer.concat([
+        readFileSync(journal),
+        name,
+        length,
+        checksum,
+        Buffer.from('d9d505f920a163d7', 'hex')
+      ])
+    )
+    const before = contents(root)
+    const read = vi.fn()
+    expect(() => withReadOnlySqliteSnapshot(path, read)).toThrow(/super-journal/)
+    expect(read).not.toHaveBeenCalled()
+    expect(contents(root)).toEqual(before)
+  })
+
+  it('rejects symbolic-link rollback journals before opening SQLite', () => {
+    const { root, path } = fixture()
+    createRollback(path)
+    const journal = `${path}-journal`
+    const target = join(root, 'original-journal')
+    renameSync(journal, target)
+    symlinkSync(target, journal)
+    const before = contents(root)
+    expect(() => withReadOnlySqliteSnapshot(path, vi.fn())).toThrow(/regular|symbolic/i)
+    expect(contents(root)).toEqual(before)
+  })
 
   it('cleans up its snapshot when the consumer throws', () => {
     const { root, path } = fixture()

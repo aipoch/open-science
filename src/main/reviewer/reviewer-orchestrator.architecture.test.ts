@@ -426,6 +426,8 @@ describe('Reviewer orchestrator architecture', () => {
         'src/main/reviewer/bridge-tools.ts',
         'src/main/reviewer/correction-context.test.ts',
         'src/main/reviewer/correction-context.ts',
+        'src/main/reviewer/correction-resume.ts',
+        'src/main/reviewer/correction-resume.test.ts',
         'src/main/reviewer/correction-owner.test.ts',
         'src/main/reviewer/correction.test.ts',
         'src/main/reviewer/fix-loop.test.ts',
@@ -508,6 +510,7 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/reviewer/fix-loop.test.ts',
           'src/main/reviewer/reviewer-fix-loop-owner.test.ts',
           'src/main/reviewer/correction-context.test.ts',
+          'src/main/reviewer/correction-resume.test.ts',
           'src/main/reviewer/correction.test.ts',
           'src/main/reviewer/correction-owner.test.ts',
           'src/main/reviewer/paged-preview-electron.test.ts',
@@ -832,7 +835,8 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/notebook/runtime-service.rpc-retirement.test.ts',
           'src/main/literature/smart-collections.test.ts',
           'src/main/notebook/runtime-service.macos-isolation.integration.test.ts',
-          'src/main/acp/library-auto-policy.test.ts'
+          'src/main/acp/library-auto-policy.test.ts',
+          'src/main/literature/journal-attributes.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

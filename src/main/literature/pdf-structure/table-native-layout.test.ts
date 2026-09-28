@@ -14,11 +14,35 @@ const { findCaptionCandidates } = await import(
 const { associateFigures } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-association.mjs')).href
 )
-const { tableCaptionCropTop } = await import(
+const { tableCaptionCropTop, tableMarginCropTop } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-geometry.mjs')).href
 )
 const fixture = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('src/main/literature/pdf-structure/fixtures', `${name}.jsonl`))
+it('trims only confirmed running headers above a captionless continuation', async () => {
+  const { excludeRepeatedMarginContent } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-graphics.mjs')).href
+  )
+  const f = fixture('captionless-continuation-below-repeated-running-header')
+  const original = f.pages.find((p: { pageNumber: number }) => p.pageNumber === f.pageNumber)
+  const page = excludeRepeatedMarginContent(f.pages).find(
+    (p: { pageNumber: number }) => p.pageNumber === f.pageNumber
+  )
+  const table = refineTable(f.table, f.items, f.captions, [], f.rules)
+  const top = tableMarginCropTop(table, original, page, f.rules, 1.5)
+  expect(top).toBeGreaterThan(85)
+  expect(top).toBeLessThan(110)
+  expect(tableMarginCropTop(table, original, original, f.rules, 1.5)).toBe(table.cropRect[1])
+  expect(
+    tableMarginCropTop(
+      { ...table, unassigned: [{ text: 'uncertain' }] },
+      original,
+      page,
+      f.rules,
+      1.5
+    )
+  ).toBe(table.cropRect[1])
+})
 const parse = (name: string): ReturnType<typeof JSON.parse> => {
   const f = fixture(name),
     first = refineTable(f.table, f.items, f.captions, [], f.rules)

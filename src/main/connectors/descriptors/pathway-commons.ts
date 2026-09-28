@@ -195,7 +195,6 @@ const splitReferences = (value: string): string[] =>
 function parseTxt(content: string): Dict {
   if (!content.trim()) return { n_records: 0, records: [], n_nodes: 0, nodes: [] }
   const sections = content
-    .trim()
     .split(/\r?\n\s*\r?\n/u)
     .map((section) => nonEmptyLines(section))
     .filter((section) => section.length > 0)

@@ -16,6 +16,7 @@ import type { ArtifactVersionEvidenceResolvers } from './host-sdk'
 import type { ReviewerFileEvidenceResolver } from './turn-evidence'
 import { buildHistoryPreamble } from '../../shared/history-preamble'
 import { runReviewAssessment } from './review-assessment-owner'
+import type { CorrectionResume } from './correction-resume'
 import { runReviewerFixLoop } from './reviewer-fix-loop-owner'
 import type { AcpSessionAgentTarget } from '../../shared/acp'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
@@ -37,6 +38,7 @@ const runReviewMutation = <Result>(
 ): Promise<Result> => (runner ? runner(mutation) : mutation())
 
 export type RunReviewOptions = {
+  correctionResume?: CorrectionResume
   sessionId: string
   // The turn to review: the agent message id (or user message id) for that turn. This is also the
   // grouping id stored on the Review row.
@@ -162,37 +164,41 @@ const runReviewWithSession = async (
     recordUsage
   } = options
 
-  const assessment = await runReviewAssessment({
-    mode: 'initial',
-    session,
-    sessionId,
-    scopeTurnMessageId: scopeTurnMessageId ?? turnMessageId,
-    scopeMessageBranchId,
-    turnMessageId,
-    evidenceScope,
-    projectId,
-    reviewRepository,
-    runSessionMutation,
-    acpRuntime: reviewerAcpRuntime,
-    artifactStorageRoot,
-    artifactVersionResolvers,
-    reviewerFileEvidenceResolver,
-    reviewerMcpEntryPath,
-    model,
-    onReviewUpdate,
-    onStarted,
-    keepFlaggedReviewRunning: mainSessionId !== undefined,
-    reviewerTimeoutMs,
-    reviewerMaxUpdates,
-    abortSignal: fixLoopAbortSignal,
-    recordUsage
-  })
+  const assessment = options.correctionResume
+    ? { review: options.correctionResume.sourceReview }
+    : await runReviewAssessment({
+        mode: 'initial',
+        session,
+        sessionId,
+        scopeTurnMessageId: scopeTurnMessageId ?? turnMessageId,
+        scopeMessageBranchId,
+        turnMessageId,
+        evidenceScope,
+        projectId,
+        reviewRepository,
+        runSessionMutation,
+        acpRuntime: reviewerAcpRuntime,
+        artifactStorageRoot,
+        artifactVersionResolvers,
+        reviewerFileEvidenceResolver,
+        reviewerMcpEntryPath,
+        model,
+        onReviewUpdate,
+        onStarted,
+        keepFlaggedReviewRunning: mainSessionId !== undefined,
+        reviewerTimeoutMs,
+        reviewerMaxUpdates,
+        abortSignal: fixLoopAbortSignal,
+        recordUsage
+      })
   const finalReview = assessment.review
   if (finalReview.lifecycle === 'error') return finalReview
 
   // Step 5: Phase 3 fix loop. If there are warn/fail checks and a main session is provided,
   // drive the bounded re-review loop: inject → correction → re-review → resolution → repeat.
-  const hasWarnOrFail = finalReview.checks.some((c) => c.status === 'warn' || c.status === 'fail')
+  const hasWarnOrFail = (options.correctionResume?.openChecks ?? finalReview.checks).some(
+    (c) => c.status === 'warn' || c.status === 'fail'
+  )
 
   if (mainSessionId && hasWarnOrFail) {
     onReviewUpdate?.(finalReview)
@@ -203,8 +209,12 @@ const runReviewWithSession = async (
         sessionId,
         originalTurnMessageId: turnMessageId,
         correctionScope: finalReview.scope,
-        reviewedSession: session,
-        openChecks: finalReview.checks.filter((c) => c.status === 'warn' || c.status === 'fail'),
+        reviewedSession: options.correctionResume?.reviewedSession ?? session,
+        resumeCorrection: options.correctionResume?.resumeCorrection,
+        onAssessmentStarted: onStarted,
+        openChecks:
+          options.correctionResume?.openChecks ??
+          finalReview.checks.filter((c) => c.status === 'warn' || c.status === 'fail'),
         projectId,
         mainSessionId,
         getSession,
@@ -222,7 +232,7 @@ const runReviewWithSession = async (
         onCorrectionFailed,
         reviewerTimeoutMs,
         reviewerMaxUpdates,
-        maxRounds: fixLoopMaxRounds,
+        maxRounds: options.correctionResume?.maxRounds ?? fixLoopMaxRounds,
         sessionRefreshTimeoutMs,
         abortSignal: fixLoopAbortSignal,
         recordUsage

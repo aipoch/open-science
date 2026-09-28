@@ -39,6 +39,8 @@ const SESSION_REFRESH_POLL_MS = 50
 
 // Options for the Phase 3 fix loop.
 type ReviewerFixLoopOptions = {
+  resumeCorrection?: { promptMessageId: string; turnMessageId: string; round: number }
+  onAssessmentStarted?: () => void
   sessionId: string
   // The original turn's message id (shared across all Review rows in this closure).
   originalTurnMessageId: string
@@ -183,7 +185,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
     )
   }
 
-  for (let round = 0; round < maxRounds; round++) {
+  for (let round = options.resumeCorrection?.round ?? 0; round < maxRounds; round++) {
     if (openChecks.length === 0) break
 
     // Abort check: if the user cancelled during the loop, exit without further [Auditor] injections.
@@ -229,23 +231,58 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
     let correctionPromptMessageId: string | undefined
     try {
       correctionContext ??= new ReviewerCorrectionContext(options.reviewedSession, correctionScope)
-      const provenanceContext = correctionContext.resolve(sessionBefore)
-      const correctionResult = await correctionOwner.request({
-        projectId,
-        sessionId: mainSessionId,
-        causeReviewId: causeReviewId ?? openChecks[0].reviewId,
-        checks: openChecks,
-        abortSignal,
-        provenanceContext,
-        onPromptAdmitted: async () => {
-          abortSignal?.throwIfAborted()
-          const latest = await getSession(sessionId)
-          abortSignal?.throwIfAborted()
-          if (!latest)
-            throw new Error('The durable session disappeared before correction admission.')
-          return correctionContext!.resolve(latest)
+      const resuming = options.resumeCorrection?.round === round
+      if (resuming) {
+        const resumed = options.resumeCorrection!
+        const answer = sessionBefore.messages.find(
+          (message) => message.id === resumed.turnMessageId
+        )
+        if (
+          sessionBefore.activeRun ||
+          sessionBefore.resumeRecovery ||
+          sessionBefore.autoReviewEnabled === false ||
+          !answer ||
+          answer.status !== 'complete' ||
+          answer.responseToMessageId !== resumed.promptMessageId
+        ) {
+          throw new ReviewerCorrectionContextChangedError('unexpected-correction-turn')
         }
-      })
+        // Validate the resumed tail before any assessment, including the all-pass exit path.
+        const witness = new ReviewerCorrectionContext(options.reviewedSession, correctionScope)
+        witness.advance(
+          sessionBefore,
+          resolveTurnScope(
+            sessionBefore,
+            resumed.turnMessageId,
+            new Map(),
+            correctionScope.messageBranchId
+          ),
+          resumed.promptMessageId
+        )
+      }
+      const provenanceContext = resuming ? undefined : correctionContext.resolve(sessionBefore)
+      const correctionResult = resuming
+        ? {
+            status: 'completed' as const,
+            promptMessageId: options.resumeCorrection!.promptMessageId
+          }
+        : await correctionOwner.request({
+            projectId,
+            sessionId: mainSessionId,
+            causeReviewId: causeReviewId ?? openChecks[0].reviewId,
+            checks: openChecks,
+            continuation: { round, maxRounds, findingIds: openChecks.map((check) => check.id) },
+            abortSignal,
+            provenanceContext: provenanceContext!,
+            onPromptAdmitted: async () => {
+              abortSignal?.throwIfAborted()
+              const latest = await getSession(sessionId)
+              abortSignal?.throwIfAborted()
+              if (!latest)
+                throw new Error('The durable session disappeared before correction admission.')
+              return correctionContext!.resolve(latest)
+            }
+          })
       if (correctionResult.status === 'context_changed') {
         // Admission rejected before dispatch, so no stop event will consume the suppression.
         onCorrectionFailed?.()
@@ -302,14 +339,22 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       | { session: PersistedChatSession; message: PersistedChatSession['messages'][number] }
       | undefined
     try {
-      correctionState = await waitForCorrectionAgentMessage({
-        sessionId,
-        correctionPromptMessageId,
-        messageIdsBefore,
-        getSession,
-        timeoutMs: sessionRefreshTimeoutMs,
-        abortSignal
-      })
+      correctionState =
+        options.resumeCorrection?.round === round
+          ? {
+              session: sessionBefore,
+              message: sessionBefore.messages.find(
+                (message) => message.id === options.resumeCorrection!.turnMessageId
+              )!
+            }
+          : await waitForCorrectionAgentMessage({
+              sessionId,
+              correctionPromptMessageId,
+              messageIdsBefore,
+              getSession,
+              timeoutMs: sessionRefreshTimeoutMs,
+              abortSignal
+            })
     } catch (error) {
       log.warn('fix loop: failed while refreshing durable correction turn', {
         sessionId,
@@ -353,6 +398,10 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
 
     const scopedResult = await runReviewAssessment({
       mode: 'tracked',
+      ...(options.resumeCorrection?.round === round
+        ? { resumedSourceFindingIds: openChecks.map((check) => check.id) }
+        : {}),
+      onStarted: options.onAssessmentStarted,
       abortSignal,
       session: correctionState.session,
       sessionId,

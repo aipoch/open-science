@@ -22,6 +22,7 @@ const ARTIFACT_VERSION_INPUT_PROMPT =
   'Run the production Artifact Version input delegation journey.'
 const BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
 const BOUNDED_RECOLLECT_PROMPT = 'Collect the running Subagent in Turn B.'
+const SCROLL_INTENT_PROMPT = 'Run the production Subagent scroll intent journey.'
 const PERMISSION_PROMPT = 'Run the production delegated permission journey.'
 const USER_QUESTION_PROMPT = 'Run the production delegated user question journey.'
 const STOP_PROMPT = 'Run the production delegation Stop journey.'
@@ -48,6 +49,26 @@ const STOP_CHILD_TWO = 'Delegated fixture B'
 const BRANCH_A_CHILD = 'Inactive branch child A'
 const BRANCH_B_CHILD = 'Active branch child B1'
 const BRANCH_B_CHILD_TWO = 'Active branch child B2'
+const IRIS_MARKDOWN_REPORT = [
+  '## Iris EDA 完成',
+  '',
+  '数据来源：`sklearn.datasets.load_iris`',
+  '',
+  '### 1) 数据规模与元信息（实测）',
+  '- 形状：**150 行 × 4 个数值特征**',
+  '',
+  '### 2) 分组统计',
+  '| species | sepal length | petal length |',
+  '| --- | --- | --- |',
+  '| setosa | 5.006 ± 0.352 | 1.462 ± 0.174 |',
+  '| versicolor | 5.936 ± 0.516 | 4.260 ± 0.470 |',
+  '',
+  '### 3) 相关系数矩阵',
+  '```',
+  '              sepal length  petal length',
+  'sepal length         1.000         0.872',
+  '```'
+].join('\n')
 
 const expectDurableChildStatus = async (
   page: Page,
@@ -95,9 +116,21 @@ const expectRenderedChildStatus = async (
   await trigger.click()
 }
 
-const seedDelegatedWork = async (page: Page, projectId: string): Promise<void> => {
+const seedDelegatedWork = async (
+  page: Page,
+  projectId: string,
+  longFirstChild = false,
+  markdownFirstChild = false
+): Promise<void> => {
   await page.evaluate(
-    async ({ childCount, projectId, rootPrompt }) => {
+    async ({
+      childCount,
+      projectId,
+      rootPrompt,
+      longFirstChild,
+      markdownFirstChild,
+      markdownReport
+    }) => {
       const bridge = globalThis as unknown as {
         api: {
           sessions: {
@@ -176,25 +209,39 @@ const seedDelegatedWork = async (page: Page, projectId: string): Promise<void> =
           activeBranchId: branchId,
           createdAt
         })
+        const messageCount = longFirstChild && index === 0 ? 32 : 1
         graph.branches.push({
           id: branchId,
           agentFrameId: frameId,
-          headMessageId: messageId,
+          headMessageId: messageCount === 1 ? messageId : `${messageId}-${messageCount - 1}`,
           createdAt,
           updatedAt: createdAt
         })
-        graph.messages.push({
-          id: messageId,
-          role: 'agent',
-          content: `Durable transcript for Release Child ${suffix}`,
-          status: 'complete',
-          eventIds: [],
-          agentFrameId: frameId,
-          introducedOnBranchId: branchId,
-          runtimeSegmentId,
-          createdAt,
-          updatedAt: createdAt
-        })
+        for (let messageIndex = 0; messageIndex < messageCount; messageIndex += 1) {
+          graph.messages.push({
+            id: messageIndex === 0 ? messageId : `${messageId}-${messageIndex}`,
+            role: 'agent',
+            content:
+              longFirstChild && index === 0
+                ? `Durable transcript for Release Child ${suffix}, part ${messageIndex + 1}. ${'Review the evidence. '.repeat(30)}`
+                : markdownFirstChild && index === 0
+                  ? markdownReport
+                  : `Durable transcript for Release Child ${suffix}`,
+            status: markdownFirstChild && index === 0 ? 'streaming' : 'complete',
+            eventIds: [],
+            agentFrameId: frameId,
+            introducedOnBranchId: branchId,
+            ...(messageIndex > 0
+              ? {
+                  parentMessageId:
+                    messageIndex === 1 ? messageId : `${messageId}-${messageIndex - 1}`
+                }
+              : {}),
+            runtimeSegmentId,
+            createdAt: createdAt + messageIndex,
+            updatedAt: createdAt + messageIndex
+          })
+        }
         graph.runtimeSegments.push({
           id: runtimeSegmentId,
           agentFrameId: frameId,
@@ -252,9 +299,345 @@ const seedDelegatedWork = async (page: Page, projectId: string): Promise<void> =
         lastSessionId: sessionId
       })
     },
-    { childCount: CHILD_COUNT, projectId, rootPrompt: ROOT_PROMPT }
+    {
+      childCount: CHILD_COUNT,
+      projectId,
+      rootPrompt: ROOT_PROMPT,
+      longFirstChild,
+      markdownFirstChild,
+      markdownReport: IRIS_MARKDOWN_REPORT
+    }
   )
 }
+
+test('renders a running Subagent Markdown report after switching preview tabs', async ({ app }) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  const projectId = await createProject(page, 'Subagent Markdown report')
+  await seedDelegatedWork(page, projectId, false, true)
+  page = await app.restart()
+  await openRecentSession(page, ROOT_PROMPT)
+
+  const bar = page.getByTestId('subagents-bar')
+  await bar.locator(':scope > button').click()
+  await bar.getByRole('button', { name: 'Release Child 01, running' }).click()
+  const transcript = page.locator('[data-slot="subagent-transcript"]')
+  const report = transcript.locator('[data-message-id="release-message-01"]')
+  await expect(report.locator('h2')).toHaveText('Iris EDA 完成')
+  await expect(report.locator('[data-streamdown="strong"]')).toContainText('150 行')
+  await expect(report.locator('table tbody tr')).toHaveCount(2)
+  await expect(report.locator('pre')).toContainText('sepal length')
+  await expect(report.locator('[data-agent-markdown-fallback]')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await page.getByRole('tab', { name: 'Subagents' }).click()
+  await expect(report.locator('h2')).toHaveText('Iris EDA 完成')
+  await expect(report.locator('table tbody tr')).toHaveCount(2)
+  await expect(report.locator('[data-agent-markdown-fallback]')).toHaveCount(0)
+})
+
+test('keeps a Subagent reading position across preview tabs', async ({ app }) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  await app.setMainWindowSize(1280, 900)
+  const projectId = await createProject(page, 'Subagent reading position')
+  await seedDelegatedWork(page, projectId, true)
+  page = await app.restart()
+  await openRecentSession(page, ROOT_PROMPT)
+
+  const bar = page.getByTestId('subagents-bar')
+  await bar.locator(':scope > button').click()
+  await bar.getByRole('button', { name: 'Release Child 01, running' }).click()
+  const preview = page.getByRole('region', { name: 'Subagents' })
+  const viewport = preview.locator('[data-slot="message-scroller-viewport"]')
+  await expect(preview).toContainText('part 32')
+  await expect.poll(() => viewport.evaluate((element) => element.scrollHeight)).toBeGreaterThan(900)
+  await viewport.hover()
+  await page.mouse.wheel(0, 2000)
+  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeGreaterThan(100)
+  await page.mouse.wheel(0, -500)
+  await expect
+    .poll(() =>
+      viewport.evaluate(
+        (element) => element.scrollHeight - element.clientHeight - element.scrollTop
+      )
+    )
+    .toBeGreaterThan(100)
+  const readingPosition = await viewport.evaluate((element) => element.scrollTop)
+
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await page.getByRole('tab', { name: 'Subagents' }).click()
+  expect(await preview.textContent()).toContain('part 32')
+  expect(await viewport.locator('[data-message-id]').count()).toBeGreaterThan(0)
+  await expect(preview).toBeVisible()
+  await expect
+    .poll(() => viewport.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(readingPosition - 8)
+  expect(await viewport.evaluate((element) => element.scrollTop)).toBeLessThan(readingPosition + 8)
+
+  const bottomGap = (): Promise<number> =>
+    viewport.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop)
+  await preview.getByRole('button', { name: 'Scroll to end' }).click()
+  await expect.poll(bottomGap).toBeLessThan(3)
+  await app.setMainWindowSize(1280, 760)
+  await expect.poll(bottomGap).toBeLessThan(3)
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await page.getByRole('tab', { name: 'Subagents' }).click()
+  await expect.poll(bottomGap).toBeLessThan(3)
+})
+
+test('follows live Subagent output only after the reader returns to the end', async ({ app }) => {
+  test.setTimeout(240_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await app.setMainWindowSize(1280, 900)
+  await createProject(page, 'Live Subagent scroll intent')
+  const directory = await app.createTestDirectory('subagent-scroll-intent')
+  const releaseFiles = [
+    join(directory, 'start'),
+    join(directory, 'first'),
+    join(directory, 'second')
+  ]
+
+  try {
+    await sendPrompt(
+      page,
+      `${SCROLL_INTENT_PROMPT}\nRelease files: ${JSON.stringify(releaseFiles)}`,
+      'Production Subagent scroll intent journey started.',
+      120_000
+    )
+    await expectDurableChildStatus(page, 'Scroll intent child', 'running')
+    const bar = page.getByTestId('subagents-bar')
+    await bar.locator(':scope > button').click()
+    await bar.getByRole('button', { name: 'Scroll intent child, running' }).click()
+    const preview = page.getByRole('region', { name: 'Subagents' })
+    const viewport = preview.locator('[data-slot="message-scroller-viewport"]')
+    await expect(viewport).toBeVisible()
+    await writeFile(releaseFiles[0], '')
+    await expect(preview).toContainText('Initial delegated evidence.', { timeout: 60_000 })
+    await page.getByRole('button', { name: 'Files', exact: true }).click()
+    await page.getByRole('tab', { name: 'Subagents' }).click()
+    await expect(preview).toContainText('Initial delegated evidence.')
+    await expect
+      .poll(() => viewport.evaluate((element) => element.scrollHeight))
+      .toBeGreaterThan(900)
+    await viewport.hover()
+    await page.mouse.wheel(0, 2000)
+    await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeGreaterThan(100)
+    await page.mouse.wheel(0, -500)
+    const bottomGap = (): Promise<number> =>
+      viewport.evaluate(
+        (element) => element.scrollHeight - element.clientHeight - element.scrollTop
+      )
+    await expect.poll(bottomGap).toBeGreaterThan(100)
+    const readingPosition = await viewport.evaluate((element) => element.scrollTop)
+
+    await writeFile(releaseFiles[1], '')
+    await expect(preview).toContainText('Reading-position update arrived.', { timeout: 60_000 })
+    await expect
+      .poll(() => viewport.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(readingPosition - 8)
+    expect(await viewport.evaluate((element) => element.scrollTop)).toBeLessThan(
+      readingPosition + 8
+    )
+
+    await preview.getByRole('button', { name: 'Scroll to end' }).click()
+    await expect.poll(bottomGap).toBeLessThan(3)
+    await writeFile(releaseFiles[2], '')
+    await expect(preview).toContainText('Follow-end update arrived.', { timeout: 60_000 })
+    await expect.poll(bottomGap).toBeLessThan(3)
+  } finally {
+    await Promise.all(releaseFiles.map((file) => writeFile(file, '')))
+  }
+})
+
+test('preserves the complete live transcript on every visible frame across preview tabs', async ({
+  app
+}) => {
+  test.setTimeout(240_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await app.setMainWindowSize(1280, 900)
+  await createProject(page, 'Live Subagent history continuity')
+  const directory = await app.createTestDirectory('subagent-history-continuity')
+  const releaseFiles = ['start', 'first', 'second', 'finish'].map((name) => join(directory, name))
+  try {
+    await sendPrompt(
+      page,
+      `${SCROLL_INTENT_PROMPT}\nRelease files: ${JSON.stringify(releaseFiles)}`,
+      'Production Subagent scroll intent journey started.',
+      120_000
+    )
+    await expectDurableChildStatus(page, 'Scroll intent child', 'running')
+    const bar = page.getByTestId('subagents-bar')
+    await bar.locator(':scope > button').click()
+    await bar.getByRole('button', { name: 'Scroll intent child, running' }).click()
+    const preview = page.getByRole('region', { name: 'Subagents', includeHidden: true })
+    const transcript = preview.locator('[data-slot="subagent-transcript"]')
+    await writeFile(releaseFiles[0], '')
+    await expect(transcript).toContainText('Initial delegated evidence.', { timeout: 60_000 })
+
+    // Keep the provider running throughout the assertions: terminal staging must not repair
+    // a missing transcript before this test notices it. Sample painted frames, not just an
+    // eventually successful locator assertion after re-entering the tab.
+    await transcript.evaluate((element) => {
+      const panelId = element.closest('[role="tabpanel"]')?.id
+      if (!panelId) throw new Error('Subagent preview has no tab panel')
+      const audit = { frames: 0, losses: [] as string[], expected: [60, 0, 0], stop: false }
+      ;(window as unknown as { subagentHistoryAudit: typeof audit }).subagentHistoryAudit = audit
+      const sample = (): void => {
+        if (audit.stop) return
+        const panel = document.getElementById(panelId)
+        if (panel && !panel.closest('[hidden]')) {
+          audit.frames += 1
+          const current = panel.querySelector('[data-slot="subagent-transcript"]')
+          const counts = [
+            'Initial delegated evidence.',
+            'Reading-position update arrived.',
+            'Follow-end update arrived.'
+          ].map((text) => (current?.textContent?.split(text).length ?? 1) - 1)
+          if (counts.some((count, index) => count < audit.expected[index])) {
+            audit.losses.push(`Expected ${audit.expected}; received ${counts}`)
+          }
+        }
+        requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+    })
+    const counts = async (): Promise<number[]> =>
+      transcript.evaluate((element) =>
+        [
+          'Initial delegated evidence.',
+          'Reading-position update arrived.',
+          'Follow-end update arrived.'
+        ].map((text) => (element.textContent?.split(text).length ?? 1) - 1)
+      )
+    expect(await counts()).toEqual([60, 0, 0])
+    for (const [gate, expected] of [
+      [1, [60, 20, 0]],
+      [2, [60, 20, 20]]
+    ] as const) {
+      await page.getByRole('button', { name: 'Files', exact: true }).click()
+      if (gate === 1) {
+        await sendPrompt(page, 'Verify interaction follow-up.', 'Interaction follow-up completed.')
+        expect(await counts()).toEqual([60, 0, 0])
+      }
+      await writeFile(releaseFiles[gate], '')
+      await expect.poll(counts, { timeout: 60_000 }).toEqual(expected)
+      await page.evaluate((expected) => {
+        ;(
+          window as unknown as { subagentHistoryAudit: { expected: readonly number[] } }
+        ).subagentHistoryAudit.expected = expected
+      }, expected)
+      await page.getByRole('tab', { name: 'Subagents' }).click()
+      expect(await counts()).toEqual(expected)
+      await expectDurableChildStatus(page, 'Scroll intent child', 'running')
+    }
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await page.getByRole('button', { name: 'Files', exact: true }).click()
+      await page.getByRole('tab', { name: 'Subagents' }).click()
+      expect(await counts()).toEqual([60, 20, 20])
+    }
+    const audit = await page.evaluate(async () => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      )
+      const audit = (
+        window as unknown as {
+          subagentHistoryAudit: { frames: number; losses: string[]; stop: boolean }
+        }
+      ).subagentHistoryAudit
+      audit.stop = true
+      return audit
+    })
+    expect(audit.frames).toBeGreaterThan(0)
+    expect(audit.losses).toEqual([])
+    await writeFile(releaseFiles[3], '')
+    await expectDurableChildStatus(page, 'Scroll intent child', 'completed')
+    expect(await counts()).toEqual([60, 20, 20])
+  } finally {
+    await Promise.all(releaseFiles.map((file) => writeFile(file, '')))
+  }
+})
+
+test('restores messages and tools emitted before opening and while the Subagents tab is closed', async ({
+  app
+}) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page, 'Subagent transcript lifecycle')
+  const directory = await app.createTestDirectory('subagent-transcript-lifecycle')
+  const releaseFiles = ['start', 'first', 'second', 'finish', 'include-history'].map((name) =>
+    join(directory, name)
+  )
+  try {
+    await page.evaluate(() => {
+      const received: string[] = []
+      ;(window as unknown as { childHistoryEvents: string[] }).childHistoryEvents = received
+      window.api.acp.onAgentRuntimeUpdate((update) => {
+        if (update.event.text) received.push(update.event.text)
+      })
+    })
+    await sendPrompt(
+      page,
+      `${SCROLL_INTENT_PROMPT}\nRelease files: ${JSON.stringify(releaseFiles)}`,
+      'Production Subagent scroll intent journey started.',
+      120_000
+    )
+    await expectDurableChildStatus(page, 'Scroll intent child', 'running')
+    await writeFile(releaseFiles[0], '')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as unknown as { childHistoryEvents: string[] }).childHistoryEvents.some((text) =>
+            text.includes('Initial delegated evidence.')
+          )
+        )
+      )
+      .toBe(true)
+    const openChild = async (): Promise<void> => {
+      const bar = page.getByTestId('subagents-bar')
+      const trigger = bar.locator(':scope > button')
+      if ((await trigger.getAttribute('aria-expanded')) === 'false') await trigger.click()
+      await bar.getByRole('button', { name: 'Scroll intent child, running' }).click()
+    }
+    await openChild()
+    const preview = page.getByRole('region', { name: 'Subagents' })
+    await expect(preview).toContainText('Historical plan before preview.')
+    await expect(preview).toContainText('Read a file')
+    await expect(preview).toContainText('Initial delegated evidence.')
+    await page.getByRole('button', { name: 'Close preview of Subagents', exact: true }).click()
+    await writeFile(releaseFiles[1], '')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as unknown as { childHistoryEvents: string[] }).childHistoryEvents.some((text) =>
+            text.includes('Reading-position update arrived.')
+          )
+        )
+      )
+      .toBe(true)
+    await openChild()
+    // Read immediately after the actual tab is re-created; no completion or later delta may repair it.
+    const text = await preview.textContent()
+    expect(text).toContain('Historical plan before preview.')
+    expect(text).toContain('Read a file')
+    expect(text?.split('Initial delegated evidence.').length).toBe(61)
+    expect(text?.split('Reading-position update arrived.').length).toBe(21)
+    await expectDurableChildStatus(page, 'Scroll intent child', 'running')
+    await writeFile(releaseFiles[2], '')
+    await expect(preview).toContainText('Follow-end update arrived.')
+    await writeFile(releaseFiles[3], '')
+    await expectDurableChildStatus(page, 'Scroll intent child', 'completed')
+    await expect(preview).toContainText('Historical plan before preview.')
+    expect((await preview.textContent())?.split('Initial delegated evidence.').length).toBe(61)
+  } finally {
+    await Promise.all(releaseFiles.map((file) => writeFile(file, '')))
+  }
+})
 
 test('resolves a bare Artifact version_id into a delegated read-only input', async ({ app }) => {
   test.setTimeout(180_000)

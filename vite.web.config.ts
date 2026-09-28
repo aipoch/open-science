@@ -7,6 +7,8 @@ import { defineConfig } from 'vite'
 
 export default defineConfig({
   root: resolve('src/renderer/web'),
+  // Match the desktop renderer: the shared journal import worker emits split modules.
+  worker: { format: 'es' },
   resolve: {
     alias: {
       // The decoder's browser entry requires document; its default/worker entry is DOM-free.

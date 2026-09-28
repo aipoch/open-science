@@ -534,12 +534,22 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       // MiniMax documents M3 reasoning as a binary thinking switch: none disables thinking and high
       // enables Adaptive Thinking. Older M2 models remain conservative until documented otherwise.
       { id: 'MiniMax-M3', contextWindow: 1_000_000, reasoningEffort: 'none-high' },
+      // Token Plan preview; keep M3 as the default for pay-as-you-go keys. Unlike M3, this model
+      // always thinks and supports five effort levels (default: max).
+      // https://platform.minimax.io/docs/api-reference/text-anthropic-api
+      {
+        id: 'MiniMax-M3.1-Flash-Preview',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'standard-5'
+      },
       { id: 'MiniMax-M3[1m]', contextWindow: 1_000_000, reasoningEffort: 'none-high' },
       { id: 'MiniMax-M2.7', contextWindow: 204_800 },
       { id: 'MiniMax-M2.5', contextWindow: 204_800 }
     ],
-    // M3 is natively multimodal; older M2 models remain text-only.
-    multimodal: { multimodalModels: ['MiniMax-M3', 'MiniMax-M3[1m]'] }
+    // M3 and M3.1 are natively multimodal; older M2 models remain text-only.
+    multimodal: {
+      multimodalModels: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M3.1-Flash-Preview']
+    }
   },
   {
     id: 'stepfun',

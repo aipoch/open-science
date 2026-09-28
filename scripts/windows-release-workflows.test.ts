@@ -238,7 +238,7 @@ describe('post-merge Windows validation', () => {
     expect(dispatch?.inputs?.platform_name).toMatchObject({
       type: 'choice',
       default: 'macos-x64',
-      options: ['macos-x64', 'macos-arm64', 'linux-x64', 'windows-x64', 'all']
+      options: ['macos-x64', 'macos-arm64', 'linux-x64', 'linux-arm64', 'windows-x64', 'all']
     })
     expect(smokeWorkflow.permissions).toEqual({ contents: 'read' })
     expect(smokeWorkflow.concurrency).toEqual({
@@ -847,6 +847,13 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
             type: 'choice',
             options: ['backfill', 'promote'],
             default: 'backfill'
+          },
+          bootstrap_linux_arm64: {
+            description:
+              'First ARM64 promotion only: allow a confirmed missing ARM64 feed (requires promote)',
+            required: false,
+            type: 'boolean',
+            default: false
           },
           dry_run: {
             description: 'Run local release transforms without AWS credentials or uploads',

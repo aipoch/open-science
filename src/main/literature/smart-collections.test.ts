@@ -1955,7 +1955,11 @@ it('drains started calls and retries saving their usage after a progress write f
       action: 'refresh',
       offset: 0
     })
-    await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('failed'))
+    // Draining started calls and retrying the usage write require real database
+    // work; CI coverage can exceed waitFor's one-second default.
+    await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('failed'), {
+      timeout: 5000
+    })
     expect(classify.mock.calls.length).toBeLessThan(9)
     const run = (await owner.view(id)).run!
     expect(run.inputTokens).toBe(classify.mock.calls.length * 5)

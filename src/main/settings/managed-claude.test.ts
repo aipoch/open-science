@@ -16,13 +16,20 @@ import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { netFetchStandard, nonRegularMarkerPaths, markerReplacementsOnRead } = vi.hoisted(() => ({
-  netFetchStandard: vi.fn(),
-  nonRegularMarkerPaths: new Set<string>(),
-  markerReplacementsOnRead: new Map<string, string>()
-}))
+const { netFetchWithManualRedirect, nonRegularMarkerPaths, markerReplacementsOnRead } = vi.hoisted(
+  () => ({
+    netFetchWithManualRedirect: vi.fn(),
+    nonRegularMarkerPaths: new Set<string>(),
+    markerReplacementsOnRead: new Map<string, string>()
+  })
+)
 
-vi.mock('../skills/net-fetch', () => ({ netFetchStandard }))
+vi.mock('../skills/net-fetch', () => ({
+  netFetchWithManualRedirect,
+  netFetchStandard: vi.fn(async () => {
+    throw new Error('Redirect was cancelled')
+  })
+}))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
@@ -100,11 +107,11 @@ const sha512 = (data: Buffer): string =>
   `sha512-${createHash('sha512').update(data).digest('base64')}`
 
 describe('managed-claude: default transport', () => {
-  beforeEach(() => netFetchStandard.mockReset())
+  beforeEach(() => netFetchWithManualRedirect.mockReset())
   afterEach(() => vi.useRealTimers())
 
-  it('loads registry metadata through Electron net.fetch', async () => {
-    netFetchStandard.mockResolvedValue(
+  it('loads registry metadata through the Electron manual-redirect adapter', async () => {
+    netFetchWithManualRedirect.mockResolvedValue(
       new Response(JSON.stringify({ version: '1.2.3' }), {
         status: 200,
         headers: { 'content-type': 'application/json' }
@@ -114,14 +121,17 @@ describe('managed-claude: default transport', () => {
     await expect(defaultFetchJson('https://registry.example.test/package')).resolves.toEqual({
       version: '1.2.3'
     })
-    expect(netFetchStandard).toHaveBeenCalledWith('https://registry.example.test/package', {
-      redirect: 'manual',
-      signal: expect.any(AbortSignal)
-    })
+    expect(netFetchWithManualRedirect).toHaveBeenCalledWith(
+      'https://registry.example.test/package',
+      {
+        redirect: 'manual',
+        signal: expect.any(AbortSignal)
+      }
+    )
   })
 
   it('follows bounded HTTPS redirects for registry metadata', async () => {
-    netFetchStandard
+    netFetchWithManualRedirect
       .mockResolvedValueOnce(
         new Response(null, {
           status: 302,
@@ -138,14 +148,14 @@ describe('managed-claude: default transport', () => {
     await expect(defaultFetchJson('https://registry.example.test/package')).resolves.toEqual({
       version: '1.2.3'
     })
-    expect(netFetchStandard.mock.calls.map(([url]) => url)).toEqual([
+    expect(netFetchWithManualRedirect.mock.calls.map(([url]) => url)).toEqual([
       'https://registry.example.test/package',
       'https://cdn.example.test/package'
     ])
   })
 
   it('rejects an HTTPS installer redirect that downgrades to HTTP', async () => {
-    netFetchStandard.mockResolvedValue(
+    netFetchWithManualRedirect.mockResolvedValue(
       new Response(null, {
         status: 302,
         headers: { location: 'http://cdn.example.test/package.tgz' }
@@ -155,12 +165,31 @@ describe('managed-claude: default transport', () => {
     await expect(defaultFetchTarball('https://registry.example.test/package.tgz')).rejects.toThrow(
       /redirect.*non-HTTPS/i
     )
-    expect(netFetchStandard).toHaveBeenCalledTimes(1)
+    expect(netFetchWithManualRedirect).toHaveBeenCalledTimes(1)
+  })
+
+  it('streams a redirected tarball from a relative HTTPS location', async () => {
+    const payload = Buffer.from('redirected-native-runtime')
+    netFetchWithManualRedirect
+      .mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: { location: '/files/claude.tgz' } })
+      )
+      .mockResolvedValueOnce(new Response(payload))
+
+    const result = await defaultFetchTarball('https://registry.example.test/claude.tgz')
+    const chunks: Buffer[] = []
+    for await (const chunk of result.stream) chunks.push(Buffer.from(chunk as Uint8Array))
+
+    expect(Buffer.concat(chunks)).toEqual(payload)
+    expect(netFetchWithManualRedirect.mock.calls.map(([url]) => url)).toEqual([
+      'https://registry.example.test/claude.tgz',
+      'https://registry.example.test/files/claude.tgz'
+    ])
   })
 
   it('rejects more than five HTTPS installer redirects', async () => {
     for (let index = 1; index <= 6; index += 1) {
-      netFetchStandard.mockResolvedValueOnce(
+      netFetchWithManualRedirect.mockResolvedValueOnce(
         new Response(null, {
           status: 302,
           headers: { location: `https://cdn.example.test/redirect-${index}` }
@@ -171,12 +200,12 @@ describe('managed-claude: default transport', () => {
     await expect(defaultFetchTarball('https://registry.example.test/package.tgz')).rejects.toThrow(
       'Too many redirects'
     )
-    expect(netFetchStandard).toHaveBeenCalledTimes(6)
+    expect(netFetchWithManualRedirect).toHaveBeenCalledTimes(6)
   })
 
-  it('streams tarballs through Electron net.fetch and preserves content length', async () => {
+  it('streams tarballs through the Electron manual-redirect adapter and preserves content length', async () => {
     const payload = Buffer.from('managed-runtime-tarball')
-    netFetchStandard.mockResolvedValue(
+    netFetchWithManualRedirect.mockResolvedValue(
       new Response(payload, {
         status: 200,
         headers: { 'content-length': String(payload.length) }
@@ -189,15 +218,18 @@ describe('managed-claude: default transport', () => {
 
     expect(Buffer.concat(chunks)).toEqual(payload)
     expect(result.totalBytes).toBe(payload.length)
-    expect(netFetchStandard).toHaveBeenCalledWith('https://registry.example.test/package.tgz', {
-      redirect: 'manual',
-      signal: expect.any(AbortSignal)
-    })
+    expect(netFetchWithManualRedirect).toHaveBeenCalledWith(
+      'https://registry.example.test/package.tgz',
+      {
+        redirect: 'manual',
+        signal: expect.any(AbortSignal)
+      }
+    )
   })
 
   it('aborts a tarball stream after 20 seconds without progress', async () => {
     vi.useFakeTimers()
-    netFetchStandard.mockResolvedValue(
+    netFetchWithManualRedirect.mockResolvedValue(
       new Response(
         new ReadableStream<Uint8Array>({
           start: () => undefined
@@ -217,14 +249,14 @@ describe('managed-claude: default transport', () => {
     expect((await streamError).message).toBe(
       'Request timed out for https://registry.example.test/stalled.tgz'
     )
-    const init = netFetchStandard.mock.calls[0]?.[1] as RequestInit
+    const init = netFetchWithManualRedirect.mock.calls[0]?.[1] as RequestInit
     expect(init.signal?.aborted).toBe(true)
   })
 
   it('resets the inactivity timeout whenever a tarball chunk arrives', async () => {
     vi.useFakeTimers()
     let body!: ReadableStreamDefaultController<Uint8Array>
-    netFetchStandard.mockResolvedValue(
+    netFetchWithManualRedirect.mockResolvedValue(
       new Response(
         new ReadableStream<Uint8Array>({
           start: (controller) => {

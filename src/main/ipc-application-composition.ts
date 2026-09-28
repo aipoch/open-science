@@ -630,6 +630,7 @@ export const createApplicationModules = async (
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
   // can spawn sessions under the same agent connection.
   const reviewerCommandOwner = await registerReviewerComposition(modules, {
+    applicationEvents,
     modelRuntime: {
       appVersion: app.getVersion(),
       isDataRootHandoffActive: () => isMigrationInProgress() || isMigrationPending(),

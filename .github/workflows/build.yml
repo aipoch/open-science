@@ -38,7 +38,7 @@ on:
         default: false
       platform_name:
         description: >-
-          If set, emit only this matrix name (macos-arm64, macos-x64, linux-x64, or windows-x64).
+          If set, emit only this matrix name (macos-arm64, macos-x64, linux-x64, linux-arm64, or windows-x64).
           Used by the Nightly macos-x64 packaging dry-run; release/nightly leave it empty.
         type: string
         default: ''
@@ -278,6 +278,7 @@ jobs:
           ]'
           rest='[
             {"name":"linux-x64","os":"ubuntu-latest","platform":"linux","eb_args":"--linux","engine_keep":".so.node","subdir":"linux-64","bin_os":"linux","bin_arch":"x64"},
+            {"name":"linux-arm64","os":"ubuntu-24.04-arm","platform":"linux","eb_args":"--linux --arm64","engine_keep":"linux-arm64-openssl-3.0.x.so.node","subdir":"linux-aarch64","bin_os":"linux","bin_arch":"arm64"},
             {"name":"windows-x64","os":"windows-latest","platform":"win","eb_args":"--win --x64","engine_keep":"windows.dll","subdir":"win-64","bin_os":"win","bin_arch":"x64"}
           ]'
           if [ "${{ inputs.mac_only }}" = "true" ]; then
@@ -369,8 +370,8 @@ jobs:
           OPEN_SCIENCE_ENV_CDN_BASE: https://statics.aipoch.com/open-science
         run: node scripts/verify-runtime-bundle.mjs "${{ matrix.subdir }}"
 
-      # Keep the engines this platform ships: Linux needs both Debian and RHEL OpenSSL 3 engines
-      # for the portable AppImage; macOS/Windows keep one. Fail if no matching engine was generated.
+      # Keep the engines this platform ships: Linux x64 needs Debian and RHEL OpenSSL 3 engines;
+      # Linux ARM64 uses one generic OpenSSL 3 engine. macOS/Windows also keep one. Fail if no matching engine was generated.
       # The glob is `*query_engine-*` (not `libquery_engine-*`) so it also matches Windows' engine,
       # which is named `query_engine-windows.dll.node` without the `lib` prefix.
       - name: Prune foreign Prisma engines

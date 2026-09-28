@@ -200,6 +200,7 @@ jobs:
             artifacts/RELEASE-CERTIFICATION.json
             artifacts/latest.yml
             artifacts/latest-linux.yml
+            artifacts/latest-linux-arm64.yml
             artifacts/*-mac.yml
             artifacts/*.blockmap
 

@@ -87,10 +87,11 @@ describe('Compute Job remote cleanup migration', () => {
         '0042_classification_usage',
         '0043_pdf_annotations',
         '0044_literature_smart_collections',
-        '0045_literature_smart_pause_run'
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes'
       ],
       from: '0025_managed_file_version_foundation',
-      to: '0045_literature_smart_pause_run'
+      to: '0046_journal_attributes'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ remoteCleanupDisposition: string }>>(

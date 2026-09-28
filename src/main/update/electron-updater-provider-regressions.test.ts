@@ -34,6 +34,22 @@ const offline = async (): Promise<never> => {
   throw new Error('No network in audit')
 }
 
+it.each([
+  ['x64', 'latest-linux'],
+  ['arm64', 'latest-linux-arm64']
+])('uses the installed updater architecture channel for %s', (arch, channel) => {
+  const { Provider } = requireRepo('electron-updater/out/providers/Provider')
+  // Upstream Provider.getChannelFilePrefix reads process.env.TEST_UPDATER_ARCH || process.arch.
+  // Exercise its own test seam; a custom app channel would receive the architecture suffix twice.
+  vi.stubEnv('TEST_UPDATER_ARCH', arch)
+  try {
+    const provider = new Provider({ platform: 'linux', executor: {} })
+    expect(provider.getDefaultChannelName()).toBe(channel)
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
+
 it.each([true, false])(
   'handles real updater cache completion with cancellation=%s',
   async (cancelled) => {

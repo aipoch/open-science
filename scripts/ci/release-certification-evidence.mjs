@@ -5,7 +5,7 @@ import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const PLATFORMS = ['linux-x64', 'macos-arm64', 'macos-x64', 'windows-x64']
+const PLATFORMS = ['linux-x64', 'linux-arm64', 'macos-arm64', 'macos-x64', 'windows-x64']
 const DISTRIBUTABLE = /\.(?:AppImage|deb|dmg|exe|zip)$/
 const CHECK_STATES = ['passed', 'not-applicable']
 const DATABASE_BASELINE_ID = '0001_runtime_schema_baseline'
@@ -226,7 +226,7 @@ const aggregateEvidence = async ({ argv }) => {
 
   const names = (await readdir(directory))
     .filter((name) =>
-      /^certification-(?:linux-x64|macos-arm64|macos-x64|windows-x64)\.json$/.test(name)
+      /^certification-(?:linux-x64|linux-arm64|macos-arm64|macos-x64|windows-x64)\.json$/.test(name)
     )
     .sort()
   const records = await Promise.all(

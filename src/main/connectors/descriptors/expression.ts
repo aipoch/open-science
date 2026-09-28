@@ -2,6 +2,12 @@ import type { ToolContext, ToolDescriptor } from '../types'
 
 const GTEX = 'https://gtexportal.org/api/v2'
 const DEFAULT_DATASET = 'gtex_v8'
+const BGEE_API = 'https://www.bgee.org/api/'
+const BGEE_SPARQL = 'https://www.bgee.org/sparql/'
+const BGEE_FTP = 'https://www.bgee.org/ftp/current/download'
+const BGEE_SPARQL_TIMEOUT_MS = 15_000
+const BGEE_SPARQL_MAX_RESULTS = 100
+const BGEE_SPARQL_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 // Keep individual GTEx responses bounded while walkPages() retrieves complete paged result sets.
 const PAGE_SIZE = 1000
 
@@ -20,6 +26,33 @@ type PagedResponse = { data?: Record<string, unknown>[]; paging_info?: PagingInf
 // Reads a top-level `dataset_id` arg, falling back to the default release.
 function datasetOf(args: Record<string, unknown>): string {
   return String(args.dataset_id ?? DEFAULT_DATASET)
+}
+
+function sparqlString(value: unknown): string {
+  return String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+}
+
+function bgeeAnatomyIri(value: string): string | undefined {
+  const match = value.trim().match(/^(UBERON|CL|GO):([A-Za-z0-9_.-]+)$/i)
+  if (!match) return undefined
+  return `http://purl.obolibrary.org/obo/${match[1].toUpperCase()}_${match[2]}`
+}
+
+function bgeeSpeciesIri(speciesId: unknown): string {
+  const id = Number(speciesId)
+  if (!Number.isInteger(id) || id < 1 || id > 2_147_483_647) {
+    throw new Error('bgee species_id must be a positive NCBI taxonomy id')
+  }
+  return `http://purl.uniprot.org/taxonomy/${id}`
+}
+
+function bgeeSparqlLimit(value: unknown): number {
+  const n = Number(value ?? 25)
+  return Number.isInteger(n) ? Math.max(1, Math.min(BGEE_SPARQL_MAX_RESULTS, n)) : 25
 }
 
 // Renders repeated query params for a list-valued arg (GTEx accepts `name=a&name=b`); '' when empty.
@@ -585,6 +618,259 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
         hom_alt_count: d.homoAltCount,
         n_samples: samples.length,
         samples
+      }
+    }
+  },
+  {
+    id: 'bgee_species',
+    connector: 'expression',
+    description:
+      'List species available in the Bgee healthy wild-type expression atlas, or retrieve one species by its NCBI taxonomy id.',
+    input: {
+      type: 'object',
+      properties: { species_id: { type: 'integer', minimum: 1, maximum: 2147483647 } }
+    },
+    returns:
+      '`{ "species": [ { "taxon_id": int, "name": str, "scientific_name": str, "genome_version": str, "has_expression_data": bool } ] }` — Bgee species metadata from the official JSON API.',
+    example: 'const result = await host.mcp("expression", "bgee_species", {})',
+    url: (a) => {
+      const params = new URLSearchParams({
+        page: 'species',
+        action: 'name',
+        display_type: 'json'
+      })
+      if (a.species_id != null) params.set('species_id', String(a.species_id))
+      return `${BGEE_API}?${params.toString()}`
+    },
+    parse: (raw) => {
+      const root = raw as { data?: Record<string, unknown> }
+      const data = root.data ?? {}
+      const rawSpecies = data.species
+      const species = (Array.isArray(rawSpecies) ? rawSpecies : rawSpecies ? [rawSpecies] : []).map(
+        (item) => {
+          const s = item as Record<string, unknown>
+          const dataTypes = s.dataSourcesForDataByDataTypes
+          return {
+            taxon_id: s.genomeSpeciesId ?? s.id,
+            name: s.name ?? s.speciesName,
+            scientific_name: `${s.genus ?? ''} ${s.speciesName ?? ''}`.trim(),
+            genome_version: s.genomeVersion,
+            has_expression_data: Boolean(
+              dataTypes && typeof dataTypes === 'object' && Object.keys(dataTypes).length
+            )
+          }
+        }
+      )
+      return { species }
+    }
+  },
+  {
+    id: 'bgee_expression_calls',
+    connector: 'expression',
+    description:
+      'Retrieve Bgee present/absent expression calls and normalized expression scores for one gene in one species. Results are healthy wild-type baseline calls and can be capped with max_calls.',
+    input: {
+      type: 'object',
+      properties: {
+        gene_id: { type: 'string' },
+        species_id: { type: 'integer', minimum: 1, maximum: 2147483647 },
+        max_calls: { type: 'integer', minimum: 1, maximum: 500, default: 100 },
+        expression_type: {
+          type: 'string',
+          enum: ['EXPRESSED', 'NOT_EXPRESSED'],
+          default: 'EXPRESSED'
+        }
+      },
+      required: ['gene_id', 'species_id']
+    },
+    required: ['gene_id', 'species_id'],
+    returns:
+      '`{ "gene": { "id": str, "name": str, "species": object }, "returned": int, "truncated": bool, "calls": [ { "anatomical_entity_id": str, "anatomical_entity_name": str, "expression_state": str, "expression_score": float, "expression_score_confidence": str, "expression_quality": str, "fdr": str, "data_types": [str] } ] }`.',
+    example:
+      'const result = await host.mcp("expression", "bgee_expression_calls", {"gene_id": "ENSG00000130208", "species_id": 9606, "max_calls": 50})',
+    totalTimeoutMs: 30_000,
+    maxResponseBytes: 4 * 1024 * 1024,
+    url: (a) => {
+      const params = new URLSearchParams({
+        page: 'gene',
+        action: 'expression',
+        gene_id: String(a.gene_id),
+        species_id: String(a.species_id),
+        display_type: 'json',
+        expr_type: String(a.expression_type ?? 'EXPRESSED')
+      })
+      return `${BGEE_API}?${params.toString()}`
+    },
+    parse: (raw, args) => {
+      const root = raw as { data?: Record<string, unknown> }
+      const data = root.data ?? {}
+      const gene = (data.gene ?? {}) as Record<string, unknown>
+      const rawCalls = Array.isArray(data.calls) ? data.calls : []
+      const maxCalls = Math.max(1, Math.min(500, Number(args.max_calls ?? 100)))
+      const calls = rawCalls.slice(0, maxCalls).map((call) => {
+        const c = call as Record<string, unknown>
+        const condition = (c.condition ?? {}) as Record<string, unknown>
+        const anat = (condition.anatEntity ?? {}) as Record<string, unknown>
+        const score = (c.expressionScore ?? {}) as Record<string, unknown>
+        return {
+          anatomical_entity_id: anat.id,
+          anatomical_entity_name: anat.name,
+          expression_state: c.expressionState,
+          expression_score:
+            score.expressionScore == null ? undefined : Number(score.expressionScore),
+          expression_score_confidence: score.expressionScoreConfidence,
+          expression_quality: c.expressionQuality,
+          fdr: c.fdr,
+          data_types: Array.isArray(c.dataTypesWithData) ? c.dataTypesWithData : []
+        }
+      })
+      return {
+        gene: { id: gene.geneId, name: gene.name, species: gene.species },
+        returned: calls.length,
+        truncated: rawCalls.length > calls.length,
+        calls
+      }
+    }
+  },
+  {
+    id: 'bgee_sparql_expression',
+    connector: 'expression',
+    description:
+      'Run a bounded Bgee SPARQL query for one gene, one NCBI species and one tissue/anatomical entity. All three filters are required; the generated query includes a hard LIMIT and the call has its own timeout.',
+    input: {
+      type: 'object',
+      properties: {
+        gene: { type: 'string', minLength: 1, maxLength: 128 },
+        species_id: { type: 'integer', minimum: 1, maximum: 2147483647 },
+        tissue: { type: 'string', minLength: 1, maxLength: 128 },
+        limit: { type: 'integer', minimum: 1, maximum: BGEE_SPARQL_MAX_RESULTS, default: 25 }
+      },
+      required: ['gene', 'species_id', 'tissue']
+    },
+    required: ['gene', 'species_id', 'tissue'],
+    returns:
+      '`{ "returned": int, "truncated": bool, "rows": [ { "gene_name": str, "species_name": str, "anatomical_entity": str, "anatomical_entity_name": str, "expression_score": number } ] }` — score-ranked Bgee SPARQL bindings.',
+    example:
+      'const result = await host.mcp("expression", "bgee_sparql_expression", {"gene": "APOC1", "species_id": 9606, "tissue": "liver", "limit": 25})',
+    totalTimeoutMs: BGEE_SPARQL_TIMEOUT_MS + 5_000,
+    maxResponseBytes: BGEE_SPARQL_MAX_RESPONSE_BYTES,
+    url: (a) => {
+      const gene = sparqlString(a.gene)
+      const tissue = String(a.tissue).trim()
+      const tissueIri = bgeeAnatomyIri(tissue)
+      const tissueFilter = tissueIri
+        ? `FILTER (?anat = <${tissueIri}> || LCASE(STR(?anatName)) = LCASE("${sparqlString(
+            tissue
+          )}"))`
+        : `FILTER (LCASE(STR(?anatName)) = LCASE("${sparqlString(tissue)}"))`
+      const query = `PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX orth: <http://purl.org/net/orth#>
+PREFIX genex: <http://purl.org/genex#>
+PREFIX obo: <http://purl.obolibrary.org/obo/>
+PREFIX up: <http://purl.uniprot.org/core/>
+SELECT DISTINCT ?geneName ?speciesName ?anat ?anatName ?score WHERE {
+  ?seq a orth:Gene ; rdfs:label ?geneName ; orth:organism ?organism .
+  ?expression a genex:Expression ; genex:hasExpressionCondition ?condition ;
+              genex:hasExpressionLevel ?score ; genex:hasSequenceUnit ?seq .
+  ?condition genex:hasAnatomicalEntity ?anat .
+  ?anat a genex:AnatomicalEntity ; rdfs:label ?anatName .
+  ?organism obo:RO_0002162 ?species .
+  ?species a up:Taxon ; up:scientificName ?speciesName .
+  FILTER (LCASE(STR(?geneName)) = LCASE("${gene}"))
+  FILTER (?species = <${bgeeSpeciesIri(a.species_id)}>)
+  ${tissueFilter}
+} ORDER BY DESC(?score) LIMIT ${bgeeSparqlLimit(a.limit)}`
+      const params = new URLSearchParams({
+        query,
+        format: 'json',
+        timeout: String(BGEE_SPARQL_TIMEOUT_MS)
+      })
+      return `${BGEE_SPARQL}?${params.toString()}`
+    },
+    parse: (raw, args) => {
+      const root = raw as { results?: { bindings?: unknown[] } }
+      const bindings = Array.isArray(root.results?.bindings) ? root.results.bindings : []
+      const limit = bgeeSparqlLimit(args.limit)
+      const rows = bindings.slice(0, limit).map((binding) => {
+        const b = (binding ?? {}) as Record<string, { value?: unknown }>
+        return {
+          gene_name: b.geneName?.value,
+          species_name: b.speciesName?.value,
+          anatomical_entity: b.anat?.value,
+          anatomical_entity_name: b.anatName?.value,
+          expression_score: b.score?.value == null ? undefined : Number(b.score.value)
+        }
+      })
+      return { returned: rows.length, truncated: bindings.length >= limit, rows }
+    }
+  },
+  {
+    id: 'bgee_download_links',
+    connector: 'expression',
+    description:
+      'Build official Bgee download links for one species: summarized present/absent calls or processed expression-value directories. This returns URLs only and never downloads the large files.',
+    input: {
+      type: 'object',
+      properties: {
+        species: { type: 'string', minLength: 1, maxLength: 128 },
+        file_kind: {
+          type: 'string',
+          enum: [
+            'calls_simple',
+            'calls_advanced',
+            'processed_rna_seq',
+            'processed_affymetrix',
+            'processed_sc_full_length',
+            'processed_sc_droplet_based'
+          ],
+          default: 'calls_simple'
+        },
+        all_conditions: { type: 'boolean', default: false }
+      },
+      required: ['species']
+    },
+    required: ['species'],
+    returns:
+      '`{ "species": str, "file_kind": str, "download_url": str, "documentation_url": str }` — stable official Bgee FTP/site URLs.',
+    example:
+      'const result = await host.mcp("expression", "bgee_download_links", {"species": "Homo_sapiens", "file_kind": "calls_simple"})',
+    run: async (_ctx, args) => {
+      const species = String(args.species).trim().replace(/\s+/g, '_')
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(species)) {
+        throw new Error(
+          'bgee species must be a filesystem-safe scientific name such as Homo_sapiens'
+        )
+      }
+      const kind = String(args.file_kind ?? 'calls_simple')
+      const conditions = args.all_conditions ? '_all_conditions' : ''
+      if (kind === 'calls_simple' || kind === 'calls_advanced') {
+        const detail = kind === 'calls_advanced' ? 'advanced' : 'simple'
+        return {
+          species,
+          file_kind: kind,
+          download_url: `${BGEE_FTP}/calls/expr_calls/${species}_expr_${detail}${conditions}.tsv.gz`,
+          documentation_url:
+            'https://www.bgee.org/support/tutorial-expression-call-download-documentation'
+        }
+      }
+      const dataType = {
+        processed_rna_seq: 'rna_seq',
+        processed_affymetrix: 'affymetrix',
+        processed_sc_full_length: 'full_length',
+        processed_sc_droplet_based: 'droplet_based'
+      }[
+        kind as
+          | 'processed_rna_seq'
+          | 'processed_affymetrix'
+          | 'processed_sc_full_length'
+          | 'processed_sc_droplet_based'
+      ]
+      return {
+        species,
+        file_kind: kind,
+        download_url: `${BGEE_FTP}/processed_expr_values/${dataType}/${species}/`,
+        documentation_url:
+          'https://www.bgee.org/support/tutorial-processed-expression-values-download-documentation'
       }
     }
   }

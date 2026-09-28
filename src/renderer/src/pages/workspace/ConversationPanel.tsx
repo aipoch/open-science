@@ -166,6 +166,7 @@ import { getAvatarColor } from '../settings/specialist-icons'
 import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
 import { BookmarksPopover } from './bookmarks/BookmarksPopover'
 import { useBookmarks } from './bookmarks/bookmark-context'
+import type { ConversationSubmissions } from './use-conversation-submissions'
 
 const localizeVisionRunFailure = (
   error: string | null | undefined,
@@ -435,11 +436,6 @@ type ConversationPanelSubagents = {
   stop: () => void | Promise<void>
 }
 
-type StopSubmissionState = Readonly<{
-  pending: boolean
-  error?: string
-}>
-
 type ConversationPanelProps = {
   view: ConversationPanelView
   composer: Pick<WorkspaceComposerController, 'view' | 'actions'>
@@ -454,6 +450,7 @@ type ConversationPanelProps = {
   workflows: ConversationPanelWorkflows
   sessionTools: ConversationPanelSessionTools
   subagents: ConversationPanelSubagents
+  submissions: ConversationSubmissions
 }
 
 const DismissibleConversationError = ({
@@ -494,7 +491,8 @@ const ConversationPanel = ({
   contextWindow,
   workflows,
   sessionTools,
-  subagents
+  subagents,
+  submissions
 }: ConversationPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
@@ -700,21 +698,14 @@ const ConversationPanel = ({
   const openSettings = useSettingsStore((state) => state.openSettings)
   const openSettingsToComputeHost = useSettingsStore((state) => state.openSettingsToComputeHost)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
-  const stopSubmissionPendingSessionIdsRef = useRef(new Set<string>())
-  const [stopSubmissionsBySessionId, setStopSubmissionsBySessionId] = useState(
-    () => new Map<string, StopSubmissionState>()
-  )
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
   const setElicitationEditDraft = useSessionStore((state) => state.setElicitationEditDraft)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
-  // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
-  const [resumingSessionId, setResumingSessionId] = useState<string>()
+  // The workspace retains pending Resume state while this panel remounts for another session.
   const isResuming =
-    activeSession !== undefined &&
-    resumingSessionId !== undefined &&
-    activeSession.id === resumingSessionId
+    activeSession !== undefined && submissions.resumePendingSessionIds.has(activeSession.id)
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
   const [isContextWindowOpen, setIsContextWindowOpen] = useState(false)
@@ -738,50 +729,14 @@ const ConversationPanel = ({
   }
 
   const activeStopSubmission = activeSession
-    ? stopSubmissionsBySessionId.get(activeSession.id)
+    ? submissions.stopBySessionId.get(activeSession.id)
     : undefined
   const isStopping = activeStopSubmission?.pending === true
   const stopError = activeStopSubmission?.error
 
-  const settleStopSubmission = (sessionId: string, error?: string): void => {
-    stopSubmissionPendingSessionIdsRef.current.delete(sessionId)
-    setStopSubmissionsBySessionId((current) => {
-      const next = new Map(current)
-      if (error !== undefined) next.set(sessionId, { pending: false, error })
-      else next.delete(sessionId)
-      return next
-    })
-  }
+  const handleStop = (): void => submissions.submitStop(activeSession?.id, onCancelRun)
 
-  const submitStop = (sessionId: string | undefined, action: () => void | Promise<void>): void => {
-    if (!sessionId || stopSubmissionPendingSessionIdsRef.current.has(sessionId)) return
-    stopSubmissionPendingSessionIdsRef.current.add(sessionId)
-    setStopSubmissionsBySessionId((current) => {
-      const next = new Map(current)
-      next.set(sessionId, { pending: true })
-      return next
-    })
-    let outcome: void | Promise<void>
-    try {
-      outcome = action()
-    } catch (error) {
-      settleStopSubmission(sessionId, error instanceof Error ? error.message : String(error))
-      return
-    }
-    if (!outcome || typeof (outcome as Promise<void>).then !== 'function') {
-      settleStopSubmission(sessionId)
-      return
-    }
-    void outcome.then(
-      () => settleStopSubmission(sessionId),
-      (error: unknown) =>
-        settleStopSubmission(sessionId, error instanceof Error ? error.message : String(error))
-    )
-  }
-
-  const handleStop = (): void => submitStop(activeSession?.id, onCancelRun)
-
-  const handleStopSubagents = (): void => submitStop(activeSession?.id, onStopSubagents)
+  const handleStopSubagents = (): void => submissions.submitStop(activeSession?.id, onStopSubagents)
 
   // Unconditional hook: one shared data source for the background-task strip chip and
   // the expandable ledger. Compute Jobs stay observable before the Notebook exists.
@@ -802,7 +757,7 @@ const ConversationPanel = ({
   const saveAsSkillDisabledReason = hasRunningSubagents
     ? t('Wait for all subagents to finish.')
     : saveAsSkillDisabledReasonFromParent
-  const effectiveCanSend = canSendMessage && !isStopping
+  const effectiveCanSend = canSendMessage && !isStopping && !isResuming
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
   // Keep the mounted editor stable across receipts and run completion. Only a
   // different Plan or an explicit review request owns a fresh draft/collapse state.
@@ -866,7 +821,10 @@ const ConversationPanel = ({
   const errorKey = JSON.stringify([
     activeSession?.id,
     activeSession?.status === 'error' ? activeSession.error : null,
-    actionError
+    actionError,
+    // An explicit recovery attempt must reveal its failure even when the provider
+    // returns the same diagnostic that the user previously dismissed.
+    isResuming
   ])
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
@@ -1057,14 +1015,9 @@ const ConversationPanel = ({
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
     const sessionId = activeSession?.id
-    if (!canResumeSession || !sessionId || isResuming) return
+    if (!canResumeSession || !sessionId || isResuming || isStopping || rootTurnBusy) return
 
-    setResumingSessionId(sessionId)
-    try {
-      await onResumeSession()
-    } finally {
-      setResumingSessionId((current) => (current === sessionId ? undefined : current))
-    }
+    await submissions.submitResume(sessionId, onResumeSession)
   }
 
   // Drag-and-drop shares the same staging callback as the picker and paste paths.
@@ -1462,21 +1415,27 @@ const ConversationPanel = ({
                 ) : null}
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
-                {activeSession?.interrupted && !hasUnsupportedCodexRunError ? (
+                {activeSession?.interrupted ? (
                   <SessionInterruptedBanner
-                    message={activeSession.error ?? t('This session was interrupted.')}
-                    isDisabled={!canResumeSession}
+                    message={
+                      hasUnsupportedCodexRunError
+                        ? t('This session was interrupted.')
+                        : (activeSession.error ?? t('This session was interrupted.'))
+                    }
+                    isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
                   />
-                ) : activeSession?.compacting ? (
+                ) : null}
+                {activeSession?.compacting ? (
                   // Auto-recovery after a request-size overflow: a neutral note, not the red error box,
                   // while the agent context is reset and the conversation is replayed as text.
                   <div className="mb-2 flex items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-3 py-2 text-[12px] leading-5 text-text-300">
                     <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
                     {t('Compacting conversation to fit the context limit…')}
                   </div>
-                ) : resolvedActionError || activeSession?.status === 'error' ? (
+                ) : (resolvedActionError || activeSession?.status === 'error') &&
+                  (!activeSession?.interrupted || hasUnsupportedCodexRunError) ? (
                   <DismissibleConversationError key={errorKey}>
                     {/* Transient action errors and a run failure can coexist; show each on its own row
                         so the run's report affordance is never suppressed by a transient error. */}
@@ -2691,7 +2650,9 @@ const ConversationPanel = ({
                               delegationHasLiveAttempts={delegationHasLiveAttempts}
                               delegationDisabledReason={delegationDisabledReason}
                               memoryDisabledReason={memoryDisabledReason}
-                              readOnly={!canChangeAgentControls}
+                              readOnly={
+                                !canChangeAgentControls || activeSession?.isPending === true
+                              }
                               autoReviewReadOnly={!canChangeAutoReview}
                               memoryReadOnly={!canChangeMemory}
                               delegationReadOnly={!canChangeDelegation}

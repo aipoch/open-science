@@ -71,7 +71,7 @@ try {
   if (mode === 'runtime') {
     if (
       !/^[1-9]\d*$/.test(process.env.VERSION ?? '') ||
-      !/^(osx-arm64|osx-64|linux-64|win-64)$/.test(argument)
+      !/^(osx-arm64|osx-64|linux-64|linux-aarch64|win-64)$/.test(argument)
     ) {
       throw new Error('Invalid runtime version or subdir')
     }

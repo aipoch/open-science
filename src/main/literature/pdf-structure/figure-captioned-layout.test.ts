@@ -84,3 +84,18 @@ it('keeps another figure on a page with a captioned vector flowchart', () => {
   expect(figures[1].rect[0]).toBeLessThanOrEqual(50)
   expect(figures[1].rect[2]).toBeGreaterThanOrEqual(270)
 })
+
+it('keeps an inline figure below a neighbouring table crop', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [{ kind: 'image', normalizedRect: [0.1, 0.45, 0.9, 0.75] }]
+  }
+  const caption = { page: 1, lines: ['Figure 1. Flow diagram.'], rect: [60, 620, 540, 640] }
+  const figure = associateFigures(page, [caption], [[60, 80, 540, 260]])[0]
+  expect(figure.rect).toEqual([60, 360, 540, 600])
+})

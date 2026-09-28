@@ -23,7 +23,7 @@ export const netFetchStandard = ((input, init) => {
 // Electron 39 net.fetch does not expose manual redirect responses: its fetch adapter never
 // handles ClientRequest's redirect event. This GET-only adapter preserves the Chromium proxy
 // while returning the redirect for the caller to validate BEFORE contacting the next host.
-// Existing fetch callers keep their original behavior; only Marketplace downloads opt in.
+// Existing fetch callers keep their original behavior; validated download callers opt in.
 export const netFetchWithManualRedirect: typeof fetch = (input, init) => {
   if (init?.redirect !== 'manual' || !net?.request) return netFetchStandard(input, init)
   const request = new Request(input, init)
@@ -37,14 +37,29 @@ export const netFetchWithManualRedirect: typeof fetch = (input, init) => {
       redirect: 'manual',
       credentials: 'omit'
     })
+    let incomingBody: Readable | undefined
+    const cleanup = (): void => request.signal.removeEventListener('abort', abort)
     const abort = (): void => {
+      cleanup()
       reject(request.signal.reason)
+      // Reject body readers as well as requests still awaiting headers.
+      incomingBody?.destroy(
+        request.signal.reason instanceof Error
+          ? request.signal.reason
+          : new Error(String(request.signal.reason))
+      )
       outgoing.abort()
     }
     request.signal.addEventListener('abort', abort, { once: true })
-    outgoing.once('close', () => request.signal.removeEventListener('abort', abort))
-    outgoing.on('error', reject)
+    // ClientRequest can close before its response body finishes. Keep cancellation
+    // attached until the response ends, rather than using the outgoing close event.
+    outgoing.on('error', (error) => {
+      cleanup()
+      incomingBody?.destroy(error)
+      reject(error)
+    })
     outgoing.on('redirect', (status, _method, location) => {
+      cleanup()
       resolve(new Response(null, { status, headers: { location } }))
       outgoing.abort()
     })
@@ -55,11 +70,17 @@ export const netFetchWithManualRedirect: typeof fetch = (input, init) => {
           if (values !== undefined)
             headers.set(name, Array.isArray(values) ? values.join(', ') : values)
         }
-        const body = [204, 205, 304].includes(incoming.statusCode)
-          ? null
-          : (Readable.toWeb(incoming as unknown as Readable) as ReadableStream<Uint8Array>)
+        if (![204, 205, 304].includes(incoming.statusCode)) {
+          incomingBody = incoming as unknown as Readable
+          incomingBody.once('end', cleanup)
+          incomingBody.once('close', cleanup)
+        } else cleanup()
+        const body = incomingBody
+          ? (Readable.toWeb(incomingBody) as ReadableStream<Uint8Array>)
+          : null
         resolve(new Response(body, { status: incoming.statusCode, headers }))
       } catch (error) {
+        cleanup()
         reject(error)
         outgoing.abort()
       }

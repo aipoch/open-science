@@ -150,6 +150,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.test.ts",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/main/session-persistence/usage-regressions.test.ts",
@@ -494,7 +495,8 @@
       "src/renderer/src/pages/workspace/file-type-icon.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
-      "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx"
+      "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
+      "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

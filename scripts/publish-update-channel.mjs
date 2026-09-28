@@ -12,7 +12,8 @@ const {
   VERSION: version,
   S3_BUCKET: bucket,
   S3_PREFIX: prefix = '',
-  MODE: mode = 'backfill'
+  MODE: mode = 'backfill',
+  BOOTSTRAP_LINUX_ARM64: bootstrapLinuxArm64 = 'false'
 } = process.env
 const stable = (value) => {
   if (typeof value !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value)) {
@@ -23,6 +24,11 @@ const stable = (value) => {
 const requested = stable(version)
 if (!bucket || !['backfill', 'promote'].includes(mode))
   throw new Error('Invalid mirror destination or mode')
+if (
+  !['true', 'false'].includes(bootstrapLinuxArm64) ||
+  (bootstrapLinuxArm64 === 'true' && mode !== 'promote')
+)
+  throw new Error('ARM64 bootstrap requires explicit promotion')
 const root = `s3://${bucket}/${prefix.replace(/^\/+|\/+$/g, '')}`.replace(/\/$/, '')
 const aws = (...args) =>
   execFileSync('aws', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
@@ -42,11 +48,12 @@ const upload = (source, target, immutable, type) =>
 const manifest = JSON.parse(readFileSync('version.json', 'utf8'))
 if (manifest.version !== version) throw new Error('Manifest does not match the requested version')
 const feeds = readdirSync('dist-assets')
-  .filter((name) => /^(latest(?:-linux)?|.*-mac)\.yml$/.test(name))
+  .filter((name) => /^(latest(?:-linux(?:-arm64)?)?|.*-mac)\.yml$/.test(name))
   .sort()
 const required = [
   'latest.yml',
   'latest-linux.yml',
+  'latest-linux-arm64.yml',
   'latest-mac.yml',
   'arm64-mac.yml',
   'x64-mac.yml'
@@ -61,12 +68,28 @@ if (promote) {
       throw new Error(`Invalid promotion feed: ${name}`)
     }
   }
-  // Deliberately fail closed on missing, unreadable or malformed current objects. Bootstrap is a
-  // separate operation; an authorization/network error must never masquerade as an empty channel.
-  const currentVersions = [
-    JSON.parse(readRemote('version.json')).version,
-    ...required.map((name) => load(readRemote(name))?.version)
-  ]
+  // Only the explicitly opted-in new platform may be absent. Confirm absence with HEAD; an
+  // authorization/network error must never masquerade as a missing channel. Existing feeds still
+  // participate in monotonic promotion, including ARM64 on a retry after a partial upload.
+  const currentFeedVersions = required.flatMap((name) => {
+    if (name === 'latest-linux-arm64.yml' && bootstrapLinuxArm64 === 'true') {
+      try {
+        aws(
+          's3api',
+          'head-object',
+          '--bucket',
+          bucket,
+          '--key',
+          `${prefix.replace(/^\/+|\/+$/g, '')}/${name}`.replace(/^\//, '')
+        )
+      } catch (error) {
+        if (/\((?:404|NoSuchKey|NotFound)\)/.test(String(error.stderr))) return []
+        throw error
+      }
+    }
+    return [load(readRemote(name))?.version]
+  })
+  const currentVersions = [JSON.parse(readRemote('version.json')).version, ...currentFeedVersions]
   for (const current of currentVersions) {
     const parts = stable(current)
     const difference = parts.findIndex((part, index) => part !== requested[index])

@@ -100,14 +100,15 @@ const createDurableDelegatedWork = (
   const withAdmissionLock = createAdmissionGate()
   const turnIdentity = (session: SessionKey, messageId: string): string =>
     `${session.projectId}\u0000${session.sessionId}\u0000${messageId}`
-  const assertTurnOpen = async (session: SessionKey, messageId: string): Promise<void> => {
-    if (cancelledTurns.has(turnIdentity(session, messageId))) {
+  const assertTurnOpen = async (caller: AuthenticatedDelegateCaller): Promise<void> => {
+    const { session, originMessageId: messageId, rootExecutionId } = caller
+    if (cancelledTurns.has(`${turnIdentity(session, messageId)}\u0000${rootExecutionId ?? ''}`)) {
       throw new DurableDelegatedWorkError(
         'conflict',
         'the initiating Conversation Turn is cancelled and cannot admit delegated work'
       )
     }
-    await options.assertTurnOpen?.(session, messageId)
+    await options.assertTurnOpen?.(session, messageId, rootExecutionId)
   }
   const permissionOwner = new RootDelegatePermissionOwner(
     options.records,
@@ -473,7 +474,7 @@ const createDurableDelegatedWork = (
       }
     }
     try {
-      await assertTurnOpen(caller.session, caller.originMessageId)
+      await assertTurnOpen(caller)
       await options.records.continueChild({
         frameId: child.frameId,
         previousAttemptId: previous.id,
@@ -530,6 +531,9 @@ const createDurableDelegatedWork = (
   }
 
   const messageDeliveryOwner = new ReliableMessageDeliveryOwner({
+    assertCaller: async (caller) => {
+      if (caller.role === 'main') await assertTurnOpen(caller)
+    },
     records: options.records,
     now,
     admission: withAdmissionLock,
@@ -765,7 +769,7 @@ const createDurableDelegatedWork = (
     if (caller.role !== 'main') {
       throw new DurableDelegatedWorkError('authorization', 'only the Main Agent can delegate work')
     }
-    await assertTurnOpen(caller.session, caller.originMessageId)
+    await assertTurnOpen(caller)
     const admission = await options.records.snapshot()
     if (
       !sameSession(admission.session, caller.session) ||
@@ -820,7 +824,7 @@ const createDurableDelegatedWork = (
     }
     try {
       await withAdmissionLock(async () => {
-        await assertTurnOpen(caller.session, caller.originMessageId)
+        await assertTurnOpen(caller)
         assertAdmissionNotStopped(caller.session, admission.rootBranchId, admissionGeneration)
         const committed = await options.records.admitChildren({
           caller,
@@ -935,6 +939,7 @@ const createDurableDelegatedWork = (
         caller.session.projectId,
         caller.session.sessionId,
         caller.frameId,
+        caller.rootExecutionId ?? '',
         caller.toolInvocationId
       ].join('\u0000')
       const existing = invocationOutcomes.get(invocationKey)
@@ -1040,12 +1045,14 @@ const createDurableDelegatedWork = (
       const targets = await readModel.pinAuthorizedChildren(caller, frameIds)
       return stopPinnedChildren(targets, 'main_agent_stop')
     },
-    async cancelTurn(session, initiatingTurnMessageId) {
+    async cancelTurn(session, initiatingTurnMessageId, executionId) {
       if (!initiatingTurnMessageId.trim()) {
         throw new DurableDelegatedWorkError('admission_rejection', 'Turn identity is required')
       }
       const targets = await withAdmissionLock(async () => {
-        cancelledTurns.add(turnIdentity(session, initiatingTurnMessageId))
+        cancelledTurns.add(
+          `${turnIdentity(session, initiatingTurnMessageId)}\u0000${executionId ?? ''}`
+        )
         const snapshot = await options.records.snapshot()
         if (!sameSession(snapshot.session, session)) return []
         return snapshot.records.filter((child) => {

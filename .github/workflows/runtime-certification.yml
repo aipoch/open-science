@@ -23,9 +23,17 @@ concurrency:
 
 jobs:
   source:
-    name: Source runtime chain (Linux)
+    name: Source runtime chain (${{ matrix.subdir }})
     continue-on-error: ${{ inputs.allow_failure == true }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - subdir: linux-64
+            os: ubuntu-latest
+          - subdir: linux-aarch64
+            os: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -44,6 +52,31 @@ jobs:
       - name: Install test dependencies
         run: node scripts/ci/npm-ci.mjs
 
+      - name: Install Linux sandbox dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes apparmor-profiles apparmor-utils bubblewrap
+
+          apparmor_userns_restriction="$(
+            sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
+          )"
+          if [[ "$apparmor_userns_restriction" == "1" ]]; then
+            profile_source=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+            test -r "$profile_source"
+            sudo install -m 0644 "$profile_source" /etc/apparmor.d/bwrap-userns-restrict
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          fi
+
+          bwrap --unshare-all --ro-bind / / -- /bin/true
+      - name: Test real Linux filesystem and network isolation
+        run: >-
+          npx vitest run --project process
+          packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
+          packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
+          src/main/session-plan/plan-context-file.shell.integration.test.ts
+
       # Use the same pinned, digest-verified micromamba downloader as the packaged runtime. These are
       # ephemeral source-certification environments, not the immutable CDN packs certified later at
       # the packaged boundary.
@@ -52,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           bin="$RUNNER_TEMP/micromamba"
-          node scripts/fetch-micromamba.mjs linux-64 "$bin"
+          node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" "$bin"
           echo "MICROMAMBA_BIN=$bin" >> "$GITHUB_ENV"
 
       - name: Create real Python and R environments

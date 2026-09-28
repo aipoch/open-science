@@ -59,6 +59,15 @@ const cases = [
   ['separate-deviation', recoverDeviationGrid, 25, 6, 'Vitamin A (retinol-mg/L)'],
   ['complete-numeric', recoverAlignedNumericGrid, 17, 8, 'cPP']
 ] as const
+
+it('recovers the tail row of a rotated continued table without leaving source text unassigned', () => {
+  const f = fixture('continued-rotated-table')
+  const result = refineTable(f.table, f.tokens, f.captions, [], f.rules)
+  expect(result.repairs).toContain('text-supported-row-recovered')
+  expect(result.grid[2][4]).toMatch(/W\d+/)
+  expect(result.grid[3][0]).toMatch(/W\d+/)
+})
+
 it.each(cases)(
   'recovers %s records from native geometry without dropping source text',
   (name, recover, rows, columns) => {

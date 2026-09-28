@@ -1312,6 +1312,7 @@ class NotebookExecutionOwner {
               }
               if (mcpRpc) session.retainControlInvocationConnection(runId, mcpRpc)
               const releaseControlInvocation = mcpRpc?.beginControlInvocation?.({
+                rootExecutionId: request.rootExecutionId,
                 turnId: runId,
                 controlInvocationGeneration,
                 toolInvocationId: runId,

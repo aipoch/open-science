@@ -1,3 +1,4 @@
+import type { ApplicationEvents } from '../application-events'
 import type { ApplicationModuleBuilder } from '../application-runtime'
 import { BackendShutdownOutcomeError, QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
 import {
@@ -15,6 +16,7 @@ type ReviewerRuntimeShutdownOwner = Pick<
 >
 
 type ReviewerCompositionDependencies = Readonly<{
+  applicationEvents?: ApplicationEvents
   modelRuntime: ConstructorParameters<typeof ReviewerModelRuntimeOwner>[0]
   options: Omit<ReviewerIpcOptions, 'modelRuntime' | 'pagedContentResolver'>
   previewResources: Parameters<typeof createReviewerElectronPagedContentResolver>[0]
@@ -26,6 +28,7 @@ export const registerReviewerComposition = async (
   modules: ApplicationModuleBuilder,
   {
     modelRuntime,
+    applicationEvents,
     options,
     previewResources,
     runtimeShutdownOwner,
@@ -56,6 +59,15 @@ export const registerReviewerComposition = async (
     pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources)
   }
   const reviewerCommandOwner = createReviewerCommandOwner(reviewerOptions)
+  if (applicationEvents)
+    await modules.add({}, () => ({
+      name: 'reviewer-correction-resume',
+      capability: undefined,
+      dispose: applicationEvents.subscribe((event) => {
+        if (event.channel === 'session:updated')
+          void reviewerCommandOwner.onSessionUpdated(event.payload.session)
+      })
+    }))
   declareElectronAdapter('reviewer', () => {
     registerReviewerIpcHandlers(reviewerOptions, reviewerCommandOwner)
   })

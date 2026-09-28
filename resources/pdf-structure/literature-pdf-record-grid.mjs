@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import {
   tableSourceItems,
   readSourceRow,
@@ -1305,6 +1306,8 @@ export function recoverBaselineComparisonGrid(table, items, captions) {
 // section headings and one native header divider. Source baselines recover
 // omitted/model-overlapped rows; a wrapped stub stays with its own value.
 export function recoverDemographicRecords(table, items, captions, rules) {
+  const enclosed = recoverEnclosedSummaryRecords(table, items, captions, rules)
+  if (enclosed) return enclosed
   if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return
   const [left, top, right, bottom] = table.cropRect
   const columns = table.structure.objects
@@ -1406,6 +1409,128 @@ export function recoverDemographicRecords(table, items, captions, rules) {
       r.section ? [{ row: n + 1, column: 0, rowSpan: 1, colSpan: 2 }] : []
     ),
     completeSpans: true
+  }
+}
+
+// A closed two-column summary supplies its header and body independently of
+// model row overlaps. Only complete numeric records determine the gutter;
+// full-width section labels must not pull it across the value column.
+function recoverEnclosedSummaryRecords(table, items, captions, rules) {
+  if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return
+  const crop = table.cropRect,
+    width = crop[2] - crop[0]
+  const predicted = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length !== 2) return
+  const joined = joinHorizontalTableRules(rules, 1)
+  const edges = joined.filter(
+    (r) =>
+      Math.abs(r[0] - crop[0]) < 16 &&
+      Math.abs(r[2] - crop[2]) < width * 0.2 &&
+      r[1] >= crop[1] - 16 &&
+      r[1] <= crop[3] + 16
+  )
+  if (
+    edges.length !== 3 ||
+    edges[1][1] - edges[0][1] > 60 ||
+    edges[2][1] - edges[1][1] < 100 ||
+    edges.some((r) => Math.abs(r[2] - edges[0][2]) > 2)
+  )
+    return
+  const left = Math.min(crop[0], edges[0][0]),
+    right = Math.max(crop[2], edges[0][2]),
+    top = Math.min(crop[1], edges[0][1]),
+    bottom = edges[2][1]
+  const source = tableSourceItems(items, [left, top, right, bottom])
+  const header = source.filter((i) => i.rect[3] <= edges[1][1])
+  let cut = crop[0] + (predicted[0].rect[2] + predicted[1].rect[0]) / 2
+  const heading = readSourceRow(header, [left, cut, right])
+  if (!heading || heading.some((s) => !/^\p{L}/u.test(s))) return
+  const body = source.filter((i) => !header.includes(i))
+  const height = body.map((i) => i.height).sort((a, b) => a - b)[Math.floor(body.length / 2)]
+  const groups = groupSourceRowsWithScripts(body, height, 0.35)
+  if (!groups) return
+  const number = (s) => /^\d[\d.,]*\([\d.,;%–−-]+\)$/.test(s.replace(/\s/g, ''))
+  const candidates = groups.filter((g) =>
+    number(
+      g
+        .filter((i) => i.rect[0] > cut)
+        .map((i) => i.text)
+        .join('')
+    )
+  )
+  if (candidates.length < 8) return
+  const labelEnd = Math.max(
+    ...candidates
+      .flat()
+      .filter((i) => (i.rect[0] + i.rect[2]) / 2 < cut)
+      .map((i) => i.rect[2])
+  )
+  const valueStart = Math.min(
+    ...candidates
+      .flat()
+      .filter((i) => (i.rect[0] + i.rect[2]) / 2 > cut)
+      .map((i) => i.rect[0])
+  )
+  if (valueStart - labelEnd < height * 0.5) return
+  cut = (labelEnd + valueStart) / 2
+  const records = []
+  let counts = 0,
+    sections = 0
+  for (const group of groups) {
+    const cells = readSourceRow(group, [left, cut, right]),
+      rect = union(group)
+    if (cells?.[0] && number(cells[1])) {
+      records.push({ rect, section: false, items: [...group] })
+      counts++
+      continue
+    }
+    const ordered = [...group].sort((a, b) => a.rect[0] - b.rect[0])
+    if (
+      !group.some((i) => /\p{L}/u.test(i.text)) ||
+      ordered.some((i, n) => n && i.rect[0] - ordered[n - 1].rect[2] > height * 1.5)
+    )
+      return
+    const previous = records.at(-1),
+      text = [...group]
+        .sort((a, b) => a.rect[0] - b.rect[0])
+        .map((i) => i.text)
+        .join(' ')
+    if (previous && /^[a-z(]/.test(text) && rect[1] - previous.rect[3] < height) {
+      previous.rect[3] = rect[3]
+      previous.items.push(...group)
+      continue
+    }
+    if (Math.abs(rect[0] - header[0].rect[0]) > height * 0.6) return
+    records.push({ rect, section: true, items: [...group] })
+    sections++
+  }
+  if (
+    counts < 8 ||
+    sections < 2 ||
+    !hasUniqueRecordTokens(
+      body,
+      records.map((r) => r.items)
+    )
+  )
+    return
+  return {
+    cropRect: [left, top, right, bottom],
+    rows: [
+      [left, top, right, edges[1][1]],
+      ...records.map((r) => [left, r.rect[1], right, r.rect[3]])
+    ],
+    columns: [
+      [left, top, cut, bottom],
+      [cut, top, right, bottom]
+    ],
+    headerRows: [0],
+    spans: records.flatMap((r, n) =>
+      r.section ? [{ row: n + 1, column: 0, rowSpan: 1, colSpan: 2 }] : []
+    ),
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }
 

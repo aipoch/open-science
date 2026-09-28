@@ -467,6 +467,8 @@ class ReviewRepository {
     reviewId: string
     checks: NewCheck[]
     expectedSourceFindingIds: string[]
+    // Main-owned Resume may assess findings terminalized by Stop, never arbitrary closed findings.
+    resumedSourceFindingIds?: string[]
     reviewerLog?: ReviewerLogEntry[]
     keepFlaggedReviewRunning?: boolean
   }): Promise<ReviewWithChecks> {
@@ -548,10 +550,20 @@ class ReviewRepository {
       for (const [submissionIndex, check] of input.checks.entries()) {
         if (!check.sourceFindingId) continue
         const finding = await tx.finding.findUnique({ where: { id: check.sourceFindingId } })
+        const lastDisposition =
+          finding?.resolution === 'unaddressed' &&
+          input.resumedSourceFindingIds?.includes(finding.id)
+            ? await tx.reviewFindingDisposition.findFirst({
+                where: { sourceFindingId: finding.id },
+                orderBy: { sequence: 'desc' }
+              })
+            : undefined
+        const resumable =
+          lastDisposition?.trigger === 'aborted' && lastDisposition.outcome === 'unaddressed'
         if (
           !finding ||
           (finding.status !== 'warn' && finding.status !== 'fail') ||
-          finding.resolution !== 'open'
+          (finding.resolution !== 'open' && !resumable)
         ) {
           throw new Error(`Tracked Finding is unavailable: ${check.sourceFindingId}`)
         }
@@ -888,6 +900,22 @@ class ReviewRepository {
         const causeReviewId =
           input.causeReviewId ??
           (input.trigger === 'review_submission' ? assessmentReview.id : null)
+        // A tracked reassessment can reopen an aborted Finding. Its next terminal event belongs
+        // to that new assessment lifecycle, while retries before another reassessment retain the
+        // same identity. Derive the epoch transactionally so both live Stop and startup recovery
+        // use it, and preserve explicit caller identities and pre-resume legacy event IDs.
+        const reopenedBy =
+          !input.eventId && input.outcome === 'unaddressed'
+            ? await tx.reviewFindingDisposition.findFirst({
+                where: {
+                  sourceFindingId: finding.id,
+                  trigger: 'review_submission',
+                  outcome: 'still_open'
+                },
+                orderBy: { sequence: 'desc' },
+                select: { id: true }
+              })
+            : undefined
         const eventId =
           input.eventId ??
           `review-disposition-${sha256(
@@ -895,7 +923,8 @@ class ReviewRepository {
               reviewId: input.reviewId,
               sourceFindingId: input.sourceFindingId,
               causeReviewId,
-              trigger: input.trigger
+              trigger: input.trigger,
+              ...(reopenedBy ? { reopenedByDispositionId: reopenedBy.id } : {})
             })
           )}`
         const existing = await tx.reviewFindingDisposition.findUnique({

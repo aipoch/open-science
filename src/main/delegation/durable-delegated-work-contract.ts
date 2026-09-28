@@ -258,7 +258,11 @@ type DurableDelegatedWork = Readonly<{
     caller: AuthenticatedDelegateCaller,
     frameIds: readonly string[]
   ): Promise<readonly StopOutcome[]>
-  cancelTurn(session: SessionKey, initiatingTurnMessageId: string): Promise<readonly StopOutcome[]>
+  cancelTurn(
+    session: SessionKey,
+    initiatingTurnMessageId: string,
+    executionId?: string
+  ): Promise<readonly StopOutcome[]>
   stopActiveBranch(session: SessionKey): Promise<readonly StopOutcome[]>
   stopSession(session: SessionKey): Promise<readonly StopOutcome[]>
   recoverInterrupted(): Promise<RecoveryOutcome>
@@ -307,7 +311,11 @@ type CreateDurableDelegatedWorkOptions = Readonly<{
   createId?: (kind: 'frame' | 'attempt' | 'message' | 'runtime' | 'question') => string
   collectPollIntervalMs?: number
   collectMonotonicNow?: () => number
-  assertTurnOpen?: (session: SessionKey, initiatingTurnMessageId: string) => Promise<void> | void
+  assertTurnOpen?: (
+    session: SessionKey,
+    initiatingTurnMessageId: string,
+    executionId?: string
+  ) => Promise<void> | void
 }>
 
 export type {

@@ -422,7 +422,8 @@
       "src/main/settings/provider-transport-owner.test.ts",
       "src/main/literature/smart-collections.test.ts",
       "src/main/acp/library-auto-policy.test.ts",
-      "src/main/notebook/wsl2-scheduling.integration.test.ts"
+      "src/main/notebook/wsl2-scheduling.integration.test.ts",
+      "src/main/literature/journal-attributes.test.ts"
     ]
   },
   "capabilityOverlays": ["i18n_catalog"],

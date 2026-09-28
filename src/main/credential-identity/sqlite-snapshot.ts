@@ -29,12 +29,19 @@ const sameFileState = (left: BigIntStats, right: BigIntStats): boolean =>
 const sourceState = (path: string): BigIntStats | undefined =>
   lstatSync(path, { bigint: true, throwIfNoEntry: false })
 
-const rejectPendingRollback = (path: string): void => {
-  const journal = sourceState(`${path}-journal`)
-  // A main-only copy would discard recovery information and could expose uncommitted contents.
-  if (journal && (!journal.isFile() || journal.size > 0n)) {
-    throw new Error('SQLite rollback journal requires recovery before inspection')
-  }
+const validateRollback = (source: SourceFile): void => {
+  if (source.initial.size === 0n) return
+  const magic = 'd9d505f920a163d7'
+  const header = Buffer.alloc(8)
+  const trailer = Buffer.alloc(8)
+  readSync(source.descriptor, header, 0, 8, 0)
+  if (source.initial.size <= 512n || header.toString('hex') !== magic)
+    throw new Error('SQLite rollback journal cannot be recovered safely')
+  readSync(source.descriptor, trailer, 0, 8, Number(source.initial.size) - 8)
+  // An attached-database super-journal can reference files outside the private copy.
+  // Keep rejecting it: only SQLite's single-database rollback is safe to run here.
+  if (trailer.toString('hex') === magic)
+    throw new Error('SQLite super-journal requires recovery before inspection')
 }
 
 const openSource = (path: string): SourceFile | undefined => {
@@ -97,6 +104,7 @@ const copySource = (source: SourceFile, destination: string): void => {
 
 // SQLite may create a WAL shared-memory file even for a read-only connection. Inspect only a
 // private copy, retaining committed WAL records without ever opening the original in SQLite.
+// A hot rollback journal is recovered by SQLite in that copy before read-only inspection.
 export const withReadOnlySqliteSnapshot = (
   path: string,
   read: (database: DatabaseSync) => void
@@ -106,25 +114,43 @@ export const withReadOnlySqliteSnapshot = (
   const sources = [main]
   let temporary: string | undefined
   try {
-    rejectPendingRollback(path)
+    const journalPath = `${path}-journal`
+    const journal = openSource(journalPath)
+    if (journal) {
+      sources.push(journal)
+      validateRollback(journal)
+    }
     const walPath = `${path}-wal`
     const wal = openSource(walPath)
     if (wal) sources.push(wal)
+    if (wal?.initial.size && journal?.initial.size)
+      throw new Error('SQLite has conflicting recovery journals')
     temporary = mkdtempSync(join(tmpdir(), 'credential-snapshot-'))
     chmodSync(temporary, 0o700)
     const snapshot = join(temporary, 'snapshot.db')
     copySource(main, snapshot)
     if (wal) copySource(wal, `${snapshot}-wal`)
+    if (journal) copySource(journal, `${snapshot}-journal`)
 
     // File descriptors pin the copied objects; path checks also catch replacement or rename.
     // If WAL was absent initially, a newly created WAL invalidates the main-only snapshot.
     for (const source of sources) verifySource(source)
     if (!wal && sourceState(walPath)) throw new Error('SQLite WAL changed while copying')
-    rejectPendingRollback(path)
+    if (!journal && sourceState(journalPath))
+      throw new Error('SQLite rollback journal changed while copying')
 
     const sqlite = process.getBuiltinModule('node:sqlite') as
       typeof import('node:sqlite') | undefined
     if (!sqlite) throw new Error('Read-only SQLite inspection is unavailable')
+    if (journal?.initial.size) {
+      const recovery = new sqlite.DatabaseSync(snapshot)
+      try {
+        // The first actual read makes SQLite roll back a hot journal. Never recover the source.
+        recovery.prepare('SELECT count(*) FROM sqlite_master').get()
+      } finally {
+        recovery.close()
+      }
+    }
     const database = new sqlite.DatabaseSync(snapshot, { readOnly: true })
     try {
       database.exec('PRAGMA query_only = ON')

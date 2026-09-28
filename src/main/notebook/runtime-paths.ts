@@ -29,10 +29,10 @@ export const runtimeSubdir = (
   if (platform === 'darwin' && arch === 'arm64') return 'osx-arm64'
   if (platform === 'darwin' && arch === 'x64') return 'osx-64'
   if (platform === 'linux' && arch === 'x64') return 'linux-64'
+  if (platform === 'linux' && arch === 'arm64') return 'linux-aarch64'
   if (platform === 'win32' && arch === 'x64') return 'win-64'
-  // Only the four subdirs above are staged/published by stage-runtime-bundle.yml. linux-aarch64 (and
-  // win32/arm64) are NOT — so reject them here with a clear "unsupported" error at resolution time,
-  // rather than mapping to a subdir whose CDN fetch would 404 and look like a transient outage.
+  // Keep unsupported targets out of CDN resolution; build.yml verifies publication of every
+  // supported subdir before a release can ship.
   throw new Error(`Unsupported notebook runtime platform: ${platform}/${arch}`)
 }
 

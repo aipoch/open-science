@@ -5,12 +5,21 @@ import {
   groupSourceRowsWithScripts
 } from './literature-pdf-source-records.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
-import { clusterTableRulePositions, classifyTableRuleEdge } from './literature-pdf-table-rules.mjs'
+import {
+  clusterTableRulePositions,
+  classifyTableRuleEdge,
+  joinHorizontalTableRules
+} from './literature-pdf-table-rules.mjs'
+import { recoverRuledRecordFaces } from './literature-pdf-ruled-record-faces.mjs'
 import { union } from './literature-pdf-table-geometry.mjs'
 
 // Some publishers draw the header divider as overlapping cell-width strokes.
 // Consistent overlap identifies real column gutters independently of model rows.
 export function recoverRuledColumnGrid(table, items, captions, rules) {
+  const closed = recoverFullyRuledRecords(table, items, captions, rules)
+  if (closed) return closed
+  const faces = recoverRuledRecordFaces(table, items, captions, rules)
+  if (faces) return faces
   if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
   const crop = table.cropRect
   const bands = []
@@ -148,6 +157,96 @@ export function recoverRuledColumnGrid(table, items, captions, rules) {
     columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
     spans,
     completeSpans: true
+  }
+}
+
+// Repeated full-width row rules plus continuous internal dividers define a
+// rectangular matrix even when detection clips the units or final value column.
+function recoverFullyRuledRecords(table, items, captions, rules) {
+  const [left, top, right, bottom] = table.cropRect
+  const predicted = table.structure.objects.filter((o) => o.label === 'table column')
+  if (
+    predicted.length < 2 ||
+    predicted.length > 6 ||
+    !captions.some((c) => captionKind(c.lines[0]) === 'table')
+  )
+    return
+  const borders = joinHorizontalTableRules(rules, 1).filter(
+    (r) =>
+      Math.abs(r[0] - left) < 20 &&
+      Math.abs(r[2] - right) < (right - left) * 0.15 &&
+      r[1] >= top - 12 &&
+      r[1] <= bottom + 12
+  )
+  if (
+    borders.length < 8 ||
+    Math.abs(borders[0][1] - top) > 16 ||
+    Math.abs(borders.at(-1)[1] - bottom) > 16 ||
+    borders.some((r) => Math.abs(r[0] - borders[0][0]) > 1 || Math.abs(r[2] - borders[0][2]) > 1)
+  )
+    return
+  const frame = [borders[0][0], borders[0][1], borders[0][2], borders.at(-1)[1]]
+  const vertical = rules.filter(
+    (r) =>
+      r[0] === r[2] &&
+      r[0] > frame[0] &&
+      r[0] < frame[2] &&
+      r[1] >= frame[1] - 1 &&
+      r[3] <= frame[3] + 1
+  )
+  const xs = clusterTableRulePositions(vertical.map((r) => r[0]))
+  if (
+    xs.length !== predicted.length - 1 ||
+    xs.some((x) => classifyTableRuleEdge(vertical, 0, x, frame[1], frame[3]) !== 1)
+  )
+    return
+  const cuts = [frame[0], ...xs, frame[2]],
+    source = tableSourceItems(items, frame)
+  const groups = borders
+    .slice(1)
+    .map((r, n) =>
+      source.filter(
+        (i) => (i.rect[1] + i.rect[3]) / 2 >= borders[n][1] && (i.rect[1] + i.rect[3]) / 2 < r[1]
+      )
+    )
+  const headerRows = [0]
+  if (
+    !hasUniqueRecordTokens(source, groups) ||
+    groups.some((g, n) => {
+      const cells = cuts
+        .slice(1)
+        .map((x, c) => g.filter((i) => i.rect[0] >= cuts[c] - 0.1 && i.rect[2] <= x + 0.1))
+      const leaves =
+        !cells[0].length &&
+        cells
+          .slice(1)
+          .every((c) => c.length && c.every((i) => /\p{L}/u.test(i.text) && !/\d/.test(i.text)))
+      if (n === 1 && leaves) headerRows.push(n)
+      return (
+        !hasUniqueRecordTokens(
+          g,
+          cells.filter((c) => c.length)
+        ) ||
+        (!(n < 2 && leaves) && !cells[0].some((i) => /\p{L}/u.test(i.text))) ||
+        (n === 0 && cells.slice(1).some((c) => !c.some((i) => /\p{L}/u.test(i.text))))
+      )
+    })
+  )
+    return
+  if (
+    groups
+      .slice(headerRows.length)
+      .filter((g) => g.some((i) => i.rect[0] >= cuts[1] && /\d/.test(i.text))).length < 3
+  )
+    return
+  return {
+    cropRect: frame,
+    rows: borders.slice(1).map((r, n) => [frame[0], borders[n][1], frame[2], r[1]]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], frame[1], x, frame[3]]),
+    headerRows,
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }
 

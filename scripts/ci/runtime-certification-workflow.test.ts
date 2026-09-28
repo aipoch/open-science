@@ -40,7 +40,7 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('runtime certification workflow', () => {
-  it('provides one reusable, manually dispatchable, read-only Linux source lane', () => {
+  it('provides native reusable, manually dispatchable, read-only Linux source lanes', () => {
     const runtime = workflow('runtime-certification.yml')
     const source = runtime.jobs.source
 
@@ -52,9 +52,25 @@ describe('runtime certification workflow', () => {
       'cancel-in-progress': true
     })
     expect(source).toMatchObject({
+      strategy: {
+        matrix: {
+          include: [
+            { subdir: 'linux-64', os: 'ubuntu-latest' },
+            { subdir: 'linux-aarch64', os: 'ubuntu-24.04-arm' }
+          ]
+        }
+      }
+    })
+    expect(step(source, 'Test real Linux filesystem and network isolation').run).toContain(
+      'network-enforcement.integration.test.ts'
+    )
+    expect(step(source, 'Install Linux sandbox dependency').run).not.toContain(
+      'apparmor_restrict_unprivileged_userns=0'
+    )
+    expect(source).toMatchObject({
       // workflow_dispatch has no allow_failure input; an explicit comparison must yield false.
       'continue-on-error': '${{ inputs.allow_failure == true }}',
-      'runs-on': 'ubuntu-latest',
+      'runs-on': '${{ matrix.os }}',
       'timeout-minutes': 20
     })
   })
@@ -67,7 +83,7 @@ describe('runtime certification workflow', () => {
     const verify = step(source, 'Verify runtime prerequisites')
 
     expect(install.run).toBe('node scripts/ci/npm-ci.mjs')
-    expect(fetch.run).toContain('scripts/fetch-micromamba.mjs linux-64')
+    expect(fetch.run).toContain('scripts/fetch-micromamba.mjs "${{ matrix.subdir }}"')
     expect(create.run).toContain('python=3.12 matplotlib-base numpy pandas nomkl')
     expect(create.run).toContain('r-base=4.4 r-jsonlite r-ggplot2 r-renv r-mass')
     expect(create.run).toContain('OPEN_SCIENCE_TEST_PY_ENV=')
@@ -156,12 +172,19 @@ describe('runtime certification workflow', () => {
 
     expect(dispatch.inputs?.dry_run).toMatchObject({
       default: 'full',
-      options: ['full', 'runtime-source', 'macos-x64', 'linux-cli', 'windows-package']
+      options: [
+        'full',
+        'runtime-source',
+        'macos-x64',
+        'linux-cli',
+        'linux-arm64',
+        'windows-package'
+      ]
     })
     expect(nightly.jobs.build.if).toContain("inputs.dry_run != 'runtime-source'")
     expect(runtime).toMatchObject({
       needs: 'plan',
-      if: "needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'windows-package'",
+      if: "needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'linux-arm64' && inputs.dry_run != 'windows-package'",
       uses: './.github/workflows/runtime-certification.yml',
       with: { allow_failure: "${{ github.event_name != 'workflow_dispatch' }}" }
     })

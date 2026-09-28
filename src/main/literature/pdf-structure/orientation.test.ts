@@ -2,6 +2,7 @@ import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { readPdfFixture } from './read-fixture'
 
 const { readingRotation, isUprightText, originalRect, rotatedTextRect } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-orientation.mjs')).href
@@ -9,6 +10,19 @@ const { readingRotation, isUprightText, originalRect, rotatedTextRect } = await 
 const { refineTable } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
 )
+it('orients a short count-mean-range continuation despite upright manuscript margins', () => {
+  const f = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/rotated-count-mean-range-beside-manuscript-margins.jsonl'
+    )
+  )
+  expect(readingRotation(f.page, f.content)).toBe(90)
+  const fragmented = structuredClone(f)
+  fragmented.content.items = fragmented.content.items.filter(
+    (i: { str: string }) => !['0–36', '0–99', '0–54', '0–33'].includes(i.str)
+  )
+  expect(readingRotation(fragmented.page, fragmented.content)).toBe(0)
+})
 const text = (str: string, rotation: number): object => {
   const angle = (rotation * Math.PI) / 180,
     a = Math.cos(angle) * 10,
@@ -67,6 +81,172 @@ it('excludes sideways margin text but still warns about vertical text inside the
   expect(refineTable(table, [body, { ...watermark, horizontal: true }]).issues).toContain(
     'text-crosses-crop-boundary'
   )
+})
+it('excludes a long vertical publisher mark outside every source row', () => {
+  const table = {
+    id: 'vertical-publisher-mark',
+    cropRect: [80, 100, 200, 220],
+    structure: {
+      objects: [
+        { label: 'table row', rect: [0, 0, 120, 100] },
+        { label: 'table column', rect: [0, 0, 120, 100] }
+      ]
+    }
+  }
+  const result = refineTable(table, [
+    {
+      text: '10',
+      rect: [90, 120, 105, 135],
+      height: 15,
+      baseline: 135,
+      horizontal: true
+    },
+    {
+      text: 'John Wiley & Sons Ltd, MENCAP & IASSID',
+      rect: [72, 145, 84, 215],
+      height: 12,
+      baseline: 215,
+      horizontal: false
+    }
+  ])
+  expect(result.issues).not.toContain('text-crosses-crop-boundary')
+  expect(result.issues).not.toContain('unsupported-text-orientation')
+  expect(result.clipped).toEqual([])
+})
+it('keeps a detached definition line out of the final source row', () => {
+  const table = {
+    id: 'detached-definition-note',
+    cropRect: [80, 100, 200, 220],
+    structure: {
+      objects: [
+        { label: 'table row', rect: [0, 0, 120, 40] },
+        { label: 'table column', rect: [0, 0, 120, 40] }
+      ]
+    }
+  }
+  const result = refineTable(table, [
+    {
+      text: '10',
+      rect: [90, 120, 105, 135],
+      height: 15,
+      baseline: 135,
+      horizontal: true
+    },
+    {
+      text: 'ADLs = activities of daily living.',
+      rect: [90, 155, 190, 165],
+      height: 10,
+      baseline: 165,
+      horizontal: true
+    }
+  ])
+  expect(result.grid[0][0]).toBe('10')
+  expect(result.unassigned).toEqual([])
+})
+it('excludes a two-part running header that only grazes a continuation crop', () => {
+  const table = {
+    id: 'running-header-continuation',
+    cropRect: [80, 100, 200, 220],
+    structure: {
+      objects: [
+        { label: 'table row', rect: [0, 0, 120, 120] },
+        { label: 'table column', rect: [0, 0, 120, 120] }
+      ]
+    }
+  }
+  const body = {
+    text: '10',
+    rect: [90, 120, 105, 135],
+    height: 15,
+    baseline: 135,
+    horizontal: true
+  }
+  const header = (text: string, rect: number[]): object => ({
+    text,
+    rect,
+    height: 15,
+    baseline: 100.9,
+    horizontal: true
+  })
+  const result = refineTable(table, [
+    body,
+    header('JOURNAL OF MEDICAL INTERNET RESEARCH', [82, 85, 170, 100.9]),
+    header('Wang et al', [175, 85, 198, 100.9])
+  ])
+  expect(result.issues).not.toContain('text-crosses-crop-boundary')
+  expect(result.clipped).toEqual([])
+  expect(result.repairs).toContain('top-running-header-excluded')
+})
+it('keeps a real clipped body line when a running header shares the crop edge', () => {
+  const table = {
+    id: 'running-header-with-clipped-body',
+    cropRect: [80, 100, 200, 220],
+    structure: {
+      objects: [
+        { label: 'table row', rect: [0, 0, 120, 120] },
+        { label: 'table column', rect: [0, 0, 120, 120] }
+      ]
+    }
+  }
+  const header = (text: string, rect: number[]): object => ({
+    text,
+    rect,
+    height: 15,
+    baseline: 100.9,
+    horizontal: true
+  })
+  const result = refineTable(table, [
+    {
+      text: '10',
+      rect: [90, 120, 105, 135],
+      height: 15,
+      baseline: 135,
+      horizontal: true
+    },
+    header('JOURNAL OF MEDICAL INTERNET RESEARCH', [82, 85, 170, 100.9]),
+    header('Wang et al', [175, 85, 198, 100.9]),
+    {
+      text: 'continued source line',
+      rect: [90, 218, 180, 226],
+      height: 8,
+      baseline: 226,
+      horizontal: true
+    }
+  ])
+  expect(result.issues).toContain('text-crosses-crop-boundary')
+  expect(result.clipped).toEqual([{ text: 'continued source line', rect: [90, 218, 180, 226] }])
+  expect(result.repairs).toContain('top-running-header-excluded')
+})
+it('excludes an isolated footnote marker just beyond a table crop', () => {
+  const table = {
+    id: 'bottom-footnote-marker',
+    cropRect: [80, 100, 200, 220],
+    structure: {
+      objects: [
+        { label: 'table row', rect: [0, 0, 120, 120] },
+        { label: 'table column', rect: [0, 0, 120, 120] }
+      ]
+    }
+  }
+  const result = refineTable(table, [
+    {
+      text: '10',
+      rect: [90, 120, 105, 135],
+      height: 15,
+      baseline: 135,
+      horizontal: true
+    },
+    {
+      text: 'a',
+      rect: [120, 219.1, 124, 225],
+      height: 5.9,
+      baseline: 225,
+      horizontal: true
+    }
+  ])
+  expect(result.issues).not.toContain('text-crosses-crop-boundary')
+  expect(result.clipped).toEqual([])
+  expect(result.repairs).toContain('bottom-footnote-marker-excluded')
 })
 it('keeps sheared italic text but rejects a genuinely diagonal baseline', () => {
   expect(isUprightText({ str: 'µ', dir: 'ltr', transform: [10, 0, 1.5, 10, 20, 30] }, 0)).toBe(true)

@@ -1,3 +1,4 @@
+import type { JournalAttributes } from './journal-attributes'
 import { withDataRootWrite } from '../storage/migration-state'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { transactLiterature } from './transact'
@@ -16,6 +17,7 @@ import type { LiteraturePdfImporter } from './pdf-importer'
 import type { ContentRepository } from '../storage/content-repository'
 
 type LiteratureCommandServices = Readonly<{
+  journalAttributes: Pick<JournalAttributes, 'run'>
   literatureBatchJobs: Pick<LiteratureBatchJobs, 'run'>
   literatureCitationStyles: Pick<LiteratureCitationStyleLibrary, 'list' | 'import' | 'delete'>
   literatureCitationFormatter: Pick<
@@ -52,6 +54,7 @@ type LiteratureCommandServices = Readonly<{
 }>
 
 export const createLiteratureCommandOwner = ({
+  journalAttributes,
   literatureBatchJobs,
   literatureCitationStyles,
   literatureCitationFormatter,
@@ -65,6 +68,7 @@ export const createLiteratureCommandOwner = ({
   literaturePdfImporter,
   contentRepository
 }: LiteratureCommandServices): LiteratureCommandOwner => ({
+  journals: (request) => journalAttributes.run(request),
   jobs: (request) => literatureBatchJobs.run(request),
   citationStyles: async (request) => {
     if (request.kind === 'preview') {

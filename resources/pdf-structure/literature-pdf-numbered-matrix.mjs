@@ -2,7 +2,8 @@
 import {
   tableSourceItems,
   readSourceRow,
-  groupSourceRowsWithScripts
+  groupSourceRowsWithScripts,
+  hasUniqueRecordTokens
 } from './literature-pdf-source-records.mjs'
 import { union } from './literature-pdf-table-geometry.mjs'
 
@@ -22,6 +23,8 @@ export function recoverNumberedMatrix(table, items, captions, rules) {
     right
   ]
   const source = tableSourceItems(items, table.cropRect)
+  const summary = recoverSummaryTriangle(source, table.cropRect, rules)
+  if (summary) return summary
   const named = recoverNamedTriangle(source, table.cropRect, rules)
   if (named) return named
   const labels = source.filter((i) => /^\d+\.\s+\p{L}/u.test(i.text) && i.rect[2] < cuts[1])
@@ -78,6 +81,88 @@ export function recoverNumberedMatrix(table, items, captions, rules) {
     columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
     spans: [],
     completeSpans: true
+  }
+}
+
+// A numbered lower triangle may have summary columns before the coefficients.
+// Consecutive source headers and the exact increasing coefficient count prove
+// a column omitted by the model; never synthesize a diagonal or mirror values.
+function recoverSummaryTriangle(source, [left, top, right, bottom], rules) {
+  const labels = source
+    .filter((i) => /^\d+\.\s+\p{L}/u.test(i.text))
+    .sort((a, b) => a.baseline - b.baseline)
+  if (labels.length < 6 || labels.some((i, n) => Number.parseInt(i.text) !== n + 1)) return
+  const header = source
+    .filter((i) => i.rect[3] < labels[0].rect[1])
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    header.length !== labels.length + 2 ||
+    !/^Variable$/i.test(header[0].text) ||
+    !/^Mean$/i.test(header[1].text) ||
+    !/^SD$/i.test(header[2].text) ||
+    header.slice(3).some((i, n) => i.text !== String(n + 1))
+  )
+    return
+  const height = header[0].height
+  const full = rules.filter((r) => r[1] === r[3] && r[0] <= left + 16 && r[2] >= right - 16)
+  const divider = full.find(
+    (r) => r[1] >= Math.max(...header.map((i) => i.rect[3])) && r[1] < labels[0].rect[1]
+  )
+  const footer = full.find((r) => r[1] > labels.at(-1).rect[3] && r[1] <= bottom)
+  if (!divider || !footer) return
+  const cuts = [
+    left,
+    (Math.max(...labels.map((i) => i.rect[2])) + header[1].rect[0]) / 2,
+    ...header.slice(2).map((i, n) => (header[n + 1].rect[2] + i.rect[0]) / 2),
+    right
+  ]
+  const body = source.filter((i) => i.rect[1] > divider[1] && i.rect[3] < footer[1])
+  const sections = body.filter(
+    (i) =>
+      !labels.includes(i) &&
+      i.rect[0] < cuts[1] &&
+      /\p{L}/u.test(i.text) &&
+      i.text.length > 3 &&
+      labels.every((l) => Math.abs(i.baseline - l.baseline) > height)
+  )
+  if (sections.some((i) => i.rect[2] >= cuts[1])) return
+  const anchors = [...labels, ...sections].sort((a, b) => a.baseline - b.baseline)
+  const ys = [
+    divider[1],
+    ...anchors.slice(1).map((a, n) => (anchors[n].baseline + a.baseline) / 2 - height * 0.5),
+    footer[1]
+  ]
+  const groups = anchors.map((_, n) =>
+    body.filter(
+      (i) => (i.rect[1] + i.rect[3]) / 2 >= ys[n] && (i.rect[1] + i.rect[3]) / 2 < ys[n + 1]
+    )
+  )
+  if (!hasUniqueRecordTokens(source, [header, ...groups])) return
+  const coefficient = (s) => /^[<>≤≥]?[−–-]?(?:0?\.\d+|\d{1,3})\*{0,3}$/.test(s)
+  const spans = []
+  for (let n = 0; n < groups.length; n++) {
+    const v = readSourceRow(groups[n], cuts)
+    if (!v) return
+    const index = labels.indexOf(anchors[n])
+    if (index < 0) {
+      if (v.slice(1).some(Boolean)) return
+      spans.push({ row: n + 1, column: 0, rowSpan: 1, colSpan: cuts.length - 1 })
+      continue
+    }
+    if (
+      !v[0].startsWith(`${index + 1}.`) ||
+      !v.slice(1, 3).every((s) => /^(?:\d+(?:\.\d+)?|—)$/.test(s)) ||
+      v.slice(3).some((s, c) => (c < index ? !coefficient(s) : Boolean(s)))
+    )
+      return
+  }
+  return {
+    rows: [[left, top, right, divider[1]], ...ys.slice(1).map((y, n) => [left, ys[n], right, y])],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    headerRows: [0],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }
 

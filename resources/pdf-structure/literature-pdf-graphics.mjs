@@ -27,10 +27,22 @@ export function findCaptionedNumericTableRegions(items, rules, detectedRects = [
       if (group) group.push(item)
       else groups.push([item])
     }
-    const caption = groups[0]
+    // Some publishers place the caption above the opening rule, followed by
+    // several header bands. Require the same enclosing geometry and records.
+    const above = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.x >= left - 1 &&
+        i.x + i.width <= right + 1 &&
+        i.baseline < top &&
+        top - i.baseline < i.height * 3 &&
+        /^Table\s+\d+(?:[.:]|\s)\s*\p{L}/u.test(i.text)
+    )
+    const captionAbove = above.length === 1
+    const caption = captionAbove ? above : groups[0]
     if (
       !caption ||
-      !/^Table\s+\d+[.:]\s+\p{L}/u.test(caption.map((i) => i.text).join(' ')) ||
+      (!captionAbove && !/^Table\s+\d+[.:]\s+\p{L}/u.test(caption.map((i) => i.text).join(' '))) ||
       caption[0].baseline - top > caption[0].height * 3
     )
       continue
@@ -46,20 +58,51 @@ export function findCaptionedNumericTableRegions(items, rules, detectedRects = [
       )
       .map((r) => r[1])
       .sort((a, b) => a - b)) {
-      const enclosed = groups.slice(1).filter((g) => g.every((i) => i.baseline <= bottom))
+      const enclosed = groups
+        .slice(captionAbove ? 0 : 1)
+        .filter((g) => g.every((i) => i.baseline <= bottom))
+      if (captionAbove) enclosed.forEach((g) => g.sort((a, b) => a.x - b.x))
       const numeric = (g) =>
         g.length >= 4 &&
         /\p{L}/u.test(g[0].text) &&
-        g.slice(1).every((i) => /^[<>≤≥−+-]?\d[\d.,()%±–−+\-/]*$/.test(i.text.trim()))
+        g
+          .slice(1)
+          .every((i) =>
+            /^[<>≤≥−+-]?\d[\d.,()%±–−+\-/]*$/.test(
+              captionAbove ? i.text.replace(/\s/g, '') : i.text.trim()
+            )
+          )
       const first = enclosed.findIndex(numeric)
-      if (first < 1) continue
+      if (first < (captionAbove ? 2 : 1)) continue
       const records = enclosed.slice(first),
         headings = enclosed.slice(0, first).flat()
       // An internal horizontal rule cannot end a table while another aligned
       // numeric record follows immediately below it.
       const following = groups.find((g) => g.every((i) => i.baseline > bottom))
       if (following && numeric(following) && following[0].baseline - bottom < height * 2.5) continue
-      if (
+      const longest = records.reduce((a, b) => (a.length >= b.length ? a : b), [])
+      if (captionAbove) {
+        // A final probability field may be shared or blank. Every occupied
+        // field must still have a header and a consistent alignment anchor.
+        if (
+          records.length < 3 ||
+          longest.length < 7 ||
+          records.some((g) => !numeric(g) || longest.length - g.length > 1)
+        )
+          continue
+        if (
+          longest.slice(1).some(
+            (_, c) =>
+              ![0, 0.5, 1].some((anchor) => {
+                const positions = records
+                  .filter((g) => g[c + 1])
+                  .map((g) => g[c + 1].x + g[c + 1].width * anchor)
+                return Math.max(...positions) - Math.min(...positions) < height * 0.5
+              })
+          )
+        )
+          continue
+      } else if (
         records.length < 2 ||
         records.some(
           (g) =>
@@ -75,7 +118,7 @@ export function findCaptionedNumericTableRegions(items, rules, detectedRects = [
         )
       )
         continue
-      const centres = records[0].map((i) => i.x + i.width / 2)
+      const centres = (captionAbove ? longest : records[0]).map((i) => i.x + i.width / 2)
       if (
         centres
           .slice(1)
@@ -90,7 +133,7 @@ export function findCaptionedNumericTableRegions(items, rules, detectedRects = [
           )
       )
         continue
-      const rect = [left, captionBottom + height * 0.6, right, bottom]
+      const rect = [left, captionAbove ? top : captionBottom + height * 0.6, right, bottom]
       if (
         ![...detectedRects, ...regions].some(
           (r) =>
@@ -247,6 +290,15 @@ export function excludeRepeatedMarginContent(pages) {
             // A page background/border path is not evidence that a repeated
             // running header is a figure label. Real images remain protected.
             !(runningHeader && kind === 'path' && r[2] - r[0] >= 0.95 && r[3] - r[1] >= 0.95) &&
+            // Quantized separator strokes can touch the top of the header's
+            // font box. A long thin rule is not an enclosing body graphic.
+            !(
+              runningHeader &&
+              kind === 'path' &&
+              r[2] - r[0] >= 0.5 &&
+              r[3] - r[1] <= 0.01 &&
+              r[3] <= rect[1] + (rect[3] - rect[1]) * 0.3
+            ) &&
             r[0] < rect[2] &&
             r[2] > rect[0] &&
             r[1] < rect[3] &&
@@ -269,11 +321,58 @@ export function excludeRepeatedMarginContent(pages) {
       )
       .map(({ line }) => line)
   )
+  for (const page of pages)
+    for (const line of page.lines ?? []) {
+      if (
+        line.height < line.width * 4 ||
+        !/publishing|copyright|©/i.test(line.text) ||
+        !((line.x + line.width) / page.width <= 0.06 || line.x / page.width >= 0.94)
+      )
+        continue
+      if (
+        page.lines.some(
+          (other) =>
+            excludedLines.has(other) &&
+            other.height > other.width * 4 &&
+            Math.abs(other.x - line.x) < line.fontSize &&
+            Math.min(
+              Math.abs(line.y - other.y - other.height),
+              Math.abs(other.y - line.y - line.height)
+            ) <
+              line.fontSize * 2
+        )
+      )
+        excludedLines.add(line)
+    }
+  // A repeated, oversized diagonal publication watermark is not a figure
+  // label. Require publication wording plus the same text/geometry on three
+  // pages; preserve ordinary rotated axes and one-off annotations.
+  for (const page of pages)
+    for (const line of page.lines ?? []) {
+      if (
+        !/^(?:Accepted Manuscript|Uncorrected Proof)$/i.test(line.text.trim()) ||
+        line.fontSize < page.height * 0.04 ||
+        line.height < line.fontSize * 3
+      )
+        continue
+      if (
+        pages.filter((other) =>
+          other.lines?.some(
+            (l) =>
+              l.text === line.text &&
+              Math.abs(l.x / other.width - line.x / page.width) < 1 / 256 &&
+              Math.abs(l.y / other.height - line.y / page.height) < 1 / 256 &&
+              Math.abs(l.height / other.height - line.height / page.height) < 1 / 256
+          )
+        ).length >= 3
+      )
+        excludedLines.add(line)
+    }
   const marks = pages.flatMap((page, pageIndex) =>
     ['top', 'bottom'].flatMap((edge) => {
       const graphics = (page.graphicsBounds ?? []).filter(
         ({ kind, normalizedRect: r }) =>
-          kind === 'path' && (edge === 'top' ? r[3] <= 0.07 : r[1] >= 0.93)
+          kind === 'path' && (edge === 'top' ? r[3] <= 0.07 : r[1] >= 0.92)
       )
       if (
         graphics.length < 6 ||
@@ -313,6 +412,69 @@ export function excludeRepeatedMarginContent(pages) {
       )
       .flatMap((mark) => mark.graphics)
   )
+  // Filled running bands enclose their own native text, so the ordinary
+  // no-overlap header test cannot identify them. Require three matching pages,
+  // a repeated non-caption label inside the band, and no raster ownership.
+  const runningBands = pages.flatMap((page, pageIndex) =>
+    (page.graphicsBounds ?? [])
+      .filter(
+        ({ kind, normalizedRect: r }) =>
+          kind === 'path' &&
+          r[2] - r[0] > 0.5 &&
+          r[3] - r[1] < 0.035 &&
+          (r[3] < 0.08 || r[1] > 0.91) &&
+          !(page.graphicsBounds ?? []).some(
+            (g) =>
+              g.kind === 'image' &&
+              g.normalizedRect[0] < r[2] &&
+              g.normalizedRect[2] > r[0] &&
+              g.normalizedRect[1] < r[3] &&
+              g.normalizedRect[3] > r[1]
+          )
+      )
+      .map((graphic) => ({
+        pageIndex,
+        graphic,
+        labels: (page.lines ?? []).filter(
+          (l) =>
+            l.text.length > 5 &&
+            !captionKind(l.text) &&
+            l.x / page.width >= graphic.normalizedRect[0] - 1 / 256 &&
+            (l.x + l.width) / page.width <= graphic.normalizedRect[2] + 1 / 256 &&
+            l.y / page.height >= graphic.normalizedRect[1] - 1 / 256 &&
+            (l.y + l.height) / page.height <= graphic.normalizedRect[3] + 1 / 256
+        )
+      }))
+  )
+  for (const band of runningBands) {
+    const peers = runningBands.filter(
+      (other) =>
+        (band.graphic.normalizedRect.every(
+          (v, n) => Math.abs(v - other.graphic.normalizedRect[n]) <= 1 / 256
+        ) ||
+          // Facing pages mirror the running band; glyph quantization can
+          // move its horizontal edges by two operation-box steps.
+          band.graphic.normalizedRect.every((v, n) =>
+            n % 2
+              ? Math.abs(v - other.graphic.normalizedRect[n]) <= 1 / 256
+              : Math.abs(v - (1 - other.graphic.normalizedRect[2 - n])) <= 2 / 256
+          )) &&
+        band.labels.some((l) =>
+          other.labels.some(
+            (o) =>
+              o.text.replace(/^\d{1,4}(?=\p{L})|\d{1,4}$/gu, '') ===
+              l.text.replace(/^\d{1,4}(?=\p{L})|\d{1,4}$/gu, '')
+          )
+        )
+    )
+    if (new Set(peers.map((p) => p.pageIndex)).size < 3) continue
+    const page = pages[band.pageIndex],
+      r = band.graphic.normalizedRect
+    for (const g of page.graphicsBounds)
+      if (g.kind === 'path' && g.normalizedRect.every((v, n) => (n < 2 ? v >= r[n] : v <= r[n])))
+        excluded.add(g)
+    for (const l of band.labels) excludedLines.add(l)
+  }
   // A publisher wordmark can be painted as one vector path. Repetition alone
   // is insufficient: require a separately confirmed running header in its band
   // and no touching body graphic or native figure label.
@@ -332,6 +494,7 @@ export function excludeRepeatedMarginContent(pages) {
           ) &&
           !page.lines?.some(
             (l) =>
+              !/^\d{1,4}$/.test(l.text.trim()) &&
               l.x / page.width < r[2] &&
               (l.x + l.width) / page.width > r[0] &&
               l.y / page.height < r[3] &&
@@ -367,7 +530,16 @@ export function excludeRepeatedMarginContent(pages) {
         ({ kind, normalizedRect: r }) =>
           kind === 'path' &&
           (r[2] <= 0.065 || r[0] >= 0.94) &&
-          r[3] - r[1] >= 0.05 &&
+          (r[3] - r[1] >= 0.05 ||
+            (r[3] - r[1] >= 0.03 &&
+              page.lines?.some(
+                (l) =>
+                  excludedLines.has(l) &&
+                  /publishing|copyright|©/i.test(l.text) &&
+                  l.height > page.height * 0.1 &&
+                  l.x / page.width >= r[0] &&
+                  (l.x + l.width) / page.width <= r[2]
+              ))) &&
           r[3] - r[1] <= 0.3 &&
           !(page.graphicsBounds ?? []).some(
             (g) =>
@@ -418,6 +590,12 @@ export function excludeRepeatedMarginContent(pages) {
     ) {
       excluded.add(mark.graphic)
       const r = mark.graphic.normalizedRect
+      for (const graphic of page.graphicsBounds)
+        if (
+          graphic.kind === 'path' &&
+          graphic.normalizedRect.every((v, n) => (n < 2 ? v >= r[n] : v <= r[n]))
+        )
+          excluded.add(graphic)
       for (const line of page.lines ?? []) {
         if (
           line.height > line.width * 4 &&
@@ -436,7 +614,7 @@ export function excludeRepeatedMarginContent(pages) {
         ({ kind, normalizedRect: r }) =>
           kind === 'path' &&
           r[2] - r[0] >= 0.25 &&
-          ((r[3] <= 0.07 && r[3] - r[1] <= 0.045) ||
+          ((r[3] <= 0.075 && r[3] - r[1] <= 0.045) ||
             (r[1] >= 0.93 &&
               r[3] - r[1] <= 0.045 &&
               (page.lines ?? []).some(
@@ -626,7 +804,7 @@ export function excludeRepeatedMarginContent(pages) {
         ({ kind, normalizedRect: r }) =>
           kind === 'path' &&
           r[2] - r[0] >= 0.8 &&
-          r[3] - r[1] <= 0.015 &&
+          r[3] - r[1] <= 0.02 &&
           r[3] <= 0.15 &&
           page.lines?.some(
             (line) =>
@@ -642,6 +820,8 @@ export function excludeRepeatedMarginContent(pages) {
       )
       .map((graphic) => ({ pageIndex, graphic }))
   )
+  // Reuse the detector's evidence when retaining removed rules as barriers.
+  const runningRuleGraphics = new Set(runningRules.map(({ graphic }) => graphic))
   for (const rule of runningRules) {
     if (
       runningRules.some(
@@ -661,7 +841,7 @@ export function excludeRepeatedMarginContent(pages) {
           excluded.has(g) &&
           g.kind === 'path' &&
           g.normalizedRect[2] - g.normalizedRect[0] >= 0.25 &&
-          g.normalizedRect[3] - g.normalizedRect[1] <= 0.015
+          (runningRuleGraphics.has(g) || g.normalizedRect[3] - g.normalizedRect[1] <= 0.015)
       )
       .map((g) => g.normalizedRect)
     return {
@@ -677,6 +857,24 @@ export function excludeRepeatedMarginContent(pages) {
         : {})
     }
   })
+}
+
+// Apply the already established running-margin ownership to the high-resolution
+// table tokens as well. No new text classifier is needed in the table parser.
+export function excludeRemovedMarginTokens(tokens, originalPage, contentPage, scale) {
+  const retained = new Set(contentPage.lines)
+  const removed = (originalPage.lines ?? []).filter((line) => !retained.has(line))
+  return tokens.filter(
+    (token) =>
+      !removed.some((line) => {
+        // A rotated notice/watermark has a large axis-aligned box covering
+        // unrelated upright cells. Its removed text does not own those cells.
+        if (token.horizontal && line.height > line.fontSize * 3) return false
+        const x = (token.rect[0] + token.rect[2]) / (2 * scale)
+        const y = (token.rect[1] + token.rect[3]) / (2 * scale)
+        return x >= line.x && x <= line.x + line.width && y >= line.y && y <= line.y + line.height
+      })
+  )
 }
 
 export function collectGraphicsBounds(renderTask, boxes) {

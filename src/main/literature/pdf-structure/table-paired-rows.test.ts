@@ -173,3 +173,28 @@ it('aligns repeated treatment/control records without crossing missing arms or p
     expect(run(source).repairs).not.toContain('paired-arm-outcomes-recovered')
   expect(run(groups, [[0, 41, 300, 41]]).repairs).not.toContain('paired-arm-outcomes-recovered')
 })
+
+it('folds slash-wrapped measurements into the labelled record', async () => {
+  const { repairWrappedTableRows } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-row-repair.mjs')).href
+  )
+  const row = (textValue: string, column: number, y: number): object => text(textValue, column, y)
+  const groups = [
+    [row('Age (years)', 0, 20), row('49.6 (7.6) /', 1, 20), row('48.8 (7.3) /', 2, 20)],
+    [row('50.5 (10.5)', 1, 34), row('50.2 (9.0)', 2, 34)],
+    [row('Employment status', 0, 50), row('0 (0.0)', 1, 50), row('1 (1.8)', 2, 50)]
+  ]
+  const rows = [20, 34, 50].map((y) => ({ rect: [0, y, 300, y + 10] }))
+  const repairs: string[] = []
+  repairWrappedTableRows({
+    rows,
+    repairs,
+    groups,
+    items: groups.flat(),
+    columnRects: [0, 100, 200].map((x) => [x, 0, x + 100, 90]),
+    rules: [],
+    right: 300
+  })
+  expect(repairs).toContain('wrapped-slash-values-recovered')
+  expect(rows).toEqual([{ rect: [0, 20, 300, 44] }, { rect: [0, 50, 300, 60] }])
+})

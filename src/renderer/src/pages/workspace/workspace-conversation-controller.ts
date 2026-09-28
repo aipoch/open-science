@@ -275,6 +275,20 @@ const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): 
   )
 }
 
+const canResume = (options: WorkspaceConversationControllerOptions): boolean =>
+  Boolean(
+    options.activeSession &&
+    options.isPersistenceReady &&
+    options.agentConfigurationReady &&
+    (options.actionability?.actions.startTurn.allowed ?? true) &&
+    !hasRuntimeInteraction(options) &&
+    !options.isTurnAdmissionBlocked &&
+    !options.activeSession.fixLoopActive &&
+    !options.activeSession.conversationGraphSyncBlocked &&
+    !options.activeSession.compacting &&
+    !options.session.view.specialist.barrierInFlight
+  )
+
 const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean => {
   const { activeSession, composer, session } = options
   return Boolean(
@@ -468,8 +482,12 @@ const useWorkspaceConversationController = (
       }
 
       const snapshot = composer.lifecycle.captureSend(!branchInNewSession)
-      if (inFlightDraftKeysRef.current.has(snapshot.draftKey)) return
-      inFlightDraftKeysRef.current.add(snapshot.draftKey)
+      // A distinct new draft can start while an earlier conversation is still preparing.
+      const submissionKey = activeSession
+        ? snapshot.draftKey
+        : `${snapshot.draftKey}:${snapshot.version}`
+      if (inFlightDraftKeysRef.current.has(submissionKey)) return
+      inFlightDraftKeysRef.current.add(submissionKey)
 
       const wasNewConversation = !activeSession
       const autoReviewEnabled = current.newConversationAutoReviewEnabled
@@ -566,7 +584,7 @@ const useWorkspaceConversationController = (
             session.actions.resetNewConversationSpecialist()
           })
           .finally(() => {
-            inFlightDraftKeysRef.current.delete(snapshot.draftKey)
+            inFlightDraftKeysRef.current.delete(submissionKey)
             clearOptimisticMessage()
           })
       }
@@ -576,7 +594,7 @@ const useWorkspaceConversationController = (
           .prepareSpecialistSend(activeSession.id, pendingSpecialistId)
           .then((ready) => {
             if (!ready) {
-              inFlightDraftKeysRef.current.delete(snapshot.draftKey)
+              inFlightDraftKeysRef.current.delete(submissionKey)
               return
             }
             if (snapshot.annotations.length === 0) composer.lifecycle.clearDraft(activeSession.id)
@@ -702,7 +720,7 @@ const useWorkspaceConversationController = (
       reportSessionSizeLimit: (sessionId): void => optionsRef.current.onSessionSizeLimit(sessionId),
       resume: async (): Promise<void> => {
         const current = optionsRef.current
-        if (!current.isPersistenceReady || !current.activeSession) return
+        if (!canResume(current) || !current.activeSession) return
         await current.runtime.resumeInterruptedSession(current.activeSession.id)
       },
       cancel: async (): Promise<void> => {
@@ -736,7 +754,7 @@ const useWorkspaceConversationController = (
       submit: submitImmediately || queueDraft,
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,
       revise: canRevise(options) || canQueueRevision(options),
-      resume: options.isPersistenceReady,
+      resume: canResume(options),
       branch: !queueBlocksActiveSession && canBranch(options),
       planResponse: options.isPersistenceReady
     },

@@ -11,12 +11,23 @@ export function splitPdfNumericRuns(content, operators) {
   const spacedStatistics =
     /^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?(?:\s*\([−–+-]?\d+(?:\.\d+)?[−–-][−–+-]?\d+(?:\.\d+)?\))?|\*{1,3})$/
   const pairedSummary = /^(\d+\.\d+\s*\(\d+\.\d+\))\s+(\d+\.\d+\s*\(\d+\.\d+\))$/
+  const countStatistics =
+    /^[<>≤≥−+-]?\d+(?:\.\d+)?(?:\s*\(\d+(?:\.\d+)?%?\))?(?:\s+[<>≤≥−+-]?\d+(?:\.\d+)?(?:\s*\(\d+(?:\.\d+)?%?\))?)+$/u
+  const countParts = (text) =>
+    countStatistics.test(text.trim()) &&
+    (/\(\d+(?:\.\d+)?%?\)/u.test(text) ||
+      /^(?:[<>≤≥−+-]?\d+\.\d+\s+){2,}[<>≤≥−+-]?\d+\.\d+$/u.test(text.trim()))
+      ? [...text.matchAll(/[<>≤≥−+-]?\d+(?:\.\d+)?(?:\s*\(\d+(?:\.\d+)?%?\))?/gu)].map(
+          (match) => match[0]
+        )
+      : undefined
   const eligible = (text) =>
     pattern.test(text.trim()) ||
     joinedHeader.test(text.trim()) ||
     joinedRange.test(text.trim()) ||
     spacedStatistics.test(text.trim()) ||
-    pairedSummary.test(text.trim())
+    pairedSummary.test(text.trim()) ||
+    !!countParts(text)
   if (!content.items.some((i) => 'str' in i && eligible(i.str))) return content
   const streams = new Map(),
     stack = []
@@ -129,9 +140,22 @@ export function splitPdfNumericRuns(content, operators) {
         )
           return [item]
       }
+      const counted = !joined && countParts(item.str)
+      // Mixed count/percentage and P-value runs must have a measured column
+      // gutter at every split. Ordinary inline statistics remain one token.
+      if (counted) {
+        let boundary = 0
+        if (
+          counted.slice(0, -1).some((part) => {
+            boundary += part.replace(/\s/gu, '').length
+            return (glyphs[boundary].start - glyphs[boundary - 1].end) * scale < item.height * 0.5
+          })
+        )
+          return [item]
+      }
       const fragments = joined
         ? joined.slice(1)
-        : [...item.str.matchAll(/\d+(?:\.\d+)?\s*\(\d+\/\d+\)/g)].map((m) => m[0])
+        : (counted ?? [...item.str.matchAll(/\d+(?:\.\d+)?\s*\(\d+\/\d+\)/g)].map((m) => m[0]))
       const parts = fragments.map((text) => {
         const count = text.replace(/\s/gu, '').length,
           a = glyphs[cursor],
@@ -170,6 +194,8 @@ export function splitPdfNumericRuns(content, operators) {
 const texSymbols = new Map([
   [0, ['\u0000', '−', 250]],
   [3, ['�', '*']],
+  [133, ['ð', '(', 385]],
+  [134, ['Þ', ')', 385]],
   [135, ['þ', '+']],
   [136, ['¼', '=']]
 ])
@@ -216,14 +242,41 @@ const latinPiSymbols = new Map([
   ['MathematicalPi-Four', new Map([[1, ['2', '−', 833, 'two']]])]
 ])
 const publisherSymbols = new Map([
+  // AdvT041 encodes common `ffi`/`fl` ligatures as legacy punctuation slots.
+  // PDF.js exposes those slots as fraction slash and pound sign respectively.
+  [
+    'AdvT041',
+    new Map([
+      [135, ['⁄', 'ffi', 770]],
+      [161, ['¡', 'ff', 562]],
+      [162, ['¢', 'fi', 500]],
+      [163, ['£', 'fl', 500]]
+    ])
+  ],
+  // AdvPSSym uses a narrow fraction-slash code for ordinary inline separators.
+  ['AdvPSSym', new Map([[135, ['⁄', '/', 166]]])],
+  ['AdvT678', new Map([[162, ['¢', 'fi', 500]]])],
+  // AdvMPi-One uses its legacy `five` slot for an equals sign in compact
+  // sample-size headers (PDF.js otherwise exposes the painted glyph as `5`).
+  ['AdvMPi-One', new Map([[53, ['5', '=', 833]]])],
+  // Some articles from the same legacy publisher use a dedicated
+  // AdvPSSPS-AS subset for the minus sign.  PDF.js exposes its only glyph as
+  // `)` because the embedded ToUnicode entry points at parenright; the
+  // subset name, slot, and advance width together identify the painted dash.
+  ['AdvPSSPS-AS', new Map([[41, [')', '−', 635]]])],
   ['AdvOT463cc31e', new Map([[53, ['5', '=', 822]]])],
   [
     'AdvPS586B',
     new Map([
+      [44, [',', '<', 833]],
+      [49, ['1', '+', 833]],
+      [50, ['2', '−', 833]],
       [54, ['6', '±', 833]],
       [53, ['5', '=', 833]]
     ])
   ],
+  ['AdvP80675', new Map([[54, ['6', '±', 833]]])],
+  ['AdvPS7DED', new Map([[53, ['5', '=', 833]]])],
   ['AdvMT_SY', new Map([[188, ['¼', '=', 770]]])],
   ['MinionMathSymbols', new Map([[136, ['�', '=', 583]]])],
   ['TeX_CM_Bold_Maths_Symbols', new Map([[136, ['¼', '=', 885]]])],
@@ -293,6 +346,7 @@ const publisherSymbols = new Map([
   [
     'AdvPi1',
     new Map([
+      [123, ['{', '†', 500]],
       [52, ['4', '>', 1000]],
       [43, ['+', '±', 1000]],
       [119, ['w', 'χ', 552]]
@@ -305,8 +359,15 @@ const publisherSymbols = new Map([
       [2, ['\u0002', '−', 781, 'C0']]
     ])
   ],
-  ['AdvEls-ent4', new Map([[111, ['o', '<', 979]]])],
+  [
+    'AdvEls-ent4',
+    new Map([
+      [111, ['o', '<', 979]],
+      [114, ['r', '≤', 979]]
+    ])
+  ],
   ['AdvEls-ent5', new Map([[90, ['Z', '≥', 979]]])],
+  ['AdvGreek_B', new Map([[108, ['l', 'μ', 552]]])],
   [
     'AdvPSMP13',
     new Map([
@@ -344,6 +405,9 @@ const publisherSymbols = new Map([
   [
     'AdvP4C4E74',
     new Map([
+      // Verified footnote bars in this math subset, distinct from Latin k/j.
+      [107, ['k', '‖', 500, 'k']],
+      [106, ['j', '|', 270, 'j']],
       [48, ['0', '′', 270, 'zero']],
       [188, ['¼', '=', 770]],
       [136, ['à', '=', 770]],
@@ -394,6 +458,15 @@ const publisherSymbols = new Map([
     new Map([
       [1, ['\u0001', 'µ', 667]],
       [5, ['\u0005', 'χ', 556, 'H9273']]
+    ])
+  ],
+  [
+    // This math font paints paired parentheses at the legacy s/d slots.
+    // Native glyph advances distinguish them from ordinary Times letters.
+    'MathematicalPi-Three',
+    new Map([
+      [115, ['s', '(', 333]],
+      [100, ['d', ')', 333]]
     ])
   ],
   [
@@ -467,13 +540,32 @@ export async function repairPdfSymbolText(page, content, operators) {
     operators ??= await page.getOperatorList()
     content = removeInvisibleNumericPadding(content, operators, originalContent)
   }
+  // A few verified publisher subsets expose their only mathematical glyph as
+  // an ordinary punctuation character.  Keep the fast-path for normal pages,
+  // but admit a content item when its font is one of the explicitly mapped
+  // subsets so the operator stream can repair that glyph.
+  const hasMappedPublisherGlyph = content.items.some((item) => {
+    if (!('str' in item)) return false
+    try {
+      const name = page.commonObjs?.get?.(item.fontName)?.name?.replace(/^[A-Z]{6}\+/, '')
+      const mappings = name ? publisherSymbols.get(name) : undefined
+      return mappings
+        ? [...mappings.values()].some(([unicode]) => item.str.includes(unicode))
+        : false
+    } catch {
+      return false
+    }
+  })
   if (
+    !hasMappedPublisherGlyph &&
     !content.items.some(
       (item) =>
         ('str' in item &&
           ([
             '�',
             'þ',
+            'ð',
+            'Þ',
             '¼',
             '§',
             '±',

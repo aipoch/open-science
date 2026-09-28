@@ -33,7 +33,9 @@ const KEY_RULES = [
   { key: 'mac-x64', pattern: /-mac-x64\.dmg$/ },
   { key: 'win-x64', pattern: /-win-x64-setup\.exe$/ },
   { key: 'linux-x64-appimage', pattern: /-linux-(?:x64|x86_64)\.AppImage$/ },
-  { key: 'linux-x64-deb', pattern: /_amd64\.deb$/ }
+  { key: 'linux-x64-deb', pattern: /_amd64\.deb$/ },
+  { key: 'linux-arm64-appimage', pattern: /-linux-arm64\.AppImage$/ },
+  { key: 'linux-arm64-deb', pattern: /_arm64\.deb$/ }
 ]
 
 // Non-installer files that legitimately live in the release dir; skipped without a warning.
@@ -130,21 +132,32 @@ export function buildManifest({
     downloads[key] = { url: `${base}/${filename}`, size: stat.size, sha256 }
   }
   for (const filename of readdirSync(dir).filter((name) =>
-    /^(latest(?:-linux)?|.*-mac)\.yml$/.test(name)
+    /^(latest(?:-linux(?:-arm64)?)?|.*-mac)\.yml$/.test(name)
   )) {
-    validateUpdateFeed(
+    const feed = validateUpdateFeed(
       load(readFileSync(join(dir, filename), 'utf8')),
       dir,
       version,
       metadataOnly,
       allowLegacyNames
     )
+    if (filename === 'latest-linux.yml' || filename === 'latest-linux-arm64.yml') {
+      const arch = filename === 'latest-linux-arm64.yml' ? 'arm64' : 'x64'
+      if (feed.files.some((file) => !keyForFile(file.url)?.startsWith(`linux-${arch}-`))) {
+        throw new Error(`Wrong architecture in ${filename}`)
+      }
+    }
   }
   if (requireComplete) {
     for (const { key } of KEY_RULES) {
       if (!downloads[key]) throw new Error(`Missing stable release installer: ${key}`)
     }
-    for (const name of ['latest.yml', 'latest-linux.yml', 'latest-mac.yml']) {
+    for (const name of [
+      'latest.yml',
+      'latest-linux.yml',
+      'latest-linux-arm64.yml',
+      'latest-mac.yml'
+    ]) {
       const feed = validateUpdateFeed(
         load(readFileSync(join(dir, name), 'utf8')),
         dir,
@@ -156,7 +169,9 @@ export function buildManifest({
           ? ['-mac-arm64.zip', '-mac-x64.zip']
           : name === 'latest.yml'
             ? ['-win-x64-setup.exe']
-            : ['.AppImage', '.deb']
+            : name === 'latest-linux-arm64.yml'
+              ? ['-linux-arm64.AppImage', '_arm64.deb']
+              : ['.AppImage', '_amd64.deb']
       for (const suffix of required) {
         if (!feed.files.some((file) => file.url.endsWith(suffix)))
           throw new Error(`Missing ${suffix} in ${name}`)

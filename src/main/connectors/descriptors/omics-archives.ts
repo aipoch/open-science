@@ -869,6 +869,35 @@ async function fetchStudyAnalyses(ctx: ToolContext, accession: string): Promise<
   return { study_accession: accession, analyses_count: res.count, analyses }
 }
 
+// API v2 analysis detail supplies explicit download URLs and nullable byte sizes.
+async function fetchAnalysisDownloads(ctx: ToolContext, accession: string): Promise<Obj> {
+  const raw = asObj(
+    await ctx.fetchJson(
+      `https://www.ebi.ac.uk/metagenomics/api/v2/analyses/${encodeURIComponent(accession)}`
+    )
+  )
+  if (!Array.isArray(raw.downloads))
+    throw new Error('MGnify analysis response is missing downloads')
+  const files = raw.downloads
+    .map((item) => {
+      const file = asObj(item)
+      const size = file.file_size_bytes
+      return {
+        file_name: str(file.alias) ?? str(file.path) ?? null,
+        path: str(file.path) ?? null,
+        file_type: str(file.file_type) ?? null,
+        download_type: str(file.download_type) ?? null,
+        download_group: str(file.download_group) ?? null,
+        description: str(file.long_description) ?? str(file.short_description) ?? null,
+        file_size_bytes:
+          typeof size === 'number' && Number.isSafeInteger(size) && size >= 0 ? size : null,
+        download_url: str(file.url) || null
+      }
+    })
+    .sort((a, b) => (a.file_name ?? '').localeCompare(b.file_name ?? ''))
+  return { analysis_accession: accession, files_count: files.length, files }
+}
+
 // ---------------------------------------------------------------------------
 // PRIDE (pride-projects; Archive REST API v2)
 // ---------------------------------------------------------------------------
@@ -1648,6 +1677,24 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     example:
       'const result = await host.mcp("omics-archives", "mgnify_get_study_analyses", {"accession": "MGYS00000410"})',
     run: (ctx, a) => fetchStudyAnalyses(ctx, String(a.accession))
+  },
+  {
+    id: 'mgnify_get_analysis_files',
+    connector: 'omics-archives',
+    description:
+      'List result-file metadata for one MGnify analysis using API v2: file type, category, byte size when reported, and upstream download URL. No file bytes are downloaded. Missing sizes or URLs remain null.',
+    input: {
+      type: 'object',
+      properties: { accession: { type: 'string', pattern: '^MGYA[0-9]{8,}$', maxLength: 32 } },
+      additionalProperties: false,
+      required: ['accession']
+    },
+    required: ['accession'],
+    returns:
+      '`{ analysis_accession, files_count, files: [{ file_name, path, file_type, download_type, download_group, description, file_size_bytes:number|null, download_url:string|null }] }` — files are sorted by file_name. URLs are supplied by MGnify without reconstruction; missing sizes are not zero.',
+    example:
+      'const result = await host.mcp("omics-archives", "mgnify_get_analysis_files", {"accession": "MGYA00639970"})',
+    run: (ctx, a) => fetchAnalysisDownloads(ctx, String(a.accession))
   },
   // ---- PRIDE ----
   {

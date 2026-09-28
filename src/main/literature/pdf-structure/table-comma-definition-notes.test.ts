@@ -74,3 +74,20 @@ it('keeps a complete acronym glossary separate from the preceding symbol footnot
   const notes = associateTableNotes(x.page, x.tables, x.rules)[0]
   expect(notes.map((note: { text: string }) => note.text)).toEqual(['†† ALT.', glossary.text])
 })
+
+it('associates a cited lowercase acronym definition after a closing rule', async () => {
+  const { associateTableNotes } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-notes.mjs')).href
+  )
+  const page = {
+    pageNumber: 3,
+    width: 240,
+    height: 180,
+    lines: [
+      { text: 'E2 (mean, pg/mL)', x: 20, y: 40, width: 80, height: 8, fontSize: 8 },
+      { text: 'E2, estradiol.', x: 20, y: 128, width: 48, height: 8, fontSize: 8 }
+    ]
+  }
+  const notes = associateTableNotes(page, [{ rect: [16, 24, 180, 120] }], [[16, 122, 180, 122]])
+  expect(notes[0].map((note: { text: string }) => note.text)).toEqual(['E2, estradiol.'])
+})

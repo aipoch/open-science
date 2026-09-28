@@ -1,3 +1,4 @@
+import { journalAttributesMigration } from './migrations/0046-journal-attributes'
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
 import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
@@ -872,6 +873,17 @@ const MIGRATION_MANIFEST = [
   {
     ...literatureSmartPauseRunMigration,
     checksum: LITERATURE_SMART_PAUSE_RUN_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...journalAttributesMigration,
+    checksum: checksumMigrationPayload(
+      journalAttributesMigration.id,
+      journalAttributesMigration.statements,
+      journalAttributesMigration.verifiers,
+      journalAttributesMigration.operations
+    ),
     backupOnApply: 'required',
     backupRetention: 'retain'
   }

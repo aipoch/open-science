@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
+import { readPdfFixture } from './read-fixture'
 
 const { captionKind, findCaptionCandidates, groupPageLines } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-caption-group.mjs')).href
@@ -1420,6 +1421,36 @@ it('rejects running-text references while retaining numbered caption titles', ()
   expect(captionKind('Fig. 2 Study flow')).toBe('figure')
 })
 
+it('rejects finite-verb table references that were split onto their own lines', () => {
+  const page = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/prose-table-reference.jsonl')
+  )
+  expect(
+    findCaptionCandidates([page]).map((candidate: { lines: string[] }) => candidate.lines)
+  ).toEqual([['Table 1. Baseline characteristics of participants.']])
+  for (const text of [
+    'Table 3 reports results the logistic regression results.',
+    'Table 2. It should be mentioned that no patients had ascites.'
+  ])
+    expect(captionKind(text)).toBeUndefined()
+})
+
+it('rejects a bare table number emitted after a paragraph reference', () => {
+  const line = (text: string, y: number, width: number): object => ({
+    text,
+    x: 150,
+    y,
+    width,
+    height: 10,
+    fontSize: 10
+  })
+  const page = {
+    pageNumber: 6,
+    lines: [line('Test statistics are shown in', 540, 145), line('Table 3.', 554, 32)]
+  }
+  expect(findCaptionCandidates([page])).toEqual([])
+})
+
 it('retains double-spaced manuscript legends only below a legends heading', () => {
   const line = (text: string, y: number): object => ({
     text,
@@ -1593,4 +1624,31 @@ it('stops a caption at a segmented native border overlapping the next glyph box 
   expect(findCaptionCandidates([page], new Map([[1, [rules[0]]]]))[0].lines.length).toBeGreaterThan(
     1
   )
+})
+
+it('keeps an unpunctuated table number with its indented title above a native rule', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    lines: [
+      { text: 'Table 1', x: 54, y: 272.935, width: 33.032, height: 8, fontSize: 8 },
+      {
+        text: 'Clinicopathological factors.',
+        x: 51,
+        y: 284.935,
+        width: 104.832,
+        height: 8,
+        fontSize: 8
+      },
+      { text: 'Factors', x: 160, y: 299.647, width: 29, height: 8, fontSize: 8 },
+      { text: 'Control (n = 19)', x: 400, y: 299.647, width: 65, height: 8, fontSize: 8 }
+    ]
+  }
+  const rules = new Map([[1, [[51, 297.185, 558, 297.185]]]])
+  expect(findCaptionCandidates([page], rules)[0].lines).toEqual([
+    'Table 1',
+    'Clinicopathological factors.'
+  ])
+  expect(findCaptionCandidates([page])[0].lines).toEqual(['Table 1'])
 })

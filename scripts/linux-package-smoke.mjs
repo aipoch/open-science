@@ -15,13 +15,16 @@ import {
 } from './database-migration-ledger-smoke.mjs'
 import { authenticatePackagedAppEndpoint } from './packaged-web-service-auth.mjs'
 
-const APPIMAGE_PATTERN = /^aipoch-open-science-(.+)-linux-x86_64\.AppImage$/
+const APPIMAGE_PATTERN = /^aipoch-open-science-(.+)-linux-(?:x64|x86_64|arm64)\.AppImage$/
 const SMOKE_ROOT_PREFIX = 'open-science-linux-package-smoke-'
 const STARTUP_TIMEOUT_MS = 60_000
-const REQUIRED_LINUX_PRISMA_ENGINES = [
-  'libquery_engine-debian-openssl-3.0.x.so.node',
-  'libquery_engine-rhel-openssl-3.0.x.so.node'
-]
+const REQUIRED_LINUX_PRISMA_ENGINES = {
+  x64: [
+    'libquery_engine-debian-openssl-3.0.x.so.node',
+    'libquery_engine-rhel-openssl-3.0.x.so.node'
+  ],
+  arm64: ['libquery_engine-linux-arm64-openssl-3.0.x.so.node']
+}
 
 const delay = (milliseconds) =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
@@ -118,8 +121,11 @@ const findResourceRoot = async (executable, resolvedExecutable = executable) => 
 
 const assertPackagedResources = async (
   executable,
-  resourceRoot = join(dirname(executable), 'resources')
+  resourceRoot = join(dirname(executable), 'resources'),
+  arch = process.arch
 ) => {
+  const requiredEngines = REQUIRED_LINUX_PRISMA_ENGINES[arch]
+  if (!requiredEngines) throw new Error(`Unsupported Linux package architecture: ${arch}`)
   for (const path of packagedResourcePaths(executable, resourceRoot)) {
     if (!(await pathExists(path))) throw new Error(`Packaged Linux resource is missing: ${path}`)
   }
@@ -128,15 +134,11 @@ const assertPackagedResources = async (
   const nativeEngines = engines.filter(
     (name) => name.includes('query_engine-') && name.endsWith('.node')
   )
-  const missingEngines = REQUIRED_LINUX_PRISMA_ENGINES.filter(
-    (name) => !nativeEngines.includes(name)
-  )
-  const unexpectedEngines = nativeEngines.filter(
-    (name) => !REQUIRED_LINUX_PRISMA_ENGINES.includes(name)
-  )
+  const missingEngines = requiredEngines.filter((name) => !nativeEngines.includes(name))
+  const unexpectedEngines = nativeEngines.filter((name) => !requiredEngines.includes(name))
   if (missingEngines.length > 0 || unexpectedEngines.length > 0) {
     throw new Error(
-      `Packaged Linux must contain Prisma engines ${REQUIRED_LINUX_PRISMA_ENGINES.join(', ')}; ` +
+      `Packaged Linux must contain Prisma engines ${requiredEngines.join(', ')}; ` +
         `found ${nativeEngines.join(', ') || 'none'} in ${prismaRoot}.`
     )
   }

@@ -34,7 +34,7 @@ it('adds empty smart storage while preserving ordinary collections, membership a
     ])
       await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
     await client.$executeRawUnsafe(
-      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0044_literature_smart_collections', '0045_literature_smart_pause_run')"
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes')"
     )
     await client.sessionAuxiliaryTurnUsage.create({
       data: {
@@ -51,7 +51,11 @@ it('adds empty smart storage while preserving ordinary collections, membership a
       }
     })
     expect(await migrateApplicationDatabase(client)).toMatchObject({
-      applied: ['0044_literature_smart_collections', '0045_literature_smart_pause_run']
+      applied: [
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes'
+      ]
     })
     expect(await client.literatureCollection.findMany({ include: { items: true } })).toEqual(before)
     expect(await client.literatureSmartCollection.count()).toBe(0)
@@ -223,7 +227,7 @@ it('leaves pre-0045 automatic pause ownership unknown', async () => {
       }
     })
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE id = '0045_literature_smart_pause_run'`
+      `DELETE FROM "_open_science_migrations" WHERE id >= '0045_literature_smart_pause_run'`
     )
 
     await migrateApplicationDatabase(client)

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 // Read-only feasibility probe, not a production layout parser.
-// Usage: node scripts/spikes/literature-pdf-structure.mjs input.pdf output-directory [render-pages]
+// Usage: node resources/pdf-structure/literature-pdf-structure.mjs input.pdf output-directory [render-pages]
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'

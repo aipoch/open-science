@@ -25,6 +25,10 @@ import { AcpRuntime } from '../acp/runtime.test-utils'
 import { ReviewRepository } from './repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { runReview } from './orchestrator'
+import { runReviewerFixLoop } from './reviewer-fix-loop-owner'
+import { resolveTurnScope } from './scope'
+import type { ReviewerAcpRuntime } from './acp-runtime'
+import type { ReviewCheck } from '../../shared/reviewer'
 import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
 import type { PersistedChatSession, PersistedChatMessage } from '../../shared/session-persistence'
 
@@ -1203,4 +1207,116 @@ describe('fix loop: distinct Review rows per iteration', () => {
 
     await client.$disconnect()
   })
+})
+
+describe('reopened correction interruption lifecycle', () => {
+  it.each(['live Stop', 'startup recovery'] as const)(
+    'records a new aborted disposition after %s, resumed reflag, and another correction Stop',
+    async (firstInterruption) => {
+      const client = createProjectDbClient(temporaryRoot!)
+      await migrateApplicationDatabase(client)
+      const repository = new ReviewRepository(() => Promise.resolve(client))
+      try {
+        const session = makeSession()
+        const source = await repository.createReview({
+          projectId: session.projectId,
+          sessionId: session.id,
+          turnMessageId: 'msg-2',
+          scope: resolveTurnScope(session, 'msg-2')
+        })
+        await repository.addChecks(source.id, [
+          { status: 'fail', claim: 'Incorrect result', evidence: 'Needs correction', sortIndex: 0 }
+        ])
+        const loadFinding = async (): Promise<ReviewCheck> =>
+          (await repository.getReviewsForProjectSession(session.projectId, session.id)).find(
+            (review) => review.id === source.id
+          )!.checks[0]
+        const stopOwner = async (retry = false): Promise<void> => {
+          const cancellation = new AbortController()
+          if (retry) cancellation.abort()
+          const sendApplicationPrompt = vi.fn<ReviewerAcpRuntime['sendApplicationPrompt']>(
+            async (_request, _attribution, options) => {
+              await options?.onPromptAdmitted?.()
+              cancellation.abort()
+              return { stopReason: 'cancelled' }
+            }
+          )
+          await runReviewerFixLoop({
+            sessionId: session.id,
+            projectId: session.projectId,
+            mainSessionId: session.id,
+            originalTurnMessageId: 'msg-2',
+            correctionScope: source.scope,
+            reviewedSession: session,
+            openChecks: [await loadFinding()],
+            getSession: async () => session,
+            reviewRepository: repository,
+            acpRuntime: {
+              sendApplicationPrompt,
+              sendPrompt: vi.fn<ReviewerAcpRuntime['sendPrompt']>(),
+              buildReviewerSession: vi.fn<ReviewerAcpRuntime['buildReviewerSession']>(),
+              disposeReviewerSession: vi.fn<ReviewerAcpRuntime['disposeReviewerSession']>()
+            },
+            artifactStorageRoot: temporaryRoot!,
+            model: 'test',
+            reviewerTimeoutMs: 100,
+            reviewerMaxUpdates: 10,
+            maxRounds: 3,
+            sessionRefreshTimeoutMs: 0,
+            abortSignal: cancellation.signal
+          })
+          expect(sendApplicationPrompt).toHaveBeenCalledTimes(retry ? 0 : 1)
+        }
+        if (firstInterruption === 'startup recovery') await repository.recoverInterruptedReviews()
+        else await stopOwner()
+        const finding = await loadFinding()
+        expect(finding.resolution).toBe('unaddressed')
+        const first = (await repository.getFindingDispositions(finding.id))[0]
+        expect(first).toMatchObject({ sequence: 1, trigger: 'aborted', outcome: 'unaddressed' })
+
+        const assessment = await repository.createReview({
+          projectId: session.projectId,
+          sessionId: session.id,
+          turnMessageId: 'msg-2',
+          scope: source.scope
+        })
+        await repository.commitScopedSubmission({
+          mode: 'tracked',
+          reviewId: assessment.id,
+          expectedSourceFindingIds: [finding.id],
+          resumedSourceFindingIds: [finding.id],
+          checks: [
+            {
+              sourceFindingId: finding.id,
+              status: 'fail',
+              claim: 'Still incorrect',
+              evidence: 'Recovered answer still needs correction'
+            }
+          ]
+        })
+        expect(await loadFinding()).toMatchObject({ resolution: 'open', reflagCount: 1 })
+
+        // The real owner dispatches the next correction and receives Stop while it is in flight.
+        // Startup's different note must not collide with this new interruption's audit event.
+        await stopOwner()
+        expect(await loadFinding()).toMatchObject({ resolution: 'unaddressed', reflagCount: 1 })
+        const dispositions = await repository.getFindingDispositions(finding.id)
+        expect(
+          dispositions.map(({ sequence, trigger, outcome }) => ({ sequence, trigger, outcome }))
+        ).toEqual([
+          { sequence: 1, trigger: 'aborted', outcome: 'unaddressed' },
+          { sequence: 2, trigger: 'review_submission', outcome: 'still_open' },
+          { sequence: 3, trigger: 'aborted', outcome: 'unaddressed' }
+        ])
+        expect(dispositions[2].id).not.toBe(first.id)
+        expect(dispositions[2].note).toBe('The fix loop was aborted by the user.')
+        if (firstInterruption === 'startup recovery')
+          expect(first.note).not.toBe(dispositions[2].note)
+        await stopOwner(true)
+        expect(await repository.getFindingDispositions(finding.id)).toEqual(dispositions)
+      } finally {
+        await client.$disconnect()
+      }
+    }
+  )
 })

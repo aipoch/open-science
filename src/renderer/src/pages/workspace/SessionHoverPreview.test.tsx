@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { Profiler } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -7,6 +8,48 @@ import { SessionHoverPreview, SessionHoverPreviewProvider } from './SessionHover
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+})
+
+it('commits only the old and new hover previews when active session changes', async () => {
+  vi.useFakeTimers()
+  const committed: string[] = []
+  const previewRequested = [vi.fn(), vi.fn(), vi.fn()]
+  render(
+    <SessionHoverPreviewProvider>
+      {['first', 'second', 'third'].map((id, index) => (
+        <Profiler key={id} id={id} onRender={(name) => committed.push(name)}>
+          <SessionHoverPreview
+            session={{ id, title: `${id} session` }}
+            onPreviewRequest={previewRequested[index]}
+          >
+            <button>{id} row</button>
+          </SessionHoverPreview>
+        </Profiler>
+      ))}
+    </SessionHoverPreviewProvider>
+  )
+  committed.length = 0
+
+  fireEvent.pointerEnter(screen.getByRole('button', { name: 'first row' }), {
+    pointerType: 'mouse'
+  })
+  await act(() => vi.advanceTimersByTimeAsync(300))
+  expect(committed).toContain('first')
+  expect(committed).not.toContain('second')
+  expect(committed).not.toContain('third')
+  expect(previewRequested[0]).toHaveBeenCalledOnce()
+  committed.length = 0
+
+  fireEvent.pointerEnter(screen.getByRole('button', { name: 'second row' }), {
+    pointerType: 'mouse'
+  })
+  await act(async () => {})
+  expect(committed).toContain('first')
+  expect(committed).toContain('second')
+  expect(committed).not.toContain('third')
+  expect(previewRequested[1]).toHaveBeenCalledOnce()
+  expect(previewRequested[2]).not.toHaveBeenCalled()
+  expect(screen.getByRole('dialog').getAttribute('aria-label')).toBe('second session')
 })
 
 it('shows the session number separately from the editable title', async () => {

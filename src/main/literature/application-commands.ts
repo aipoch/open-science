@@ -1,3 +1,8 @@
+import {
+  journalAttributesContract,
+  type JournalRequest,
+  type JournalResult
+} from '../../shared/journal-attributes'
 import { withDataRootWrite } from '../storage/migration-state'
 import {
   literatureExportRecordContract,
@@ -42,6 +47,7 @@ import {
 } from '../application-command-router'
 
 type LiteratureCommandOwner = Readonly<{
+  journals(request: JournalRequest): Promise<JournalResult>
   exportRecord(request: LiteratureExportRecordRequest): Promise<LiteratureExportRecordResult>
   jobs(request: LiteratureJobRequest): Promise<LiteratureJobsResult>
   fullText(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult>
@@ -67,6 +73,11 @@ type LiteratureCommandOwner = Readonly<{
 }>
 
 const literatureApplicationCommands = Object.freeze({
+  journals: defineApplicationCommand<
+    'literature:journals',
+    readonly [JournalRequest],
+    JournalResult
+  >('literature:journals', journalAttributesContract),
   exportRecord: defineApplicationCommand<
     'literature:export-record',
     readonly [LiteratureExportRecordRequest],
@@ -145,6 +156,7 @@ const literatureApplicationCommands = Object.freeze({
 })
 
 const literatureApplicationCommandGroup = defineApplicationCommandGroup('literature', [
+  literatureApplicationCommands.journals,
   literatureApplicationCommands.exportRecord,
   literatureApplicationCommands.jobs,
   literatureApplicationCommands.fullText,
@@ -169,6 +181,7 @@ const registerLiteratureApplicationCommands = (
   const scope = registrar.createScope()
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
+      'literature:journals': ({ args }) => withDataRootWrite(() => owner.journals(args[0])),
       'literature:export-record': ({ args }) =>
         withDataRootWrite(() => owner.exportRecord(args[0])),
       'literature:jobs': ({ args }) => withDataRootWrite(() => owner.jobs(args[0])),

@@ -14,6 +14,7 @@ vi.mock('@/lib/session-fork', () => ({
 }))
 
 import { ConversationPanel } from './ConversationPanel'
+import { useConversationSubmissions } from './use-conversation-submissions'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { subscribeAnnotationReveal } from './annotations/annotation-reveal'
 import { docFromText, emptyDoc, type ComposerDoc } from './composer/composer-doc'
@@ -794,6 +795,12 @@ const createPanelDefaults = (): PanelProps => ({
   },
   subagents: {
     stop: vi.fn()
+  },
+  submissions: {
+    stopBySessionId: new Map(),
+    resumePendingSessionIds: new Set(),
+    submitStop: vi.fn(),
+    submitResume: vi.fn()
   }
 })
 
@@ -817,10 +824,15 @@ const mergePanelProps = (defaults: PanelProps, overrides: DeepPartial<PanelProps
   return merge(defaults, overrides) as PanelProps
 }
 
+const PanelHarness = (props: PanelProps): React.JSX.Element => {
+  const submissions = useConversationSubmissions()
+  return <ConversationPanel {...props} submissions={submissions} />
+}
+
 const renderPanel = (props: DeepPartial<PanelProps> = {}): void => {
   const panelProps = mergePanelProps(createPanelDefaults(), props)
   act(() => {
-    root.render(<ConversationPanel {...panelProps} />)
+    root.render(<PanelHarness {...panelProps} />)
   })
 }
 
@@ -3279,6 +3291,30 @@ describe('ConversationPanel composer intake', () => {
     expect(controls?.getAttribute('data-specialist-read-only')).toBe('false')
   })
 
+  it('keeps Compute Host controls read-only before a failed Session binds', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'pending-session-1',
+          projectId: 'project-a',
+          title: 'Failed connection',
+          cwd: '/workspace',
+          status: 'error',
+          isPending: true,
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      agentControls: { canChange: true }
+    })
+
+    expect(
+      container.querySelector('[data-testid="mock-agent-controls"]')?.getAttribute('data-read-only')
+    ).toBe('true')
+    expect(container.querySelector('[data-testid="mock-model-picker"]')).not.toBeNull()
+  })
+
   it.each([undefined, { kind: 'all' }, { kind: 'before-message', messageId: 'user-1' }] as const)(
     'opens an empty side chat directly with pending replay %j',
     (pendingHistoryReplay) => {
@@ -4574,6 +4610,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
         activeSession: interruptedSession
       },
       conversation: {
+        availability: { submit: true },
         actions: {
           resume: onResumeSession
         }
@@ -4587,10 +4624,19 @@ describe('ConversationPanel interrupted Session recovery', () => {
 
     expect(onResumeSession).toHaveBeenCalledTimes(1)
     expect(container.querySelector('[data-testid="resume-progress-indicator"]')).not.toBeNull()
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled
+    ).toBe(true)
+    expect(resumeButton?.disabled).toBe(true)
+    await act(async () => resumeButton?.click())
+    expect(onResumeSession).toHaveBeenCalledTimes(1)
 
     await act(async () => resolveResume?.())
 
     expect(container.querySelector('[data-testid="resume-progress-indicator"]')).toBeNull()
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled
+    ).toBe(false)
   })
 
   it('does not show one Session resume progress on another active Session', async () => {
@@ -4641,6 +4687,60 @@ describe('ConversationPanel interrupted Session recovery', () => {
     expect(container.querySelector('[data-testid="resume-progress-indicator"]')).toBeNull()
 
     await act(async () => resolveResume?.())
+  })
+
+  it('retains each Session recovery guard when two resumes overlap across navigation', async () => {
+    const interrupted = (id: string): ChatSession => ({
+      id,
+      projectId: 'project-a',
+      title: id,
+      cwd: '/workspace',
+      status: 'error',
+      interrupted: true,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    let finishA!: () => void
+    let finishB!: () => void
+    const resumeA = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishA = resolve
+        })
+    )
+    const resumeB = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishB = resolve
+        })
+    )
+    const show = (id: string, resume: () => Promise<void>): void =>
+      renderPanel({
+        view: { activeSession: interrupted(id) },
+        conversation: { availability: { submit: true }, actions: { resume } }
+      })
+    const resumeButton = (): HTMLButtonElement | null =>
+      container.querySelector('[aria-label="Resume session"]')
+    const sendButton = (): HTMLButtonElement | null =>
+      container.querySelector('[aria-label="Send message"]')
+
+    show('session-a', resumeA)
+    await act(async () => resumeButton()?.click())
+    show('session-b', resumeB)
+    expect(sendButton()?.disabled).toBe(false)
+    await act(async () => resumeButton()?.click())
+    show('session-a', resumeA)
+    expect(resumeButton()?.disabled).toBe(true)
+    expect(sendButton()?.disabled).toBe(true)
+    await act(async () => finishB())
+    expect(resumeButton()?.disabled).toBe(true)
+    expect(sendButton()?.disabled).toBe(true)
+    await act(async () => resumeButton()?.click())
+    expect(resumeA).toHaveBeenCalledOnce()
+    await act(async () => finishA())
+    expect(resumeButton()?.disabled).toBe(false)
+    expect(sendButton()?.disabled).toBe(false)
   })
 
   it('does not show Session resume progress for a new conversation with no active Session', () => {
@@ -7046,7 +7146,9 @@ describe('ConversationPanel error box + report affordance', () => {
         }
       })
       expect(reportButton()).toBeNull()
-      expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+      expect(Boolean(container.querySelector('[aria-label="Resume session"]'))).toBe(
+        Boolean(wrapper)
+      )
       const button = Array.from(container.querySelectorAll('button')).find(
         (candidate) => candidate.textContent === 'Agent settings'
       )
@@ -7095,13 +7197,37 @@ describe('ConversationPanel error box + report affordance', () => {
     })
 
     expect(errorBoxText()).toContain('Agent session resume failed: Codex ACP adapter 1.1.4')
-    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
     const button = Array.from(container.querySelectorAll('button')).find(
       (candidate) => candidate.textContent === 'Agent settings'
     )
     expect(button).toBeDefined()
     act(() => button?.click())
     expect(openSettingsToPanel).toHaveBeenCalledWith('agent')
+  })
+
+  it('keeps recovery reachable after dismissing a repaired compatibility error', async () => {
+    const resume = vi.fn().mockResolvedValue(undefined)
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          interrupted: true,
+          error:
+            'Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
+        }
+      },
+      conversation: { actions: { resume } }
+    })
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')?.click())
+    expect(errorBoxText()).toBe('')
+    const resumeButton = container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')
+    expect(resumeButton?.disabled).toBe(false)
+    await act(async () => resumeButton?.click())
+    expect(resume).toHaveBeenCalledOnce()
+    // A retry that leaves the same Session failure must reopen its diagnostic.
+    expect(errorBoxText()).toContain('Codex ACP adapter 1.1.4')
   })
 
   it('keeps an unrelated session resume failure in the Resume banner', () => {

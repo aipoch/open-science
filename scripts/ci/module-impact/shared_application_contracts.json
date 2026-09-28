@@ -131,7 +131,8 @@
     "src/shared/pdf-annotations.test.ts",
     "src/shared/literature-smart-collections.ts",
     "src/shared/smart-collection-rule.test.ts",
-    "src/shared/smart-collection-rule.ts"
+    "src/shared/smart-collection-rule.ts",
+    "src/shared/journal-attributes.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -222,7 +223,8 @@
     "src/shared/config-root.ts",
     "src/shared/runtime-writer.ts",
     "src/shared/pdf-annotations.ts",
-    "src/shared/literature-smart-collections.ts"
+    "src/shared/literature-smart-collections.ts",
+    "src/shared/journal-attributes.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -269,7 +271,11 @@
       "src/shared/pdf-annotations.test.ts"
     ],
     "contract": [],
-    "consumer": []
+    "consumer": [
+      "src/main/literature/journal-attributes.test.ts",
+      "src/renderer/src/pages/literature/journal-import-file.test.ts",
+      "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx"
+    ]
   },
   "capabilityOverlays": [],
   "fallbackCapability": "shared_contract",

@@ -13,7 +13,7 @@ import {
   writeWindowsUpdateEvidence
 } from './release-certification-evidence.mjs'
 
-const platforms = ['linux-x64', 'macos-arm64', 'macos-x64', 'windows-x64']
+const platforms = ['linux-x64', 'linux-arm64', 'macos-arm64', 'macos-x64', 'windows-x64']
 
 describe('release certification evidence', () => {
   it('hashes only user-facing distributables in stable order', async () => {

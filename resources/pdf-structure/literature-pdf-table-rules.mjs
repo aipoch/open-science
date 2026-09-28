@@ -1,4 +1,24 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+// Group by ordinate before sorting segments horizontally. Tiny PDF rounding
+// differences must not reorder the middle segment after the right segment.
+export function joinHorizontalTableRules(rules, gap = 0.01) {
+  const bands = []
+  for (const rule of rules.filter((r) => r[1] === r[3]).sort((a, b) => a[1] - b[1])) {
+    const last = bands.at(-1)
+    if (last && Math.abs(last[0][1] - rule[1]) < 0.01) last.push(rule)
+    else bands.push([rule])
+  }
+  return bands.flatMap((band) => {
+    const joined = []
+    for (const r of band.sort((a, b) => a[0] - b[0])) {
+      const last = joined.at(-1)
+      if (last && r[0] <= last[2] + gap) last[2] = Math.max(last[2], r[2])
+      else joined.push([r[0], band[0][1], r[2], band[0][1]])
+    }
+    return joined
+  })
+}
+
 export function clusterTableRulePositions(values) {
   const groups = []
   for (const value of [...new Set(values)].sort((a, b) => a - b)) {

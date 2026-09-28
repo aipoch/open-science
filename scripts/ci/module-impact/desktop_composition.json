@@ -33,7 +33,6 @@
     "src/main/composition/specialists.ts",
     "src/main/composition/storage-startup.ts",
     "src/main/composition/upload-storage.ts",
-
     "src/main/composition/notebook-environment.ts",
     "src/main/composition/notebook-environment.test.ts",
     "src/main/composition/reviewer.test.ts",
@@ -126,6 +125,7 @@
     "src/main/preview-context-menu.test.ts",
     "src/main/preview-context-menu.ts",
     "src/main/process-tree-darwin-recovery.test.ts",
+    "src/main/process-tree-cold-recovery.test.ts",
     "src/main/process-tree-evidence.macos.integration.test.ts",
     "src/main/process-tree-native-loading.macos.integration.test.ts",
     "src/main/process-tree.macos.integration.test.ts",
@@ -297,6 +297,7 @@
       "src/main/permission-approval-presence.test.ts",
       "src/main/preview-context-menu.test.ts",
       "src/main/process-tree-darwin-recovery.test.ts",
+      "src/main/process-tree-cold-recovery.test.ts",
       "src/main/process-tree-evidence.macos.integration.test.ts",
       "src/main/process-tree-native-loading.macos.integration.test.ts",
       "src/main/process-tree.macos.integration.test.ts",
@@ -1150,9 +1151,12 @@
       "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
       "src/main/acp/library-auto-policy.test.ts",
+      "src/main/reviewer/correction-resume.test.ts",
       "src/main/notebook/mcp-wsl-diagnostics.test.ts",
       "src/main/wsl/wsl-setup-owner.integration.test.ts",
-      "src/main/notebook/wsl2-scheduling.integration.test.ts"
+      "src/main/notebook/wsl2-scheduling.integration.test.ts",
+      "src/main/literature/journal-attributes.scale.test.ts",
+      "src/main/literature/journal-attributes.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -149,6 +149,45 @@ describe('pathway-commons / graph', () => {
     ])
   })
 
+  it.each([
+    ['pathway_commons_graph', ''],
+    ['pathway_commons_graph', '\n'],
+    ['pathway_commons_graph', '\r\n'],
+    ['pathway_commons_export', ''],
+    ['pathway_commons_export', '\n'],
+    ['pathway_commons_export', '\r\n']
+  ])('preserves empty final TXT fields for %s with ending %j', async (id, ending) => {
+    const content =
+      [
+        'PARTICIPANT_A\tINTERACTION_TYPE\tPARTICIPANT_B\tINTERACTION_DATA_SOURCE\tINTERACTION_PUBMED_ID\tPATHWAY_NAMES\tMEDIATOR_IDS',
+        'MDM2\tinteracts-with\tTP53\tReactome\t\t\t',
+        '',
+        'PARTICIPANT\tPARTICIPANT_TYPE\tPARTICIPANT_NAME\tUNIFICATION_XREF\tRELATIONSHIP_XREF',
+        'MDM2\tProteinReference\tMDM2\t\t'
+      ].join(ending === '\r\n' ? '\r\n' : '\n') + ending
+    const args = id === 'pathway_commons_graph' ? { source: ['MDM2'] } : { uri: ['MDM2'] }
+
+    const out = await tool(id).run!(
+      context(async () => content),
+      { ...args, format: 'TXT' }
+    )
+
+    expect(out).toMatchObject({
+      n_records: 1,
+      records: [{ pubmed_id: '', pathway_names: '', mediator_ids: '' }],
+      n_nodes: 1,
+      nodes: [
+        {
+          participant: 'MDM2',
+          participant_type: 'ProteinReference',
+          participant_name: 'MDM2',
+          unification_xrefs: [],
+          relationship_xrefs: []
+        }
+      ]
+    })
+  })
+
   it('requires targets for directed paths-from-to queries', async () => {
     await expect(
       tool('pathway_commons_graph').run!(

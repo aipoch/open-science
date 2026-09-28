@@ -198,6 +198,13 @@ it('excludes a table reference wrapped after an explicit preceding prose referen
   }
   const before = { ...title, text: '[12] using extinction coefficients as listed in', y: 308 }
   expect(findCaptionCandidates([{ pageNumber: 1, lines: [before, title] }])).toEqual([])
+  const splitArabicReference = {
+    ...title,
+    text: 'Table 1. Two out of 37 trainees did not participate in the guided training.'
+  }
+  expect(findCaptionCandidates([{ pageNumber: 1, lines: [before, splitArabicReference] }])).toEqual(
+    []
+  )
   for (const previous of [
     { ...before, y: 280 },
     { ...before, x: 45 },
@@ -205,6 +212,28 @@ it('excludes a table reference wrapped after an explicit preceding prose referen
   ]) {
     expect(findCaptionCandidates([{ pageNumber: 1, lines: [previous, title] }])).toHaveLength(1)
   }
+})
+
+it('rejects supplementary-material lists that resemble one wrapped table caption', () => {
+  const line = (text: string, x: number, y: number, fontSize = 10): object => ({
+    text,
+    x,
+    y,
+    width: text.length * 5,
+    height: fontSize,
+    fontSize
+  })
+  const page = {
+    pageNumber: 9,
+    lines: [
+      line('Supplementary Materials', 309, 375, 12),
+      line('Table S2: body composition changes between 0 and 24', 309, 397),
+      line('months stratified by body mass index. Table S3: age', 309, 409),
+      line('stratified changes. Figure S6: additional measurements.', 309, 421),
+      line('(Supplementary Materials)', 309, 433)
+    ]
+  }
+  expect(findCaptionCandidates([page])).toEqual([])
 })
 
 it('places a delayed native subscript beside its source anchor before following prose', () => {

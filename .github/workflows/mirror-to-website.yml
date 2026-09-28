@@ -16,6 +16,11 @@ on:
         type: choice
         options: [backfill, promote]
         default: backfill
+      bootstrap_linux_arm64:
+        description: 'First ARM64 promotion only: allow a confirmed missing ARM64 feed (requires promote)'
+        required: false
+        type: boolean
+        default: false
       dry_run:
         description: 'Run local release transforms without AWS credentials or uploads'
         required: false
@@ -79,7 +84,7 @@ jobs:
             --jq '.assets[] | [.name, (.size | tostring)] | @tsv' |
           while IFS=$'\t' read -r name size; do
             case "$name" in
-              *-mac-arm64.dmg|*-mac-x64.dmg|*-win-x64-setup.exe|*-linux-x64.AppImage|*-linux-x86_64.AppImage|*_amd64.deb|*-mac-arm64.zip|*-mac-x64.zip)
+              *-mac-arm64.dmg|*-mac-x64.dmg|*-win-x64-setup.exe|*-linux-x64.AppImage|*-linux-x86_64.AppImage|*-linux-arm64.AppImage|*_amd64.deb|*_arm64.deb|*-mac-arm64.zip|*-mac-x64.zip)
                 [ "$name" = "$(basename "$name")" ] || { echo "Unsafe asset name: $name" >&2; exit 1; }
                 truncate -s "$size" "dist-assets/$name"
                 ;;
@@ -168,7 +173,7 @@ jobs:
           VERSION: ${{ steps.ref.outputs.version }}
         run: |
           shopt -s nullglob
-          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
+          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/latest-linux-arm64.yml dist-assets/*-mac.yml; do
             [ -f "$yml" ] || continue
             node -e '
               const fs = require("fs");
@@ -193,7 +198,7 @@ jobs:
         run: |
           shopt -s nullglob
           feeds=()
-          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
+          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/latest-linux-arm64.yml dist-assets/*-mac.yml; do
             [ -f "$yml" ] && feeds+=("$yml")
           done
           if [ ${#feeds[@]} -eq 0 ]; then
@@ -246,4 +251,5 @@ jobs:
           S3_PREFIX: ${{ vars.S3_PREFIX }}
           VERSION: ${{ steps.ref.outputs.version }}
           MODE: ${{ inputs.mode }}
+          BOOTSTRAP_LINUX_ARM64: ${{ inputs.bootstrap_linux_arm64 }}
         run: node scripts/publish-update-channel.mjs

@@ -1,7 +1,7 @@
 import type { PersistedChatSession } from '../../src/shared/session-persistence'
 import { expect } from '@playwright/test'
 import { test } from '../fixtures/electron-app'
-import { createProject, sendPrompt } from './helpers'
+import { createProject, openRecentSession, sendPrompt } from './helpers'
 
 test.setTimeout(180_000)
 
@@ -58,6 +58,46 @@ test('retains an Artifact Version producer across Electron relaunch', async ({ a
     }
   })
 
+  const inspectReproducibility = async (): Promise<void> => {
+    await page
+      .getByRole('button', { name: 'Preview generated file provenance-evidence.txt' })
+      .first()
+      .click()
+    await page
+      .getByRole('button', { name: 'Open full screen preview of provenance-evidence.txt' })
+      .click()
+    const preview = page.getByRole('dialog', { name: 'Preview provenance-evidence.txt' })
+    await preview
+      .getByRole('button', { name: 'Open Provenance for provenance-evidence.txt' })
+      .click()
+    const provenance = page.locator('[data-testid="artifact-provenance"]')
+    await expect(provenance.getByLabel('Loading Provenance')).toBeHidden()
+    await provenance.getByRole('tab', { name: 'Reproducibility', exact: true }).click()
+
+    // A Shell producer is evidence, not a replayable Python/R recipe. Exercise the production
+    // preview, IPC reads and panel together without granting this version a runnable frontier.
+    await expect(provenance.getByRole('heading', { name: 'Not verified yet' })).toBeVisible()
+    await expect(provenance.locator('[data-reproducibility-check-unavailable]')).toBeVisible()
+    await expect(provenance.locator('[data-reproducibility-check-blocker]')).toBeVisible()
+    await expect(provenance.getByRole('button', { name: 'Check reproducibility' })).toHaveCount(0)
+    const execution = await page.evaluate(
+      (request) => window.api.artifacts.getVersionExecution(request),
+      { projectId, appSessionId: appSessionId!, artifactId: artifactId!, versionId: versionId! }
+    )
+    expect(execution).toMatchObject({
+      execution: {
+        reproducibility: {
+          startFrontiers: expect.arrayContaining([
+            expect.objectContaining({ kind: 'original-inputs', eligibility: 'blocked' })
+          ])
+        }
+      }
+    })
+    await provenance.getByRole('button', { name: 'Close Provenance' }).click()
+    await preview.getByRole('button', { name: 'Close preview of provenance-evidence.txt' }).click()
+  }
+  await inspectReproducibility()
+
   // Main owns the completed transcript before the UI permits the next turn. Sending again
   // exercises adoption of an existing Session and verifies one owner per immutable Version.
   const readOwnedSession = (): Promise<PersistedChatSession | undefined> =>
@@ -111,4 +151,6 @@ test('retains an Artifact Version producer across Electron relaunch', async ({ a
   expect((await readOwnedSession())?.conversationGraph?.messages).toEqual(
     second?.conversationGraph?.messages
   )
+  await openRecentSession(page, 'Create a provenance artifact.')
+  await inspectReproducibility()
 })

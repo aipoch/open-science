@@ -48,7 +48,15 @@ export type InstallTarget = {
 export const CLAUDE_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@anthropic-ai/claude-code',
   scriptUnix: 'curl -fsSL https://claude.ai/install.sh | bash',
-  scriptWindows: 'irm https://claude.ai/install.ps1 | iex'
+  // Regional-unavailability pages can return HTTP 200 after a redirect. Inspect the
+  // response before execution so PowerShell does not parse HTML as installer code.
+  scriptWindows: [
+    "$ErrorActionPreference = 'Stop'",
+    "$installerResponse = Invoke-WebRequest -UseBasicParsing -Uri 'https://claude.ai/install.ps1'",
+    '$installerScript = if ($installerResponse.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($installerResponse.Content) } else { [string]$installerResponse.Content }',
+    `if ($installerResponse.Headers['Content-Type'] -match '(?i)text/html|application/xhtml\\+xml' -or $installerScript.TrimStart([char]0xFEFF) -match '(?is)^\\s*<(?:!doctype\\s+html\\b|html\\b|head\\b|body\\b)') { throw 'Official installer returned HTML instead of PowerShell. Check network access or use app-managed installation.' }`,
+    'Invoke-Expression $installerScript'
+  ].join('; ')
 }
 
 // Builds the exact spawn command/args for a source on a given platform. Windows: npm runs through the
@@ -182,6 +190,7 @@ const REGION_BLOCK_SCAN_LIMIT = 16 * 1024
 // script: `curl … | bash` then pipes HTML into bash, which fails with a syntax error near `<`. Any of
 // these in the output means the download was blocked, not that the machine is misconfigured.
 const REGION_BLOCK_MARKERS = [
+  'official installer returned html instead of powershell',
   '<!doctype html',
   '<html',
   'app unavailable in region',
