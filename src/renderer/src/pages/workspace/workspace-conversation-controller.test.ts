@@ -11,6 +11,8 @@ import {
 import type { TextAnnotation } from '../../../../shared/annotations'
 
 import type { ComposerDoc } from './composer/composer-doc'
+import { useWorkspaceComposerController } from './workspace-composer-controller'
+import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
 import {
   useWorkspaceConversationController,
   type WorkspaceConversationController,
@@ -358,6 +360,127 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() =>
       expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('new:project-a', 3)
     )
+  })
+
+  it.each(['success', 'undefined', 'rejection'])(
+    'admits a distinct new draft and keeps its guard after the earlier send settles with %s',
+    async (outcome) => {
+      const first = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+      first.composer.lifecycle.captureSend = vi.fn(() => ({
+        draftKey: 'new:project-a',
+        version: 1,
+        doc: textDoc('first'),
+        annotations: [],
+        attachments: []
+      }))
+      let finish!: (value: { sessionId: string; messageId: string } | undefined) => void
+      let fail!: (error: Error) => void
+      first.runtime.sendMessage = vi.fn<
+        WorkspaceConversationControllerOptions['runtime']['sendMessage']
+      >(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = resolve
+            fail = reject
+          })
+      )
+      const hook = renderController(first)
+      mounted.push(hook)
+      act(() => {
+        hook.result.current.actions.submit.draft({ forcedSkillIds: [] })
+        hook.result.current.actions.submit.draft({ forcedSkillIds: [] })
+      })
+      expect(first.runtime.sendMessage).toHaveBeenCalledOnce()
+      const second = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+      second.composer.lifecycle.captureSend = vi.fn(() => ({
+        draftKey: 'new:project-a',
+        version: 2,
+        doc: textDoc('second'),
+        annotations: [],
+        attachments: []
+      }))
+      second.runtime.sendMessage = vi.fn<
+        WorkspaceConversationControllerOptions['runtime']['sendMessage']
+      >(() => new Promise(() => undefined))
+      hook.rerender(second)
+      act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(second.runtime.sendMessage).toHaveBeenCalledOnce()
+      await act(async () => {
+        if (outcome === 'rejection') fail(new Error('preparation failed'))
+        else
+          finish(
+            outcome === 'success'
+              ? { sessionId: 'first-session', messageId: 'first-message' }
+              : undefined
+          )
+      })
+      act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(second.runtime.sendMessage).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('suppresses synchronous duplicate clicks after the real composer clears a new draft', () => {
+    const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+    input.runtime.sendMessage = vi.fn<
+      WorkspaceConversationControllerOptions['runtime']['sendMessage']
+    >(() => new Promise(() => undefined))
+    let composer!: ReturnType<typeof useWorkspaceComposerController>
+    let controller!: WorkspaceConversationController
+    const root = createRoot(document.createElement('div'))
+    const Harness = (): null => {
+      composer = useWorkspaceComposerController({
+        currentDraftKey: input.currentDraftKey,
+        newConversationDraftKey: input.currentDraftKey,
+        activeProjectId: input.projectId,
+        activeSession: undefined,
+        pendingCustomizePrefill: undefined,
+        onCustomizePrefillApplied: vi.fn(),
+        historyEntries: [],
+        historyPolicy: {
+          catalogSkillIds: new Set(),
+          allowedSkillIds: undefined,
+          skillCatalogReady: true,
+          refreshSkillCatalog: false,
+          specialistCatalogReady: true,
+          specialistId: undefined,
+          loadSkills: vi.fn(),
+          loadSpecialists: vi.fn()
+        },
+        canStageAttachments: true,
+        supportsImageInput: true,
+        uploads: {
+          stageLocalFile: vi.fn(),
+          beginTransfer: vi.fn(),
+          appendTransfer: vi.fn(),
+          getTransferStatus: vi.fn(),
+          finishTransfer: vi.fn(),
+          abortTransfer: vi.fn().mockResolvedValue(undefined),
+          deleteUpload: vi.fn(),
+          onTransferProgress: vi.fn(() => () => undefined)
+        }
+      })
+      controller = useWorkspaceConversationController({ ...input, composer })
+      return null
+    }
+    try {
+      act(() =>
+        root.render(createElement(WorkspaceComposerDraftsProvider, null, createElement(Harness)))
+      )
+      act(() => composer.actions.changeDoc(textDoc('same text')))
+      const firstVersion = composer.lifecycle.captureSend().version
+      act(() => {
+        controller.actions.submit.draft({ forcedSkillIds: [] })
+        controller.actions.submit.draft({ forcedSkillIds: [] })
+      })
+      expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+      expect(composer.lifecycle.captureSend().version).toBe(firstVersion)
+      act(() => composer.actions.changeDoc(textDoc('same text')))
+      expect(composer.lifecycle.captureSend().version).toBeGreaterThan(firstVersion)
+      act(() => controller.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(input.runtime.sendMessage).toHaveBeenCalledTimes(2)
+    } finally {
+      act(() => root.unmount())
+    }
   })
 
   it('exposes the submitted draft immediately while runtime admission is pending', async () => {

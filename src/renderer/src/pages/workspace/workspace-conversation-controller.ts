@@ -468,8 +468,12 @@ const useWorkspaceConversationController = (
       }
 
       const snapshot = composer.lifecycle.captureSend(!branchInNewSession)
-      if (inFlightDraftKeysRef.current.has(snapshot.draftKey)) return
-      inFlightDraftKeysRef.current.add(snapshot.draftKey)
+      // A distinct new draft can start while an earlier conversation is still preparing.
+      const submissionKey = activeSession
+        ? snapshot.draftKey
+        : `${snapshot.draftKey}:${snapshot.version}`
+      if (inFlightDraftKeysRef.current.has(submissionKey)) return
+      inFlightDraftKeysRef.current.add(submissionKey)
 
       const wasNewConversation = !activeSession
       const autoReviewEnabled = current.newConversationAutoReviewEnabled
@@ -566,7 +570,7 @@ const useWorkspaceConversationController = (
             session.actions.resetNewConversationSpecialist()
           })
           .finally(() => {
-            inFlightDraftKeysRef.current.delete(snapshot.draftKey)
+            inFlightDraftKeysRef.current.delete(submissionKey)
             clearOptimisticMessage()
           })
       }
@@ -576,7 +580,7 @@ const useWorkspaceConversationController = (
           .prepareSpecialistSend(activeSession.id, pendingSpecialistId)
           .then((ready) => {
             if (!ready) {
-              inFlightDraftKeysRef.current.delete(snapshot.draftKey)
+              inFlightDraftKeysRef.current.delete(submissionKey)
               return
             }
             if (snapshot.annotations.length === 0) composer.lifecycle.clearDraft(activeSession.id)
