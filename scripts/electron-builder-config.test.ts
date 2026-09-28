@@ -14,6 +14,23 @@ import {
   WINDOWS_CACHE_TRUSTED_OWNER_SIDS
 } from '../src/main/notebook/micromamba-cache'
 
+describe('macOS native privacy purpose descriptions', () => {
+  it.each([
+    'NSDesktopFolderUsageDescription',
+    'NSDocumentsFolderUsageDescription',
+    'NSDownloadsFolderUsageDescription',
+    'NSNetworkVolumesUsageDescription',
+    'NSRemovableVolumesUsageDescription',
+    'NSLocalNetworkUsageDescription'
+  ])('provides a purpose for %s in the app Info.plist configuration', (key) => {
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      mac?: { extendInfo?: Record<string, unknown> }
+    }
+
+    expect(config.mac?.extendInfo?.[key]).toEqual(expect.stringMatching(/\S/))
+  })
+})
+
 describe('electron-builder native image processing', () => {
   it('ships sharp and its platform binary outside the ASAR archive', () => {
     const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {

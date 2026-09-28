@@ -175,8 +175,12 @@ mac:
     CFBundleDisplayName: Open-Science
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
-    NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
-    NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+    NSDesktopFolderUsageDescription: Open-Science needs access to Desktop files to browse, open, and save your research files.
+    NSDocumentsFolderUsageDescription: Open-Science needs access to Documents files to browse, open, and save your research files.
+    NSDownloadsFolderUsageDescription: Open-Science needs access to Downloads files to browse, open, and save your research files.
+    NSNetworkVolumesUsageDescription: Open-Science needs access to network volumes to browse, open, and save your research files.
+    NSRemovableVolumesUsageDescription: Open-Science needs access to removable volumes to browse, open, and save your research files.
+    NSLocalNetworkUsageDescription: Open-Science needs local network access to connect to compute hosts and services you configure.
   notarize: false
   extraResources:
     # Ship the ad-hoc-signed micromamba mach-O at Contents/Resources/micromamba, where
