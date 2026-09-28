@@ -565,6 +565,14 @@ export class DelegatedProcessOwnership {
                 this.remove(receipt)
                 return
               }
+              // A clean cold scan cannot erase an earlier incomplete observation: a candidate
+              // could have escaped and replaced its environment before this process restarted.
+              // Only the live ownership handle above or proven reboot can discharge that debt.
+              if (receipt.cleanupDiagnostics?.recovery === 'stronger-ownership-proof-required') {
+                throw new DelegateExecutionCleanupError(
+                  'Delegated process cleanup is unconfirmed; its workspace remains protected.'
+                )
+              }
               // Windows: the named Job is the authoritative lifecycle owner. Only attempt reap if we
               // have a real token — recordFailure receipts have no token and can only be cleared by
               // reboot proof. Attempting reapWindowsOwnedJob on a nonexistent Job returns success

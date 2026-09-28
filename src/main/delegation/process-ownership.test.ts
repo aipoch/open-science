@@ -374,6 +374,80 @@ describe('durable delegated process ownership', () => {
     expect(cold.receipts(scope)).toHaveLength(0)
   })
 
+  it.skipIf(process.platform !== 'darwin')(
+    'clears a retained cold receipt after its real macOS leader has exited',
+    async () => {
+      const owner = await setup()
+      const child = owner.spawn(
+        scope,
+        process.execPath,
+        ['-e', 'setTimeout(() => process.exit(0), 50)'],
+        {
+          stdio: 'pipe',
+          env: process.env,
+          windowsHide: true
+        }
+      )
+      children.push(child)
+      // Persist the actual spawn identity as it would remain when the app exits before observing
+      // cleanup. Restore this evidence after live teardown so the cold path cannot silently skip.
+      const [receipt] = owner.receipts(scope)
+      expect(receipt.ownership?.leader?.birthToken).toBeDefined()
+      await once(child, 'close')
+      await terminateProcessTree(child)
+      const receiptPath = join(
+        directory!,
+        'delegation-process-ownership',
+        scope.projectId,
+        scope.sessionId,
+        `${receipt.receiptId}.json`
+      )
+      await mkdir(
+        join(directory!, 'delegation-process-ownership', scope.projectId, scope.sessionId),
+        { recursive: true }
+      )
+      await writeFile(receiptPath, JSON.stringify(receipt))
+      const cold = new DelegatedProcessOwnership(directory!)
+      expect(cold.receipts(scope)).toHaveLength(1)
+      await expect(cold.recover(scope)).resolves.toBeUndefined()
+      expect(cold.receipts(scope)).toHaveLength(0)
+    }
+  )
+
+  it('does not erase historical ownership uncertainty with a clean cold scan', async () => {
+    const owner = await setup()
+    owner.recordFailure(scope)
+    const [receipt] = owner.receipts(scope)
+    const diagnostics = {
+      failureCategory: 'ownership-candidate-unresolved',
+      recovery: 'stronger-ownership-proof-required',
+      ownedIdentityCount: 1,
+      ambiguousIdentityCount: 1
+    }
+    const retained = {
+      ...receipt,
+      ownership: {
+        ...receipt.ownership,
+        token: '00000000-0000-4000-8000-000000000001',
+        leader: { pid: 2147483647, birthToken: 'darwin-proc-uniqueid:1' }
+      },
+      cleanupDiagnostics: diagnostics
+    }
+    await writeFile(
+      join(
+        directory!,
+        'delegation-process-ownership',
+        scope.projectId,
+        scope.sessionId,
+        `${receipt.receiptId}.json`
+      ),
+      JSON.stringify(retained)
+    )
+    const cold = new DelegatedProcessOwnership(directory!)
+    await expect(cold.recover(scope)).rejects.toThrow('Delegated process recovery is incomplete')
+    expect(cold.receipts(scope)[0].cleanupDiagnostics).toEqual(diagnostics)
+  })
+
   // ── D1: reboot-proof clears receipts with a matching boot-session id ─────────────────────────
 
   it('clears a cold receipt when the recorded boot session differs from the current one', async () => {
