@@ -42,6 +42,8 @@ const probe = (
     const originalRequire = instance.require.bind(instance)
     instance.require = id => id === '@aipoch/process-tree-native' ? {
       ...native,
+      getDarwinProcessCoalition: native.getDarwinProcessCoalition,
+      signalDarwinProcess: native.signalDarwinProcess,
       getDarwinEnvironmentValue(pid, name) {
         if (pid === ambiguousPid) {
           environmentReads++

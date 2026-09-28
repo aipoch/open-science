@@ -6,7 +6,8 @@ import {
   readFileSync,
   rmSync
 } from 'node:fs'
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
+import { spawn as nodeSpawn } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -55,6 +56,7 @@ import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
 import { withExclusiveCacheLocks, withSharedCacheLocks } from './pkgs-cache-lock'
 import { CHILD_UNCONFIRMED, killAndConfirmExit } from './provisioner-runtime'
 import {
+  capturePosixProcessTreeIdentity,
   createPosixProcessTreeOwnership,
   trackOwnedPosixProcessTree,
   terminateProcessTree,
@@ -162,7 +164,28 @@ export type SpawnResult = {
   maxPathRecoveryEvidence?: string
   // Observation from the bounded process-tree teardown performed before this result settles.
   processesTerminated?: boolean
+  processEvidence?: PackageProcessEvidence
 }
+// Carries the exact live owner across failed result settlement. The journal stores only its
+// evidence; a recovery coordinator retains this closure while the application is still running.
+export type PackageProcessEvidence = Readonly<{
+  childPid: number
+  childStartedAt: number
+  childBirthToken?: string
+  ownershipToken?: string
+}>
+export class PackageProcessCleanupError extends Error {
+  constructor(
+    message: string,
+    readonly retryCleanup: () => Promise<void>,
+    readonly processEvidence?: PackageProcessEvidence,
+    readonly processesTerminated = false
+  ) {
+    super(`${CHILD_UNCONFIRMED}: ${message}`)
+    this.name = 'PackageProcessCleanupError'
+  }
+}
+
 export type InstallSpawnOptions = Readonly<{
   signal?: AbortSignal
   timeoutMs?: number
@@ -1081,33 +1104,63 @@ export const defaultSpawn = (
       })
       return
     }
-    if (platform !== 'win32' && process.platform !== 'win32')
-      trackOwnedPosixProcessTree(child, processTreeOwnership.token)
-    if (child.pid !== undefined) {
-      try {
-        onChild?.(child.pid)
-      } catch (error) {
-        // Recording the PID failed. FAIL CLOSED: kill it and only settle once it is CONFIRMED gone.
-        // If it can't be confirmed, REJECT with the CHILD_UNCONFIRMED marker so the caller retains the
-        // recovery evidence (a worker may still be writing) instead of clearing it.
-        void killAndConfirmExit(child, terminateTree).then((confirmed) => {
-          void discardCondaJsonCapture(condaJsonCapture)
-          if (confirmed) {
-            resolve({
-              code: 1,
-              stdout: '',
-              stderr: `Failed to record the installer worker; aborted: ${toErrorMessage(error)}`
-            })
-          } else {
-            reject(
-              new Error(
-                `${CHILD_UNCONFIRMED}: recording failed and the installer could not be confirmed stopped.`
-              )
-            )
+    let processEvidence: PackageProcessEvidence | undefined =
+      child.pid === undefined
+        ? undefined
+        : {
+            childPid: child.pid,
+            childStartedAt: Date.now(),
+            ownershipToken: processTreeOwnership.token
           }
-        })
-        return
-      }
+    let retryInFlight: Promise<void> | undefined
+    const retryCleanup = (): Promise<void> => {
+      if (retryInFlight) return retryInFlight
+      const attempt = (async () => {
+        const outcome = await terminateTree(child)
+        const nativeConfirmed =
+          !outcome.reaped && confirmProcessTreeTermination
+            ? await confirmProcessTreeTermination().catch(() => false)
+            : false
+        if (!outcome.reaped && !nativeConfirmed)
+          throw new Error(`${CHILD_UNCONFIRMED}: package process cleanup remains unconfirmed.`)
+      })().finally(() => {
+        if (retryInFlight === attempt) retryInFlight = undefined
+      })
+      retryInFlight = attempt
+      return attempt
+    }
+    const cleanupFailure = (message: string): PackageProcessCleanupError =>
+      new PackageProcessCleanupError(message, retryCleanup, processEvidence)
+    try {
+      if (platform !== 'win32' && process.platform !== 'win32')
+        trackOwnedPosixProcessTree(child, processTreeOwnership.token)
+      const identity = capturePosixProcessTreeIdentity(child)
+      if (processEvidence && identity)
+        processEvidence = { ...processEvidence, childBirthToken: identity.birthToken }
+      if (child.pid !== undefined) onChild?.(child.pid)
+    } catch (error) {
+      // Registration and durable PID recording both happen after spawn. Retain the exact child
+      // before either can throw, and do not release its resources until physical cleanup is proven.
+      child.once('error', () => undefined)
+      void killAndConfirmExit(child, terminateTree).then((confirmed) => {
+        void discardCondaJsonCapture(condaJsonCapture)
+        if (confirmed) {
+          resolve({
+            code: 1,
+            stdout: '',
+            stderr: `Failed to record the installer worker; aborted: ${toErrorMessage(error)}`,
+            processesTerminated: true,
+            processEvidence
+          })
+        } else {
+          reject(
+            cleanupFailure(
+              'Registration or recording failed and the installer could not be confirmed stopped.'
+            )
+          )
+        }
+      })
+      return
     }
     const stdout = new InstallerLogTailBuffer(INSTALLER_STREAM_LOG_LIMIT_BYTES)
     const stderr = new InstallerLogTailBuffer(INSTALLER_STREAM_LOG_LIMIT_BYTES)
@@ -1156,11 +1209,17 @@ export const defaultSpawn = (
         condaJsonCapture,
         stdoutSnapshot.droppedBytes > 0 || stderrSnapshot.droppedBytes > 0
       )
+      if (!processOutcome.reaped && !processTreeTerminationConfirmed) {
+        throw cleanupFailure(
+          'The package installer exited but its process tree could not be confirmed stopped.'
+        )
+      }
       return {
         code,
         // taskkill cannot inspect descendants after the leader has exited. A supervised launcher
         // supplies a one-time proof only after its Job Object has reached zero active processes.
         processesTerminated: processOutcome.reaped || processTreeTerminationConfirmed,
+        processEvidence,
         stdout: stdoutSnapshot.text,
         stderr: stderrSnapshot.text,
         ...(stdoutSnapshot.droppedBytes > 0
@@ -1193,9 +1252,8 @@ export const defaultSpawn = (
       void termination.then((confirmed) => {
         if (!confirmed) {
           rejectOnce(
-            new Error(
-              `${CHILD_UNCONFIRMED}: the package installer process tree could not be confirmed ` +
-                `stopped after ${terminationReason}; leaving the operation for recovery to block.`
+            cleanupFailure(
+              `The package installer process tree could not be confirmed stopped after ${terminationReason}.`
             )
           )
         }

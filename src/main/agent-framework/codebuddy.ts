@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import * as acp from '@agentclientprotocol/sdk'
 import type { SessionModeState } from '@agentclientprotocol/sdk'
 
+import { createTrackedAgentSpawner } from '../owned-process-spawn'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import {
   resolvePermissionProfileApplication,
@@ -115,7 +116,7 @@ export const createCodeBuddyFramework = ({
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
     const needsShell = platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
     const args = ['--acp', ...input.args].map((arg) => (needsShell && arg === '' ? '""' : arg))
-    return (input.spawnProcess ?? spawnProcess)(
+    return (input.spawnProcess ?? createTrackedAgentSpawner(spawnProcess, platform))(
       needsShell ? `"${input.executablePath}"` : input.executablePath,
       args,
       {

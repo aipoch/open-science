@@ -64,6 +64,7 @@ type ActiveWorkingCache = {
     { workingRoot: string; authorizations: Map<string, MicromambaArchiveAuthorization> }
   >
   finalization?: Promise<boolean>
+  finalizationSucceeded?: boolean
   completion: Promise<boolean>
   resolveCompletion: (completed: boolean) => void
 }
@@ -167,34 +168,39 @@ export const retainMicromambaWorkingCache = async (
     break
   }
   let released = false
+  let finalized = false
 
   return async ({
     archivePublications = [],
     completedOperationId,
     retainForRecovery = false
   }): Promise<boolean> => {
-    if (released) return false
-    released = true
-    if (operationId) active.operationIds.delete(operationId)
-    if (completedOperationId) active.completedOperationIds.add(completedOperationId)
-    if (retainForRecovery) {
-      recoveryRetainedWorkingCaches.add(key)
-    } else {
-      for (const publication of archivePublications) {
-        if (publication.authorizations.length === 0) continue
-        const publicationKey = micromambaCacheLockKey(publication.workingRoot, deps)
-        const collected = active.archivePublications.get(publicationKey) ?? {
-          workingRoot: publication.workingRoot,
-          authorizations: new Map<string, MicromambaArchiveAuthorization>()
+    if (finalized || active.finalizationSucceeded) return true
+    if (released && active.finalization) return active.finalization
+    if (released && activeWorkingCaches.get(key) !== active) return false
+    if (!released) {
+      released = true
+      if (operationId) active.operationIds.delete(operationId)
+      if (completedOperationId) active.completedOperationIds.add(completedOperationId)
+      if (retainForRecovery) {
+        recoveryRetainedWorkingCaches.add(key)
+      } else {
+        for (const publication of archivePublications) {
+          if (publication.authorizations.length === 0) continue
+          const publicationKey = micromambaCacheLockKey(publication.workingRoot, deps)
+          const collected = active.archivePublications.get(publicationKey) ?? {
+            workingRoot: publication.workingRoot,
+            authorizations: new Map<string, MicromambaArchiveAuthorization>()
+          }
+          for (const authorization of publication.authorizations) {
+            const key = `${authorization.file}\0${authorization.algorithm}\0${authorization.digest}`
+            collected.authorizations.set(key, authorization)
+          }
+          active.archivePublications.set(publicationKey, collected)
         }
-        for (const authorization of publication.authorizations) {
-          const key = `${authorization.file}\0${authorization.algorithm}\0${authorization.digest}`
-          collected.authorizations.set(key, authorization)
-        }
-        active.archivePublications.set(publicationKey, collected)
       }
+      active.leases -= 1
     }
-    active.leases -= 1
     if (active.leases > 0) return retainForRecovery ? false : active.completion
     let publicationFailed = false
     const finalization = Promise.resolve().then(async (): Promise<boolean> => {
@@ -227,6 +233,7 @@ export const retainMicromambaWorkingCache = async (
             return false
           }
         }
+        active.finalizationSucceeded = !recoveryRetainedWorkingCaches.has(key) && !durableRetention
         active.resolveCompletion(true)
         return true
       } catch {
@@ -242,7 +249,8 @@ export const retainMicromambaWorkingCache = async (
     })
     active.finalization = finalization
     const completed = await finalization
-    return retainForRecovery ? false : completed
+    finalized = !retainForRecovery && completed
+    return finalized
   }
 }
 

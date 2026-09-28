@@ -151,9 +151,16 @@ const parse = (value: unknown): Receipt => {
       Array.isArray(diagnostics) ||
       Object.keys(diagnostics).some(
         (key) =>
-          !['failureCategory', 'recovery', 'ownedIdentityCount', 'ambiguousIdentityCount'].includes(
-            key
-          )
+          ![
+            'failureCategory',
+            'recovery',
+            'ownedIdentityCount',
+            'ambiguousIdentityCount',
+            'leaderPid',
+            'coalitionId',
+            'signalMode',
+            'ambiguousIdentities'
+          ].includes(key)
       ) ||
       ![
         'leader-identity-unavailable',
@@ -165,7 +172,34 @@ const parse = (value: unknown): Receipt => {
       !Number.isSafeInteger(diagnostics.ownedIdentityCount) ||
       diagnostics.ownedIdentityCount < 0 ||
       !Number.isSafeInteger(diagnostics.ambiguousIdentityCount) ||
-      diagnostics.ambiguousIdentityCount < 0
+      diagnostics.ambiguousIdentityCount < 0 ||
+      (diagnostics.leaderPid !== undefined &&
+        (!Number.isSafeInteger(diagnostics.leaderPid) || diagnostics.leaderPid <= 0)) ||
+      (diagnostics.coalitionId !== undefined &&
+        (typeof diagnostics.coalitionId !== 'string' ||
+          !/^[1-9][0-9]{0,19}$/u.test(diagnostics.coalitionId))) ||
+      (diagnostics.signalMode !== undefined &&
+        !['atomic', 'legacy'].includes(diagnostics.signalMode)) ||
+      (diagnostics.ambiguousIdentities !== undefined &&
+        (!Array.isArray(diagnostics.ambiguousIdentities) ||
+          diagnostics.ambiguousIdentities.length > 20 ||
+          diagnostics.ambiguousIdentities.some(
+            (identity) =>
+              !identity ||
+              typeof identity !== 'object' ||
+              Array.isArray(identity) ||
+              Object.keys(identity).some(
+                (key) => !['pid', 'birthToken', 'observable'].includes(key)
+              ) ||
+              !Number.isSafeInteger(identity.pid) ||
+              identity.pid <= 0 ||
+              typeof identity.observable !== 'boolean' ||
+              (identity.birthToken !== undefined &&
+                (typeof identity.birthToken !== 'string' ||
+                  !/^(?:darwin-proc-uniqueid|linux-proc-starttime):[0-9]+$/u.test(
+                    identity.birthToken
+                  )))
+          )))
     )
       throw new Error('Invalid process cleanup diagnostics')
   }

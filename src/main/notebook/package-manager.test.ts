@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { once } from 'node:events'
+import * as processTree from '../process-tree'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, win32 } from 'node:path'
@@ -17,6 +19,7 @@ vi.mock('./micromamba', async (importActual) => ({
 import {
   CONDA_JSON_CAPTURE_LIMIT_BYTES,
   defaultSpawn,
+  PackageProcessCleanupError,
   INSTALLER_STREAM_LOG_LIMIT_BYTES,
   installPackages,
   type InstallSpawn,
@@ -25,6 +28,7 @@ import {
 import { micromambaCacheLockKey } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
+import { terminateProcessTree } from '../process-tree'
 import {
   envPrefix,
   pipBin,
@@ -238,6 +242,22 @@ describe('managed R native lock tool preparation', () => {
 })
 
 describe('defaultSpawn (fail-closed spawn hooks)', () => {
+  it('rejects a successful installer exit when its descendant cleanup is unconfirmed', async () => {
+    await expect(
+      defaultSpawn(
+        process.execPath,
+        ['-e', 'process.exit(0)'],
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        async () => ({ reaped: false })
+      )
+    ).rejects.toThrow('RUNTIME_CHILD_UNCONFIRMED')
+  })
+
   it('does not spawn when the caller aborts while recording the spawn intent', async () => {
     const controller = new AbortController()
     let childSpawned = false
@@ -2362,3 +2382,79 @@ describe('installPackages shared pkgs cache lock', () => {
     expect(order).toEqual(['pip-start', 'repair', 'pip-end'])
   })
 })
+
+it('retains the exact exited child and joins cleanup retries after an unconfirmed package result', async () => {
+  const terminate = vi.fn(async (child: Parameters<typeof terminateProcessTree>[0]) => {
+    if (terminate.mock.calls.length === 1) return { reaped: false }
+    return terminateProcessTree(child)
+  })
+  const failure = await defaultSpawn(
+    process.execPath,
+    ['-e', 'process.exit(0)'],
+    undefined,
+    undefined,
+    undefined,
+    false,
+    undefined,
+    undefined,
+    terminate
+  ).catch((error) => error)
+  expect(failure).toBeInstanceOf(PackageProcessCleanupError)
+  expect(failure.processEvidence).toMatchObject({ childPid: expect.any(Number) })
+  const first = failure.retryCleanup()
+  expect(failure.retryCleanup()).toBe(first)
+  await first
+  expect(terminate).toHaveBeenCalledTimes(2)
+  expect(terminate.mock.calls[1][0]).toBe(terminate.mock.calls[0][0])
+})
+
+it.runIf(process.platform !== 'win32').each([true, false])(
+  'physically cleans the exact child after ownership registration throws (confirmed=%s)',
+  async (confirmed) => {
+    const registration = vi
+      .spyOn(processTree, 'trackOwnedPosixProcessTree')
+      .mockImplementationOnce(() => {
+        throw new Error('native registration failed')
+      })
+    const onChild = vi.fn()
+    const terminate = vi.fn(async (child: Parameters<typeof terminateProcessTree>[0]) => {
+      if (terminate.mock.calls.length === 1) {
+        const exited = once(child, 'exit')
+        child.kill('SIGKILL')
+        await exited
+        return { reaped: confirmed }
+      }
+      return { reaped: true }
+    })
+    try {
+      const completion = defaultSpawn(
+        process.execPath,
+        ['-e', 'setInterval(() => {}, 1000)'],
+        undefined,
+        onChild,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        terminate
+      )
+      if (confirmed) {
+        await expect(completion).resolves.toMatchObject({
+          code: 1,
+          processesTerminated: true,
+          stderr: expect.stringContaining('native registration failed')
+        })
+      } else {
+        const error = await completion.catch((failure) => failure)
+        expect(error).toBeInstanceOf(PackageProcessCleanupError)
+        expect(error.processEvidence).toMatchObject({ childPid: terminate.mock.calls[0][0].pid })
+        await error.retryCleanup()
+        expect(terminate.mock.calls[1][0]).toBe(terminate.mock.calls[0][0])
+      }
+      expect(onChild).not.toHaveBeenCalled()
+      expect(terminate).toHaveBeenCalledTimes(confirmed ? 1 : 2)
+    } finally {
+      registration.mockRestore()
+    }
+  }
+)

@@ -363,8 +363,27 @@ class KernelProcessLifecycleOwner {
     this.removeIfOwned(intent.path, intent.record.receiptId)
   }
 
+  completeSpawn(intent: KernelProcessSpawnIntent, reaped: boolean): void {
+    this.complete({ path: intent.path, receiptId: intent.record.receiptId }, reaped)
+  }
+
   complete(receipt: KernelProcessReceipt, reaped: boolean): void {
-    if (reaped) this.removeIfOwned(receipt.path, receipt.receiptId)
+    if (!reaped) return
+    // Activation renames the pending receipt before updating its contents. A failed update must
+    // remain settleable even when recordSpawned never returned its active path. Physical proof
+    // authorizes this exact receipt only; neither a shared PID nor a shared lane is sufficient.
+    let names: string[]
+    try {
+      names = readdirSync(dirname(receipt.path))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+    for (const name of names) {
+      if (name === basename(receipt.path) || name.endsWith(`.${receipt.receiptId}.json`)) {
+        this.removeIfOwned(join(dirname(receipt.path), name), receipt.receiptId)
+      }
+    }
   }
 
   environment(ownerToken: string): NodeJS.ProcessEnv {

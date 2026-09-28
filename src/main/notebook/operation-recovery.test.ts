@@ -532,3 +532,33 @@ describe('defaultOperationChildLiveness (two-state pid-reuse guard: dead | unkno
     })
   })
 })
+
+it('does not equate a missing leader with complete cleanup for an unresolved tree receipt', async () => {
+  const legacy = record({ childPid: 2_147_483_646, childStartToken: '123', treeUnconfirmed: true })
+  await expect(defaultOperationChildLiveness(legacy)).resolves.toBe('unknown')
+  await expect(
+    defaultOperationChildLiveness({ ...legacy, childBirthToken: 'linux-proc-starttime:123' })
+  ).resolves.toBe('unknown')
+  await expect(defaultOperationChildLiveness(record({ treeUnconfirmed: true }))).resolves.toBe(
+    'unknown'
+  )
+})
+
+it('never probes or signals a complete unresolved-tree receipt during cold liveness reads', async () => {
+  const kill = vi.spyOn(process, 'kill')
+  try {
+    await expect(
+      defaultOperationChildLiveness(
+        record({
+          childPid: process.pid,
+          childBirthToken: 'linux-proc-starttime:123',
+          ownershipToken: '12345678-1234-1234-1234-123456789abc',
+          treeUnconfirmed: true
+        })
+      )
+    ).resolves.toBe('unknown')
+    expect(kill).not.toHaveBeenCalled()
+  } finally {
+    kill.mockRestore()
+  }
+})

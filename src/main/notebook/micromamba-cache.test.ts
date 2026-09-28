@@ -652,6 +652,65 @@ describe('retainMicromambaWorkingCache', () => {
     await expect(release({})).resolves.toBe(false)
   })
 
+  it('retries failed cleanup on the same release without decrementing another live lease or deleting a later generation', async () => {
+    const cleanup = vi.fn().mockReturnValueOnce(false).mockReturnValue(true)
+    const deps = {
+      platform: 'win32' as const,
+      canonicalize: (path: string) => win32.normalize(path),
+      cleanup,
+      requiresRecoveryRetention: async () => false
+    }
+    const root = 'J:\\OpenScience\\runtime'
+    const failed = await retainMicromambaWorkingCache(root, deps)
+    await expect(failed({})).resolves.toBe(false)
+    const active = await retainMicromambaWorkingCache(root, deps)
+    const retry = failed({})
+    await Promise.resolve()
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    await expect(active({})).resolves.toBe(true)
+    await expect(retry).resolves.toBe(true)
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    const later = await retainMicromambaWorkingCache(root, deps)
+    await expect(failed({})).resolves.toBe(true)
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    await expect(later({})).resolves.toBe(true)
+    expect(cleanup).toHaveBeenCalledTimes(3)
+  })
+
+  it('shares later successful finalization with both failed original leases without touching a new generation', async () => {
+    const cleanup = vi.fn().mockReturnValueOnce(false).mockReturnValue(true)
+    const deps = {
+      platform: 'win32' as const,
+      canonicalize: (path: string) => win32.normalize(path),
+      cleanup,
+      requiresRecoveryRetention: async () => false
+    }
+    const root = 'L:\\OpenScience\\runtime'
+    const first = await retainMicromambaWorkingCache(root, deps)
+    const second = await retainMicromambaWorkingCache(root, deps)
+    await expect(Promise.all([first({}), second({})])).resolves.toEqual([false, false])
+    await expect(first({})).resolves.toBe(true)
+    const newer = await retainMicromambaWorkingCache(root, deps)
+    await expect(second({})).resolves.toBe(true)
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    await expect(newer({})).resolves.toBe(true)
+    expect(cleanup).toHaveBeenCalledTimes(3)
+  })
+
+  it('retries its original cache release after cleanup failure without acquiring a new lease', async () => {
+    const cleanup = vi.fn().mockReturnValueOnce(false).mockReturnValue(true)
+    const release = await retainMicromambaWorkingCache('K:\\OpenScience\\runtime', {
+      platform: 'win32',
+      canonicalize: (path) => win32.normalize(path),
+      cleanup,
+      requiresRecoveryRetention: async () => false
+    })
+    await expect(release({})).resolves.toBe(false)
+    await expect(release({})).resolves.toBe(true)
+    await expect(release({})).resolves.toBe(true)
+    expect(cleanup).toHaveBeenCalledTimes(2)
+  })
+
   it('blocks a new lease until final publication and cleanup finish', async () => {
     let finishPublication: (() => void) | undefined
     const publication = new Promise<number>((resolve) => {

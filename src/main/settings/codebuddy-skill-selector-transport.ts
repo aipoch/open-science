@@ -53,11 +53,17 @@ export function createCodeBuddySkillSelectorTransport(input: {
     },
     { skillSelectorFailureMode: 'throw' }
   )
-  let released = false
-  const release = async (): Promise<void> => {
-    if (released) return
-    released = true
-    await selector.close()
+  let releasePromise: Promise<void> | undefined
+  const release = (): Promise<void> => {
+    if (releasePromise) return releasePromise
+    const pending = Promise.resolve()
+      .then(() => selector.close())
+      .catch((error) => {
+        if (releasePromise === pending) releasePromise = undefined
+        throw error
+      })
+    releasePromise = pending
+    return pending
   }
   return Object.freeze({
     providerTransportLease: {

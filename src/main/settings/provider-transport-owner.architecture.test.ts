@@ -77,7 +77,7 @@ describe('Provider transport ownership', () => {
         ? [member.name.text]
         : []
     })
-    expect(operations).toEqual(['acquire'])
+    expect(operations).toEqual(['acquire', 'shutdown'])
 
     const exports = sourceFileFor(ownerPath).statements.filter(isExportDeclaration)
     expect(

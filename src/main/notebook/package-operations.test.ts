@@ -102,6 +102,7 @@ const harness = (
       completeInterruptedInstall: vi.fn().mockResolvedValue(undefined)
     },
     recovery: {
+      retainLiveCleanup: vi.fn(),
       isGloballyBlocked: vi.fn(() => false),
       isPrefixBlocked: vi.fn(() => false),
       isRuntimeIdBlocked: vi.fn(() => false),

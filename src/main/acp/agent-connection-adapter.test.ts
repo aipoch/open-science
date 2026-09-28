@@ -48,7 +48,7 @@ class FakeAgentProcess extends EventEmitter {
 const asAgentProcess = (process: FakeAgentProcess): ChildProcessWithoutNullStreams =>
   process as unknown as ChildProcessWithoutNullStreams
 
-const hooks = (): AcpAgentConnectionHooks => ({
+const hooks = (owner = new AcpConnectionResourceOwner()): AcpAgentConnectionHooks => ({
   createElicitation: vi.fn(async () => ({ action: 'decline' as const })),
   requestPermission: vi.fn(async () => ({ outcome: { outcome: 'cancelled' as const } })),
   observeSessionUpdate: vi.fn(),
@@ -60,14 +60,13 @@ const hooks = (): AcpAgentConnectionHooks => ({
   onBackendResolved: vi.fn(),
   onProcessSpawned: vi.fn(),
   onBackendPublished: vi.fn(),
-  onProcessTreeReaped: vi.fn(),
+  cleanupUnattachedResources: (resource) => owner.cleanupUnattached(resource),
   markProcessExitExpected: vi.fn(),
   onProcessStderr: vi.fn(),
   onProcessError: vi.fn(),
   onProcessExit: vi.fn(),
   onConnectionClosed: vi.fn(),
-  reportCleanupFailure: vi.fn(),
-  reportProcessTreeError: vi.fn()
+  reportCleanupFailure: vi.fn()
 })
 
 const openConnection = async (
@@ -123,6 +122,47 @@ const openCandidate = async (
 }
 
 describe('AcpAgentConnectionAdapter', () => {
+  it.each(['superseded', 'shutdown'] as const)(
+    'does not spawn a resolved backend after %s and retains failed candidate leases for recovery',
+    async (reason) => {
+      const owner = new AcpConnectionResourceOwner()
+      const backendOwner = new AcpBackendGenerationOwner(claudeCodeFramework)
+      const backend = Promise.withResolvers<ResolvedAgentBackend>()
+      const spawn = vi.fn(() => asAgentProcess(new FakeAgentProcess()))
+      const release = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('bridge close failed'))
+        .mockRejectedValueOnce(new Error('bridge still closing'))
+        .mockResolvedValue(undefined)
+      let revoked = false
+      const pending = new AcpAgentConnectionAdapter().open(
+        {
+          epoch: 1,
+          resolveBackend: () => backend.promise,
+          prepareBackend: (resolved) =>
+            backendOwner.prepare({ epoch: 1, assertCurrent: vi.fn() }, resolved),
+          isCurrent: () => reason !== 'superseded' || !revoked,
+          isShuttingDown: () => reason === 'shutdown' && revoked,
+          spawnAgent: spawn
+        },
+        hooks(owner)
+      )
+      revoked = true
+      backend.resolve({
+        framework: claudeCodeFramework,
+        executablePath: '',
+        env: {},
+        providerTransportLease: { setTarget: vi.fn(() => true), release }
+      })
+      await expect(pending).rejects.toThrow(reason === 'shutdown' ? 'shutting down' : 'superseded')
+      expect(spawn).not.toHaveBeenCalled()
+      expect(owner.hasProcessResources).toBe(true)
+      await expect(owner.beginAwaitableShutdown(false).finish()).resolves.toEqual({ reaped: false })
+      await expect(owner.beginAwaitableShutdown(false).finish()).resolves.toEqual({ reaped: true })
+      expect(release).toHaveBeenCalledTimes(3)
+    }
+  )
+
   it('preserves stderr separators and decodes UTF-8 split across byte chunks', async () => {
     const process = new FakeAgentProcess()
     const connectionHooks = hooks()
@@ -243,6 +283,25 @@ describe('AcpAgentConnectionAdapter', () => {
 
     await candidate.dispose()
     expect(terminateProcessTree).toHaveBeenCalledOnce()
+  })
+
+  it('hands a failed candidate tree to the resource owner for shutdown recovery', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const process = new FakeAgentProcess()
+    const candidate = await openCandidate(process, undefined, hooks(owner))
+    terminateProcessTree
+      .mockResolvedValueOnce({ reaped: false })
+      .mockResolvedValueOnce({ reaped: false })
+      .mockResolvedValueOnce({ reaped: true })
+
+    await candidate.dispose()
+    await expect(owner.beginAwaitableShutdown(false).finish()).resolves.toEqual({ reaped: false })
+    await expect(owner.beginAwaitableShutdown(false).finish()).resolves.toEqual({ reaped: true })
+    expect(terminateProcessTree.mock.calls.map(([child]) => child)).toEqual([
+      process,
+      process,
+      process
+    ])
   })
 
   it('transfers once without exposing resources and leaves teardown solely to the owner', async () => {

@@ -17,6 +17,44 @@ afterEach(() => {
 })
 
 describe('sandboxedPackageSpawn', () => {
+  it.each(['process', 'network', 'temporary', 'rejected-process'] as const)(
+    'does not accept an installer result with incomplete %s cleanup',
+    async (failure) => {
+      const cleanup = vi.fn(async () => {
+        if (failure === 'rejected-process') throw new Error('sandbox cleanup failed')
+        return {
+          processesTerminated: failure !== 'process',
+          networkClosed: failure !== 'network',
+          temporaryResourcesRemoved: failure !== 'temporary'
+        }
+      })
+      const spawn = sandboxedPackageSpawn({
+        processSandbox: {
+          wrap: async (invocation) => ({
+            ...invocation,
+            env: invocation.env ?? {},
+            annotateStderr: (stderr) => stderr,
+            cleanup
+          })
+        },
+        request: { language: 'python', packages: [] },
+        runtimeRoot: process.cwd(),
+        storageRoot: process.cwd(),
+        terminateTree: async () => ({ reaped: failure !== 'rejected-process' })
+      })
+      const completion = spawn(process.execPath, ['-e', 'process.exit(0)'])
+      await expect(completion).rejects.toMatchObject({
+        processesTerminated: failure === 'network' || failure === 'temporary'
+      })
+      await expect(completion).rejects.toThrow(
+        failure === 'process' || failure === 'rejected-process'
+          ? 'RUNTIME_CHILD_UNCONFIRMED'
+          : 'PACKAGE_CLEANUP_INCOMPLETE'
+      )
+      expect(cleanup).toHaveBeenCalledOnce()
+    }
+  )
+
   it('passes GUI-authorized roots to the package sandbox with their access mode', async () => {
     const storageRoot = mkdtempSync(join(tmpdir(), 'open-science-package-grants-'))
     const runtimeRoot = join(storageRoot, 'runtime')
@@ -34,7 +72,11 @@ describe('sandboxedPackageSpawn', () => {
         args: invocation.args,
         env: invocation.env,
         annotateStderr: (stderr: string) => stderr,
-        cleanup: vi.fn()
+        cleanup: vi.fn().mockResolvedValue({
+          processesTerminated: true,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
       }))
     }
     const spawn = sandboxedPackageSpawn({
@@ -199,7 +241,11 @@ describe('sandboxedPackageSpawn', () => {
             args: invocation.args,
             env: invocation.env,
             annotateStderr: (stderr: string) => stderr,
-            cleanup: vi.fn()
+            cleanup: vi.fn().mockResolvedValue({
+              processesTerminated: true,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
+            })
           }
         })
       }
@@ -375,7 +421,7 @@ describe('sandboxedPackageSpawn', () => {
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
       processesTerminated: true,
-      confirmTermination
+      confirmTermination: expect.any(Function)
     })
   })
 
@@ -423,7 +469,7 @@ describe('sandboxedPackageSpawn', () => {
     expect(confirmTermination).toHaveBeenCalledOnce()
     expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
       processesTerminated: true,
-      confirmTermination
+      confirmTermination: expect.any(Function)
     })
   })
 
@@ -434,7 +480,11 @@ describe('sandboxedPackageSpawn', () => {
         args: invocation.args,
         env: invocation.env,
         annotateStderr: (stderr: string) => stderr,
-        cleanup: vi.fn()
+        cleanup: vi.fn().mockResolvedValue({
+          processesTerminated: true,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
       }))
     }
     const spawn = sandboxedPackageSpawn({
@@ -476,7 +526,11 @@ describe('sandboxedPackageSpawn', () => {
         args: invocation.args,
         env: invocation.env,
         annotateStderr: (stderr: string) => stderr,
-        cleanup: vi.fn()
+        cleanup: vi.fn().mockResolvedValue({
+          processesTerminated: true,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
       }))
     }
     const spawn = sandboxedPackageSpawn({
@@ -496,7 +550,11 @@ describe('sandboxedPackageSpawn', () => {
 
   it('forwards installer deadlines and cleans up only after the child is stopped', async () => {
     const endExecution = vi.fn()
-    const cleanup = vi.fn()
+    const cleanup = vi.fn().mockResolvedValue({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
     const processSandbox: NotebookProcessSandbox = {
       wrap: vi.fn(async (invocation) => ({
         executable: invocation.executable,
@@ -612,7 +670,7 @@ describe('sandboxedPackageSpawn', () => {
         return { reaped: false }
       })
       const cleanup = vi.fn().mockResolvedValue({
-        processesTerminated: false,
+        processesTerminated,
         networkClosed: true,
         temporaryResourcesRemoved: true
       })
@@ -650,8 +708,9 @@ describe('sandboxedPackageSpawn', () => {
       expect(completed).toBe(false)
       expect(cleanup).not.toHaveBeenCalled()
       releaseReaping?.()
-      await expect(completion).resolves.toMatchObject({ code })
-      expect(cleanup).toHaveBeenCalledWith('exit', {
+      if (processesTerminated) await expect(completion).resolves.toMatchObject({ code })
+      else await expect(completion).rejects.toThrow('RUNTIME_CHILD_UNCONFIRMED')
+      expect(cleanup).toHaveBeenCalledWith(processesTerminated ? 'exit' : 'spawn-failed', {
         processesTerminated,
         confirmTermination: expect.any(Function)
       })
@@ -693,7 +752,10 @@ describe('sandboxedPackageSpawn', () => {
         helperPid = Number(result.stdout)
         expect(result.code).toBe(0)
         await vi.waitFor(() => expect(() => process.kill(helperPid as number, 0)).toThrow())
-        expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: true })
+        expect(cleanup).toHaveBeenCalledWith('exit', {
+          processesTerminated: true,
+          confirmTermination: expect.any(Function)
+        })
       } finally {
         if (helperPid) {
           try {

@@ -33,7 +33,6 @@
     "src/main/composition/specialists.ts",
     "src/main/composition/storage-startup.ts",
     "src/main/composition/upload-storage.ts",
-
     "src/main/composition/notebook-environment.ts",
     "src/main/composition/notebook-environment.test.ts",
     "src/main/composition/reviewer.test.ts",
@@ -195,7 +194,9 @@
     "src/main/credential-identity/macos.test.ts",
     "src/main/credential-identity/probe-logging.test.ts",
     "src/main/process-tree-windows.ts",
-    "src/main/process-tree.windows.integration.test.ts"
+    "src/main/process-tree.windows.integration.test.ts",
+    "src/main/owned-process-spawn.test.ts",
+    "src/main/owned-process-spawn.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -334,7 +335,8 @@
       "src/main/credential-identity/windows-profile-key.test.ts",
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
-      "src/main/process-tree.windows.integration.test.ts"
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/owned-process-spawn.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

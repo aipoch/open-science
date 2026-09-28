@@ -150,6 +150,9 @@ type PromptAdmissionGuard = <Result>(
 class AcpRuntimeCoordinator {
   private readonly runtimes = new Set<AcpRuntime>()
   private readonly retiredRuntimes = new Set<AcpRuntime>()
+  // A generation can stop routing Sessions before its physical resources are reaped. Keep those
+  // owners outside UI/routing aggregation, but include them in every subsequent shutdown gate.
+  private readonly cleanupRuntimes = new Set<AcpRuntime>()
   private readonly sessionRuntimes = new Map<string, AcpRuntime>()
   private readonly sessionConnectionStatuses = new Map<string, AcpStateSnapshot['status']>()
   private readonly permissionRuntimes = new Map<string, AcpRuntime>()
@@ -2305,6 +2308,7 @@ class AcpRuntimeCoordinator {
   }
 
   private releaseRuntimeOwnership(runtime: AcpRuntime): void {
+    if (runtime.hasProcessResources) this.cleanupRuntimes.add(runtime)
     const targetKey = this.runtimeTargetKeys.get(runtime)
     if (targetKey && this.targetedRuntimes.get(targetKey) === runtime) {
       this.targetedRuntimes.delete(targetKey)
@@ -2441,7 +2445,7 @@ class AcpRuntimeCoordinator {
     shutdown: (runtime: AcpRuntime) => Promise<{ reaped: boolean }>,
     stopDelegatedWork: () => Promise<void> | undefined
   ): Promise<{ reaped: boolean }> {
-    const runtimes = Array.from(this.runtimes)
+    const runtimes = [...new Set([...this.runtimes, ...this.cleanupRuntimes])]
     const [delegatedOutcome, ...outcomes] = await Promise.allSettled([
       stopDelegatedWork() ?? Promise.resolve(),
       ...runtimes.map(shutdown)
@@ -2449,6 +2453,14 @@ class AcpRuntimeCoordinator {
     const failure =
       outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected') ??
       (delegatedOutcome.status === 'rejected' ? delegatedOutcome : undefined)
+    outcomes.forEach((outcome, index) => {
+      const runtime = runtimes[index]
+      if (outcome.status === 'fulfilled' && outcome.value.reaped) {
+        this.cleanupRuntimes.delete(runtime)
+      } else {
+        this.cleanupRuntimes.add(runtime)
+      }
+    })
     if (failure) {
       // Awaitable shutdown paths suppress each runtime's closed-state event. Account for partial
       // success here so only runtimes that really stopped release their routing ownership.
@@ -2470,6 +2482,9 @@ class AcpRuntimeCoordinator {
 
   private clearRuntimeOwnership(): void {
     this.cancelRootAdmissions()
+    for (const runtime of this.runtimes) {
+      if (runtime.hasProcessResources) this.cleanupRuntimes.add(runtime)
+    }
     for (const attempts of this.pendingPromptStarts.values()) {
       for (const attempt of attempts) {
         attempt.startAdmission?.reject(

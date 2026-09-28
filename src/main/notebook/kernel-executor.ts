@@ -522,6 +522,8 @@ const helperInitializationError = (
 // as independent processes; the requested kind never triggers a restart of another.
 class NotebookKernelExecutor implements NotebookExecutor {
   private readonly procs = new Map<ProcessKey, ProcState>()
+  private readonly pendingProcStarts = new Map<ProcessKey, Promise<ProcState>>()
+  private shutdownInFlight: Promise<ProcessTreeKillResult> | undefined
   // In-flight process-tree teardowns, keyed by the process key of the proc being reaped. A dropped
   // proc's tree is killed asynchronously; ensureProc awaits any pending teardown for a key before
   // spawning its replacement, so two live process trees for the SAME (kind, env) never briefly coexist.
@@ -532,8 +534,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     {
       completion: Promise<ProcessTreeKillResult>
       retry: () => Promise<ProcessTreeKillResult>
-      failure: () => Error | undefined
-      owner: ProcState
+      failure?: () => Error | undefined
+      owner?: ProcState
     }
   >()
   // One temp dir the loops write captured figures into; created lazily, reused, removed on shutdown.
@@ -595,6 +597,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
       this.checkEnvironmentReady(kind, env, request)
 
       const proc = await this.ensureProc(key, kind, env, request)
+      // Shutdown can retire a just-published start before this awaiting caller resumes. Validate
+      // before helper initialization too: that private request also needs a live response owner.
+      if (this.shutdownInFlight) throw new Error('Notebook kernel is shutting down.')
+      if (!proc.alive || this.procs.get(key) !== proc) {
+        throw proc.terminationError ?? new Error('Notebook kernel process exited before execution.')
+      }
       if (proc.pending) throw new Error('Notebook execution is already running.')
       endSandboxExecution = proc.beginSandboxExecution()
       if (kind !== 'repl') {
@@ -745,7 +753,19 @@ class NotebookKernelExecutor implements NotebookExecutor {
   // Kills every loop, rejects any pending run, and removes the temp figures dir. Returns { reaped }:
   // true only when every kernel tree was cleanly reaped, so shutdownAll can gate the update-install
   // uninstall on all interpreter file handles being released.
-  async shutdown(): Promise<ProcessTreeKillResult> {
+  shutdown(): Promise<ProcessTreeKillResult> {
+    if (this.shutdownInFlight) return this.shutdownInFlight
+    const shutdown = this.shutdownProcesses().finally(() => {
+      if (this.shutdownInFlight === shutdown) this.shutdownInFlight = undefined
+    })
+    this.shutdownInFlight = shutdown
+    return shutdown
+  }
+
+  private async shutdownProcesses(): Promise<ProcessTreeKillResult> {
+    // Sandbox preparation may have yielded before its child is published in `procs`. Close new
+    // admission for this shutdown and await every admitted start before taking the ownership set.
+    await Promise.allSettled(this.pendingProcStarts.values())
     const procs = Array.from(this.procs.values())
     this.procs.clear()
 
@@ -766,16 +786,22 @@ class NotebookKernelExecutor implements NotebookExecutor {
       Promise.all(pending)
     ])
 
-    if (this.figuresDir) {
-      await rm(this.figuresDir, { recursive: true, force: true }).catch(() => {})
-      this.figuresDir = undefined
-    }
     // Reaped only when every current proc AND every outstanding teardown reaped its whole tree.
-    return {
-      reaped:
-        results.every((result) => result.reaped) &&
-        pendingResults.every((result) => result?.reaped === true)
+    const reaped =
+      results.every((result) => result.reaped) &&
+      pendingResults.every((result) => result?.reaped === true)
+    // All kernels share this directory. A dropped kernel or incomplete sandbox cleanup can still
+    // own it; keep the path so a later shutdown can finish this final resource obligation.
+    if (!reaped) return { reaped: false }
+    if (this.figuresDir) {
+      try {
+        await rm(this.figuresDir, { recursive: true, force: true })
+        this.figuresDir = undefined
+      } catch {
+        return { reaped: false }
+      }
     }
+    return { reaped: true }
   }
 
   // Tears down all loops so the next execute() lazily respawns a clean process per language.
@@ -838,7 +864,27 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
   // Reuses a live loop for the (kind, env) or spawns a fresh one, wiring its readline, stderr drain,
   // and exit handling.
-  private async ensureProc(
+  private ensureProc(
+    key: ProcessKey,
+    kind: KernelProcessKind,
+    env: string,
+    request: NotebookExecutionRequest
+  ): Promise<ProcState> {
+    if (this.shutdownInFlight) {
+      return Promise.reject(new Error('Notebook kernel is shutting down.'))
+    }
+    const pending = this.pendingProcStarts.get(key)
+    // Concurrent preparation must not publish two processes under the same routing key. Recheck
+    // admission and interpreter identity after the first start has finished.
+    if (pending) return pending.then(() => this.ensureProc(key, kind, env, request))
+    const start = this.ensureProcOnce(key, kind, env, request)
+    this.pendingProcStarts.set(key, start)
+    return start.finally(() => {
+      if (this.pendingProcStarts.get(key) === start) this.pendingProcStarts.delete(key)
+    })
+  }
+
+  private async ensureProcOnce(
     key: ProcessKey,
     kind: KernelProcessKind,
     env: string,
@@ -864,7 +910,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // we never run two live process trees for the same (kind, env) at once.
     const pending = await this.reconcilePendingTeardown(key)
     if (pending && !pending.reaped) {
-      const cause = this.pendingTeardowns.get(key)?.failure()
+      const cause = this.pendingTeardowns.get(key)?.failure?.()
       throw new NotebookExecutionStopError(
         cause ? `${cause.message}\nNotebook process tree could not be stopped.` : undefined,
         {
@@ -1030,6 +1076,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     ) => Promise<NotebookSandboxCleanupResult>
   }> {
     assertProcessTreeSupport(this.platform)
+    const processKey = kind === 'repl' ? 'repl' : `${kind}:${env}`
     const figuresDir = this.ensureFiguresDir()
     // Control-plane REPL may omit a runtime root; package cache belongs to a managed runtime directory.
     const workloadCacheEnv = request.runtimeRoot
@@ -1241,7 +1288,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     ): Promise<NotebookSandboxCleanupResult> =>
       sandboxed?.cleanup(reason, {
         ...processOutcome,
-        confirmTermination
+        // Before spawn there is no process to inspect, including on a later owner cleanup retry.
+        confirmTermination: child ? confirmTermination : async () => true
       }) ??
       Promise.resolve({
         processesTerminated: processOutcome.processesTerminated,
@@ -1251,45 +1299,46 @@ class NotebookKernelExecutor implements NotebookExecutor {
     const rpcTokenFileDescriptor =
       kind === 'repl' && this.platform === 'linux' && request.mcpRpcToken ? 3 : undefined
     let ownershipIntent: KernelProcessSpawnIntent | undefined
-    if (this.processLifecycle && this.laneKey && ownerToken) {
-      ownershipIntent = this.processLifecycle.beginSpawn(
-        {
-          laneKey: this.laneKey,
-          processKey: kind === 'repl' ? 'repl' : `${kind}:${env}`,
-          kernelEpochId
-        },
-        ownerToken
-      )
-    }
-    const kernelExecutable = sandboxed?.executable ?? invocation.executable
-    const kernelArgs = sandboxed?.args ?? invocation.args
-    const spawnExecutable = ownershipIntent ? process.execPath : kernelExecutable
-    const spawnArgs = ownershipIntent
-      ? [
-          this.processHostPath,
-          ownershipIntent.path,
-          ownershipIntent.record.receiptId,
-          kernelExecutable,
-          ...kernelArgs
-        ]
-      : kernelArgs
-    // Admission has already been checked before any kernel resources are prepared.
-    const processTreeOwnership = createPosixProcessTreeOwnership(
-      sandboxed?.env ?? spawnEnv,
-      this.platform
-    )
-    const effectiveSpawnEnv = {
-      ...processTreeOwnership.env,
-      ...(ownershipIntent
-        ? {
-            ELECTRON_RUN_AS_NODE: '1',
-            OPEN_SCIENCE_KERNEL_INHERITED_FDS: rpcTokenFileDescriptor ? '1' : '0'
-          }
-        : {})
-    }
     let child: ChildProcessWithoutNullStreams
+    let processTreeOwnership: ReturnType<typeof createPosixProcessTreeOwnership>
     let spawnAdmission: Readonly<{ started: () => void; notStarted: () => void }> | undefined
     try {
+      if (this.processLifecycle && this.laneKey && ownerToken) {
+        ownershipIntent = this.processLifecycle.beginSpawn(
+          {
+            laneKey: this.laneKey,
+            processKey: kind === 'repl' ? 'repl' : `${kind}:${env}`,
+            kernelEpochId
+          },
+          ownerToken
+        )
+      }
+      const kernelExecutable = sandboxed?.executable ?? invocation.executable
+      const kernelArgs = sandboxed?.args ?? invocation.args
+      const spawnExecutable = ownershipIntent ? process.execPath : kernelExecutable
+      const spawnArgs = ownershipIntent
+        ? [
+            this.processHostPath,
+            ownershipIntent.path,
+            ownershipIntent.record.receiptId,
+            kernelExecutable,
+            ...kernelArgs
+          ]
+        : kernelArgs
+      // Admission has already been checked before any kernel resources are prepared.
+      processTreeOwnership = createPosixProcessTreeOwnership(
+        sandboxed?.env ?? spawnEnv,
+        this.platform
+      )
+      const effectiveSpawnEnv = {
+        ...processTreeOwnership.env,
+        ...(ownershipIntent
+          ? {
+              ELECTRON_RUN_AS_NODE: '1',
+              OPEN_SCIENCE_KERNEL_INHERITED_FDS: rpcTokenFileDescriptor ? '1' : '0'
+            }
+          : {})
+      }
       // No await may separate this check from spawn: settings mutations must not interleave
       // between validating the prepared launch and creating its process.
       spawnAdmission = sandboxed?.beginSpawn?.()
@@ -1305,20 +1354,34 @@ class NotebookKernelExecutor implements NotebookExecutor {
       })
     } catch (error) {
       spawnAdmission?.notStarted()
-      if (ownershipIntent) this.processLifecycle?.abandonSpawn(ownershipIntent)
-      await cleanupSandbox('spawn-failed', { processesTerminated: true })
+      await this.trackTeardown(processKey, async () => {
+        if (ownershipIntent) this.processLifecycle?.abandonSpawn(ownershipIntent)
+        const cleanup = await cleanupSandbox('spawn-failed', { processesTerminated: true })
+        return {
+          reaped:
+            cleanup.processesTerminated &&
+            cleanup.networkClosed &&
+            cleanup.temporaryResourcesRemoved
+        }
+      })
       throw error
     }
     child.once('spawn', () => spawnAdmission?.started())
     child.once('error', () => spawnAdmission?.notStarted())
-    if (this.platform !== 'win32' && this.canTrackPosixProcesses)
-      this.registerOwnedProcessGroup(child, processTreeOwnership.token)
     const cleanupFailedSpawn = async (): Promise<void> => {
-      const result = await teardownProcess()
-      if (!ownershipReceipt && ownershipIntent && result.reaped) {
-        this.processLifecycle?.abandonSpawn(ownershipIntent)
-      }
-      await cleanupSandbox('spawn-failed', { processesTerminated: result.reaped })
+      await this.trackTeardown(processKey, async () => {
+        const result = await teardownProcess()
+        if (!ownershipReceipt && ownershipIntent) {
+          this.processLifecycle?.completeSpawn(ownershipIntent, result.reaped)
+        }
+        const cleanup = await cleanupSandbox('spawn-failed', { processesTerminated: result.reaped })
+        return {
+          reaped:
+            cleanup.processesTerminated &&
+            cleanup.networkClosed &&
+            cleanup.temporaryResourcesRemoved
+        }
+      })
     }
     const recordOwnership = (): void => {
       if (!ownershipIntent || child.pid === undefined || ownershipReceipt) return
@@ -1329,6 +1392,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
       })
     }
     try {
+      if (this.platform !== 'win32' && this.canTrackPosixProcesses)
+        this.registerOwnedProcessGroup(child, processTreeOwnership.token)
       // ChildProcess.pid is populated synchronously for a successful spawn. The parent commits it
       // before yielding; if main dies first, kernel_process_host atomically activates the same receipt
       // before it starts the actual loop.
@@ -1849,6 +1914,26 @@ class NotebookKernelExecutor implements NotebookExecutor {
       retry: () => this.killChildTracked(proc, reason),
       failure: () => proc.terminationError,
       owner: proc
+    })
+    return done
+  }
+
+  // Failed launches have no published ProcState, but retain the same cleanup obligation.
+  private trackTeardown(
+    key: ProcessKey,
+    teardown: () => Promise<ProcessTreeKillResult>
+  ): Promise<ProcessTreeKillResult> {
+    const done = teardown()
+      .catch(() => ({ reaped: false }))
+      .then((result) => {
+        if (result.reaped && this.pendingTeardowns.get(key)?.completion === done) {
+          this.pendingTeardowns.delete(key)
+        }
+        return result
+      })
+    this.pendingTeardowns.set(key, {
+      completion: done,
+      retry: () => this.trackTeardown(key, teardown)
     })
     return done
   }

@@ -222,6 +222,7 @@
         "src/main/notifications/desktop-attention.ts",
         "src/main/notifications/desktop-badge.ts",
         "src/main/permission-grants/capability.ts",
+        "src/main/owned-process-spawn.ts",
         "src/main/process-tree.ts",
         "src/main/remote-access/remoteit.ts",
         "src/main/settings/agent-runtime-manager.ts",

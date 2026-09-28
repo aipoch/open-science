@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { createTrackedAgentSpawner } from '../owned-process-spawn'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 
 import { createLogger } from '../logger'
@@ -79,7 +80,7 @@ export type SpawnClaudeAgentAcpOptions = {
 // environment and pointing CLAUDE_CODE_EXECUTABLE at the detected system claude.
 const spawnClaudeAgentAcp = ({
   envOverrides = {},
-  spawnProcess = spawn as AgentProcessSpawner,
+  spawnProcess = createTrackedAgentSpawner(spawn as AgentProcessSpawner),
   executablePath
 }: SpawnClaudeAgentAcpOptions = {}): ChildProcessWithoutNullStreams => {
   if (!executablePath) {

@@ -255,6 +255,32 @@ class NotebookNetworkSandbox {
         throw new Error('Notebook sandbox process is already closed.')
       }
     }
+    const cleanup: NotebookSandboxedProcess['cleanup'] = (reason, processOutcome) => {
+      if (cleanupPromise) {
+        if (
+          processOutcome.processesTerminated &&
+          activeCommand.cleanupRequest?.processOutcome.processesTerminated === false
+        ) {
+          // A newer proof from this command's owner must not be lost behind an older attempt.
+          return cleanupPromise.then(
+            (result) => (cleanupComplete(result) ? result : cleanup(reason, processOutcome)),
+            () => cleanup(reason, processOutcome)
+          )
+        }
+        return cleanupPromise
+      }
+      cleanupPromise = this.#releaseCommand(commandId, processOutcome, reason).then(
+        (result) => {
+          if (!cleanupComplete(result)) cleanupPromise = undefined
+          return result
+        },
+        (error) => {
+          cleanupPromise = undefined
+          throw error
+        }
+      )
+      return cleanupPromise
+    }
     return {
       argv: wrapped.argv,
       env: wrapped.env,
@@ -275,20 +301,7 @@ class NotebookNetworkSandbox {
         this.#backend.setCommandExecutionActive(commandId, active)
       },
       resetNetworkConnections: () => this.#backend.resetCommandConnections(commandId),
-      cleanup: (reason, processOutcome) => {
-        if (cleanupPromise) return cleanupPromise
-        cleanupPromise = this.#releaseCommand(commandId, processOutcome, reason).then(
-          (result) => {
-            if (!cleanupComplete(result)) cleanupPromise = undefined
-            return result
-          },
-          (error) => {
-            cleanupPromise = undefined
-            throw error
-          }
-        )
-        return cleanupPromise
-      }
+      cleanup
     }
   }
 
@@ -429,9 +442,29 @@ class NotebookNetworkSandbox {
       command.detachSignal?.()
       command.controller.abort(new Error('Notebook process ended.'))
     }
-    if (command.cleanupTask) return command.cleanupTask
+    if (command.cleanupTask) {
+      if (
+        processOutcome.processesTerminated &&
+        command.cleanupRequest?.processOutcome.processesTerminated === false
+      ) {
+        return command.cleanupTask.then(
+          (result) =>
+            cleanupComplete(result)
+              ? result
+              : this.#releaseCommand(commandId, processOutcome, reason),
+          () => this.#releaseCommand(commandId, processOutcome, reason)
+        )
+      }
+      return command.cleanupTask
+    }
     const retry = Boolean(command.cleanupRequest)
     command.cleanupRequest ??= { reason, processOutcome }
+    if (
+      processOutcome.processesTerminated &&
+      !command.cleanupRequest.processOutcome.processesTerminated
+    ) {
+      command.cleanupRequest = { reason: command.cleanupRequest.reason, processOutcome }
+    }
     command.cleanupTask = (async () => {
       const retainedOutcome = command.cleanupRequest!.processOutcome
       if (retry && !retainedOutcome.processesTerminated && retainedOutcome.confirmTermination) {

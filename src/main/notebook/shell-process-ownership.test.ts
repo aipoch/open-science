@@ -288,6 +288,24 @@ describe('Shell process ownership receipt lifecycle', () => {
     expect(terminate).toHaveBeenCalledTimes(2)
   })
 
+  it('retries receipt removal after a failed release without forgetting the obligation', async () => {
+    const { root, release } = await claimedReceipt()
+    const registry = new ShellProcessOwnershipRegistry(root)
+    const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('receipt busy'), { code: 'EACCES' })
+    })
+    try {
+      expect(release).toThrow('receipt busy')
+      expect(registry.hasReceipts()).toBe(true)
+      release()
+      expect(registry.hasReceipts()).toBe(false)
+      release()
+      expect(unlink).toHaveBeenCalledTimes(2)
+    } finally {
+      unlink.mockRestore()
+    }
+  })
+
   it('fails closed on a crash between launch intent and immutable process identity', async () => {
     const root = await mkdtemp(join(tmpdir(), 'shell-process-launch-intent-'))
     roots.push(root)

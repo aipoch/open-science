@@ -106,7 +106,11 @@ describeMacOS('macOS process-tree consumers (real processes)', () => {
     const helperPid = recordHelperPid(result.stdout)
     expect(result.code).toBe(0)
     await waitForDead(helperPid)
-    expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: true })
+    expect(cleanup).toHaveBeenCalledWith('exit', {
+      processesTerminated: true,
+      confirmTermination: expect.any(Function)
+    })
+    await expect(cleanup.mock.calls[0][1].confirmTermination()).resolves.toBe(true)
   }, 15_000)
 
   it('reaps a setsid helper through the persistent kernel consumer', async () => {

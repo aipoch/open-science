@@ -454,11 +454,12 @@ describe('Settings backend ownership architecture', () => {
       'resolveActiveSpawnConfig',
       'resolveAdmittedTarget',
       'resolveExplicitTarget',
-      'resolveSelection'
+      'resolveSelection',
+      'shutdownProviderTransports'
     ])
     expect(
       publicOperationsOf(settingsPaths.providerTransportOwner, 'ProviderTransportOwner')
-    ).toEqual(['acquire'])
+    ).toEqual(['acquire', 'shutdown'])
     expect(publicOperationsOf(settingsPaths.responsesBridge, 'ResponsesBridge')).toEqual([
       'close',
       'registerHostMessageSession',
@@ -502,7 +503,7 @@ describe('Settings backend ownership architecture', () => {
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookNetwork setNotificationsEnabled
         setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
-        setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex
+        setToolPermission shutdownProviderTransports skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex
         uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
@@ -1537,7 +1538,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/notebook/runtime-service.rpc-retirement.test.ts',
       'src/main/literature/smart-collections.test.ts',
       'src/main/notebook/runtime-service.macos-isolation.integration.test.ts',
-      'src/main/acp/library-auto-policy.test.ts'
+      'src/main/acp/library-auto-policy.test.ts',
+      'src/main/owned-process-spawn.test.ts'
     ])
     expect(
       [

@@ -1902,6 +1902,10 @@ class SettingsService {
     return this.scenarioModels.subagent.resolveAdmittedBackend(...args)
   }
 
+  shutdownProviderTransports(): Promise<{ reaped: boolean }> {
+    return this.backendResolver.shutdownProviderTransports()
+  }
+
   async resolveAgentBackend(
     selection: AgentBackendSelection,
     context: AgentBackendResolutionContext = {}

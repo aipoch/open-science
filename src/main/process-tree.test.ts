@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Hoisted spawn double: process-tree spawns `taskkill` (win32) or `ps` (posix); each test wires the
 // return value to a controllable EventEmitter so it can drive exit/close/error and ps output.
@@ -18,6 +18,7 @@ const {
   createPosixProcessTreeOwnership,
   onProcessTreeReaped,
   registerOwnedPosixProcessGroup,
+  registerProcessTreeOwnership,
   trackOwnedPosixProcessTree,
   terminateProcessTree
 } = await import('./process-tree')
@@ -65,6 +66,14 @@ const originalPlatform = process.platform
 const setPlatform = (value: string): void => {
   Object.defineProperty(process, 'platform', { value, configurable: true })
 }
+
+beforeEach(() => {
+  // Later verification samples contain only an unrelated process unless a test supplies a live
+  // survivor. An empty Linux /proc table is deliberately not accepted as a complete snapshot.
+  readdirMock.mockReset().mockResolvedValue(['99999'])
+  readFileMock.mockReset().mockResolvedValue(linuxStat(99999, 1, 99999, 99999, 1))
+  readFileSyncMock.mockReset()
+})
 
 afterEach(() => {
   setPlatform(originalPlatform)
@@ -223,6 +232,7 @@ describe('terminateProcessTree (posix)', () => {
       setPlatform('linux')
       const marker = 'command-ownership'
       const child = new FakeChild(1000)
+      let helperAlive = true
       let releaseFirstSample: ((entries: string[]) => void) | undefined
       readdirMock
         .mockImplementationOnce(
@@ -231,7 +241,7 @@ describe('terminateProcessTree (posix)', () => {
               releaseFirstSample = resolve
             })
         )
-        .mockResolvedValue(['2000', '3000'])
+        .mockImplementation(async () => (helperAlive ? ['2000', '3000'] : ['3000']))
       readFileMock.mockImplementation(async (path: string) =>
         path.includes('/2000/')
           ? linuxStat(2000, 1, 2000, 2000, 200)
@@ -244,7 +254,6 @@ describe('terminateProcessTree (posix)', () => {
         if (path === '/proc/2000/stat') return linuxStat(2000, 1, 2000, 2000, reused ? 201 : 200)
         return Buffer.from('OPEN_SCIENCE_PROCESS_TREE_ID=unrelated\0')
       })
-      let helperAlive = true
       const kill = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
         if (signal === 0 && !helperAlive) throw esrch()
         if (signal === 'SIGTERM') helperAlive = false
@@ -462,7 +471,7 @@ describe('terminateProcessTree (posix)', () => {
       )
       .mockResolvedValueOnce(['2000', '2001'])
       .mockResolvedValueOnce(['2001'])
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(['99999'])
     readFileMock
       .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 100))
       .mockResolvedValueOnce(linuxStat(2000, 1, 2000, 2000, 200))
@@ -516,30 +525,18 @@ describe('terminateProcessTree (posix)', () => {
     expect(killSpy).not.toHaveBeenCalledWith(1001, expect.anything())
   })
 
-  it('uses the detached group but fails closed without a Darwin leader identity', async () => {
+  it('does not signal an unproven Darwin group when the leader identity is unavailable', async () => {
     setPlatform('darwin')
-    const ps = new FakePs()
-    spawnMock.mockReturnValueOnce(ps)
-    let groupAlive = true
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
-      expect(pid).toBe(-1000)
-      if (signal === 0 && !groupAlive) throw esrch()
-      if (signal === 'SIGTERM') groupAlive = false
-      return true
-    })
+    const killSpy = vi.spyOn(process, 'kill')
     const child = new FakeChild(1000)
     child.exitCode = 0
 
     trackOwnedPosixProcessTree(child as never)
-    const pending = terminateProcessTree(child as never)
-    ps.stdout.emit('data', Buffer.from('1000 1\n'))
-    ps.emit('close', 0)
-
-    await expect(pending).resolves.toMatchObject({
+    await expect(terminateProcessTree(child as never)).resolves.toMatchObject({
       reaped: false,
       diagnostics: { failureCategory: 'leader-identity-unavailable' }
     })
-    expect(killSpy).toHaveBeenCalledWith(-1000, 'SIGTERM')
+    expect(killSpy).not.toHaveBeenCalled()
     expect(child.kill).not.toHaveBeenCalled()
   })
 
@@ -769,6 +766,67 @@ describe('terminateProcessTree (posix)', () => {
 })
 
 describe('process tree reap notification', () => {
+  it('retries receipt settlement without signaling an already reaped process again', async () => {
+    const child = new FakeChild(4321)
+    const terminate = vi.fn().mockResolvedValue({ reaped: true })
+    const settled = vi.fn().mockImplementationOnce(() => {
+      throw new Error('receipt storage temporarily unavailable')
+    })
+    const release = vi.fn()
+    registerProcessTreeOwnership(child as never, { terminate, settled })
+    onProcessTreeReaped(child as never, release)
+
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: false })
+    expect(release).not.toHaveBeenCalled()
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+    expect(terminate).toHaveBeenCalledOnce()
+    expect(settled).toHaveBeenCalledTimes(2)
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('retains a failed resource release and retries it after physical cleanup has succeeded', async () => {
+    const child = new FakeChild(4321)
+    const terminate = vi.fn().mockResolvedValue({ reaped: true })
+    const settled = vi.fn()
+    const release = vi.fn().mockImplementationOnce(() => {
+      throw new Error('lease release temporarily unavailable')
+    })
+    registerProcessTreeOwnership(child as never, { terminate, settled })
+    onProcessTreeReaped(child as never, release)
+
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: false })
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+    expect(terminate).toHaveBeenCalledOnce()
+    expect(settled).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps failed termination retryable even when its diagnostic logger throws', async () => {
+    const child = new FakeChild(4321)
+    const terminate = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('owner unavailable'))
+      .mockResolvedValue({ reaped: true })
+    const settled = vi.fn()
+    registerProcessTreeOwnership(child as never, { terminate, settled })
+    const log = {
+      error: vi.fn(() => {
+        throw new Error('logger unavailable')
+      })
+    }
+
+    await expect(terminateProcessTree(child as never, undefined, log)).resolves.toEqual({
+      reaped: false
+    })
+    await expect(terminateProcessTree(child as never, undefined, log)).resolves.toEqual({
+      reaped: true
+    })
+    expect(terminate).toHaveBeenCalledTimes(2)
+    expect(settled).toHaveBeenNthCalledWith(1, { reaped: false })
+    expect(settled).toHaveBeenNthCalledWith(2, { reaped: true })
+  })
+
   it('retains admission after close and failed teardown, and releases once after confirmed teardown', async () => {
     setPlatform('win32')
     const child = new FakeChild(4321)

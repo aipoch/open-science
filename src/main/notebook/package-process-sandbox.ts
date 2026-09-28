@@ -27,7 +27,9 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { validateCustomAllowedDomain } from '../../shared/notebook-network'
 import {
   defaultSpawn,
+  PackageProcessCleanupError,
   packageProcessTreeTerminated,
+  type PackageProcessEvidence,
   type InstallRequest,
   type InstallSpawn
 } from './package-manager'
@@ -35,6 +37,7 @@ import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
 import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from './process-environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { kernelExecutableReadRoot } from './kernel-executable-read-root'
+import { CHILD_UNCONFIRMED, isChildUnconfirmedError } from './provisioner-runtime'
 
 type PackageProcessSandboxOptions = Readonly<{
   processSandbox: NotebookProcessSandbox
@@ -332,7 +335,61 @@ export const sandboxedPackageSpawn =
     })
     let endExecution: (() => void) | undefined
     let ended = false
-    let processesTerminated = false
+    let processesTerminated = true
+    let sandboxProcessesUnconfirmed = false
+    let processFailure: PackageProcessCleanupError | undefined
+    let processEvidence: PackageProcessEvidence | undefined
+    let cleanupInFlight: Promise<void> | undefined
+    const confirmTermination = async (): Promise<boolean> => {
+      if (processesTerminated) return true
+      if (processFailure) {
+        try {
+          await processFailure.retryCleanup()
+          processesTerminated = true
+        } catch {
+          return false
+        }
+      } else if (sandboxed.confirmProcessTreeTermination) {
+        processesTerminated = await sandboxed.confirmProcessTreeTermination().catch(() => false)
+      }
+      return processesTerminated
+    }
+    const cleanupSandbox = async (): Promise<void> => {
+      let cleanup
+      try {
+        cleanup = await sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', {
+          processesTerminated,
+          confirmTermination
+        })
+      } catch (cause) {
+        // Do not let a sandbox exception replace the marker that keeps the environment mutation's
+        // journal, working cache and admission fence while an installer may still be writing.
+        if (!processesTerminated)
+          throw new Error(`${CHILD_UNCONFIRMED}: package process cleanup could not be verified.`, {
+            cause
+          })
+        throw cause
+      }
+      sandboxProcessesUnconfirmed = !cleanup.processesTerminated
+      if (!cleanup.processesTerminated)
+        throw new Error(`${CHILD_UNCONFIRMED}: package process cleanup remains unconfirmed.`)
+      if (!cleanup.networkClosed || !cleanup.temporaryResourcesRemoved)
+        throw new Error(
+          'PACKAGE_CLEANUP_INCOMPLETE: package sandbox resource cleanup is incomplete.'
+        )
+    }
+    const retryCleanup = (): Promise<void> => {
+      if (cleanupInFlight) return cleanupInFlight
+      const attempt = (async () => {
+        if (!(await confirmTermination()))
+          throw new Error(`${CHILD_UNCONFIRMED}: package process cleanup remains unconfirmed.`)
+        await cleanupSandbox()
+      })().finally(() => {
+        if (cleanupInFlight === attempt) cleanupInFlight = undefined
+      })
+      cleanupInFlight = attempt
+      return attempt
+    }
     try {
       spawnOptions?.signal?.throwIfAborted()
       endExecution = sandboxed.beginExecution?.()
@@ -340,7 +397,10 @@ export const sandboxedPackageSpawn =
         sandboxed.executable,
         [...sandboxed.args],
         sandboxed.env,
-        onChild,
+        (pid) => {
+          processesTerminated = false
+          onChild?.(pid)
+        },
         onBeforeSpawn,
         captureCondaJson ?? args.includes('--json'),
         cwd,
@@ -352,6 +412,7 @@ export const sandboxedPackageSpawn =
       endExecution?.()
       ended = true
       processesTerminated = result.processesTerminated ?? true
+      processEvidence = result.processEvidence
       return { ...result, stderr: sandboxed.annotateStderr(result.stderr) }
     } catch (error) {
       if (packageProcessTreeTerminated(error)) {
@@ -359,17 +420,22 @@ export const sandboxedPackageSpawn =
         if (sandboxed.confirmProcessTreeTermination) {
           await sandboxed.confirmProcessTreeTermination().catch(() => false)
         }
-      } else if (!ended && sandboxed.confirmProcessTreeTermination) {
+      } else if (isChildUnconfirmedError(error)) {
+        processesTerminated = false
+        if (error instanceof PackageProcessCleanupError) processFailure = error
+      } else if (!ended && platform === 'win32' && sandboxed.confirmProcessTreeTermination) {
         processesTerminated = await sandboxed.confirmProcessTreeTermination().catch(() => false)
       }
       throw error
     } finally {
       if (!ended) endExecution?.()
-      await sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', {
-        processesTerminated,
-        ...(sandboxed.confirmProcessTreeTermination
-          ? { confirmTermination: sandboxed.confirmProcessTreeTermination }
-          : {})
+      await cleanupSandbox().catch((error: unknown) => {
+        throw new PackageProcessCleanupError(
+          error instanceof Error ? error.message : 'Package sandbox cleanup failed.',
+          retryCleanup,
+          processFailure?.processEvidence ?? processEvidence,
+          processesTerminated && !sandboxProcessesUnconfirmed
+        )
       })
     }
   }

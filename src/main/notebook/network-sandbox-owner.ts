@@ -535,20 +535,33 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     let cleanupPromise: Promise<NotebookSandboxCleanupResult> | undefined
     let cleanupReason: NotebookSandboxCleanupReason | undefined
     let cleanupOutcome: NotebookSandboxProcessOutcome | undefined
+    let cleanupAttemptProcessesTerminated = false
     const pendingCleanup: PendingCommandCleanup = {
       target,
       retry: () => cleanup(cleanupReason!, cleanupOutcome!)
     }
     const cleanup: NotebookSandboxedSpawn['cleanup'] = (reason, processOutcome) => {
       cleanupReason ??= reason
-      cleanupOutcome ??= processOutcome
-      if (cleanupPromise) return cleanupPromise
+      const proofAdvanced =
+        cleanupOutcome?.processesTerminated === false && processOutcome.processesTerminated
+      if (!cleanupOutcome || proofAdvanced) cleanupOutcome = processOutcome
+      if (cleanupPromise) {
+        if (processOutcome.processesTerminated && !cleanupAttemptProcessesTerminated) {
+          // The original owner can confirm termination while an older cleanup is still running.
+          return cleanupPromise.then(
+            (result) => (cleanupComplete(result) ? result : cleanup(reason, processOutcome)),
+            () => cleanup(reason, processOutcome)
+          )
+        }
+        return cleanupPromise
+      }
       if (retained) {
         retained.debt = true
         retained.blocked = true
       }
       activeExecutionGrants = new Set()
       executionActive = false
+      cleanupAttemptProcessesTerminated = cleanupOutcome.processesTerminated
       cleanupPromise = (async () => {
         const sandboxCleanup = await Promise.resolve(
           wrapped.cleanup(cleanupReason!, cleanupOutcome!)

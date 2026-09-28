@@ -313,8 +313,8 @@ class ShellProcessOwnershipRegistry {
         let released = false
         return () => {
           if (released) return
-          released = true
           remove()
+          released = true
         }
       },
       abort: remove

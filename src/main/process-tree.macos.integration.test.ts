@@ -100,6 +100,71 @@ afterEach(async () => {
 
 describeMacOS('terminateProcessTree (real macOS processes)', () => {
   it(
+    'reaps a detached descendant created by the leader during graceful shutdown',
+    async () => {
+      const { getDarwinProcess } = await import('@aipoch/process-tree-native')
+      const identities = new Map<number, string>()
+      const remember = (pid: number): void => {
+        const identity = getDarwinProcess(pid)
+        if (identity) identities.set(pid, identity.uniqueId)
+      }
+      // The helper bounds its own lifetime if a failed test runner cannot finish cleanup.
+      const helper = 'setTimeout(() => process.exit(0), 15_000); setInterval(() => {}, 1_000)'
+      const leader = [
+        "const { spawn } = require('node:child_process')",
+        "process.once('SIGTERM', () => {",
+        // Ignore a second group/PID signal while the first handler finishes its child handoff.
+        "process.on('SIGTERM', () => {})",
+        `const child = spawn(process.execPath, ['-e', ${JSON.stringify(helper)}], { detached: true, stdio: 'ignore' })`,
+        'child.unref()',
+        "console.log('child:' + child.pid)",
+        'setTimeout(() => process.exit(0), 30)',
+        '})',
+        "console.log('ready')",
+        'setTimeout(() => process.exit(0), 15_000)',
+        'setInterval(() => {}, 1_000)'
+      ].join(';')
+      const child = spawnTracked(process.execPath, ['-e', leader], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      if (child.pid !== undefined) remember(child.pid)
+      let ready = false
+      let descendantPid: number | undefined
+      let output = ''
+      child.stdout?.on('data', (chunk: Buffer) => {
+        output += chunk.toString()
+        ready = output.includes('ready\n')
+        const match = output.match(/child:(\d+)\n/u)
+        if (match && descendantPid === undefined) {
+          descendantPid = Number(match[1])
+          remember(descendantPid)
+        }
+      })
+      try {
+        await waitFor(() => ready)
+        await expect(terminateProcessTree(child)).resolves.toEqual({ reaped: true })
+        expect(descendantPid).toBeDefined()
+        await waitFor(() => !isAlive(descendantPid!))
+      } finally {
+        // Only this fixture's exact process generations may be signaled by test cleanup.
+        for (const [pid, uniqueId] of identities) {
+          if (getDarwinProcess(pid)?.uniqueId !== uniqueId) continue
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            // It exited between identity validation and signaling.
+          }
+        }
+        await waitFor(() =>
+          [...identities].every(([pid, uniqueId]) => getDarwinProcess(pid)?.uniqueId !== uniqueId)
+        )
+      }
+    },
+    PROBE_TIMEOUT_MS
+  )
+
+  it(
     'reaps a tracked detached leader and its same-group child',
     async () => {
       for (let iteration = 0; iteration < PROBE_ITERATIONS; iteration += 1) {
