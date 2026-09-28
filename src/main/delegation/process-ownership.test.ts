@@ -409,7 +409,9 @@ describe('durable delegated process ownership', () => {
       await writeFile(receiptPath, JSON.stringify(receipt))
       const cold = new DelegatedProcessOwnership(directory!)
       expect(cold.receipts(scope)).toHaveLength(1)
-      await expect(cold.recover(scope)).resolves.toBeUndefined()
+      // Other processes can exit between the native snapshot and identity recheck. A blocked
+      // observation keeps the receipt and is retryable; require an eventual complete scan.
+      await expect.poll(() => cold.recover(scope), { timeout: 5_000 }).toBeUndefined()
       expect(cold.receipts(scope)).toHaveLength(0)
     }
   )
