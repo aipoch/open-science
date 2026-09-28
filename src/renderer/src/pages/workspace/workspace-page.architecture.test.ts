@@ -234,9 +234,10 @@ describe('workspace page architecture', () => {
       'contextWindow',
       'workflows',
       'sessionTools',
-      'subagents'
+      'subagents',
+      'submissions'
     ])
-    expect(propNames).toHaveLength(13)
+    expect(propNames).toHaveLength(14)
     expect(propNames.some((name) => name.startsWith('on'))).toBe(false)
   })
 
