@@ -1251,7 +1251,12 @@ describe('reopened correction interruption lifecycle', () => {
             openChecks: [await loadFinding()],
             getSession: async () => session,
             reviewRepository: repository,
-            acpRuntime: { sendApplicationPrompt } as ReviewerAcpRuntime,
+            acpRuntime: {
+              sendApplicationPrompt,
+              sendPrompt: vi.fn<ReviewerAcpRuntime['sendPrompt']>(),
+              buildReviewerSession: vi.fn<ReviewerAcpRuntime['buildReviewerSession']>(),
+              disposeReviewerSession: vi.fn<ReviewerAcpRuntime['disposeReviewerSession']>()
+            },
             artifactStorageRoot: temporaryRoot!,
             model: 'test',
             reviewerTimeoutMs: 100,
