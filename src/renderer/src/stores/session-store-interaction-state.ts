@@ -172,9 +172,12 @@ export const projectSessionActionability = (
           : undefined
   const interactionDisabledReason = disabledReasonForInteraction(blockingInteraction)
   const historyReplayPending = Boolean(session.pendingHistoryReplay)
-  const sessionPending = Boolean(session.isPending) || historyReplayPending
+  // A failed creation keeps isPending until retry binds the provider. It no longer owns
+  // initialization: allow the user to repair its configuration and submit that retry.
+  const creationPending = Boolean(session.isPending) && session.status !== 'error'
+  const sessionPending = creationPending || historyReplayPending
   const turnDisabledReason =
-    session.isPending && !facts.allowPendingSessionRetry
+    creationPending && !facts.allowPendingSessionRetry
       ? 'session-pending'
       : running
         ? 'session-running'
@@ -190,7 +193,7 @@ export const projectSessionActionability = (
           : 'plan-approval-pending'
       : undefined)
   const replayOrPendingReason = sessionPending ? 'session-pending' : undefined
-  const replayIndependentChangeDisabledReason = session.isPending
+  const replayIndependentChangeDisabledReason = creationPending
     ? 'session-pending'
     : running
       ? 'session-running'

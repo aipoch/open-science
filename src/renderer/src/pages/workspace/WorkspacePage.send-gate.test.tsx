@@ -1182,6 +1182,29 @@ describe('WorkspacePage send gate while compacting', () => {
     }
   )
 
+  it('allows repair and sending after initial connection failure without clearing the error', async () => {
+    useSessionStore.setState({
+      sessions: [
+        createSession({ status: 'error', isPending: true, error: 'Agent startup failed' })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('continue after repair'))
+    })
+
+    expect(conversationProps.view.canEditDraft).toBe(true)
+    expect(conversationProps.agentControls.canChange).toBe(true)
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    })
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess-a', text: 'continue after repair' })
+    )
+  })
+
   it('keeps Side chat blocked while the parent Session is still being created', async () => {
     useSessionStore.setState({
       sessions: [{ ...createReviewableSession(), isPending: true }]

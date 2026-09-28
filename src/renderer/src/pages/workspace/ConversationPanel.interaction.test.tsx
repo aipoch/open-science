@@ -4574,6 +4574,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
         activeSession: interruptedSession
       },
       conversation: {
+        availability: { submit: true },
         actions: {
           resume: onResumeSession
         }
@@ -4587,10 +4588,19 @@ describe('ConversationPanel interrupted Session recovery', () => {
 
     expect(onResumeSession).toHaveBeenCalledTimes(1)
     expect(container.querySelector('[data-testid="resume-progress-indicator"]')).not.toBeNull()
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled
+    ).toBe(true)
+    expect(resumeButton?.disabled).toBe(true)
+    await act(async () => resumeButton?.click())
+    expect(onResumeSession).toHaveBeenCalledTimes(1)
 
     await act(async () => resolveResume?.())
 
     expect(container.querySelector('[data-testid="resume-progress-indicator"]')).toBeNull()
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled
+    ).toBe(false)
   })
 
   it('does not show one Session resume progress on another active Session', async () => {
@@ -7046,7 +7056,9 @@ describe('ConversationPanel error box + report affordance', () => {
         }
       })
       expect(reportButton()).toBeNull()
-      expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+      expect(Boolean(container.querySelector('[aria-label="Resume session"]'))).toBe(
+        Boolean(wrapper)
+      )
       const button = Array.from(container.querySelectorAll('button')).find(
         (candidate) => candidate.textContent === 'Agent settings'
       )
@@ -7095,13 +7107,37 @@ describe('ConversationPanel error box + report affordance', () => {
     })
 
     expect(errorBoxText()).toContain('Agent session resume failed: Codex ACP adapter 1.1.4')
-    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
     const button = Array.from(container.querySelectorAll('button')).find(
       (candidate) => candidate.textContent === 'Agent settings'
     )
     expect(button).toBeDefined()
     act(() => button?.click())
     expect(openSettingsToPanel).toHaveBeenCalledWith('agent')
+  })
+
+  it('keeps recovery reachable after dismissing a repaired compatibility error', async () => {
+    const resume = vi.fn().mockResolvedValue(undefined)
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          interrupted: true,
+          error:
+            'Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
+        }
+      },
+      conversation: { actions: { resume } }
+    })
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')?.click())
+    expect(errorBoxText()).toBe('')
+    const resumeButton = container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')
+    expect(resumeButton?.disabled).toBe(false)
+    await act(async () => resumeButton?.click())
+    expect(resume).toHaveBeenCalledOnce()
+    // A retry that leaves the same Session failure must reopen its diagnostic.
+    expect(errorBoxText()).toContain('Codex ACP adapter 1.1.4')
   })
 
   it('keeps an unrelated session resume failure in the Resume banner', () => {

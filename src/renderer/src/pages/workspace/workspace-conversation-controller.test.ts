@@ -221,6 +221,37 @@ afterEach(() => {
 })
 
 describe('workspace conversation controller', () => {
+  it.each([
+    ['claude-code', 'claude-code', 'claude-code:anthropic'],
+    ['opencode', 'opencode', 'opencode:provider-1'],
+    ['codebuddy', 'codebuddy', 'codebuddy:provider-1'],
+    ['codex-response', 'codex', 'codex:responses-provider'],
+    ['codex-bridge', 'codex', 'codex:bridge-provider']
+  ] as const)(
+    'allows a new message after a failed initial session connection (%s)',
+    async (_path, agentFrameworkId, agentBackendId) => {
+      const failedSession = session({
+        status: 'error',
+        isPending: true,
+        agentFrameworkId,
+        agentBackendId,
+        error: 'Agent startup failed'
+      })
+      const input = options({
+        activeSession: failedSession,
+        actionability: projectSessionActionability(failedSession)
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+
+      expect(hook.result.current.availability.submit).toBe(true)
+      await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: failedSession.id, text: 'hello' })
+      )
+    }
+  )
+
   it('admits and sends a structured annotation without message text', async () => {
     const annotation = {
       id: 'annotation-1',
@@ -1596,6 +1627,32 @@ describe('workspace conversation controller', () => {
 
     expect(order).toEqual(['review', 'runtime'])
   })
+
+  it.each(['configuration', 'prompt', 'preparation', 'permission', 'graph', 'compaction'] as const)(
+    'keeps interrupted recovery blocked by current %s ownership',
+    async (blocker) => {
+      const activeSession = session({
+        status: 'error',
+        interrupted: true,
+        conversationGraphSyncBlocked: blocker === 'graph' || undefined,
+        compacting: blocker === 'compaction' || undefined
+      })
+      const input = options({
+        activeSession,
+        agentConfigurationReady: blocker !== 'configuration',
+        promptInFlightSessionIds: blocker === 'prompt' ? ['session-a'] : [],
+        sendPreparationInFlightSessionIds: blocker === 'preparation' ? ['session-a'] : [],
+        actionability: projectSessionActionability(activeSession, {
+          rootPermissionPending: blocker === 'permission'
+        })
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      expect(hook.result.current.availability.resume).toBe(false)
+      await act(async () => hook.result.current.actions.resume())
+      expect(input.runtime.resumeInterruptedSession).not.toHaveBeenCalled()
+    }
+  )
 
   it('gates resume and delegates deletion to the Session transaction owner', async () => {
     const input = options({ isPersistenceReady: false })

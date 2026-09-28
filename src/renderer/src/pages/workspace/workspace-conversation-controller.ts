@@ -275,6 +275,20 @@ const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): 
   )
 }
 
+const canResume = (options: WorkspaceConversationControllerOptions): boolean =>
+  Boolean(
+    options.activeSession &&
+    options.isPersistenceReady &&
+    options.agentConfigurationReady &&
+    (options.actionability?.actions.startTurn.allowed ?? true) &&
+    !hasRuntimeInteraction(options) &&
+    !options.isTurnAdmissionBlocked &&
+    !options.activeSession.fixLoopActive &&
+    !options.activeSession.conversationGraphSyncBlocked &&
+    !options.activeSession.compacting &&
+    !options.session.view.specialist.barrierInFlight
+  )
+
 const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean => {
   const { activeSession, composer, session } = options
   return Boolean(
@@ -702,7 +716,7 @@ const useWorkspaceConversationController = (
       reportSessionSizeLimit: (sessionId): void => optionsRef.current.onSessionSizeLimit(sessionId),
       resume: async (): Promise<void> => {
         const current = optionsRef.current
-        if (!current.isPersistenceReady || !current.activeSession) return
+        if (!canResume(current) || !current.activeSession) return
         await current.runtime.resumeInterruptedSession(current.activeSession.id)
       },
       cancel: async (): Promise<void> => {
@@ -736,7 +750,7 @@ const useWorkspaceConversationController = (
       submit: submitImmediately || queueDraft,
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,
       revise: canRevise(options) || canQueueRevision(options),
-      resume: options.isPersistenceReady,
+      resume: canResume(options),
       branch: !queueBlocksActiveSession && canBranch(options),
       planResponse: options.isPersistenceReady
     },

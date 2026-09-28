@@ -515,6 +515,26 @@ describe('session store', () => {
     })
   })
 
+  it('allows a failed creation to retry and change Agent configuration without unlocking branches', () => {
+    const failed = { status: 'error' as const, isPending: true }
+    expect(projectSessionActionability(failed).actions).toMatchObject({
+      startTurn: { allowed: true },
+      changeAgentControls: { allowed: true },
+      branchFromMessage: { allowed: false, disabledReason: 'session-pending' }
+    })
+    for (const facts of [
+      { hasRunningWork: true },
+      { rootPermissionPending: true },
+      { credentialPending: true },
+      { elicitationPending: true },
+      { planPending: true }
+    ]) {
+      const projection = projectSessionActionability(failed, facts)
+      expect(projection.actions.startTurn.allowed).toBe(false)
+      expect(projection.actions.changeAgentControls.allowed).toBe(false)
+    }
+  })
+
   it('keeps replay-independent Session actions available while history replay is pending', () => {
     const actionability = projectSessionActionability({
       id: 'session-replay',

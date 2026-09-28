@@ -802,7 +802,7 @@ const ConversationPanel = ({
   const saveAsSkillDisabledReason = hasRunningSubagents
     ? t('Wait for all subagents to finish.')
     : saveAsSkillDisabledReasonFromParent
-  const effectiveCanSend = canSendMessage && !isStopping
+  const effectiveCanSend = canSendMessage && !isStopping && !isResuming
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
   // Keep the mounted editor stable across receipts and run completion. Only a
   // different Plan or an explicit review request owns a fresh draft/collapse state.
@@ -866,7 +866,10 @@ const ConversationPanel = ({
   const errorKey = JSON.stringify([
     activeSession?.id,
     activeSession?.status === 'error' ? activeSession.error : null,
-    actionError
+    actionError,
+    // An explicit recovery attempt must reveal its failure even when the provider
+    // returns the same diagnostic that the user previously dismissed.
+    isResuming
   ])
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
@@ -1057,7 +1060,7 @@ const ConversationPanel = ({
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
     const sessionId = activeSession?.id
-    if (!canResumeSession || !sessionId || isResuming) return
+    if (!canResumeSession || !sessionId || isResuming || isStopping || rootTurnBusy) return
 
     setResumingSessionId(sessionId)
     try {
@@ -1462,21 +1465,27 @@ const ConversationPanel = ({
                 ) : null}
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
-                {activeSession?.interrupted && !hasUnsupportedCodexRunError ? (
+                {activeSession?.interrupted ? (
                   <SessionInterruptedBanner
-                    message={activeSession.error ?? t('This session was interrupted.')}
-                    isDisabled={!canResumeSession}
+                    message={
+                      hasUnsupportedCodexRunError
+                        ? t('This session was interrupted.')
+                        : (activeSession.error ?? t('This session was interrupted.'))
+                    }
+                    isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
                   />
-                ) : activeSession?.compacting ? (
+                ) : null}
+                {activeSession?.compacting ? (
                   // Auto-recovery after a request-size overflow: a neutral note, not the red error box,
                   // while the agent context is reset and the conversation is replayed as text.
                   <div className="mb-2 flex items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-3 py-2 text-[12px] leading-5 text-text-300">
                     <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
                     {t('Compacting conversation to fit the context limit…')}
                   </div>
-                ) : resolvedActionError || activeSession?.status === 'error' ? (
+                ) : (resolvedActionError || activeSession?.status === 'error') &&
+                  (!activeSession?.interrupted || hasUnsupportedCodexRunError) ? (
                   <DismissibleConversationError key={errorKey}>
                     {/* Transient action errors and a run failure can coexist; show each on its own row
                         so the run's report affordance is never suppressed by a transient error. */}
