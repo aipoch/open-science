@@ -1127,6 +1127,36 @@ if (process.argv.includes('--version')) {
       )
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
+      if (prompt.includes('Cold recovery held child.')) {
+        await waitForSessionCancellation(context.params.sessionId)
+        return { stopReason: 'cancelled' }
+      }
+      if (prompt.includes('Run delegated cold recovery regression.')) {
+        const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
+        const code = resumed
+          ? 'const children = await host.children(); const child = children.find(c => c.name === "Cold recovery child"); if (!child) throw new Error("missing original child"); const receipt = await host.sendFrameMessage(child.frameId, "Continue explicitly after application restart."); return { before: child.status, receipt };'
+          : 'return await host.delegate({ task: "Cold recovery held child.", name: "Cold recovery child" }, { wait: false })'
+        const value = controlResultValue(await executeControlCode(context.params.sessionId, code))
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: {
+              type: 'text',
+              text: resumed
+                ? 'Cold recovery resumed: ' + JSON.stringify(value)
+                : 'Cold recovery ready for exit.'
+            }
+          }
+        })
+        if (!resumed) {
+          await waitForSessionCancellation(context.params.sessionId)
+          return { stopReason: 'cancelled' }
+        }
+        return { stopReason: 'end_turn' }
+      }
+
       if (prompt.includes(PROVIDER_RUNTIME_FAILURE_PROMPT)) await rejectThroughProviderBridge()
       // Use the supported mid-response interruption wrapper: generic provider errors are terminal
       // failures and intentionally do not offer Resume. Let this escape the reply fixture catch.
