@@ -7,12 +7,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookPackageAdmittedTarget } from './package-admission'
 import { NotebookPackageMutationOwner } from './package-mutation'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
+import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { EnvironmentLeaseManager } from './environment-lease-manager'
+import { retainMicromambaWorkingCache } from './windows-micromamba-working-cache'
+import { terminateProcessTree } from '../process-tree'
+import { PackageProcessCleanupError } from './package-manager'
+import * as operationJournal from './operation-journal'
 import {
   operationJournalPath,
   readOperationChild,
   RuntimeOperationJournal
 } from './operation-journal'
 import { importedEnvironmentLockMarkerPath } from './runtime-paths'
+import { sandboxedPackageSpawn } from './package-process-sandbox'
 
 type MutationOptions = ConstructorParameters<typeof NotebookPackageMutationOwner>[0]
 
@@ -614,7 +621,7 @@ describe('NotebookPackageMutationOwner', () => {
       'CACHE_ARCHIVE_EVIDENCE_INCOMPLETE'
     )
 
-    expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+    expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target, expect.any(String))
     expect(release).toHaveBeenCalledWith({
       archivePublications: [],
       completedOperationId: expect.any(String),
@@ -699,7 +706,7 @@ describe('NotebookPackageMutationOwner', () => {
 
     await expect(owner.mutate({ target, mirror: {} })).rejects.toBe(updateFailure)
 
-    expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+    expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target, expect.any(String))
     expect(release).toHaveBeenCalledWith({
       archivePublications: [
         { workingRoot: '/working-cache', authorizations: [archiveAuthorization] }
@@ -983,7 +990,7 @@ describe('NotebookPackageMutationOwner', () => {
       try {
         await readStarted
         await new Promise<void>((resolve) => setImmediate(resolve))
-        expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+        expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target, expect.any(String))
         settledBeforeWrite = settled
         releasedBeforeWrite = release.mock.calls.length > 0
       } finally {
@@ -1025,7 +1032,7 @@ describe('NotebookPackageMutationOwner', () => {
 
     await expect(owner.mutate({ target, mirror: {} })).rejects.toBe(childFailure)
 
-    expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+    expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target, expect.any(String))
     expect(options.environmentStateTracker.refreshAfterPackageMutation).not.toHaveBeenCalled()
     expect(release).toHaveBeenCalledWith({
       archivePublications: [],
@@ -1033,6 +1040,299 @@ describe('NotebookPackageMutationOwner', () => {
       retainForRecovery: true
     })
     expect(await pending(runtimeRoot)).toEqual([expect.objectContaining({ operationId })])
-    expect(readOperationChild(runtimeRoot, operationId)).toMatchObject({ spawning: true })
+    expect(readOperationChild(runtimeRoot, operationId)).toMatchObject({
+      childPid: process.pid,
+      treeUnconfirmed: true
+    })
   })
+
+  it('fences the environment before releasing its lease after sandbox process cleanup is unconfirmed', async () => {
+    let leaseHeld = false
+    let blockedUnderLease = false
+    const release = vi.fn().mockResolvedValue(false)
+    const { owner, options, target, runtimeRoot } = ownerHarness({
+      retainWorkingCache: vi.fn(() => release),
+      environmentOperations: {
+        runMutation: async <T>(_environment: string, operation: () => Promise<T>): Promise<T> => {
+          leaseHeld = true
+          try {
+            return await operation()
+          } finally {
+            leaseHeld = false
+          }
+        },
+        logPackageFailure: vi.fn(),
+        logPackageResult: vi.fn()
+      },
+      blockUnconfirmedChild: vi.fn(() => {
+        blockedUnderLease ||= leaseHeld
+      }),
+      installPackages: vi.fn(async (request, deps) => {
+        const spawn = sandboxedPackageSpawn({
+          processSandbox: {
+            wrap: async (invocation) => ({
+              ...invocation,
+              env: invocation.env ?? {},
+              annotateStderr: (stderr) => stderr,
+              cleanup: async () => ({
+                processesTerminated: false,
+                networkClosed: true,
+                temporaryResourcesRemoved: false
+              })
+            })
+          },
+          request,
+          runtimeRoot,
+          storageRoot: options.storageRoot,
+          terminateTree: async () => ({ reaped: true })
+        })
+        await spawn(
+          process.execPath,
+          ['-e', 'process.exit(0)'],
+          undefined,
+          deps?.onChild,
+          deps?.onBeforeSpawn
+        )
+        return { ok: true, needsRestart: false, log: 'installed' }
+      })
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).rejects.toThrow(CHILD_UNCONFIRMED)
+    expect(blockedUnderLease).toBe(true)
+    expect(options.environmentStateTracker.refreshAfterPackageMutation).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledWith(expect.objectContaining({ retainForRecovery: true }))
+    const records = await pending(runtimeRoot)
+    expect(records).toHaveLength(1)
+    expect(readOperationChild(runtimeRoot, records[0].operationId)).toMatchObject({
+      childPid: expect.any(Number),
+      treeUnconfirmed: true
+    })
+  })
+})
+
+it('retries the exact package tree and sandbox owner before releasing its journal, cache lease and target fence', async () => {
+  let processAllowed = false
+  let resourcesAllowed = false
+  let cacheAllowed = false
+  // Assigned after the harness creates its isolated runtime root; callbacks run later.
+  // eslint-disable-next-line prefer-const
+  let recovery!: NotebookRecoveryCoordinator
+  let firstChildPid: number | undefined
+  const cacheRelease = vi.fn(async () => cacheAllowed)
+  const { owner, options, target, runtimeRoot } = ownerHarness({
+    retainWorkingCache: async () => cacheRelease,
+    retainCleanup: (id, target, retry) =>
+      recovery.retainLiveCleanup(
+        id,
+        {
+          prefix: target.journalTarget,
+          runtimeId: target.repairRuntimeId
+        },
+        retry
+      ),
+    blockUnconfirmedChild: (target, operationId) => {
+      recovery.markRuntimeLiveUnconfirmed(target.repairRuntimeId, operationId)
+      recovery.markLiveUnconfirmed(target.journalTarget!, undefined, operationId)
+    },
+    installPackages: async (request, deps) => {
+      const spawn = sandboxedPackageSpawn({
+        processSandbox: {
+          wrap: async (invocation) => ({
+            ...invocation,
+            env: invocation.env ?? {},
+            annotateStderr: (value) => value,
+            cleanup: async (_reason, context) => {
+              const reaped =
+                context?.processesTerminated || (await context?.confirmTermination?.()) || false
+              return {
+                processesTerminated: reaped,
+                networkClosed: reaped && resourcesAllowed,
+                temporaryResourcesRemoved: reaped && resourcesAllowed
+              }
+            }
+          })
+        },
+        request,
+        runtimeRoot,
+        storageRoot: options.storageRoot,
+        terminateTree: async (child) => {
+          firstChildPid ??= child.pid
+          return processAllowed ? terminateProcessTree(child) : { reaped: false }
+        }
+      })
+      await spawn(
+        process.execPath,
+        ['-e', 'process.exit(0)'],
+        undefined,
+        deps?.onChild,
+        deps?.onBeforeSpawn
+      )
+      return { ok: true, needsRestart: false, log: '' }
+    }
+  })
+  recovery = new NotebookRecoveryCoordinator(runtimeRoot)
+  await expect(owner.mutate({ target, mirror: {} })).rejects.toThrow(CHILD_UNCONFIRMED)
+  const [record] = await pending(runtimeRoot)
+  const receipt = readOperationChild(runtimeRoot, record.operationId)
+  expect(receipt).toMatchObject({
+    childPid: firstChildPid,
+    treeUnconfirmed: true,
+    ownershipToken: expect.stringMatching(/^[0-9a-f-]{36}$/)
+  })
+  expect(record).toMatchObject(receipt as object)
+  expect(cacheRelease).not.toHaveBeenCalled()
+  await recovery.ensureReady()
+  expect(recovery.isPrefixBlocked(target.journalTarget!)).toBe(true)
+  expect(recovery.isPrefixBlocked(join(runtimeRoot, 'envs', 'unrelated'))).toBe(false)
+  expect(readOperationChild(runtimeRoot, record.operationId)).toEqual(receipt)
+  processAllowed = true
+  await recovery.ensureReady()
+  expect(cacheRelease).not.toHaveBeenCalled()
+  expect(await pending(runtimeRoot)).toHaveLength(1)
+  resourcesAllowed = true
+  await recovery.ensureReady()
+  expect(cacheRelease).toHaveBeenCalledTimes(1)
+  expect(recovery.isRuntimeIdBlocked(target.repairRuntimeId)).toBe(true)
+  expect(await pending(runtimeRoot)).toHaveLength(1)
+  cacheAllowed = true
+  await Promise.all([recovery.ensureReady(), recovery.ensureReady()])
+  expect(cacheRelease).toHaveBeenCalledTimes(2)
+  expect(await pending(runtimeRoot)).toEqual([])
+  expect(readOperationChild(runtimeRoot, record.operationId)).toBeUndefined()
+  expect(recovery.isPrefixBlocked(target.journalTarget!)).toBe(false)
+  expect(recovery.isRuntimeIdBlocked(target.repairRuntimeId)).toBe(false)
+  await expect(owner.mutate({ target, mirror: {} })).resolves.toMatchObject({ ok: true })
+  await recovery.dispose()
+})
+
+it.each(['journal-write', 'sidecar-remove', 'journal-complete', 'finally'] as const)(
+  'retains a retryable package owner through %s failure',
+  async (fault) => {
+    // Assigned after the harness creates its isolated runtime root; callbacks run later.
+    // eslint-disable-next-line prefer-const
+    let recovery!: NotebookRecoveryCoordinator
+    let blockCalls = 0
+    const retry = vi.fn().mockResolvedValue(undefined)
+    const original = new PackageProcessCleanupError('fixture tree incomplete', retry, {
+      childPid: process.pid,
+      childStartedAt: 100,
+      childBirthToken: 'linux-proc-starttime:123',
+      ownershipToken: '12345678-1234-1234-1234-123456789abc'
+    })
+    const { owner, target, runtimeRoot } = ownerHarness({
+      retainWorkingCache: async () => vi.fn().mockResolvedValue(true),
+      retainCleanup: (id, target, retry) =>
+        recovery.retainLiveCleanup(
+          id,
+          { runtimeId: target.repairRuntimeId, prefix: target.journalTarget },
+          retry
+        ),
+      blockUnconfirmedChild: (target, operationId) => {
+        recovery.markLiveUnconfirmed(target.journalTarget!, target.repairRuntimeId, operationId)
+        if (fault === 'finally' && ++blockCalls === 3) throw new Error('finally sink failed')
+      },
+      installPackages: async (_request, deps) => {
+        deps?.onBeforeSpawn?.()
+        deps?.onChild?.(process.pid)
+        throw original
+      }
+    })
+    recovery = new NotebookRecoveryCoordinator(runtimeRoot)
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    const update = journal.update.bind(journal)
+    let writeFails = fault === 'journal-write'
+    vi.spyOn(journal, 'update').mockImplementation((id, patch) => {
+      if (writeFails && patch.cleanupUnconfirmed)
+        return Promise.reject(new Error('journal unavailable'))
+      return update(id, patch)
+    })
+    if (fault === 'sidecar-remove')
+      vi.spyOn(operationJournal, 'removeOperationChildSync').mockImplementationOnce(() => {
+        throw new Error('sidecar locked')
+      })
+    if (fault === 'journal-complete')
+      vi.spyOn(journal, 'complete').mockRejectedValueOnce(new Error('journal locked'))
+    const failure = await owner.mutate({ target, mirror: {} }).catch((error) => error)
+    if (fault !== 'finally') expect(failure).toBe(original)
+    else expect(failure.message).toBe('finally sink failed')
+    expect(recovery.isPrefixBlocked(target.journalTarget!)).toBe(true)
+    await recovery.ensureReady()
+    if (fault !== 'finally') {
+      expect(recovery.isPrefixBlocked(target.journalTarget!)).toBe(true)
+      expect(await pending(runtimeRoot)).toHaveLength(1)
+      writeFails = false
+      await recovery.ensureReady()
+    }
+    expect(retry).toHaveBeenCalled()
+    expect(recovery.isPrefixBlocked(target.journalTarget!)).toBe(false)
+    expect(await pending(runtimeRoot)).toEqual([])
+    await recovery.dispose()
+  }
+)
+
+it('releases two retained cache leases without holding their shared environment lock while waiting', async () => {
+  const { owner, options, target, runtimeRoot } = ownerHarness()
+  const recovery = new NotebookRecoveryCoordinator(runtimeRoot)
+  await recovery.recover()
+  const leases = new EnvironmentLeaseManager()
+  options.environmentOperations.runMutation = async (environment, operation) => {
+    const lease = await leases.acquire(environment, 'exclusive').granted
+    try {
+      return await operation()
+    } finally {
+      lease.release()
+    }
+  }
+  const cleanup = vi.fn(() => {
+    expect(leases.hasExclusive(target.environmentName)).toBe(false)
+    return true
+  })
+  options.retainWorkingCache = (root, id) =>
+    retainMicromambaWorkingCache(
+      root,
+      {
+        platform: 'win32',
+        canonicalize: (path) => path,
+        cleanup,
+        requiresRecoveryRetention: async () => false
+      },
+      id
+    )
+  options.retainCleanup = (id, target, retry) =>
+    recovery.retainLiveCleanup(
+      id,
+      { runtimeId: target.repairRuntimeId, prefix: target.journalTarget },
+      retry
+    )
+  options.blockUnconfirmedChild = (target, id) =>
+    recovery.markLiveUnconfirmed(target.journalTarget!, target.repairRuntimeId, id)
+  const retry = vi.fn(async () => {
+    expect(leases.hasExclusive(target.environmentName)).toBe(true)
+  })
+  options.installPackages = async (_request, deps) => {
+    deps?.onBeforeSpawn?.()
+    deps?.onChild?.(process.pid)
+    throw new PackageProcessCleanupError('test cleanup pending', retry)
+  }
+  try {
+    const failed = await Promise.allSettled([
+      owner.mutate({ target, mirror: {} }),
+      owner.mutate({ target, mirror: {} })
+    ])
+    expect(failed.map(({ status }) => status)).toEqual(['rejected', 'rejected'])
+    expect(await pending(runtimeRoot)).toHaveLength(2)
+    let completed = false
+    const recovering = recovery.ensureReady().then(() => {
+      completed = true
+    })
+    await vi.waitFor(() => expect(completed).toBe(true))
+    await recovering
+    expect(retry).toHaveBeenCalledTimes(2)
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(await pending(runtimeRoot)).toHaveLength(0)
+    expect(recovery.isPrefixBlocked(target.journalTarget!)).toBe(false)
+    await recovery.dispose()
+  } finally {
+    leases.dispose()
+  }
 })

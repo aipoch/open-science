@@ -5,6 +5,22 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+// Inject the disk-write boundary after the real pending -> active rename, leaving its actual file.
+const receiptWriteFault = vi.hoisted(() => ({ enabled: false }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    openSync: (...args: Parameters<typeof actual.openSync>) => {
+      if (receiptWriteFault.enabled && String(args[0]).includes('.active.')) {
+        receiptWriteFault.enabled = false
+        throw Object.assign(new Error('Injected active receipt write failure'), { code: 'EACCES' })
+      }
+      return actual.openSync(...args)
+    }
+  }
+})
+
 import {
   defaultController,
   KernelProcessLifecycleOwner
@@ -28,6 +44,7 @@ describe('KernelProcessLifecycleOwner', () => {
   let root: string | undefined
 
   afterEach(async () => {
+    receiptWriteFault.enabled = false
     vi.restoreAllMocks()
     if (root) await rm(root, { recursive: true, force: true })
     root = undefined
@@ -45,6 +62,34 @@ describe('KernelProcessLifecycleOwner', () => {
     const retried = restarted.beginSpawn(scope)
     expect(retried.record.processKey).toBe('python:default-python')
     expect(() => restarted.beginSpawn(scope)).toThrow('KERNEL_STARTUP_FENCE')
+  })
+
+  it('settles an activated receipt after its update fails only with exact physical proof', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-partial-publication-'))
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const scope = { laneKey: 'lane', processKey: 'repl', kernelEpochId: 'epoch' }
+    const intent = owner.beginSpawn(scope)
+    const sibling = owner.beginSpawn({ ...scope, laneKey: 'other-lane' })
+    // Equal PIDs deliberately do not authorize removing the sibling receipt.
+    const siblingReceipt = owner.recordSpawned(sibling, { pid: 12345 })
+    receiptWriteFault.enabled = true
+    expect(() => owner.recordSpawned(intent, { pid: 12345 })).toThrow(
+      'Injected active receipt write failure'
+    )
+    const activated = intent.activePath(12345)
+    expect(JSON.parse(await readFile(activated, 'utf8')).receiptId).toBe(intent.record.receiptId)
+    await expect(readFile(intent.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    owner.completeSpawn(intent, false)
+    expect(() => owner.beginSpawn(scope)).toThrow('KERNEL_STARTUP_FENCE')
+    // A duplicate published form is possible after interrupted recovery; exact identity settles both.
+    await writeFile(intent.path, JSON.stringify(intent.record))
+    owner.completeSpawn(intent, true)
+    await expect(readFile(activated, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(intent.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(JSON.parse(await readFile(siblingReceipt.path, 'utf8')).receiptId).toBe(
+      sibling.record.receiptId
+    )
+    expect(owner.beginSpawn(scope).record.receiptId).not.toBe(intent.record.receiptId)
   })
 
   it('allows the real process host to publish its receipt and execute code', async () => {

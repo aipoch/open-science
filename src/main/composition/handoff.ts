@@ -87,7 +87,8 @@ export async function composeHandoff({
             ? reviewerModelRuntimeShutdown.current.shutdown()
             : Promise.resolve({ reaped: true })
         ])
-        return { reaped: main.reaped && reviewer.reaped }
+        const transports = await settingsService.shutdownProviderTransports()
+        return { reaped: main.reaped && reviewer.reaped && transports.reaped }
       },
       shutdownForUpdateGate: async () => {
         const [main, reviewer] = await Promise.all([
@@ -96,7 +97,8 @@ export async function composeHandoff({
             ? reviewerModelRuntimeShutdown.current.shutdownForUpdateGate()
             : Promise.resolve({ reaped: true })
         ])
-        return { reaped: main.reaped && reviewer.reaped }
+        const transports = await settingsService.shutdownProviderTransports()
+        return { reaped: main.reaped && reviewer.reaped && transports.reaped }
       }
     },
     notebook: notebookLifecycle,

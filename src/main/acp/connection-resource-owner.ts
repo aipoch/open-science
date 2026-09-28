@@ -9,6 +9,9 @@ import { terminateProcessTree } from '../process-tree'
 type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
 type AnthropicBridgeLease = ResolvedAgentBackend['anthropicBridgeLease']
 type ProviderTransportLease = ResolvedAgentBackend['providerTransportLease']
+type ReleasableLease = NonNullable<
+  ResponsesBridgeLease | AnthropicBridgeLease | ProviderTransportLease
+>
 type CleanupFailure = (stage: 'connection' | 'agent-process', error: unknown) => void
 
 const log = createLogger('acp')
@@ -87,10 +90,16 @@ export class AcpConnectionResourceOwner {
   private provisional: CurrentResource | undefined
   private current: CurrentResource | undefined
   private connectInFlight: Promise<AcpConnectionResourceReadyHandle> | undefined
+  private readonly pendingConnections = new Set<Promise<AcpConnectionResourceReadyHandle>>()
   private readonly expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly releasedBridgeLeases = new WeakSet<object>()
+  private readonly pendingLeases = new Map<ReleasableLease, string>()
+  private readonly leaseReleases = new Map<ReleasableLease, Promise<void>>()
   private shuttingDown = false
-  private lastTreeKillReaped = true
+  // Detaching a connection releases routing authority, not ownership of its still-live tree.
+  // Keep exact child handles across generations until a later teardown proves them reaped.
+  private readonly pendingProcessTrees = new Set<ChildProcessWithoutNullStreams>()
+  private readonly processReaping = new Map<ChildProcessWithoutNullStreams, Promise<void>>()
 
   constructor(private readonly options: AcpConnectionResourceOwnerOptions = {}) {}
 
@@ -125,9 +134,20 @@ export class AcpConnectionResourceOwner {
     return this.shuttingDown
   }
 
+  get hasProcessResources(): boolean {
+    return Boolean(
+      this.current ||
+      this.provisional ||
+      this.pendingConnections.size ||
+      this.pendingProcessTrees.size ||
+      this.pendingLeases.size
+    )
+  }
+
   connect(
     operation: (attempt: AcpConnectionResourceAttempt) => Promise<AcpConnectionResourceReadyHandle>
   ): Promise<AcpConnectionResourceReadyHandle> {
+    if (this.shuttingDown) return Promise.reject(new Error('ACP runtime is shutting down.'))
     if (this.connectInFlight) return this.connectInFlight
 
     const epoch = this.supersede()
@@ -139,7 +159,9 @@ export class AcpConnectionResourceOwner {
       rejectConnect = reject
     })
     this.connectInFlight = connect
+    this.pendingConnections.add(connect)
     const clear = (): void => {
+      this.pendingConnections.delete(connect)
       if (this.connectInFlight === connect) this.connectInFlight = undefined
     }
     void connect.then(clear, clear)
@@ -175,6 +197,7 @@ export class AcpConnectionResourceOwner {
     // without an older process or lease remaining reachable through this owner.
     const resource = this.detach(expectedEpoch)
     if (!resource) return
+    this.retainLeases(resource)
     this.expectedProcessExits.add(resource.process)
 
     try {
@@ -198,6 +221,7 @@ export class AcpConnectionResourceOwner {
     onFailure: CleanupFailure = (stage, error) =>
       safeLogCleanupError(`unattached ACP ${stage} cleanup failed`, error)
   ): Promise<void> {
+    this.retainLeases(resource)
     if (resource.process) this.expectedProcessExits.add(resource.process)
     try {
       resource.connection?.close()
@@ -220,6 +244,7 @@ export class AcpConnectionResourceOwner {
   cleanupUnexpectedClose(expectedEpoch: number): void {
     const resource = this.detach(expectedEpoch)
     if (!resource) return
+    this.retainLeases(resource)
     this.expectedProcessExits.add(resource.process)
     void this.reapProcessTree(resource.process).catch((error) => {
       safeLogCleanupError('agent process cleanup after unexpected close failed', error)
@@ -236,6 +261,7 @@ export class AcpConnectionResourceOwner {
       onSuperseded()
     } finally {
       const resource = this.detach(teardownEpoch)
+      if (resource) this.retainLeases(resource)
       if (resource?.process) this.expectedProcessExits.add(resource.process)
       try {
         resource?.connection.close()
@@ -243,6 +269,7 @@ export class AcpConnectionResourceOwner {
         safeLogCleanupError('ACP connection close during shutdown failed', error)
       }
       if (resource?.process) {
+        this.pendingProcessTrees.add(resource.process)
         try {
           if (!resource.process.killed) resource.process.kill()
         } catch (error) {
@@ -257,14 +284,22 @@ export class AcpConnectionResourceOwner {
   }
 
   beginAwaitableShutdown(latch: boolean): AcpConnectionShutdownHandle {
-    this.lastTreeKillReaped = true
     if (latch) this.shuttingDown = true
-    const inFlight = this.connectInFlight
+    const inFlight = [...this.pendingConnections]
+    // Retry only debt that predates this shutdown. A newly failed teardown remains visible to
+    // this caller, and can be retried at the next explicit shutdown boundary.
+    const recovery = Promise.allSettled([
+      ...[...this.pendingProcessTrees].map((process) => this.reapProcessTree(process)),
+      ...[...this.pendingLeases].map(([lease, message]) => this.releaseLease(lease, message))
+    ])
 
     return Object.freeze({
       finish: async () => {
-        if (inFlight) await inFlight.catch(() => undefined)
-        return { reaped: this.lastTreeKillReaped }
+        await Promise.allSettled(inFlight)
+        await recovery
+        // Unexpected close and an in-flight spawn can start cleanup outside disconnect().
+        await Promise.allSettled([...this.processReaping.values(), ...this.leaseReleases.values()])
+        return { reaped: !this.hasProcessResources }
       }
     })
   }
@@ -365,40 +400,62 @@ export class AcpConnectionResourceOwner {
       : selectSkills(text, catalog, signal)
   }
 
-  private async reapProcessTree(process: ChildProcessWithoutNullStreams): Promise<void> {
+  private reapProcessTree(process: ChildProcessWithoutNullStreams): Promise<void> {
     this.expectedProcessExits.add(process)
-    const result = await terminateProcessTree(process, undefined, log)
-    this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
+    this.pendingProcessTrees.add(process)
+    const existing = this.processReaping.get(process)
+    if (existing) return existing
+    const pending = terminateProcessTree(process, undefined, log)
+      .then((result) => {
+        if (result.reaped) this.pendingProcessTrees.delete(process)
+      })
+      .finally(() => {
+        if (this.processReaping.get(process) === pending) this.processReaping.delete(process)
+      })
+    this.processReaping.set(process, pending)
+    return pending
   }
 
-  private async releaseBridgeLease(lease: ResponsesBridgeLease): Promise<void> {
-    if (!lease || this.releasedBridgeLeases.has(lease)) return
-    this.releasedBridgeLeases.add(lease)
-    try {
-      await lease.release()
-    } catch (error) {
-      safeLogCleanupError('responses bridge lease release failed', error)
+  private retainLeases(resource: AcpUnattachedConnectionResource): void {
+    const leases: Array<readonly [ReleasableLease | undefined, string]> = [
+      [resource.bridgeLease, 'responses bridge lease release failed'],
+      [resource.anthropicBridgeLease, 'Anthropic bridge lease release failed'],
+      [resource.providerTransportLease, 'provider transport lease release failed']
+    ]
+    for (const [lease, message] of leases) {
+      if (lease && !this.releasedBridgeLeases.has(lease)) this.pendingLeases.set(lease, message)
     }
   }
 
-  private async releaseAnthropicBridgeLease(lease: AnthropicBridgeLease): Promise<void> {
-    if (!lease || this.releasedBridgeLeases.has(lease)) return
-    this.releasedBridgeLeases.add(lease)
-    try {
-      await lease.release()
-    } catch (error) {
-      safeLogCleanupError('Anthropic bridge lease release failed', error)
-    }
+  private releaseBridgeLease(lease: ResponsesBridgeLease): Promise<void> {
+    return this.releaseLease(lease, 'responses bridge lease release failed')
   }
 
-  private async releaseProviderTransportLease(lease: ProviderTransportLease): Promise<void> {
-    if (!lease || this.releasedBridgeLeases.has(lease)) return
-    this.releasedBridgeLeases.add(lease)
-    try {
-      await lease.release()
-    } catch (error) {
-      safeLogCleanupError('provider transport lease release failed', error)
-    }
+  private releaseAnthropicBridgeLease(lease: AnthropicBridgeLease): Promise<void> {
+    return this.releaseLease(lease, 'Anthropic bridge lease release failed')
+  }
+
+  private releaseProviderTransportLease(lease: ProviderTransportLease): Promise<void> {
+    return this.releaseLease(lease, 'provider transport lease release failed')
+  }
+
+  private releaseLease(lease: ReleasableLease | undefined, message: string): Promise<void> {
+    if (!lease || this.releasedBridgeLeases.has(lease)) return Promise.resolve()
+    this.pendingLeases.set(lease, message)
+    const existing = this.leaseReleases.get(lease)
+    if (existing) return existing
+    const pending = Promise.resolve()
+      .then(() => lease.release())
+      .then(() => {
+        this.releasedBridgeLeases.add(lease)
+        this.pendingLeases.delete(lease)
+      })
+      .catch((error) => safeLogCleanupError(message, error))
+      .finally(() => {
+        if (this.leaseReleases.get(lease) === pending) this.leaseReleases.delete(lease)
+      })
+    this.leaseReleases.set(lease, pending)
+    return pending
   }
 
   private reportCleanupFailure(

@@ -22,6 +22,10 @@ export const operationJournalPath = (runtimeRoot: string): string =>
 export const isValidChildStartToken = (value: unknown): value is string =>
   typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
 
+const isValidChildBirthToken = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  /^(linux-proc-starttime|darwin-proc-uniqueid):(0|[1-9]\d*)$/.test(value)
+
 // A recorded childPid must be a POSITIVE safe integer — a real OS pid. Rejecting 0/negative/non-integer
 // (0 and negatives have special process.kill semantics — process groups / "any process" — and would make
 // a liveness probe signal the wrong target or spuriously succeed) closes a forgery path: a corrupt sidecar
@@ -88,7 +92,15 @@ export const bootTokenProvesReboot = (
 // unreadable. Absent off Linux (there the no-PID escape stays blocked).
 export type OperationChildState =
   | { spawning: true; bootToken?: string }
-  | { childPid: number; childStartedAt: number; childStartToken?: string }
+  | {
+      childPid: number
+      childStartedAt: number
+      childStartToken?: string
+      childBirthToken?: string
+      treeUnconfirmed?: true
+      cleanupUnconfirmed?: true
+      ownershipToken?: string
+    }
 
 const operationChildPath = (runtimeRoot: string, operationId: string): string =>
   join(runtimeRoot, `operation-child-${operationId}.json`)
@@ -124,6 +136,35 @@ export const recordOperationChildSync = (
   writeChildStateSync(runtimeRoot, operationId, child)
 }
 
+// Preserve the recorded leader identity when descendants remain unconfirmed. Erasing it back to a
+// no-PID spawn intent would permanently discard the evidence needed by a later exact-owner retry.
+export const recordOperationChildUnconfirmedSync = (
+  runtimeRoot: string,
+  operationId: string,
+  evidence?: {
+    childPid: number
+    childStartedAt: number
+    childStartToken?: string
+    childBirthToken?: string
+    ownershipToken?: string
+  },
+  processesTerminated = false
+): void => {
+  const current = readOperationChild(runtimeRoot, operationId)
+  const previous = current && current !== 'corrupt' && 'childPid' in current ? current : undefined
+  if (!previous && !evidence) return
+  writeChildStateSync(runtimeRoot, operationId, {
+    ...previous,
+    ...Object.fromEntries(
+      Object.entries(evidence ?? {}).filter(([, value]) => value !== undefined)
+    ),
+    childPid: evidence?.childPid ?? previous!.childPid,
+    childStartedAt: evidence?.childStartedAt ?? previous!.childStartedAt,
+    treeUnconfirmed: processesTerminated ? undefined : true,
+    cleanupUnconfirmed: true
+  })
+}
+
 // Reads a sidecar, distinguishing three cases the recovery side treats differently:
 //   - undefined  : the file is genuinely ABSENT (ENOENT) — the op never reached the spawn stage, so it
 //                  is safe to reconcile.
@@ -147,12 +188,26 @@ export const readOperationChild = (
   try {
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object') return 'corrupt'
-    const { spawning, childPid, childStartedAt, childStartToken, bootToken } = parsed as {
+    const {
+      spawning,
+      childPid,
+      childStartedAt,
+      childStartToken,
+      childBirthToken,
+      bootToken,
+      treeUnconfirmed,
+      cleanupUnconfirmed,
+      ownershipToken
+    } = parsed as {
       spawning?: unknown
       childPid?: unknown
       childStartedAt?: unknown
       childStartToken?: unknown
+      childBirthToken?: unknown
       bootToken?: unknown
+      treeUnconfirmed?: unknown
+      cleanupUnconfirmed?: unknown
+      ownershipToken?: unknown
     }
     // The two states are MUTUALLY EXCLUSIVE: a sidecar is either a {spawning} intent (no pid yet) or a
     // recorded {childPid} — never both. A blob carrying spawning:true AND a childPid is contradictory
@@ -167,7 +222,15 @@ export const readOperationChild = (
       // EXACT shape: the intent variant carries ONLY {spawning, bootToken?}. A childStartedAt/childStartToken
       // here is a PID-variant field bleeding into an intent (corruption/tampering); fail CLOSED so a torn
       // or forged blob can never be salvaged into a state it doesn't cleanly match.
-      if (childStartedAt !== undefined || childStartToken !== undefined) return 'corrupt'
+      if (
+        childStartedAt !== undefined ||
+        childStartToken !== undefined ||
+        childBirthToken !== undefined ||
+        treeUnconfirmed !== undefined ||
+        cleanupUnconfirmed !== undefined ||
+        ownershipToken !== undefined
+      )
+        return 'corrupt'
       // A bootToken PRESENT but not a valid boot_id is corruption — fail CLOSED. Absent is fine (off
       // Linux): the no-PID escape then just stays blocked (bootTokenProvesReboot needs both sides).
       if (bootToken !== undefined && !isValidBootToken(bootToken)) return 'corrupt'
@@ -184,18 +247,37 @@ export const readOperationChild = (
     // CLOSED rather than drop it to the tokenless path, so a malformed token can never masquerade as a
     // legitimately tokenless record. Absent is fine (legacy / non-Linux).
     if (childStartToken !== undefined && !isValidChildStartToken(childStartToken)) return 'corrupt'
-    return childStartToken !== undefined
-      ? { childPid, childStartedAt, childStartToken }
-      : { childPid, childStartedAt }
+    if (childBirthToken !== undefined && !isValidChildBirthToken(childBirthToken)) return 'corrupt'
+    if (treeUnconfirmed !== undefined && treeUnconfirmed !== true) return 'corrupt'
+    if (cleanupUnconfirmed !== undefined && cleanupUnconfirmed !== true) return 'corrupt'
+    if (
+      ownershipToken !== undefined &&
+      (typeof ownershipToken !== 'string' || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(ownershipToken))
+    )
+      return 'corrupt'
+    return {
+      childPid,
+      childStartedAt,
+      ...(childStartToken !== undefined ? { childStartToken } : {}),
+      ...(childBirthToken !== undefined ? { childBirthToken } : {}),
+      ...(treeUnconfirmed ? { treeUnconfirmed } : {}),
+      ...(cleanupUnconfirmed ? { cleanupUnconfirmed } : {}),
+      ...(ownershipToken !== undefined ? { ownershipToken } : {})
+    }
   } catch {
     return 'corrupt' // present but unparseable
   }
 }
 
-export const removeOperationChildSync = (runtimeRoot: string, operationId: string): void => {
+export const removeOperationChildSync = (
+  runtimeRoot: string,
+  operationId: string,
+  strict = false
+): void => {
   try {
     rmSync(operationChildPath(runtimeRoot, operationId), { force: true })
-  } catch {
+  } catch (error) {
+    if (strict) throw error
     // Best-effort cleanup; a leftover sidecar for a cleared journal record is inert (recovery only
     // processes records still in the journal).
   }
@@ -271,6 +353,10 @@ export type RuntimeOperationRecord = {
   // — a malformed value fails closed). Absent off Linux / on legacy records — a live pid with no token is
   // then always 'unknown' (a wall-clock start time can't soundly prove a live pid dead).
   childStartToken?: string
+  treeUnconfirmed?: true
+  cleanupUnconfirmed?: true
+  childBirthToken?: string
+  ownershipToken?: string
   // Persisted before a mutation that can create relocatable package archives. If the process dies after
   // the child commits but before exact filename/digest authority is recorded, recovery cannot safely
   // publish or discard the working cache. It therefore blocks the target and retains the cache until an
@@ -552,6 +638,13 @@ const isOperationRecord = (value: unknown): value is RuntimeOperationRecord => {
       record.repairReason === 'protected-identity-change') &&
     // Child fields are validated as a lifecycle GROUP (parity with the sidecar's exact-shape rule):
     // all-absent or a complete {childPid + childStartedAt (+ token?)}, never a partial subset.
+    (record.treeUnconfirmed === undefined || record.treeUnconfirmed === true) &&
+    (record.cleanupUnconfirmed === undefined || record.cleanupUnconfirmed === true) &&
+    (record.ownershipToken === undefined ||
+      (typeof record.ownershipToken === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(record.ownershipToken))) &&
+    (record.childBirthToken === undefined ||
+      (record.childPid !== undefined && isValidChildBirthToken(record.childBirthToken))) &&
     hasValidChildGroup(record) &&
     hasValidArchivePublications(record)
   )

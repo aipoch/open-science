@@ -2,11 +2,13 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
 #ifdef __APPLE__
 #include <cerrno>
+#include <dlfcn.h>
 #include <libproc.h>
 #include <signal.h>
 #include <sys/sysctl.h>
@@ -34,6 +36,18 @@ struct DarwinProcessIdentity {
   int32_t sid;
   uint64_t unique_id;
   uint64_t parent_unique_id;
+  int32_t id_version;
+};
+
+// ABI: https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info_private.h
+// Resource coalitions are inherited by ordinary fork/exec (osfmk/kern/task.c,
+// task_create_internal). Choosing another coalition at spawn requires a privileged
+// coalition/entitlement (bsd/kern/kern_exec.c). A different coalition is therefore
+// negative evidence for an unproven ordinary descendant, never positive ownership.
+constexpr int kProcPidCoalitionInfo = 20;
+struct DarwinCoalitionInfo {
+  uint64_t ids[2];
+  uint64_t reserved[3];
 };
 
 enum class ProcessReadStatus { kIncluded, kSafelyIgnored, kIncomplete };
@@ -67,6 +81,15 @@ napi_value Uint64String(napi_env env, uint64_t input) {
   const std::string text = std::to_string(input);
   napi_create_string_utf8(env, text.c_str(), text.size(), &value);
   return value;
+}
+
+napi_value Status(napi_env env, const char* status, int error = 0) {
+  napi_value result, text;
+  napi_create_object(env, &result);
+  napi_create_string_utf8(env, status, NAPI_AUTO_LENGTH, &text);
+  napi_set_named_property(env, result, "status", text);
+  if (error) napi_set_named_property(env, result, "error", Int32(env, error));
+  return result;
 }
 
 #ifdef __APPLE__
@@ -135,9 +158,57 @@ ProcessReadStatus ReadDarwinProcess(int32_t pid, DarwinProcessIdentity* output) 
       static_cast<int32_t>(sid),
       unique_after.unique_id,
       unique_after.parent_unique_id,
+      unique_after.id_version,
   };
   return output->pid == pid && output->unique_id != 0 ? ProcessReadStatus::kIncluded
                                                       : ProcessReadStatus::kIncomplete;
+}
+
+bool ReadUint64String(napi_env env, napi_value input, uint64_t* output) {
+  size_t size = 0;
+  if (napi_get_value_string_utf8(env, input, nullptr, 0, &size) != napi_ok ||
+      size == 0 || size > 20) return false;
+  char buffer[21]{};
+  if (napi_get_value_string_utf8(env, input, buffer, sizeof(buffer), &size) != napi_ok) return false;
+  uint64_t value = 0;
+  for (size_t i = 0; i < size; ++i) {
+    if (buffer[i] < '0' || buffer[i] > '9') return false;
+    const uint64_t digit = static_cast<uint64_t>(buffer[i] - '0');
+    if (value > (std::numeric_limits<uint64_t>::max() - digit) / 10) return false;
+    value = value * 10 + digit;
+  }
+  if (value == 0) return false;
+  *output = value;
+  return true;
+}
+
+// Returns errno, never a guessed absence. In particular EPERM is unavailable.
+int ReadDarwinCoalition(int32_t pid, uint64_t* cid) {
+  DarwinCoalitionInfo info{};
+  errno = 0;
+  if (proc_pidinfo(pid, kProcPidCoalitionInfo, 0, &info, sizeof(info)) != sizeof(info)) {
+    const int error = errno;
+    return error == ESRCH || ProcessVanished(pid) ? ESRCH : (error ? error : EIO);
+  }
+  if (!info.ids[0]) return EIO;
+  *cid = info.ids[0];
+  return 0;
+}
+
+int ReadDarwinCoalitionMember(int32_t pid, DarwinProcessIdentity* identity, uint64_t* cid) {
+  const auto status = ReadDarwinProcess(pid, identity);
+  if (status != ProcessReadStatus::kIncluded) return ProcessVanished(pid) ? ESRCH : EIO;
+  const int error = ReadDarwinCoalition(pid, cid);
+  if (error) return error;
+  DarwinUniqueIdentifierInfo verified{};
+  errno = 0;
+  if (proc_pidinfo(pid, kProcPidUniqueIdentifierInfo, 0, &verified, sizeof(verified)) != sizeof(verified)) {
+    const int read_error = errno;
+    return read_error == ESRCH || ProcessVanished(pid) ? ESRCH : (read_error ? read_error : EIO);
+  }
+  // pidversion changes across exec; do not authorize a signal with an old token.
+  if (identity->unique_id != verified.unique_id || identity->id_version != verified.id_version) return EAGAIN;
+  return 0;
 }
 
 EnvironmentReadStatus ReadDarwinEnvironmentValue(int32_t pid, const std::string& name,
@@ -284,6 +355,91 @@ napi_value ListDarwinProcesses(napi_env env, napi_callback_info info) {
 #endif
 }
 
+napi_value GetDarwinProcessCoalition(napi_env env, napi_callback_info info) {
+#ifdef __APPLE__
+  size_t argc = 1;
+  napi_value argv[1];
+  int32_t pid = 0;
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 1 ||
+      napi_get_value_int32(env, argv[0], &pid) != napi_ok || pid <= 0) return Status(env, "unavailable", EINVAL);
+  DarwinProcessIdentity identity{};
+  uint64_t cid = 0;
+  const int error = ReadDarwinCoalitionMember(pid, &identity, &cid);
+  if (error) return Status(env, error == ESRCH ? "missing" : "unavailable", error);
+  napi_value result = Status(env, "ok");
+  napi_set_named_property(env, result, "coalitionId", Uint64String(env, cid));
+  napi_set_named_property(env, result, "process", ProcessIdentity(env, identity));
+  return result;
+#else
+  (void)info;
+  return Status(env, "unavailable");
+#endif
+}
+
+napi_value SignalDarwinProcess(napi_env env, napi_callback_info info) {
+#ifdef __APPLE__
+  using SignalAuditToken = int (*)(audit_token_t*, int);
+  static const auto send = reinterpret_cast<SignalAuditToken>(dlsym(RTLD_DEFAULT, "proc_signal_with_audittoken"));
+  const auto result = [env](const char* status, int error = 0) {
+    napi_value value = Status(env, status, error);
+    napi_value mode;
+    napi_create_string_utf8(env, send ? "atomic" : "legacy", NAPI_AUTO_LENGTH, &mode);
+    napi_set_named_property(env, value, "signalMode", mode);
+    return value;
+  };
+  size_t argc = 3;
+  napi_value argv[3];
+  uint64_t unique_id = 0;
+  int32_t pid = 0, signal = 0;
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 3 ||
+      napi_get_value_int32(env, argv[0], &pid) != napi_ok || pid <= 0 ||
+      !ReadUint64String(env, argv[1], &unique_id) || napi_get_value_int32(env, argv[2], &signal) != napi_ok ||
+      signal <= 0 || signal >= NSIG) return result("unavailable", EINVAL);
+  DarwinProcessIdentity identity{};
+  if (ReadDarwinProcess(pid, &identity) != ProcessReadStatus::kIncluded) {
+    return ProcessVanished(pid) ? result("missing", ESRCH) : result("unavailable", EIO);
+  }
+  if (identity.unique_id != unique_id) return result("mismatch");
+  if (!send) {
+    // macOS 12-14 lack the audit-token API. Preserve their supported execution
+    // path by rechecking the birth identity immediately before a single-PID kill.
+    // This is explicitly legacy assurance: userspace cannot eliminate PID reuse
+    // between this final check and kill(). Never signal a numeric process group.
+    DarwinProcessIdentity verified{};
+    if (ReadDarwinProcess(pid, &verified) != ProcessReadStatus::kIncluded) {
+      return ProcessVanished(pid) ? result("missing", ESRCH) : result("unavailable", EIO);
+    }
+    if (verified.unique_id != unique_id) return result("mismatch");
+    errno = 0;
+    if (kill(pid, signal) == 0) return result("ok");
+    const int error = errno ? errno : EIO;
+    return result(error == ESRCH ? "missing" : "unavailable", error);
+  }
+  // XNU kern_proc.c proc_find_audit_token resolves PID + pidversion to a proc ref;
+  // proc_info.c psignal_by_audit_token revalidates that identity before signaling.
+  // An available audit-token API never falls back on error: permissions, PID reuse
+  // or intervening exec must not authorize an unchecked legacy signal.
+  audit_token_t token{};
+  token.val[5] = static_cast<uint32_t>(pid);
+  token.val[7] = static_cast<uint32_t>(identity.id_version);
+  const int signal_error = send(&token, signal);
+  if (signal_error == ESRCH) {
+    DarwinProcessIdentity current{};
+    const auto current_status = ReadDarwinProcess(pid, &current);
+    if (ProcessVanished(pid) || (current_status == ProcessReadStatus::kIncluded && current.unique_id != unique_id)) {
+      return result("missing", ESRCH);
+    }
+    // An intervening exec changes pidversion but can preserve the birth identity.
+    // Failure to signal an old exec generation is not proof that its process died.
+    return result("unavailable", EAGAIN);
+  }
+  return result(signal_error == 0 ? "ok" : "unavailable", signal_error);
+#else
+  (void)info;
+  return Status(env, "unavailable");
+#endif
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   RegisterWindowsOwnedProcess(env, exports);
   napi_value get_process;
@@ -298,6 +454,11 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(
       env, "listDarwinProcesses", NAPI_AUTO_LENGTH, ListDarwinProcesses, nullptr, &list_processes);
   napi_set_named_property(env, exports, "listDarwinProcesses", list_processes);
+  const napi_property_descriptor coalition_methods[] = {
+      {"getDarwinProcessCoalition", nullptr, GetDarwinProcessCoalition, nullptr, nullptr, nullptr, napi_default_jsproperty, nullptr},
+      {"signalDarwinProcess", nullptr, SignalDarwinProcess, nullptr, nullptr, nullptr, napi_default_jsproperty, nullptr},
+  };
+  napi_define_properties(env, exports, sizeof(coalition_methods) / sizeof(coalition_methods[0]), coalition_methods);
   return exports;
 }
 

@@ -927,6 +927,50 @@ describe('notebook shell process behavior', () => {
         signal
       })
 
+    it('settles completed output when receipt release fails and retains recovery evidence', async () => {
+      const registry = new ShellProcessOwnershipRegistry(runtimeRoot, {
+        processStartIdentity: () => 'fixture-start-identity',
+        processExists: () => false,
+        ownedTreeExists: () => false
+      })
+      const launch = registry.beginLaunch({
+        runId: 'release-failed',
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+      const release = vi.fn(() => {
+        throw new Error('receipt removal failed')
+      })
+      const result = await runShellCommand({
+        command: 'printf completed-output',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        terminateTree: async () => ({ reaped: true }),
+        prepareProcessOwnership: () => ({
+          claim: (child, platform) => {
+            launch.claim(child, platform)
+            return release
+          },
+          abort: launch.abort
+        })
+      })
+
+      expect(release).toHaveBeenCalledOnce()
+      expect(result).toMatchObject({
+        stdout: 'completed-output',
+        exitCode: null,
+        errorCode: 'shell-cleanup-incomplete',
+        recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+      })
+      expect(result).toHaveProperty('ownedTreeReaped', false)
+      expect(registry.hasReceipts()).toBe(true)
+      await registry.recover()
+      expect(registry.hasReceipts()).toBe(false)
+    })
+
     it('exposes the authoritative native input root over an inherited override', async () => {
       const inputRoot = join(process.cwd(), '.open-science-test-inputs')
       const result = await runShellCommand({

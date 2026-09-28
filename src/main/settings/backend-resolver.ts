@@ -156,6 +156,10 @@ export class AgentBackendResolver {
       ((transport) => ensureCodexAuthHome('isolated', this.storageRoot, transport))
   }
 
+  shutdownProviderTransports(): Promise<{ reaped: boolean }> {
+    return this.transports.shutdown()
+  }
+
   async resolveActiveSpawnConfig(
     context: AgentBackendResolutionContext = {}
   ): Promise<AgentSpawnConfig> {

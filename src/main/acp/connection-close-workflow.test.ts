@@ -192,13 +192,12 @@ describe('AcpConnectionCloseWorkflow', () => {
     ])
   })
 
-  it('keeps quit shutdown awaitable and combines candidate reap results', async () => {
+  it('keeps quit shutdown awaitable and preserves the physical owner reap result', async () => {
     const { workflow, resources, state } = createWorkflow()
     resources.beginAwaitableShutdown.mockReturnValue({
       finish: async () => ({ reaped: false })
     })
 
-    workflow.recordProcessTreeReaped(false)
     await expect(workflow.shutdownForQuit()).resolves.toEqual({ reaped: false })
 
     expect(resources.beginAwaitableShutdown).toHaveBeenCalledWith(true)

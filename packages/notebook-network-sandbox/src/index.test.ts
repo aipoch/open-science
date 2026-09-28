@@ -503,7 +503,7 @@ describe('NotebookNetworkSandbox', () => {
     }
   )
 
-  it('surfaces sandbox denial annotations and cleans up each command once', async () => {
+  it('preserves newer owner proof arriving during an incomplete cleanup', async () => {
     const sandbox = new NotebookNetworkSandbox(options())
     vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
     backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
@@ -526,21 +526,51 @@ describe('NotebookNetworkSandbox', () => {
       temporaryResourcesRemoved: true
     })
     await expect(secondCleanup).resolves.toEqual({
-      processesTerminated: false,
-      networkClosed: true,
-      temporaryResourcesRemoved: true
-    })
-    expect(firstCleanup).toBe(secondCleanup)
-    expect(backend.cleanupAfterCommand).toHaveBeenCalledOnce()
-    expect(backend.cleanupAfterCommand).toHaveBeenCalledWith(expect.any(String), 'timeout', {
-      processesTerminated: false
-    })
-    backend.cleanupAfterCommand.mockResolvedValueOnce({
       processesTerminated: true,
       networkClosed: true,
       temporaryResourcesRemoved: true
     })
-    await wrapped.cleanup('cancel', { processesTerminated: true })
+    expect(backend.cleanupAfterCommand).toHaveBeenCalledTimes(2)
+    expect(backend.cleanupAfterCommand).toHaveBeenCalledWith(expect.any(String), 'timeout', {
+      processesTerminated: false
+    })
+    expect(backend.cleanupAfterCommand).toHaveBeenLastCalledWith(expect.any(String), 'timeout', {
+      processesTerminated: true
+    })
+    await expect(wrapped.cleanup('cancel', { processesTerminated: false })).resolves.toMatchObject({
+      processesTerminated: true
+    })
+    expect(backend.cleanupAfterCommand).toHaveBeenCalledTimes(2)
+    await sandbox.dispose()
+  })
+
+  it('retains positive owner proof across a later network cleanup failure', async () => {
+    const sandbox = new NotebookNetworkSandbox(options())
+    vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+    await sandbox.initialize()
+    const wrapped = await sandbox.wrap({
+      command: 'true',
+      cwd: '/workspace',
+      onNetworkAccessRequest: denyNetwork
+    })
+    await wrapped.cleanup('exit', { processesTerminated: false })
+    backend.cleanupAfterCommand.mockImplementationOnce(async (_id, _reason, outcome) => ({
+      processesTerminated: outcome.processesTerminated,
+      networkClosed: false,
+      temporaryResourcesRemoved: false
+    }))
+    await expect(wrapped.cleanup('cancel', { processesTerminated: true })).resolves.toMatchObject({
+      processesTerminated: true,
+      networkClosed: false
+    })
+    await expect(wrapped.cleanup('cancel', { processesTerminated: false })).resolves.toMatchObject({
+      processesTerminated: true,
+      networkClosed: true
+    })
+    expect(backend.cleanupAfterCommand).toHaveBeenLastCalledWith(expect.any(String), 'exit', {
+      processesTerminated: true
+    })
     await sandbox.dispose()
   })
 

@@ -989,3 +989,21 @@ it('removes stale recovery details after explicit repair clears the affected blo
   recovery.clearPrefixBlock(prefix)
   expect(recovery.status().operations).toEqual([])
 })
+
+it.each(['anonymous', 'other-operation'])(
+  'retains an independent %s block when one exact cleanup succeeds',
+  async (other) => {
+    const coordinator = new NotebookRecoveryCoordinator(await createRuntimeRoot())
+    await coordinator.recover()
+    const prefix = '/runtime/envs/shared-target'
+    const runtimeId = 'shared-runtime'
+    coordinator.markLiveUnconfirmed(prefix, runtimeId, other === 'anonymous' ? undefined : other)
+    const retry = vi.fn().mockResolvedValue(undefined)
+    coordinator.retainLiveCleanup('retryable-operation', { prefix, runtimeId }, retry)
+    await coordinator.ensureReady()
+    expect(retry).toHaveBeenCalledTimes(1)
+    expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
+    expect(coordinator.isRuntimeIdBlocked(runtimeId)).toBe(true)
+    expect(coordinator.isPrefixLiveUnconfirmed(prefix)).toBe(true)
+  }
+)

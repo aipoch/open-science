@@ -18,12 +18,14 @@ import { StringDecoder } from 'node:string_decoder'
 
 import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { terminateProcessTree } from '../process-tree'
 import type {
   AcpBackendGenerationAttempt,
   AcpBackendGenerationView
 } from './backend-generation-owner'
-import type { AcpConnectionResourceAttempt } from './connection-resource-owner'
+import type {
+  AcpConnectionResourceAttempt,
+  AcpUnattachedConnectionResource
+} from './connection-resource-owner'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 
 type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
@@ -62,7 +64,7 @@ type AcpAgentConnectionHooks = Readonly<{
   onBackendResolved: (framework: AgentFramework['id']) => void
   onProcessSpawned: (framework: AgentFramework['id']) => void
   onBackendPublished: (backend: AcpBackendGenerationView) => void
-  onProcessTreeReaped: (reaped: boolean) => void
+  cleanupUnattachedResources: (resource: AcpUnattachedConnectionResource) => Promise<void>
   markProcessExitExpected: (process: ChildProcessWithoutNullStreams, epoch: number) => void
   onProcessStderr: (text: string, context: AcpProcessEventContext) => void
   onProcessStderrEnd?: (context: AcpProcessEventContext) => void
@@ -79,7 +81,6 @@ type AcpAgentConnectionHooks = Readonly<{
     framework: AgentFramework['id'],
     epoch: number
   ) => void
-  reportProcessTreeError: (message: string, error?: unknown) => void
 }>
 
 type AcpAgentConnectionCandidateInput = Readonly<{
@@ -128,42 +129,18 @@ class AcpAgentConnectionAdapter {
       }
     }
     const cleanup = async (): Promise<void> => {
+      if (process) hooks.markProcessExitExpected(process, input.epoch)
       try {
-        connection?.close()
+        // Candidates hand off every physical obligation, including leases resolved before spawn.
+        await hooks.cleanupUnattachedResources({
+          process,
+          connection,
+          bridgeLease,
+          anthropicBridgeLease,
+          providerTransportLease
+        })
       } catch (error) {
-        reportCleanupFailure('connection', error)
-      }
-      if (process) {
-        hooks.markProcessExitExpected(process, input.epoch)
-        try {
-          const result = await terminateProcessTree(process, undefined, {
-            error: (message, error) => hooks.reportProcessTreeError(message, error)
-          })
-          hooks.onProcessTreeReaped(result.reaped)
-        } catch (error) {
-          reportCleanupFailure('agent-process', error)
-        }
-      }
-      if (bridgeLease) {
-        try {
-          await bridgeLease.release()
-        } catch (error) {
-          reportCleanupFailure('bridge-lease', error)
-        }
-      }
-      if (anthropicBridgeLease) {
-        try {
-          await anthropicBridgeLease.release()
-        } catch (error) {
-          reportCleanupFailure('anthropic-bridge-lease', error)
-        }
-      }
-      if (providerTransportLease) {
-        try {
-          await providerTransportLease.release()
-        } catch (error) {
-          reportCleanupFailure('provider-transport-lease', error)
-        }
+        reportCleanupFailure('agent-process', error)
       }
     }
 
@@ -175,6 +152,15 @@ class AcpAgentConnectionAdapter {
       providerTransportLease = backend.providerTransportLease
       backendAttempt = input.prepareBackend(backend)
       hooks.onBackendResolved(framework)
+      // Backend resolution may outlive supersession or shutdown. Recheck before creating any OS
+      // process; the post-spawn check below still covers synchronous hooks that revoke admission.
+      if (input.isShuttingDown() || !input.isCurrent()) {
+        throw new Error(
+          input.isShuttingDown()
+            ? 'ACP runtime is shutting down.'
+            : 'ACP connection superseded before spawn.'
+        )
+      }
       process = input.spawnAgent
         ? input.spawnAgent()
         : backend.framework.spawn({

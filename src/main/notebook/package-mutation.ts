@@ -9,12 +9,18 @@ import type {
 import {
   operationJournalPath,
   recordOperationChildSync,
+  recordOperationChildUnconfirmedSync,
   recordSpawnIntentSync,
   removeOperationChildSync,
   RuntimeOperationJournal
 } from './operation-journal'
 import type { NotebookPackageAdmission, NotebookPackageAdmittedTarget } from './package-admission'
-import type { InstallDeps, InstallResult, InstallSpawn } from './package-manager'
+import {
+  PackageProcessCleanupError,
+  type InstallDeps,
+  type InstallResult,
+  type InstallSpawn
+} from './package-manager'
 import type {
   MicromambaWorkingCacheRetainer,
   WorkingCacheArchivePublication
@@ -68,7 +74,12 @@ type NotebookPackageMutationOwnerOptions = {
     NotebookRuntimeRepairOwner,
     'quarantineProtectedIdentity' | 'completeInterruptedInstall'
   >
-  blockUnconfirmedChild: (target: NotebookPackageAdmittedTarget) => void
+  blockUnconfirmedChild: (target: NotebookPackageAdmittedTarget, operationId: string) => void
+  retainCleanup?: (
+    operationId: string,
+    target: NotebookPackageAdmittedTarget,
+    retry: () => Promise<void>
+  ) => void
   retainWorkingCache?: MicromambaWorkingCacheRetainer
 }
 
@@ -169,6 +180,8 @@ class NotebookPackageMutationOwner {
     let begun = false
     let publicationIntentPersisted = false
     let archiveEvidenceIncomplete = false
+    let cleanupRetained = false
+    const mutationSettled = Promise.withResolvers<void>()
     const archivePublications = new Map<string, WorkingCacheArchivePublication>()
     try {
       // The journal begins inside the environment lock so Reset cannot clear this new operation
@@ -297,12 +310,17 @@ class NotebookPackageMutationOwner {
                 // Establish the in-process block while the exclusive environment lease is still held.
                 // A waiting run must never enter between lease release and the outer recovery catch.
                 try {
-                  recordSpawnIntentSync(runtimeRoot, operationId)
+                  recordOperationChildUnconfirmedSync(
+                    runtimeRoot,
+                    operationId,
+                    error instanceof PackageProcessCleanupError ? error.processEvidence : undefined,
+                    error instanceof PackageProcessCleanupError && error.processesTerminated
+                  )
                 } catch {
                   // Keep the recorded PID as the best durable evidence; the in-process block below is
                   // authoritative for the remainder of this app lifetime.
                 }
-                this.options.blockUnconfirmedChild(target)
+                this.options.blockUnconfirmedChild(target, operationId)
               }
               throw error
             }
@@ -478,37 +496,94 @@ class NotebookPackageMutationOwner {
       if (isRepairQuarantineError(error)) retainForRecovery = true
       if (isChildUnconfirmedError(error)) {
         retainForRecovery = true
-        // The direct installer PID may already be gone while an unenumerated/reparented descendant
-        // continues writing. Replace that stale identity with the existing no-verifiable-PID state so
-        // startup recovery blocks instead of clearing the journal after probing only the dead parent.
+        // A dead leader does not prove its descendants stopped. Keep the leader/marker evidence and
+        // persist the separate unresolved-tree state until the exact owner confirms cleanup.
         try {
-          recordSpawnIntentSync(runtimeRoot, operationId)
+          recordOperationChildUnconfirmedSync(
+            runtimeRoot,
+            operationId,
+            error instanceof PackageProcessCleanupError ? error.processEvidence : undefined,
+            error instanceof PackageProcessCleanupError && error.processesTerminated
+          )
         } catch {
           // Retain the prior sidecar + journal as the best durable evidence still available. The
           // in-process recovery block below remains authoritative for this app lifetime.
         }
-        this.options.blockUnconfirmedChild(target)
+        this.options.blockUnconfirmedChild(target, operationId)
+        if (error instanceof PackageProcessCleanupError && this.options.retainCleanup) {
+          this.options.retainCleanup(operationId, target, async () => {
+            await mutationSettled.promise
+            await this.options.environmentOperations.runMutation(environmentName, async () => {
+              await error.retryCleanup()
+              recordOperationChildUnconfirmedSync(
+                runtimeRoot,
+                operationId,
+                error.processEvidence,
+                true
+              )
+              // The failed operation publishes no archives. Keep its durable dirty inventory marker;
+              // the next authorized run/install refreshes it, rather than declaring the install successful.
+              await journal.update(operationId, {
+                ...error.processEvidence,
+                treeUnconfirmed: undefined,
+                cleanupUnconfirmed: true,
+                archivePublicationPending: undefined
+              })
+            })
+            // Cache completion may require another retained operation to release its lease. Do not
+            // hold this environment's exclusive lease while waiting for that operation's cleanup.
+            if (
+              releaseWorkingCache &&
+              !(await releaseWorkingCache({
+                archivePublications: [],
+                completedOperationId: operationId,
+                retainForRecovery: false
+              }))
+            )
+              throw new Error('Package working cache cleanup is incomplete.')
+            removeOperationChildSync(runtimeRoot, operationId, true)
+            await journal.complete(operationId)
+          })
+          cleanupRetained = true
+        }
+        await childJournalUpdate
+        await journal
+          .update(operationId, {
+            ...(error instanceof PackageProcessCleanupError ? error.processEvidence : {}),
+            treeUnconfirmed:
+              error instanceof PackageProcessCleanupError && error.processesTerminated
+                ? undefined
+                : true,
+            cleanupUnconfirmed: true
+          })
+          .catch(() => undefined)
       }
       throw error
     } finally {
-      // Recovery paths can skip later journal writes. Drain the last serialized PID update
-      // before releasing resources or letting the caller tear down this runtime root.
-      await childJournalUpdate
-      const publications = result?.ok ? [...archivePublications.values()] : []
-      if (begun && !publicationIntentPersisted) {
-        retainForRecovery = true
-        this.options.blockUnconfirmedChild(target)
-      }
-      if (begun && !retainForRecovery) {
-        removeOperationChildSync(runtimeRoot, operationId)
-      }
-      const cacheFinalized = await releaseWorkingCache?.({
-        archivePublications: publications,
-        completedOperationId: operationId,
-        retainForRecovery
-      }).catch(() => false)
-      if (begun && !retainForRecovery && (publications.length === 0 || cacheFinalized)) {
-        await journal.complete(operationId).catch(() => undefined)
+      try {
+        // Recovery paths can skip later journal writes. Drain the last serialized PID update
+        // before releasing resources or letting the caller tear down this runtime root.
+        await childJournalUpdate
+        const publications = result?.ok ? [...archivePublications.values()] : []
+        if (begun && !publicationIntentPersisted) {
+          retainForRecovery = true
+          this.options.blockUnconfirmedChild(target, operationId)
+        }
+        if (begun && !retainForRecovery) {
+          removeOperationChildSync(runtimeRoot, operationId)
+        }
+        const cacheFinalized = cleanupRetained
+          ? false
+          : await releaseWorkingCache?.({
+              archivePublications: publications,
+              completedOperationId: operationId,
+              retainForRecovery
+            }).catch(() => false)
+        if (begun && !retainForRecovery && (publications.length === 0 || cacheFinalized)) {
+          await journal.complete(operationId).catch(() => undefined)
+        }
+      } finally {
+        mutationSettled.resolve()
       }
     }
     if (!result) throw new Error('package mutation completed without an installer result')

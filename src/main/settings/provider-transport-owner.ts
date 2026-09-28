@@ -61,6 +61,39 @@ type OpenAiProviderBridgePort = Pick<
 type ChatProviderCompatibilityBridgePort = Pick<ChatProviderCompatibilityBridge, 'start' | 'close'>
 type CreateXaiOAuthProviderBridge = typeof createXaiOAuthProviderBridge
 
+// A transport generation can own several independent bridges. Successful releases stay settled;
+// failures retain their exact resources, and concurrent callers join the same cleanup attempt.
+const createRetryableRelease = (
+  cleanups: readonly (() => Promise<void>)[]
+): (() => Promise<void>) => {
+  const pending = new Set(cleanups)
+  let inFlight: Promise<void> | undefined
+  return () => {
+    if (inFlight) return inFlight
+    const attempt = Promise.allSettled(
+      [...pending].map(async (cleanup) => {
+        await cleanup()
+        pending.delete(cleanup)
+      })
+    )
+      .then((results) => {
+        const failures = results.filter((result) => result.status === 'rejected')
+        if (failures.length === 1) throw failures[0].reason
+        if (failures.length > 1) {
+          throw new AggregateError(
+            failures.map((failure) => failure.reason),
+            'Provider transport cleanup is incomplete.'
+          )
+        }
+      })
+      .finally(() => {
+        if (inFlight === attempt) inFlight = undefined
+      })
+    inFlight = attempt
+    return attempt
+  }
+}
+
 const codeBuddyCompatibilityEndpoint = (
   provider: ProviderRuntimeTarget['provider'],
   wire: ChatProviderCompatibilityTarget['wire']
@@ -152,6 +185,9 @@ type ProviderTransportOwnerOptions = {
 }
 
 class ProviderTransportOwner {
+  private readonly pendingCleanup = new Set<() => Promise<void>>()
+  private readonly acquisitions = new Set<Promise<ProviderTransportGeneration>>()
+  private shutdownInFlight: Promise<{ reaped: boolean }> | undefined
   private readonly onProviderFailure: ProviderTransportOwnerOptions['onProviderFailure']
   private readonly createResponsesBridge: (
     target: ResponsesBridgeTarget,
@@ -205,7 +241,71 @@ class ProviderTransportOwner {
     this.getXaiOAuthAccessToken = options.getXaiOAuthAccessToken
   }
 
-  async acquire(input: ProviderTransportRequest): Promise<ProviderTransportGeneration> {
+  acquire(input: ProviderTransportRequest): Promise<ProviderTransportGeneration> {
+    if (this.shutdownInFlight)
+      return Promise.reject(new Error('Provider transport shutdown is in progress.'))
+    // Bridge generations own separate listeners and credentials. Retry retired resources without
+    // making an unrelated acquisition wait for their release (which may itself still be pending).
+    void this.reconcileCleanup()
+    const acquisition = Promise.resolve().then(async () => {
+      if (this.shutdownInFlight) throw new Error('Provider transport shutdown is in progress.')
+      const generation = await this.acquireTransport(input)
+      if (this.shutdownInFlight) {
+        // A start admitted before shutdown cannot publish a new live lease after the boundary.
+        await generation.release().catch(() => undefined)
+        throw new Error('Provider transport shutdown is in progress.')
+      }
+      return generation
+    })
+    this.acquisitions.add(acquisition)
+    const settled = (): void => {
+      this.acquisitions.delete(acquisition)
+    }
+    void acquisition.then(settled, settled)
+    return acquisition
+  }
+
+  shutdown(): Promise<{ reaped: boolean }> {
+    if (this.shutdownInFlight) return this.shutdownInFlight
+    const shutdown = (async () => {
+      // Failed starts may not have returned any lease to ACP. The provider owner keeps these
+      // obligations itself, and waits for admitted acquisitions to publish their cleanup result.
+      await Promise.allSettled([...this.acquisitions])
+      await Promise.allSettled([...this.pendingCleanup].map((release) => release()))
+      return { reaped: this.pendingCleanup.size === 0 }
+    })().finally(() => {
+      if (this.shutdownInFlight === shutdown) this.shutdownInFlight = undefined
+    })
+    this.shutdownInFlight = shutdown
+    return shutdown
+  }
+
+  private async reconcileCleanup(): Promise<void> {
+    await Promise.allSettled([...this.pendingCleanup].map((release) => release()))
+  }
+
+  private createRelease(cleanups: readonly (() => Promise<void>)[]): () => Promise<void> {
+    const cleanup = createRetryableRelease(cleanups)
+    let inFlight: Promise<void> | undefined
+    const release = (): Promise<void> => {
+      if (inFlight) return inFlight
+      this.pendingCleanup.add(release)
+      const attempt = cleanup()
+        .then(() => {
+          this.pendingCleanup.delete(release)
+        })
+        .finally(() => {
+          if (inFlight === attempt) inFlight = undefined
+        })
+      inFlight = attempt
+      return attempt
+    }
+    return release
+  }
+
+  private async acquireTransport(
+    input: ProviderTransportRequest
+  ): Promise<ProviderTransportGeneration> {
     if (input.plan.modelRoute === 'codebuddy-openai') {
       return this.startCodeBuddyTransport(input)
     }
@@ -326,12 +426,10 @@ class ProviderTransportOwner {
         ...(input.plan.sessionEffort ? { reasoningEffort: input.plan.sessionEffort } : {}),
         createSelector: this.createResponsesBridge
       })
-      let released = false
-      const release = async (): Promise<void> => {
-        if (released) return
-        released = true
-        await Promise.all([bridge.close(), selector?.release()])
-      }
+      const release = this.createRelease([
+        () => bridge.close(),
+        () => selector?.release() ?? Promise.resolve()
+      ])
       const selectSkills = selector.providerTransportLease?.selectSkills
       return Object.freeze({
         provider: routedProvider,
@@ -344,10 +442,10 @@ class ProviderTransportOwner {
         release
       })
     } catch (error) {
-      await Promise.all([
-        bridge.close().catch(() => undefined),
-        selector?.release().catch(() => undefined)
-      ])
+      await this.createRelease([
+        () => bridge.close(),
+        () => selector?.release() ?? Promise.resolve()
+      ])().catch(() => undefined)
       throw error
     }
   }
@@ -380,12 +478,7 @@ class ProviderTransportOwner {
     const bridge = this.createOpenAiProviderBridge(targets, initialTargetId)
     try {
       const connection = await bridge.start()
-      let released = false
-      const release = async (): Promise<void> => {
-        if (released) return
-        released = true
-        await bridge.close()
-      }
+      const release = this.createRelease([() => bridge.close()])
       return Object.freeze({
         provider: Object.freeze({
           ...input.activeTarget.provider,
@@ -403,7 +496,7 @@ class ProviderTransportOwner {
         release
       })
     } catch (error) {
-      await bridge.close().catch(() => undefined)
+      await this.createRelease([() => bridge.close()])().catch(() => undefined)
       throw error
     }
   }
@@ -498,12 +591,7 @@ class ProviderTransportOwner {
       }
       if (!activeProvider)
         throw new Error('The active OpenCode transport target was not registered.')
-      let released = false
-      const release = async (): Promise<void> => {
-        if (released) return
-        released = true
-        await Promise.all(bridges.map((bridge) => bridge.close()))
-      }
+      const release = this.createRelease(bridges.map((bridge) => () => bridge.close()))
       return Object.freeze({
         provider: activeProvider,
         providerModelCatalog: Object.freeze(catalog),
@@ -522,7 +610,9 @@ class ProviderTransportOwner {
         release
       })
     } catch (error) {
-      await Promise.all(bridges.map((bridge) => bridge.close().catch(() => undefined)))
+      await this.createRelease(bridges.map((bridge) => () => bridge.close()))().catch(
+        () => undefined
+      )
       throw error
     }
   }
@@ -551,12 +641,7 @@ class ProviderTransportOwner {
           )
     try {
       const connection = await bridge.start()
-      let released = false
-      const release = async (): Promise<void> => {
-        if (released) return
-        released = true
-        await bridge.close()
-      }
+      const release = this.createRelease([() => bridge.close()])
       return Object.freeze({
         environment: {
           ...claudeCodeLoopbackEnv(
@@ -578,7 +663,7 @@ class ProviderTransportOwner {
         release
       })
     } catch (error) {
-      await bridge.close().catch(() => undefined)
+      await this.createRelease([() => bridge.close()])().catch(() => undefined)
       throw error
     }
   }
@@ -621,28 +706,31 @@ class ProviderTransportOwner {
       (initialTargetId ? targets.get(initialTargetId) : undefined) ??
         createTarget(input.activeTarget)
     )
-    const entry = { proxy, connection: proxy.start() }
+    const entry = { proxy, connection: Promise.resolve().then(() => proxy.start()) }
     this.nativeResponsesCompatibilityProxies.set(generationId, entry)
 
     let connection: ResponsesBridgeConnection
     try {
       connection = await entry.connection
     } catch (error) {
-      if (this.nativeResponsesCompatibilityProxies.get(generationId) === entry) {
-        this.nativeResponsesCompatibilityProxies.delete(generationId)
-      }
-      await entry.proxy.close().catch(() => undefined)
+      await this.createRelease([
+        async () => {
+          await entry.proxy.close()
+          if (this.nativeResponsesCompatibilityProxies.get(generationId) === entry)
+            this.nativeResponsesCompatibilityProxies.delete(generationId)
+        }
+      ])().catch(() => undefined)
       throw error
     }
 
-    let released = false
-    const release = async (): Promise<void> => {
-      if (released) return
-      released = true
-      if (this.nativeResponsesCompatibilityProxies.get(generationId) !== entry) return
-      this.nativeResponsesCompatibilityProxies.delete(generationId)
-      await entry.proxy.close()
-    }
+    const release = this.createRelease([
+      async () => {
+        await entry.proxy.close()
+        if (this.nativeResponsesCompatibilityProxies.get(generationId) === entry) {
+          this.nativeResponsesCompatibilityProxies.delete(generationId)
+        }
+      }
+    ])
     return Object.freeze({
       ...connection,
       lease: {
@@ -717,28 +805,31 @@ class ProviderTransportOwner {
       createTarget(input.activeTarget, input.plan.sessionEffort)
     const generationId = this.nextGenerationId()
     const bridge = this.createResponsesBridge(target)
-    const entry = { bridge, connection: bridge.start() }
+    const entry = { bridge, connection: Promise.resolve().then(() => bridge.start()) }
     this.responsesBridges.set(generationId, entry)
 
     let connection: ResponsesBridgeConnection
     try {
       connection = await entry.connection
     } catch (error) {
-      if (this.responsesBridges.get(generationId) === entry) {
-        this.responsesBridges.delete(generationId)
-      }
-      await entry.bridge.close().catch(() => undefined)
+      await this.createRelease([
+        async () => {
+          await entry.bridge.close()
+          if (this.responsesBridges.get(generationId) === entry)
+            this.responsesBridges.delete(generationId)
+        }
+      ])().catch(() => undefined)
       throw error
     }
 
-    let released = false
-    const release = async (): Promise<void> => {
-      if (released) return
-      released = true
-      if (this.responsesBridges.get(generationId) !== entry) return
-      this.responsesBridges.delete(generationId)
-      await entry.bridge.close()
-    }
+    const release = this.createRelease([
+      async () => {
+        await entry.bridge.close()
+        if (this.responsesBridges.get(generationId) === entry) {
+          this.responsesBridges.delete(generationId)
+        }
+      }
+    ])
     return Object.freeze({
       ...connection,
       lease: {

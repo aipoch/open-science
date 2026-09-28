@@ -76,6 +76,7 @@ type NotebookPackageOperationsOptions = {
     | 'isRuntimeIdBlocked'
     | 'markLiveUnconfirmed'
     | 'markRuntimeLiveUnconfirmed'
+    | 'retainLiveCleanup'
   >
   environmentOperations: Pick<
     NotebookEnvironmentOperations,
@@ -154,9 +155,17 @@ class NotebookPackageOperations {
           target.binding
         ).required,
       runtimeRepair: options.runtimeRepair,
-      blockUnconfirmedChild: ({ repairRuntimeId, journalTarget }) => {
-        options.recovery.markRuntimeLiveUnconfirmed(repairRuntimeId)
-        if (journalTarget) options.recovery.markLiveUnconfirmed(journalTarget)
+      retainCleanup: (operationId, { repairRuntimeId, journalTarget }, retry) => {
+        options.recovery.retainLiveCleanup(
+          operationId,
+          { runtimeId: repairRuntimeId, prefix: journalTarget },
+          retry
+        )
+      },
+      blockUnconfirmedChild: ({ repairRuntimeId, journalTarget }, operationId) => {
+        options.recovery.markRuntimeLiveUnconfirmed(repairRuntimeId, operationId)
+        if (journalTarget)
+          options.recovery.markLiveUnconfirmed(journalTarget, undefined, operationId)
       }
     })
   }

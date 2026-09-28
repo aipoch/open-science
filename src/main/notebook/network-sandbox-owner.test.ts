@@ -1197,6 +1197,80 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it.each(['settled', 'in-flight'] as const)(
+    'uses later owner proof after a %s incomplete cleanup without deleting another command root',
+    async (timing) => {
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn().mockResolvedValue('deny'),
+        platform: 'linux'
+      })
+      const invocation = {
+        executable: '/bin/sh',
+        args: ['-c', 'true'],
+        env: {},
+        cwd: '/workspace',
+        commandText: 'true',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        runtime: 'bash' as const,
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: ['/workspace'],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      }
+      const first = await owner.wrap(invocation)
+      const firstRoot = backend.wrap.mock.calls.at(-1)![0].env.TMPDIR as string
+      const other = await owner.wrap({ ...invocation, sessionId: 'other-session' })
+      const otherRoot = backend.wrap.mock.calls.at(-1)![0].env.TMPDIR as string
+      await writeFile(join(otherRoot, 'sentinel'), 'other command')
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      backend.cleanup.mockImplementationOnce(async (outcome) => {
+        if (timing === 'in-flight') await gate
+        return {
+          processesTerminated: outcome.processesTerminated,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        }
+      })
+      const initial = first.cleanup('cancel', { processesTerminated: false })
+      if (timing === 'settled') await initial
+      expect(existsSync(firstRoot)).toBe(true)
+      const retry = first.cleanup('cancel', { processesTerminated: true })
+      const concurrentRetry = first.cleanup('cancel', { processesTerminated: true })
+      release()
+      await expect(initial).resolves.toMatchObject({
+        processesTerminated: false,
+        temporaryResourcesRemoved: false
+      })
+      await expect(retry).resolves.toEqual({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      await expect(concurrentRetry).resolves.toEqual({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      expect(backend.cleanup).toHaveBeenNthCalledWith(2, { processesTerminated: true })
+      expect(existsSync(firstRoot)).toBe(false)
+      expect(existsSync(firstRoot + '.receipt')).toBe(false)
+      expect(await readFile(join(otherRoot, 'sentinel'), 'utf8')).toBe('other command')
+      await first.cleanup('cancel', { processesTerminated: false })
+      expect(backend.cleanup).toHaveBeenCalledTimes(2)
+      await other.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  )
+
   it('retains the command temp root until backend teardown succeeds and retries the same root', async () => {
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/resources',

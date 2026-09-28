@@ -5744,6 +5744,64 @@ describe('AcpRuntimeCoordinator', () => {
     expect(onDisconnected).toHaveBeenCalledOnce()
   })
 
+  it('retries an unreaped generation after an update gate cleared its Session routing', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    await coordinator.createSession()
+    vi.mocked(created[0].runtime.shutdownForUpdateGate)
+      .mockResolvedValueOnce({ reaped: false })
+      .mockResolvedValueOnce({ reaped: false })
+      .mockResolvedValueOnce({ reaped: true })
+
+    await expect(coordinator.shutdownForUpdateGate()).resolves.toEqual({ reaped: false })
+    expect(coordinator.getSnapshot().sessionIds).toEqual([])
+    await coordinator.createSession()
+    expect(created).toHaveLength(2)
+    await expect(coordinator.shutdownForUpdateGate()).resolves.toEqual({ reaped: false })
+    await expect(coordinator.shutdownForUpdateGate()).resolves.toEqual({ reaped: true })
+    await expect(coordinator.shutdownForUpdateGate()).resolves.toEqual({ reaped: true })
+    expect(created[0].runtime.shutdownForUpdateGate).toHaveBeenCalledTimes(3)
+    expect(created[1].runtime.shutdownForUpdateGate).toHaveBeenCalledOnce()
+  })
+
+  it.each(['retirement', 'disconnect', 'synchronous shutdown'] as const)(
+    'preserves a physical owner removed from routing by %s',
+    async (boundary) => {
+      let fake!: ReturnType<typeof createFakeRuntime>
+      let pending = true
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        fake = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session'], callbacks })
+        Object.defineProperty(fake.runtime, 'hasProcessResources', { get: () => pending })
+        fake.requestRetirement.mockImplementation(async () => callbacks.onRetired?.())
+        vi.mocked(fake.runtime.shutdownForUpdateGate)
+          .mockResolvedValueOnce({ reaped: false })
+          .mockImplementationOnce(async () => {
+            pending = false
+            return { reaped: true }
+          })
+        return fake.runtime
+      })
+      await coordinator.createSession()
+      if (boundary === 'retirement') await coordinator.requestAgentFrameworkSwitch()
+      else if (boundary === 'disconnect') await coordinator.disconnect()
+      else coordinator.shutdown()
+
+      expect(coordinator.getSnapshot().sessionIds).toEqual([])
+      await expect(coordinator.shutdownForUpdateGate()).resolves.toEqual({ reaped: false })
+      await expect(coordinator.shutdownForUpdateGate()).resolves.toEqual({ reaped: true })
+      await expect(coordinator.shutdownForUpdateGate()).resolves.toEqual({ reaped: true })
+      expect(fake.runtime.shutdownForUpdateGate).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('runs new sessions immediately and moves the old session after its active turn', async () => {
     const oldPrompt = createDeferred<{ stopReason: string }>()
     const created: ReturnType<typeof createFakeRuntime>[] = []

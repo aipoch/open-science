@@ -19,6 +19,22 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+// Inject the disk-write boundary after the real pending -> active rename, leaving its actual file.
+const receiptWriteFault = vi.hoisted(() => ({ enabled: false }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    openSync: (...args: Parameters<typeof actual.openSync>) => {
+      if (receiptWriteFault.enabled && String(args[0]).includes('.active.')) {
+        receiptWriteFault.enabled = false
+        throw Object.assign(new Error('Injected active receipt write failure'), { code: 'EACCES' })
+      }
+      return actual.openSync(...args)
+    }
+  }
+})
+
 import {
   kernelExecutableReadRoot,
   NotebookKernelExecutor,
@@ -34,6 +50,7 @@ import {
   rScriptBin
 } from './runtime-paths'
 import { terminateProcessTree } from '../process-tree'
+import * as processTree from '../process-tree'
 import { TimeoutController } from './timeout-controller'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
@@ -4092,6 +4109,63 @@ type PendingTeardownsInternals = {
 }
 
 describe('NotebookKernelExecutor shutdown reaping', () => {
+  it('retains shared figures until an earlier dropped tree is reaped on retry', async () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
+    const internals = executor as unknown as PendingTeardownsInternals & {
+      ensureFiguresDir: () => string
+      figuresDir: string | undefined
+    }
+    const figures = internals.ensureFiguresDir()
+    const figure = join(figures, 'retained.png')
+    await writeFile(figure, 'still owned')
+    let reaped = false
+    internals.pendingTeardowns.set('python:default-python', {
+      completion: Promise.resolve({ reaped: false }),
+      retry: async () => ({ reaped })
+    })
+    try {
+      await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+      expect(await readFile(figure, 'utf8')).toBe('still owned')
+      expect(internals.figuresDir).toBe(figures)
+      reaped = true
+      await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+      expect(existsSync(figures)).toBe(false)
+      expect(internals.figuresDir).toBeUndefined()
+    } finally {
+      reaped = true
+      await executor.shutdown()
+    }
+  })
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'retains the figures removal obligation when filesystem cleanup fails',
+    async () => {
+      const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
+      const internals = executor as unknown as {
+        ensureFiguresDir: () => string
+        figuresDir: string | undefined
+      }
+      const parent = await mkdtemp(join(tmpdir(), 'os-kernel-figures-busy-'))
+      const figures = join(parent, 'figures')
+      await mkdir(figures)
+      internals.figuresDir = figures
+      await chmod(parent, 0o555)
+      try {
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+        expect(existsSync(figures)).toBe(true)
+        expect(internals.figuresDir).toBe(figures)
+        await chmod(parent, 0o755)
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+        expect(existsSync(figures)).toBe(false)
+        expect(internals.figuresDir).toBeUndefined()
+      } finally {
+        await chmod(parent, 0o755)
+        await executor.shutdown()
+        await rm(parent, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('refuses to restart while an earlier persistent process tree remains unreaped', async () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
     const internals = executor as unknown as PendingTeardownsInternals
@@ -4187,6 +4261,304 @@ const delayedSandboxCleanup = (
 }
 
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
+  it.each([
+    'ownership intent',
+    'ownership environment',
+    'before spawn',
+    ...(process.platform !== 'win32' ? ['process registration' as const] : []),
+    'receipt publication',
+    'partial receipt publication'
+  ] as const)(
+    'retains failed launch cleanup and figures when failure occurs at %s',
+    async (failure) => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-start-cleanup-retry-'))
+      const owner = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+      await owner.ensureReady()
+      const begin = vi.spyOn(owner, 'beginSpawn')
+      if (failure === 'ownership intent') {
+        begin.mockImplementationOnce(() => {
+          throw new Error('Intent write unavailable')
+        })
+      }
+      const ownership = vi.spyOn(processTree, 'createPosixProcessTreeOwnership')
+      const record = vi.spyOn(owner, 'recordSpawned')
+      if (failure === 'partial receipt publication') receiptWriteFault.enabled = true
+      if (failure === 'receipt publication') {
+        record.mockImplementation(() => {
+          throw new Error('Receipt temporarily unavailable')
+        })
+      }
+      let cleanupAllowed = false
+      const terminateTree = vi.fn(async (child: ChildProcess) =>
+        cleanupAllowed ? terminateProcessTree(child) : { reaped: false }
+      )
+      const executor = new NotebookKernelExecutor({
+        replLoopPath: REPL_LOOP,
+        processLifecycle: owner,
+        laneKey: '["project","session","root",null,null]',
+        terminateTree,
+        ...(failure === 'process registration'
+          ? {
+              registerOwnedProcessGroup: () => {
+                throw new Error('Process registration unavailable')
+              }
+            }
+          : {}),
+        processSandbox: {
+          wrap: async (invocation) => {
+            if (failure === 'ownership environment') {
+              ownership.mockImplementationOnce(() => {
+                throw new Error('Ownership admission unavailable')
+              })
+            }
+            return {
+              ...invocation,
+              annotateStderr: (stderr) => stderr,
+              beginSpawn: () => {
+                if (failure === 'before spawn') throw new Error('Launch admission revoked')
+                return { started: () => {}, notStarted: () => {} }
+              },
+              cleanup: async (_reason, outcome) => ({
+                processesTerminated: outcome.processesTerminated,
+                networkClosed: true,
+                temporaryResourcesRemoved: cleanupAllowed
+              })
+            }
+          }
+        }
+      })
+      const request = {
+        ...baseRequest(cwdDir),
+        kind: 'repl' as const,
+        code: 'return 1',
+        sessionId: 'session',
+        projectId: 'project'
+      }
+      try {
+        await expect(executor.execute(request)).resolves.toMatchObject({ status: 'failed' })
+        const figures = (executor as unknown as { figuresDir: string }).figuresDir
+        expect(existsSync(figures)).toBe(true)
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+        expect(existsSync(figures)).toBe(true)
+        await expect(executor.execute(request)).rejects.toThrow('process tree could not be stopped')
+        cleanupAllowed = true
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+        expect(existsSync(figures)).toBe(false)
+        // All original process and resource obligations settled; the same lane can start again.
+        record.mockRestore()
+        ownership.mockRestore()
+        const replacement = new NotebookKernelExecutor({
+          replLoopPath: REPL_LOOP,
+          processLifecycle: owner,
+          laneKey: '["project","session","root",null,null]'
+        })
+        try {
+          await expect(replacement.execute(request)).resolves.toMatchObject({ status: 'completed' })
+        } finally {
+          await replacement.shutdown()
+        }
+      } finally {
+        receiptWriteFault.enabled = false
+        begin.mockRestore()
+        record.mockRestore()
+        ownership.mockRestore()
+        cleanupAllowed = true
+        await executor.shutdown()
+      }
+    }
+  )
+
+  it.runIf(Boolean(python3))(
+    'settles a Python helper request when shutdown retires its preparing kernel before dispatch',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-helper-shutdown-'))
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const cleanup = vi.fn(async (_reason, outcome: { processesTerminated: boolean }) => ({
+        processesTerminated: outcome.processesTerminated,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }))
+      const wrap = vi.fn(async (invocation) => {
+        await gate
+        return { ...invocation, annotateStderr: (stderr: string) => stderr, cleanup }
+      })
+      const executor = new NotebookKernelExecutor({
+        pythonBin: python3,
+        pythonLoopPath: FIXTURE,
+        processSandbox: { wrap }
+      })
+      const send = vi.spyOn(executor as unknown as RequestArbitrationInternals, 'sendRequest')
+      const preparing = executor.execute({
+        ...baseRequest(cwdDir),
+        language: 'python',
+        sessionId: 'session',
+        projectId: 'project',
+        resolvedInterpreter: {
+          command: python3!,
+          condaPrefix: dirname(dirname(realpathSync(python3!)))
+        },
+        code: 'print(42)',
+        helperModules: [
+          {
+            id: 'shutdown-helper',
+            language: 'python',
+            exports: [],
+            digest: 'a'.repeat(64),
+            registeredGeneration: 'test-generation',
+            epochId: 'test-epoch',
+            code: 'pass'
+          }
+        ]
+      })
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      try {
+        await vi.waitFor(() => expect(wrap).toHaveBeenCalledOnce())
+        const shutdown = executor.shutdown()
+        release()
+        await expect(shutdown).resolves.toEqual({ reaped: true })
+        const bounded = Promise.race([
+          preparing,
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error('Python helper execution did not settle')),
+              1000
+            )
+          })
+        ])
+        await expect(bounded).resolves.toMatchObject({ status: 'failed', kernelDispatched: false })
+        expect(send).not.toHaveBeenCalled()
+        expect(cleanup).toHaveBeenCalledWith(
+          'cancel',
+          expect.objectContaining({ processesTerminated: true })
+        )
+      } finally {
+        if (timeout) clearTimeout(timeout)
+        release()
+        send.mockRestore()
+        await executor.shutdown()
+      }
+    }
+  )
+
+  it('fences new starts and waits for a preparing kernel before deleting shared figures', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-shutdown-preparing-'))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const cleanup = vi.fn(async (_reason, outcome: { processesTerminated: boolean }) => ({
+      processesTerminated: outcome.processesTerminated,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }))
+    const wrap = vi.fn(async (invocation) => {
+      await gate
+      return { ...invocation, annotateStderr: (stderr: string) => stderr, cleanup }
+    })
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: { wrap }
+    })
+    const request = {
+      ...baseRequest(cwdDir),
+      kind: 'repl' as const,
+      code: 'return 1',
+      sessionId: 'session',
+      projectId: 'project'
+    }
+    const preparing = executor.execute(request)
+    const alsoPreparing = executor.execute(request)
+    try {
+      await vi.waitFor(() => expect(wrap).toHaveBeenCalledOnce())
+      const figures = (executor as unknown as { figuresDir: string }).figuresDir
+      let settled = false
+      const shutdown = executor.shutdown()
+      expect(executor.shutdown()).toBe(shutdown)
+      void shutdown.then(() => {
+        settled = true
+      })
+      await expect(executor.execute(request)).resolves.toMatchObject({
+        status: 'failed',
+        kernelDispatched: false,
+        traceback: expect.stringContaining('shutting down')
+      })
+      expect(wrap).toHaveBeenCalledOnce()
+      expect(settled).toBe(false)
+      expect(existsSync(figures)).toBe(true)
+      release()
+      await expect(shutdown).resolves.toEqual({ reaped: true })
+      await preparing
+      await expect(alsoPreparing).resolves.toMatchObject({
+        status: 'failed',
+        kernelDispatched: false
+      })
+      expect(cleanup).toHaveBeenCalledWith(
+        'cancel',
+        expect.objectContaining({ processesTerminated: true })
+      )
+      expect(existsSync(figures)).toBe(false)
+      await expect(executor.execute(request)).resolves.toMatchObject({ status: 'completed' })
+    } finally {
+      release()
+      await preparing
+      await alsoPreparing
+      await executor.shutdown()
+    }
+  })
+
+  it.each(['processes', 'sandbox resources'] as const)(
+    'preserves figures while %s remain owned and removes them after cleanup retry',
+    async (obligation) => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-figure-retention-'))
+      let cleanupAllowed = false
+      const terminateTree = vi.fn(async (child: ChildProcess) =>
+        obligation === 'processes' && !cleanupAllowed
+          ? { reaped: false }
+          : terminateProcessTree(child)
+      )
+      const executor = new NotebookKernelExecutor({
+        replLoopPath: REPL_LOOP,
+        terminateTree,
+        processSandbox: {
+          wrap: async (invocation) => ({
+            ...invocation,
+            annotateStderr: (stderr) => stderr,
+            cleanup: async (_reason, outcome) => ({
+              processesTerminated: outcome.processesTerminated,
+              networkClosed: true,
+              temporaryResourcesRemoved: obligation !== 'sandbox resources' || cleanupAllowed
+            })
+          })
+        }
+      })
+      try {
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            kind: 'repl',
+            code: 'return 1',
+            sessionId: 'session',
+            projectId: 'project'
+          })
+        ).resolves.toMatchObject({ status: 'completed' })
+        const figures = (executor as unknown as { figuresDir: string }).figuresDir
+        const figure = join(figures, 'retained.png')
+        await writeFile(figure, 'still owned')
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+        expect(await readFile(figure, 'utf8')).toBe('still owned')
+        cleanupAllowed = true
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+        expect(existsSync(figures)).toBe(false)
+      } finally {
+        cleanupAllowed = true
+        await executor.shutdown()
+      }
+    }
+  )
+
   it('retains original exit cleanup proof when recovery admits a successor during the retry delay', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-exit-retry-epoch-'))
     let proofAvailable = false

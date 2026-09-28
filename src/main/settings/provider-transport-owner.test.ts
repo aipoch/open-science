@@ -133,6 +133,307 @@ const makePlan = (transport: BackendTransportPlan): BackendRoutePlan => ({
 })
 
 describe('ProviderTransportOwner generations', () => {
+  it.each([
+    'responses',
+    'compatibility',
+    'claude',
+    'native codex',
+    'codebuddy',
+    'opencode'
+  ] as const)(
+    'keeps a failed %s acquisition cleanup visible to shutdown without a returned lease',
+    async (kind) => {
+      const responses = makeResponsesBridge(0)
+      const compatibility = makeNativeProxy()
+      const claude = makeAnthropicBridge()
+      const openai = makeOpenAiBridge(0)
+      const bridge = {
+        responses,
+        compatibility,
+        claude,
+        'native codex': openai,
+        codebuddy: openai,
+        opencode: openai
+      }[kind]
+      const startError = new Error('start failed')
+      vi.mocked(bridge.start).mockImplementationOnce(() => {
+        throw startError
+      })
+      vi.mocked(bridge.close)
+        .mockRejectedValueOnce(new Error('close failed'))
+        .mockRejectedValueOnce(new Error('close still failed'))
+        .mockResolvedValue(undefined)
+      const owner = new ProviderTransportOwner({
+        createResponsesBridge: () => responses,
+        createNativeResponsesProxy: () => compatibility,
+        createAnthropicProviderBridge: () => claude,
+        createOpenAiProviderBridge: () => openai
+      })
+      const activeTarget = makeTarget()
+      const targetId = 'provider-a/model-a'
+      const transport: BackendTransportPlan =
+        kind === 'responses'
+          ? { kind: 'codex-chat', targets: [] }
+          : kind === 'compatibility'
+            ? { kind: 'codex-responses-compatibility', targets: [] }
+            : kind === 'claude'
+              ? {
+                  kind: 'claude-anthropic',
+                  targets: [
+                    { id: targetId, baseUrl: 'https://provider.example', model: 'model-a' }
+                  ],
+                  initialTargetId: targetId
+                }
+              : kind === 'opencode'
+                ? { kind: 'opencode-openai', targets: [{ id: targetId, target: activeTarget }] }
+                : kind === 'codebuddy'
+                  ? { kind: 'direct' }
+                  : {
+                      kind: 'codex-native-responses',
+                      targets: [{ id: targetId, target: activeTarget }],
+                      initialTargetId: targetId
+                    }
+      await expect(
+        owner.acquire({
+          activeTarget,
+          plan: {
+            ...makePlan(transport),
+            ...(kind === 'codebuddy' ? { modelRoute: 'codebuddy-openai' as const } : {})
+          }
+        })
+      ).rejects.toBe(startError)
+      await expect(owner.shutdown()).resolves.toEqual({ reaped: false })
+      await expect(owner.shutdown()).resolves.toEqual({ reaped: true })
+      await expect(owner.shutdown()).resolves.toEqual({ reaped: true })
+      expect(bridge.close).toHaveBeenCalledTimes(3)
+    }
+  )
+
+  it('retries orphan cleanup before admitting another acquisition without closing a live sibling', async () => {
+    const live = makeResponsesBridge(0)
+    const failed = makeResponsesBridge(1)
+    const replacement = makeResponsesBridge(2)
+    vi.mocked(failed.start).mockRejectedValueOnce(new Error('failed start'))
+    vi.mocked(failed.close).mockRejectedValueOnce(new Error('failed close'))
+    const bridges = [live, failed, replacement]
+    const create = vi.fn(() => bridges.shift()!)
+    const owner = new ProviderTransportOwner({ createResponsesBridge: create })
+    const request = {
+      activeTarget: makeTarget(),
+      plan: makePlan({ kind: 'codex-chat', targets: [] })
+    }
+    const first = await owner.acquire(request)
+    await expect(owner.acquire(request)).rejects.toThrow('failed start')
+    const third = await owner.acquire(request)
+    expect(failed.close).toHaveBeenCalledTimes(2)
+    expect(live.close).not.toHaveBeenCalled()
+    await expect(owner.shutdown()).resolves.toEqual({ reaped: true })
+    expect(live.close).not.toHaveBeenCalled()
+    expect(replacement.close).not.toHaveBeenCalled()
+    await first.release()
+    await third.release()
+  })
+
+  it('admits independent generations while a retired cleanup is pending and still gates shutdown', async () => {
+    const retired = makeResponsesBridge(0)
+    const replacement = makeResponsesBridge(1)
+    vi.mocked(retired.start).mockRejectedValueOnce(new Error('failed start'))
+    vi.mocked(retired.close).mockRejectedValueOnce(new Error('failed close'))
+    const bridges = [retired, replacement]
+    const owner = new ProviderTransportOwner({
+      createResponsesBridge: vi.fn(() => bridges.shift()!)
+    })
+    const request = {
+      activeTarget: makeTarget(),
+      plan: makePlan({ kind: 'codex-chat', targets: [] })
+    }
+    await expect(owner.acquire(request)).rejects.toThrow('failed start')
+    let rejectRetry!: (reason: Error) => void
+    vi.mocked(retired.close).mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRetry = reject
+        })
+    )
+    const next = await owner.acquire(request)
+    expect(retired.close).toHaveBeenCalledTimes(2)
+    expect(replacement.start).toHaveBeenCalledOnce()
+    const shutdown = owner.shutdown()
+    rejectRetry(new Error('still locked'))
+    await expect(shutdown).resolves.toEqual({ reaped: false })
+    expect(replacement.close).not.toHaveBeenCalled()
+    await next.release()
+    await expect(owner.shutdown()).resolves.toEqual({ reaped: true })
+    expect(retired.close).toHaveBeenCalledTimes(3)
+    expect(replacement.close).toHaveBeenCalledOnce()
+  })
+
+  it('waits for an admitted start and joins shutdown while rejecting new acquisitions', async () => {
+    const bridge = makeResponsesBridge(0)
+    const started = Promise.withResolvers<void>()
+    const gate = Promise.withResolvers<never>()
+    vi.mocked(bridge.start).mockImplementationOnce(() => {
+      started.resolve()
+      return gate.promise
+    })
+    vi.mocked(bridge.close).mockRejectedValueOnce(new Error('failed close'))
+    const owner = new ProviderTransportOwner({ createResponsesBridge: () => bridge })
+    const request = {
+      activeTarget: makeTarget(),
+      plan: makePlan({ kind: 'codex-chat', targets: [] })
+    }
+    const pending = owner.acquire(request)
+    void pending.catch(() => undefined)
+    await started.promise
+    const shutdown = owner.shutdown()
+    expect(owner.shutdown()).toBe(shutdown)
+    await expect(owner.acquire(request)).rejects.toThrow('shutdown is in progress')
+    gate.reject(new Error('start failed'))
+    await expect(pending).rejects.toThrow('start failed')
+    await expect(shutdown).resolves.toEqual({ reaped: true })
+    expect(bridge.close).toHaveBeenCalledTimes(2)
+  })
+
+  it('releases a successful start that finishes after shutdown instead of publishing its lease', async () => {
+    const bridge = makeResponsesBridge(0)
+    const started = Promise.withResolvers<void>()
+    const gate = Promise.withResolvers<Awaited<ReturnType<ResponsesBridgeStub['start']>>>()
+    vi.mocked(bridge.start).mockImplementationOnce(() => {
+      started.resolve()
+      return gate.promise
+    })
+    const owner = new ProviderTransportOwner({ createResponsesBridge: () => bridge })
+    const pending = owner.acquire({
+      activeTarget: makeTarget(),
+      plan: makePlan({ kind: 'codex-chat', targets: [] })
+    })
+    void pending.catch(() => undefined)
+    await started.promise
+    const shutdown = owner.shutdown()
+    gate.resolve({
+      baseUrl: 'http://127.0.0.1:41000/v1',
+      token: 'test-token',
+      continuityToken: 'test-continuity'
+    })
+    await expect(pending).rejects.toThrow('shutdown is in progress')
+    await expect(shutdown).resolves.toEqual({ reaped: true })
+    expect(bridge.close).toHaveBeenCalledOnce()
+  })
+
+  it.each(['responses', 'compatibility', 'claude', 'native codex'] as const)(
+    'joins concurrent %s releases and retries a rejected close without forgetting its generation',
+    async (kind) => {
+      const responses = makeResponsesBridge(0)
+      const compatibility = makeNativeProxy()
+      const claude = makeAnthropicBridge()
+      const nativeCodex = makeOpenAiBridge(0)
+      const bridge = { responses, compatibility, claude, 'native codex': nativeCodex }[kind]
+      const closeError = new Error('Transport close failed')
+      let rejectClose!: (error: Error) => void
+      vi.mocked(bridge.close).mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectClose = reject
+          })
+      )
+      const owner = new ProviderTransportOwner({
+        createResponsesBridge: () => responses,
+        createNativeResponsesProxy: () => compatibility,
+        createAnthropicProviderBridge: () => claude,
+        createOpenAiProviderBridge: () => nativeCodex
+      })
+      const activeTarget = makeTarget()
+      const targetId = 'provider-a/model-a'
+      const transport: BackendTransportPlan =
+        kind === 'responses'
+          ? { kind: 'codex-chat', targets: [] }
+          : kind === 'compatibility'
+            ? { kind: 'codex-responses-compatibility', targets: [] }
+            : kind === 'claude'
+              ? {
+                  kind: 'claude-anthropic',
+                  targets: [
+                    { id: targetId, baseUrl: 'https://provider.example', model: 'model-a' }
+                  ],
+                  initialTargetId: targetId
+                }
+              : {
+                  kind: 'codex-native-responses',
+                  targets: [{ id: targetId, target: activeTarget }],
+                  initialTargetId: targetId
+                }
+      const generation = await owner.acquire({ activeTarget, plan: makePlan(transport) })
+      const first = generation.release()
+      const concurrent = generation.release()
+      expect(first).toBe(concurrent)
+      expect(bridge.close).toHaveBeenCalledOnce()
+      const rejected = expect(first).rejects.toBe(closeError)
+      rejectClose(closeError)
+      await rejected
+      await generation.release()
+      await generation.release()
+      expect(bridge.close).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it.each(['model bridge', 'selector'] as const)(
+    'retries only the failed CodeBuddy %s release',
+    async (failedResource) => {
+      const selector = makeResponsesBridge(0)
+      const bridge = makeOpenAiBridge(0)
+      const failed = failedResource === 'selector' ? selector : bridge
+      const successful = failedResource === 'selector' ? bridge : selector
+      const closeError = new Error('Resource close failed')
+      vi.mocked(failed.close).mockRejectedValueOnce(closeError)
+      const owner = new ProviderTransportOwner({
+        createResponsesBridge: () => selector,
+        createOpenAiProviderBridge: () => bridge
+      })
+      const generation = await owner.acquire({
+        activeTarget: makeTarget(),
+        plan: { ...makePlan({ kind: 'direct' }), modelRoute: 'codebuddy-openai' }
+      })
+      await expect(generation.release()).rejects.toBe(closeError)
+      await generation.providerTransportLease?.release()
+      await generation.release()
+      expect(failed.close).toHaveBeenCalledTimes(2)
+      expect(successful.close).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('keeps successful OpenCode bridge releases settled while another bridge retries', async () => {
+    const bridges = [makeOpenAiBridge(0), makeOpenAiBridge(1)]
+    const closeError = new Error('Second bridge close failed')
+    vi.mocked(bridges[1].close).mockRejectedValueOnce(closeError)
+    let index = 0
+    const owner = new ProviderTransportOwner({ createOpenAiProviderBridge: () => bridges[index++] })
+    const first = makeTarget()
+    const second = {
+      ...makeTarget(),
+      providerId: 'provider-b',
+      effectiveModel: 'model-b',
+      provider: { ...makeTarget().provider, model: 'model-b' }
+    }
+    const generation = await owner.acquire({
+      activeTarget: first,
+      plan: {
+        ...makePlan({ kind: 'direct' }),
+        modelRoute: 'opencode-openai',
+        transport: {
+          kind: 'opencode-openai',
+          targets: [
+            { id: 'opencode/provider-a/model-a', target: first },
+            { id: 'opencode/provider-b/model-b', target: second }
+          ]
+        }
+      }
+    })
+    await expect(generation.release()).rejects.toBe(closeError)
+    await generation.release()
+    expect(bridges[0].close).toHaveBeenCalledOnce()
+    expect(bridges[1].close).toHaveBeenCalledTimes(2)
+  })
+
   it('routes only CodeBuddy model traffic through its image-normalizing bridge', async () => {
     const selector = makeResponsesBridge(0)
     const bridge = makeOpenAiBridge(0)

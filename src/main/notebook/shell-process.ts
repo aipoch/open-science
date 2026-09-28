@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { assertShellSearchScope } from './shell-search-scope'
@@ -735,10 +736,12 @@ const runShellCommand = (
                   : {})
             })
           )
+          // Receipt removal is part of cleanup. Its failure must preserve the completed command's
+          // output and settle this Run while the retained receipt remains available for recovery.
+          if (complete) releaseProcessOwnership?.()
         } catch {
           complete = false
         }
-        if (complete) releaseProcessOwnership?.()
         const normalizedResult = { ...result, stderr }
         const completed = complete
           ? normalizedResult

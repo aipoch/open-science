@@ -107,11 +107,13 @@ export const reconcileInterruptedOperations = async (
       //   - neither                     -> the op never reached the spawn stage (no sidecar); there is no
       //                                    child, so it is safe to reconcile ('dead').
       const liveness =
-        record.childPid !== undefined
-          ? await deps.operationChildLiveness(record)
-          : record.spawnAttempted
-            ? 'unknown'
-            : 'dead'
+        (record.treeUnconfirmed || record.cleanupUnconfirmed) && record.childPid === undefined
+          ? 'unknown'
+          : record.childPid !== undefined
+            ? await deps.operationChildLiveness(record)
+            : record.spawnAttempted
+              ? 'unknown'
+              : 'dead'
       if (liveness === 'unknown') {
         // We could not PROVE the recorded child died (its pid is still live and its identity can't be
         // strictly confirmed, or the probe was unavailable). A survivor might still be writing staging or
@@ -260,6 +262,9 @@ export const defaultOperationChildLiveness = async (
   record: RuntimeOperationRecord,
   readToken: ProcessStartTokenReader = readProcessStartToken
 ): Promise<OperationChildLiveness> => {
+  // A recorded leader receipt does not prove all descendants exited. Cold liveness is read-only;
+  // only the retained live owner may retry termination and discharge this obligation.
+  if (record.treeUnconfirmed || record.cleanupUnconfirmed) return 'unknown'
   if (record.childPid === undefined) return 'dead'
   try {
     process.kill(record.childPid, 0)

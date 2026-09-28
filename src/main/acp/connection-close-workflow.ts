@@ -64,7 +64,6 @@ type AcpConnectionCloseWorkflowOptions = Readonly<{
   reportFailure: (message: string, error: unknown) => void
 }>
 class AcpConnectionCloseWorkflow {
-  private candidateTreeKillReaped = true
   private readonly expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   constructor(private readonly options: AcpConnectionCloseWorkflowOptions) {}
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
@@ -184,18 +183,14 @@ class AcpConnectionCloseWorkflow {
     this.options.state.clearAppliedSessionModels()
   }
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
-    this.candidateTreeKillReaped = true
     const shutdown = this.options.resources.beginAwaitableShutdown(true)
     await this.disconnect(false)
-    const outcome = await shutdown.finish()
-    return { reaped: outcome.reaped && this.candidateTreeKillReaped }
+    return shutdown.finish()
   }
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
-    this.candidateTreeKillReaped = true
     const shutdown = this.options.resources.beginAwaitableShutdown(false)
     await this.disconnect(false)
-    const outcome = await shutdown.finish()
-    return { reaped: outcome.reaped && this.candidateTreeKillReaped }
+    return shutdown.finish()
   }
   async requestProviderReconnect(): Promise<void> {
     await this.options.modelChanges.cancelAndDrain()
@@ -224,9 +219,6 @@ class AcpConnectionCloseWorkflow {
     } catch (error) {
       this.reportFailure('emitState after failed deferred disconnect failed', error)
     }
-  }
-  recordProcessTreeReaped(reaped: boolean): void {
-    this.candidateTreeKillReaped = this.candidateTreeKillReaped && reaped
   }
   markExpected(process: ChildProcessWithoutNullStreams): void {
     this.expectedProcessExits.add(process)

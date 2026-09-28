@@ -81,8 +81,65 @@ export class NotebookRecoveryCoordinator {
   private readonly corruptResetAllowlist = new Set<string>()
   private readonly liveUnconfirmedPrefixes = new Set<string>()
   private readonly liveUnconfirmedRuntimeIds = new Set<string>()
+  private readonly liveBlockOwners = new Map<
+    string,
+    { prefixes: Set<string>; runtimeIds: Set<string> }
+  >()
   private recoveryCorrupt = false
   private disposed = false
+  private readonly liveCleanups = new Map<
+    string,
+    {
+      prefix?: string
+      runtimeId: string
+      retry: () => Promise<void>
+    }
+  >()
+  private liveCleanupInFlight: Promise<void> | undefined
+
+  retainLiveCleanup(
+    operationId: string,
+    target: { prefix?: string; runtimeId: string },
+    retry: () => Promise<void>
+  ): void {
+    this.liveCleanups.set(operationId, { ...target, retry })
+    this.markRuntimeLiveUnconfirmed(target.runtimeId, operationId)
+    if (target.prefix) this.markLiveUnconfirmed(target.prefix, undefined, operationId)
+  }
+
+  private retryLiveCleanups(): Promise<void> {
+    if (this.liveCleanupInFlight) return this.liveCleanupInFlight
+    const attempt = Promise.allSettled(
+      [...this.liveCleanups].map(async ([id, cleanup]) => {
+        await cleanup.retry()
+        this.liveCleanups.delete(id)
+        this.liveBlockOwners.delete(id)
+        if (
+          cleanup.prefix &&
+          ![...this.liveBlockOwners.values()].some((other) => other.prefixes.has(cleanup.prefix!))
+        ) {
+          this.liveUnconfirmedPrefixes.delete(cleanup.prefix)
+          if (!this.startupBlockedPrefixes.has(cleanup.prefix))
+            this.blockedPrefixes.delete(cleanup.prefix)
+        }
+        if (
+          ![...this.liveBlockOwners.values()].some((other) =>
+            other.runtimeIds.has(cleanup.runtimeId)
+          )
+        ) {
+          this.liveUnconfirmedRuntimeIds.delete(cleanup.runtimeId)
+          if (!this.startupBlockedRuntimeIds.has(cleanup.runtimeId))
+            this.blockedRuntimeIds.delete(cleanup.runtimeId)
+        }
+      })
+    )
+      .then(() => undefined)
+      .finally(() => {
+        if (this.liveCleanupInFlight === attempt) this.liveCleanupInFlight = undefined
+      })
+    this.liveCleanupInFlight = attempt
+    return attempt
+  }
 
   constructor(
     private readonly runtimeRoot: string,
@@ -102,7 +159,7 @@ export class NotebookRecoveryCoordinator {
 
     this.readiness = 'recovering'
     this.lastFailure = undefined
-    const run = this.reconcile()
+    const run = this.retryLiveCleanups().then(() => this.reconcile())
     this.recoveryInFlight = run
     this.recoveryComplete = run.then(
       () => undefined,
@@ -124,6 +181,7 @@ export class NotebookRecoveryCoordinator {
   async ensureReady(): Promise<void> {
     if (this.disposed) throw new Error('Notebook recovery coordinator is disposed.')
     if (this.recoveryComplete) await this.recoveryComplete
+    if (this.liveCleanups.size > 0) await this.retryLiveCleanups()
     if (
       this.startupBlockedPrefixes.size > 0 ||
       this.startupBlockedRuntimeIds.size > 0 ||
@@ -134,6 +192,8 @@ export class NotebookRecoveryCoordinator {
   }
 
   async dispose(): Promise<void> {
+    await this.retryLiveCleanups()
+    if (this.liveCleanups.size > 0) throw new Error('Package process cleanup remains incomplete.')
     if (this.disposed) return
     this.disposed = true
     this.readiness = 'disposed'
@@ -194,7 +254,22 @@ export class NotebookRecoveryCoordinator {
     this.corruptResetAllowlist.add(prefix)
   }
 
-  markLiveUnconfirmed(prefix: string, runtimeId?: string): void {
+  private liveBlockOwner(operationId?: string): { prefixes: Set<string>; runtimeIds: Set<string> } {
+    // Calls without an operation identity own a separate conservative obligation. A successful
+    // retry for a named operation must never clear this independent block.
+    const key = operationId ?? ''
+    let owner = this.liveBlockOwners.get(key)
+    if (!owner) {
+      owner = { prefixes: new Set(), runtimeIds: new Set() }
+      this.liveBlockOwners.set(key, owner)
+    }
+    return owner
+  }
+
+  markLiveUnconfirmed(prefix: string, runtimeId?: string, operationId?: string): void {
+    const owner = this.liveBlockOwner(operationId)
+    owner.prefixes.add(prefix)
+    if (runtimeId) owner.runtimeIds.add(runtimeId)
     this.blockedPrefixes.add(prefix)
     this.liveUnconfirmedPrefixes.add(prefix)
     if (runtimeId) {
@@ -203,7 +278,8 @@ export class NotebookRecoveryCoordinator {
     }
   }
 
-  markRuntimeLiveUnconfirmed(runtimeId: string): void {
+  markRuntimeLiveUnconfirmed(runtimeId: string, operationId?: string): void {
+    this.liveBlockOwner(operationId).runtimeIds.add(runtimeId)
     this.blockedRuntimeIds.add(runtimeId)
     this.liveUnconfirmedRuntimeIds.add(runtimeId)
   }
@@ -235,7 +311,9 @@ export class NotebookRecoveryCoordinator {
     this.startupOperationIds ??= new Set(startupState.records.map((record) => record.operationId))
     this.retainedOperations = []
     const reconciled = await reconcileInterruptedOperations(journal, {
-      operationIds: this.startupOperationIds,
+      operationIds: new Set(
+        [...this.startupOperationIds].filter((id) => !this.liveCleanups.has(id))
+      ),
       operationChildLiveness: defaultOperationChildLiveness,
       hydrateInterruptedChild: (record) => {
         const state = readOperationChild(this.runtimeRoot, record.operationId)

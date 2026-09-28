@@ -103,6 +103,68 @@ describe('durable delegated process ownership', () => {
     }
   )
 
+  it.each([
+    { leaderPid: -1 },
+    { coalitionId: 'not-a-kernel-id' },
+    { signalMode: 'unchecked' },
+    { ambiguousIdentities: {} },
+    { ambiguousIdentities: Array(21).fill({ pid: 1234, observable: true }) },
+    { ambiguousIdentities: [{ pid: 0, observable: true }] },
+    { ambiguousIdentities: [{ pid: 1234, observable: 'yes' }] },
+    { ambiguousIdentities: [{ pid: 1234, observable: true, birthToken: 'command text' }] },
+    { ambiguousIdentities: [{ pid: 1234, observable: true, command: 'secret' }] }
+  ])('rejects malformed bounded cleanup evidence %j', async (invalid) => {
+    const owner = await setup()
+    owner.recordFailure(scope)
+    const receipt = owner.receipts(scope)[0]
+    const path = join(
+      directory!,
+      'delegation-process-ownership',
+      scope.projectId,
+      scope.sessionId,
+      `${receipt.receiptId}.json`
+    )
+    await writeFile(
+      path,
+      JSON.stringify({
+        ...receipt,
+        cleanupDiagnostics: {
+          failureCategory: 'ownership-candidate-unresolved',
+          recovery: 'stronger-ownership-proof-required',
+          ownedIdentityCount: 1,
+          ambiguousIdentityCount: 1,
+          ...invalid
+        }
+      })
+    )
+    expect(() => new DelegatedProcessOwnership(directory!).receipts(scope)).toThrow(
+      'could not be read'
+    )
+  })
+
+  it('reads earlier diagnostics receipts without the optional identity evidence', async () => {
+    const owner = await setup()
+    owner.recordFailure(scope)
+    const receipt = owner.receipts(scope)[0]
+    const path = join(
+      directory!,
+      'delegation-process-ownership',
+      scope.projectId,
+      scope.sessionId,
+      `${receipt.receiptId}.json`
+    )
+    const cleanupDiagnostics = {
+      failureCategory: 'ownership-candidate-unresolved',
+      recovery: 'stronger-ownership-proof-required',
+      ownedIdentityCount: 1,
+      ambiguousIdentityCount: 1
+    }
+    await writeFile(path, JSON.stringify({ ...receipt, cleanupDiagnostics }))
+    expect(new DelegatedProcessOwnership(directory!).receipts(scope)[0].cleanupDiagnostics).toEqual(
+      cleanupDiagnostics
+    )
+  })
+
   it('silently skips a torn .json.pending file left by a crashed phase update', async () => {
     // A .json.pending is produced only during a phase update (write → rename).
     // The underlying .json is the committed state; skipping the pending file is correct.
@@ -238,7 +300,14 @@ describe('durable delegated process ownership', () => {
       failureCategory: 'ownership-candidate-unresolved' as const,
       recovery: 'stronger-ownership-proof-required' as const,
       ownedIdentityCount: 2,
-      ambiguousIdentityCount: 2
+      ambiguousIdentityCount: 2,
+      leaderPid: 1234,
+      coalitionId: '10',
+      signalMode: 'legacy' as const,
+      ambiguousIdentities: [
+        { pid: 1235, birthToken: 'darwin-proc-uniqueid:42', observable: true },
+        { pid: 1236, birthToken: 'darwin-proc-uniqueid:43', observable: true }
+      ]
     }
     const register = processTree.registerProcessTreeOwnership
     let settle!: Parameters<typeof register>[1]['settled']

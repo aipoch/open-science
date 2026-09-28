@@ -11,6 +11,7 @@ import {
   listOperationChildren,
   readOperationChild,
   recordOperationChildSync,
+  recordOperationChildUnconfirmedSync,
   recordSpawnIntentSync,
   removeOperationChildSync,
   RuntimeOperationJournal,
@@ -652,5 +653,38 @@ describe('isValidBootToken', () => {
     expect(isValidBootToken('')).toBe(false)
     expect(isValidBootToken(undefined)).toBe(false)
     expect(isValidBootToken(42)).toBe(false)
+  })
+})
+
+it('preserves legacy PID/start evidence alongside an unresolved tree marker and kernel birth identity', async () => {
+  const path = await journalPath()
+  const root = dirname(path)
+  const evidence = { childPid: 123, childStartedAt: 100, childStartToken: '456' }
+  recordOperationChildSync(root, 'op-1', evidence)
+  recordOperationChildUnconfirmedSync(root, 'op-1', {
+    ...evidence,
+    childBirthToken: 'linux-proc-starttime:456',
+    ownershipToken: '12345678-1234-1234-1234-123456789abc'
+  })
+  expect(readOperationChild(root, 'op-1')).toEqual({
+    ...evidence,
+    treeUnconfirmed: true,
+    cleanupUnconfirmed: true,
+    childBirthToken: 'linux-proc-starttime:456',
+    ownershipToken: '12345678-1234-1234-1234-123456789abc'
+  })
+  const journal = new RuntimeOperationJournal(path)
+  await journal.begin(record({ ...(readOperationChild(root, 'op-1') as object) }))
+  expect(await journal.readState()).not.toBe('corrupt')
+})
+
+it('preserves confirmed process termination separately from incomplete resource cleanup', async () => {
+  const root = dirname(await journalPath())
+  const evidence = { childPid: 123, childStartedAt: 100, childStartToken: '456' }
+  recordOperationChildSync(root, 'resource-only', evidence)
+  recordOperationChildUnconfirmedSync(root, 'resource-only', undefined, true)
+  expect(readOperationChild(root, 'resource-only')).toEqual({
+    ...evidence,
+    cleanupUnconfirmed: true
   })
 })

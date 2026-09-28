@@ -11,6 +11,7 @@ import {
   PermissionProfileUnavailableError,
   type PermissionProfileApplication
 } from '../acp/permission-profile-controller'
+import { createTrackedAgentSpawner } from '../owned-process-spawn'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
@@ -34,7 +35,6 @@ import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../settings/codex-paths'
 import { CODEX_VERSION, spawnCodexWithInstallAdmission } from '../settings/managed-codex'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
-import { registerOwnedPosixProcessGroup } from '../process-tree'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 import { modelFacingAppMcpToolName } from './app-mcp-names'
 import {
@@ -496,7 +496,7 @@ export const createCodexFramework = ({
     const child = spawnCodexWithInstallAdmission(
       [input.executablePath, ...(input.env.CODEX_PATH ? [input.env.CODEX_PATH] : [])],
       () =>
-        (input.spawnProcess ?? spawnProcess)(command, args, {
+        (input.spawnProcess ?? createTrackedAgentSpawner(spawnProcess, platform))(command, args, {
           env: buildSpawnEnvironment(input, sourceEnv),
           stdio: 'pipe',
           // Keep a terminal/dev-runner SIGINT aimed at the Electron application's foreground process
@@ -509,7 +509,6 @@ export const createCodexFramework = ({
           shell: needsShell
         })
     )
-    if (platform !== 'win32') registerOwnedPosixProcessGroup(child)
     return child
   },
 

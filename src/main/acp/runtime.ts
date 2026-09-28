@@ -943,6 +943,10 @@ class AcpRuntime {
     return this.connectionTransitions.barrier
   }
 
+  get hasProcessResources(): boolean {
+    return this.connectionResources.hasProcessResources
+  }
+
   private get connectionGeneration(): number {
     return this.connectionResources.epoch
   }
@@ -1590,9 +1594,8 @@ class AcpRuntime {
           backend.adapter.codexHome ? join(backend.adapter.codexHome, 'skills') : undefined
         )
       },
-      onProcessTreeReaped: (reaped) => {
-        this.connectionClose.recordProcessTreeReaped(reaped)
-      },
+      cleanupUnattachedResources: (resource) =>
+        this.connectionResources.cleanupUnattached(resource),
       markProcessExitExpected: (process) => this.connectionClose.markExpected(process),
       onProcessStderr: (text, context) => this.handleAgentProcessStderr(text, context),
       onProcessStderrEnd: (context) => {
@@ -1623,8 +1626,7 @@ class AcpRuntime {
           ...diagnosticErrorFields(error),
           ...this.diagnosticContext(framework, epoch)
         })
-      },
-      reportProcessTreeError: (message, error) => log.error(message, error)
+      }
     }
 
     return this.connectionAdapter.open(

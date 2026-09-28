@@ -11,6 +11,7 @@ import {
   resolvePermissionProfileApplication,
   type PermissionProfileApplication
 } from '../acp/permission-profile-controller'
+import { createTrackedAgentSpawner } from '../owned-process-spawn'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { preferredEndpoint } from '../../shared/settings'
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
@@ -480,7 +481,7 @@ export const createOpencodeFramework = ({
     // path quoted; a native `.exe`/Unix binary spawns directly.
     const needsShell = platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
 
-    return (input.spawnProcess ?? spawnProcess)(
+    return (input.spawnProcess ?? createTrackedAgentSpawner(spawnProcess, platform))(
       needsShell ? `"${input.executablePath}"` : input.executablePath,
       ['acp', ...input.args],
       {
