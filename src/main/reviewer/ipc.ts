@@ -16,6 +16,11 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import { createLogger } from '../logger'
 import type { runReview as RunReview } from './orchestrator'
+import {
+  resolveCorrectionResume,
+  isCorrectionResumeScopeCurrent,
+  type CorrectionResume
+} from './correction-resume'
 import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
 import type { ReviewerAcpRuntime } from './acp-runtime'
@@ -177,6 +182,7 @@ type ReviewerIpcOptions = {
 }
 
 type ReviewerCommandOwner = Readonly<{
+  onSessionUpdated: (session: PersistedChatSession) => Promise<void>
   run: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   triggerReview: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   getForSession: (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]>
@@ -206,6 +212,7 @@ const createInFlightReviewStart = (): InFlightReviewStart => {
 // Owns reviewer arbitration and fix-loop cancellation independently from any command transport.
 // The triggerReview alias preserves the existing direct-call result returned by IPC registration.
 const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerCommandOwner => {
+  const reviewSettlements = new Map<string, Set<Promise<void>>>()
   const storageRoot = options.storageRoot ?? resolveConfigRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
   const artifactProvenanceRepository = options.artifactProvenanceRepository
@@ -348,7 +355,8 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   // of us fabricating a non-retriable error review.
   const triggerAdmittedReview = async (
     request: ReviewRunRequest,
-    projectAdmission: ReviewerProjectAdmission
+    projectAdmission: ReviewerProjectAdmission,
+    correctionResume?: CorrectionResume
   ): Promise<ReviewRunResult> => {
     const {
       sessionId,
@@ -396,7 +404,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     // store check could only approximate (that check races across processes). If any review already
     // exists for this turn, an auto request is a duplicate → refuse. Manual re-runs (Request review,
     // stale/error Re-run) set origin='manual' and skip this so the user can force a fresh review.
-    if (request.origin === 'auto') {
+    if (request.origin === 'auto' && !correctionResume) {
       try {
         const existing = await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
         if (existing.some((review) => review.turnMessageId === turnMessageId)) {
@@ -478,6 +486,31 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       return finishBeforeBackground({ started: false, reason: 'run-failed' })
     }
 
+    if (correctionResume) {
+      try {
+        const current = resolveCorrectionResume(
+          session,
+          await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
+        )
+        if (
+          !current ||
+          current.resumeCorrection.turnMessageId !== correctionResume.resumeCorrection.turnMessageId
+        ) {
+          return finishBeforeBackground({ started: false, reason: 'already-reviewed' })
+        }
+        if (!(await isCorrectionResumeScopeCurrent(current, dataRoot, resolveArtifactVersion))) {
+          return finishBeforeBackground({ started: false, reason: 'run-failed' })
+        }
+        correctionResume = current
+      } catch (error) {
+        log.warn('correction resume scope validation failed', {
+          sessionId,
+          error: toErrorMessage(error)
+        })
+        return finishBeforeBackground({ started: false, reason: 'load-failed' })
+      }
+    }
+
     log.info('review triggered', { sessionId, turnMessageId })
 
     let runReview: typeof RunReview
@@ -540,10 +573,18 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         activeReviewAbortControllers.get(effectiveMainSessionKey) ?? new Set<() => void>()
       activeControllers.add(projectAdmission.abort)
       activeReviewAbortControllers.set(effectiveMainSessionKey, activeControllers)
+      let settleReview!: () => void
+      const settlement = new Promise<void>((resolve) => {
+        settleReview = resolve
+      })
+      const settlements = reviewSettlements.get(effectiveMainSessionKey) ?? new Set<Promise<void>>()
+      settlements.add(settlement)
+      reviewSettlements.set(effectiveMainSessionKey, settlements)
       let releaseFixLoop: (() => void) | undefined
       let fixLoopBroadcastStarted = false
 
       void runReview({
+        correctionResume,
         sessionId,
         turnMessageId,
         scopeTurnMessageId,
@@ -673,6 +714,9 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
               })
             })
             projectAdmission.release()
+            settlements.delete(settlement)
+            if (settlements.size === 0) reviewSettlements.delete(effectiveMainSessionKey)
+            settleReview()
           }
         })
     }
@@ -682,7 +726,10 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     return await inFlightStart.promise
   }
 
-  const triggerReview = (request: ReviewRunRequest): Promise<ReviewRunResult> => {
+  const triggerReview = (
+    request: ReviewRunRequest,
+    correctionResume?: CorrectionResume
+  ): Promise<ReviewRunResult> => {
     const admitReview = (): Promise<ReviewRunResult> => {
       let projectAdmission: ReviewerProjectAdmission
       const releases: (() => void)[] = []
@@ -707,17 +754,66 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         releases.forEach((release) => release())
         return Promise.reject(error)
       }
-      return triggerAdmittedReview(request, projectAdmission).catch((error: unknown) => {
-        projectAdmission.release()
-        throw error
-      })
+      return triggerAdmittedReview(request, projectAdmission, correctionResume).catch(
+        (error: unknown) => {
+          projectAdmission.release()
+          throw error
+        }
+      )
     }
     return options.withProjectAvailable
       ? options.withProjectAvailable(request.projectId, admitReview)
       : admitReview()
   }
 
-  return { run: triggerReview, triggerReview, getForSession, abort, abortFixLoop }
+  const pendingCompletions = new Set<string>()
+  const onSessionUpdated = async (hint: PersistedChatSession): Promise<void> => {
+    if (
+      !hint.runtimeTranscriptLastRun ||
+      hint.activeRun ||
+      hint.resumeRecovery ||
+      hint.autoReviewEnabled !== true
+    )
+      return
+    const key = `${hint.projectId}\0${hint.id}`
+    if (pendingCompletions.has(key)) return
+    pendingCompletions.add(key)
+    try {
+      // Normal completion remains owned by its running loop. Stop/Resume may finish before the
+      // aborted owner releases; never let its finally block unlock or erase the new owner.
+      await Promise.all(reviewSettlements.get(key) ?? [])
+      const session = await sessionReader.loadSession(hint.projectId, hint.id)
+      if (!session) return
+      const reviews = await reviewRepository.getReviewsForProjectSession(hint.projectId, hint.id)
+      const resume = resolveCorrectionResume(session, reviews)
+      if (!resume) return
+      await triggerReview(
+        {
+          projectId: session.projectId,
+          sessionId: session.id,
+          mainSessionId: session.id,
+          turnMessageId: resume.sourceReview.turnMessageId,
+          origin: 'auto'
+        },
+        resume
+      )
+    } catch (error) {
+      log.error('correction resume assessment failed to start', {
+        sessionId: hint.id,
+        error: toErrorMessage(error)
+      })
+    } finally {
+      pendingCompletions.delete(key)
+    }
+  }
+  return {
+    run: (request) => triggerReview(request),
+    triggerReview: (request) => triggerReview(request),
+    onSessionUpdated,
+    getForSession,
+    abort,
+    abortFixLoop
+  }
 }
 
 // Registers the legacy Electron adapter against an injectable owner. A future Host command

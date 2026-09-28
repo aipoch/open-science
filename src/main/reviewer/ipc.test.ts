@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ReviewRunRequest, ReviewRunResult } from '../../shared/reviewer'
+import type { ReviewRunRequest, ReviewRunResult, ReviewWithChecks } from '../../shared/reviewer'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { AcpRuntime } from '../acp/runtime'
@@ -1261,5 +1261,162 @@ describe('reviewer IPC handlers', () => {
         expect.objectContaining({ mode: 'read-only' })
       )
     })
+  })
+})
+
+describe('Main correction completion ownership', () => {
+  const fixture = async (): Promise<{
+    session: PersistedChatSession
+    review: ReviewWithChecks
+    resolveTurnScope: typeof import('./scope').resolveTurnScope
+  }> => {
+    const { materializeSessionConversationGraph } = await import('../../shared/session-persistence')
+    const { resolveTurnScope } = await import('./scope')
+    const msg = (
+      id: string,
+      role: 'user' | 'agent',
+      responseToMessageId?: string
+    ): PersistedChatSession['messages'][number] => ({
+      id,
+      role,
+      responseToMessageId,
+      status: 'complete' as const,
+      content: id,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const original = materializeSessionConversationGraph({
+      id: 'session-1',
+      projectId: 'project-1',
+      cwd: '/tmp',
+      title: 'Task',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 1,
+      messages: [msg('user', 'user'), msg('answer', 'agent', 'user')]
+    })
+    const review: ReviewWithChecks = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      model: '',
+      createdAt: 1,
+      updatedAt: 1,
+      outcome: 'flagged',
+      reviewerLog: [],
+      id: 'review',
+      turnMessageId: 'answer',
+      scope: resolveTurnScope(original, 'answer'),
+      lifecycle: 'complete',
+      checks: [
+        {
+          id: 'finding',
+          reviewId: 'review',
+          status: 'fail',
+          resolution: 'unaddressed',
+          claim: 'Issue',
+          evidence: 'Evidence',
+          sortIndex: 0,
+          reflagCount: 0
+        }
+      ]
+    }
+    const session = materializeSessionConversationGraph({
+      ...original,
+      conversationGraph: undefined,
+      autoReviewEnabled: true,
+      runtimeTranscriptLastRun: { promptMessageId: 'correction', startedAt: 20 },
+      messages: [
+        ...original.messages,
+        {
+          ...msg('correction', 'user'),
+          attribution: {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review',
+            continuation: { round: 1, maxRounds: 3, findingIds: ['finding'] }
+          }
+        },
+        msg('recovered', 'agent', 'correction')
+      ]
+    })
+    sessionLoadOne.mockResolvedValue(session)
+    getReviewsForSession.mockResolvedValue([review])
+    return { session, review, resolveTurnScope }
+  }
+
+  it('waits for the aborted chain to settle, joins duplicate completion hints, and never uses stale snapshots', async () => {
+    const { session, review, resolveTurnScope } = await fixture()
+    type Run = Parameters<typeof import('./orchestrator').runReview>[0]
+    let releaseOld!: () => void
+    let releaseNew!: () => void
+    runReview
+      .mockImplementationOnce(async (options: Run) => {
+        options.onStarted?.()
+        await options.onFixLoopStart?.()
+        await new Promise<void>((resolve) => {
+          releaseOld = resolve
+        })
+        options.onFixLoopEnd?.()
+      })
+      .mockImplementationOnce(async (options: Run) => {
+        await options.onFixLoopStart?.()
+        options.onStarted?.()
+        await new Promise<void>((resolve) => {
+          releaseNew = resolve
+        })
+        getReviewsForSession.mockResolvedValue([
+          review,
+          { ...review, id: 'assessment', scope: resolveTurnScope(session, 'recovered') }
+        ])
+        options.onFixLoopEnd?.()
+      })
+    const owner = createReviewerCommandOwner({ acpRuntime })
+    await owner.run({
+      ...createRequest(),
+      turnMessageId: 'answer',
+      mainSessionId: 'session-1',
+      origin: 'manual'
+    })
+    await vi.waitFor(() => expect(releaseOld).toBeTypeOf('function'))
+    owner.abortFixLoop({ projectId: 'project-1', appSessionId: 'session-1' })
+    const completion = owner.onSessionUpdated(session)
+    await owner.onSessionUpdated(session)
+    expect(runReview).toHaveBeenCalledTimes(1)
+    releaseOld()
+    await completion
+    expect(runReview).toHaveBeenCalledTimes(2)
+    expect(runReview.mock.calls[1][0].correctionResume.resumeCorrection).toEqual({
+      promptMessageId: 'correction',
+      turnMessageId: 'recovered',
+      round: 1
+    })
+    const duplicate = owner.onSessionUpdated(session)
+    releaseNew()
+    await duplicate
+    await owner.onSessionUpdated(session)
+    expect(runReview).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores an old completion after a new Stop or disabling auto-review in durable storage', async () => {
+    const { session } = await fixture()
+    const owner = createReviewerCommandOwner({ acpRuntime })
+    for (const current of [
+      { ...session, autoReviewEnabled: false },
+      {
+        ...session,
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'cancelled',
+          promptMessageId: 'correction'
+        }
+      },
+      { ...session, activeRun: { promptMessageId: 'correction', startedAt: 30 } }
+    ]) {
+      sessionLoadOne.mockResolvedValue(current)
+      await owner.onSessionUpdated(session)
+    }
+    expect(runReview).not.toHaveBeenCalled()
   })
 })

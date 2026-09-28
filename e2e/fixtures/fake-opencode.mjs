@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
 
+const autoReviewResumeCounts = new Map()
 const VERSION = '1.0.0'
 const WSL_SETUP_DIAGNOSTICS_PROMPT = 'Verify WSL setup diagnostic tools.'
 const WSL_SETUP_UNAVAILABLE_PROMPT = 'Verify WSL setup tools are unavailable.'
@@ -199,7 +200,7 @@ const parseMcpResponse = (body) => {
   return json ? JSON.parse(json) : {}
 }
 
-const submitReviewerPass = async (mcpServers) => {
+const submitReviewerPass = async (mcpServers, prompt = '') => {
   const server = mcpServers.find(
     (candidate) =>
       candidate.type === 'http' &&
@@ -262,7 +263,58 @@ const submitReviewerPass = async (mcpServers) => {
     }
     return payload.result
   }
-  await callTool('read_turn', {})
+  const turn = await callTool('read_turn', {})
+  const blocks = JSON.parse(turn.content?.[0]?.text ?? '[]')
+  const reproBlock = blocks.find(
+    (block) => block.role === 'agent' && block.content?.startsWith('AUTO_REVIEW_REPRO_')
+  )
+  if (reproBlock) {
+    await callTool('submit_findings', {
+      checks: [
+        {
+          status: 'fail',
+          claim: reproBlock.content,
+          evidence: 'Controlled reviewer finding for Stop / Resume reproduction.',
+          locator: {
+            blockRef: { blockIndex: reproBlock.blockIndex },
+            contentHash: reproBlock.contentHash
+          }
+        }
+      ]
+    })
+    return true
+  }
+  const trackedIds = [...prompt.matchAll(/"sourceFindingId":"([^"]+)"/gu)].map((match) => match[1])
+  if (trackedIds.length > 0) {
+    const unresolvedBlock = blocks.find(
+      (block) => block.content === 'Recovered execution still needs correction.'
+    )
+    await callTool('submit_findings', {
+      checks: [...new Set(trackedIds)].map((sourceFindingId) => ({
+        sourceFindingId,
+        ...(unresolvedBlock
+          ? {
+              locator: {
+                blockRef: { blockIndex: unresolvedBlock.blockIndex },
+                contentHash: unresolvedBlock.contentHash
+              }
+            }
+          : {}),
+        status: blocks.some(
+          (block) => block.content === 'Recovered execution still needs correction.'
+        )
+          ? 'fail'
+          : 'pass',
+        claim: blocks.some(
+          (block) => block.content === 'Recovered execution still needs correction.'
+        )
+          ? 'AUTO_REVIEW_REPRO_REFLAG: remaining issue'
+          : 'The controlled correction completed.',
+        evidence: 'The corrected answer is present in the frozen turn.'
+      }))
+    })
+    return true
+  }
   await callTool('submit_findings', {
     checks: [
       {
@@ -1127,6 +1179,72 @@ if (process.argv.includes('--version')) {
       )
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
+      const reviewerRoute = sessionRoutes
+        .get(context.params.sessionId)
+        ?.mcpServers?.some((server) => server.name.replaceAll('_', '-') === 'open-science-reviewer')
+      const reproScenario =
+        !reviewerRoute &&
+        (prompt.includes('Run auto review ordinary stop scenario.') ||
+          prompt.includes('Run auto review correction stop scenario.') ||
+          prompt.includes('Run auto review correction complete scenario.') ||
+          prompt.includes('Run auto review correction repeat stop scenario.') ||
+          prompt.includes('Run auto review correction disabled stop scenario.') ||
+          prompt.includes('Run auto review correction reflag stop scenario.') ||
+          prompt.includes('AUTO_REVIEW_REPRO_'))
+      if (reproScenario) {
+        const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
+        const correction = prompt.includes('[Auditor] A fresh-context reviewer')
+        const resumeCount = resumed
+          ? (autoReviewResumeCounts.get(context.params.sessionId) ?? 0) + 1
+          : 0
+        if (resumed) autoReviewResumeCounts.set(context.params.sessionId, resumeCount)
+        const repeatedStop =
+          resumed && prompt.includes('AUTO_REVIEW_REPRO_REPEAT_STOP') && resumeCount === 1
+        const waitForStop =
+          repeatedStop ||
+          (!resumed &&
+            (prompt.includes('Run auto review ordinary stop scenario.') ||
+              (correction &&
+                /AUTO_REVIEW_REPRO_(?:REPEAT_|DISABLED_|REFLAG_)?STOP/u.test(prompt) &&
+                !(
+                  prompt.includes('AUTO_REVIEW_REPRO_REFLAG_STOP') &&
+                  (autoReviewResumeCounts.get(context.params.sessionId) ?? 0) > 0
+                ))))
+        const text = resumed
+          ? repeatedStop
+            ? 'Recovered correction is running; ready for Stop.'
+            : prompt.includes('AUTO_REVIEW_REPRO_REFLAG_STOP')
+              ? 'Recovered execution still needs correction.'
+              : 'Recovered execution completed successfully.'
+          : correction
+            ? waitForStop
+              ? 'Correction is running; ready for Stop.'
+              : 'Correction completed successfully.'
+            : waitForStop
+              ? 'Ordinary execution is running; ready for Stop.'
+              : prompt.includes('Run auto review correction repeat stop scenario.')
+                ? 'AUTO_REVIEW_REPRO_REPEAT_STOP: this controlled answer needs a correction.'
+                : prompt.includes('Run auto review correction disabled stop scenario.')
+                  ? 'AUTO_REVIEW_REPRO_DISABLED_STOP: this controlled answer needs a correction.'
+                  : prompt.includes('Run auto review correction reflag stop scenario.')
+                    ? 'AUTO_REVIEW_REPRO_REFLAG_STOP: this controlled answer needs a correction.'
+                    : prompt.includes('Run auto review correction stop scenario.')
+                      ? 'AUTO_REVIEW_REPRO_STOP: this controlled answer needs a correction.'
+                      : 'AUTO_REVIEW_REPRO_COMPLETE: this controlled answer needs a correction.'
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text }
+          }
+        })
+        if (waitForStop) {
+          await waitForSessionCancellation(context.params.sessionId)
+          return { stopReason: 'cancelled' }
+        }
+        return { stopReason: 'end_turn' }
+      }
       if (prompt.includes(PROVIDER_RUNTIME_FAILURE_PROMPT)) await rejectThroughProviderBridge()
       // Use the supported mid-response interruption wrapper: generic provider errors are terminal
       // failures and intentionally do not offer Resume. Let this escape the reply fixture catch.
@@ -1708,7 +1826,10 @@ if (process.argv.includes('--version')) {
           reply =
             '| PMID | Journal |\n| --- | --- |\n| [42668673](https://citation.example/paper) | Bioact Mater |\n| [42537459](https://unadmitted.example/paper) | Biomaterials |'
         } else if (
-          await submitReviewerPass(sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [])
+          await submitReviewerPass(
+            sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [],
+            prompt
+          )
         ) {
           reply = ''
         } else if (prompt.includes(CONTEXT_COMPACTION_PROMPT)) {

@@ -467,6 +467,8 @@ class ReviewRepository {
     reviewId: string
     checks: NewCheck[]
     expectedSourceFindingIds: string[]
+    // Main-owned Resume may assess findings terminalized by Stop, never arbitrary closed findings.
+    resumedSourceFindingIds?: string[]
     reviewerLog?: ReviewerLogEntry[]
     keepFlaggedReviewRunning?: boolean
   }): Promise<ReviewWithChecks> {
@@ -548,10 +550,20 @@ class ReviewRepository {
       for (const [submissionIndex, check] of input.checks.entries()) {
         if (!check.sourceFindingId) continue
         const finding = await tx.finding.findUnique({ where: { id: check.sourceFindingId } })
+        const lastDisposition =
+          finding?.resolution === 'unaddressed' &&
+          input.resumedSourceFindingIds?.includes(finding.id)
+            ? await tx.reviewFindingDisposition.findFirst({
+                where: { sourceFindingId: finding.id },
+                orderBy: { sequence: 'desc' }
+              })
+            : undefined
+        const resumable =
+          lastDisposition?.trigger === 'aborted' && lastDisposition.outcome === 'unaddressed'
         if (
           !finding ||
           (finding.status !== 'warn' && finding.status !== 'fail') ||
-          finding.resolution !== 'open'
+          (finding.resolution !== 'open' && !resumable)
         ) {
           throw new Error(`Tracked Finding is unavailable: ${check.sourceFindingId}`)
         }

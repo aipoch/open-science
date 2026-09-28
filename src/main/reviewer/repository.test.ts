@@ -1570,3 +1570,61 @@ describe('review repository (integration)', { timeout: WINDOWS_SQLITE_TEST_TIMEO
     expect(stored.checks[0]!.reflagCount).toBe(0)
   })
 })
+
+describe('resumed tracked submissions', () => {
+  it.each(['aborted', 'loop_terminated'] as const)(
+    'only resumes unaddressed findings from %s with explicit owner authority',
+    async (trigger) => {
+      const repository = await createRepository()
+      const source = await repository.createReview({
+        projectId: 'project-1',
+        sessionId: 'session-resume',
+        turnMessageId: 'a1',
+        scope: scope('a1')
+      })
+      await repository.addChecks(source.id, [checks()[0]!])
+      const finding = (
+        await repository.getReviewsForProjectSession('project-1', 'session-resume')
+      )[0].checks[0]
+      await repository.commitFindingDispositions([
+        { reviewId: source.id, sourceFindingId: finding.id, trigger, outcome: 'unaddressed' }
+      ])
+      const assessment = await repository.createReview({
+        projectId: 'project-1',
+        sessionId: 'session-resume',
+        turnMessageId: 'a1',
+        scope: scope('a1')
+      })
+      const input = {
+        mode: 'tracked' as const,
+        reviewId: assessment.id,
+        checks: [
+          {
+            sourceFindingId: finding.id,
+            status: 'pass' as const,
+            claim: 'Fixed',
+            evidence: 'Recovered answer fixes it'
+          }
+        ],
+        expectedSourceFindingIds: [finding.id]
+      }
+      await expect(repository.commitScopedSubmission(input)).rejects.toThrow(
+        'Tracked Finding is unavailable'
+      )
+      if (trigger === 'aborted') {
+        await expect(
+          repository.commitScopedSubmission({ ...input, resumedSourceFindingIds: [finding.id] })
+        ).resolves.toMatchObject({ outcome: 'pass' })
+        expect(
+          (await repository.getReviewsForProjectSession('project-1', 'session-resume')).find(
+            (review) => review.id === source.id
+          )!.checks[0].resolution
+        ).toBe('resolved')
+      } else {
+        await expect(
+          repository.commitScopedSubmission({ ...input, resumedSourceFindingIds: [finding.id] })
+        ).rejects.toThrow('Tracked Finding is unavailable')
+      }
+    }
+  )
+})
