@@ -128,6 +128,144 @@ describe('expression / gtex_dataset_info', () => {
   })
 })
 
+describe('expression / Bgee API', () => {
+  it('lists one species through the official JSON API and normalizes metadata', async () => {
+    const { out, url } = await call(
+      'bgee_species',
+      { species_id: 9606 },
+      {
+        data: {
+          species: {
+            genomeSpeciesId: 9606,
+            genus: 'Homo',
+            speciesName: 'sapiens',
+            genomeVersion: 'GRCh38.p13',
+            dataSourcesForDataByDataTypes: { RNA_SEQ: ['Bgee'] }
+          }
+        }
+      }
+    )
+    expect(url).toBe(
+      'https://www.bgee.org/api/?page=species&action=name&display_type=json&species_id=9606'
+    )
+    expect(out).toEqual({
+      species: [
+        {
+          taxon_id: 9606,
+          name: 'sapiens',
+          scientific_name: 'Homo sapiens',
+          genome_version: 'GRCh38.p13',
+          has_expression_data: true
+        }
+      ]
+    })
+  })
+
+  it('caps and maps Bgee expression calls', async () => {
+    const { out, url } = await call(
+      'bgee_expression_calls',
+      { gene_id: 'ENSG00000130208', species_id: 9606, max_calls: 1 },
+      {
+        data: {
+          gene: { geneId: 'ENSG00000130208', name: 'APOC1', species: { id: 9606 } },
+          calls: [
+            {
+              condition: { anatEntity: { id: 'UBERON:0002107', name: 'liver' } },
+              expressionScore: { expressionScore: '99.98', expressionScoreConfidence: 'high' },
+              expressionState: 'expressed',
+              expressionQuality: 'gold',
+              fdr: '<= 1.00e-14',
+              dataTypesWithData: ['RNA-Seq']
+            },
+            { condition: { anatEntity: { id: 'UBERON:0000955', name: 'brain' } } }
+          ]
+        }
+      }
+    )
+    expect(url).toContain('page=gene&action=expression')
+    expect(out).toMatchObject({
+      gene: { id: 'ENSG00000130208', name: 'APOC1' },
+      returned: 1,
+      truncated: true,
+      calls: [
+        {
+          anatomical_entity_id: 'UBERON:0002107',
+          anatomical_entity_name: 'liver',
+          expression_score: 99.98,
+          expression_quality: 'gold'
+        }
+      ]
+    })
+  })
+})
+
+describe('expression / Bgee SPARQL', () => {
+  it('requires gene, species and tissue filters and embeds timeout + LIMIT in the query', async () => {
+    const { out, url } = await call(
+      'bgee_sparql_expression',
+      { gene: 'APOC1', species_id: 9606, tissue: 'UBERON:0002107', limit: 2 },
+      {
+        results: {
+          bindings: [
+            {
+              geneName: { value: 'APOC1' },
+              speciesName: { value: 'Homo sapiens' },
+              anat: { value: 'http://purl.obolibrary.org/obo/UBERON_0002107' },
+              anatName: { value: 'liver' },
+              score: { value: '99.98' }
+            }
+          ]
+        }
+      }
+    )
+    const parsed = new URL(url)
+    const query = parsed.searchParams.get('query')!
+    expect(parsed.searchParams.get('format')).toBe('json')
+    expect(parsed.searchParams.get('timeout')).toBe('15000')
+    expect(query).toContain('FILTER (?species = <http://purl.uniprot.org/taxonomy/9606>)')
+    expect(query).toContain('UBERON_0002107')
+    expect(query).toContain('LIMIT 2')
+    expect(out).toEqual({
+      returned: 1,
+      truncated: false,
+      rows: [
+        {
+          gene_name: 'APOC1',
+          species_name: 'Homo sapiens',
+          anatomical_entity: 'http://purl.obolibrary.org/obo/UBERON_0002107',
+          anatomical_entity_name: 'liver',
+          expression_score: 99.98
+        }
+      ]
+    })
+  })
+
+  it('rejects missing SPARQL scope arguments before making a request', async () => {
+    const descriptor = tool('bgee_sparql_expression')
+    await expect(
+      new ParserEngine({ fetchImpl: vi.fn() }).call(descriptor, { gene: 'APOC1' }, {})
+    ).rejects.toThrow('missing required arg: species_id')
+  })
+})
+
+describe('expression / Bgee downloads', () => {
+  it('returns a stable calls URL without downloading the archive', async () => {
+    const out = await new ParserEngine({ fetchImpl: vi.fn() }).call(
+      tool('bgee_download_links'),
+      { species: 'Homo sapiens', file_kind: 'calls_simple', all_conditions: true },
+      {}
+    )
+    expect(out).toEqual({
+      species: 'Homo_sapiens',
+      file_kind: 'calls_simple',
+      download_url:
+        'https://www.bgee.org/ftp/current/download/calls/expr_calls/Homo_sapiens_expr_simple_all_conditions.tsv.gz',
+      documentation_url:
+        'https://www.bgee.org/support/tutorial-expression-call-download-documentation'
+    })
+  })
+})
+
 describe('expression / gtex_resolve_genes', () => {
   it('sends repeated geneId params with the release GENCODE version and maps records', async () => {
     const { out, url } = await call(

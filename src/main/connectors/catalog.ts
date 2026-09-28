@@ -180,11 +180,12 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'expression',
     displayName: 'Expression',
-    description: 'Human tissue expression and eQTLs via the GTEx Portal.',
+    aliases: ['Bgee', 'Bgee expression', 'cross-species expression', 'normal tissue expression'],
+    description: 'Human and cross-species normal tissue expression via GTEx and Bgee.',
     useWhen:
-      'Use for GTEx tissue expression and eQTL evidence — listing tissue sites or dataset releases, resolving gene symbols to versioned GENCODE ids, median or per-sample expression (TPM) by tissue, top-expressed genes per tissue, sample/donor metadata, and cis-eQTLs (eGenes, single-tissue, multi-tissue METASOFT, or on-the-fly calculation) for a gene or variant. Sourced from GTEx.',
-    sources: ['GTEx'],
-    termsUrl: 'https://gtexportal.org/home/license',
+      'Use for tissue expression and eQTL evidence — GTEx tissue sites, dataset releases, versioned GENCODE resolution, median or per-sample TPM, top-expressed genes, donor metadata, and cis-eQTLs; or Bgee healthy wild-type expression across animal species, present/absent calls and scores for a gene, bounded SPARQL lookup constrained by gene/species/tissue, and official expression-call or processed-value download links. Sourced from GTEx and Bgee.',
+    sources: ['GTEx', 'Bgee'],
+    termsUrl: 'https://www.bgee.org/about/terms-and-conditions',
     requiresNcbi: false
   },
   {
