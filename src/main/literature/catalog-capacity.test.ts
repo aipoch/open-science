@@ -9,15 +9,10 @@ import { LiteratureCatalog } from './catalog'
 import { literatureItemInputSchema } from '../../shared/literature'
 
 it('allows a small catalog write while a large library search is running', async () => {
-  const startPhase = performance.now()
-  const phase = (name: string): void => {
-    process.stdout.write(`CAPACITY ${name}: ${Math.round(performance.now() - startPhase)}ms\n`)
-  }
   const root = await mkdtemp(join(tmpdir(), 'literature-capacity-'))
   const client = createProjectDbClient(root)
   try {
     await migrateApplicationDatabase(client)
-    phase('migrated')
     const catalog = new LiteratureCatalog(async () => client)
     const receipt = await catalog.transact({
       kind: 'create-item',
@@ -37,7 +32,6 @@ it('allows a small catalog write while a large library search is running', async
       include: { creators: true }
     })
     // Clone a public-command record to seed scale without tying this regression to derived columns.
-    phase('seed-start')
     const n = 50000
     // Clone inside SQLite instead of serializing the large abstract 50,000 times through Prisma.
     // These column names come only from the Prisma scalar record, preserving derived search fields.
@@ -59,7 +53,6 @@ it('allows a small catalog write while a large library search is running', async
     ])
     expect(counts).toEqual([n, n])
     await client.literatureItem.delete({ where: { id: receipt.id } })
-    phase('seed-complete')
     const start = performance.now()
     const search = catalog.search({ scope: 'library', query: 'ÉTUDE', limit: 25 })
     await new Promise((resolve) => setTimeout(resolve, 100))
@@ -79,7 +72,6 @@ it('allows a small catalog write while a large library search is running', async
         )
       })
     )
-    phase('search-write-complete')
     expect(results.filter(({ status }) => status === 'rejected')).toEqual([])
     expect(await search).toMatchObject({ totalCount: n })
   } finally {
