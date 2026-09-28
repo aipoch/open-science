@@ -173,6 +173,8 @@ jobs:
           src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx
           src/main/notebook/shell-process-ownership.test.ts
           src/main/literature/batch-jobs.test.ts
+          src/main/literature/catalog.test.ts
+          src/main/literature/catalog-capacity.test.ts
           src/main/notebook/source-file-access-analysis.test.ts
           src/main/notebook/source-file-access-analysis.additional-omics.test.ts
           src/main/notebook/source-file-access-analysis.clinical-formats.test.ts

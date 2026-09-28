@@ -3,7 +3,7 @@ import type { FileViewerSearchProvider } from '@file-viewer/core'
 
 import { test } from './fixtures/electron-app'
 
-test('finds offscreen cells across XLSX and XLS worksheets', async ({ app }) => {
+test('finds offscreen cells across XLSX and XLS worksheets', async ({ app }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await page.getByRole('button', { name: 'New project' }).click()
@@ -76,10 +76,22 @@ test('finds offscreen cells across XLSX and XLS worksheets', async ({ app }) => 
   expect(zoomInBounds!.x).toBeLessThan(findBounds!.x)
   expect(findBounds!.x - zoomInBounds!.x - zoomInBounds!.width).toBeLessThan(20)
   expect(Math.abs(zoomInBounds!.y - findBounds!.y)).toBeLessThan(2)
-  await find.click()
+  // Electron contexts are manually launched, so the test runner's trace omits DOM/input snapshots.
+  const context = page.context()
+  const tracePath = testInfo.outputPath('spreadsheet-find-trace.zip')
+  await context.tracing.start({ screenshots: true, snapshots: true, sources: true })
   const query = spreadsheet.getByRole('searchbox', { name: 'Find' })
-  await expect(query).toBeVisible()
-  await expect(query).toBeFocused()
+  try {
+    await find.click()
+    await expect(query).toBeVisible()
+    await expect(query).toBeFocused()
+  } finally {
+    await context.tracing.stop({ path: tracePath })
+    await testInfo.attach('spreadsheet-find-trace', {
+      path: tracePath,
+      contentType: 'application/zip'
+    })
+  }
   await query.fill('CaseProbe')
   await expect(spreadsheet.locator('.spreadsheet-review-find-count')).toHaveText('1 / 3')
   const matchCase = spreadsheet.getByRole('button', { name: 'Match case' })

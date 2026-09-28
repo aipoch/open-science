@@ -582,7 +582,15 @@ describe('LiteratureCatalog', () => {
   it.each(['query', 'creator'] as const)(
     'finds a displayed personal name through %s',
     async (surface) => {
+      const started = performance.now()
+      const phase = (name: string): void => {
+        process.stdout.write(
+          `PERSONAL_NAME ${surface} ${name}: ${Math.round(performance.now() - started)}ms\n`
+        )
+      }
+      phase('start')
       const catalog = await setup()
+      phase('setup')
       const created = await catalog.transact({
         kind: 'create-item',
         item: literatureItemInputSchema.parse({
@@ -604,6 +612,7 @@ describe('LiteratureCatalog', () => {
           ]
         })
       })
+      phase('seeded')
       const search = (text: string): ReturnType<LiteratureCatalog['search']> =>
         catalog.search(
           literatureCatalogSearchRequestSchema.parse({
@@ -614,9 +623,11 @@ describe('LiteratureCatalog', () => {
       expect(
         (await search('Smith Jane')).entries.flatMap((entry) => ('id' in entry ? [entry.id] : []))
       ).toEqual([created.id])
+      phase('queried')
       expect(
         (await search('Jane Smith')).entries.flatMap((entry) => ('id' in entry ? [entry.id] : []))
       ).toEqual([created.id])
+      phase('queried')
     }
   )
 

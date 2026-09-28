@@ -8,10 +8,15 @@ import { LiteratureCatalog } from './catalog'
 import { literatureItemInputSchema } from '../../shared/literature'
 
 it('allows a small catalog write while a large library search is running', async () => {
+  const startPhase = performance.now()
+  const phase = (name: string): void => {
+    process.stdout.write(`CAPACITY ${name}: ${Math.round(performance.now() - startPhase)}ms\n`)
+  }
   const root = await mkdtemp(join(tmpdir(), 'literature-capacity-'))
   const client = createProjectDbClient(root)
   try {
     await migrateApplicationDatabase(client)
+    phase('migrated')
     const catalog = new LiteratureCatalog(async () => client)
     const receipt = await catalog.transact({
       kind: 'create-item',
@@ -31,8 +36,10 @@ it('allows a small catalog write while a large library search is running', async
       include: { creators: true }
     })
     // Clone a public-command record to seed scale without tying this regression to derived columns.
+    phase('seed-start')
     const n = 50000
     for (let offset = 0; offset < n; offset += 500) {
+      if (offset % 5000 === 0) phase(`seed-${offset}`)
       const ids = Array.from({ length: 500 }, (_, i) => `row-${offset + i}`)
       await client.literatureItem.createMany({ data: ids.map((id) => ({ ...template, id })) })
       await client.literatureItemCreator.createMany({
@@ -45,6 +52,7 @@ it('allows a small catalog write while a large library search is running', async
       })
     }
     await client.literatureItem.delete({ where: { id: receipt.id } })
+    phase('seed-complete')
     const start = performance.now()
     const search = catalog.search({ scope: 'library', query: 'ÉTUDE', limit: 25 })
     await new Promise((resolve) => setTimeout(resolve, 100))
@@ -64,6 +72,7 @@ it('allows a small catalog write while a large library search is running', async
         )
       })
     )
+    phase('search-write-complete')
     expect(results.filter(({ status }) => status === 'rejected')).toEqual([])
     expect(await search).toMatchObject({ totalCount: n })
   } finally {
