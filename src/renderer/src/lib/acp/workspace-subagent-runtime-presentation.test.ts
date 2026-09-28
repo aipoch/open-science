@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  createLinearConversationGraph,
+  validateConversationGraph
+} from '../../../../shared/conversation-graph'
 import type { AcpAgentRuntimeUpdate } from '../../../../shared/acp'
 import type { ChatSession, SessionStoreApi } from '../../stores/session-store'
 import {
@@ -65,6 +69,85 @@ const texts = (store: SessionStoreApi): string[] => {
 }
 
 describe('App-owned Subagent transcript lifecycle', () => {
+  it.each(['stop', 'error'] as const)(
+    'keeps a resumed root execution out of the child %s projection',
+    (kind) => {
+      const rootPrompt = { ...detail.messages[0], id: 'root-prompt', content: 'Root task' }
+      const graph = createLinearConversationGraph({
+        sessionId: root.id,
+        messages: [rootPrompt],
+        createdAt: 1,
+        updatedAt: 1
+      })
+      const child = createLinearConversationGraph({
+        sessionId: 'child',
+        messages: [...detail.messages],
+        createdAt: 1,
+        updatedAt: 1
+      })
+      const childFrameId = child.rootFrameId
+      const childSegmentId = child.runtimeSegments[0].id
+      graph.frames.push({
+        ...child.frames[0],
+        kind: 'delegate',
+        parentFrameId: graph.rootFrameId,
+        originMessageId: rootPrompt.id,
+        originBindingState: 'validated'
+      })
+      graph.branches.push(...child.branches)
+      graph.messages.push(...child.messages)
+      graph.runtimeSegments.push(...child.runtimeSegments)
+      validateConversationGraph(graph)
+      const resumed: ChatSession = {
+        ...root,
+        messages: [rootPrompt],
+        conversationGraph: graph,
+        activeRun: { promptMessageId: rootPrompt.id, startedAt: 3 },
+        activeRunRuntimeSegmentId: graph.runtimeSegments[0].id
+      }
+      const projection = {
+        ...detail,
+        frameId: childFrameId,
+        attempt: { ...detail.attempt!, runtimeSegmentIds: [childSegmentId] }
+      }
+      const scopedUpdate = (id: string, text: string): AcpAgentRuntimeUpdate => ({
+        ...update(id, text),
+        scope: {
+          ...update(id, text).scope,
+          agentFrameId: childFrameId,
+          runtimeSegmentId: childSegmentId
+        }
+      })
+      const owner = createSubagentTranscriptOwner()
+      const store = owner.select(resumed, projection)
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      try {
+        owner.ingest(scopedUpdate('child-output', 'Child result'))
+        // A new root snapshot must not reintroduce its resumed execution into the child store.
+        owner.select({ ...resumed, updatedAt: 4 }, projection)
+        const terminal = scopedUpdate('child-terminal', 'Child failed')
+        owner.ingest({ ...terminal, event: { ...terminal.event, kind } })
+        const childSession = store.getState().sessions[0]
+        expect(errors).not.toHaveBeenCalled()
+        expect(childSession.conversationGraphSyncBlocked).toBeUndefined()
+        expect(childSession.status).toBe(kind === 'stop' ? 'idle' : 'error')
+        const response = childSession.conversationGraph!.messages.find(
+          (message) => message.content === 'Child result'
+        )
+        expect(response).toMatchObject({
+          agentFrameId: childFrameId,
+          runtimeSegmentId: childSegmentId
+        })
+        validateConversationGraph(childSession.conversationGraph!)
+        expect(resumed.activeRun?.promptMessageId).toBe(rootPrompt.id)
+        expect(resumed.activeRunRuntimeSegmentId).toBe(graph.runtimeSegments[0].id)
+        expect(resumed.conversationGraph).toEqual(graph)
+      } finally {
+        errors.mockRestore()
+      }
+    }
+  )
+
   it('materializes output before the first reader, and retains the same store without any readers', () => {
     const owner = createSubagentTranscriptOwner()
     owner.ingest(update('one', 'Before opening'))

@@ -39,6 +39,7 @@ const childConversationSession = (
   const messages = [...detail.messages]
   const promptMessage = messages.findLast((message) => message.role === 'user')
   const running = detail.status === 'running' && detail.attempt?.status === 'running'
+  const runtimeSegmentId = detail.attempt?.runtimeSegmentIds.at(-1)
 
   return {
     ...session,
@@ -48,6 +49,13 @@ const childConversationSession = (
       running && promptMessage
         ? { promptMessageId: promptMessage.id, startedAt: detail.attempt.startedAt }
         : undefined,
+    // A resumed root has its own execution segment. The isolated child transcript must
+    // never use that segment when appending output or projecting a terminal event.
+    activeRunRuntimeSegmentId: session.conversationGraph?.runtimeSegments.some(
+      (segment) => segment.id === runtimeSegmentId && segment.agentFrameId === detail.frameId
+    )
+      ? runtimeSegmentId
+      : undefined,
     agentPromptInFlight: running ? true : undefined,
     messages,
     conversationGraph: session.conversationGraph
