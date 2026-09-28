@@ -3298,6 +3298,7 @@ describe('ConversationPanel composer intake', () => {
           id: 'pending-session-1',
           projectId: 'project-a',
           title: 'Failed connection',
+          cwd: '/workspace',
           status: 'error',
           isPending: true,
           messages: [],
