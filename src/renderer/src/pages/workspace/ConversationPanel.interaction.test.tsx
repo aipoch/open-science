@@ -3291,6 +3291,29 @@ describe('ConversationPanel composer intake', () => {
     expect(controls?.getAttribute('data-specialist-read-only')).toBe('false')
   })
 
+  it('keeps Compute Host controls read-only before a failed Session binds', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'pending-session-1',
+          projectId: 'project-a',
+          title: 'Failed connection',
+          status: 'error',
+          isPending: true,
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      agentControls: { canChange: true }
+    })
+
+    expect(
+      container.querySelector('[data-testid="mock-agent-controls"]')?.getAttribute('data-read-only')
+    ).toBe('true')
+    expect(container.querySelector('[data-testid="mock-model-picker"]')).not.toBeNull()
+  })
+
   it.each([undefined, { kind: 'all' }, { kind: 'before-message', messageId: 'user-1' }] as const)(
     'opens an empty side chat directly with pending replay %j',
     (pendingHistoryReplay) => {

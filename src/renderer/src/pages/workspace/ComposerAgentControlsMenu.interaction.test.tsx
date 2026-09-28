@@ -1216,6 +1216,11 @@ describe('ComposerAgentControlsMenu', () => {
         '[data-testid="compute-host-enabled-ssh:cluster-1"]'
       )?.disabled
     ).toBe(true)
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="compute-host-selected-ssh:cluster-1"]'
+      )?.disabled
+    ).toBe(true)
   })
 
   it('renders a Compute submenu trigger above the SSH hosts', () => {

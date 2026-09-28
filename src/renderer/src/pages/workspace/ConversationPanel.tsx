@@ -2650,7 +2650,9 @@ const ConversationPanel = ({
                               delegationHasLiveAttempts={delegationHasLiveAttempts}
                               delegationDisabledReason={delegationDisabledReason}
                               memoryDisabledReason={memoryDisabledReason}
-                              readOnly={!canChangeAgentControls}
+                              readOnly={
+                                !canChangeAgentControls || activeSession?.isPending === true
+                              }
                               autoReviewReadOnly={!canChangeAutoReview}
                               memoryReadOnly={!canChangeMemory}
                               delegationReadOnly={!canChangeDelegation}
