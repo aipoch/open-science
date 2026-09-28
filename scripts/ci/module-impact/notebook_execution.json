@@ -905,7 +905,8 @@
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/literature/smart-collections.test.ts",
       "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
-      "src/main/acp/library-auto-policy.test.ts"
+      "src/main/acp/library-auto-policy.test.ts",
+      "src/main/reviewer/correction-resume.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

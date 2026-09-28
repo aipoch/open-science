@@ -709,7 +709,8 @@
       "src/main/literature/smart-collections.test.ts",
       "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
-      "src/main/acp/library-auto-policy.test.ts"
+      "src/main/acp/library-auto-policy.test.ts",
+      "src/main/reviewer/correction-resume.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
