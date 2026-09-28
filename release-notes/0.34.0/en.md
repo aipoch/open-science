@@ -2,8 +2,7 @@
 
 - **Native Linux ARM64.** Open Science now ships ARM64 installers for Linux alongside x64, covering Apple Silicon Linux VMs and ARM workstations. (#3106)
 - **Connector expansion.** A new Pathway Commons connector joins expanded cBioPortal, openFDA, MGnify, and Bgee cross-species expression sources. (#3113, #3101, #3097)
-- **Tray session navigation.** The desktop tray menu now lists sessions for quick switching without opening the main window. (#3047)
-- **Electron 43.** The app upgrades to Electron 43 for a newer, better-supported runtime. (#3060)
+- **Journal datasets.** The literature library gains journal datasets with reference attributes for organizing collections. (#3095)
 
 ## 🚀 New Features
 
@@ -12,6 +11,7 @@
 - Bgee cross-species expression tools: expression calls, download links, and SPARQL queries across species. (#3097)
 - Expanded cBioPortal, openFDA, and MGnify connectors with broader query coverage. (#3101)
 - MiniMax M3.1 Flash Preview as a built-in provider option. (#3110)
+- Claude Sonnet 5.5 as a built-in Anthropic model option. (#3116)
 - Journal datasets with reference attributes for organizing literature collections. (#3095)
 - Tray session navigation on desktop for quick session switching. (#3047)
 - Workspace reference actions for working with literature references in context. (#3058)

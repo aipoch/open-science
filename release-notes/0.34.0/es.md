@@ -2,8 +2,7 @@
 
 - **ARM64 nativo en Linux.** Open Science ahora ofrece instaladores ARM64 para Linux junto a los x64, cubriendo máquinas virtuales Linux en Apple Silicon y estaciones de trabajo ARM. (#3106)
 - **Expansión de conectores.** Un nuevo conector de Pathway Commons se une a las fuentes ampliadas de expresión entre especies de cBioPortal, openFDA, MGnify y Bgee. (#3113, #3101, #3097)
-- **Navegación de sesiones desde la bandeja.** El menú de la bandeja del escritorio ahora lista las sesiones para cambiar rápidamente sin abrir la ventana principal. (#3047)
-- **Electron 43.** La app se actualiza a Electron 43 para un tiempo de ejecución más reciente y mejor mantenido. (#3060)
+- **Conjuntos de datos de revistas.** La biblioteca de literature gana conjuntos de datos de revistas con atributos de referencia para organizar colecciones. (#3095)
 
 ## 🚀 Novedades
 
@@ -12,6 +11,7 @@
 - Herramientas de expresión entre especies de Bgee: llamadas de expresión, enlaces de descarga y consultas SPARQL entre especies. (#3097)
 - Conectores ampliados de cBioPortal, openFDA y MGnify con cobertura de consultas más amplia. (#3101)
 - MiniMax M3.1 Flash Preview como opción de proveedor integrada. (#3110)
+- Claude Sonnet 5.5 como opción de modelo integrada de Anthropic. (#3116)
 - Conjuntos de datos de revistas con atributos de referencia para organizar colecciones de literature. (#3095)
 - Navegación de sesiones desde la bandeja en el escritorio para cambiar de sesión rápidamente. (#3047)
 - Acciones de referencia en el espacio de trabajo para trabajar con referencias de literature en contexto. (#3058)

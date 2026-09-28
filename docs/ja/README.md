@@ -49,7 +49,7 @@ AIPOCH Open-Science は科学者と研究者のための AI 研究ワークベ�
 
 AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材料科学、物理学、環境科学など、幅広い分野の計算集約型・データ集約型研究を支援します。文献レビューと仮説構築から、コード実行、データ分析、シミュレーション、可視化、追跡可能な研究成果の作成まで、研究プロセス全体を支えます。
 
-> 💡 **[AIPOCH Open-Science v0.34.0 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年9月更新)_。 AIPOCH Open-Science v0.34.0 では、ネイティブな Linux ARM64 インストーラーが追加され、Pathway Commons コネクタが新たに加わるとともに、cBioPortal、openFDA、MGnify、Bgee の種をまたいだ発現ソースが拡張され、デスクトップのトレイでセッションを移動できるようになりました。また、Electron 43 へのアップグレード、MiniMax M3.1 Flash Preview プロバイダーの追加、文献ライブラリでの参照属性を持つジャーナルデータセットの追加も含まれます。詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
+> 💡 **[AIPOCH Open-Science v0.34.0 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年9月更新)_。 AIPOCH Open-Science v0.34.0 では、ネイティブな Linux ARM64 インストーラーが追加され、Pathway Commons コネクタが新たに加わるとともに、cBioPortal、openFDA、MGnify、Bgee の種をまたいだ発現ソースが拡張され、文献ライブラリで参照属性を持つジャーナルデータセットを利用できるようになりました。また、MiniMax M3.1 Flash Preview と Claude Sonnet 5.5 のモデルオプションも新たに追加されました。詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />

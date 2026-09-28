@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科学家和研究人员的 AI 研究工作台，�
 
 AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.34.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.34.0 带来原生 Linux ARM64 安装包，新增 Pathway Commons 连接器，并扩充 cBioPortal、openFDA、MGnify 和 Bgee 跨物种表达数据源；桌面端支持托盘会话导航。应用升级至 Electron 43，新增 MiniMax M3.1 Flash Preview 提供商，文献图书馆支持带参考文献属性的期刊数据集。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.34.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.34.0 带来原生 Linux ARM64 安装包，新增 Pathway Commons 连接器，并扩充 cBioPortal、openFDA、MGnify 和 Bgee 跨物种表达数据源；文献图书馆新增带参考文献属性的期刊数据集。应用还新增 MiniMax M3.1 Flash Preview 与 Claude Sonnet 5.5 模型选项。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
