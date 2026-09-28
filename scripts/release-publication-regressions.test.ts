@@ -224,7 +224,6 @@ if (args[0] === 's3api' && args[1] === 'head-object') {
 if (args[0] !== 's3' || args[1] !== 'cp') throw Error('Unsupported AWS test operation');
 if (args[3].startsWith('s3://') && args[3].endsWith(process.env.TEST_FAIL_UPLOAD || '\\0')) {console.error('Upload interrupted'); process.exit(1);}
 const source = local(args[2]), target = local(args[3]);
-if (args[3] === '-') { process.stdout.write(fs.readFileSync(source)); process.exit(0); }
 fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, target);
 `,
     { mode: 0o755 }
@@ -600,52 +599,5 @@ it.skipIf(process.platform === 'win32')(
     expect(run('Generate version.json', 'promote').status).not.toBe(0)
     expect(run('Sync installers to versioned path', 'promote').status).not.toBe(0)
     expect(readFileSync(join(channel, 'version.json'), 'utf8')).toBe(current)
-  }
-)
-
-it.skipIf(process.platform === 'win32')(
-  'promotes the ARM64 channel without bypassing bootstrap or rolling back a newer feed',
-  () => {
-    const { cwd, remote, env } = objectStore()
-    const dir = join(cwd, 'dist-assets')
-    const channel = join(remote, 'test-bucket/open-science/app/stable')
-    mkdirSync(dir)
-    mkdirSync(channel, { recursive: true })
-    const feeds = [
-      'latest.yml',
-      'latest-linux.yml',
-      'latest-linux-arm64.yml',
-      'latest-mac.yml',
-      'arm64-mac.yml',
-      'x64-mac.yml'
-    ]
-    const content = (version: string): string =>
-      JSON.stringify({ version, files: [{ url: 'artifact' }] })
-    for (const name of feeds) {
-      writeFileSync(join(dir, name), content('0.1.2'))
-      if (name !== 'latest-linux-arm64.yml') writeFileSync(join(channel, name), content('0.1.1'))
-    }
-    writeFileSync(join(cwd, 'version.json'), JSON.stringify({ version: '0.1.2' }))
-    writeFileSync(join(channel, 'version.json'), JSON.stringify({ version: '0.1.1' }))
-    const run = (): ReturnType<typeof spawnSync> =>
-      spawnSync(process.execPath, [join(repo, 'scripts/publish-update-channel.mjs')], {
-        cwd,
-        encoding: 'utf8',
-        env: { ...env, VERSION: '0.1.2', MODE: 'promote' }
-      })
-    expect(run().status).not.toBe(0)
-    expect(JSON.parse(readFileSync(join(channel, 'version.json'), 'utf8')).version).toBe('0.1.1')
-    writeFileSync(join(channel, 'latest-linux-arm64.yml'), content('0.1.3'))
-    const stale = run()
-    expect(stale.status, stale.stderr).toBe(0)
-    expect(stale.stdout).toContain('Backfilled')
-    expect(JSON.parse(readFileSync(join(channel, 'latest-linux-arm64.yml'), 'utf8')).version).toBe(
-      '0.1.3'
-    )
-    writeFileSync(join(channel, 'latest-linux-arm64.yml'), content('0.1.1'))
-    const promoted = run()
-    expect(promoted.status, promoted.stderr).toBe(0)
-    for (const name of [...feeds, 'version.json'])
-      expect(JSON.parse(readFileSync(join(channel, name), 'utf8')).version).toBe('0.1.2')
   }
 )

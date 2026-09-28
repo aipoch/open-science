@@ -5,7 +5,14 @@ import { delimiter, dirname, join } from 'node:path'
 import { load } from 'js-yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const feeds = ['latest.yml', 'latest-linux.yml', 'latest-mac.yml', 'arm64-mac.yml', 'x64-mac.yml']
+const feeds = [
+  'latest.yml',
+  'latest-linux.yml',
+  'latest-linux-arm64.yml',
+  'latest-mac.yml',
+  'arm64-mac.yml',
+  'x64-mac.yml'
+]
 const roots: string[] = []
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -184,6 +191,22 @@ describe.skipIf(process.platform === 'win32')('website channel publication', () 
     f.run('2.1.0', 'promote')
     expect(f.snapshot()).toEqual(before)
   })
+  it('does not downgrade a newer ARM64 feed before the version manifest catches up', () => {
+    const f = fixture()
+    writeFileSync(join(f.channel, 'latest-linux-arm64.yml'), 'version: 3.0.0\n')
+    const before = f.snapshot()
+    f.stage('2.1.0')
+    f.run('2.1.0', 'promote')
+    expect(f.snapshot()).toEqual(before)
+  })
+  it('requires the new ARM64 channel to be initialized before first promotion', () => {
+    const f = fixture()
+    f.stage('2.1.0')
+    rmSync(join(f.channel, 'latest-linux-arm64.yml'))
+    const previousManifest = readFileSync(join(f.channel, 'version.json'), 'utf8')
+    expect(() => f.run('2.1.0', 'promote')).toThrow()
+    expect(readFileSync(join(f.channel, 'version.json'), 'utf8')).toBe(previousManifest)
+  })
   it('rejects successful uploads whose channel readback differs', () => {
     const f = fixture()
     f.stage('2.1.0')
@@ -191,11 +214,11 @@ describe.skipIf(process.platform === 'win32')('website channel publication', () 
       f.run('2.1.0', 'promote', 'corrupt:s3://fixture-bucket/stable/latest.yml')
     ).toThrow(/Publication readback failed/)
   })
-  it('rejects a promotion with a missing platform before channel writes', () => {
+  it.each(feeds)('rejects a promotion missing %s before channel writes', (feed) => {
     const f = fixture(),
       before = f.snapshot()
     f.stage('2.1.0')
-    rmSync(join(f.root, 'dist-assets', 'latest-mac.yml'))
+    rmSync(join(f.root, 'dist-assets', feed))
     expect(() => f.run('2.1.0', 'promote')).toThrow()
     expect(f.snapshot()).toEqual(before)
   })
@@ -209,18 +232,21 @@ describe.skipIf(process.platform === 'win32')('website channel publication', () 
     expect(() => f.run('2.1.0', 'promote')).toThrow()
     expect(readFileSync(join(f.channel, 'latest.yml'), 'utf8')).toBe(previousFeed)
   })
-  it('repairs a partial upload by retrying the same version and prevents an intervening downgrade', () => {
-    const f = fixture()
-    f.stage('3.0.0')
-    expect(() => f.run('3.0.0', 'promote', 'latest-linux.yml')).toThrow()
-    const partial = f.snapshot()
-    expect(JSON.parse(partial['version.json']).version).toBe('2.0.0')
-    expect((load(partial['arm64-mac.yml']) as { version: string }).version).toBe('3.0.0')
-    f.stage('2.1.0')
-    f.run('2.1.0', 'promote')
-    expect(f.snapshot()).toEqual(partial)
-    f.stage('3.0.0')
-    f.run('3.0.0', 'promote')
-    expect(JSON.parse(f.snapshot()['version.json']).version).toBe('3.0.0')
-  })
+  it.each(['latest-linux.yml', 'latest-linux-arm64.yml'])(
+    'repairs an interrupted %s upload and prevents an intervening downgrade',
+    (feed) => {
+      const f = fixture()
+      f.stage('3.0.0')
+      expect(() => f.run('3.0.0', 'promote', feed)).toThrow()
+      const partial = f.snapshot()
+      expect(JSON.parse(partial['version.json']).version).toBe('2.0.0')
+      expect((load(partial['arm64-mac.yml']) as { version: string }).version).toBe('3.0.0')
+      f.stage('2.1.0')
+      f.run('2.1.0', 'promote')
+      expect(f.snapshot()).toEqual(partial)
+      f.stage('3.0.0')
+      f.run('3.0.0', 'promote')
+      expect(JSON.parse(f.snapshot()['version.json']).version).toBe('3.0.0')
+    }
+  )
 })
