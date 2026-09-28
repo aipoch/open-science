@@ -98,7 +98,53 @@ const sourceReceipt = {
     }
   ]
 }
-if (scenario) {
+if (scenario === 'lifecycle') {
+  // This preview fixture controls execution outcomes; the full-app certification test owns
+  // real provenance/IPC coverage. Never claim these injected results as scientific reruns.
+  let state
+  let attempts = 0
+  const listeners = new Set()
+  const publish = (next) => {
+    state = next
+    for (const listener of listeners) listener(state)
+  }
+  window.addEventListener('e2e-reproducibility-change', (event) => publish(event.detail))
+  window.api = {
+    ...window.api,
+    artifacts: {
+      ...window.api?.artifacts,
+      getReproducibilityCheck: async () => state,
+      listReproducibilityReceipts: async () => ({
+        receipts: state?.receipt ? [state.receipt] : []
+      }),
+      onReproducibilityCheckChanged: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      startReproducibilityCheck: async (request) => {
+        state = {
+          attemptId: `preview-attempt-${++attempts}`,
+          startedAt: '2026-09-28T00:00:00.000Z',
+          request,
+          revision: 1,
+          status: 'running',
+          phase: 'executing',
+          completedSteps: 0,
+          totalSteps: 2,
+          completedEnvironments: 0,
+          totalEnvironments: 0,
+          totalComparisons: 1,
+          comparisons: []
+        }
+        return state
+      },
+      cancelReproducibilityCheck: async ({ attemptId }) => {
+        if (attemptId !== state.attemptId) throw new Error('Unexpected attempt cancellation')
+        publish({ ...state, revision: state.revision + 1, status: 'cancelled' })
+      }
+    }
+  }
+} else if (scenario) {
   window.api = {
     ...window.api,
     artifacts: {
