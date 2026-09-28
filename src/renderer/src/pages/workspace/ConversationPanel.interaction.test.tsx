@@ -4653,6 +4653,60 @@ describe('ConversationPanel interrupted Session recovery', () => {
     await act(async () => resolveResume?.())
   })
 
+  it('retains each Session recovery guard when two resumes overlap across navigation', async () => {
+    const interrupted = (id: string): ChatSession => ({
+      id,
+      projectId: 'project-a',
+      title: id,
+      cwd: '/workspace',
+      status: 'error',
+      interrupted: true,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    let finishA!: () => void
+    let finishB!: () => void
+    const resumeA = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishA = resolve
+        })
+    )
+    const resumeB = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishB = resolve
+        })
+    )
+    const show = (id: string, resume: () => Promise<void>): void =>
+      renderPanel({
+        view: { activeSession: interrupted(id) },
+        conversation: { availability: { submit: true }, actions: { resume } }
+      })
+    const resumeButton = (): HTMLButtonElement | null =>
+      container.querySelector('[aria-label="Resume session"]')
+    const sendButton = (): HTMLButtonElement | null =>
+      container.querySelector('[aria-label="Send message"]')
+
+    show('session-a', resumeA)
+    await act(async () => resumeButton()?.click())
+    show('session-b', resumeB)
+    expect(sendButton()?.disabled).toBe(false)
+    await act(async () => resumeButton()?.click())
+    show('session-a', resumeA)
+    expect(resumeButton()?.disabled).toBe(true)
+    expect(sendButton()?.disabled).toBe(true)
+    await act(async () => finishB())
+    expect(resumeButton()?.disabled).toBe(true)
+    expect(sendButton()?.disabled).toBe(true)
+    await act(async () => resumeButton()?.click())
+    expect(resumeA).toHaveBeenCalledOnce()
+    await act(async () => finishA())
+    expect(resumeButton()?.disabled).toBe(false)
+    expect(sendButton()?.disabled).toBe(false)
+  })
+
   it('does not show Session resume progress for a new conversation with no active Session', () => {
     // Regression: `activeSession?.id === resumingSessionId` is true when both are undefined, which
     // marked every brand-new conversation as "resuming" and suppressed the empty-state banner.

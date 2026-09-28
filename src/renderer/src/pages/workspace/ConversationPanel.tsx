@@ -709,12 +709,10 @@ const ConversationPanel = ({
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
-  // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
-  const [resumingSessionId, setResumingSessionId] = useState<string>()
-  const isResuming =
-    activeSession !== undefined &&
-    resumingSessionId !== undefined &&
-    activeSession.id === resumingSessionId
+  // Each Session retains recovery ownership while the user visits other conversations.
+  const resumingSessionIdsRef = useRef(new Set<string>())
+  const [resumingSessionIds, setResumingSessionIds] = useState<ReadonlySet<string>>(() => new Set())
+  const isResuming = activeSession !== undefined && resumingSessionIds.has(activeSession.id)
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
   const [isContextWindowOpen, setIsContextWindowOpen] = useState(false)
@@ -1060,13 +1058,22 @@ const ConversationPanel = ({
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
     const sessionId = activeSession?.id
-    if (!canResumeSession || !sessionId || isResuming || isStopping || rootTurnBusy) return
+    if (
+      !canResumeSession ||
+      !sessionId ||
+      resumingSessionIdsRef.current.has(sessionId) ||
+      isStopping ||
+      rootTurnBusy
+    )
+      return
 
-    setResumingSessionId(sessionId)
+    resumingSessionIdsRef.current.add(sessionId)
+    setResumingSessionIds(new Set(resumingSessionIdsRef.current))
     try {
       await onResumeSession()
     } finally {
-      setResumingSessionId((current) => (current === sessionId ? undefined : current))
+      resumingSessionIdsRef.current.delete(sessionId)
+      setResumingSessionIds(new Set(resumingSessionIdsRef.current))
     }
   }
 
