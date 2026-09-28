@@ -190,6 +190,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'claude-opus-4-8', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8[1m]', contextWindow: 1_000_000 },
       { id: 'claude-sonnet-5', contextWindow: 1_000_000 },
+      { id: 'claude-sonnet-5-5', contextWindow: 1_000_000 },
       {
         id: 'claude-haiku-4-5-20251001',
         contextWindow: 200_000,

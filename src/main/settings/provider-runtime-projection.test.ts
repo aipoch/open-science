@@ -82,39 +82,44 @@ describe('ProviderRuntimeProjectionOwner', () => {
     )
   })
 
-  it('resolves Claude Opus 5.5 for API and pinned subscription targets', () => {
-    const owner = new ProviderRuntimeProjectionOwner()
-    const framework = getAgentFramework('claude-code')
-    const providers: StoredProvider[] = [
-      {
-        id: 'anthropic',
-        type: 'official',
-        vendorId: 'anthropic',
-        name: 'Anthropic'
-      },
-      {
-        id: 'builtin-claude-isolated',
-        type: 'claude-isolated',
-        name: 'Claude subscription',
-        model: 'claude-opus-5-5'
+  it.each(['claude-opus-5-5', 'claude-sonnet-5-5'])(
+    'resolves %s for API and pinned subscription targets',
+    (model) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const framework = getAgentFramework('claude-code')
+      const providers: StoredProvider[] = [
+        {
+          id: 'anthropic',
+          type: 'official',
+          vendorId: 'anthropic',
+          name: 'Anthropic'
+        },
+        {
+          id: 'builtin-claude-isolated',
+          type: 'claude-isolated',
+          name: 'Claude subscription',
+          model
+        },
+        {
+          id: 'builtin-claude-shared',
+          type: 'claude-shared',
+          name: 'Shared Claude subscription',
+          model
+        }
+      ]
+
+      for (const provider of providers) {
+        const target = owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+
+        expect(target.effectiveModel).toBe(model)
+        expect(target.provider).toMatchObject({
+          model,
+          contextWindow: 1_000_000,
+          supportsImageInput: true
+        })
       }
-    ]
-
-    for (const provider of providers) {
-      const target = owner.resolveRuntimeTarget(
-        provider,
-        { kind: 'required', model: 'claude-opus-5-5' },
-        framework
-      )
-
-      expect(target.effectiveModel).toBe('claude-opus-5-5')
-      expect(target.provider).toMatchObject({
-        model: 'claude-opus-5-5',
-        contextWindow: 1_000_000,
-        supportsImageInput: true
-      })
     }
-  })
+  )
 
   it.each(['claude-code', 'opencode', 'codex'] as const)(
     'resolves an omitted model from the changing provider default for %s',
