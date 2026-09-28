@@ -3,6 +3,9 @@ import type { FileViewerSearchProvider } from '@file-viewer/core'
 
 import { test } from './fixtures/electron-app'
 
+// Exercise real iframe pointer and native Find focus on a presented Electron window.
+test.use({ windowMode: 'normal' })
+
 test('finds offscreen cells across XLSX and XLS worksheets', async ({ app }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
