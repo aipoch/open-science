@@ -49,7 +49,7 @@ AIPOCH Open-Science는 과학자와 연구자를 위한 AI 연구 워크벤치�
 
 AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[AIPOCH Open-Science v0.33.3 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 9월 업데이트)_. AIPOCH Open-Science v0.33.3는 문서 미리보기를 페이지 매긴 Office 읽기와 검색, 페이지 단위 PowerPoint 검토로 강화하고, 유전자 커넥터에 Enrichr 유전자 세트 농축 도구를 추가하며, 워크스페이스에 컴팩트 라이브러리 미리보기를 제공합니다. Windows 서명은 이제 모든 번들 실행 파일을 커버하고, Literature 심사에는 평가 중단 작업이 추가되며, 세션 패키지는 적응형 속도로 전송할 수 있습니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v0.34.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 9월 업데이트)_. AIPOCH Open-Science v0.34.0는 리눅스용 네이티브 ARM64 설치 패키지를 제공하고, Pathway Commons 커넥터를 새로 추가하며 cBioPortal, openFDA, MGnify, Bgee 종 간 발현 데이터 소스를 확장하고, 데스크톱 트레이 세션 탐색을 도입합니다. 앱은 Electron 43으로 업그레이드되고, MiniMax M3.1 Flash Preview 프로바이더를 추가하며, Literature 라이브러리에 참조 속성을 갖춘 저널 데이터 세트를 지원합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
