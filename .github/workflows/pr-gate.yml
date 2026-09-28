@@ -566,7 +566,7 @@ jobs:
         # changes select the overlay lane; full plans keep fail-closed CDN coverage.
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
         continue-on-error: true
-        run: node scripts/verify-runtime-bundle.mjs linux-64 osx-arm64 osx-64 win-64
+        run: node scripts/verify-runtime-bundle.mjs linux-64 linux-aarch64 osx-arm64 osx-64 win-64
       - name: Setup Node 22 for CLI compatibility
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7

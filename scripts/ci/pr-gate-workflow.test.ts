@@ -1047,7 +1047,7 @@ describe('PR Gate workflow', () => {
     expect(runtimeBundle).toMatchObject({
       id: 'runtime_bundle',
       'continue-on-error': true,
-      run: 'node scripts/verify-runtime-bundle.mjs linux-64 osx-arm64 osx-64 win-64'
+      run: 'node scripts/verify-runtime-bundle.mjs linux-64 linux-aarch64 osx-arm64 osx-64 win-64'
     })
     expect(runtimeBundle?.if).toContain("'runtime_bundle'")
     expect(runtimeBundle?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
