@@ -179,6 +179,42 @@ it.each([
   expect(findSensitivePackageText(value)).toBeUndefined()
 })
 
+it.each([1, 2, 3, 4])('recognizes redacted Bearer values through %i JSON layers', (depth) => {
+  let text = JSON.stringify({ authorization: 'Bearer [redacted]' })
+  for (let layer = 0; layer < depth; layer++) text = JSON.stringify({ result: text })
+  expect(findSensitivePackageText(text)).toBeUndefined()
+  for (let length = 1; length < text.length; length++)
+    expect(
+      findSensitivePackageText(text.slice(0, length), false),
+      `prefix ${length}`
+    ).toBeUndefined()
+
+  const secret = text.replace('[redacted]', 'synthetic-private-value')
+  const match = findSensitivePackageText(secret)
+  expect(match).toBeDefined()
+  expect(buildSensitiveContentEvidence(secret, match!, 'records.json').context).not.toContain(
+    'synthetic-private-value'
+  )
+  expect(findSensitivePackageText(text + '\npassword=synthetic-private-value')).toBeDefined()
+
+  for (const suffix of ['suffix', '\\', '"suffix', '\\"suffix']) {
+    let literal = JSON.stringify({ note: `Bearer [redacted]${suffix}` })
+    for (let layer = 0; layer < depth; layer++) literal = JSON.stringify({ result: literal })
+    expect(findSensitivePackageText(literal), `literal suffix ${suffix}`).toBeDefined()
+  }
+})
+
+it.each([
+  'Bearer [redacted]' + '\\'.repeat(7),
+  'Bearer [redacted]' + '\\'.repeat(7) + 'suffix',
+  JSON.stringify({ authorization: 'Bearer [redacted]\\' }),
+  JSON.stringify({ note: 'Bearer [redacted]\\' }),
+  JSON.stringify({ note: 'Bearer [redacted]"suffix' }),
+  JSON.stringify({ result: JSON.stringify({ authorization: 'Bearer [redacted]suffix' }) })
+])('does not treat literal credential suffixes as serialization: %s', (text) => {
+  expect(findSensitivePackageText(text)).toBeDefined()
+})
+
 it('bounds scanning of malformed CLI quotes with long escape sequences', async () => {
   const { buildSync } = await import('esbuild')
   const { execFileSync } = await import('node:child_process')

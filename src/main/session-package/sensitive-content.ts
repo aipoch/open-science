@@ -304,6 +304,22 @@ export const findSensitivePackageText = (
   for (const match of text.matchAll(
     /\bBearer\s+[^\s"']+|\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b|\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|sk-[A-Za-z0-9_-]{8,})\b/gi
   )) {
+    // Nested JSON adds matching escape runs to the surrounding quotes. Exclude only those
+    // delimiters from an exact placeholder, never literal backslashes in a credential value.
+    const end = match.index + match[0].length
+    let openingEscapes = 0
+    if (text[match.index - 1] === '"')
+      while (text[match.index - 2 - openingEscapes] === '\\') openingEscapes++
+    let closingEscapes = 0
+    while (text[end - 1 - closingEscapes] === '\\') closingEscapes++
+    if (
+      openingEscapes % 2 === 1 &&
+      closingEscapes > 0 &&
+      !isPrivatePackageValue(match[0].slice(0, -closingEscapes)) &&
+      ((closingEscapes === openingEscapes && text[end] === '"') ||
+        (!complete && end === text.length && closingEscapes <= openingEscapes))
+    )
+      continue
     if (privateValue(match[0], match.index + match[0].length))
       return {
         offset: match.index,

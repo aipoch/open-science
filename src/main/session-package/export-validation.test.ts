@@ -78,7 +78,22 @@ it('handles cancellation during export validation before reaching later sensitiv
   }
 })
 
+const serializedRedaction = Array.from({ length: 3 }).reduce<string>(
+  (text) => JSON.stringify({ result: text }),
+  JSON.stringify({ authorization: 'Bearer [redacted]' })
+)
+const splitRedaction =
+  ' '.repeat(65536 - serializedRedaction.indexOf('Bearer') - 'Bearer [redacted]'.length - 3) +
+  serializedRedaction
+
 it.each([
+  ['nested JSON redaction', Buffer.from(serializedRedaction), true],
+  ['nested JSON closing escapes split across reads', Buffer.from(splitRedaction), true],
+  [
+    'real credential after nested JSON redaction',
+    Buffer.from(splitRedaction + '\npassword=synthetic-private-value'),
+    false
+  ],
   [
     'token count crossing a chunk boundary',
     Buffer.from(' '.repeat(65514) + '{"estimatedTokens":71862,"tokens":88197}'),
@@ -415,6 +430,58 @@ it('preserves context and model-step token counts through native export and impo
       documents.push(document)
     }
     expect(documents[1]).toBe(documents[0])
+    expect(await sessions.loadSession(request.projectId, request.sessionId)).toEqual(before)
+  } finally {
+    await service.close()
+    await fixture.dispose()
+    initDataRoot(undefined)
+  }
+})
+
+it('preserves serialized redactions through native export and imported-package forwarding', async () => {
+  const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
+  const sessions = new SessionRepository(fixture.storageRoot)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  try {
+    await fixture.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+    await sessions.saveSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Redacted evidence',
+      cwd: '',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: serializedRedaction,
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ]
+    })
+    const request = { projectId: 'project-1', sessionId: 'session-1' }
+    const before = await sessions.loadSession(request.projectId, request.sessionId)
+    const native = join(fixture.storageRoot, 'native.science')
+    await service.exportTo(request, native)
+    const imported = await service.importFrom(native)
+    const forwarded = join(fixture.storageRoot, 'forwarded.science')
+    await service.exportTo(imported, forwarded)
+    for (const [index, archive] of [native, forwarded].entries()) {
+      const directory = join(fixture.storageRoot, `expanded-${index}`)
+      await mkdir(directory)
+      await extractTar({ file: archive, cwd: directory })
+      const document = JSON.parse(await readFile(join(directory, 'session.json'), 'utf8'))
+      expect(document.session.messages[0].content).toBe(serializedRedaction)
+    }
     expect(await sessions.loadSession(request.projectId, request.sessionId)).toEqual(before)
   } finally {
     await service.close()
