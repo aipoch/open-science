@@ -45,8 +45,14 @@ test('continues a child after force quit without rewriting persisted state', asy
     )
     .toBe(1)
   const filename = (await readdir(receiptRoot)).find((f) => f.endsWith('.json'))!
-  const receipt = await readFile(join(receiptRoot, filename), 'utf8')
-  expect(JSON.parse(receipt).ownership.leader.birthToken).toMatch(/^darwin-proc-uniqueid:/)
+  // The owner writes a launch intent before the real child identity is captured.
+  // Wait for that identity so the crash exercises recovery of a spawned process.
+  await expect
+    .poll(async () => {
+      const receipt = JSON.parse(await readFile(join(receiptRoot, filename), 'utf8'))
+      return receipt.ownership?.leader?.birthToken
+    })
+    .toMatch(/^darwin-proc-uniqueid:/)
   const originalAttempt = interrupted.runtimeContext!.delegatedWork!.records[0].attempts[0].id
 
   // Keep the real persisted session and receipt untouched. Terminate the isolated app while

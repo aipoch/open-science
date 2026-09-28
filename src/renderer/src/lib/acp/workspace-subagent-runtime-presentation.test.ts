@@ -126,7 +126,10 @@ describe('App-owned Subagent transcript lifecycle', () => {
         // A new root snapshot must not reintroduce its resumed execution into the child store.
         owner.select({ ...resumed, updatedAt: 4 }, projection)
         const terminal = scopedUpdate('child-terminal', 'Child failed')
-        owner.ingest({ ...terminal, event: { ...terminal.event, kind } })
+        owner.ingest({
+          scope: terminal.scope,
+          event: { id: 'child-terminal', kind, text: 'Child failed', timestamp: 5, level: 'info' }
+        })
         const childSession = store.getState().sessions[0]
         expect(errors).not.toHaveBeenCalled()
         expect(childSession.conversationGraphSyncBlocked).toBeUndefined()
