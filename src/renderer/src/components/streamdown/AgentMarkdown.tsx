@@ -7,9 +7,12 @@ import {
   useMemo,
   useState,
   type ErrorInfo,
+  type ComponentProps,
   type ReactNode
 } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { cjk } from '@streamdown/cjk'
 import { createMathPlugin } from '@streamdown/math'
 import {
@@ -93,13 +96,67 @@ const NETWORK_FETCHING_MEDIA_ELEMENTS = [
 
 type AgentMarkdownErrorBoundaryProps = {
   content: string
+  isAnimating: boolean
   children: ReactNode
   fallback?: ReactNode
 }
 
 type AgentMarkdownErrorBoundaryState = {
   failedContent: string | null
+  failedWhileAnimating: boolean | null
   hasError: boolean
+}
+
+const fallbackRemarkPlugins = [remarkGfm]
+const fallbackComponents = {
+  a: ({ children }: ComponentProps<'a'>) => <span>{children}</span>,
+  img: ({ alt }: ComponentProps<'img'>) => <span>{alt}</span>,
+  table: ({ children }: ComponentProps<'table'>) => (
+    <div className="max-w-full overflow-x-auto">
+      <table>{children}</table>
+    </div>
+  )
+}
+
+// This renderer has no rich plugins, external media, or active links. It keeps common Markdown
+// readable if Streamdown or one of its optional renderers fails on a streamed message.
+const ReadableMarkdownFallback = ({ content }: { content: string }): React.JSX.Element => (
+  <div data-agent-markdown-fallback="" className="agent-markdown-root max-w-full min-w-0">
+    <div className="agent-markdown prose prose-sm prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2">
+      <ReactMarkdown remarkPlugins={fallbackRemarkPlugins} components={fallbackComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  </div>
+)
+
+class ReadableMarkdownFallbackBoundary extends Component<
+  { content: string },
+  { hasError: boolean }
+> {
+  state = { hasError: false }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error('Failed to render fallback Markdown; showing source text.', error, errorInfo)
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <pre
+          data-agent-markdown-source-fallback=""
+          className="agent-markdown-root m-0 max-w-full min-w-0 whitespace-pre-wrap break-words font-sans text-inherit"
+        >
+          {this.props.content}
+        </pre>
+      )
+    }
+    return <ReadableMarkdownFallback content={this.props.content} />
+  }
 }
 
 type MermaidErrorPanelProps = {
@@ -202,6 +259,7 @@ class AgentMarkdownErrorBoundary extends Component<
 > {
   state: AgentMarkdownErrorBoundaryState = {
     failedContent: null,
+    failedWhileAnimating: null,
     hasError: false
   }
 
@@ -209,12 +267,16 @@ class AgentMarkdownErrorBoundary extends Component<
     props: AgentMarkdownErrorBoundaryProps,
     state: AgentMarkdownErrorBoundaryState
   ): AgentMarkdownErrorBoundaryState | null {
-    if (!state.hasError || state.failedContent === null || props.content === state.failedContent) {
+    if (
+      !state.hasError ||
+      state.failedContent === null ||
+      (props.content === state.failedContent && props.isAnimating === state.failedWhileAnimating)
+    ) {
       return null
     }
 
-    // A changed message gets a fresh rich-render attempt instead of inheriting the previous failure.
-    return { failedContent: null, hasError: false }
+    // Completion retries a transient streaming failure even when the final text is unchanged.
+    return { failedContent: null, failedWhileAnimating: null, hasError: false }
   }
 
   static getDerivedStateFromError(): Partial<AgentMarkdownErrorBoundaryState> {
@@ -222,21 +284,17 @@ class AgentMarkdownErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    this.setState((_state, props) => ({ failedContent: props.content }))
-    console.error('Failed to render rich Markdown; showing plain text fallback.', error, errorInfo)
+    this.setState((_state, props) => ({
+      failedContent: props.content,
+      failedWhileAnimating: props.isAnimating
+    }))
+    console.error('Failed to render rich Markdown; showing readable fallback.', error, errorInfo)
   }
 
   render(): ReactNode {
     if (this.state.hasError) {
       if (this.props.fallback !== undefined) return this.props.fallback
-      return (
-        <pre
-          data-agent-markdown-fallback=""
-          className="agent-markdown-root m-0 max-w-full min-w-0 whitespace-pre-wrap break-words font-sans text-inherit"
-        >
-          {this.props.content}
-        </pre>
-      )
+      return <ReadableMarkdownFallbackBoundary content={this.props.content} />
     }
 
     return this.props.children
@@ -331,7 +389,7 @@ const PresentedAgentMarkdown = memo(
     extension,
     fallback
   }: RichAgentMarkdownProps): React.JSX.Element => (
-    <AgentMarkdownErrorBoundary content={content} fallback={fallback}>
+    <AgentMarkdownErrorBoundary content={content} isAnimating={isAnimating} fallback={fallback}>
       <RichAgentMarkdown
         content={content}
         isAnimating={isAnimating}

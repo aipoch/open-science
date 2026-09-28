@@ -14,7 +14,6 @@ import {
   type ReactElement
 } from 'react'
 import {
-  type AcpAgentRuntimeUpdate,
   type AcpContextUsage,
   type AcpPermissionGrant,
   type AcpPermissionRequest,
@@ -66,7 +65,11 @@ import {
   type SendWorkspaceMessageResult
 } from './workspace-runtime-command-owner'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
-import { useSubagentRuntimePresentation } from './workspace-subagent-runtime-presentation'
+import {
+  createSubagentTranscriptOwner,
+  useSubagentRuntimePresentation,
+  type SubagentTranscriptOwner
+} from './workspace-subagent-runtime-presentation'
 import { createPreviewFileItemFromPdfContext } from '../../pages/workspace/preview-file-item'
 import {
   createPermissionResponseAttemptOwner,
@@ -82,7 +85,6 @@ type WorkspacePermissionProfileRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'setPermissionProfile'
 >
-type SubagentRuntimeListener = (update: AcpAgentRuntimeUpdate) => void
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 export const revealLinkedPdfContext = (
@@ -140,7 +142,7 @@ type WorkspaceAgentRuntime = {
   sendPreparationInFlightSessionIds: string[]
   saveAsSkillInFlightSessionIds: string[]
   nativeContextCompactionSessionIds: string[]
-  subscribeToSubagentRuntimeUpdates: (listener: SubagentRuntimeListener) => () => void
+  subagentTranscripts: SubagentTranscriptOwner
   compactContext: (sessionId: string) => Promise<boolean>
   ensureSessionReady: (sessionId: string) => Promise<void>
   saveAsSkill: (
@@ -174,14 +176,7 @@ const useOwnedWorkspaceAgentRuntime = (
   onSessionSizeLimit?: (sessionId: string) => void
 ): WorkspaceAgentRuntime => {
   const runtime = useAcpRuntime()
-  const subagentRuntimeUpdateListeners = useRef(new Set<SubagentRuntimeListener>())
-  const subscribeToSubagentRuntimeUpdates = useCallback(
-    (listener: SubagentRuntimeListener): (() => void) => {
-      subagentRuntimeUpdateListeners.current.add(listener)
-      return () => subagentRuntimeUpdateListeners.current.delete(listener)
-    },
-    []
-  )
+  const [subagentTranscripts] = useState(createSubagentTranscriptOwner)
   const restoredPermissionProjectionKey = useSessionStore((state) =>
     JSON.stringify(
       state.sessions.map((session) => {
@@ -272,12 +267,16 @@ const useOwnedWorkspaceAgentRuntime = (
     [durablePermissionSessionIdsKey]
   )
   useEffect(() => {
-    const subscribe = window.api?.acp?.onAgentRuntimeUpdate
-    if (!subscribe) return
-    return subscribe((update) => {
-      for (const listener of subagentRuntimeUpdateListeners.current) listener(update)
+    subagentTranscripts.reconcileSessions(useSessionStore.getState().sessions)
+    const unsubscribeSessions = useSessionStore.subscribe((state) => {
+      subagentTranscripts.reconcileSessions(state.sessions)
     })
-  }, [])
+    const unsubscribeRuntime = window.api?.acp?.onAgentRuntimeUpdate?.(subagentTranscripts.ingest)
+    return () => {
+      unsubscribeRuntime?.()
+      unsubscribeSessions()
+    }
+  }, [subagentTranscripts])
 
   useEffect(
     () =>
@@ -657,7 +656,7 @@ const useOwnedWorkspaceAgentRuntime = (
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,
     nativeContextCompactionSessionIds: runtime.state.nativeContextCompactionSessionIds ?? [],
-    subscribeToSubagentRuntimeUpdates,
+    subagentTranscripts,
     compactContext,
     ensureSessionReady,
     setMemoryEnabled,
@@ -699,7 +698,7 @@ const useWorkspaceSubagentRuntimeSession = (
   detail: Parameters<typeof useSubagentRuntimePresentation>[2]
 ): ChatSession => {
   const runtime = useWorkspaceAgentRuntime()
-  return useSubagentRuntimePresentation(runtime.subscribeToSubagentRuntimeUpdates, session, detail)
+  return useSubagentRuntimePresentation(runtime.subagentTranscripts, session, detail)
 }
 
 export {

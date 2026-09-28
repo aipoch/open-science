@@ -97,6 +97,7 @@
     "parse5": "^7.3.0",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "5.4.624",
+    "react-markdown": "^10.1.0",
     "react-remove-scroll": "^2.7.2",
     "reflect-metadata": "0.2.2",
     "sharp": "0.35.4",
