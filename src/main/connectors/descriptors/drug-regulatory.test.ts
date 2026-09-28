@@ -411,3 +411,67 @@ describe('drug-regulatory / search_drug_labels', () => {
     })
   })
 })
+
+describe('drug-regulatory / adverse events and recalls', () => {
+  it.each(['search_drug_adverse_events', 'count_drug_adverse_events', 'search_drug_recalls'])(
+    'uses a strict object schema for %s',
+    (id) => {
+      expect(tool(id).input).toMatchObject({ type: 'object', additionalProperties: false })
+    }
+  )
+
+  it('searches and aggregates FAERS events with mapped fields', async () => {
+    const event = { safetyreportid: '1', patient: { reaction: [{ reactionmeddrapt: 'HEADACHE' }] } }
+    const searched = await run(
+      'search_drug_adverse_events',
+      {
+        drug_name: 'LIPITOR',
+        reaction: 'headache',
+        received_date_from: '2020-01-01',
+        max_records: 5
+      },
+      [okJson({ meta: { last_updated: '2026-01-01', results: { total: 1 } }, results: [event] })]
+    )
+    expect(searched.urls[0]).toBe(
+      `https://api.fda.gov/drug/event.json?search=${encodeURIComponent(
+        '(patient.drug.medicinalproduct:"LIPITOR" AND patient.reaction.reactionmeddrapt:"headache") AND receivedate:[20200101 TO 30001231]'
+      )}&limit=5&skip=0`
+    )
+    expect(searched.out).toMatchObject({
+      total: 1,
+      n_returned: 1,
+      truncated: false,
+      records: [event]
+    })
+
+    const counted = await run(
+      'count_drug_adverse_events',
+      { count_field: 'reaction', drug_name: 'LIPITOR', max_buckets: 10 },
+      [okJson({ results: [{ term: 'HEADACHE', count: 4 }] })]
+    )
+    expect(counted.urls[0]).toBe(
+      `https://api.fda.gov/drug/event.json?search=${encodeURIComponent(
+        'patient.drug.medicinalproduct:"LIPITOR"'
+      )}&count=${encodeURIComponent('patient.reaction.reactionmeddrapt.exact')}&limit=10`
+    )
+    expect(counted.out).toMatchObject({
+      api_field: 'patient.reaction.reactionmeddrapt.exact',
+      bucket_sum: 4
+    })
+  })
+
+  it('searches drug enforcement reports and treats a zero-hit response as empty', async () => {
+    const recall = { recall_number: 'D-000-2026', status: 'Ongoing' }
+    const result = await run(
+      'search_drug_recalls',
+      { recalling_firm: 'Example', report_date_from: '2026-01-01', max_records: 1 },
+      [okJson({ meta: { results: { total: 1 } }, results: [recall] })]
+    )
+    expect(decodeURIComponent(result.urls[0])).toContain('recalling_firm:"Example"')
+    expect(decodeURIComponent(result.urls[0])).toContain('report_date:[20260101 TO 30001231]')
+    expect(result.out).toMatchObject({ total: 1, records: [recall] })
+
+    const empty = await run('search_drug_recalls', { status: 'Completed' }, [notFound()])
+    expect(empty.out).toMatchObject({ total: 0, n_returned: 0, truncated: false, records: [] })
+  })
+})

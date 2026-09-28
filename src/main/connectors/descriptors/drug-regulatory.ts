@@ -1,9 +1,12 @@
 import type { ToolContext, ToolDescriptor } from '../types'
 
-// Drugs@FDA applications (NDA/ANDA/BLA) and product labels (SPL), both served by openFDA. Read-only;
-// anonymous rate limits apply (the engine retries 429/5xx). openFDA envelope: { meta, results }.
+// Drugs@FDA applications (NDA/ANDA/BLA), product labels (SPL), FAERS adverse events and drug
+// enforcement reports, all served by openFDA. Read-only; anonymous rate limits apply (the engine
+// retries 429/5xx). openFDA envelope: { meta, results }.
 const APPLICATIONS = 'https://api.fda.gov/drug/drugsfda.json'
 const LABELS = 'https://api.fda.gov/drug/label.json'
+const ADVERSE_EVENTS = 'https://api.fda.gov/drug/event.json'
+const ENFORCEMENT = 'https://api.fda.gov/drug/enforcement.json'
 
 // openFDA can only page while skip+limit stays under ~26k; larger result sets must be narrowed first.
 const MAX_PAGEABLE = 26_000
@@ -56,7 +59,7 @@ type LabelRecord = {
   openfda?: OpenFdaLabelBlock
 } & Record<string, unknown>
 
-type CountBucket = { term?: string; count?: number }
+type CountBucket = { term?: string; time?: string; count?: number }
 type OpenFdaMeta = {
   last_updated?: string
   results?: { total?: number; skip?: number; limit?: number }
@@ -178,7 +181,8 @@ async function fetchPaged<T>(
   endpoint: string,
   expr: string,
   maxRecords: number,
-  guard: boolean
+  guard: boolean,
+  sort?: string
 ): Promise<{ total: number; lastUpdated?: string; records: T[] }> {
   const searchParam = expr ? `search=${enc(expr)}&` : ''
   const records: T[] = []
@@ -191,7 +195,7 @@ async function fetchPaged<T>(
     let resp: OpenFdaResults<T>
     try {
       resp = (await ctx.fetchJson(
-        `${endpoint}?${searchParam}limit=${pageLimit}&skip=${skip}`
+        `${endpoint}?${searchParam}limit=${pageLimit}&skip=${skip}${sort ? `&sort=${enc(sort)}` : ''}`
       )) as OpenFdaResults<T>
     } catch (err) {
       if (isNotFound(err)) break
@@ -213,6 +217,98 @@ async function fetchPaged<T>(
     if (!batch.length || batch.length < pageLimit || skip >= total) break
   }
   return { total, lastUpdated, records }
+}
+
+const EVENT_FILTER_FIELDS: Record<string, string> = {
+  drug_name: 'patient.drug.medicinalproduct',
+  brand_name: 'patient.drug.openfda.brand_name',
+  generic_name: 'patient.drug.openfda.generic_name',
+  ingredient: 'patient.drug.openfda.substance_name',
+  reaction: 'patient.reaction.reactionmeddrapt',
+  country: 'occurcountry',
+  serious: 'serious'
+}
+
+const ENFORCEMENT_FILTER_FIELDS: Record<string, string> = {
+  recalling_firm: 'recalling_firm',
+  product_description: 'product_description',
+  reason_for_recall: 'reason_for_recall',
+  status: 'status',
+  classification: 'classification',
+  city: 'city',
+  state: 'state',
+  country: 'country'
+}
+
+const dateClause = (field: string, from: unknown, to: unknown): string => {
+  if (from == null && to == null) return ''
+  const start = from != null ? String(from).replace(/-/g, '') : '19000101'
+  const end = to != null ? String(to).replace(/-/g, '') : '30001231'
+  return `${field}:[${start} TO ${end}]`
+}
+
+function mappedSearch(
+  args: Record<string, unknown>,
+  fields: Record<string, string>,
+  dates: Array<[string, string]>
+): string {
+  const dateClauses = dates
+    .map(([arg, field]) => dateClause(field, args[`${arg}_from`], args[`${arg}_to`]))
+    .filter(Boolean)
+  if (args.raw_search != null && args.raw_search !== '') {
+    const raw = String(args.raw_search)
+    return dateClauses.length ? `(${raw}) AND ${dateClauses.join(' AND ')}` : raw
+  }
+  const clauses: string[] = []
+  for (const [key, field] of Object.entries(fields)) {
+    if (args[key] != null && args[key] !== '') clauses.push(`${field}:${phrase(args[key])}`)
+  }
+  const op = String(args.search_type ?? 'and').toLowerCase() === 'or' ? ' OR ' : ' AND '
+  const expr = clauses.join(op)
+  if (!dateClauses.length) return expr
+  return expr ? `(${expr}) AND ${dateClauses.join(' AND ')}` : dateClauses.join(' AND ')
+}
+
+const eventSearchExpr = (args: Record<string, unknown>): string =>
+  mappedSearch(args, EVENT_FILTER_FIELDS, [
+    ['received_date', 'receivedate'],
+    ['receipt_date', 'receiptdate']
+  ])
+
+const enforcementSearchExpr = (args: Record<string, unknown>): string =>
+  mappedSearch(args, ENFORCEMENT_FILTER_FIELDS, [['report_date', 'report_date']])
+
+const EVENT_COUNT_FIELDS: Record<string, string> = {
+  reaction: 'patient.reaction.reactionmeddrapt.exact',
+  drug_name: 'patient.drug.medicinalproduct.exact',
+  generic_name: 'patient.drug.openfda.generic_name.exact',
+  country: 'occurcountry',
+  outcome: 'patient.reaction.reactionoutcome',
+  serious: 'serious',
+  received_date: 'receivedate',
+  receipt_date: 'receiptdate'
+}
+
+async function countBucketsAt(
+  ctx: ToolContext,
+  endpoint: string,
+  apiField: string,
+  searchExpr: string,
+  maxBuckets: number
+): Promise<CountBucket[]> {
+  const searchParam = searchExpr ? `search=${enc(searchExpr)}&` : ''
+  try {
+    const resp = (await ctx.fetchJson(
+      `${endpoint}?${searchParam}count=${enc(apiField)}&limit=${maxBuckets}`
+    )) as OpenFdaResults<CountBucket>
+    return (resp.results ?? []).map((b) => ({
+      ...(b.time !== undefined ? { time: b.time } : { term: b.term }),
+      count: b.count
+    }))
+  } catch (err) {
+    if (isNotFound(err)) return []
+    throw err
+  }
 }
 
 // Runs a single count aggregation and returns its buckets (empty on a zero-hit 404).
@@ -662,6 +758,163 @@ export const DRUG_REGULATORY_TOOLS: ToolDescriptor[] = [
         records: records.map((r) =>
           sections ? sectionLabelRecord(r, sections) : defaultLabelRecord(r)
         )
+      }
+    }
+  },
+  {
+    id: 'search_drug_adverse_events',
+    connector: 'drug-regulatory',
+    description:
+      'Search FAERS reports by reported drug_name (medicinalproduct), harmonized brand/generic/ingredient, reaction, seriousness (1=serious, 2=non-serious), country or initial/latest receipt date. Dates always constrain other filters; raw_search replaces mapped filters but retains dates. Reports can list multiple drugs and reactions and do not establish causation or incidence. Results are capped at 26000; narrow filters for larger cohorts.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        drug_name: { type: 'string' },
+        brand_name: { type: 'string' },
+        generic_name: { type: 'string' },
+        ingredient: { type: 'string' },
+        reaction: { type: 'string' },
+        country: { type: 'string' },
+        serious: { type: 'string' },
+        received_date_from: { type: 'string' },
+        received_date_to: { type: 'string' },
+        receipt_date_from: { type: 'string' },
+        receipt_date_to: { type: 'string' },
+        search_type: { type: 'string', enum: ['and', 'or'], default: 'and' },
+        raw_search: { type: 'string' },
+        sort: { type: 'string', description: 'openFDA sort expression, e.g. receivedate:desc' },
+        max_records: { type: 'integer', minimum: 1, maximum: 26000, default: 25 }
+      }
+    },
+    returns:
+      '`{ search, total, n_returned, truncated, records: [raw FAERS reports] }` — records are the openFDA adverse-event objects; a 404 zero-hit search returns an empty result.',
+    example:
+      'const result = await host.mcp("drug-regulatory", "search_drug_adverse_events", {"drug_name": "LIPITOR", "reaction": "headache", "max_records": 10})',
+    run: async (ctx, a) => {
+      const search = eventSearchExpr(a)
+      const maxRecords = Math.min(Math.max(1, Number(a.max_records ?? 25)), MAX_PAGEABLE)
+      const { total, lastUpdated, records } = await fetchPaged<Record<string, unknown>>(
+        ctx,
+        ADVERSE_EVENTS,
+        search,
+        maxRecords,
+        false,
+        a.sort == null ? undefined : String(a.sort)
+      )
+      return {
+        search,
+        total,
+        n_returned: records.length,
+        truncated: records.length < total,
+        last_updated: lastUpdated,
+        records
+      }
+    }
+  },
+  {
+    id: 'count_drug_adverse_events',
+    connector: 'drug-regulatory',
+    description:
+      'Aggregate matching FAERS reports by reaction, drug, outcome, country or receipt date. Counts reflect reports, not incidence or causation; multi-valued buckets overlap and their sum is not a unique report total. Date fields return time/count instead of term/count. raw_search retains date constraints.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        count_field: {
+          type: 'string',
+          description:
+            'Friendly field (reaction, drug_name, generic_name, outcome, country, serious, received_date, receipt_date) or a raw openFDA field path.'
+        },
+        drug_name: { type: 'string' },
+        brand_name: { type: 'string' },
+        generic_name: { type: 'string' },
+        ingredient: { type: 'string' },
+        reaction: { type: 'string' },
+        country: { type: 'string' },
+        serious: { type: 'string' },
+        received_date_from: { type: 'string' },
+        received_date_to: { type: 'string' },
+        receipt_date_from: { type: 'string' },
+        receipt_date_to: { type: 'string' },
+        search_type: { type: 'string', enum: ['and', 'or'], default: 'and' },
+        raw_search: { type: 'string' },
+        max_buckets: { type: 'integer', minimum: 1, maximum: 1000, default: 100 }
+      },
+      required: ['count_field']
+    },
+    required: ['count_field'],
+    returns:
+      '`{ count_field, api_field, n_buckets, bucket_sum, buckets: [{ term?, time?, count }] }` — term counts return the top max_buckets, not an exhaustive distribution; dates return a time series. Bucket sums need not equal unique report totals.',
+    example:
+      'const result = await host.mcp("drug-regulatory", "count_drug_adverse_events", {"count_field": "reaction", "drug_name": "LIPITOR"})',
+    run: async (ctx, a) => {
+      const countField = String(a.count_field)
+      const apiField = EVENT_COUNT_FIELDS[countField] ?? countField
+      const maxBuckets = Math.min(Math.max(1, Number(a.max_buckets ?? 100)), MAX_BUCKETS)
+      const buckets = await countBucketsAt(
+        ctx,
+        ADVERSE_EVENTS,
+        apiField,
+        eventSearchExpr(a),
+        maxBuckets
+      )
+      return {
+        count_field: countField,
+        api_field: apiField,
+        n_buckets: buckets.length,
+        bucket_sum: buckets.reduce((sum, bucket) => sum + (bucket.count ?? 0), 0),
+        buckets
+      }
+    }
+  },
+  {
+    id: 'search_drug_recalls',
+    connector: 'drug-regulatory',
+    description:
+      'Search FDA drug enforcement reports (product recalls) from openFDA by firm, product, recall reason, classification, status, location, or report date.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        recalling_firm: { type: 'string' },
+        product_description: { type: 'string' },
+        reason_for_recall: { type: 'string' },
+        status: { type: 'string' },
+        classification: { type: 'string' },
+        city: { type: 'string' },
+        state: { type: 'string' },
+        country: { type: 'string' },
+        report_date_from: { type: 'string' },
+        report_date_to: { type: 'string' },
+        search_type: { type: 'string', enum: ['and', 'or'], default: 'and' },
+        raw_search: { type: 'string' },
+        sort: { type: 'string', description: 'openFDA sort expression, e.g. report_date:desc' },
+        max_records: { type: 'integer', minimum: 1, maximum: 26000, default: 25 }
+      }
+    },
+    returns:
+      '`{ search, total, n_returned, truncated, records: [raw drug enforcement reports] }` — a 404 zero-hit search returns an empty result.',
+    example:
+      'const result = await host.mcp("drug-regulatory", "search_drug_recalls", {"reason_for_recall": "contamination", "max_records": 10})',
+    run: async (ctx, a) => {
+      const search = enforcementSearchExpr(a)
+      const maxRecords = Math.min(Math.max(1, Number(a.max_records ?? 25)), MAX_PAGEABLE)
+      const { total, lastUpdated, records } = await fetchPaged<Record<string, unknown>>(
+        ctx,
+        ENFORCEMENT,
+        search,
+        maxRecords,
+        false,
+        a.sort == null ? undefined : String(a.sort)
+      )
+      return {
+        search,
+        total,
+        n_returned: records.length,
+        truncated: records.length < total,
+        last_updated: lastUpdated,
+        records
       }
     }
   }
