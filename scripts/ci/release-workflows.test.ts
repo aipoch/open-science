@@ -759,13 +759,18 @@ describe('website mirror publication intent', () => {
       'cancel-in-progress': false
     })
     const dispatch = mirror.on?.workflow_dispatch as {
-      inputs: { mode: { default: string; options: string[] } }
+      inputs: {
+        mode: { default: string; options: string[] }
+        bootstrap_linux_arm64: { default: boolean; type: string }
+      }
     }
     expect(dispatch.inputs.mode).toMatchObject({
       default: 'backfill',
       options: ['backfill', 'promote']
     })
     const publication = step(mirror.jobs.mirror, 'Sync installers to versioned path')
+    expect(dispatch.inputs.bootstrap_linux_arm64).toMatchObject({ default: false, type: 'boolean' })
+    expect(publication.env?.BOOTSTRAP_LINUX_ARM64).toBe('${{ inputs.bootstrap_linux_arm64 }}')
     expect(publication.env?.MODE).toBe('${{ inputs.mode }}')
     expect(publication.if).toBe('${{ !inputs.dry_run }}')
     expect(publication.run).toBe('node scripts/publish-update-channel.mjs')

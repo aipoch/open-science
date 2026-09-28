@@ -39,6 +39,8 @@ it.each([
   ['arm64', 'latest-linux-arm64']
 ])('uses the installed updater architecture channel for %s', (arch, channel) => {
   const { Provider } = requireRepo('electron-updater/out/providers/Provider')
+  // Upstream Provider.getChannelFilePrefix reads process.env.TEST_UPDATER_ARCH || process.arch.
+  // Exercise its own test seam; a custom app channel would receive the architecture suffix twice.
   vi.stubEnv('TEST_UPDATER_ARCH', arch)
   try {
     const provider = new Provider({ platform: 'linux', executor: {} })
