@@ -114,6 +114,7 @@ type RootDelegatedWorkControl = Readonly<{
     }>
   ): Promise<void>
   wakeMessages?(sessionId: string): Promise<void>
+  rootExecutionStarted?(sessionId: string, originatingPromptId: string, executionId: string): void
   rootTurnStarted?(
     input: Readonly<{
       sessionId: string
@@ -232,6 +233,11 @@ const createProductionDelegatedWorkComposition = (
   >()
   const listeners = new Set<(event: RootDelegatedWorkEvent) => void>()
   const unavailableReasons = new Map<string, DelegatedWorkUnavailableReason>()
+  // The logical prompt survives Resume, but only the newly admitted runtime execution can
+  // create work. Cancelled capabilities remain revoked forever, including across async waits.
+  const rootExecutions = new Map<string, string>()
+  const cancellingTurns = new Map<string, number>()
+  const cancelledExecutions = new Set<string>()
   const cancelledTurns = new Set<string>()
   const cancelledSessionTurns = new Set<string>()
   const cancelledTurnKey = (key: SessionKey, messageId: string): string =>
@@ -333,8 +339,18 @@ const createProductionDelegatedWorkComposition = (
       deliverToParent: options.parentMessages?.deliver,
       onRootPermissionEvent: (event) => observePermission(key, event),
       onAgentRuntimeUpdate: options.onAgentRuntimeUpdate,
-      assertTurnOpen: (session, messageId) => {
+      assertTurnOpen: (session, messageId, executionId) => {
+        const identity = `${session.sessionId}\u0000${messageId}`
         if (
+          executionId &&
+          rootExecutions.get(identity) === executionId &&
+          !cancelledExecutions.has(executionId) &&
+          !cancellingTurns.has(identity)
+        )
+          return
+        if (
+          Boolean(executionId) ||
+          cancellingTurns.has(identity) ||
           cancelledTurns.has(cancelledTurnKey(session, messageId)) ||
           cancelledSessionTurns.has(`${session.sessionId}\u0000${messageId}`)
         ) {
@@ -398,7 +414,13 @@ const createProductionDelegatedWorkComposition = (
                   ({ status }) => status === 'running' || status === 'awaiting_user'
                 )
               : []
-        if (unobserved.length > 0) {
+        if (
+          unobserved.length > 0 &&
+          (!caller.rootExecutionId ||
+            (rootExecutions.get(`${caller.session.sessionId}\u0000${caller.originMessageId}`) ===
+              caller.rootExecutionId &&
+              !cancelledExecutions.has(caller.rootExecutionId)))
+        ) {
           settlementWake?.trackUnobservedAttempts({
             sessionId: caller.session.sessionId,
             originatingPromptId: caller.originMessageId,
@@ -598,7 +620,11 @@ const createProductionDelegatedWorkComposition = (
         sessionId,
         initiatingTurnMessageId
       )
-      cancelledSessionTurns.add(`${sessionId}\u0000${initiatingTurnMessageId}`)
+      const turnKey = `${sessionId}\u0000${initiatingTurnMessageId}`
+      const executionId = rootExecutions.get(turnKey)
+      if (executionId) cancelledExecutions.add(executionId)
+      cancellingTurns.set(turnKey, (cancellingTurns.get(turnKey) ?? 0) + 1)
+      cancelledSessionTurns.add(turnKey)
       const pendingScoped = [...works.entries()].filter(([identity]) =>
         identity.endsWith(`\u0000${sessionId}`)
       )
@@ -607,11 +633,21 @@ const createProductionDelegatedWorkComposition = (
       for (const [identity] of pendingScoped) {
         cancelledTurns.add(`${identity}\u0000${initiatingTurnMessageId}`)
       }
-      const scoped = await Promise.all(pendingScoped.map(([, work]) => work))
-      await Promise.all([
-        settlementInvalidation,
-        ...scoped.map(({ key, work }) => work.cancelTurn(key, initiatingTurnMessageId))
-      ])
+      try {
+        const scoped = await Promise.all(pendingScoped.map(([, work]) => work))
+        const results = await Promise.allSettled([
+          settlementInvalidation,
+          ...scoped.map(({ key, work }) =>
+            work.cancelTurn(key, initiatingTurnMessageId, executionId)
+          )
+        ])
+        const failure = results.find((result) => result.status === 'rejected')
+        if (failure?.status === 'rejected') throw failure.reason
+      } finally {
+        const remaining = (cancellingTurns.get(turnKey) ?? 1) - 1
+        if (remaining) cancellingTurns.set(turnKey, remaining)
+        else cancellingTurns.delete(turnKey)
+      }
     },
     async stopActiveBranch(sessionId) {
       const scoped = await worksForSession(sessionId)
@@ -679,6 +715,9 @@ const createProductionDelegatedWorkComposition = (
     },
     async rootTurnEnded(input) {
       await settlementWake?.onRootTurnEnded(input)
+    },
+    rootExecutionStarted(sessionId, originatingPromptId, executionId) {
+      rootExecutions.set(`${sessionId}\u0000${originatingPromptId}`, executionId)
     },
     async rootTurnStarted(input) {
       return settlementWake?.onRootTurnStarted(input)

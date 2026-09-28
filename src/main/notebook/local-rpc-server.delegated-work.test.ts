@@ -39,6 +39,43 @@ describe('authenticated delegatedWorkCall route', () => {
     ...overrides
   })
 
+  it('pins the root execution from trusted control context instead of agent parameters', async () => {
+    const delegate = vi.fn<
+      (caller: unknown, request: unknown) => Promise<{ kind: 'receipts'; children: [] }>
+    >(async () => ({ kind: 'receipts', children: [] }))
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: { delegate }
+    })
+    const connection = await server.issueControlConnection('session-1', 'project-1', 'root-frame')
+    const end = connection.beginControlInvocation({
+      turnId: 'tool-turn',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-1',
+      originatingUserMessageId: 'prompt-1',
+      rootExecutionId: 'trusted-execution'
+    })
+    const response = await fetch(connection.endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'delegatedWorkCall',
+        params: {
+          root_execution_id: 'forged-execution',
+          request: { task: 'work', name: 'child' },
+          options: { wait: false }
+        }
+      })
+    })
+    expect(response.status).toBe(200)
+    expect(delegate.mock.calls[0]?.[0]).toMatchObject({
+      rootExecutionId: 'trusted-execution',
+      originMessageId: 'prompt-1'
+    })
+    end()
+    connection.release()
+  })
+
   it('projects authoritative Session delegation policy without disabling existing-child operations', async () => {
     let delegationAllowed = true
     const work = {

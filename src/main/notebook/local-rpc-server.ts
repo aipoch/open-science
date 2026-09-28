@@ -1851,6 +1851,7 @@ class NotebookLocalRpcServer {
       // A session capability can outlive its turn. Snapshot before reading the body so a
       // slow request cannot acquire a later turn's authority after cleanup has returned.
       const initialSessionBinding = this.sessionRpcCapabilities.get(bearerToken)
+      const initialControlInvocation = initialSessionBinding?.activeControlInvocation
       const initialSessionId = initialSessionBinding
         ? (this.sessionAliases.get(initialSessionBinding.sessionId) ??
           initialSessionBinding.sessionId)
@@ -2062,8 +2063,9 @@ class NotebookLocalRpcServer {
             !sessionBinding.delegatedNotebook &&
             (!sessionBinding.projectId ||
               !sessionBinding.agentFrameId ||
-              !sessionBinding.activeControlInvocation?.toolInvocationId ||
-              !sessionBinding.activeControlInvocation.originatingUserMessageId)
+              sessionBinding.activeControlInvocation !== initialControlInvocation ||
+              !initialControlInvocation?.toolInvocationId ||
+              !initialControlInvocation.originatingUserMessageId)
           ) {
             throw new RpcHttpError(
               403,
@@ -2144,6 +2146,7 @@ class NotebookLocalRpcServer {
                   frame_id: sessionBinding.agentFrameId,
                   caller_role: sessionBinding.delegatedWorkRole,
                   attempt_id: sessionBinding.delegatedWorkAttemptId,
+                  root_execution_id: initialControlInvocation?.rootExecutionId,
                   permissionPrompts: sessionBinding.delegatedNotebook?.permissionPrompts,
                   origin_message_id:
                     sessionBinding.delegatedNotebook?.provenanceContext.promptMessageId ??
@@ -2160,6 +2163,7 @@ class NotebookLocalRpcServer {
                     session_id: sessionBinding.sessionId,
                     frame_id: sessionBinding.agentFrameId,
                     attempt_id: sessionBinding.delegatedWorkAttemptId,
+                    root_execution_id: initialControlInvocation?.rootExecutionId,
                     origin_message_id:
                       sessionBinding.delegatedNotebook?.provenanceContext.promptMessageId ??
                       sessionBinding.activeControlInvocation?.originatingUserMessageId
@@ -2200,6 +2204,16 @@ class NotebookLocalRpcServer {
       // Resolve pre-session aliases before the runtime service looks up persistent state.
       if (method === 'planCall' && lifecycle.closing) disconnect.abort()
       let resolvedParams = { ...this.resolveSessionAlias(params) }
+      delete resolvedParams.rootExecutionId
+      // Background control runs also retain their submitting execution; they must never borrow
+      // a later foreground turn's delegation authority when their queued work starts.
+      if (
+        method === 'executeControl' &&
+        initialTurn &&
+        initialSessionBinding?.delegatedWorkRole !== 'delegate'
+      ) {
+        resolvedParams.rootExecutionId = initialTurn.ownerExecutionId
+      }
       delete resolvedParams.executionInvocationId
       delete resolvedParams.registeredHelperSkillIds
       const authenticatedBinding = authenticatedSessionBinding
@@ -3183,6 +3197,9 @@ class NotebookLocalRpcServer {
       }
       const parentSpecialistId = this.sessionSpecialists.get(sessionId)
       const caller: AuthenticatedDelegateCaller = {
+        ...(typeof params.root_execution_id === 'string'
+          ? { rootExecutionId: params.root_execution_id }
+          : {}),
         permissionPrompts: params.permissionPrompts === 'none' ? 'none' : undefined,
         session: { projectId, sessionId },
         frameId,

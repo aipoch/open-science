@@ -102,12 +102,14 @@ const withoutTrustedTurnContext = <
   const {
     provenanceContext,
     executionInvocationId,
+    rootExecutionId,
     registeredInputFiles,
     registeredHelperSkillIds,
     inputRunLeaseId,
     ...publicRequest
   } = request
   void provenanceContext
+  void rootExecutionId
   void executionInvocationId
   void registeredInputFiles
   void registeredHelperSkillIds

@@ -1181,6 +1181,53 @@ if (process.argv.includes('--version')) {
       )
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
+      if (prompt.includes('Delegation resume held child task.')) {
+        await waitForSessionCancellation(context.params.sessionId)
+        return { stopReason: 'cancelled' }
+      }
+      if (
+        prompt.includes('Audit delegation after Stop Resume.') ||
+        prompt.includes('Audit delegation without Stop.') ||
+        prompt.includes('Audit delegation explicit continuation.')
+      ) {
+        const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
+        const continuation = prompt.includes('Audit delegation explicit continuation.')
+        const shouldDelegate = resumed || prompt.includes('Audit delegation without Stop.')
+        let text = 'Delegation audit ready for Stop.'
+        if (continuation && !resumed) {
+          const created = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              'return await host.delegate({ task: "Delegation resume held child task.", name: "Interrupted child" }, { wait: false })'
+            )
+          )
+          globalThis.delegationResumeChild = created.children[0]
+        }
+        if (shouldDelegate) {
+          const code = continuation
+            ? `const before = await host.children(); const receipt = await host.sendFrameMessage(${JSON.stringify(globalThis.delegationResumeChild?.frameId)}, "Finish the explicitly continued task."); return { outcome: "continued", before, receipt };`
+            : 'const value = await host.delegate({ task: "Return a short confirmation for the resume audit.", name: "Resume audit child" }, { wait: false }); return { outcome: "admitted", value };'
+          const result = await executeControlCode(
+            context.params.sessionId,
+            `try { ${code} } catch (error) { return { outcome: "rejected", code: error.code, message: error.message }; }`
+          )
+          text = 'Delegation audit result: ' + JSON.stringify(controlResultValue(result))
+        }
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text }
+          }
+        })
+        if (!shouldDelegate) {
+          await waitForSessionCancellation(context.params.sessionId)
+          return { stopReason: 'cancelled' }
+        }
+        return { stopReason: 'end_turn' }
+      }
+
       const reviewerRoute = sessionRoutes
         .get(context.params.sessionId)
         ?.mcpServers?.some((server) => server.name.replaceAll('_', '-') === 'open-science-reviewer')

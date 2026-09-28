@@ -2518,6 +2518,7 @@ describe('AcpRuntimeCoordinator', () => {
 
   it('reports completed user and application-owned root turns to delegated settlement watching', async () => {
     const rootTurnEnded = vi.fn(async () => undefined)
+    const rootExecutionStarted = vi.fn()
     let settlementLease = 0
     const rootTurnStarted = vi.fn(async () => `settlement-lease-${++settlementLease}`)
     const delegatedWork: RootDelegatedWorkControl = {
@@ -2532,6 +2533,7 @@ describe('AcpRuntimeCoordinator', () => {
       shutdownForUpdateGate: async () => undefined,
       deleteSession: async () => undefined,
       deleteProject: async () => undefined,
+      rootExecutionStarted,
       rootTurnStarted,
       rootTurnEnded
     }
@@ -2597,6 +2599,16 @@ describe('AcpRuntimeCoordinator', () => {
       leaseId: 'settlement-lease-3'
     })
     expect(rootTurnStarted).toHaveBeenCalledTimes(3)
+    expect(rootExecutionStarted).toHaveBeenCalledTimes(3)
+    expect(rootExecutionStarted.mock.calls[0].slice(0, 2)).toEqual([
+      session.sessionId,
+      'root-prompt'
+    ])
+    expect(rootExecutionStarted.mock.calls[1].slice(0, 2)).toEqual([
+      session.sessionId,
+      'root-prompt'
+    ])
+    expect(new Set(rootExecutionStarted.mock.calls.map((call) => call[2])).size).toBe(3)
   })
 
   it.each(['cancel', 'handoff', 'delete'] as const)(

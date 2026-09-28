@@ -928,6 +928,8 @@ export type NotebookRunSummary = Omit<
 
 // Common routing fields required by every notebook command.
 export type NotebookSessionRequest = OptionalProjectIdScope & {
+  // Main-owned root execution captured at RPC admission; public adapters strip it.
+  rootExecutionId?: string
   sessionId: string
   workspaceCwd: string
   provenanceContext?: NotebookRunProvenanceContext

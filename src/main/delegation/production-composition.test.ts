@@ -599,6 +599,197 @@ afterEach(async () => {
 })
 
 describe('production delegated-work composition', () => {
+  it('resumes delegation with a fresh execution without restarting cancelled children', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-resume-'))
+    const harness = await createCompositionHarness(root, 'codex')
+    const { composition, caller, execution } = harness
+    const start = (rootExecutionId: string): typeof caller & { rootExecutionId: string } => {
+      composition.root.rootExecutionStarted!(
+        caller.session.sessionId,
+        caller.originMessageId,
+        rootExecutionId
+      )
+      return { ...caller, rootExecutionId }
+    }
+    const first = start('execution-1')
+    const child = (
+      await composition.host.delegate(first, { task: 'wait', name: 'child' }, { wait: false })
+    ).children[0]
+    await expect.poll(() => execution.controls()).toHaveLength(1)
+    execution.control(child.attemptId).accept()
+    await composition.root.cancelTurn!(caller.session.sessionId, caller.originMessageId)
+    expect(harness.durable().runtimeContext!.delegatedWork!.records[0].attempts[0].status).toBe(
+      'cancelled'
+    )
+
+    const resumed = start('execution-2')
+    await composition.root.rootTurnStarted!({
+      sessionId: caller.session.sessionId,
+      originatingPromptId: caller.originMessageId
+    })
+    expect(execution.controls()).toHaveLength(1)
+    expect((await composition.host.children(resumed))[0].status).toBe('cancelled')
+    await expect(
+      composition.host.delegate(
+        { ...first, toolInvocationId: 'late-delegate' },
+        { task: 'stale', name: 'stale' },
+        { wait: false }
+      )
+    ).rejects.toThrow('cancelled')
+    await expect(
+      composition.host.sendMessage(first, child.frameId, 'late continuation', { requestId: 'late' })
+    ).rejects.toThrow('cancelled')
+    const continued = await composition.host.sendMessage(
+      resumed,
+      child.frameId,
+      'continue explicitly',
+      { requestId: 'resume-child' }
+    )
+    expect(continued.disposition).toBe('continued')
+    await expect.poll(() => execution.controls()).toHaveLength(2)
+    const attempts = harness.durable().runtimeContext!.delegatedWork!.records[0].attempts
+    expect(attempts).toHaveLength(2)
+    expect(attempts[0]).toMatchObject({ id: child.attemptId, status: 'cancelled' })
+    expect(attempts[1].id).not.toBe(child.attemptId)
+
+    await composition.root.cancelTurn!(caller.session.sessionId, caller.originMessageId)
+    const third = start('execution-3')
+    await expect(
+      composition.host.delegate(resumed, { task: 'stale again', name: 'stale' }, { wait: false })
+    ).rejects.toThrow('cancelled')
+    const fresh = await composition.host.delegate(
+      { ...third, toolInvocationId: 'fresh-delegate' },
+      { task: 'new work', name: 'new child' },
+      { wait: false }
+    )
+    expect(fresh.children[0].frameId).not.toBe(child.frameId)
+    harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
+    await expect(
+      composition.host.delegate(third, { task: 'disabled', name: 'disabled' }, { wait: false })
+    ).rejects.toThrow(/disabled/i)
+    await composition.root.stopAll()
+  })
+
+  it('does not revive a pre-Stop continuation when its reservation returns after Resume', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-resume-continuation-'))
+    const execution = createDeterministicDelegateExecution()
+    let release!: () => void
+    let entered!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let reservations = 0
+    const harness = await createCompositionHarness(root, 'codex', {
+      ...execution,
+      reserve: async (count) => {
+        if (++reservations === 2) {
+          entered()
+          await blocked
+        }
+        return execution.reserve(count)
+      }
+    })
+    const { composition, caller } = harness
+    composition.root.rootExecutionStarted!(
+      caller.session.sessionId,
+      caller.originMessageId,
+      'first'
+    )
+    const child = (
+      await composition.host.delegate(
+        { ...caller, rootExecutionId: 'first' },
+        { task: 'work', name: 'child' },
+        { wait: false }
+      )
+    ).children[0]
+    await composition.root.cancelTurn!(caller.session.sessionId, caller.originMessageId)
+    composition.root.rootExecutionStarted!(
+      caller.session.sessionId,
+      caller.originMessageId,
+      'second'
+    )
+    const pending = composition.host.sendMessage(
+      { ...caller, rootExecutionId: 'second' },
+      child.frameId,
+      'delayed continuation',
+      { requestId: 'delayed' }
+    )
+    const rejection = expect(pending).rejects.toThrow('cancelled')
+    await entering
+    const stopping = composition.root.cancelTurn!(caller.session.sessionId, caller.originMessageId)
+    composition.root.rootExecutionStarted!(
+      caller.session.sessionId,
+      caller.originMessageId,
+      'third'
+    )
+    release()
+    await rejection
+    await stopping
+    expect(harness.durable().runtimeContext!.delegatedWork!.records[0].attempts).toHaveLength(1)
+    await expect(
+      composition.host.sendMessage(
+        { ...caller, rootExecutionId: 'third' },
+        child.frameId,
+        'fresh continuation',
+        { requestId: 'fresh' }
+      )
+    ).resolves.toMatchObject({ disposition: 'continued' })
+    await composition.root.stopAll()
+  })
+
+  it('rejects an admission delayed before Stop after the same prompt resumes', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-resume-delayed-'))
+    let release!: () => void
+    let entered!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let calls = 0
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      undefined,
+      undefined,
+      {},
+      [],
+      async () => {
+        if (++calls === 1) {
+          entered()
+          await blocked
+        }
+        return testExecutionModel('codex')
+      }
+    )
+    const { composition, caller } = harness
+    composition.root.rootExecutionStarted!(caller.session.sessionId, caller.originMessageId, 'old')
+    const pending = composition.host.delegate(
+      { ...caller, rootExecutionId: 'old' },
+      { task: 'late work', name: 'late' },
+      { wait: false }
+    )
+    const rejected = expect(pending).rejects.toThrow('cancelled')
+    await entering
+    await composition.root.cancelTurn!(caller.session.sessionId, caller.originMessageId)
+    composition.root.rootExecutionStarted!(caller.session.sessionId, caller.originMessageId, 'new')
+    release()
+    await rejected
+    expect(harness.durable().runtimeContext?.delegatedWork?.records ?? []).toHaveLength(0)
+    await expect(
+      composition.host.delegate(
+        { ...caller, rootExecutionId: 'new' },
+        { task: 'fresh', name: 'fresh' },
+        { wait: false }
+      )
+    ).resolves.toMatchObject({ kind: 'receipts' })
+    await composition.root.stopAll()
+  })
+
   it('wakes the root through application context when a background child settles', async () => {
     vi.useFakeTimers()
     root = await mkdtemp(join(tmpdir(), 'delegated-production-settlement-wake-'))

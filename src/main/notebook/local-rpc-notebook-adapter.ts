@@ -57,6 +57,7 @@ const notebookSessionRequestSchema = z
     workspaceCwd: z.string(),
     provenanceContext: provenanceContextSchema.optional(),
     executionInvocationId: z.string().optional(),
+    rootExecutionId: z.string().optional(),
     registeredInputFiles: z.array(registeredInputFileSchema).optional(),
     registeredHelperSkillIds: z.array(z.string()).optional(),
     inputRunLeaseId: z.string().optional(),

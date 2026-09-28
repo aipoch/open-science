@@ -123,6 +123,7 @@ describe('Notebook command workflows', () => {
         promptMessageId: 'forged-prompt'
       },
       executionInvocationId: 'forged-invocation',
+      rootExecutionId: 'forged-execution',
       registeredInputFiles: [],
       inputRunLeaseId: 'forged-lease'
     }
