@@ -902,6 +902,7 @@ describe('notebook runtime service', () => {
 
   it('keeps Session deletion fenced when a persistent process tree cannot be proven reaped', async () => {
     const root = await createStorageRoot()
+    const activityKernelCounts: number[] = []
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -918,7 +919,14 @@ describe('notebook runtime service', () => {
           outputs: []
         }),
         shutdown: async () => ({ reaped: false })
-      })
+      }),
+      callbacks: {
+        onNotebookChanged: () => {
+          activityKernelCounts.push(
+            service.getProjectActivity({ projectId: 'project-1' }).kernels.length
+          )
+        }
+      }
     })
     const request = {
       projectId: 'project-1',
@@ -927,6 +935,9 @@ describe('notebook runtime service', () => {
     }
     await service.execute({ ...request, code: '1' })
 
+    expect(service.getProjectActivity({ projectId: 'project-1' }).kernels).toHaveLength(1)
+    activityKernelCounts.length = 0
+
     const cleanupError = await service.shutdownSession('session-1').catch((error: unknown) => error)
     expect(cleanupError).toBeInstanceOf(AggregateError)
     expect((cleanupError as AggregateError).errors).toEqual([
@@ -934,6 +945,7 @@ describe('notebook runtime service', () => {
         message: expect.stringContaining('persistent process tree was not reaped')
       })
     ])
+    expect(activityKernelCounts).toEqual([0])
     await expect(service.state(request)).rejects.toThrow('Session is being deleted.')
   })
 

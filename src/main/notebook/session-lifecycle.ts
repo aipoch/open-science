@@ -503,8 +503,8 @@ class NotebookSessionLifecycleOwner {
       await this.options.waitForRevocationDrains()
       const session = this.options.sessions.get(lane)
       const removed = await this.options.sessions.remove(lane)
-      // Publish after registry removal: activity readers must no longer see the stopped kernel.
-      if (removed.reaped && session) this.notifyChanged(session)
+      // Registry removal invalidates activity even when process reaping remains unconfirmed.
+      if (session) this.notifyChanged(session)
       return removed
     })
     if (!result.reaped) {
