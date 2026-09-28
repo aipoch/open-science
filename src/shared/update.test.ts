@@ -60,12 +60,30 @@ describe('platformDownloadKey', () => {
     expect(platformDownloadKey('win32', 'x64')).toBe('win-x64')
     expect(platformDownloadKey('linux', 'x64')).toBe('linux-x64-deb')
     expect(platformDownloadKey('win32', 'arm64')).toBeNull()
-    expect(platformDownloadKey('linux', 'arm64')).toBeNull()
+    expect(platformDownloadKey('linux', 'arm64')).toBe('linux-arm64-deb')
     expect(platformDownloadKey('freebsd' as NodeJS.Platform, 'x64')).toBeNull()
   })
 })
 
 describe('selectDownload', () => {
+  it('selects ARM64 deb or its AppImage without falling back to x64 artifacts', () => {
+    const appimage = { url: 'https://cdn/arm64.AppImage', size: 30, sha256: 'c' }
+    const deb = { url: 'https://cdn/arm64.deb', size: 20, sha256: 'd' }
+    const armManifest = {
+      ...manifest,
+      downloads: { ...manifest.downloads, 'linux-arm64-appimage': appimage }
+    }
+    expect(selectDownload(armManifest, 'linux', 'arm64')).toBe(appimage)
+    expect(
+      selectDownload(
+        { ...armManifest, downloads: { ...armManifest.downloads, 'linux-arm64-deb': deb } },
+        'linux',
+        'arm64'
+      )
+    ).toBe(deb)
+    expect(selectDownload(manifest, 'linux', 'arm64')).toBeNull()
+    expect(selectDownload(armManifest, 'linux', 'ia32')).toBeNull()
+  })
   it('returns the matching entry', () => {
     expect(selectDownload(manifest, 'darwin', 'arm64')?.url).toContain('mac-arm64')
   })

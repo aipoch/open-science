@@ -238,7 +238,7 @@ describe('post-merge Windows validation', () => {
     expect(dispatch?.inputs?.platform_name).toMatchObject({
       type: 'choice',
       default: 'macos-x64',
-      options: ['macos-x64', 'macos-arm64', 'linux-x64', 'windows-x64', 'all']
+      options: ['macos-x64', 'macos-arm64', 'linux-x64', 'linux-arm64', 'windows-x64', 'all']
     })
     expect(smokeWorkflow.permissions).toEqual({ contents: 'read' })
     expect(smokeWorkflow.concurrency).toEqual({

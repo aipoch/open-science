@@ -19,6 +19,15 @@ on:
         required: true
         default: '2'
         type: string
+      subdir:
+        description: Stage one platform, or all existing platforms
+        type: choice
+        default: all
+        options: [all, osx-arm64, osx-64, linux-64, linux-aarch64, win-64]
+      dry_run:
+        description: Validate and upload workflow artifacts without writing to the CDN
+        type: boolean
+        default: true
 
 # Read-only on the repo; writes go to S3, not back to git.
 permissions:
@@ -32,31 +41,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        shell: bash
+        env:
+          SUBDIR: ${{ inputs.subdir }}
+        run: |
+          platforms='[
+            {"subdir":"osx-arm64","os":"macos-14","runner_subdir":"osx-arm64"},
+            {"subdir":"osx-64","os":"macos-14","runner_subdir":"osx-arm64"},
+            {"subdir":"linux-64","os":"ubuntu-latest","runner_subdir":"linux-64"},
+            {"subdir":"linux-aarch64","os":"ubuntu-24.04-arm","runner_subdir":"linux-aarch64"},
+            {"subdir":"win-64","os":"windows-latest","runner_subdir":"win-64"}
+          ]'
+          include=$(jq -c --arg subdir "$SUBDIR" '[.[] | select($subdir == "all" or .subdir == $subdir)]' <<<"$platforms")
+          [ "$include" != '[]' ] || { echo '::error::unknown runtime subdir'; exit 1; }
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+
   stage:
     name: Stage ${{ matrix.subdir }}
     runs-on: ${{ matrix.os }}
     # Observed 2–6 min per subdir; the ceiling leaves room for a slow conda solve or CDN upload.
     timeout-minutes: 60
+    needs: setup
     strategy:
       fail-fast: false
-      matrix:
-        # subdir = conda platform to SOLVE for; runner_subdir = the runner's native arch, whose
-        # micromamba we run. They differ only for osx-64: Intel macOS runners (macos-13) are scarce, so
-        # osx-64 is cross-solved on Apple-silicon (macos-14) — the dry-run solve never runs foreign-arch
-        # binaries, so this is safe (see stage-default-envs.mjs).
-        include:
-          - subdir: osx-arm64
-            os: macos-14
-            runner_subdir: osx-arm64
-          - subdir: osx-64
-            os: macos-14
-            runner_subdir: osx-arm64
-          - subdir: linux-64
-            os: ubuntu-latest
-            runner_subdir: linux-64
-          - subdir: win-64
-            os: windows-latest
-            runner_subdir: win-64
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -131,7 +146,16 @@ jobs:
           echo "version=$requested" >> "$GITHUB_OUTPUT"
           echo "bundle version = $requested"
 
+      - name: Preserve staged bundle for review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: runtime-bundle-${{ matrix.subdir }}
+          path: resources/default-envs
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Configure AWS credentials
+        if: ${{ !inputs.dry_run }}
         env:
           S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
@@ -150,6 +174,7 @@ jobs:
       # the manifest so consumers never observe a manifest that points to a missing object.
       # Bucket stays masked (secret); --only-show-errors avoids leaking the s3:// path.
       - name: Upload bundle to CDN
+        if: ${{ !inputs.dry_run }}
         shell: bash
         env:
           S3_BUCKET: ${{ secrets.S3_BUCKET }}

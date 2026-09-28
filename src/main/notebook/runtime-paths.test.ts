@@ -191,13 +191,13 @@ describe('runtime CDN platform mapping', () => {
     ['darwin', 'arm64', 'osx-arm64'],
     ['darwin', 'x64', 'osx-64'],
     ['linux', 'x64', 'linux-64'],
+    ['linux', 'arm64', 'linux-aarch64'],
     ['win32', 'x64', 'win-64']
   ] as const)('%s/%s maps to %s', (platform, arch, expected) => {
     expect(runtimeSubdir(platform, arch)).toBe(expected)
   })
 
   it.each([
-    ['linux', 'arm64'], // never published — must reject, not map to a 404-ing linux-aarch64
     ['win32', 'arm64'],
     ['freebsd', 'x64']
   ] as const)('rejects the unpublished platform %s/%s', (platform, arch) => {

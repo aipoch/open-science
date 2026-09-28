@@ -23,7 +23,9 @@ const INSTALLERS = {
   'mac-x64': `aipoch-open-science-${VERSION}-mac-x64.dmg`,
   'win-x64': `aipoch-open-science-${VERSION}-win-x64-setup.exe`,
   'linux-x64-appimage': `aipoch-open-science-${VERSION}-linux-x64.AppImage`,
-  'linux-x64-deb': `aipoch-open-science_${VERSION}_amd64.deb`
+  'linux-x64-deb': `aipoch-open-science_${VERSION}_amd64.deb`,
+  'linux-arm64-appimage': `aipoch-open-science-${VERSION}-linux-arm64.AppImage`,
+  'linux-arm64-deb': `aipoch-open-science_${VERSION}_arm64.deb`
 }
 
 // One line of SHA256SUMS.txt worth of file: content is hashed by `sha` (or omitted when sha is null).
@@ -174,6 +176,46 @@ describe('buildManifest', () => {
   let dir: string | undefined
   afterEach(() => dir && rmSync(dir, { recursive: true, force: true }))
 
+  it.each(['x64', 'arm64'] as const)(
+    'validates %s feed bytes and rejects a swapped architecture',
+    (arch) => {
+      const files = [entry(`linux-${arch}-appimage`), entry(`linux-${arch}-deb`)]
+      dir = makeReleaseDir(files)
+      const feed = JSON.stringify({
+        version: VERSION,
+        files: files.map((file) => ({
+          url: file.name,
+          size: file.content.length,
+          sha512: createHash('sha512').update(file.content).digest('base64')
+        }))
+      })
+      const options = { dir, version: VERSION, cdnBase: CDN, prefix: PREFIX }
+      const name = arch === 'arm64' ? 'latest-linux-arm64.yml' : 'latest-linux.yml'
+      writeFileSync(join(dir, name), feed)
+      expect(Object.keys(buildManifest(options).downloads)).toHaveLength(2)
+      writeFileSync(
+        join(dir, arch === 'arm64' ? 'latest-linux.yml' : 'latest-linux-arm64.yml'),
+        feed
+      )
+      expect(() => buildManifest(options)).toThrow(/Wrong architecture/)
+    }
+  )
+
+  it('keeps historical backfill partial while requiring ARM64 for a new promotion', () => {
+    dir = makeReleaseDir(
+      Object.keys(INSTALLERS)
+        .filter((key) => !key.includes('linux-arm64'))
+        .map((key) => entry(key))
+    )
+    const options = { dir, version: VERSION, cdnBase: CDN, prefix: PREFIX }
+    expect(
+      Object.keys(buildManifest({ ...options, allowLegacyNames: true }).downloads)
+    ).toHaveLength(5)
+    expect(() => buildManifest({ ...options, requireComplete: true })).toThrow(
+      /Missing stable release installer: linux-arm64/
+    )
+  })
+
   it('maps every installer to its key with url, size and sha256', () => {
     const files = Object.keys(INSTALLERS).map((key, i) => entry(key, i + 1))
     dir = makeReleaseDir(files)
@@ -194,7 +236,7 @@ describe('buildManifest', () => {
     expect(manifest.localizedNotes).toEqual({ 'zh-Hans': '版本说明' })
     expect(manifest.releaseDate).toBe('2026-07-12T00:00:00Z')
 
-    // All five platform keys present.
+    // All platform keys present.
     expect(Object.keys(manifest.downloads).sort()).toEqual(Object.keys(INSTALLERS).sort())
 
     // url construction: <cdn>/<prefix>/releases/<version>/<filename>.

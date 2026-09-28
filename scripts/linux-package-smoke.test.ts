@@ -14,6 +14,34 @@ import {
 } from './linux-package-smoke.mjs'
 
 describe('Linux package smoke', () => {
+  it.each(['x64', 'x86_64', 'arm64'])('accepts the %s AppImage filename', (arch) => {
+    expect(appImageVersion(`aipoch-open-science-0.33.3-linux-${arch}.AppImage`)).toBe('0.33.3')
+  })
+
+  it('requires the ARM64 Prisma engine and rejects foreign engines', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-arm64-engine-'))
+    const executable = join(root, 'open-science')
+    const resources = join(root, 'resources')
+    const prisma = join(resources, 'node_modules', '.prisma', 'client')
+    await mkdir(prisma, { recursive: true })
+    await Promise.all(
+      [executable, join(resources, 'app.asar'), join(resources, 'micromamba')].map((file) =>
+        writeFile(file, '')
+      )
+    )
+    await expect(assertPackagedResources(executable, resources, 'arm64')).rejects.toThrow(
+      /linux-arm64-openssl/
+    )
+    await writeFile(join(prisma, 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'), '')
+    await expect(assertPackagedResources(executable, resources, 'arm64')).resolves.toBeUndefined()
+    await writeFile(join(prisma, 'libquery_engine-rhel-openssl-3.0.x.so.node'), '')
+    await expect(assertPackagedResources(executable, resources, 'arm64')).rejects.toThrow(
+      /Prisma engines/
+    )
+    await expect(assertPackagedResources(executable, resources, 'ia32')).rejects.toThrow(
+      /Unsupported/
+    )
+  })
   it('discovers one AppImage and derives stable or nightly versions', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-linux-artifacts-'))
     const appImage = join(root, 'aipoch-open-science-0.11.0-nightly.abc1234-linux-x86_64.AppImage')
@@ -55,7 +83,9 @@ describe('Linux package smoke', () => {
     await mkdir(join(appRoot, 'resources'), { recursive: true })
     await writeFile(join(appRoot, 'resources', 'app.asar'), '')
 
-    await expect(assertPackagedResources(executable)).rejects.toThrow(/micromamba/)
+    await expect(assertPackagedResources(executable, undefined, 'x64')).rejects.toThrow(
+      /micromamba/
+    )
   })
 
   it('requires Debian and RHEL native Linux Prisma engines', async () => {
@@ -72,9 +102,11 @@ describe('Linux package smoke', () => {
       writeFile(join(prismaClient, 'libquery_engine-rhel-openssl-3.0.x.so.node'), '')
     ])
 
-    await expect(assertPackagedResources(executable)).resolves.toBeUndefined()
+    await expect(assertPackagedResources(executable, undefined, 'x64')).resolves.toBeUndefined()
     await writeFile(join(prismaClient, 'libquery_engine-darwin.dylib.node'), '')
-    await expect(assertPackagedResources(executable)).rejects.toThrow(/Prisma engines/)
+    await expect(assertPackagedResources(executable, undefined, 'x64')).rejects.toThrow(
+      /Prisma engines/
+    )
   })
 
   it('rejects a Debian-only engine set because Fedora selects the RHEL runtime', async () => {
@@ -90,6 +122,8 @@ describe('Linux package smoke', () => {
       writeFile(join(prismaClient, 'libquery_engine-debian-openssl-3.0.x.so.node'), '')
     ])
 
-    await expect(assertPackagedResources(executable)).rejects.toThrow(/rhel-openssl-3\.0\.x/)
+    await expect(assertPackagedResources(executable, undefined, 'x64')).rejects.toThrow(
+      /rhel-openssl-3\.0\.x/
+    )
   })
 })
