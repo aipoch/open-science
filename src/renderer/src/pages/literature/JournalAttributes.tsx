@@ -13,6 +13,7 @@ import type { TagColorKey } from '../../../../shared/tags'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
 import { useJournalAttributes } from './journal-attribute-store'
+import { cn } from '@/lib/utils'
 
 const JOURNAL_POPOVER_OPENED = 'open-science:journal-popover-opened'
 
@@ -62,6 +63,7 @@ export function JournalAttributes(props: {
   itemId?: string
   detail?: boolean
   fieldKey?: string
+  className?: string
 }): React.JSX.Element | null {
   if (props.item.itemType !== 'journalArticle') return null
   return <JournalArticleAttributes {...props} />
@@ -70,12 +72,14 @@ function JournalArticleAttributes({
   item,
   itemId,
   detail = false,
-  fieldKey
+  fieldKey,
+  className
 }: {
   item: LiteratureItemInput
   itemId?: string
   detail?: boolean
   fieldKey?: string
+  className?: string
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -208,11 +212,12 @@ function JournalArticleAttributes({
           aria-label={t('Journal attributes')}
           onClick={(event) => event.stopPropagation()}
           onDoubleClick={(event) => event.stopPropagation()}
-          className={
+          className={cn(
             fieldKey
               ? 'h-auto max-w-full justify-start px-0 py-0.5'
-              : '-ml-2 mb-2 h-auto max-w-full flex-wrap justify-start gap-x-3 gap-y-1 rounded-md px-2 py-1.5 hover:bg-transparent'
-          }
+              : '-ml-2 mb-2 h-auto max-w-full flex-wrap justify-start gap-x-3 gap-y-1 rounded-md px-2 py-1.5 hover:bg-transparent',
+            className
+          )}
         >
           {attributes.slice(0, fieldKey ? 1 : 3).map((attribute) => (
             <span key={attribute.key} className="inline-flex min-w-0 items-center gap-1.5 text-xs">
