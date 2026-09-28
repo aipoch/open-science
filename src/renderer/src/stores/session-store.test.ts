@@ -520,6 +520,9 @@ describe('session store', () => {
     expect(projectSessionActionability(failed).actions).toMatchObject({
       startTurn: { allowed: true },
       changeAgentControls: { allowed: true },
+      changeAutoReview: { allowed: false, disabledReason: 'session-pending' },
+      changeSpecialist: { allowed: false, disabledReason: 'session-pending' },
+      changeMemory: { allowed: false, disabledReason: 'session-pending' },
       branchFromMessage: { allowed: false, disabledReason: 'session-pending' }
     })
     for (const facts of [

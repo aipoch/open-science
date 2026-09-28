@@ -1196,6 +1196,7 @@ describe('WorkspacePage send gate while compacting', () => {
 
     expect(conversationProps.view.canEditDraft).toBe(true)
     expect(conversationProps.agentControls.canChange).toBe(true)
+    expect(conversationProps.agentControls.canChangeMemory).toBe(false)
     expect(conversationProps.conversation.availability.submit).toBe(true)
     await act(async () => {
       conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })

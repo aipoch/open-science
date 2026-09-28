@@ -193,7 +193,9 @@ export const projectSessionActionability = (
           : 'plan-approval-pending'
       : undefined)
   const replayOrPendingReason = sessionPending ? 'session-pending' : undefined
-  const replayIndependentChangeDisabledReason = creationPending
+  // These settings can persist or reset runtime context; keep transient Session IDs
+  // out of those paths even after creation fails.
+  const replayIndependentChangeDisabledReason = session.isPending
     ? 'session-pending'
     : running
       ? 'session-running'
