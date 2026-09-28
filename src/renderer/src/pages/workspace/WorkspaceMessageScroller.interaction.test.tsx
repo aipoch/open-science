@@ -67,11 +67,13 @@ vi.mock('pdfjs-dist', () => {
   }
 })
 
-const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock } = vi.hoisted(() => ({
-  agentMarkdownRenderMock: vi.fn(),
-  endScrollTargetMock: vi.fn(),
-  scrollToEndMock: vi.fn()
-}))
+const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock, scrollableMock } =
+  vi.hoisted(() => ({
+    agentMarkdownRenderMock: vi.fn(),
+    endScrollTargetMock: vi.fn(),
+    scrollToEndMock: vi.fn(),
+    scrollableMock: { end: false }
+  }))
 const { flushSessionPersistenceMock } = vi.hoisted(() => ({
   flushSessionPersistenceMock: vi.fn(async (): Promise<void> => undefined)
 }))
@@ -219,7 +221,8 @@ vi.mock('@/components/ui/message-scroller', () => {
       scrollToEnd: scrollToEndMock,
       scrollToMessage: vi.fn(),
       scrollToStart: vi.fn()
-    })
+    }),
+    useMessageScrollerScrollable: () => scrollableMock
   }
 })
 
@@ -408,6 +411,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
   let root: Root
 
   beforeEach(() => {
+    scrollableMock.end = false
     upsertAndActivateItem.mockClear()
     openFileDialog.mockClear()
     listGrantedRoots.mockReset().mockResolvedValue([])
@@ -4633,6 +4637,56 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       )
     )
     expect(container.querySelector('[data-message-id="new-end-79"]')).not.toBeNull()
+    expect(scrollToEndMock).toHaveBeenCalledWith({ behavior: 'auto' })
+  })
+
+  it('does not force the reader to the end when a transcript window is replaced', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `reading-window-${index}`,
+        content: `Reading window ${index}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+    const render = async (): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({ status: 'idle', messages: [...messages] })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      )
+    }
+    root = createRoot(container)
+    await render()
+    scrollableMock.end = true
+    scrollToEndMock.mockClear()
+    messages.push(
+      ...Array.from({ length: 80 }, (_, index) =>
+        createMessage({
+          id: `new-reading-window-${index}`,
+          createdAt: 1710000001000 + index,
+          updatedAt: 1710000001000 + index
+        })
+      )
+    )
+    await render()
+    expect(scrollToEndMock).not.toHaveBeenCalled()
+
+    scrollableMock.end = false
+    messages.push(
+      ...Array.from({ length: 80 }, (_, index) =>
+        createMessage({
+          id: `followed-window-${index}`,
+          createdAt: 1710000002000 + index,
+          updatedAt: 1710000002000 + index
+        })
+      )
+    )
+    await render()
     expect(scrollToEndMock).toHaveBeenCalledWith({ behavior: 'auto' })
   })
 

@@ -91,6 +91,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.importPdf': 'literature:import-pdf',
   'literature.importRecords': 'literature:import-records',
   'literature.jobs': 'literature:jobs',
+  'literature.journals': 'literature:journals',
   'literature.lookupMetadata': 'literature:lookup-metadata',
   'literature.search': 'literature:search',
   'literature.sources': 'literature:sources',

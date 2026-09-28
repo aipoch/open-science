@@ -1,3 +1,5 @@
+import { JournalAttributes } from '../literature/journal-attributes'
+import { QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
 import { session } from 'electron'
 import { join } from 'node:path'
 import type { ApplicationEvents } from '../application-events'
@@ -66,6 +68,7 @@ export async function composeResearchCatalog({
   tagService: TagService
   memoryService: MemoryService
   literatureCatalog: LiteratureCatalog
+  journalAttributes: JournalAttributes
   literatureCitationStyles: LiteratureCitationStyleLibrary
   literatureCitationFormatter: LiteratureCitationFormatter
   literatureCitationDocument: LiteratureCitationDocument
@@ -121,17 +124,30 @@ export async function composeResearchCatalog({
     start: () => owner.start(),
     dispose: () => owner.dispose()
   }))
+  const journalAttributes = new JournalAttributes(
+    () => getProjectDbClient(configRoot),
+    () => applicationEvents.publish('literature:changed', { revision: ++smartCollectionRevision })
+  )
+  await modules.add({ journalAttributes }, ({ journalAttributes: owner }) => ({
+    name: 'literature-journal-attributes',
+    capability: owner,
+    dispose: () => owner.dispose(),
+    disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
+  }))
   const literatureCatalog = new LiteratureCatalog(
     () => getProjectDbClient(configRoot),
     () => tagService.notifyAssignmentsChanged(),
     contentRepository,
     (remove) => sessionPersistenceCoordinator.withLiteratureAttachmentRemoval(remove),
-    (event) =>
+    (event) => {
+      journalAttributes.referencesChanged()
       applicationEvents.publish('literature:changed', {
         ...event,
         revision: ++smartCollectionRevision
-      }),
-    smartCollections
+      })
+    },
+    smartCollections,
+    journalAttributes
   )
   const literatureCitationStyles = new LiteratureCitationStyleLibrary(
     join(resolveDataRoot(), 'literature', 'citation-styles')
@@ -214,6 +230,7 @@ export async function composeResearchCatalog({
   return {
     tagService,
     memoryService,
+    journalAttributes,
     literatureCatalog,
     literatureCitationStyles,
     literatureCitationFormatter,

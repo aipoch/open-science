@@ -1,3 +1,16 @@
+import { LiteraturePagination } from './LiteraturePagination'
+import {
+  journalDatasetLabel,
+  journalColumnKey,
+  type JournalAttributeFilter
+} from '../../../../shared/journal-attributes'
+import { JournalAttributes } from './JournalAttributes'
+import {
+  useJournalDatasets,
+  useDisplayedJournalDatasets,
+  useJournalSourceYears,
+  setJournalSourceYear
+} from './journal-attribute-store'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { literatureMetadataProviderLabel } from '../../../../shared/literature'
 import { SmartDecisionPendingContext, createSmartCollectionState } from './smart-collection-state'
@@ -56,17 +69,18 @@ import {
   Check,
   Copy,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   ChevronUp,
   Download,
   ExternalLink,
+  FileCog,
   FilePlus2,
   FileText,
   FolderOpen,
   FolderPlus,
   GalleryVerticalEnd,
   Inbox,
+  LibraryBig,
   LoaderCircle,
   Merge,
   MoreHorizontal,
@@ -82,11 +96,12 @@ import {
   Trash2,
   Upload,
   RotateCcw,
-  Settings,
   X
 } from 'lucide-react'
 import {
   memo,
+  lazy,
+  Suspense,
   createContext,
   useContext,
   startTransition,
@@ -191,7 +206,7 @@ import {
   type RecordImportDraft
 } from './LiteratureRecordImportDialog'
 import { LiteratureBatchDestinationMenus } from './LiteratureBatchDestinationMenus'
-import { LiteratureColumnCustomizer } from './LiteratureColumnCustomizer'
+import { LiteratureColumnCustomizer, JournalDatasetChoices } from './LiteratureColumnCustomizer'
 import {
   createLiteratureDetailController,
   type LiteratureDetailController,
@@ -205,18 +220,21 @@ import { LiteratureLibraryCount } from './LiteratureLibraryCount'
 import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
 import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
 import { LiteratureSearchInput } from './LiteratureSearchInput'
-import { LiteratureYearFilter } from './LiteratureYearFilter'
+import { LiteratureFilters } from './LiteratureFilters'
 import { LiteratureReadingDialog } from './LiteratureReadingDialog'
 import { LiteratureFullTextLookup } from './LiteratureFullTextLookup'
 import { useLiteratureYearFilter } from './useLiteratureYearFilter'
 import {
   ResourceTagBadges,
   ResourceTagMenu,
-  ResourceTagSummary,
-  TagFilter
+  ResourceTagSummary
 } from '../settings/ResourceTagControls'
 
 type LibrarySection = 'inbox' | 'library' | 'trash'
+
+const JournalManager = lazy(() =>
+  import('./JournalManager').then((module) => ({ default: module.JournalManager }))
+)
 
 const literatureSorts = {
   updated: { sortBy: 'updated', sortDirection: 'desc' },
@@ -265,7 +283,16 @@ const hasLiteratureDetailChildLayer = (): boolean =>
   )
 
 type LiteratureTableColumn =
-  'abstract' | 'authors' | 'notes' | 'publication' | 'rating' | 'tags' | 'type' | 'url' | 'year'
+  | `journal:${string}`
+  | 'abstract'
+  | 'authors'
+  | 'notes'
+  | 'publication'
+  | 'rating'
+  | 'tags'
+  | 'type'
+  | 'url'
+  | 'year'
 
 const literatureTableColumns = [
   'abstract',
@@ -501,7 +528,8 @@ type LiteratureTablePreferences = Readonly<{
 type LiteraturePageSize = (typeof LITERATURE_PAGE_SIZES)[number]
 
 const isLiteratureTableColumn = (value: unknown): value is LiteratureTableColumn =>
-  typeof value === 'string' && literatureTableColumns.includes(value as LiteratureTableColumn)
+  typeof value === 'string' &&
+  ((literatureTableColumns as readonly string[]).includes(value) || value.startsWith('journal:'))
 
 const loadLiteratureTablePreferences = (): LiteratureTablePreferences => {
   const fallback = {
@@ -573,7 +601,7 @@ function LiteratureSidebarHint({
   children
 }: Readonly<{ label: string; collapsed: boolean; children: ReactElement }>): React.JSX.Element {
   return (
-    <Tooltip>
+    <Tooltip disableHoverableContent>
       <TooltipTrigger
         asChild
         onFocus={(event) => {
@@ -1464,6 +1492,15 @@ const LiteratureItemRow = memo(function LiteratureItemRow({
         />
       )}
       {visibleOrderedTableColumns.map((column) => {
+        if (column.startsWith('journal:'))
+          return (
+            <td
+              key={column}
+              className="w-[180px] min-w-[180px] max-w-[180px] overflow-hidden px-2 py-2 align-middle"
+            >
+              <JournalAttributes item={entry.item} itemId={entry.id} fieldKey={column.slice(8)} />
+            </td>
+          )
         switch (column) {
           case 'abstract':
             return (
@@ -1596,6 +1633,8 @@ const LiteratureItemRow = memo(function LiteratureItemRow({
               </td>
             )
           }
+          default:
+            return null
         }
       })}
       <td className="sticky right-12 z-20 w-28 min-w-28 max-w-28 border-l border-border-300/80 bg-inherit px-3 py-2 text-center align-middle shadow-card-opaque">
@@ -1713,6 +1752,21 @@ const LiteratureItemRow = memo(function LiteratureItemRow({
 const LiteratureFilePreviewDialog = memo(FilePreviewDialog)
 
 const LiteratureLibraryPage = (): React.JSX.Element => {
+  const journalDatasets = useJournalDatasets()
+  const displayedJournalDatasets = useDisplayedJournalDatasets()
+  const journalSourceYears = useJournalSourceYears()
+  const journalColumns = useMemo(
+    () =>
+      displayedJournalDatasets.flatMap((dataset) =>
+        dataset.fields
+          .filter((field) => field.visible)
+          .map((field) => ({
+            key: `journal:${journalColumnKey(dataset.id, field)}` as LiteratureTableColumn,
+            label: `${field.label} · ${journalDatasetLabel(dataset)}`
+          }))
+      ),
+    [displayedJournalDatasets]
+  )
   const { i18n, t } = useTranslation()
   const returnFromLibrary = useNavigationStore((state) => state.returnFromLibrary)
   const startPdfReadingConversation = useNavigationStore(
@@ -1831,7 +1885,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [tagId, setTagId] = useState('all')
   const [sortBy, setSortBy] = useState<keyof typeof literatureSorts>('updated')
   const [initialTablePreferences] = useState(loadLiteratureTablePreferences)
-  const [tableColumnOrder, setTableColumnOrder] = useState<LiteratureTableColumn[]>(
+  const [savedTableColumnOrder, setTableColumnOrder] = useState<LiteratureTableColumn[]>(
     initialTablePreferences.order
   )
   const [visibleTableColumns, setVisibleTableColumns] = useState<Set<LiteratureTableColumn>>(
@@ -1839,11 +1893,54 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   )
   const [filterItemType, setFilterItemType] = useState<LiteratureItemType | 'all'>('all')
   const [filterHasPdf, setFilterHasPdf] = useState<'all' | 'with' | 'without'>('all')
+  const [journalAttributeFilters, setJournalAttributeFilters] = useState<JournalAttributeFilter[]>(
+    []
+  )
   const [selectionStore] = useState(createLiteratureSelectionStore)
   const clearSelection = useCallback((): void => selectionStore.clear(), [selectionStore])
   const yearFilter = useLiteratureYearFilter(clearSelection)
   const { from: filterYearFrom, to: filterYearTo } = yearFilter
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const journalFilterDatasets = displayedJournalDatasets
+  const [previousJournalDisplay, setPreviousJournalDisplay] = useState({
+    datasets: displayedJournalDatasets,
+    years: journalSourceYears
+  })
+  if (
+    previousJournalDisplay.datasets !== displayedJournalDatasets ||
+    previousJournalDisplay.years !== journalSourceYears
+  ) {
+    const previous = previousJournalDisplay
+    setPreviousJournalDisplay({ datasets: displayedJournalDatasets, years: journalSourceYears })
+    // Drop conditions for hidden/replaced years before rendering or fetching the new view.
+    const filters = journalAttributeFilters.filter((filter) =>
+      displayedJournalDatasets.some(({ id }) => id === filter.datasetId)
+    )
+    if (filters.length !== journalAttributeFilters.length) setJournalAttributeFilters(filters)
+    const added: LiteratureTableColumn[] = []
+    for (const dataset of displayedJournalDatasets) {
+      const old = previous.datasets.find(({ source }) => source === dataset.source)
+      const preferenceChanged =
+        previous.years[dataset.source] !== journalSourceYears[dataset.source]
+      if (old?.id === dataset.id && !preferenceChanged) continue
+      if (!old && !preferenceChanged && journalSourceYears[dataset.source] === undefined) continue
+      for (const field of dataset.fields.filter((field) => field.visible)) {
+        const key = `journal:${journalColumnKey(dataset.id, field)}` as LiteratureTableColumn
+        if (savedTableColumnOrder.includes(key)) continue
+        const matches =
+          old?.fields.filter((entry) => entry.label === field.label && entry.kind === field.kind) ??
+          []
+        if (
+          !old ||
+          matches.length !== 1 ||
+          visibleTableColumns.has(`journal:${journalColumnKey(old.id, matches[0])}`)
+        )
+          added.push(key)
+      }
+    }
+    if (added.length) setVisibleTableColumns((visible) => new Set([...visible, ...added]))
+  }
+  useEffect(() => clearSelection(), [journalSourceYears, clearSelection])
   const [restorePreview, setRestorePreview] = useState<{ itemIds: string[]; skipped: number }>()
   const dialogRestorePreview = useRetainedDialogValue(restorePreview)
   const [isBatching, setIsBatching] = useState(false)
@@ -2146,6 +2243,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [readingProjectError, setReadingProjectError] = useState<string>()
   const [citationStyles, setCitationStyles] = useState<LiteratureCitationStyleView[]>()
   const [citationStylesOpen, setCitationStylesOpen] = useState(false)
+  const [journalsOpen, setJournalsOpen] = useState(false)
+  const [journalsVisited, setJournalsVisited] = useState(false)
+  const closeJournals = useCallback(() => setJournalsOpen(false), [])
+  const tableColumnOrder = useMemo(() => {
+    const missing = journalColumns
+      .map(({ key }) => key)
+      .filter((key) => !savedTableColumnOrder.includes(key))
+    return missing.length ? [...savedTableColumnOrder, ...missing] : savedTableColumnOrder
+  }, [savedTableColumnOrder, journalColumns])
   const pdfInputRef = useRef<HTMLInputElement>(null)
   const importPdfInputRef = useRef<HTMLInputElement>(null)
   const importRecordsInputRef = useRef<HTMLInputElement>(null)
@@ -2168,9 +2274,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const tableMinWidth =
     540 +
-    literatureTableColumns.reduce(
+    tableColumnOrder.reduce(
       (width, column) =>
-        width + (visibleTableColumns.has(column) ? literatureTableColumnWidths[column] : 0),
+        width +
+        (visibleTableColumns.has(column) &&
+        (!column.startsWith('journal:') || journalColumns.some((field) => field.key === column))
+          ? (literatureTableColumnWidths[column] ?? 180)
+          : 0),
       0
     )
 
@@ -2199,6 +2309,17 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }, [])
 
+  const openJournalReference = useCallback(
+    async (id: string, initiator?: HTMLElement): Promise<void> => {
+      const interaction = ++detailInteractionRef.current
+      const item = await detailController.read(id)
+      if (detailInteractionRef.current !== interaction || !initiator?.isConnected) return
+      if (!item || item.deletedAt !== undefined) throw new Error('Reference unavailable')
+      openSelectedItemDetail(item, initiator)
+    },
+    [detailController, openSelectedItemDetail]
+  )
+
   const handleDetailSelectOpenChange = useCallback((open: boolean): void => {
     detailSelectOpenRef.current = open
     if (!open) {
@@ -2219,7 +2340,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       return
     const latest = loadLiteratureTablePreferences()
     const visible = new Set(latest.visible)
-    for (const column of literatureTableColumns) {
+    for (const column of tableColumnOrder) {
       if (visibleTableColumns.has(column) !== previous.visible.includes(column)) {
         if (visibleTableColumns.has(column)) visible.add(column)
         else visible.delete(column)
@@ -2462,6 +2583,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         filterYearFrom,
         filterYearTo,
         filterHasPdf,
+        journalAttributeFilters,
         entriesPageSize
       }),
     [
@@ -2469,6 +2591,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       smartFilter,
       smartDecisionSource,
       filterHasPdf,
+      journalAttributeFilters,
       entriesPageSize,
       filterItemType,
       filterYearFrom,
@@ -2488,41 +2611,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       linkScopeRef.current = ''
     }
   }, [entriesKey])
-  const entriesPage = Math.floor(entriesOffset / entriesPageSize) + 1
-  const entriesPageCount = Math.max(1, Math.ceil(entriesTotalCount / entriesPageSize))
-  const displayedEntryCount = section === 'inbox' ? candidates.length : items.length
-  const entriesRangeStart = entriesTotalCount > 0 ? entriesOffset + 1 : 0
-  const entriesRangeEnd = Math.min(entriesOffset + displayedEntryCount, entriesTotalCount)
-  const entriesPaginationItems = useMemo<Array<number | 'ellipsis'>>(() => {
-    if (entriesPageCount <= 7) {
-      return Array.from({ length: entriesPageCount }, (_, index) => index + 1)
-    }
-
-    const visiblePages = new Set([
-      1,
-      entriesPageCount,
-      entriesPage - 1,
-      entriesPage,
-      entriesPage + 1
-    ])
-    if (entriesPage <= 4) {
-      for (let page = 2; page <= 5; page += 1) visiblePages.add(page)
-    }
-    if (entriesPage >= entriesPageCount - 3) {
-      for (let page = entriesPageCount - 4; page < entriesPageCount; page += 1) {
-        visiblePages.add(page)
-      }
-    }
-
-    const pages = [...visiblePages]
-      .filter((page) => page >= 1 && page <= entriesPageCount)
-      .sort((left, right) => left - right)
-    return pages.flatMap((page, index) => {
-      const previousPage = pages[index - 1]
-      return previousPage !== undefined && page - previousPage > 1 ? ['ellipsis', page] : [page]
-    })
-  }, [entriesPage, entriesPageCount])
-
   const buildEntriesRequest = useCallback(
     (offset = entriesOffset): LiteratureCatalogSearchRequest =>
       section === 'inbox'
@@ -2549,7 +2637,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               ...(filterItemType !== 'all' ? { itemTypes: [filterItemType] } : {}),
               ...(filterYearFrom ? { yearFrom: Number(filterYearFrom) } : {}),
               ...(filterYearTo ? { yearTo: Number(filterYearTo) } : {}),
-              ...(filterHasPdf !== 'all' ? { hasFullText: filterHasPdf === 'with' } : {})
+              ...(filterHasPdf !== 'all' ? { hasFullText: filterHasPdf === 'with' } : {}),
+              ...(journalAttributeFilters.length
+                ? { journalAttributes: journalAttributeFilters }
+                : {})
             },
             offset,
             limit: entriesPageSize
@@ -2562,6 +2653,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       entriesOffset,
       entriesPageSize,
       filterHasPdf,
+      journalAttributeFilters,
       filterItemType,
       filterYearFrom,
       filterYearTo,
@@ -2998,6 +3090,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   )
   const tableColumnLabels = useMemo<Record<LiteratureTableColumn, string>>(
     () => ({
+      ...Object.fromEntries(journalColumns.map(({ key, label }) => [key, label])),
       abstract: t('Abstract'),
       year: t('Year'),
       publication: t('Publication'),
@@ -3008,24 +3101,31 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       notes: t('Notes'),
       url: t('URL')
     }),
-    [t]
+    [t, journalColumns]
   )
   const visibleOrderedTableColumns = useMemo(
-    () => tableColumnOrder.filter((column) => visibleTableColumns.has(column)),
-    [tableColumnOrder, visibleTableColumns]
+    () =>
+      tableColumnOrder.filter(
+        (column) =>
+          visibleTableColumns.has(column) &&
+          (!column.startsWith('journal:') || journalColumns.some(({ key }) => key === column))
+      ),
+    [tableColumnOrder, visibleTableColumns, journalColumns]
   )
   const activeFilterCount =
     (tagId !== 'all' ? 1 : 0) +
     (filterItemType !== 'all' ? 1 : 0) +
     (yearFilter.from ? 1 : 0) +
     (yearFilter.to ? 1 : 0) +
-    (filterHasPdf !== 'all' ? 1 : 0)
+    (filterHasPdf !== 'all' ? 1 : 0) +
+    journalAttributeFilters.length
 
   const clearFilters = (): void => {
     setTagId('all')
     setFilterItemType('all')
     yearFilter.clear()
     setFilterHasPdf('all')
+    setJournalAttributeFilters([])
     clearSelection()
   }
 
@@ -3035,8 +3135,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     edge: 'before' | 'after'
   ): void => {
     if (source === target) return
-    setTableColumnOrder((current) => {
-      const next = current.filter((column) => column !== source)
+    setTableColumnOrder(() => {
+      const next = tableColumnOrder.filter((column) => column !== source)
       const targetIndex = next.indexOf(target)
       const insertionIndex =
         targetIndex < 0 ? next.length : targetIndex + (edge === 'after' ? 1 : 0)
@@ -3046,7 +3146,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const moveTableColumnBy = (column: LiteratureTableColumn, delta: -1 | 1): void => {
-    setTableColumnOrder((current) => {
+    setTableColumnOrder(() => {
+      const current = tableColumnOrder
       const sourceIndex = current.indexOf(column)
       const targetIndex = sourceIndex + delta
       if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= current.length) return current
@@ -3347,6 +3448,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const selectLibrary = (nextCollectionId?: string): void => {
     setCitationStylesOpen(false)
+    setJournalsOpen(false)
     setDuplicatesOpen(false)
     setSection('library')
     setSmartFilter('match')
@@ -3359,6 +3461,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const selectProject = (nextProjectId: string): void => {
     setCitationStylesOpen(false)
+    setJournalsOpen(false)
     setDuplicatesOpen(false)
     setSection('library')
     setCollectionId(undefined)
@@ -3368,6 +3471,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const selectSection = (nextSection: Exclude<LibrarySection, 'library'>): void => {
     setCitationStylesOpen(false)
+    setJournalsOpen(false)
     setDuplicatesOpen(false)
     setSection(nextSection)
     setCollectionId(undefined)
@@ -4760,111 +4864,29 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const entriesPagination =
     entriesTotalCount > 0 ? (
-      <fieldset
+      <LiteraturePagination
+        total={entriesTotalCount}
+        offset={entriesOffset}
+        pageSize={entriesPageSize}
+        displayedCount={section === 'inbox' ? candidates.length : items.length}
+        countLabel={t('{{count}} references', {
+          count: entriesTotalCount,
+          defaultValue_one: '{{count}} reference'
+        })}
+        pageSizeLabel={t('References per page')}
         disabled={smartTableBlocked}
-        className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border-300/80 bg-bg-000 px-3 py-2"
-      >
-        <p className="text-xs text-muted-foreground tabular-nums">
-          <span className="font-medium text-foreground">
-            {entriesRangeStart}–{entriesRangeEnd}
-          </span>{' '}
-          ·{' '}
-          {t('{{count}} references', {
-            count: entriesTotalCount,
-            defaultValue_one: '{{count}} reference'
-          })}
-        </p>
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="whitespace-nowrap">{t('References per page')}</span>
-            <Select
-              value={String(entriesPageSize)}
-              onValueChange={(value) => {
-                const pageSize = Number(value) as LiteraturePageSize
-                if (!LITERATURE_PAGE_SIZES.includes(pageSize)) return
-                clearSelection()
-                setEntriesOffset(0)
-                setEntriesPageSize(pageSize)
-              }}
-            >
-              <SelectTrigger
-                aria-label={t('References per page')}
-                className="h-7 w-16 bg-bg-000 text-xs tabular-nums"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent align="end">
-                {LITERATURE_PAGE_SIZES.map((pageSize) => (
-                  <SelectItem key={pageSize} value={String(pageSize)}>
-                    {pageSize}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {entriesPageCount > 1 ? (
-            <nav
-              aria-label={t('Page {{page}}', { page: entriesPage })}
-              className="flex items-center gap-1"
-            >
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Previous page')}
-                disabled={entriesPage <= 1 || entriesLoading}
-                onClick={() => {
-                  clearSelection()
-                  setEntriesOffset((entriesPage - 2) * entriesPageSize)
-                }}
-              >
-                <ChevronLeft className="size-4" aria-hidden="true" />
-              </Button>
-              {entriesPaginationItems.map((item, index) =>
-                item === 'ellipsis' ? (
-                  <span
-                    key={`ellipsis-${index}`}
-                    aria-hidden="true"
-                    className="grid size-7 place-items-center text-xs text-muted-foreground"
-                  >
-                    …
-                  </span>
-                ) : (
-                  <Button
-                    key={item}
-                    type="button"
-                    variant={item === entriesPage ? 'secondary' : 'ghost'}
-                    size="icon-sm"
-                    aria-label={t('Page {{page}}', { page: item })}
-                    aria-current={item === entriesPage ? 'page' : undefined}
-                    disabled={entriesLoading}
-                    className="tabular-nums"
-                    onClick={() => {
-                      clearSelection()
-                      setEntriesOffset((item - 1) * entriesPageSize)
-                    }}
-                  >
-                    {item}
-                  </Button>
-                )
-              )}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Next page')}
-                disabled={entriesPage >= entriesPageCount || entriesLoading}
-                onClick={() => {
-                  clearSelection()
-                  setEntriesOffset(entriesPage * entriesPageSize)
-                }}
-              >
-                <ChevronRight className="size-4" aria-hidden="true" />
-              </Button>
-            </nav>
-          ) : null}
-        </div>
-      </fieldset>
+        loading={entriesLoading}
+        onOffsetChange={(offset) => {
+          clearSelection()
+          setEntriesOffset(offset)
+        }}
+        onPageSizeChange={(size) => {
+          if (!LITERATURE_PAGE_SIZES.includes(size as LiteraturePageSize)) return
+          clearSelection()
+          setEntriesOffset(0)
+          setEntriesPageSize(size as LiteraturePageSize)
+        }}
+      />
     ) : null
 
   const smartReevaluationNotice = smartReevaluation &&
@@ -5059,284 +5081,348 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </div>
                 <nav
                   id="literature-sidebar-navigation"
-                  className="space-y-1"
+                  className="flex min-h-0 flex-1 flex-col"
                   aria-label={t('Literature library')}
                 >
-                  <LiteratureSidebarHint label={t('Inbox')} collapsed={sidebarCollapsed}>
-                    <button
-                      type="button"
-                      className={cn(
-                        navButtonClassName,
-                        !duplicatesOpen && section === 'inbox' && 'bg-bg-300 font-medium'
-                      )}
-                      aria-current={
-                        !citationStylesOpen && !duplicatesOpen && section === 'inbox'
-                          ? 'page'
-                          : undefined
-                      }
-                      aria-label={t('Inbox')}
-                      onClick={() => selectSection('inbox')}
-                    >
-                      <Inbox className="size-4" aria-hidden="true" />
-                      {!sidebarCollapsed ? <span>{t('Inbox')}</span> : null}
-                      {!sidebarCollapsed &&
-                      inboxPendingCount !== undefined &&
-                      inboxPendingCount > 0 ? (
-                        <span className="ml-auto rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
-                          {inboxPendingCount}
-                        </span>
-                      ) : null}
-                      {sidebarCollapsed &&
-                      inboxPendingCount !== undefined &&
-                      inboxPendingCount > 0 ? (
-                        <span
-                          className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-primary"
-                          aria-hidden="true"
-                        />
-                      ) : null}
-                    </button>
-                  </LiteratureSidebarHint>
-                  <LiteratureSidebarHint label={t('All references')} collapsed={sidebarCollapsed}>
-                    <button
-                      type="button"
-                      className={cn(
-                        navButtonClassName,
-                        !duplicatesOpen &&
+                  <div className="space-y-1">
+                    <LiteratureSidebarHint label={t('Inbox')} collapsed={sidebarCollapsed}>
+                      <button
+                        type="button"
+                        className={cn(
+                          navButtonClassName,
+                          !citationStylesOpen &&
+                            !journalsOpen &&
+                            !duplicatesOpen &&
+                            section === 'inbox' &&
+                            'bg-bg-300 font-medium'
+                        )}
+                        aria-current={
+                          !citationStylesOpen &&
+                          !journalsOpen &&
+                          !citationStylesOpen &&
+                          !journalsOpen &&
+                          !duplicatesOpen &&
+                          section === 'inbox'
+                            ? 'page'
+                            : undefined
+                        }
+                        aria-label={t('Inbox')}
+                        onClick={() => selectSection('inbox')}
+                      >
+                        <Inbox className="size-4" aria-hidden="true" />
+                        {!sidebarCollapsed ? <span>{t('Inbox')}</span> : null}
+                        {!sidebarCollapsed &&
+                        inboxPendingCount !== undefined &&
+                        inboxPendingCount > 0 ? (
+                          <span className="ml-auto rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                            {inboxPendingCount}
+                          </span>
+                        ) : null}
+                        {sidebarCollapsed &&
+                        inboxPendingCount !== undefined &&
+                        inboxPendingCount > 0 ? (
+                          <span
+                            className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-primary"
+                            aria-hidden="true"
+                          />
+                        ) : null}
+                      </button>
+                    </LiteratureSidebarHint>
+                    <LiteratureSidebarHint label={t('All references')} collapsed={sidebarCollapsed}>
+                      <button
+                        type="button"
+                        className={cn(
+                          navButtonClassName,
+                          !citationStylesOpen &&
+                            !journalsOpen &&
+                            !duplicatesOpen &&
+                            section === 'library' &&
+                            !collectionId &&
+                            !projectId &&
+                            'bg-bg-300 font-medium'
+                        )}
+                        ref={libraryEntryRef}
+                        aria-current={
+                          !citationStylesOpen &&
+                          !journalsOpen &&
+                          !duplicatesOpen &&
                           section === 'library' &&
                           !collectionId &&
-                          !projectId &&
-                          'bg-bg-300 font-medium'
-                      )}
-                      ref={libraryEntryRef}
-                      aria-current={
-                        !citationStylesOpen &&
-                        !duplicatesOpen &&
-                        section === 'library' &&
-                        !collectionId &&
-                        !projectId
-                          ? 'page'
-                          : undefined
-                      }
-                      aria-label={t('All references')}
-                      onClick={() => selectLibrary()}
-                    >
-                      <BookOpenText className="size-4" aria-hidden="true" />
-                      {!sidebarCollapsed ? <span>{t('All references')}</span> : null}
-                      <LiteratureLibraryCount
-                        revision={libraryCountRevision}
-                        hidden={sidebarCollapsed}
+                          !projectId
+                            ? 'page'
+                            : undefined
+                        }
+                        aria-label={t('All references')}
+                        onClick={() => selectLibrary()}
+                      >
+                        <BookOpenText className="size-4" aria-hidden="true" />
+                        {!sidebarCollapsed ? <span>{t('All references')}</span> : null}
+                        <LiteratureLibraryCount
+                          revision={libraryCountRevision}
+                          hidden={sidebarCollapsed}
+                        />
+                      </button>
+                    </LiteratureSidebarHint>
+                    <LiteratureSidebarHint label={t('Duplicates')} collapsed={sidebarCollapsed}>
+                      <button
+                        type="button"
+                        className={cn(
+                          navButtonClassName,
+                          duplicatesOpen && 'bg-bg-300 font-medium'
+                        )}
+                        aria-current={
+                          !citationStylesOpen && !journalsOpen && duplicatesOpen
+                            ? 'page'
+                            : undefined
+                        }
+                        aria-label={t('Duplicates')}
+                        onClick={() => {
+                          setCitationStylesOpen(false)
+                          setJournalsOpen(false)
+                          setDuplicatesOpen(true)
+                          clearSelection()
+                        }}
+                      >
+                        <Copy className="size-4" aria-hidden="true" />
+                        {!sidebarCollapsed ? <span>{t('Duplicates')}</span> : null}
+                        <LiteratureDuplicateCount
+                          ref={duplicateCountRef}
+                          hidden={sidebarCollapsed}
+                        />
+                      </button>
+                    </LiteratureSidebarHint>
+                    <LiteratureSidebarHint label={t('Trash')} collapsed={sidebarCollapsed}>
+                      <button
+                        type="button"
+                        className={cn(
+                          navButtonClassName,
+                          !citationStylesOpen &&
+                            !journalsOpen &&
+                            !duplicatesOpen &&
+                            section === 'trash' &&
+                            'bg-bg-300 font-medium'
+                        )}
+                        aria-current={
+                          !citationStylesOpen &&
+                          !journalsOpen &&
+                          !duplicatesOpen &&
+                          section === 'trash'
+                            ? 'page'
+                            : undefined
+                        }
+                        aria-label={t('Trash')}
+                        onClick={() => selectSection('trash')}
+                      >
+                        <Trash2 className="size-4" aria-hidden="true" />
+                        {!sidebarCollapsed ? <span>{t('Trash')}</span> : null}
+                      </button>
+                    </LiteratureSidebarHint>
+                  </div>
+                  <div
+                    className={cn(
+                      'min-h-0 flex-1 overflow-y-auto',
+                      sidebarCollapsed ? 'mt-3 border-t border-border-300/80 pt-3' : 'mt-2'
+                    )}
+                  >
+                    {!sidebarCollapsed ? (
+                      <div
+                        role="separator"
+                        aria-orientation="horizontal"
+                        className="mx-2 mb-2 mt-2 h-px bg-border-300/80"
                       />
-                    </button>
-                  </LiteratureSidebarHint>
-                  <LiteratureSidebarHint label={t('Duplicates')} collapsed={sidebarCollapsed}>
-                    <button
-                      type="button"
-                      className={cn(navButtonClassName, duplicatesOpen && 'bg-bg-300 font-medium')}
-                      aria-current={!citationStylesOpen && duplicatesOpen ? 'page' : undefined}
-                      aria-label={t('Duplicates')}
-                      onClick={() => {
-                        setCitationStylesOpen(false)
-                        setDuplicatesOpen(true)
-                        clearSelection()
-                      }}
-                    >
-                      <Copy className="size-4" aria-hidden="true" />
-                      {!sidebarCollapsed ? <span>{t('Duplicates')}</span> : null}
-                      <LiteratureDuplicateCount ref={duplicateCountRef} hidden={sidebarCollapsed} />
-                    </button>
-                  </LiteratureSidebarHint>
-                  <LiteratureSidebarHint label={t('Trash')} collapsed={sidebarCollapsed}>
-                    <button
-                      type="button"
-                      className={cn(
-                        navButtonClassName,
-                        !duplicatesOpen && section === 'trash' && 'bg-bg-300 font-medium'
+                    ) : null}
+                    <LiteratureSidebarGroup
+                      collapsed={sidebarCollapsed}
+                      entries={activeProjects}
+                      groupId="literature-sidebar-projects"
+                      label={t('Projects')}
+                      navButtonClassName={navButtonClassName}
+                      selectedId={duplicatesOpen ? undefined : projectId}
+                      showAllLabel={t('Show all projects')}
+                      showAllText={t('Show all')}
+                      showFewerLabel={t('Show fewer projects')}
+                      showLessText={t('Show less')}
+                      renderEntry={(project) => (
+                        <LiteratureSidebarHint
+                          key={project.id}
+                          label={project.name}
+                          collapsed={sidebarCollapsed}
+                        >
+                          <button
+                            type="button"
+                            className={cn(
+                              navButtonClassName,
+                              !citationStylesOpen &&
+                                !journalsOpen &&
+                                !duplicatesOpen &&
+                                projectId === project.id &&
+                                'bg-bg-300 font-medium'
+                            )}
+                            aria-current={
+                              !citationStylesOpen &&
+                              !journalsOpen &&
+                              !citationStylesOpen &&
+                              !journalsOpen &&
+                              !duplicatesOpen &&
+                              section === 'library' &&
+                              projectId === project.id
+                                ? 'page'
+                                : undefined
+                            }
+                            aria-label={project.name}
+                            onClick={() => selectProject(project.id)}
+                          >
+                            <GalleryVerticalEnd className="size-4" aria-hidden="true" />
+                            {!sidebarCollapsed ? (
+                              <span className="min-w-0 flex-1 truncate text-left">
+                                {project.name}
+                              </span>
+                            ) : null}
+                            {!sidebarCollapsed ? (
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {projectItemCounts[project.id] ?? 0}
+                              </span>
+                            ) : null}
+                          </button>
+                        </LiteratureSidebarHint>
                       )}
-                      aria-current={
-                        !citationStylesOpen && !duplicatesOpen && section === 'trash'
-                          ? 'page'
-                          : undefined
-                      }
-                      aria-label={t('Trash')}
-                      onClick={() => selectSection('trash')}
-                    >
-                      <Trash2 className="size-4" aria-hidden="true" />
-                      {!sidebarCollapsed ? <span>{t('Trash')}</span> : null}
-                    </button>
-                  </LiteratureSidebarHint>
-                </nav>
-                <div
-                  className={cn(
-                    'min-h-0 flex-1 overflow-y-auto',
-                    sidebarCollapsed ? 'mt-3 border-t border-border-300/80 pt-3' : 'mt-2'
-                  )}
-                >
-                  {!sidebarCollapsed ? (
+                    />
                     <div
                       role="separator"
                       aria-orientation="horizontal"
-                      className="mx-2 mb-2 mt-2 h-px bg-border-300/80"
-                    />
-                  ) : null}
-                  <LiteratureSidebarGroup
-                    collapsed={sidebarCollapsed}
-                    entries={activeProjects}
-                    groupId="literature-sidebar-projects"
-                    label={t('Projects')}
-                    navButtonClassName={navButtonClassName}
-                    selectedId={duplicatesOpen ? undefined : projectId}
-                    showAllLabel={t('Show all projects')}
-                    showAllText={t('Show all')}
-                    showFewerLabel={t('Show fewer projects')}
-                    showLessText={t('Show less')}
-                    renderEntry={(project) => (
-                      <LiteratureSidebarHint
-                        key={project.id}
-                        label={project.name}
-                        collapsed={sidebarCollapsed}
-                      >
-                        <button
-                          type="button"
-                          className={cn(
-                            navButtonClassName,
-                            !duplicatesOpen && projectId === project.id && 'bg-bg-300 font-medium'
-                          )}
-                          aria-current={
-                            !citationStylesOpen &&
-                            !duplicatesOpen &&
-                            section === 'library' &&
-                            projectId === project.id
-                              ? 'page'
-                              : undefined
-                          }
-                          aria-label={project.name}
-                          onClick={() => selectProject(project.id)}
-                        >
-                          <GalleryVerticalEnd className="size-4" aria-hidden="true" />
-                          {!sidebarCollapsed ? (
-                            <span className="min-w-0 flex-1 truncate text-left">
-                              {project.name}
-                            </span>
-                          ) : null}
-                          {!sidebarCollapsed ? (
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                              {projectItemCounts[project.id] ?? 0}
-                            </span>
-                          ) : null}
-                        </button>
-                      </LiteratureSidebarHint>
-                    )}
-                  />
-                  <div
-                    role="separator"
-                    aria-orientation="horizontal"
-                    className={cn(
-                      'mx-2 h-px bg-border-300/80',
-                      sidebarCollapsed ? 'my-3' : 'mb-2 mt-4'
-                    )}
-                  />
-                  <LiteratureSidebarGroup
-                    collapsed={sidebarCollapsed}
-                    entries={displayCollections}
-                    groupId="literature-sidebar-collections"
-                    label={t('Collections')}
-                    action={
-                      <LiteratureSidebarHint label={t('New collection')} collapsed>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-lg"
-                          className="text-muted-foreground hover:bg-bg-300 hover:text-foreground active:bg-bg-300 transition-none"
-                          aria-label={t('New collection')}
-                          aria-haspopup="dialog"
-                          onClick={openCreateCollection}
-                        >
-                          {sidebarCollapsed ? (
-                            <FolderPlus className="size-4" aria-hidden="true" />
-                          ) : (
-                            <Plus className="size-4" aria-hidden="true" />
-                          )}
-                        </Button>
-                      </LiteratureSidebarHint>
-                    }
-                    navButtonClassName={navButtonClassName}
-                    selectedId={duplicatesOpen ? undefined : collectionId}
-                    showAllLabel={t('Show all collections')}
-                    showAllText={t('Show all')}
-                    showFewerLabel={t('Show fewer collections')}
-                    showLessText={t('Show less')}
-                    renderEntry={(collection) => (
-                      <LiteratureSidebarHint
-                        key={collection.id}
-                        label={collection.name}
-                        collapsed={sidebarCollapsed}
-                      >
-                        <button
-                          type="button"
-                          className={cn(
-                            navButtonClassName,
-                            !duplicatesOpen &&
-                              collectionId === collection.id &&
-                              'bg-bg-300 font-medium'
-                          )}
-                          aria-current={
-                            !citationStylesOpen &&
-                            !duplicatesOpen &&
-                            section === 'library' &&
-                            collectionId === collection.id
-                              ? 'page'
-                              : undefined
-                          }
-                          aria-label={collection.name}
-                          onClick={() => selectLibrary(collection.id)}
-                        >
-                          <span aria-hidden="true">
-                            {collection.smart ? (
-                              <SmartCollectionIcon
-                                className="size-4 text-primary"
-                                aria-hidden="true"
-                              />
-                            ) : (
-                              <FolderOpen className="size-4" />
-                            )}
-                          </span>
-                          {!sidebarCollapsed ? (
-                            <span className="min-w-0 flex-1 truncate text-left">
-                              {collection.name}
-                            </span>
-                          ) : null}
-                          {!sidebarCollapsed ? (
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                              {collection.itemCount}
-                            </span>
-                          ) : null}
-                        </button>
-                      </LiteratureSidebarHint>
-                    )}
-                  />
-                </div>
-                <div
-                  className={cn(
-                    'mt-auto space-y-1 border-t border-border-300/80 pt-2',
-                    sidebarCollapsed && 'flex flex-col items-center'
-                  )}
-                >
-                  <LiteratureSidebarHint label={t('Settings')} collapsed={sidebarCollapsed}>
-                    <button
-                      type="button"
                       className={cn(
-                        navButtonClassName,
-                        citationStylesOpen && 'bg-bg-300 font-medium'
+                        'mx-2 h-px bg-border-300/80',
+                        sidebarCollapsed ? 'my-3' : 'mb-2 mt-4'
                       )}
-                      aria-current={citationStylesOpen ? 'page' : undefined}
-                      aria-label={t('Settings')}
-                      onClick={() => setCitationStylesOpen(true)}
+                    />
+                    <LiteratureSidebarGroup
+                      collapsed={sidebarCollapsed}
+                      entries={displayCollections}
+                      groupId="literature-sidebar-collections"
+                      label={t('Collections')}
+                      action={
+                        <LiteratureSidebarHint label={t('New collection')} collapsed>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-lg"
+                            className="text-muted-foreground hover:bg-bg-300 hover:text-foreground active:bg-bg-300 transition-none"
+                            aria-label={t('New collection')}
+                            onClick={openCreateCollection}
+                          >
+                            {sidebarCollapsed ? (
+                              <FolderPlus className="size-4" aria-hidden="true" />
+                            ) : (
+                              <Plus className="size-4" aria-hidden="true" />
+                            )}
+                          </Button>
+                        </LiteratureSidebarHint>
+                      }
+                      navButtonClassName={navButtonClassName}
+                      selectedId={duplicatesOpen ? undefined : collectionId}
+                      showAllLabel={t('Show all collections')}
+                      showAllText={t('Show all')}
+                      showFewerLabel={t('Show fewer collections')}
+                      showLessText={t('Show less')}
+                      renderEntry={(collection) => (
+                        <LiteratureSidebarHint
+                          key={collection.id}
+                          label={collection.name}
+                          collapsed={sidebarCollapsed}
+                        >
+                          <button
+                            type="button"
+                            className={cn(
+                              navButtonClassName,
+                              !duplicatesOpen &&
+                                collectionId === collection.id &&
+                                'bg-bg-300 font-medium'
+                            )}
+                            aria-current={
+                              !citationStylesOpen &&
+                              !journalsOpen &&
+                              !duplicatesOpen &&
+                              section === 'library' &&
+                              collectionId === collection.id
+                                ? 'page'
+                                : undefined
+                            }
+                            aria-label={collection.name}
+                            onClick={() => selectLibrary(collection.id)}
+                          >
+                            <span aria-hidden="true">
+                              {collection.smart ? (
+                                <SmartCollectionIcon
+                                  className="size-4 text-primary"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <FolderOpen className="size-4" />
+                              )}
+                            </span>
+                            {!sidebarCollapsed ? (
+                              <span className="min-w-0 flex-1 truncate text-left">
+                                {collection.name}
+                              </span>
+                            ) : null}
+                            {!sidebarCollapsed ? (
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {collection.itemCount}
+                              </span>
+                            ) : null}
+                          </button>
+                        </LiteratureSidebarHint>
+                      )}
+                    />
+                  </div>
+                  <div
+                    className={cn(
+                      'mt-auto space-y-1 border-t border-border-300/80 pt-2',
+                      sidebarCollapsed && 'flex flex-col items-center'
+                    )}
+                  >
+                    <LiteratureSidebarHint label={t('Journals')} collapsed={sidebarCollapsed}>
+                      <button
+                        type="button"
+                        className={cn(navButtonClassName, journalsOpen && 'bg-bg-300 font-medium')}
+                        aria-current={journalsOpen ? 'page' : undefined}
+                        aria-label={t('Journals')}
+                        onClick={() => {
+                          setCitationStylesOpen(false)
+                          setJournalsVisited(true)
+                          setJournalsOpen(true)
+                          setDuplicatesOpen(false)
+                          clearSelection()
+                        }}
+                      >
+                        <LibraryBig className="size-4" aria-hidden="true" />
+                        {!sidebarCollapsed ? <span>{t('Journals')}</span> : null}
+                      </button>
+                    </LiteratureSidebarHint>
+                    <LiteratureSidebarHint
+                      label={t('Citation styles')}
+                      collapsed={sidebarCollapsed}
                     >
-                      <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-                      {!sidebarCollapsed ? <span>{t('Settings')}</span> : null}
-                    </button>
-                  </LiteratureSidebarHint>
-                </div>
+                      <button
+                        type="button"
+                        className={cn(
+                          navButtonClassName,
+                          citationStylesOpen && 'bg-bg-300 font-medium'
+                        )}
+                        aria-current={citationStylesOpen ? 'page' : undefined}
+                        aria-label={t('Citation styles')}
+                        onClick={() => {
+                          setJournalsOpen(false)
+                          setCitationStylesOpen(true)
+                          setDuplicatesOpen(false)
+                        }}
+                      >
+                        <FileCog className="size-4" aria-hidden="true" />
+                        {!sidebarCollapsed ? <span>{t('Citation styles')}</span> : null}
+                      </button>
+                    </LiteratureSidebarHint>
+                  </div>
+                </nav>
               </aside>
             )
           }}
@@ -5344,7 +5430,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
         <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
           <LiteratureDuplicatesView
-            active={duplicatesOpen && !citationStylesOpen}
+            active={duplicatesOpen && !citationStylesOpen && !journalsOpen}
             revision={duplicatesRevision}
             onCount={setDuplicateCount}
             onMerged={() => {
@@ -5361,8 +5447,27 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               setMergeOpen(true)
             }}
           />
+          {journalsVisited ? (
+            <div className={journalsOpen ? 'contents' : 'hidden'}>
+              <Suspense
+                fallback={
+                  <div role="status" className="p-6 text-sm text-muted-foreground">
+                    {t('Loading')}
+                  </div>
+                }
+              >
+                <JournalManager
+                  embedded
+                  active={journalsOpen}
+                  onClose={closeJournals}
+                  onOpenItem={openJournalReference}
+                />
+              </Suspense>
+            </div>
+          ) : null}
           {citationStylesOpen ? (
             <CitationStylesView
+              embedded
               styles={citationStyles}
               onBack={() => setCitationStylesOpen(false)}
               onStylesChange={updateCitationStyles}
@@ -5371,7 +5476,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           <div
             className={cn(
               'flex h-full min-h-0 w-full max-w-none flex-col px-4 py-6 lg:px-6 lg:py-8',
-              (citationStylesOpen || duplicatesOpen) && 'hidden'
+              (citationStylesOpen || journalsOpen || duplicatesOpen) && 'hidden'
             )}
           >
             <div
@@ -5936,99 +6041,30 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                       <PopoverContent
                                         align="end"
                                         aria-labelledby={`${accessibilityId}-filters`}
-                                        className="w-72 space-y-4 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-menu"
+                                        onOpenAutoFocus={(event) => {
+                                          event.preventDefault()
+                                          document
+                                            .getElementById(`${accessibilityId}-filters`)
+                                            ?.focus()
+                                        }}
+                                        className="w-[min(46rem,calc(100vw-2rem))] space-y-4 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-menu"
                                       >
-                                        <p
-                                          id={`${accessibilityId}-filters`}
-                                          className="text-sm font-medium"
-                                        >
-                                          {t('Filters')}
-                                        </p>
-                                        <div className="space-y-1.5">
-                                          <span className="text-xs font-medium text-muted-foreground">
-                                            {t('Tags')}
-                                          </span>
-                                          <TagFilter
-                                            resourceType="literature.item"
-                                            value={tagId}
-                                            onChange={(value) => {
-                                              setTagId(value)
-                                              clearSelection()
-                                            }}
-                                            className="w-full"
-                                          />
-                                        </div>
-                                        <>
-                                          <div className="space-y-1.5">
-                                            <span className="text-xs font-medium text-muted-foreground">
-                                              {t('Reference type')}
-                                            </span>
-                                            <Select
-                                              value={filterItemType}
-                                              onValueChange={(value) => {
-                                                setFilterItemType(
-                                                  value as LiteratureItemType | 'all'
-                                                )
-                                                clearSelection()
-                                              }}
-                                            >
-                                              <SelectTrigger aria-label={t('Reference type')}>
-                                                <SelectValue />
-                                              </SelectTrigger>
-                                              <SelectContent>
-                                                <SelectItem value="all">{t('All')}</SelectItem>
-                                                {Object.entries(itemTypeLabels).map(
-                                                  ([value, label]) => (
-                                                    <SelectItem key={value} value={value}>
-                                                      {label}
-                                                    </SelectItem>
-                                                  )
-                                                )}
-                                              </SelectContent>
-                                            </Select>
-                                          </div>
-                                          <LiteratureYearFilter {...yearFilter} />
-                                          <div className="space-y-1.5">
-                                            <span className="text-xs font-medium text-muted-foreground">
-                                              {t('PDF')}
-                                            </span>
-                                            <Select
-                                              value={filterHasPdf}
-                                              onValueChange={(value) => {
-                                                setFilterHasPdf(value as typeof filterHasPdf)
-                                                clearSelection()
-                                              }}
-                                            >
-                                              <SelectTrigger aria-label={t('PDF')}>
-                                                <SelectValue />
-                                              </SelectTrigger>
-                                              <SelectContent>
-                                                <SelectItem value="all">{t('All')}</SelectItem>
-                                                <SelectItem value="with">
-                                                  {t('With PDF')}
-                                                </SelectItem>
-                                                <SelectItem value="without">
-                                                  {t('Without PDF')}
-                                                </SelectItem>
-                                              </SelectContent>
-                                            </Select>
-                                          </div>
-                                        </>
-                                        <div className="border-t border-border pt-3">
-                                          <Button
-                                            type="button"
-                                            variant="outline"
-                                            className="w-full"
-                                            disabled={
-                                              activeFilterCount === 0 &&
-                                              !yearFilter.draftFrom &&
-                                              !yearFilter.draftTo
-                                            }
-                                            onClick={clearFilters}
-                                          >
-                                            {t('Clear filters')}
-                                          </Button>
-                                        </div>
+                                        <LiteratureFilters
+                                          headingId={`${accessibilityId}-filters`}
+                                          tagId={tagId}
+                                          onTagChange={setTagId}
+                                          itemType={filterItemType}
+                                          onItemTypeChange={setFilterItemType}
+                                          itemTypeLabels={itemTypeLabels}
+                                          hasPdf={filterHasPdf}
+                                          onHasPdfChange={setFilterHasPdf}
+                                          yearFilter={yearFilter}
+                                          datasets={journalFilterDatasets}
+                                          journalFilters={journalAttributeFilters}
+                                          onJournalFiltersChange={setJournalAttributeFilters}
+                                          onFilterChange={clearSelection}
+                                          onClear={clearFilters}
+                                        />
                                       </PopoverContent>
                                     </Popover>
                                     {yearFilter.invalid && !filtersOpen ? (
@@ -6041,7 +6077,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                       </p>
                                     ) : null}
                                     <LiteratureColumnCustomizer
-                                      columns={tableColumnOrder}
+                                      journalSettings={
+                                        <JournalDatasetChoices
+                                          datasets={journalDatasets}
+                                          years={journalSourceYears}
+                                          onChange={setJournalSourceYear}
+                                        />
+                                      }
+                                      columns={tableColumnOrder.filter(
+                                        (column) =>
+                                          !column.startsWith('journal:') ||
+                                          journalColumns.some(({ key }) => key === column)
+                                      )}
                                       labels={tableColumnLabels}
                                       visible={visibleTableColumns}
                                       onMove={moveTableColumn}
@@ -6917,6 +6964,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     scope="col"
                                     className={cn(
                                       'px-3 py-2.5',
+                                      column.startsWith('journal:') && 'w-[180px] max-w-[180px]',
                                       column === 'type' && 'w-40',
                                       column === 'authors' && 'w-56',
                                       column === 'year' && 'w-20 tabular-nums',
@@ -6928,7 +6976,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                       column === 'url' && 'w-20 text-center'
                                     )}
                                   >
-                                    {tableColumnLabels[column]}
+                                    {column.startsWith('journal:') ? (
+                                      <LiteratureTextTooltip text={tableColumnLabels[column]}>
+                                        <span className="block max-w-full truncate">
+                                          {tableColumnLabels[column]}
+                                        </span>
+                                      </LiteratureTextTooltip>
+                                    ) : (
+                                      tableColumnLabels[column]
+                                    )}
                                   </th>
                                 ))}
                                 <th
@@ -7932,6 +7988,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         }}
                         onManageStyles={() => {
                           closeSelectedItemDetail()
+                          setJournalsOpen(false)
                           setCitationStylesOpen(true)
                         }}
                       />
@@ -8003,6 +8060,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             <CollapsibleAbstract text={selectedItem.item.abstract} />
                           </section>
                         ) : null}
+                        <JournalAttributes
+                          item={selectedItem.item}
+                          itemId={selectedItem.id}
+                          detail
+                        />
                         <section className="py-4">
                           <h3 className="font-medium">{t('Publication metadata')}</h3>
                           <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">

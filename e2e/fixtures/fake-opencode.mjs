@@ -62,6 +62,8 @@ const DELEGATION_ARTIFACT_VERSION_INPUT_PROMPT =
   'Run the production Artifact Version input delegation journey.'
 const DELEGATION_BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
 const DELEGATION_BOUNDED_RECOLLECT_PROMPT = 'Collect the running Subagent in Turn B.'
+const DELEGATION_SCROLL_INTENT_PROMPT = 'Run the production Subagent scroll intent journey.'
+const DELEGATED_SCROLL_INTENT_TASK = 'Stream the delegated scroll intent fixture.'
 const DELEGATION_PERMISSION_PROMPT = 'Run the production delegated permission journey.'
 const DELEGATION_USER_QUESTION_PROMPT = 'Run the production delegated user question journey.'
 const DELEGATION_STOP_PROMPT = 'Run the production delegation Stop journey.'
@@ -2099,6 +2101,17 @@ if (process.argv.includes('--version')) {
             throw new Error(`Bounded terminal recollect failed: ${JSON.stringify(terminal)}`)
           }
           reply = 'Production bounded collect journey completed.'
+        } else if (prompt.includes(DELEGATION_SCROLL_INTENT_PROMPT)) {
+          const releaseFiles = JSON.parse(prompt.split('Release files: ')[1])
+          await runProductionDelegationRequest(
+            context.params.sessionId,
+            {
+              task: `${DELEGATED_SCROLL_INTENT_TASK}\nRelease files: ${JSON.stringify(releaseFiles)}`,
+              name: 'Scroll intent child'
+            },
+            false
+          )
+          reply = 'Production Subagent scroll intent journey started.'
         } else if (prompt.includes(DELEGATION_PERMISSION_PROMPT)) {
           await runProductionDelegation(
             context.params.sessionId,
@@ -2425,6 +2438,48 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(DELEGATED_BOUNDED_SLOW_TASK)) {
           await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]), 120_000)
           reply = 'Delayed bounded child completed.'
+        } else if (prompt.includes(DELEGATED_SCROLL_INTENT_TASK)) {
+          const releaseFiles = JSON.parse(prompt.split('Release files: ')[1])
+          const messageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
+          const emit = async (text) =>
+            context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId,
+                content: { type: 'text', text }
+              }
+            })
+          await waitForReleaseFile(releaseFiles[0], 120_000)
+          if (releaseFiles[4]) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: `${messageId}-plan`,
+                content: { type: 'text', text: 'Historical plan before preview.' }
+              }
+            })
+            for (const status of ['in_progress', 'completed']) {
+              await context.client.notify(acp.methods.client.session.update, {
+                sessionId: context.params.sessionId,
+                update: {
+                  sessionUpdate: 'tool_call',
+                  toolCallId: `${messageId}-read`,
+                  title: 'Read historical evidence',
+                  kind: 'read',
+                  status
+                }
+              })
+            }
+          }
+          await emit('Initial delegated evidence.\n\n'.repeat(60))
+          await waitForReleaseFile(releaseFiles[1], 120_000)
+          await emit('Reading-position update arrived.\n\n'.repeat(20))
+          await waitForReleaseFile(releaseFiles[2], 120_000)
+          await emit('Follow-end update arrived.\n\n'.repeat(20))
+          if (releaseFiles[3]) await waitForReleaseFile(releaseFiles[3], 120_000)
+          reply = ''
         } else if (prompt.includes(DELEGATED_PERMISSION_TASK)) {
           const permission = await context.client.request(
             acp.methods.client.session.requestPermission,

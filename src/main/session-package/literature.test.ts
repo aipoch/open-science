@@ -252,9 +252,9 @@ it.each([false, true])(
     const reforked = await target.service.fork(forked)
     expect(reforked.sessionId).not.toBe(forked.sessionId)
   },
-  // This case migrates source/target databases and validates two imports plus two forks.
-  // Match the bounded Windows budget used by the adjacent package round-trip suites.
-  process.platform === 'win32' ? 120_000 : 30_000
+  // Two imports plus two forks repeatedly migrate real validation databases; Ubuntu coverage
+  // exceeded 30 seconds. Match the bounded budgets of the adjacent package round-trip suites.
+  process.platform === 'win32' ? 120_000 : 60_000
 )
 
 it('keeps metadata-only Literature references', () => {

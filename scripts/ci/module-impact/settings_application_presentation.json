@@ -424,7 +424,14 @@
       "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/use-pdf-export.test.tsx",
-      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx"
+      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
+      "src/renderer/src/pages/literature/JournalAlignment.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
+      "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx",
+      "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ArtifactSourcesPanel.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

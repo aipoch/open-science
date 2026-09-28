@@ -207,3 +207,84 @@ for (const scenario of ['import', 'export']) {
     await page.screenshot({ path: testInfo.outputPath(`package-${scenario}-reproducibility.png`) })
   })
 }
+
+test('cancels, retries and inspects comparison results in the Preview dialog', async ({ page }) => {
+  await page.goto(`${url}?package=lifecycle`)
+  const card = page.locator('[data-reproducibility-check-state]')
+  await page.getByRole('button', { name: 'Check reproducibility', exact: true }).click()
+  await expect(card).toHaveAttribute('data-reproducibility-check-state', 'running')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(card).toHaveAttribute('data-reproducibility-check-state', 'cancelled')
+  await expect(page.getByRole('heading', { name: 'Check cancelled', exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Check again', exact: true }).click()
+  await expect(card).toHaveAttribute('data-reproducibility-check-state', 'running')
+  await page.evaluate(async () => {
+    const request = {
+      projectId: 'import-project',
+      appSessionId: 'import-session',
+      artifactId: 'local-artifact',
+      versionId: 'local-version'
+    }
+    const state = await window.api.artifacts.getReproducibilityCheck!(request)
+    window.dispatchEvent(
+      new CustomEvent('e2e-reproducibility-change', {
+        detail: {
+          ...state,
+          revision: 2,
+          status: 'failed',
+          errorMessage: 'Fixture execution failed'
+        }
+      })
+    )
+  })
+  await expect(page.getByRole('button', { name: 'Retry check', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Retry check', exact: true }).click()
+  await expect(card).toHaveAttribute('data-reproducibility-check-state', 'running')
+  await page.evaluate(async () => {
+    const scope = {
+      projectId: 'import-project',
+      appSessionId: 'import-session',
+      artifactId: 'local-artifact',
+      versionId: 'local-version'
+    }
+    const state = (await window.api.artifacts.getReproducibilityCheck!(scope))!
+    const receipt = {
+      schemaVersion: 1,
+      receiptId: 'preview-check',
+      receiptChecksum: 'e'.repeat(64),
+      artifactVersion: { ...scope, targetChecksum: 'a'.repeat(64) },
+      startedAt: state.startedAt,
+      completedAt: '2026-09-28T00:01:00.000Z',
+      outcome: 'different',
+      frontier: { frontierId: 'original-inputs', claimScope: 'end-to-end' },
+      recipe: { recipeId: 'b'.repeat(64), graphChecksum: 'c'.repeat(64) },
+      environmentLocks: [],
+      completedStepIds: ['run-1', 'run-2'],
+      comparisons: [
+        {
+          stepId: 'run-2',
+          entityId: 'output',
+          relativePath: 'result.csv',
+          expectedChecksum: 'a'.repeat(64),
+          actualChecksum: 'b'.repeat(64),
+          expectedSizeBytes: 20,
+          actualSizeBytes: 20,
+          status: 'different'
+        }
+      ]
+    }
+    window.dispatchEvent(
+      new CustomEvent('e2e-reproducibility-change', {
+        detail: { ...state, revision: 2, status: 'different', completedSteps: 2, receipt }
+      })
+    )
+  })
+  await expect(page.getByRole('heading', { name: 'Result differs', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'View details', exact: true }).click()
+  const history = page.locator('[data-reproducibility-history]')
+  await expect(history).toHaveAttribute('open', '')
+  await expect(history.locator('[data-receipt-checksum]')).toHaveAttribute('open', '')
+  await expect(history.getByText('result.csv', { exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog')).toBeVisible()
+})

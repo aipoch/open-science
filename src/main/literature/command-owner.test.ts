@@ -71,6 +71,15 @@ const fixture = (): {
 beforeEach(() => vi.clearAllMocks())
 
 describe('Literature command workflows', () => {
+  it('routes journal requests through the dataset service', async () => {
+    const result = { datasets: [] }
+    const journalAttributes = { run: vi.fn().mockResolvedValue(result) }
+    const owner = createLiteratureCommandOwner({ journalAttributes } as unknown as Services)
+    const request = { action: 'list' as const }
+    await expect(owner.journals(request)).resolves.toBe(result)
+    expect(journalAttributes.run).toHaveBeenCalledWith(request)
+  })
+
   it('previews references without acquiring a file lease or creating a version', async () => {
     const { owner, versions, formatter } = fixture()
     await expect(owner.formatDocument({ ...request, mode: 'preview' })).resolves.toEqual({

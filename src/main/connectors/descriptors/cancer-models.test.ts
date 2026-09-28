@@ -875,6 +875,211 @@ describe('cancer-models / clinical_attributes', () => {
   })
 })
 
+describe('cancer-models / samples, patients, clinical and molecular data', () => {
+  const molecularArgs = {
+    study_id: 'study',
+    molecular_profile_id: 'study_mrna',
+    entrez_gene_ids: [7157],
+    sample_ids: ['S1']
+  }
+
+  it.each([
+    'cbioportal_get_samples',
+    'cbioportal_get_patients',
+    'cbioportal_get_clinical_data',
+    'cbioportal_get_molecular_data'
+  ])('uses a strict object schema for %s', (id) => {
+    expect(tool(id).input).toMatchObject({ type: 'object', additionalProperties: false })
+  })
+
+  const requestFailures = [
+    {
+      id: 'cbioportal_get_samples',
+      args: { study_id: 'study' },
+      path: '/samples?'
+    },
+    {
+      id: 'cbioportal_get_patients',
+      args: { study_id: 'study' },
+      path: '/patients?'
+    },
+    {
+      id: 'cbioportal_get_clinical_data',
+      args: { study_id: 'study', sample_ids: ['S1'] },
+      path: '/clinical-data/fetch'
+    },
+    {
+      id: 'cbioportal_get_molecular_data',
+      args: molecularArgs,
+      path: '/studies/study/molecular-profiles'
+    },
+    {
+      id: 'cbioportal_get_molecular_data',
+      args: {
+        study_id: 'study',
+        molecular_profile_id: 'study_mrna',
+        entrez_gene_ids: [7157],
+        sample_list_id: 'study_all'
+      },
+      path: '/sample-lists'
+    },
+    {
+      id: 'cbioportal_get_molecular_data',
+      args: molecularArgs,
+      path: '/molecular-data/fetch'
+    }
+  ]
+
+  it.each(requestFailures)(
+    'preserves upstream HTTP failures at $path',
+    async ({ id, args, path }) => {
+      for (const status of [404, 401, 403, 429, 503]) {
+        const fetchImpl = vi.fn(async (url: string) => {
+          if (url.includes(path)) return { ok: false, status, headers: new Headers() } as Response
+          if (url.includes('/studies/study/molecular-profiles'))
+            return jsonRes([
+              { molecularProfileId: 'study_mrna', molecularAlterationType: 'MRNA_EXPRESSION' }
+            ])
+          if (url.includes('/sample-lists')) return jsonRes([{ sampleListId: 'study_all' }])
+          throw new Error(`unexpected fetch: ${url}`)
+        }) as unknown as typeof fetch
+        const call = run(id, args, fetchImpl)
+        await expect(call).rejects.toMatchObject({ name: 'ConnectorHttpError', status })
+      }
+    }
+  )
+
+  it('keeps the established gene not-found message', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.includes('/genes/TP53'))
+        return { ok: false, status: 404, headers: new Headers() } as Response
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as unknown as typeof fetch
+    await expect(
+      run(
+        'cbioportal_get_molecular_data',
+        {
+          study_id: 'study',
+          molecular_profile_id: 'study_mrna',
+          gene_symbol: 'TP53',
+          sample_ids: ['S1']
+        },
+        fetchImpl
+      )
+    ).rejects.toThrow('Gene not found: TP53')
+  })
+
+  it('preserves network errors instead of converting them to not-found errors', async () => {
+    const failure = new Error('connection closed')
+    const fetchImpl = vi.fn().mockRejectedValue(failure)
+    await expect(run('cbioportal_get_samples', { study_id: 'study' }, fetchImpl)).rejects.toBe(
+      failure
+    )
+  })
+
+  it('lists and filters samples and patients while preserving totals', async () => {
+    const fetchImpl = vi.fn(
+      router([
+        [
+          '/samples?',
+          [
+            { sampleId: 'S2', patientId: 'P2' },
+            { sampleId: 'S1', patientId: 'P1' }
+          ]
+        ],
+        ['/samples/S1?', { sampleId: 'S1', patientId: 'P1' }],
+        ['/patients?', [{ patientId: 'P2' }, { patientId: 'P1' }]],
+        ['/patients/P2?', { patientId: 'P2' }]
+      ]) as unknown as typeof fetch
+    )
+    const samples = (await run(
+      'cbioportal_get_samples',
+      { study_id: 'study', sample_ids: ['S1'], max_records: 1 },
+      fetchImpl as unknown as typeof fetch
+    )) as Record<string, unknown>
+    expect(samples).toMatchObject({ total: 2, filtered_total: 1, n_returned: 1, truncated: false })
+    expect(samples.samples).toEqual([
+      expect.objectContaining({ sample_id: 'S1', patient_id: 'P1', study_id: 'study' })
+    ])
+    const patients = (await run(
+      'cbioportal_get_patients',
+      { study_id: 'study', patient_ids: ['P2'] },
+      fetchImpl as unknown as typeof fetch
+    )) as Record<string, unknown>
+    expect(patients).toMatchObject({ total: 2, filtered_total: 1 })
+    expect(patients.patients).toEqual([
+      expect.objectContaining({ patient_id: 'P2', study_id: 'study' })
+    ])
+  })
+
+  it('walks bounded pages and keeps only the sorted output cap', async () => {
+    const firstPage = Array.from({ length: 1000 }, (_, index) => ({
+      sampleId: `S${String(index + 1001).padStart(4, '0')}`,
+      patientId: `P${index + 1001}`
+    }))
+    const fetchImpl = vi.fn(async (url: string) => {
+      const page = new URL(url).searchParams.get('pageNumber')
+      return jsonRes(page === '0' ? firstPage : [{ sampleId: 'S0001', patientId: 'P1' }])
+    }) as unknown as typeof fetch
+    const out = (await run(
+      'cbioportal_get_samples',
+      { study_id: 'study', max_records: 2 },
+      fetchImpl
+    )) as Record<string, unknown>
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(out).toMatchObject({ total: 1001, filtered_total: 1001, n_returned: 2, truncated: true })
+    expect(out.samples).toEqual([
+      expect.objectContaining({ sample_id: 'S0001' }),
+      expect.objectContaining({ sample_id: 'S1001' })
+    ])
+  })
+
+  it('posts clinical filters and molecular expression data', async () => {
+    const calls: Array<{ url: string; body: unknown }> = []
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined
+      calls.push({ url, body })
+      if (url.includes('/clinical-data/fetch'))
+        return jsonRes([{ clinicalAttributeId: 'AGE', patientId: 'P1', value: '42' }])
+      if (url.includes('/molecular-data/fetch'))
+        return jsonRes([{ entrezGeneId: 7157, sampleId: 'S1', patientId: 'P1', value: 2.5 }])
+      if (url.includes('/molecular-profiles'))
+        return jsonRes([
+          { molecularProfileId: 'study_mrna', molecularAlterationType: 'MRNA_EXPRESSION' }
+        ])
+      if (url.includes('/genes/TP53'))
+        return jsonRes({ hugoGeneSymbol: 'TP53', entrezGeneId: 7157 })
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as unknown as typeof fetch
+    const clinical = (await run(
+      'cbioportal_get_clinical_data',
+      { study_id: 'study', level: 'PATIENT', attribute_ids: ['AGE'], patient_ids: ['P1'] },
+      fetchImpl
+    )) as Record<string, unknown>
+    expect(clinical.clinical_data).toEqual([
+      expect.objectContaining({ clinical_attribute_id: 'AGE', patient_id: 'P1', value: '42' })
+    ])
+    expect(calls[0].url).toContain('clinicalDataType=PATIENT')
+    expect(calls[0].body).toEqual({ attributeIds: ['AGE'], ids: ['P1'] })
+
+    const molecular = (await run(
+      'cbioportal_get_molecular_data',
+      {
+        study_id: 'study',
+        molecular_profile_id: 'study_mrna',
+        gene_symbol: 'TP53',
+        sample_ids: ['S1']
+      },
+      fetchImpl
+    )) as Record<string, unknown>
+    expect(molecular.molecular_data).toEqual([
+      expect.objectContaining({ entrez_gene_id: 7157, sample_id: 'S1', value: 2.5 })
+    ])
+    expect(calls[3].body).toEqual({ entrezGeneIds: [7157], sampleIds: ['S1'] })
+  })
+})
+
 // Live integration tests against the real cBioPortal API. Opt-in via LIVE_API=1 to keep the default
 // suite offline and to respect upstream rate limits (each block hits the network a handful of times).
 describe.skipIf(!process.env.LIVE_API)('cancer-models / LIVE cBioPortal', () => {

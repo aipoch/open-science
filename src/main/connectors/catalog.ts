@@ -161,7 +161,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     displayName: 'Drug Regulatory',
     description: 'Drugs@FDA applications, labels, and corpus statistics via openFDA.',
     useWhen:
-      'Use when you need FDA drug regulatory data — searching or fetching Drugs@FDA applications (NDA/ANDA/BLA) by brand, generic, ingredient, sponsor, marketing status, or pharmacologic class; aggregate/corpus statistics; generic equivalents of a brand; or product label (SPL) sections such as indications and boxed warnings. Sourced from openFDA (Drugs@FDA + drug labels).',
+      'Use when you need FDA drug regulatory and safety data — searching or fetching Drugs@FDA applications (NDA/ANDA/BLA) by brand, generic, ingredient, sponsor, marketing status, or pharmacologic class; aggregate/corpus statistics; generic equivalents of a brand; product label (SPL) sections such as indications and boxed warnings; FAERS adverse-event reports and reaction/drug aggregations; or drug product enforcement and recall reports. Sourced from openFDA (Drugs@FDA, drug labels, drug events and drug enforcement).',
     sources: ['openFDA'],
     termsUrl: 'https://open.fda.gov/terms/',
     requiresNcbi: false
@@ -226,7 +226,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     displayName: 'Cancer Models',
     description: 'Cancer genomics study records via the cBioPortal REST API.',
     useWhen:
-      "Use when you need cancer genomics data from cBioPortal — listing or looking up cancer studies (cancer type, sample counts, citation), the mutations of a gene in a study (recurrent protein changes, mutation types), a gene's mutation frequency across several studies, discrete copy-number alterations (deletions/amplifications) of a gene, or a study's clinical attributes and survival endpoints.",
+      "Use when you need cancer genomics data from cBioPortal — listing or looking up cancer studies, samples and patients; retrieving patient/sample clinical values; fetching mRNA expression values for genes; the mutations of a gene in a study (recurrent protein changes, mutation types), a gene's mutation frequency across several studies, discrete copy-number alterations (deletions/amplifications) of a gene, or a study's clinical attributes and survival endpoints.",
     sources: ['cBioPortal'],
     termsUrl: 'https://www.cbioportal.org/faq',
     requiresNcbi: false
@@ -258,7 +258,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     description:
       'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).',
     useWhen:
-      'Use when finding or looking up omics datasets across the major archives — functional-genomics / expression experiments in ArrayExpress (BioStudies) or NCBI GEO series (by keyword, organism, assay, or accession, with per-sample metadata); metabolomics studies and data files in MetaboLights (MTBLS); metagenomics studies and analyses in MGnify (MGYS, by free text or biome lineage); or proteomics projects, proteins and paged project file inventories with download locations in PRIDE Archive (PXD/PRD, by keyword/organism/instrument/disease, or protein↔project). Discover ENA sequencing runs by taxonomy, library strategy and title/description keywords, or resolve ENA/INSDC study, experiment or sample accessions to runs. List archive-generated FASTQ URLs or original submitted file locations (including BAM/CRAM), sizes and MD5 checksums for a run; resolve GEO/ArrayExpress/MGnify IDs to linked INSDC accessions first. Sourced from ArrayExpress, GEO, ENA, MetaboLights, MGnify and PRIDE.',
+      'Use when finding or looking up omics datasets across the major archives — functional-genomics / expression experiments in ArrayExpress (BioStudies) or NCBI GEO series (by keyword, organism, assay, or accession, with per-sample metadata); metabolomics studies and data files in MetaboLights (MTBLS); metagenomics studies, analyses and downloadable result files in MGnify (MGYS, by free text or biome lineage); or proteomics projects, proteins and paged project file inventories with download locations in PRIDE Archive (PXD/PRD, by keyword/organism/instrument/disease, or protein↔project). Discover ENA sequencing runs by taxonomy, library strategy and title/description keywords, or resolve ENA/INSDC study, experiment or sample accessions to runs. List archive-generated FASTQ URLs or original submitted file locations (including BAM/CRAM), sizes and MD5 checksums for a run; resolve GEO/ArrayExpress/MGnify IDs to linked INSDC accessions first. Sourced from ArrayExpress, GEO, ENA, MetaboLights, MGnify and PRIDE.',
     sources: ['ArrayExpress', 'GEO', 'ENA', 'MetaboLights', 'MGnify', 'PRIDE'],
     termsUrl: 'https://www.ebi.ac.uk/about/terms-of-use',
     requiresNcbi: true

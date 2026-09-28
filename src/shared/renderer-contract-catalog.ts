@@ -1,3 +1,4 @@
+import type { JournalRequest, JournalResult } from './journal-attributes'
 import type {
   SessionDiagnosticRequest,
   SessionDiagnosticInspection,
@@ -1322,6 +1323,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'logs:reveal-in-folder',
     LOCAL
   ]),
+  'literature.journals': callable<(request: JournalRequest) => Promise<JournalResult>>()(
+    'literature',
+    ['literature:journals', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.formatReferences': callable<
     (request: LiteratureFormatReferencesRequest) => Promise<LiteratureFormatReferencesResult>
   >()('literature', ['literature:format-references', WEB, undefined, undefined, RUNTIME_VALIDATED]),

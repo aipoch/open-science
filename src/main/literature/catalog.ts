@@ -1,3 +1,4 @@
+import { journalBindingIdentity } from '../../shared/journal-attributes'
 import { saveSmartRuleVersion } from './smart-rule-history'
 import {
   serializedSmartRuleSchema,
@@ -9,6 +10,7 @@ import {
   smartEvidenceModeSchema
 } from '../../shared/literature-smart-collections'
 import type { LiteratureSmartCollections } from './smart-collections'
+import type { JournalAttributes } from './journal-attributes'
 import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
@@ -626,7 +628,14 @@ const replaceItemMetadata = async (
   const identifiers = normalizedIdentifiers(item.identifiers)
   const existing = await transaction.literatureItem.findFirst({
     where: { id: itemId, deletedAt: null },
-    select: { metadataRevision: true, creators: { select: { creatorId: true } } }
+    select: {
+      metadataRevision: true,
+      creators: { select: { creatorId: true } },
+      itemType: true,
+      containerTitle: true,
+      typeFieldsJson: true,
+      identifiers: { select: { scheme: true, rawValue: true } }
+    }
   })
   if (!existing) throw new Error('Literature Item is unavailable.')
   if (existing.metadataRevision !== expectedMetadataRevision) {
@@ -661,6 +670,15 @@ const replaceItemMetadata = async (
     }
   })
   if (updated.count !== 1) throw new Error('Literature Item revision conflict.')
+  if (
+    journalBindingIdentity({
+      ...existing,
+      typeFields: JSON.parse(existing.typeFieldsJson),
+      identifiers: existing.identifiers.map(({ scheme, rawValue }) => ({ scheme, value: rawValue }))
+    }) !== journalBindingIdentity({ ...item, identifiers })
+  ) {
+    await transaction.$executeRaw`DELETE FROM "JournalItemBinding" WHERE "itemId" = ${itemId}`
+  }
   await transaction.literatureItemCreator.deleteMany({ where: { itemId } })
   await transaction.literatureIdentifier.deleteMany({ where: { itemId } })
   if (identifiers.length > 0) {
@@ -824,7 +842,8 @@ class LiteratureCatalog {
         if (attachmentIds.length) throw new Error('Literature attachment removal is unavailable.')
       }),
     private readonly onChanged?: (event: LiteratureChangedEvent) => void,
-    private readonly smart?: LiteratureSmartCollections
+    private readonly smart?: LiteratureSmartCollections,
+    private readonly journalAttributes?: JournalAttributes
   ) {}
 
   private revision = 0
@@ -1047,9 +1066,19 @@ class LiteratureCatalog {
         nextOffset: rows.length > limit ? offset + limit : undefined
       }
     }
-    return client.$transaction((transaction) => this.searchLibrary(request, transaction), {
-      timeout: 30_000
-    })
+    const journalFilterIds = request.filter?.journalAttributes?.length
+      ? await this.journalAttributes?.filterItemIds(
+          client as PrismaClient,
+          request.filter.journalAttributes,
+          request.lifecycle
+        )
+      : undefined
+    return client.$transaction(
+      (transaction) => this.searchLibrary(request, transaction, true, journalFilterIds),
+      {
+        timeout: 30_000
+      }
+    )
   }
 
   // The main-process agent adapter applies the existing MCP projection and output budget.
@@ -1058,15 +1087,24 @@ class LiteratureCatalog {
     request: LiteratureCatalogSearchRequest & { scope: 'library' }
   ): Promise<LiteratureCatalogSearchPage> {
     const client = await this.getClient()
-    return client.$transaction((transaction) => this.searchLibrary(request, transaction, false), {
-      timeout: 30_000
-    })
+    const journalFilterIds = request.filter?.journalAttributes?.length
+      ? await this.journalAttributes?.filterItemIds(
+          client as PrismaClient,
+          request.filter.journalAttributes,
+          request.lifecycle
+        )
+      : undefined
+    return client.$transaction(
+      (transaction) => this.searchLibrary(request, transaction, false, journalFilterIds),
+      { timeout: 30_000 }
+    )
   }
 
   private async searchLibrary(
     request: LiteratureCatalogSearchRequest,
     client: Prisma.TransactionClient,
-    boundResponse = true
+    boundResponse = true,
+    journalFilterIds?: string[]
   ): Promise<LiteratureCatalogSearchPage> {
     const offset = Math.max(0, request.offset ?? 0)
     const limit = Math.min(100, Math.max(1, request.limit ?? 50))
@@ -1084,6 +1122,12 @@ class LiteratureCatalog {
           : Prisma.sql`0 = 1`
       )
     }
+    if (filter?.journalAttributes?.length)
+      predicates.push(
+        journalFilterIds?.length
+          ? Prisma.sql`i.id IN (SELECT value FROM json_each(${JSON.stringify(journalFilterIds)}))`
+          : Prisma.sql`0 = 1`
+      )
     const contains = (column: Prisma.Sql, text: string): Prisma.Sql =>
       Prisma.sql`instr(${column}, ${normalizeSearchText(text)}) > 0`
     const creatorMatches = (text: string): Prisma.Sql => Prisma.sql`EXISTS (
@@ -2919,6 +2963,9 @@ class LiteratureCatalog {
     await transaction.literatureSmartAssessment.deleteMany({
       where: { itemId: { in: [command.survivorId, ...duplicateIds] } }
     })
+    await transaction.$executeRaw(
+      Prisma.sql`DELETE FROM "JournalItemBinding" WHERE "itemId" IN (${Prisma.join(duplicateIds)})`
+    )
     await transaction.literatureIdentifier.deleteMany({
       where: { itemId: { in: duplicateIds } }
     })

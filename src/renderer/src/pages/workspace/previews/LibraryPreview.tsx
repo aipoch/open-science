@@ -1,3 +1,4 @@
+import { JournalAttributes } from '@/pages/literature/JournalAttributes'
 /* Hallmark · component: library preview · genre: modern-minimal · theme: existing workspace
  * Pre-emit critique: P5 H4 E4 S5 R5 V4. Preserve project tokens and native control states.
  */
@@ -194,7 +195,7 @@ function ReferenceRow({
           aria-expanded={expanded}
           aria-controls={detailId}
           onClick={onToggle}
-          className="block w-full min-w-0 rounded-sm pt-3 pb-2 text-left hover:text-primary active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+          className="block w-full min-w-0 rounded-sm pt-3 pb-1 text-left hover:text-primary active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
         >
           <span
             className={cn(
@@ -207,7 +208,7 @@ function ReferenceRow({
           {creators.length > 0 && (
             <span
               className={cn(
-                'mt-1 block text-xs text-muted-foreground',
+                'mt-0.5 block text-xs text-muted-foreground',
                 !expanded ? 'truncate' : '[overflow-wrap:anywhere]'
               )}
             >
@@ -230,6 +231,7 @@ function ReferenceRow({
           </span>
         </button>
       </div>
+      <JournalAttributes item={entry.item} itemId={entry.id} className="mb-1 py-0.5" />
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-2 pb-3">
         <div className="flex items-center gap-1">
           <Button

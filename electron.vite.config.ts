@@ -64,6 +64,10 @@ export default defineConfig(({ command }) => ({
       }
     },
     server: {
+      // Electron-vite uses the resolved server host in ELECTRON_RENDERER_URL. Explicit IPv4
+      // avoids localhost resolving to ::1 in restricted environments where IPv6 loopback cannot
+      // bind, which otherwise leaves the isolated dev window without a renderer page.
+      host: '127.0.0.1',
       // Don't watch git worktrees under .claude/worktrees — full source copies would trigger
       // needless rescans/HMR churn during dev.
       watch: { ignored: ['**/.claude/**'] }

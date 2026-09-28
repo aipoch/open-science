@@ -545,6 +545,7 @@ model LiteratureItem {
   metadataCommitReceipts   LiteratureMetadataCommitReceipt[]
   smartAssessments         LiteratureSmartAssessment[]
   smartOverrides           LiteratureSmartOverride[]
+  journalBinding           JournalItemBinding?
 
   @@index([deletedAt, updatedAt])
   @@index([mergedIntoItemId])
@@ -1381,4 +1382,55 @@ model LiteratureSmartRunItem {
   @@id([runId, itemId])
   @@index([runId, state])
   @@index([itemId, evaluatedAt])
+}
+
+// User-owned journal identity and annual attribute datasets. Bibliographic Items stay unchanged.
+model Journal {
+  id             String @id
+  name           String
+  normalizedName String
+  aliasesJson    String @default("[]")
+  issnsJson      String @default("[]")
+  externalIdsJson String @default("[]")
+  entries        JournalDatasetEntry[]
+  itemBindings   JournalItemBinding[]
+
+  @@index([normalizedName])
+}
+
+model JournalDataset {
+  id         String @id
+  name       String?
+  source     String
+  year       Int
+  revision   Int @default(1)
+  fieldsJson String
+  importedAt DateTime @default(now())
+  entries    JournalDatasetEntry[]
+
+  @@unique([source, year])
+}
+
+model JournalDatasetEntry {
+  datasetId String
+  journalId String
+  valuesJson String
+  sourceRow Int
+  dataset JournalDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@id([datasetId, journalId])
+  @@index([journalId])
+}
+
+// Explicit confirmation applies only to this reference and this journal identity.
+model JournalItemBinding {
+  itemId String @id
+  journalId String
+  identityFingerprint String
+  revision String
+  item LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@index([journalId])
 }

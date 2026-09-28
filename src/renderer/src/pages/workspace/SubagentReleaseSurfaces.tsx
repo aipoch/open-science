@@ -313,12 +313,59 @@ type SubagentFrameDetail = NonNullable<ReturnType<typeof selectSubagentFrame>>
 
 const SubagentTranscript = ({
   session,
-  detail
+  detail,
+  isActive
 }: {
   session: ChatSession
   detail: SubagentFrameDetail
+  isActive: boolean
 }): React.JSX.Element => {
   const projectedSession = useWorkspaceSubagentRuntimeSession(session, detail)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const scrollPositionRef = useRef<number | undefined>(undefined)
+  const restoringScrollRef = useRef(false)
+  const followIntentRef = useRef(true)
+  const hiddenFollowIntentRef = useRef(true)
+  const [autoScroll, setAutoScroll] = useState(true)
+  const rememberFollowIntent = useCallback((following: boolean): void => {
+    if (restoringScrollRef.current) return
+    followIntentRef.current = following
+    setAutoScroll(following)
+  }, [])
+  const rememberScroll = (event: React.UIEvent<HTMLDivElement>): void => {
+    if (
+      !isActive ||
+      restoringScrollRef.current ||
+      (event.target as HTMLElement).dataset.slot !== 'message-scroller-viewport'
+    )
+      return
+    scrollPositionRef.current = (event.target as HTMLElement).scrollTop
+  }
+  useEffect(() => {
+    if (!isActive) {
+      hiddenFollowIntentRef.current = followIntentRef.current
+      restoringScrollRef.current = true
+      return
+    }
+    if (scrollPositionRef.current === undefined) {
+      restoringScrollRef.current = false
+      return
+    }
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      const viewport = containerRef.current?.querySelector<HTMLElement>(
+        '[data-slot="message-scroller-viewport"]'
+      )
+      const position = scrollPositionRef.current
+      if (viewport && position !== undefined)
+        viewport.scrollTop = hiddenFollowIntentRef.current ? viewport.scrollHeight : position
+      restoringScrollRef.current = false
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [isActive])
   const onOpenLibraryMention = useCallback(
     (scope: LibraryMentionScopeRequest): void => {
       const preview = usePreviewWorkbenchStore.getState()
@@ -328,11 +375,21 @@ const SubagentTranscript = ({
     [session.projectId]
   )
   return (
-    <WorkspaceMessageScroller
-      activeSession={projectedSession}
-      onOpenLibraryMention={onOpenLibraryMention}
-      onSendEditedMessage={() => ({ ok: false })}
-    />
+    <div
+      ref={containerRef}
+      className="min-h-0 flex-1"
+      data-slot="subagent-transcript"
+      onScrollCapture={rememberScroll}
+    >
+      <WorkspaceMessageScroller
+        activeSession={projectedSession}
+        autoScroll={autoScroll}
+        onScrollFollowingChange={rememberFollowIntent}
+        scrollIntentActive={isActive}
+        onOpenLibraryMention={onOpenLibraryMention}
+        onSendEditedMessage={() => ({ ok: false })}
+      />
+    </div>
   )
 }
 
@@ -349,17 +406,33 @@ const SubagentPreview = ({
   const session = useSessionStore((state) =>
     state.sessions.find((candidate) => candidate.id === item.sessionId)
   )
-  const summary = useMemo(() => projectSessionSubagents(session, []), [session])
+  // A previously opened tab can outlive the root Session's loaded content. Keep the last
+  // committed transcript visible while the selected Session is read back from persistence.
+  const [lastLoadedSession, setLastLoadedSession] = useState<ChatSession | undefined>(() =>
+    session?.contentLoaded === false ? undefined : session
+  )
+  if (session && session.contentLoaded !== false && lastLoadedSession !== session) {
+    setLastLoadedSession(session)
+  }
+  const displayedSession =
+    session && session.contentLoaded !== false
+      ? session
+      : lastLoadedSession?.id === item.sessionId &&
+          lastLoadedSession.projectId === (session?.projectId ?? item.projectId)
+        ? lastLoadedSession
+        : undefined
+  const summary = useMemo(() => projectSessionSubagents(displayedSession, []), [displayedSession])
   const effectiveFrameId = item.selectedAgentFrameId ?? summary.children[0]?.frameId ?? ''
   const [isRetrying, setIsRetrying] = useState(false)
+  const [readFailed, setReadFailed] = useState(false)
   const readInFlight = useRef(false)
   const attemptedAutomaticRead = useRef(false)
   const [automaticReadFinished, setAutomaticReadFinished] = useState(false)
   const projectId = session?.projectId ?? item.projectId
   const needsHydration = !session || session.contentLoaded === false
   const detail = useMemo(
-    () => selectSubagentFrame(session, effectiveFrameId),
-    [effectiveFrameId, session]
+    () => selectSubagentFrame(displayedSession, effectiveFrameId),
+    [displayedSession, effectiveFrameId]
   )
 
   const selectFrame = (frameId: string): void => {
@@ -379,6 +452,7 @@ const SubagentPreview = ({
     if (readInFlight.current) return
     readInFlight.current = true
     setIsRetrying(true)
+    setReadFailed(false)
     try {
       if (!item.sessionId) return
       // Restored legacy tabs may not carry a Project until their Session is hydrated.
@@ -388,8 +462,9 @@ const SubagentPreview = ({
             (candidate) => candidate.id === item.sessionId
           )
       if (durable) useSessionStore.getState().upsertPersistedSession(durable)
+      else setReadFailed(true)
     } catch {
-      // The alert remains visible and the action remains retryable.
+      setReadFailed(true)
     } finally {
       readInFlight.current = false
       setIsRetrying(false)
@@ -406,7 +481,9 @@ const SubagentPreview = ({
     void retryRead()
   }, [isActive, needsHydration, projectId, retryRead])
 
-  const isLoading = isRetrying || (needsHydration && Boolean(projectId) && !automaticReadFinished)
+  const isLoading =
+    !displayedSession &&
+    (isRetrying || (needsHydration && Boolean(projectId) && !automaticReadFinished))
 
   return (
     <section className="flex size-full min-h-0 flex-col bg-bg-000" aria-label={t('Subagents')}>
@@ -453,7 +530,7 @@ const SubagentPreview = ({
           <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
           {t('Loading…')}
         </div>
-      ) : !detail || !session ? (
+      ) : !detail || !displayedSession ? (
         <ErrorNotice
           role="alert"
           className="m-auto max-w-sm"
@@ -466,6 +543,18 @@ const SubagentPreview = ({
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col" aria-live="off">
+          {readFailed && needsHydration ? (
+            <ErrorNotice
+              role="alert"
+              className="mx-3 mt-3 shrink-0"
+              description={t('This Subagent conversation could not be read.')}
+              primaryButton={{
+                label: t('Retry Subagent preview'),
+                loading: isRetrying,
+                onClick: () => void retryRead()
+              }}
+            />
+          ) : null}
           <div className="shrink-0 border-b border-border-100 px-4 py-2 text-[11px] text-text-300">
             <span className="font-medium text-text-100">{detail.agentLabel}</span>
             {detail.originUnavailable ? (
@@ -494,9 +583,10 @@ const SubagentPreview = ({
           </div>
           <WorkspaceMessageEditStateProvider canEditMessage={false}>
             <SubagentTranscript
-              key={`${session.id}:${detail.frameId}:${detail.attempt?.id ?? 'no-attempt'}:${detail.attempt?.runtimeSegmentIds.at(-1) ?? 'no-runtime'}`}
-              session={session}
+              key={`${displayedSession.id}:${detail.frameId}:${detail.attempt?.id ?? 'no-attempt'}:${detail.attempt?.runtimeSegmentIds.at(-1) ?? 'no-runtime'}`}
+              session={displayedSession}
               detail={detail}
+              isActive={isActive}
             />
           </WorkspaceMessageEditStateProvider>
         </div>

@@ -14,6 +14,9 @@ describe('electron-vite main process dependencies', () => {
         build: {
           externalizeDeps: { exclude: ['@aipoch/notebook-network-sandbox'] }
         }
+      },
+      renderer: {
+        server: { host: '127.0.0.1' }
       }
     })
   })

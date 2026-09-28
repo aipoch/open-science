@@ -1,92 +1,111 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { LiteratureTable, LiteratureTextTooltip } from './LiteratureTable'
+import { LiteratureTableScrollArea, LiteratureTextTooltip } from './LiteratureTable'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 afterEach(() => {
   cleanup()
-  vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
-
-it('opens subsequent hints immediately and restores the initial delay after leaving', async () => {
-  vi.useFakeTimers()
-  render(
-    <LiteratureTable>
+it('updates the fixed column edge only while content remains to the right, without rerendering children', () => {
+  let resized!: () => void
+  const disconnect = vi.fn()
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: () => void) {
+        resized = callback
+      }
+      observe = vi.fn()
+      disconnect = disconnect
+    }
+  )
+  const child = vi.fn(() => (
+    <table>
       <tbody>
         <tr>
-          {['First', 'Second'].map((label) => (
-            <td key={label}>
-              <LiteratureTextTooltip text={`${label} full text`}>
-                <button>{label}</button>
-              </LiteratureTextTooltip>
-            </td>
-          ))}
+          <td>{'Synthetic row'}</td>
         </tr>
       </tbody>
-    </LiteratureTable>
+    </table>
+  ))
+  const Child = child
+  const view = render(
+    <LiteratureTableScrollArea>
+      <Child />
+    </LiteratureTableScrollArea>
   )
-  const first = screen.getByRole('button', { name: 'First' })
-  const second = screen.getByRole('button', { name: 'Second' })
-  fireEvent.pointerMove(first, { pointerType: 'mouse' })
-  await act(() => vi.advanceTimersByTimeAsync(200))
-  fireEvent.keyDown(first, { key: 'Escape' })
-  fireEvent.pointerLeave(first, { pointerType: 'mouse' })
-  fireEvent.pointerMove(second, { pointerType: 'mouse' })
-  expect(screen.getByRole('tooltip').textContent).toBe('Second full text')
-  fireEvent.keyDown(second, { key: 'Escape' })
-  fireEvent.pointerLeave(second, { pointerType: 'mouse' })
-  await act(() => vi.advanceTimersByTimeAsync(301))
-  fireEvent.pointerMove(first, { pointerType: 'mouse' })
-  expect(screen.queryByRole('tooltip')).toBeNull()
-  await act(() => vi.advanceTimersByTimeAsync(200))
-  expect(screen.getByRole('tooltip').textContent).toBe('First full text')
-})
-
-it('uses a consistent short delay and white-on-black contrast for long text hints', async () => {
-  vi.useFakeTimers()
-  render(
-    <LiteratureTable>
-      <tbody>
-        <tr>
-          <td>
-            <LiteratureTextTooltip text="Complete reference title">
-              <button>Reference title</button>
-            </LiteratureTextTooltip>
-          </td>
-        </tr>
-      </tbody>
-    </LiteratureTable>
-  )
-  const trigger = screen.getByRole('button', { name: 'Reference title' })
-  expect(trigger.hasAttribute('title')).toBe(false)
-  fireEvent.pointerMove(trigger, { pointerType: 'mouse' })
-  await act(async () => {
-    vi.advanceTimersByTime(199)
+  const viewport = view.container.firstElementChild as HTMLDivElement
+  Object.defineProperties(viewport, {
+    clientWidth: { value: 300, configurable: true },
+    scrollWidth: { value: 600, configurable: true }
   })
-  expect(screen.queryByRole('tooltip')).toBeNull()
-  await act(async () => {
-    vi.advanceTimersByTime(1)
+  resized()
+  expect(viewport.dataset.overflowRight).toBe('true')
+  viewport.scrollLeft = 300
+  fireEvent.scroll(viewport)
+  expect(viewport.dataset.overflowRight).toBe('false')
+  viewport.scrollLeft = 100
+  fireEvent.scroll(viewport)
+  expect(viewport.dataset.overflowRight).toBe('true')
+  Object.defineProperty(viewport, 'clientWidth', { value: 600 })
+  viewport.scrollLeft = 0
+  resized()
+  expect(viewport.dataset.overflowRight).toBe('false')
+  expect(child).toHaveBeenCalledOnce()
+  view.unmount()
+  expect(disconnect).toHaveBeenCalledOnce()
+})
+
+it('only opens overflow hints for clipped text and checks again after resizing', async () => {
+  render(
+    <TooltipProvider>
+      <LiteratureTextTooltip text="0.9" overflowOnly>
+        <span tabIndex={0}>{'0.9'}</span>
+      </LiteratureTextTooltip>
+    </TooltipProvider>
+  )
+  const trigger = screen.getByText('0.9')
+  Object.defineProperties(trigger, {
+    clientWidth: { value: 100, configurable: true },
+    scrollWidth: { value: 100, configurable: true }
   })
-  expect(screen.getByRole('tooltip').textContent).toBe('Complete reference title')
-  const content = document.querySelector('[data-slot="tooltip-content"]')
-  expect(content?.className).toContain('bg-black')
-  expect(content?.className).toContain('text-white')
-  fireEvent.keyDown(trigger, { key: 'Escape' })
+  fireEvent.focus(trigger)
+  expect(screen.queryByRole('tooltip')).toBeNull()
+  fireEvent.blur(trigger)
+
+  Object.defineProperty(trigger, 'scrollWidth', { value: 150, configurable: true })
+  fireEvent.focus(trigger)
+  expect((await screen.findByRole('tooltip')).textContent).toBe('0.9')
+  fireEvent.blur(trigger)
+
+  Object.defineProperty(trigger, 'clientWidth', { value: 200 })
+  fireEvent.focus(trigger)
   expect(screen.queryByRole('tooltip')).toBeNull()
 })
 
-it('shows hints on keyboard focus without waiting for hover', () => {
+it('reveals a clipped nested badge while preserving ordinary text hints', async () => {
   render(
-    <LiteratureTable>
-      <tbody>
-        <tr>
-          <LiteratureTextTooltip text="Full abstract">
-            <td tabIndex={0}>Short abstract</td>
-          </LiteratureTextTooltip>
-        </tr>
-      </tbody>
-    </LiteratureTable>
+    <TooltipProvider>
+      <LiteratureTextTooltip text="Long category name" overflowOnly>
+        <span tabIndex={0} data-testid="category-cell">
+          <span>{'Long category name'}</span>
+        </span>
+      </LiteratureTextTooltip>
+      <LiteratureTextTooltip text="Reference title">
+        <span tabIndex={0}>{'Reference title'}</span>
+      </LiteratureTextTooltip>
+    </TooltipProvider>
   )
-  fireEvent.focus(screen.getByText('Short abstract'))
-  expect(screen.getByRole('tooltip').textContent).toBe('Full abstract')
+  Object.defineProperties(screen.getByText('Long category name'), {
+    clientWidth: { value: 80 },
+    scrollWidth: { value: 160 }
+  })
+  const trigger = screen.getByTestId('category-cell')
+  fireEvent.focus(trigger)
+  expect((await screen.findByRole('tooltip')).textContent).toBe('Long category name')
+  fireEvent.blur(trigger)
+  fireEvent.focus(screen.getByText('Reference title'))
+  expect((await screen.findByRole('tooltip')).textContent).toBe('Reference title')
 })

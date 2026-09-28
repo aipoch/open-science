@@ -65,7 +65,7 @@ const MGNIFY_ANALYSES = [
 ]
 
 describe('omics-archives tool set', () => {
-  it('exposes the 18 archive tools and 4 ENA tools, all on connector omics-archives', () => {
+  it('exposes the archive tools and ENA tools, all on connector omics-archives', () => {
     expect(OMICS_ARCHIVES_TOOLS.map((t) => t.id).sort()).toEqual(
       [
         'arrayexpress_get_experiment',
@@ -83,6 +83,7 @@ describe('omics-archives tool set', () => {
         'metabolights_list_studies',
         'metabolights_search_data_files',
         'mgnify_get_studies',
+        'mgnify_get_analysis_files',
         'mgnify_get_study_analyses',
         'mgnify_search_studies',
         'pride_find_projects_for_protein',
@@ -1011,6 +1012,72 @@ describe('mgnify_get_study_analyses', () => {
       assembly_accession: 'ERZ1',
       sample_accession: null
     })
+  })
+})
+
+describe('mgnify_get_analysis_files', () => {
+  it('uses a strict object schema', () => {
+    const descriptor = tool('mgnify_get_analysis_files')
+    expect(descriptor.input).toMatchObject({ type: 'object', additionalProperties: false })
+  })
+
+  it('reads v2 download metadata without fetching file bytes or inventing sizes and URLs', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        accession: 'MGYA01020362',
+        downloads: [
+          {
+            alias: 'z.tsv',
+            path: 'results/z.tsv',
+            file_type: 'tsv',
+            download_type: 'Functional analysis',
+            file_size_bytes: 0,
+            url: 'https://ftp.ebi.ac.uk/z.tsv?token=a'
+          },
+          {
+            alias: 'a.fasta.gz',
+            path: 'a.fasta.gz',
+            file_type: 'fasta',
+            file_size_bytes: 1024,
+            url: null
+          },
+          { alias: 'missing.csv', file_type: 'csv' }
+        ]
+      })
+    )
+    const out = await engine(fetchImpl).call(
+      tool('mgnify_get_analysis_files'),
+      { accession: 'MGYA01020362' },
+      {}
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'https://www.ebi.ac.uk/metagenomics/api/v2/analyses/MGYA01020362'
+    )
+    expect(out).toMatchObject({
+      files_count: 3,
+      files: [
+        { file_name: 'a.fasta.gz', file_size_bytes: 1024, download_url: null },
+        { file_name: 'missing.csv', file_size_bytes: null, download_url: null },
+        {
+          file_name: 'z.tsv',
+          file_size_bytes: 0,
+          download_url: 'https://ftp.ebi.ac.uk/z.tsv?token=a'
+        }
+      ]
+    })
+  })
+  it('distinguishes an empty inventory from missing data and upstream errors', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes({ downloads: [] }))
+      .mockResolvedValueOnce(jsonRes({}))
+      .mockResolvedValueOnce(errRes(404))
+    const call = (): Promise<unknown> =>
+      engine(fetchImpl).call(tool('mgnify_get_analysis_files'), { accession: 'MGYA01020362' }, {})
+    expect(await call()).toMatchObject({ files_count: 0, files: [] })
+    await expect(call()).rejects.toThrow('missing downloads')
+    await expect(call()).rejects.toThrow('HTTP 404')
   })
 })
 

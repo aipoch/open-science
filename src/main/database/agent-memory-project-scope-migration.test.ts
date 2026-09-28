@@ -17,7 +17,7 @@ const COMPUTE_ANALYSIS_CONSTRAINTS_MIGRATION_ID = '0021_compute_job_analysis_con
 const MEMORY_GLOBAL_CONTENT_UNIQUE_MIGRATION_ID = '0022_memory_global_content_unique'
 const COMPUTE_JOB_OPERATION_MIGRATION_ID = '0023_compute_job_operation'
 const COMPUTE_JOB_FILE_EVIDENCE_MIGRATION_ID = '0024_compute_job_file_evidence'
-const CURRENT_MIGRATION_ID = '0045_literature_smart_pause_run'
+const CURRENT_MIGRATION_ID = '0046_journal_attributes'
 const MEMORY_AUXILIARY_SCHEMA_NAMES = [
   'MemoryEntryFts',
   'MemoryEntry_fts_insert',
@@ -344,6 +344,7 @@ describe('agent memory project scope migration', () => {
         '0042_classification_usage',
         '0043_pdf_annotations',
         '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
         CURRENT_MIGRATION_ID
       ],
       to: CURRENT_MIGRATION_ID

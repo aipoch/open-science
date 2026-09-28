@@ -166,6 +166,7 @@ import { getAvatarColor } from '../settings/specialist-icons'
 import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
 import { BookmarksPopover } from './bookmarks/BookmarksPopover'
 import { useBookmarks } from './bookmarks/bookmark-context'
+import type { ConversationSubmissions } from './use-conversation-submissions'
 
 const localizeVisionRunFailure = (
   error: string | null | undefined,
@@ -435,11 +436,6 @@ type ConversationPanelSubagents = {
   stop: () => void | Promise<void>
 }
 
-type StopSubmissionState = Readonly<{
-  pending: boolean
-  error?: string
-}>
-
 type ConversationPanelProps = {
   view: ConversationPanelView
   composer: Pick<WorkspaceComposerController, 'view' | 'actions'>
@@ -454,6 +450,7 @@ type ConversationPanelProps = {
   workflows: ConversationPanelWorkflows
   sessionTools: ConversationPanelSessionTools
   subagents: ConversationPanelSubagents
+  submissions: ConversationSubmissions
 }
 
 const DismissibleConversationError = ({
@@ -494,7 +491,8 @@ const ConversationPanel = ({
   contextWindow,
   workflows,
   sessionTools,
-  subagents
+  subagents,
+  submissions
 }: ConversationPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
@@ -700,19 +698,14 @@ const ConversationPanel = ({
   const openSettings = useSettingsStore((state) => state.openSettings)
   const openSettingsToComputeHost = useSettingsStore((state) => state.openSettingsToComputeHost)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
-  const stopSubmissionPendingSessionIdsRef = useRef(new Set<string>())
-  const [stopSubmissionsBySessionId, setStopSubmissionsBySessionId] = useState(
-    () => new Map<string, StopSubmissionState>()
-  )
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
   const setElicitationEditDraft = useSessionStore((state) => state.setElicitationEditDraft)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
-  // Each Session retains recovery ownership while the user visits other conversations.
-  const resumingSessionIdsRef = useRef(new Set<string>())
-  const [resumingSessionIds, setResumingSessionIds] = useState<ReadonlySet<string>>(() => new Set())
-  const isResuming = activeSession !== undefined && resumingSessionIds.has(activeSession.id)
+  // The workspace retains pending Resume state while this panel remounts for another session.
+  const isResuming =
+    activeSession !== undefined && submissions.resumePendingSessionIds.has(activeSession.id)
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
   const [isContextWindowOpen, setIsContextWindowOpen] = useState(false)
@@ -736,50 +729,14 @@ const ConversationPanel = ({
   }
 
   const activeStopSubmission = activeSession
-    ? stopSubmissionsBySessionId.get(activeSession.id)
+    ? submissions.stopBySessionId.get(activeSession.id)
     : undefined
   const isStopping = activeStopSubmission?.pending === true
   const stopError = activeStopSubmission?.error
 
-  const settleStopSubmission = (sessionId: string, error?: string): void => {
-    stopSubmissionPendingSessionIdsRef.current.delete(sessionId)
-    setStopSubmissionsBySessionId((current) => {
-      const next = new Map(current)
-      if (error !== undefined) next.set(sessionId, { pending: false, error })
-      else next.delete(sessionId)
-      return next
-    })
-  }
+  const handleStop = (): void => submissions.submitStop(activeSession?.id, onCancelRun)
 
-  const submitStop = (sessionId: string | undefined, action: () => void | Promise<void>): void => {
-    if (!sessionId || stopSubmissionPendingSessionIdsRef.current.has(sessionId)) return
-    stopSubmissionPendingSessionIdsRef.current.add(sessionId)
-    setStopSubmissionsBySessionId((current) => {
-      const next = new Map(current)
-      next.set(sessionId, { pending: true })
-      return next
-    })
-    let outcome: void | Promise<void>
-    try {
-      outcome = action()
-    } catch (error) {
-      settleStopSubmission(sessionId, error instanceof Error ? error.message : String(error))
-      return
-    }
-    if (!outcome || typeof (outcome as Promise<void>).then !== 'function') {
-      settleStopSubmission(sessionId)
-      return
-    }
-    void outcome.then(
-      () => settleStopSubmission(sessionId),
-      (error: unknown) =>
-        settleStopSubmission(sessionId, error instanceof Error ? error.message : String(error))
-    )
-  }
-
-  const handleStop = (): void => submitStop(activeSession?.id, onCancelRun)
-
-  const handleStopSubagents = (): void => submitStop(activeSession?.id, onStopSubagents)
+  const handleStopSubagents = (): void => submissions.submitStop(activeSession?.id, onStopSubagents)
 
   // Unconditional hook: one shared data source for the background-task strip chip and
   // the expandable ledger. Compute Jobs stay observable before the Notebook exists.
@@ -1058,23 +1015,9 @@ const ConversationPanel = ({
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
     const sessionId = activeSession?.id
-    if (
-      !canResumeSession ||
-      !sessionId ||
-      resumingSessionIdsRef.current.has(sessionId) ||
-      isStopping ||
-      rootTurnBusy
-    )
-      return
+    if (!canResumeSession || !sessionId || isResuming || isStopping || rootTurnBusy) return
 
-    resumingSessionIdsRef.current.add(sessionId)
-    setResumingSessionIds(new Set(resumingSessionIdsRef.current))
-    try {
-      await onResumeSession()
-    } finally {
-      resumingSessionIdsRef.current.delete(sessionId)
-      setResumingSessionIds(new Set(resumingSessionIdsRef.current))
-    }
+    await submissions.submitResume(sessionId, onResumeSession)
   }
 
   // Drag-and-drop shares the same staging callback as the picker and paste paths.

@@ -1,9 +1,11 @@
 import type { ToolContext, ToolDescriptor } from '../types'
 
 const CBIOPORTAL = 'https://www.cbioportal.org/api'
-// cBioPortal exposes no total-count in the JSON body (only in a header we can't read), so every
-// "verify against the API total" is done by pulling the full collection in a single large page.
+// cBioPortal exposes no total-count in the JSON body (only in a header we can't read), so collection
+// totals are verified by walking bounded pages. FULL_PAGE remains for the older mutation/CNA paths.
 const FULL_PAGE = 10_000_000
+const COLLECTION_PAGE_SIZE = 1_000
+const DIRECT_FETCH_BATCH_SIZE = 20
 const DESC_MAX = 240
 const TOP_PROTEIN_CHANGES = 25
 
@@ -83,9 +85,43 @@ type CBioClinicalAttr = {
   patientAttribute?: boolean
   priority?: string
 }
+type CBioSample = {
+  sampleId?: string
+  patientId?: string
+  studyId?: string
+  sampleType?: string
+  sampleTypeId?: string
+  cancerTypeId?: string
+  uniqueSampleKey?: string
+  uniquePatientKey?: string
+  [key: string]: unknown
+}
+type CBioPatient = {
+  patientId?: string
+  studyId?: string
+  uniquePatientKey?: string
+  [key: string]: unknown
+}
+type CBioClinicalData = {
+  clinicalAttributeId?: string
+  patientId?: string
+  sampleId?: string
+  studyId?: string
+  value?: string
+  [key: string]: unknown
+}
+type CBioMolecularData = {
+  entrezGeneId?: number
+  molecularProfileId?: string
+  sampleId?: string
+  patientId?: string
+  studyId?: string
+  value?: number
+  [key: string]: unknown
+}
 
-// The engine surfaces a non-2xx response as `HTTP <status> for <url>`; a 404 is cBioPortal's way of
-// saying the study/gene id is unknown, which we translate into a friendly "not found" error.
+// The engine surfaces a non-2xx response as `HTTP <status> for <url>`. Keep the upstream HTTP
+// failure for the newer collection/data tools; legacy tools retain their established errors.
 const isNotFound = (err: unknown): boolean => err instanceof Error && /HTTP 404/.test(err.message)
 
 async function fetchStudyRecord(ctx: ToolContext, studyId: string): Promise<CBioStudy> {
@@ -264,6 +300,79 @@ const mapMutation = (m: CBioMutation): Record<string, unknown> => ({
   tumor_ref_count: m.tumorRefCount,
   refseq_mrna_id: m.refseqMrnaId
 })
+
+const boundedMax = (value: unknown, fallback: number, maximum = 10_000): number => {
+  const n = Number(value ?? fallback)
+  return Number.isFinite(n) ? Math.min(Math.max(0, Math.trunc(n)), maximum) : fallback
+}
+
+const normalizeIds = (value: unknown): string[] => [
+  ...new Set(Array.isArray(value) ? value.map(String).filter(Boolean) : [])
+]
+
+type CBioCollectionRow = CBioSample | CBioPatient
+
+async function walkStudyCollection<T extends CBioCollectionRow>(
+  ctx: ToolContext,
+  studyId: string,
+  collection: 'samples' | 'patients',
+  projection: 'ID' | 'DETAILED',
+  onPage: (rows: T[]) => void
+): Promise<number> {
+  let pageNumber = 0
+  let total = 0
+  for (;;) {
+    const rows =
+      ((await ctx.fetchJson(
+        `${CBIOPORTAL}/studies/${encodeURIComponent(studyId)}/${collection}?projection=${projection}&pageSize=${COLLECTION_PAGE_SIZE}&pageNumber=${pageNumber}`
+      )) as T[]) ?? []
+    total += rows.length
+    onPage(rows)
+    if (rows.length < COLLECTION_PAGE_SIZE) return total
+    pageNumber += 1
+  }
+}
+
+async function fetchStudyEntity<T extends CBioCollectionRow>(
+  ctx: ToolContext,
+  studyId: string,
+  collection: 'samples' | 'patients',
+  id: string
+): Promise<T | undefined> {
+  try {
+    return (await ctx.fetchJson(
+      `${CBIOPORTAL}/studies/${encodeURIComponent(studyId)}/${collection}/${encodeURIComponent(id)}?projection=DETAILED`
+    )) as T
+  } catch (err) {
+    // A missing requested entity is equivalent to the existing client-side filter behavior; the
+    // study itself was already validated by walkStudyCollection.
+    if (isNotFound(err)) return undefined
+    throw err
+  }
+}
+
+function keepSmallestById<T extends CBioCollectionRow>(
+  target: T[],
+  rows: T[],
+  key: 'sampleId' | 'patientId',
+  maxRecords: number
+): void {
+  if (maxRecords <= 0) return
+  for (const row of rows) {
+    const id = String(row[key] ?? '')
+    if (!id) continue
+    let low = 0
+    let high = target.length
+    while (low < high) {
+      const middle = (low + high) >> 1
+      if (String(target[middle][key] ?? '').localeCompare(id) <= 0) low = middle + 1
+      else high = middle
+    }
+    if (low >= maxRecords && target.length >= maxRecords) continue
+    target.splice(low, 0, row)
+    if (target.length > maxRecords) target.pop()
+  }
+}
 
 // cBioPortal public REST API (keyless): read-only cancer-genomics studies, mutations, CNA, and
 // clinical-attribute lookups. Profile/sample-list ids are never assumed — always resolved from the
@@ -728,6 +837,314 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
         has_overall_survival: ids.has('OS_STATUS') && ids.has('OS_MONTHS'),
         truncated: raw.length > maxRecords,
         attributes: attributes.slice(0, maxRecords)
+      }
+    }
+  },
+  {
+    id: 'cbioportal_get_samples',
+    connector: 'cancer-models',
+    description:
+      'List cBioPortal samples in a study with detailed sample and patient identifiers. Optional sample_ids restrict the returned rows; max_records caps the response while preserving the true study count.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        study_id: { type: 'string', minLength: 1, pattern: '\\S' },
+        sample_ids: {
+          type: 'array',
+          items: { type: 'string', minLength: 1, pattern: '\\S' },
+          minItems: 1,
+          maxItems: 1000
+        },
+        max_records: { type: 'integer', minimum: 1, maximum: 10000, default: 500 }
+      },
+      required: ['study_id']
+    },
+    required: ['study_id'],
+    returns:
+      '`{ study_id, total, n_returned, truncated, samples: [{ sample_id, patient_id, study_id, ... }] }` — `total` is the complete study sample count before optional filtering and the output cap.',
+    example:
+      'const result = await host.mcp("cancer-models", "cbioportal_get_samples", {"study_id": "brca_tcga_pan_can_atlas_2018", "max_records": 100})',
+    run: async (ctx, a) => {
+      const studyId = String(a.study_id)
+      const requested = normalizeIds(a.sample_ids)
+      const maxRecords = boundedMax(a.max_records, 500)
+      const samples: CBioSample[] = []
+      let filteredTotal = 0
+      const total = await walkStudyCollection<CBioSample>(
+        ctx,
+        studyId,
+        'samples',
+        requested.length ? 'ID' : 'DETAILED',
+        (rows) => {
+          if (!requested.length) keepSmallestById(samples, rows, 'sampleId', maxRecords)
+        }
+      )
+      if (requested.length) {
+        for (let start = 0; start < requested.length; start += DIRECT_FETCH_BATCH_SIZE) {
+          const batch = await Promise.all(
+            requested
+              .slice(start, start + DIRECT_FETCH_BATCH_SIZE)
+              .map((id) => fetchStudyEntity<CBioSample>(ctx, studyId, 'samples', id))
+          )
+          const found = batch.filter((sample): sample is CBioSample => sample !== undefined)
+          filteredTotal += found.length
+          keepSmallestById(samples, found, 'sampleId', maxRecords)
+        }
+      }
+      return {
+        study_id: studyId,
+        total,
+        filtered_total: requested.length ? filteredTotal : total,
+        n_returned: Math.min(samples.length, maxRecords),
+        truncated: (requested.length ? filteredTotal : total) > maxRecords,
+        samples: samples.map((sample) => ({
+          ...sample,
+          sample_id: sample.sampleId,
+          patient_id: sample.patientId,
+          study_id: sample.studyId ?? studyId
+        }))
+      }
+    }
+  },
+  {
+    id: 'cbioportal_get_patients',
+    connector: 'cancer-models',
+    description:
+      'List cBioPortal patients in a study with detailed identifiers. Optional patient_ids restrict the returned rows; max_records caps the response while preserving the true study count.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        study_id: { type: 'string', minLength: 1, pattern: '\\S' },
+        patient_ids: {
+          type: 'array',
+          items: { type: 'string', minLength: 1, pattern: '\\S' },
+          minItems: 1,
+          maxItems: 1000
+        },
+        max_records: { type: 'integer', minimum: 1, maximum: 10000, default: 500 }
+      },
+      required: ['study_id']
+    },
+    required: ['study_id'],
+    returns:
+      '`{ study_id, total, n_returned, truncated, patients: [{ patient_id, study_id, ... }] }` — `total` is the complete study patient count before optional filtering and the output cap.',
+    example:
+      'const result = await host.mcp("cancer-models", "cbioportal_get_patients", {"study_id": "brca_tcga_pan_can_atlas_2018", "max_records": 100})',
+    run: async (ctx, a) => {
+      const studyId = String(a.study_id)
+      const requested = normalizeIds(a.patient_ids)
+      const maxRecords = boundedMax(a.max_records, 500)
+      const patients: CBioPatient[] = []
+      let filteredTotal = 0
+      const total = await walkStudyCollection<CBioPatient>(
+        ctx,
+        studyId,
+        'patients',
+        requested.length ? 'ID' : 'DETAILED',
+        (rows) => {
+          if (!requested.length) keepSmallestById(patients, rows, 'patientId', maxRecords)
+        }
+      )
+      if (requested.length) {
+        for (let start = 0; start < requested.length; start += DIRECT_FETCH_BATCH_SIZE) {
+          const batch = await Promise.all(
+            requested
+              .slice(start, start + DIRECT_FETCH_BATCH_SIZE)
+              .map((id) => fetchStudyEntity<CBioPatient>(ctx, studyId, 'patients', id))
+          )
+          const found = batch.filter((patient): patient is CBioPatient => patient !== undefined)
+          filteredTotal += found.length
+          keepSmallestById(patients, found, 'patientId', maxRecords)
+        }
+      }
+      return {
+        study_id: studyId,
+        total,
+        filtered_total: requested.length ? filteredTotal : total,
+        n_returned: Math.min(patients.length, maxRecords),
+        truncated: (requested.length ? filteredTotal : total) > maxRecords,
+        patients: patients.map((patient) => ({
+          ...patient,
+          patient_id: patient.patientId,
+          study_id: patient.studyId ?? studyId
+        }))
+      }
+    }
+  },
+  {
+    id: 'cbioportal_get_clinical_data',
+    connector: 'cancer-models',
+    description:
+      'Fetch cBioPortal clinical data values for explicit patient_ids or sample_ids matching level, optionally restricted to attribute_ids. Clinical values remain strings, including missing-value markers.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        study_id: { type: 'string', minLength: 1, pattern: '\\S' },
+        level: { type: 'string', enum: ['SAMPLE', 'PATIENT'], default: 'SAMPLE' },
+        attribute_ids: {
+          type: 'array',
+          items: { type: 'string', minLength: 1, pattern: '\\S' },
+          maxItems: 1000
+        },
+        sample_ids: {
+          type: 'array',
+          items: { type: 'string', minLength: 1, pattern: '\\S' },
+          minItems: 1,
+          maxItems: 1000
+        },
+        patient_ids: {
+          type: 'array',
+          items: { type: 'string', minLength: 1, pattern: '\\S' },
+          minItems: 1,
+          maxItems: 1000
+        },
+        max_records: { type: 'integer', minimum: 1, maximum: 10000, default: 1000 }
+      },
+      required: ['study_id']
+    },
+    required: ['study_id'],
+    returns:
+      '`{ study_id, level, total, n_returned, truncated, clinical_data: [{ clinical_attribute_id, patient_id, sample_id, value, ... }] }`.',
+    example:
+      'const result = await host.mcp("cancer-models", "cbioportal_get_clinical_data", {"study_id": "brca_tcga_pan_can_atlas_2018", "level": "PATIENT", "attribute_ids": ["AGE"], "patient_ids": ["TCGA-A1-A0SB"]})',
+    run: async (ctx, a) => {
+      const studyId = String(a.study_id)
+      const level = String(a.level ?? 'SAMPLE') === 'PATIENT' ? 'PATIENT' : 'SAMPLE'
+      const sampleIds = normalizeIds(a.sample_ids)
+      const patientIds = normalizeIds(a.patient_ids)
+      if ((level === 'PATIENT' && sampleIds.length) || (level === 'SAMPLE' && patientIds.length))
+        throw new Error('Entity IDs must match the clinical data level')
+      const attributeIds = normalizeIds(a.attribute_ids)
+      const ids = level === 'PATIENT' ? patientIds : sampleIds
+      if (!ids.length) throw new Error('Provide patient_ids or sample_ids matching level')
+      const body: Record<string, unknown> = {}
+      if (attributeIds.length) body.attributeIds = attributeIds
+      if (ids.length) body.ids = ids
+      const raw =
+        ((await ctx.postJson(
+          `${CBIOPORTAL}/studies/${encodeURIComponent(studyId)}/clinical-data/fetch?clinicalDataType=${level}&projection=DETAILED`,
+          body
+        )) as CBioClinicalData[]) ?? []
+      const maxRecords = boundedMax(a.max_records, 1000)
+      const rows = raw
+        .slice()
+        .sort(
+          (x, y) =>
+            (x.clinicalAttributeId ?? '').localeCompare(y.clinicalAttributeId ?? '') ||
+            (x.patientId ?? '').localeCompare(y.patientId ?? '') ||
+            (x.sampleId ?? '').localeCompare(y.sampleId ?? '')
+        )
+      return {
+        study_id: studyId,
+        level,
+        total: rows.length,
+        n_returned: Math.min(rows.length, maxRecords),
+        truncated: rows.length > maxRecords,
+        clinical_data: rows.slice(0, maxRecords).map((row) => ({
+          ...row,
+          clinical_attribute_id: row.clinicalAttributeId,
+          patient_id: row.patientId,
+          sample_id: row.sampleId,
+          study_id: row.studyId ?? studyId
+        }))
+      }
+    }
+  },
+  {
+    id: 'cbioportal_get_molecular_data',
+    connector: 'cancer-models',
+    description:
+      'Fetch numeric mRNA or protein expression values from an explicit study molecular profile. Discover profiles with cbioportal_get_study; choose the measurement/normalization deliberately. Supply gene_symbol or entrez_gene_ids and exactly one of sample_ids or sample_list_id. Missing rows are not zero expression.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        study_id: { type: 'string', minLength: 1, pattern: '\\S' },
+        molecular_profile_id: { type: 'string', minLength: 1, pattern: '\\S' },
+        gene_symbol: { type: 'string', description: 'HUGO symbol, e.g. TP53' },
+        entrez_gene_ids: { type: 'array', items: { type: 'integer' }, maxItems: 1000 },
+        sample_ids: {
+          type: 'array',
+          items: { type: 'string', minLength: 1, pattern: '\\S' },
+          minItems: 1,
+          maxItems: 1000
+        },
+        sample_list_id: { type: 'string', minLength: 1, pattern: '\\S' },
+        max_records: { type: 'integer', minimum: 1, maximum: 10000, default: 1000 }
+      },
+      required: ['study_id', 'molecular_profile_id']
+    },
+    required: ['study_id', 'molecular_profile_id'],
+    returns:
+      '`{ study_id, molecular_profile_id, gene_ids, total, n_returned, truncated, molecular_data: [{ entrez_gene_id, sample_id, patient_id, value, ... }] }` — profile metadata describes the measurement and normalization; values are preserved without conversion.',
+    example:
+      'const result = await host.mcp("cancer-models", "cbioportal_get_molecular_data", {"study_id": "brca_tcga_pan_can_atlas_2018", "molecular_profile_id": "brca_tcga_pan_can_atlas_2018_rna_seq_v2_mrna", "gene_symbol": "ESR1", "sample_list_id": "brca_tcga_pan_can_atlas_2018_all"})',
+    run: async (ctx, a) => {
+      const studyId = String(a.study_id)
+      const sampleIds = normalizeIds(a.sample_ids)
+      if (sampleIds.length > 0 === Boolean(a.sample_list_id))
+        throw new Error("provide exactly one of 'sample_ids' or 'sample_list_id'")
+      const geneIds = normalizeIds(a.entrez_gene_ids)
+        .map(Number)
+        .filter((id) => Number.isInteger(id))
+      if (a.gene_symbol != null && String(a.gene_symbol).trim()) {
+        const gene = await resolveGene(ctx, String(a.gene_symbol).trim())
+        if (!Number.isInteger(gene.entrezGeneId))
+          throw new Error(`Missing gene id: ${a.gene_symbol}`)
+        geneIds.push(gene.entrezGeneId!)
+      }
+      const uniqueGeneIds = [...new Set(geneIds)]
+      if (!uniqueGeneIds.length) throw new Error("provide 'gene_symbol' or 'entrez_gene_ids'")
+      const profileId = String(a.molecular_profile_id)
+      const profiles = await fetchProfiles(ctx, studyId)
+      const profile = profiles.find((p) => p.molecularProfileId === profileId)
+      if (
+        !profile ||
+        !['MRNA_EXPRESSION', 'PROTEIN_LEVEL'].includes(profile.molecularAlterationType ?? '')
+      )
+        throw new Error(`Expression profile ${profileId} not found in study ${studyId}`)
+      if (a.sample_list_id != null) {
+        const lists = await fetchSampleLists(ctx, studyId)
+        if (!lists.some((list) => list.sampleListId === a.sample_list_id))
+          throw new Error(`Sample list not found in study ${studyId}: ${a.sample_list_id}`)
+      }
+      const body: Record<string, unknown> = { entrezGeneIds: uniqueGeneIds }
+      if (sampleIds.length) body.sampleIds = sampleIds
+      else if (a.sample_list_id != null && String(a.sample_list_id))
+        body.sampleListId = String(a.sample_list_id)
+      const raw =
+        ((await ctx.postJson(
+          `${CBIOPORTAL}/molecular-profiles/${encodeURIComponent(profileId)}/molecular-data/fetch?projection=DETAILED`,
+          body
+        )) as CBioMolecularData[]) ?? []
+      const maxRecords = boundedMax(a.max_records, 1000)
+      const rows = raw
+        .slice()
+        .sort(
+          (x, y) =>
+            (x.entrezGeneId ?? 0) - (y.entrezGeneId ?? 0) ||
+            (x.sampleId ?? '').localeCompare(y.sampleId ?? '')
+        )
+      return {
+        study_id: studyId,
+        molecular_profile_id: profileId,
+        gene_ids: uniqueGeneIds,
+        profile,
+        total: rows.length,
+        n_returned: Math.min(rows.length, maxRecords),
+        truncated: rows.length > maxRecords,
+        molecular_data: rows.slice(0, maxRecords).map((row) => ({
+          ...row,
+          entrez_gene_id: row.entrezGeneId,
+          molecular_profile_id: row.molecularProfileId ?? profileId,
+          sample_id: row.sampleId,
+          patient_id: row.patientId,
+          study_id: row.studyId ?? studyId,
+          value: row.value
+        }))
       }
     }
   }

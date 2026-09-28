@@ -261,7 +261,7 @@ describe('workspace Agent Runtime hook contract', () => {
         'sendPreparationInFlightSessionIds',
         'saveAsSkillInFlightSessionIds',
         'nativeContextCompactionSessionIds',
-        'subscribeToSubagentRuntimeUpdates',
+        'subagentTranscripts',
         'compactContext',
         'ensureSessionReady',
         'saveAsSkill',
@@ -852,8 +852,38 @@ describe('workspace Agent Runtime hook contract', () => {
     await render()
     expect(onAgentRuntimeUpdate).toHaveBeenCalledOnce()
 
-    const listener = vi.fn()
-    const unsubscribe = latest.subscribeToSubagentRuntimeUpdates(listener)
+    const session = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: '',
+      cwd: '',
+      status: 'running' as const,
+      createdAt: 0,
+      updatedAt: 0,
+      messages: []
+    }
+    const detail = {
+      frameId: 'child-1',
+      status: 'running' as const,
+      attempt: {
+        id: 'attempt-1',
+        status: 'running' as const,
+        resolvedAgent: { kind: 'main' as const },
+        runtimeSegmentIds: ['runtime-1'],
+        startedAt: 1
+      },
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user' as const,
+          content: 'Task',
+          status: 'complete' as const,
+          createdAt: 1,
+          updatedAt: 1,
+          eventIds: []
+        }
+      ]
+    }
     const update = {
       scope: {
         projectId: 'project-1',
@@ -863,15 +893,22 @@ describe('workspace Agent Runtime hook contract', () => {
         runtimeSegmentId: 'runtime-1',
         promptMessageId: 'prompt-1'
       },
-      event: { id: 'event-1', kind: 'stop', level: 'info', timestamp: 1 }
+      event: {
+        id: 'event-1',
+        kind: 'message',
+        role: 'assistant',
+        messageId: 'answer-1',
+        text: 'Before any view exists',
+        level: 'info',
+        timestamp: 2
+      }
     } satisfies AcpAgentRuntimeUpdate
-
     act(() => publish(update))
-    expect(listener).toHaveBeenCalledWith(update)
-
-    unsubscribe()
+    const store = latest.subagentTranscripts.select(session, detail)
+    expect(store.getState().sessions[0].messages.at(-1)?.content).toBe('Before any view exists')
+    expect(latest.subagentTranscripts.select(session, detail)).toBe(store)
     act(() => publish(update))
-    expect(listener).toHaveBeenCalledOnce()
+    expect(store.getState().sessions[0].messages.at(-1)?.content).toBe('Before any view exists')
   })
 
   it('publishes runtime adoption as preparation and releases it before opening the prompt', async () => {

@@ -1,3 +1,4 @@
+import { JournalAttributes } from '@/pages/literature/JournalAttributes'
 import type { LiteratureAnnotationSearchView } from '../../../../shared/literature'
 import { createBookmarkPreviewItem } from '@/pages/workspace/annotations/annotation-reveal'
 import {
@@ -217,6 +218,9 @@ const SearchResultRow = memo(function SearchResultRow({
           <div className="search-result-excerpt">
             <SearchHighlight text={display} query={query} />
           </div>
+        ) : null}
+        {result.kind === 'library' && 'item' in result.item ? (
+          <JournalAttributes item={result.item.item} itemId={result.item.id} />
         ) : null}
         <div className="search-result-meta">
           <span className="truncate" title={metadata}>
