@@ -1680,6 +1680,16 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(diagnosticText).toContain('"phase":"sandbox-cleanup"')
     expect(diagnosticText).toContain('"result":"incomplete"')
     expect(diagnosticText).toContain('"incompleteStageCount":3')
+    for (const phase of ['sandbox-prepare', 'sandbox-cleanup']) {
+      const measured = records as Array<{ data?: { phase?: string; durationMs?: number } }>
+      const durations = measured.filter(({ data }) => data?.phase === phase)
+      expect(durations).toHaveLength(2)
+      for (const { data } of durations) {
+        expect(data?.durationMs).toEqual(expect.any(Number))
+        expect(Number.isFinite(data?.durationMs)).toBe(true)
+        expect(data!.durationMs).toBeGreaterThanOrEqual(0)
+      }
+    }
     expect(diagnosticText).not.toContain('python script.py')
     expect(diagnosticText).not.toContain('C:\\\\workspace')
     expect(diagnosticText).not.toContain('researcher')

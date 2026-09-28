@@ -626,10 +626,12 @@ const runShellCommand = (
           platform === 'win32' &&
           child.pid !== undefined &&
           launchOwnership &&
-          sandboxed?.confirmProcessTreeTermination
+          sandboxed &&
+          (sandboxed.confirmProcessTreeTermination || runtimeBinding.kind === 'wsl2-bash')
         ) {
-          // A short-lived supervisor can exit before the separate start-identity query. Keep the
-          // durable launch intent and collect its real result; only proven tree cleanup releases it.
+          // A supervisor or WSL launcher can exit before the separate start-identity query. Keep
+          // the durable intent and real result; native tree proof or exact WSL guest cleanup must
+          // still succeed in finish() before the intent is released.
           releaseProcessOwnership = launchOwnership.abort
         } else {
           // spawn can emit its error asynchronously after the missing PID made claim fail.

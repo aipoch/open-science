@@ -16,6 +16,7 @@ import {
 } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { assertProcessTreeSupport } from '../process-tree'
 
 import {
@@ -343,6 +344,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    const preparationStartedAt = performance.now()
     assertProcessTreeSupport(this.platform)
     const runtimeAccessRevision = this.runtimeAccessRevision
     await this.initialize()
@@ -444,11 +446,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         executionReference: invocation.executionReference,
         phase: 'sandbox-prepare',
         result: 'complete',
+        durationMs: Math.round(performance.now() - preparationStartedAt),
         platform: this.platform,
         target: invocation.target?.kind ?? 'native',
         runtime: invocation.runtime
       })
     } catch (error) {
+      const preparationDurationMs = Math.round(performance.now() - preparationStartedAt)
       if (retained) {
         retained.debt = true
         retained.blocked = true
@@ -523,6 +527,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         }
       }
       this.log.error('sandbox process preparation failed', {
+        executionReference: invocation.executionReference,
+        phase: 'sandbox-prepare',
+        result: 'failed',
+        durationMs: preparationDurationMs,
         platform: this.platform,
         runtime: invocation.runtime,
         ...diagnosticErrorFields(error)
@@ -550,6 +558,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       activeExecutionGrants = new Set()
       executionActive = false
       cleanupPromise = (async () => {
+        const cleanupStartedAt = performance.now()
         const sandboxCleanup = await Promise.resolve(
           wrapped.cleanup(cleanupReason!, cleanupOutcome!)
         ).then(
@@ -598,6 +607,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           executionReference: invocation.executionReference,
           phase: 'sandbox-cleanup',
           result: cleanupComplete(result) ? 'complete' : 'incomplete',
+          durationMs: Math.round(performance.now() - cleanupStartedAt),
           platform: this.platform,
           target: invocation.target?.kind ?? 'native',
           runtime: invocation.runtime,

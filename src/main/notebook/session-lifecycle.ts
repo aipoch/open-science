@@ -501,7 +501,11 @@ class NotebookSessionLifecycleOwner {
       // Holding the lane teardown gate while waiting closes both sides of the race: an earlier revoke
       // must finish before removal, while a later revoke cannot enter until the lane is already gone.
       await this.options.waitForRevocationDrains()
-      return this.options.sessions.remove(lane)
+      const session = this.options.sessions.get(lane)
+      const removed = await this.options.sessions.remove(lane)
+      // Registry removal invalidates activity even when process reaping remains unconfirmed.
+      if (session) this.notifyChanged(session)
+      return removed
     })
     if (!result.reaped) {
       throw new Error(

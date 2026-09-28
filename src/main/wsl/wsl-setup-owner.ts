@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { arch, release } from 'node:os'
+import { win32 } from 'node:path'
 
 import {
   RECOMMENDED_WSL_DISTRO,
@@ -93,10 +94,32 @@ export const WSL_DISTRO_INSTALL_TIMEOUT_MS = 10 * 60_000
 export const WSL_DEPENDENCY_INSTALL_TIMEOUT_MS = 10 * 60_000
 export const WSL_SETUP_DIAGNOSTICS_STALE = 'WSL_SETUP_DIAGNOSTICS_STALE'
 
-const decodeCommandOutput = (value: Buffer): string => {
-  const sample = value.subarray(0, Math.min(value.length, 64))
-  const nullBytes = [...sample].filter((byte) => byte === 0).length
-  return value.toString(nullBytes > sample.length / 4 ? 'utf16le' : 'utf8')
+// Redirected wsl.exe output is not consistently encoded: recent builds honor WSL_UTF8 while
+// localized builds can still return BOM-less UTF-16LE. Keep detection as a fallback for both.
+const isLikelyUtf16Le = (value: Buffer): boolean => {
+  if (value.length < 2 || value.length % 2 !== 0) return false
+  if (value[0] === 0xff && value[1] === 0xfe) return true
+  const sample = value.subarray(0, Math.min(value.length, 256))
+  let oddNullBytes = 0
+  let evenNullBytes = 0
+  for (let index = 0; index + 1 < sample.length; index += 2) {
+    if (sample[index] === 0) evenNullBytes += 1
+    if (sample[index + 1] === 0) oddNullBytes += 1
+  }
+  const pairs = Math.floor(sample.length / 2)
+  return oddNullBytes / pairs >= 0.2 && evenNullBytes / pairs < 0.05
+}
+
+export const decodeWslCommandOutput = (value: Buffer): string => {
+  if (value.length === 0) return ''
+  if (isLikelyUtf16Le(value)) return value.toString('utf16le')
+  return value.toString('utf8')
+}
+
+export const resolveWslExecutable = (env: NodeJS.ProcessEnv = process.env): string => {
+  const windowsRoot = env.SystemRoot || env.WINDIR
+  if (!windowsRoot) return 'wsl.exe'
+  return win32.join(windowsRoot, 'System32', 'wsl.exe')
 }
 
 const commandExitCode = (error: unknown): number => {
@@ -115,14 +138,19 @@ const executeWsl: WslCommandRunner = {
   run: (args, options) =>
     new Promise((resolve) => {
       execFile(
-        'wsl.exe',
+        resolveWslExecutable(),
         [...args],
-        { windowsHide: true, timeout: options?.timeoutMs ?? 15_000, encoding: 'buffer' },
+        {
+          windowsHide: true,
+          timeout: options?.timeoutMs ?? 15_000,
+          encoding: 'buffer',
+          env: { ...process.env, WSL_UTF8: '1' }
+        },
         (error, stdout, stderr) => {
           const failure = commandFailure(error)
           resolve({
-            stdout: decodeCommandOutput(stdout),
-            stderr: decodeCommandOutput(stderr),
+            stdout: decodeWslCommandOutput(stdout),
+            stderr: decodeWslCommandOutput(stderr),
             exitCode: commandExitCode(error),
             ...(failure ? { failure } : {})
           })
@@ -163,11 +191,12 @@ const elevatedWslPlatformInstaller: WslPlatformInstaller = {
 }
 
 export const createWslTerminalLauncher = (
-  spawnProcess: typeof spawn = spawn
+  spawnProcess: typeof spawn = spawn,
+  resolveExecutable: () => string = resolveWslExecutable
 ): WslTerminalLauncher => ({
   open: (args) =>
     new Promise((resolve, reject) => {
-      const child = spawnProcess('wsl.exe', [...args], {
+      const child = spawnProcess(resolveExecutable(), [...args], {
         detached: true,
         windowsHide: false,
         stdio: 'ignore',
@@ -295,6 +324,14 @@ const platformFailure = (output: string): { state: WslSetupState; code: string }
     return { state: 'not-installed', code: 'wsl_not_installed' }
   }
   return { state: 'failed', code: 'wsl_probe_failed' }
+}
+
+const wslStatusReportsPlatformFailure = (output: string): boolean =>
+  /(?:^|\n)\s*WSL2(?:\s|:)/i.test(output)
+
+const probeFailureStage = (result: WslCommandResult): WslSetupFailure['stage'] => {
+  const output = `${result.stdout}\n${result.stderr}`
+  return /0x80370102|HCS_E_HYPERV_NOT_INSTALLED/i.test(output) ? 'platform' : 'distribution'
 }
 
 const supportErrorCode = (snapshot: WslSetupSnapshot): string => {
@@ -1508,19 +1545,25 @@ export class WslSetupOwner {
         failure: diagnosticFailure('platform', failure.code, status)
       })
     }
+    if (wslStatusReportsPlatformFailure(`${status.stdout}\n${status.stderr}`)) {
+      return setupSnapshot('failed', operationReference, [], {
+        errorCode: 'wsl_probe_failed',
+        failure: diagnosticFailure('platform', 'wsl_probe_failed', status)
+      })
+    }
 
     const names = await this.runner.run(['--list', '--quiet'])
     if (names.exitCode !== 0) {
       return setupSnapshot('failed', operationReference, [], {
         errorCode: 'wsl_probe_failed',
-        failure: diagnosticFailure('distribution', 'wsl_probe_failed', names)
+        failure: diagnosticFailure(probeFailureStage(names), 'wsl_probe_failed', names)
       })
     }
     const listed = await this.runner.run(['--list', '--verbose'])
     if (listed.exitCode !== 0) {
       return setupSnapshot('failed', operationReference, [], {
         errorCode: 'wsl_probe_failed',
-        failure: diagnosticFailure('distribution', 'wsl_probe_failed', listed)
+        failure: diagnosticFailure(probeFailureStage(listed), 'wsl_probe_failed', listed)
       })
     }
     const distros = parseWslDistros(names.stdout, listed.stdout).filter(isSelectableDistro)

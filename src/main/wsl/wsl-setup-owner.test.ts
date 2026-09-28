@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { SettingsInstallCoordinator } from '../settings/settings-install-coordinator'
 import {
   boundedWslDiagnosticText,
+  decodeWslCommandOutput,
   RECOMMENDED_WSL_DISTRO,
+  resolveWslExecutable,
   WSL_DISTRO_INSTALL_TIMEOUT_MS,
   WSL_SETUP_DIAGNOSTICS_STALE,
   WslSetupOwner,
@@ -50,6 +52,34 @@ const makeOwner = (
   })
 
 describe('WslSetupOwner', () => {
+  it('decodes localized UTF-16LE WSL output when CJK text defeats a short NUL-byte sample', () => {
+    const localized = Buffer.from(
+      '默认版本: 2\r\n当前计算机配置不支持 WSL1。\r\nWSL2 无法启动，因为此计算机上未启用虚拟化。\r\n',
+      'utf16le'
+    )
+
+    expect(decodeWslCommandOutput(localized)).toContain('WSL2 无法启动')
+  })
+
+  it('decodes BOM-less UTF-16LE output made entirely of ASCII characters', () => {
+    const status = 'Default Version: 2\r\nWSL2 cannot start because virtualization is disabled.\r\n'
+
+    expect(decodeWslCommandOutput(Buffer.from(status, 'utf16le'))).toBe(status)
+  })
+
+  it('preserves valid UTF-8 WSL output', () => {
+    const output = 'WSL version: 2.7.14.0\n'
+
+    expect(decodeWslCommandOutput(Buffer.from(output, 'utf8'))).toBe(output)
+  })
+
+  it('resolves the same System32 WSL entry point used by the sandbox', () => {
+    expect(resolveWslExecutable({ SystemRoot: 'D:\\Windows' })).toBe(
+      'D:\\Windows\\System32\\wsl.exe'
+    )
+    expect(resolveWslExecutable({})).toBe('wsl.exe')
+  })
+
   it('creates a privacy-safe support handoff from the current failed probe', async () => {
     const owner = makeOwner({
       runner: makeRunner(
@@ -1200,12 +1230,16 @@ describe('WslSetupOwner', () => {
     const spawnProcess = vi.fn(() => child) as unknown as typeof spawn
     const launch = createWslTerminalLauncher(spawnProcess).open(['--distribution', 'Ubuntu-22.04'])
 
-    expect(spawnProcess).toHaveBeenCalledWith('wsl.exe', ['--distribution', 'Ubuntu-22.04'], {
-      detached: true,
-      windowsHide: false,
-      stdio: 'ignore',
-      shell: false
-    })
+    expect(spawnProcess).toHaveBeenCalledWith(
+      resolveWslExecutable(),
+      ['--distribution', 'Ubuntu-22.04'],
+      {
+        detached: true,
+        windowsHide: false,
+        stdio: 'ignore',
+        shell: false
+      }
+    )
     child.emit('spawn')
     await expect(launch).resolves.toBeUndefined()
     expect(child.unref).toHaveBeenCalledOnce()
@@ -1520,6 +1554,45 @@ describe('WslSetupOwner', () => {
       state: 'not-installed',
       errorCode: 'wsl_not_installed'
     })
+  })
+
+  it('records the stable WSL virtualization failure as a platform diagnostic', async () => {
+    const owner = makeOwner({
+      runner: makeRunner(
+        result('Default Version: 2'),
+        result('Ubuntu-22.04'),
+        result('', 1, 'Error: 0x80370102 The virtual machine could not be started.')
+      ),
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: vi.fn()
+    })
+
+    await expect(owner.probe()).resolves.toMatchObject({
+      state: 'failed',
+      errorCode: 'wsl_probe_failed',
+      failure: { stage: 'platform', code: 'wsl_probe_failed' }
+    })
+  })
+
+  it('stops before distro probing when WSL status reports a localized WSL2 platform failure', async () => {
+    const runner = makeRunner(result('默认版本: 2\nWSL2 无法启动，因为此计算机上未启用虚拟化。'))
+    const owner = makeOwner({
+      runner,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: vi.fn()
+    })
+
+    await expect(owner.probe()).resolves.toMatchObject({
+      state: 'failed',
+      errorCode: 'wsl_probe_failed',
+      failure: {
+        stage: 'platform',
+        stdout: '默认版本: 2\nWSL2 无法启动，因为此计算机上未启用虚拟化。'
+      }
+    })
+    expect(runner.run).toHaveBeenCalledOnce()
   })
 
   it('rejects case-variant Docker Desktop selections before persistence or probing', async () => {

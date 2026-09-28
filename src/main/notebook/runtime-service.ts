@@ -1500,9 +1500,21 @@ class NotebookRuntimeService {
       throw error
     }
     if (current.run.status === 'queued' || current.run.status === 'running') {
-      this.backgroundRuns
-        .get(current.run.runId)
-        ?.controller.abort(new Error('Background Run cancelled explicitly.'))
+      const reason = new Error('Background Run cancelled explicitly.')
+      if (current.run.kernelKind === 'bash') {
+        // Use the same write-before-abort boundary as teardown, scoped to the authorized Run.
+        // Other subscribers must see cancellation intent while guest cleanup is still running.
+        await this.executionOwner.cancelShellRuns(
+          {
+            projectId: current.receipt.projectId,
+            sessionId: request.sessionId,
+            runId: current.run.runId
+          },
+          reason
+        )
+      } else {
+        this.backgroundRuns.get(current.run.runId)?.controller.abort(reason)
+      }
       await this.waitForBackgroundRun(current.run.runId)
     }
     try {

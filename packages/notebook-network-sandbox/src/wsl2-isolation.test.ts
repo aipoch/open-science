@@ -201,7 +201,11 @@ describe('WSL2 sandbox adapter', () => {
     ).toBe(false)
     expect(launch.env.PATH).toBeUndefined()
     expect(launch.env.AWS_SECRET_ACCESS_KEY).toBeUndefined()
+    expect(launch.env.WSL_UTF8).toBe('1')
     expect(mapPath).toHaveBeenCalledWith('C:\\Open-Science\\Workspace 路径', undefined)
+    // cwd, mounts and environment channels reuse paths; each wslpath call starts a Windows process.
+    const mappedPaths = mapPath.mock.calls.map(([path]) => path)
+    expect(mappedPaths).toHaveLength(new Set(mappedPaths).size)
     launch.beginSpawn().started()
     await expect(launch.release()).resolves.toEqual({
       processesTerminated: true,

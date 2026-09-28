@@ -902,6 +902,7 @@ describe('notebook runtime service', () => {
 
   it('keeps Session deletion fenced when a persistent process tree cannot be proven reaped', async () => {
     const root = await createStorageRoot()
+    const activityKernelCounts: number[] = []
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -918,7 +919,14 @@ describe('notebook runtime service', () => {
           outputs: []
         }),
         shutdown: async () => ({ reaped: false })
-      })
+      }),
+      callbacks: {
+        onNotebookChanged: () => {
+          activityKernelCounts.push(
+            service.getProjectActivity({ projectId: 'project-1' }).kernels.length
+          )
+        }
+      }
     })
     const request = {
       projectId: 'project-1',
@@ -927,6 +935,9 @@ describe('notebook runtime service', () => {
     }
     await service.execute({ ...request, code: '1' })
 
+    expect(service.getProjectActivity({ projectId: 'project-1' }).kernels).toHaveLength(1)
+    activityKernelCounts.length = 0
+
     const cleanupError = await service.shutdownSession('session-1').catch((error: unknown) => error)
     expect(cleanupError).toBeInstanceOf(AggregateError)
     expect((cleanupError as AggregateError).errors).toEqual([
@@ -934,6 +945,7 @@ describe('notebook runtime service', () => {
         message: expect.stringContaining('persistent process tree was not reaped')
       })
     ])
+    expect(activityKernelCounts).toEqual([0])
     await expect(service.state(request)).rejects.toThrow('Session is being deleted.')
   })
 
@@ -4172,7 +4184,9 @@ describe('notebook runtime service', () => {
           expect(executions).toBe(1)
           await expect(
             service.cancelBackgroundRun({ ...request, runId: first.runId })
-          ).resolves.toMatchObject({ run: { status: 'cancelled' } })
+          ).resolves.toMatchObject({
+            run: { status: 'cancelled', cancellationRequestedAt: expect.any(Number) }
+          })
           await expect(
             service.cancelBackgroundRun({ ...request, runId: first.runId })
           ).resolves.toMatchObject({ run: { status: 'cancelled' } })
@@ -4186,6 +4200,52 @@ describe('notebook runtime service', () => {
         }
       }
     )
+
+    it('still stops an explicitly cancelled background Shell when saving intent fails', async () => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const started = createDeferred<void>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository,
+        backgroundExecutionEnabled: true,
+        shellProcess: {
+          execute: async (request) => {
+            started.resolve()
+            await new Promise<void>((resolve) =>
+              request.signal?.addEventListener('abort', () => resolve(), { once: true })
+            )
+            return { stdout: '', stderr: 'cancelled', exitCode: null, cancelled: true }
+          }
+        }
+      })
+      const input = {
+        sessionId: 'shell-cancel-write-failure',
+        workspaceCwd: root,
+        command: 'wait-for-cancel',
+        background: true,
+        executionInvocationId: 'cancel-write-failure'
+      }
+      const receipt = await service.executeShellBackground(input)
+      await started.promise
+      const write = vi
+        .spyOn(repository, 'requestRunCancellation')
+        .mockRejectedValueOnce(new Error('disk unavailable'))
+      try {
+        await expect(
+          service.cancelBackgroundRun({ ...input, runId: receipt.runId })
+        ).rejects.toThrow('Shell cancellation intent could not be persisted')
+        await service.waitForBackgroundRun(receipt.runId)
+        expect(
+          (await service.getBackgroundRun({ ...input, runId: receipt.runId })).run.status
+        ).toBe('cancelled')
+      } finally {
+        write.mockRestore()
+        await service.dispose()
+      }
+    })
 
     it('keeps a background Shell Run retryable when its durable result is temporarily unreadable', async () => {
       const root = await createStorageRoot()
@@ -8899,7 +8959,8 @@ describe('notebook runtime service', () => {
     await teardown
 
     expect(shutdownExecutor).toHaveBeenCalledTimes(1)
-    expect(changedSessions).toHaveLength(changedCountBefore + 1)
+    // The drained persistence callback and the completed lane removal each invalidate activity.
+    expect(changedSessions).toHaveLength(changedCountBefore + 2)
   })
 
   it('clears a stale terminated status once a run completes on the transparently respawned kernel', async () => {
@@ -15454,6 +15515,21 @@ describe('v4 runtime bindings & agent tools', () => {
       idle: 0,
       dormant: 0
     })
+  })
+
+  it('notifies Project activity consumers after a Kernel lane is removed by shutdown', async () => {
+    const root = await createStorageRoot()
+    const { service, changedSessions } = lifecycleCallbackHarness(root)
+    const request = { projectId: 'project-a', sessionId: 'session-a', workspaceCwd: root }
+    await service.execute({ ...request, language: 'python', code: '1' })
+    expect(service.getProjectActivity({ projectId: 'project-a' }).kernels).toHaveLength(1)
+    changedSessions.length = 0
+    await service.shutdown(request)
+    expect(service.getProjectActivity({ projectId: 'project-a' }).kernels).toEqual([])
+    expect(changedSessions).toEqual(['session-a'])
+    // Repeated shutdown of an absent lane must not manufacture additional invalidations.
+    await service.shutdown(request)
+    expect(changedSessions).toEqual(['session-a'])
   })
 
   it('reports only live Kernels owned by the requested Project without materializing dormant Sessions', async () => {
