@@ -344,6 +344,38 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    try {
+      return await this.prepare(invocation)
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === 'NotebookSandboxPreparationCleanupError' ||
+          error.message === 'SHELL_CLEANUP_INCOMPLETE: Retained command cleanup is unverified.' ||
+          error.message ===
+            'SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.')
+      ) {
+        const target = invocation.target ?? { kind: 'native' as const }
+        // Retain only the original cleanup capabilities. Admission of another command is not
+        // proof that these resources were reaped (notably on macOS).
+        const pending = [...this.pendingCommandCleanups].filter((cleanup) =>
+          sameCleanupDomain(cleanup.target, target)
+        )
+        if (pending.length > 0) {
+          Object.assign(error, {
+            retryCleanup: async (): Promise<boolean> => {
+              const results = await Promise.all(pending.map((cleanup) => cleanup.retry()))
+              if (!results.every(cleanupComplete)) return false
+              await this.reconcilePendingCommandCleanups(target)
+              return true
+            }
+          })
+        }
+      }
+      throw error
+    }
+  }
+
+  private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
     assertProcessTreeSupport(this.platform)
     const runtimeAccessRevision = this.runtimeAccessRevision

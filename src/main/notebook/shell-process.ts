@@ -269,7 +269,10 @@ const terminateShellOnTimeout = async (
 // Runs one fresh platform-native process with the Session cwd and handoff channel. Spawn failure,
 // non-zero exit, and timeout all resolve as ordinary results instead of rejecting.
 class ShellPreparationError extends Error {
-  constructor(readonly result: NotebookShellResult) {
+  constructor(
+    readonly result: NotebookShellResult,
+    readonly retryCleanup?: () => Promise<boolean>
+  ) {
     super(result.stderr)
   }
 }
@@ -431,13 +434,23 @@ const prepareShellLaunchOptions = async (
       })
     }
     if (message.startsWith('SHELL_CLEANUP_INCOMPLETE:')) {
-      throw new ShellPreparationError({
-        stdout: '',
-        stderr: message,
-        exitCode: null,
-        errorCode: 'shell-cleanup-incomplete',
-        recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
-      })
+      const retryCleanup =
+        error instanceof Error &&
+        'retryCleanup' in error &&
+        typeof error.retryCleanup === 'function'
+          ? (error.retryCleanup.bind(error) as () => Promise<boolean>)
+          : undefined
+      throw new ShellPreparationError(
+        {
+          stdout: '',
+          stderr: message,
+          exitCode: null,
+          errorCode: 'shell-cleanup-incomplete',
+          ownedTreeReaped: false,
+          recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
+        },
+        retryCleanup
+      )
     }
     if (runtimeBinding.kind !== 'wsl2-bash') throw error
     if (options.signal?.aborted) {
@@ -988,6 +1001,7 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
             if (!(error instanceof ShellPreparationError)) throw error
             return {
               completion: Promise.resolve(error.result),
+              retryCleanup: error.retryCleanup,
               beginExecution: () => () => undefined
             }
           }

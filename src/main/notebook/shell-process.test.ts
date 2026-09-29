@@ -169,10 +169,55 @@ describe('notebook shell process behavior', () => {
       recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
     })
     expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
-    expect(wrap).toHaveBeenCalledTimes(2)
-    expect(await adapter.shutdown()).toEqual({ reaped: true })
+    expect(wrap).toHaveBeenCalledTimes(1)
+    expect(await adapter.shutdown()).toEqual({ reaped: false })
     expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
   })
+
+  it.each(['incomplete', 'throw'])(
+    'retries preparation cleanup on shutdown after %s proof',
+    async (failure) => {
+      let verified = false
+      const retryCleanup = vi.fn(async () => {
+        if (!verified && failure === 'throw') throw new Error('cleanup still unavailable')
+        return verified
+      })
+      const wrap = vi
+        .fn()
+        .mockRejectedValue(
+          Object.assign(
+            new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.'),
+            { retryCleanup }
+          )
+        )
+      const adapter = new NotebookShellProcessAdapter(process.platform, { wrap })
+      const request = {
+        command: 'echo never-started',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session',
+        projectId: 'project'
+      }
+      const result = await adapter.execute(request)
+      expect(result).toMatchObject({
+        errorCode: 'shell-cleanup-incomplete',
+        ownedTreeReaped: false
+      })
+      wrap.mockRejectedValueOnce(new Error('unrelated preparation failure must never run'))
+      expect(await adapter.execute(request)).toMatchObject({
+        errorCode: 'shell-cleanup-incomplete'
+      })
+      expect(wrap).toHaveBeenCalledOnce()
+      expect(await adapter.shutdown()).toEqual({ reaped: false })
+      verified = true
+      expect(await adapter.shutdown()).toEqual({ reaped: true })
+      expect(retryCleanup).toHaveBeenCalledTimes(3)
+      expect(wrap).toHaveBeenCalledOnce()
+      expect(await adapter.shutdown()).toEqual({ reaped: true })
+      expect(retryCleanup).toHaveBeenCalledTimes(3)
+    }
+  )
 
   it('rejects unavailable process ownership before sandbox preparation', async () => {
     const admission = vi.spyOn(processTree, 'assertProcessTreeSupport').mockImplementation(() => {

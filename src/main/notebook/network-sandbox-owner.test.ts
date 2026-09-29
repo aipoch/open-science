@@ -3509,7 +3509,9 @@ describe('macOS retained cleanup admission', () => {
         const otherRoot = runtimeWrap.mock.calls[0][0].env.TMPDIR!
         await writeFile(join(otherRoot, 'sentinel'), 'other session')
         runtimeWrap.mockRejectedValueOnce(new Error('transient preparation failure'))
-        await expect(owner.wrap(invocation)).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+        const preparationError = await owner.wrap(invocation).catch((error) => error)
+        expect(preparationError.message).toContain('SHELL_CLEANUP_INCOMPLETE')
+        expect(preparationError.retryCleanup).toBeTypeOf('function')
         const failedCommand = runtimeWrap.mock.calls[1][0]
         const failedRoot = failedCommand.env.TMPDIR!
         await expect(owner.wrap(invocation)).rejects.toThrow()
@@ -3518,6 +3520,8 @@ describe('macOS retained cleanup admission', () => {
         expect(existsSync(failedRoot)).toBe(true)
         expect(existsSync(failedRoot + '.receipt')).toBe(true)
         recovered = true
+        expect(await preparationError.retryCleanup()).toBe(true)
+        expect(runtimeWrap).toHaveBeenCalledTimes(2)
         const next = await owner.wrap(invocation)
         expect(runtimeWrap).toHaveBeenCalledTimes(3)
         expect(cleanup.mock.calls.map(([id]) => id)).toEqual([

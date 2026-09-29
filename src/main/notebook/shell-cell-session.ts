@@ -92,13 +92,12 @@ export class ShellCellSession {
 
   private async verifyCleanup(): Promise<boolean> {
     if (
-      (!this.launchedProcess && this.processResult?.ownedTreeReaped !== false) ||
       this.cleanupVerified ||
       (this.processResult?.ownedTreeReaped !== false &&
         this.processResult?.errorCode !== 'shell-cleanup-incomplete')
     )
       return true
-    this.cleanupVerified = (await this.retryCleanup?.().catch(() => false)) ?? false
+    this.cleanupVerified = (await this.retryCleanup?.().catch(() => false)) === true
     return this.cleanupVerified
   }
 
