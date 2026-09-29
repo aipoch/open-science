@@ -962,6 +962,7 @@
     "Completed remote job: {{intent}}": "완료된 원격 작업: {{intent}}",
     "Compressed": "압축",
     "Compute": "컴퓨팅",
+    "{{count}} hosts_other": "호스트 {{count}}개",
     "Concurrent job limit": "동시 작업 제한",
     "Conda channel mirror": "콘다 채널 미러",
     "Conda: {{name}}": "콘다: {{name}}",

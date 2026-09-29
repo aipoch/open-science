@@ -925,6 +925,8 @@
     "Completed remote job: {{intent}}": "Abgeschlossener Remote-Job: {{intent}}",
     "Compressed": "Komprimiert",
     "Compute": "Rechenressourcen",
+    "{{count}} hosts_one": "{{count}} Host",
+    "{{count}} hosts_other": "{{count}} Hosts",
     "Concurrent job limit": "Beschränkung gleichzeitiger Jobs",
     "Conda channel mirror": "Conda-Kanalspiegel",
     "Conda: {{name}}": "Conda: {{name}}",

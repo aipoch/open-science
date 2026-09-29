@@ -1072,6 +1072,7 @@
     "Completed remote job: {{intent}}": "已完成的远程作业：{{intent}}",
     "Compressed": "压缩后",
     "Compute": "算力",
+    "{{count}} hosts_other": "{{count}} 台主机",
     "Concurrent job limit": "并发作业上限",
     "Conda channel mirror": "Conda 频道镜像",
     "Conda: {{name}}": "Conda：{{name}}",

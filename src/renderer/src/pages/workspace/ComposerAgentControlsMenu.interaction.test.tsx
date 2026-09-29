@@ -1051,14 +1051,14 @@ describe('ComposerAgentControlsMenu', () => {
     expect(container.textContent).toContain('Manage compute...')
   })
 
-  it('keeps the Compute summary stable when host state changes', () => {
+  it('shows the registered host count until a run target is selected', () => {
     act(() => {
       root.render(
         <ComposerAgentControlsMenu
           profile="ask"
           autoReviewEnabled={false}
-          enabledComputeHosts={['ssh:cluster-1', 'ssh:gpu-box']}
-          selectedComputeHosts={['ssh:cluster-1', 'ssh:gpu-box']}
+          enabledComputeHosts={['ssh:cluster-1']}
+          selectedComputeHosts={[]}
           onProfileChange={vi.fn()}
           onAutoReviewChange={vi.fn()}
           onComputeHostEnabledChange={vi.fn()}
@@ -1067,8 +1067,123 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
+    expect(container.querySelector('[data-testid="compute-status-capsule"]')?.textContent).toBe(
+      '2 hosts'
+    )
     expect(container.textContent).toContain('Run jobs on a remote SSH host, or manage hosts.')
-    expect(container.textContent).not.toContain('2 execution targets selected.')
+
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          enabledComputeHosts={[]}
+          selectedComputeHosts={['ssh:cluster-1']}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="compute-status-capsule"]')?.textContent).toBe(
+      'cluster-1'
+    )
+    expect(container.textContent).toContain('Compute execution target: cluster-1')
+  })
+
+  it('shows zero and singular host counts without a selected target', () => {
+    const props = {
+      profile: 'ask' as const,
+      autoReviewEnabled: false,
+      selectedComputeHosts: [],
+      onProfileChange: vi.fn(),
+      onAutoReviewChange: vi.fn()
+    }
+
+    act(() => {
+      useComputeStore.setState({ hosts: [] })
+      root.render(<ComposerAgentControlsMenu {...props} />)
+    })
+    expect(container.querySelector('[data-testid="compute-status-capsule"]')?.textContent).toBe(
+      '0 hosts'
+    )
+
+    act(() => useComputeStore.setState({ hosts: [createHost()] }))
+    expect(container.querySelector('[data-testid="compute-status-capsule"]')?.textContent).toBe(
+      '1 host'
+    )
+  })
+
+  it('keeps selected target identities visible before the host list loads', () => {
+    act(() => {
+      useComputeStore.setState({ hosts: [], isLoaded: false })
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          selectedComputeHosts={['ssh:cluster-1', 'ssh:gpu-box']}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="compute-status-capsule"]')?.textContent).toBe(
+      'ssh:cluster-1+1'
+    )
+    expect(container.textContent).toContain('Compute execution targets: ssh:cluster-1, ssh:gpu-box')
+  })
+
+  it('shows an unavailable state when the host list fails to load', () => {
+    act(() => {
+      useComputeStore.setState({ hosts: [], isLoaded: true, loadError: 'IPC failed' })
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          selectedComputeHosts={[]}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="compute-status-capsule"]')?.textContent).toBe(
+      'Unavailable'
+    )
+    expect(container.textContent).not.toContain('0 hosts')
+    expect(container.textContent).not.toContain('No SSH hosts registered')
+  })
+
+  it('keeps long target names compact and reveals every selected name on hover', () => {
+    const longName = 'cluster-with-a-very-long-display-name'
+    act(() => {
+      useComputeStore.setState({
+        hosts: [
+          createHost({ displayName: longName }),
+          createHost({
+            id: 'host-2',
+            providerId: 'ssh:gpu-box',
+            displayName: 'gpu-box',
+            sshAlias: 'gpu-box'
+          })
+        ]
+      })
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          selectedComputeHosts={['ssh:cluster-1', 'ssh:gpu-box']}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    const capsule = container.querySelector('[data-testid="compute-status-capsule"]')
+    expect(capsule?.textContent).toBe(`${longName}+1`)
+    expect(capsule?.firstElementChild?.className).toContain('truncate')
+    expect(container.textContent).toContain(`Compute execution targets: ${longName}, gpu-box`)
   })
 
   it('enables a hidden host as Available without selecting it', () => {

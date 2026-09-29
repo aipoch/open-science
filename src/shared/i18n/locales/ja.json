@@ -962,6 +962,7 @@
     "Completed remote job: {{intent}}": "完了したリモートジョブ：{{intent}}",
     "Compressed": "圧縮された",
     "Compute": "コンピュート",
+    "{{count}} hosts_other": "{{count}} ホスト",
     "Concurrent job limit": "同時ジョブ制限",
     "Conda channel mirror": "Conda チャネルミラー",
     "Conda: {{name}}": "Conda：{{name}}",
