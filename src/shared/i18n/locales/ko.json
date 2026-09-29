@@ -133,6 +133,7 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Enter a valid number. The last valid journal filters are still applied.": "유효한 숫자를 입력하세요. 마지막으로 유효했던 학술지 필터가 계속 적용됩니다.",
     "Batch actions": "일괄 작업",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 이름으로 ClinPGx 약물/화학물질 레코드를 확인합니다.",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 HGNC 기호로 ClinPGx 유전자 레코드를 확인합니다.",

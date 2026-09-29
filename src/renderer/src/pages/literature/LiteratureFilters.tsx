@@ -217,29 +217,40 @@ export function LiteratureFilters({
   const [rows, setRows] = useState(initialRows)
   const nextId = useRef(rows.length)
   const applied = JSON.stringify(journalFilters)
+  const invalidRows = new Set(
+    rows
+      .filter(
+        (row) =>
+          fields.find((field) => field.key === row.key)?.field?.kind === 'number' &&
+          row.operator !== 'missing' &&
+          row.value.trim() !== '' &&
+          !Number.isFinite(Number(row.value))
+      )
+      .map((row) => row.id)
+  )
   const pending = JSON.stringify(
-    rows.flatMap((row): JournalAttributeFilter[] => {
-      const field = fields.find((field) => field.key === row.key)
-      if (!field) {
-        // Keep an applied condition while its dataset definitions are still loading.
-        const existing = journalFilters.find(
-          (filter) => journalKey(filter.datasetId, filter.fieldId) === row.key
-        )
-        return existing ? [existing] : []
-      }
-      if (!field.datasetId || !field.field || (row.operator !== 'missing' && !row.value.trim()))
-        return []
-      if (['gt', 'gte', 'lt', 'lte'].includes(row.operator) && !Number.isFinite(Number(row.value)))
-        return []
-      return [
-        {
-          datasetId: field.datasetId,
-          fieldId: field.field.id,
-          operator: row.operator,
-          ...(row.operator === 'missing' ? {} : { value: row.value.trim() })
-        }
-      ]
-    })
+    invalidRows.size
+      ? journalFilters
+      : rows.flatMap((row): JournalAttributeFilter[] => {
+          const field = fields.find((field) => field.key === row.key)
+          if (!field) {
+            // Keep an applied condition while its dataset definitions are still loading.
+            const existing = journalFilters.find(
+              (filter) => journalKey(filter.datasetId, filter.fieldId) === row.key
+            )
+            return existing ? [existing] : []
+          }
+          if (!field.datasetId || !field.field || (row.operator !== 'missing' && !row.value.trim()))
+            return []
+          return [
+            {
+              datasetId: field.datasetId,
+              fieldId: field.field.id,
+              operator: row.operator,
+              ...(row.operator === 'missing' ? {} : { value: row.value.trim() })
+            }
+          ]
+        })
   )
   useEffect(() => {
     if (pending === applied) return
@@ -414,13 +425,30 @@ export function LiteratureFilters({
                   </Select>
                 ) : null}
                 {dynamic && row.operator !== 'missing' ? (
-                  <Input
-                    aria-label={t('Journal attribute value')}
-                    placeholder={t('Value')}
-                    value={row.value}
-                    maxLength={500}
-                    onChange={(event) => update(row.id, { value: event.target.value })}
-                  />
+                  <>
+                    <Input
+                      aria-label={t('Journal attribute value')}
+                      aria-invalid={invalidRows.has(row.id)}
+                      aria-describedby={
+                        invalidRows.has(row.id) ? `${headingId}-${row.id}-error` : undefined
+                      }
+                      placeholder={t('Value')}
+                      value={row.value}
+                      maxLength={500}
+                      onChange={(event) => update(row.id, { value: event.target.value })}
+                    />
+                    {invalidRows.has(row.id) ? (
+                      <p
+                        id={`${headingId}-${row.id}-error`}
+                        role="alert"
+                        className="mt-1 text-xs text-destructive"
+                      >
+                        {t(
+                          'Enter a valid number. The last valid journal filters are still applied.'
+                        )}
+                      </p>
+                    ) : null}
+                  </>
                 ) : null}
               </div>
             </div>

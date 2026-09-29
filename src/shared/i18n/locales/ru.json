@@ -136,6 +136,7 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Enter a valid number. The last valid journal filters are still applied.": "Введите допустимое число. По-прежнему применяются последние корректные фильтры журналов.",
     "Batch actions": "Групповые действия",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Разрешите записи лекарств и химических веществ ClinPGx по идентификатору доступа ClinPGx или названию перед поиском фармакогеномных аннотаций.",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "Разрешите записи генов ClinPGx по идентификатору доступа ClinPGx или символу HGNC перед поиском фармакогеномных аннотаций.",
