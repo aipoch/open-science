@@ -285,7 +285,16 @@ describe('SessionPdfContextOwner', () => {
       sessions: {
         readSessionRuntimeContext: async () => ({ version: 1, revision: 0 }),
         patchSessionRuntimeContext: async (request) => {
-          await request.beforePersist?.()
+          await request.beforePersist?.({
+            id: 'session',
+            projectId: 'project',
+            title: 'PDF context',
+            cwd: '/workspace',
+            status: 'idle',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1
+          })
           persist()
           return { version: 1, revision: 1, ...request.patch }
         }

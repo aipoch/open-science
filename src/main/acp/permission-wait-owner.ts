@@ -1,10 +1,12 @@
 import type { AcpPermissionRequest, AcpPermissionResponse } from '../../shared/acp'
 import {
+  materializeSessionConversationGraph,
   sanitizeSessionPermissionRuntimeContext,
   type PersistedChatSession,
   type SessionPermissionRuntimeContext,
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
+import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import type {
   SessionCatalog,
   SessionMutation,
@@ -77,6 +79,8 @@ class AcpPermissionWaitOwner {
         candidate.promptMessageId
       ))
     ) {
+      if (candidate.restoredContinuation)
+        throw new Error('The restored permission request is not on the active Message Branch.')
       return false
     }
 
@@ -95,10 +99,28 @@ class AcpPermissionWaitOwner {
     // reviewed persistence preview so a delayed provider notification cannot bypass its limits.
     await this.prepareRuntimeTranscript?.({ ...candidate, request: permission.request })
 
+    let replacingContinuation = false
+    const assertCurrentContinuation = (): void => {
+      const continuation = candidate.restoredContinuation
+      if (
+        continuation &&
+        (!continuation.isCurrent?.() ||
+          continuation.interactionSequence === undefined ||
+          !continuation.agentFrameId ||
+          !continuation.messageBranchId ||
+          continuation.projectId !== candidate.projectId ||
+          continuation.sessionId !== candidate.request.sessionId ||
+          continuation.promptMessageId !== candidate.promptMessageId)
+      )
+        throw new Error('The restored permission continuation is no longer active.')
+    }
     await this.patch(
       candidate.projectId,
       candidate.request.sessionId,
       (context) => {
+        replacingContinuation = false
+        const continuation = candidate.restoredContinuation
+        assertCurrentContinuation()
         const currentPermission = context.permission
         if (currentPermission) {
           if (
@@ -107,11 +129,51 @@ class AcpPermissionWaitOwner {
           ) {
             return currentPermission
           }
+          if (
+            currentPermission.state === 'continuing' &&
+            continuation &&
+            !continuation.handedOff &&
+            continuation.handoffStarted &&
+            currentPermission.request.requestId === continuation.requestId &&
+            currentPermission.originatingPromptMessageId === continuation.promptMessageId &&
+            currentPermission.fingerprint === continuation.fingerprint
+          ) {
+            replacingContinuation = true
+            return permission
+          }
           throw new Error('Another durable permission request already owns this Session.')
         }
         return permission
       },
-      'waiting-permission'
+      'waiting-permission',
+      () => {
+        // Commit may succeed even if the subsequent renderer publication fails. Never let that
+        // notification failure re-arm the consumed old decision over its committed successor.
+        if (replacingContinuation && candidate.restoredContinuation)
+          candidate.restoredContinuation.handedOff = true
+      },
+      candidate.restoredContinuation
+        ? (session) => {
+            // This runs inside the Session's persistence queue after its final read. Do not call back
+            // into the coordinator here: its reads use the same queue.
+            assertCurrentContinuation()
+            const graph = materializeSessionConversationGraph(session).conversationGraph
+            const continuation = candidate.restoredContinuation!
+            const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+            if (
+              !graph ||
+              !frame ||
+              frame.id !== continuation.agentFrameId ||
+              frame.activeBranchId !== continuation.messageBranchId ||
+              !resolveActiveConversationMessages(graph).some(
+                ({ id }) => id === candidate.promptMessageId
+              )
+            )
+              throw new Error(
+                'The restored permission request is not on the active Message Branch.'
+              )
+          }
+        : undefined
     )
     return true
   }
@@ -156,7 +218,7 @@ class AcpPermissionWaitOwner {
         const permission = context.permission
         if (!permission) return undefined
         if (permission.request.requestId !== requestId) {
-          throw new Error('A different permission request now owns this Session.')
+          return permission
         }
         return undefined
       },
@@ -308,7 +370,9 @@ class AcpPermissionWaitOwner {
     projectId: string,
     sessionId: string,
     update: (context: SessionRuntimeContext) => SessionPermissionRuntimeContext | undefined,
-    sessionStatus: 'waiting-permission' | 'running' | 'idle'
+    sessionStatus: 'waiting-permission' | 'running' | 'idle',
+    onCommitted?: () => void,
+    beforePersist?: (session: PersistedChatSession) => void
   ): Promise<boolean> {
     if (!this.sessions) return false
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -321,8 +385,10 @@ class AcpPermissionWaitOwner {
           sessionId,
           expectedRevision: context.revision,
           patch: { permission },
-          sessionStatus
+          sessionStatus,
+          ...(beforePersist ? { beforePersist } : {})
         })
+        onCommitted?.()
         if (this.publishSessionUpdated) {
           const session = await this.sessions.loadSessionForContinuation(projectId, sessionId)
           await this.publishSessionUpdated(session)

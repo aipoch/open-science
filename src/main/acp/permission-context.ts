@@ -29,7 +29,8 @@ import {
   permissionRequestFingerprint,
   resolveNotebookPermissionContext,
   type AppPermissionRequest,
-  type PermissionWaitHooks
+  type PermissionWaitHooks,
+  type RestoredPermissionContinuation
 } from './permission-broker'
 import type { PermissionPolicyContext } from './permission-policy'
 import {
@@ -525,6 +526,7 @@ class AcpPermissionContext {
           this.options.permissionGrantContext?.projectId ?? routing.resolveProjectId(appSessionId),
         permissionGrantSessionId: this.options.permissionGrantContext?.sessionId,
         promptMessageId: promptInteraction?.promptMessageId,
+        interactionSequence: promptInteraction?.sequence,
         permissionPrompts: promptInteraction?.permissionPrompts
       })
       const selectedOptionId =
@@ -621,23 +623,26 @@ class AcpPermissionContext {
   prepareRestoredDecision(
     permission: SessionPermissionRuntimeContext,
     option: AcpPermissionRequest['options'][number] | undefined,
-    projectId: string
+    projectId: string,
+    continuation?: RestoredPermissionContinuation
   ): Promise<void> {
-    return this.broker.prepareRestoredDecision(permission, option, projectId).then(() => {
-      const allowsReplay = option?.kind.toLowerCase().startsWith('allow_') === true
-      if (!allowsReplay || !notebookExecutionMethod(permission.request.mcpIdentity)) {
-        this.restoredNotebookPresentationCandidates.delete(permission.request.sessionId)
-        return
-      }
-      this.restoredNotebookPresentationCandidates.set(permission.request.sessionId, {
-        originalToolCallId: permission.request.toolCallId,
-        fingerprint: permission.fingerprint
+    return this.broker
+      .prepareRestoredDecision(permission, option, projectId, continuation)
+      .then(() => {
+        const allowsReplay = option?.kind.toLowerCase().startsWith('allow_') === true
+        if (!allowsReplay || !notebookExecutionMethod(permission.request.mcpIdentity)) {
+          this.restoredNotebookPresentationCandidates.delete(permission.request.sessionId)
+          return
+        }
+        this.restoredNotebookPresentationCandidates.set(permission.request.sessionId, {
+          originalToolCallId: permission.request.toolCallId,
+          fingerprint: permission.fingerprint
+        })
       })
-    })
   }
 
-  clearRestoredDecision(sessionId: string): void {
-    this.broker.clearRestoredDecision(sessionId)
+  clearRestoredDecision(sessionId: string, continuation?: RestoredPermissionContinuation): void {
+    if (!this.broker.clearRestoredDecision(sessionId, continuation)) return
     this.restoredNotebookPresentationCandidates.delete(sessionId)
   }
 

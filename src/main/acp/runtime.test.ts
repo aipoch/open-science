@@ -837,6 +837,10 @@ const startPermissionProbeAgent = (
       kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'
     }>
     onPermissionResponse?: (response: unknown) => void
+    followingPermission?: {
+      toolCall: acp.RequestPermissionRequest['toolCall']
+      onResponse: (response: unknown) => Promise<void> | void
+    }
     onSteer?: (params: unknown) => void
     advertiseSteering?: boolean
     resume?: 'ok' | 'notFound'
@@ -965,7 +969,21 @@ const startPermissionProbeAgent = (
         ],
         ...(options.sparseCodexMcpApproval ? { _meta: { is_mcp_tool_approval: true } } : {})
       })
-      options.onPermissionResponse?.(response)
+      await options.onPermissionResponse?.(response)
+      if (options.followingPermission) {
+        const nextResponse = await ctx.client.request(
+          acp.methods.client.session.requestPermission,
+          {
+            sessionId: ctx.params.sessionId,
+            toolCall: options.followingPermission.toolCall,
+            options: [
+              { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+              { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+            ]
+          }
+        )
+        await options.followingPermission.onResponse(nextResponse)
+      }
 
       return { stopReason: 'end_turn' }
     })
@@ -2895,6 +2913,254 @@ describe('ACP runtime restored permission continuation', () => {
         .getSnapshot()
         .events.some((event) => event.kind === 'tool' && event.toolCallId === replayToolCallId)
     ).toBe(false)
+  })
+
+  it.each(['different input', 'the same input'] as const)(
+    'requires a new decision for %s after consuming a restored Allow once',
+    async (followingInput) => {
+      const process = new FakeAgentProcess()
+      const toolTitle = 'mcp.open-science-notebook.notebook_execute'
+      const rawInput = { language: 'python', code: 'print("original")' }
+      const followingRawInput =
+        followingInput === 'the same input'
+          ? rawInput
+          : { language: 'python', code: 'print("different")' }
+      const originalRequest: AcpPermissionRequest = {
+        requestId: 'permission-restored',
+        sessionId: 'restored-session',
+        toolCallId: 'notebook-original',
+        title: toolTitle,
+        providerToolName: 'notebook_execute',
+        isMcp: true,
+        mcpIdentity: 'open-science-notebook/notebook_execute',
+        toolKind: 'execute',
+        rawInput,
+        options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' }]
+      }
+      let runtimeContext: SessionRuntimeContext = {
+        version: 1,
+        revision: 1,
+        permission: {
+          state: 'pending',
+          request: originalRequest,
+          originatingPromptMessageId: 'prompt-1',
+          fingerprint: permissionRequestFingerprint(originalRequest)!,
+          createdAt: 1
+        }
+      }
+      const originalResponse = vi.fn()
+      const followingResponse = vi.fn()
+      const authorizeExecution = vi.fn(() => 'execution-original')
+      startPermissionProbeAgent(process, {
+        newSessionId: 'restored-session',
+        toolCallId: 'notebook-replayed',
+        toolTitle,
+        toolKind: 'execute',
+        toolRawInput: rawInput,
+        codexMcpIdentity: {
+          server: 'open-science-notebook',
+          tool: 'notebook_execute',
+          arguments: rawInput
+        },
+        sparseCodexMcpApproval: true,
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+        onPermissionResponse: originalResponse,
+        followingPermission: {
+          toolCall: {
+            toolCallId: 'notebook-following',
+            title: toolTitle,
+            kind: 'execute',
+            rawInput: followingRawInput
+          },
+          onResponse: followingResponse
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        notebook: {
+          projectId: 'project-1',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
+          authorizeExecution
+        },
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
+            patchSessionRuntimeContext: vi.fn(async (command) => {
+              expect(command.expectedRevision).toBe(runtimeContext.revision)
+              command.beforePersist?.(createRestoredContinuationSession())
+              runtimeContext = {
+                ...runtimeContext,
+                ...command.patch,
+                revision: runtimeContext.revision + 1
+              }
+              return structuredClone(runtimeContext)
+            }),
+            containsMessageOnActiveBranch: vi.fn(async () => true),
+            loadSessionForContinuation: vi.fn(async () => createRestoredContinuationSession())
+          }
+        },
+        resolveBackend: () => ({
+          framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+          backendId: 'codex:provider-a',
+          modelRoute: 'codex-responses',
+          executablePath: '/bin/agent',
+          env: {}
+        })
+      })
+      try {
+        await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+        await runtime.respondToPermission({
+          requestId: originalRequest.requestId,
+          optionId: 'allow-once',
+          restored: { sessionId: 'restored-session', projectId: 'project-1' }
+        })
+
+        await vi.waitFor(() => expect(originalResponse).toHaveBeenCalledOnce())
+        expect(originalResponse).toHaveBeenCalledWith({
+          outcome: { outcome: 'selected', optionId: 'allow-once' }
+        })
+        await vi.waitFor(() =>
+          expect(runtimeContext.permission).toMatchObject({
+            state: 'pending',
+            request: { toolCallId: 'notebook-following' },
+            originatingPromptMessageId: 'prompt-1'
+          })
+        )
+        const nextRequest = runtimeContext.permission!.request
+        expect(nextRequest.requestId).not.toBe(originalRequest.requestId)
+        expect(runtime.getSnapshot().pendingPermissions).toEqual([
+          expect.objectContaining({ requestId: nextRequest.requestId })
+        ])
+        expect(followingResponse).not.toHaveBeenCalled()
+        expect(authorizeExecution).toHaveBeenCalledOnce()
+        expect(runtime.getSnapshot().promptInFlightSessionIds).toContain('restored-session')
+
+        await runtime.respondToPermission({ requestId: nextRequest.requestId, optionId: 'deny' })
+        await vi.waitFor(() => expect(followingResponse).toHaveBeenCalledOnce())
+        expect(followingResponse).toHaveBeenCalledWith({
+          outcome: { outcome: 'selected', optionId: 'deny' }
+        })
+        // The restored Once permits only the exact original call; neither a different call nor a
+        // second identical call inherits it, and denying the next request never starts execution.
+        expect(authorizeExecution).toHaveBeenCalledOnce()
+        await vi.waitFor(() => expect(runtimeContext.permission).toBeUndefined())
+      } finally {
+        runtime.shutdown()
+      }
+    }
+  )
+
+  it('never re-arms a consumed restored Allow once after the provider fails', async () => {
+    const process = new FakeAgentProcess()
+    const toolTitle = 'mcp.open-science-notebook.notebook_execute'
+    const rawInput = { language: 'python', code: 'print("original")' }
+    const originalRequest: AcpPermissionRequest = {
+      requestId: 'permission-restored',
+      sessionId: 'restored-session',
+      toolCallId: 'notebook-original',
+      title: toolTitle,
+      providerToolName: 'notebook_execute',
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute',
+      toolKind: 'execute',
+      rawInput,
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' }]
+    }
+    let runtimeContext: SessionRuntimeContext = {
+      version: 1,
+      revision: 1,
+      permission: {
+        state: 'pending',
+        request: originalRequest,
+        originatingPromptMessageId: 'prompt-1',
+        fingerprint: permissionRequestFingerprint(originalRequest)!,
+        createdAt: 1
+      }
+    }
+    const originalResponse = vi.fn(() => {
+      throw new Error('Provider failed after receiving the exact restored approval')
+    })
+    const authorizeExecution = vi.fn(() => 'execution-original')
+    startPermissionProbeAgent(process, {
+      newSessionId: 'restored-session',
+      toolCallId: 'notebook-replayed',
+      toolTitle,
+      toolKind: 'execute',
+      toolRawInput: rawInput,
+      codexMcpIdentity: {
+        server: 'open-science-notebook',
+        tool: 'notebook_execute',
+        arguments: rawInput
+      },
+      sparseCodexMcpApproval: true,
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+      onPermissionResponse: originalResponse
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      notebook: {
+        projectId: 'project-1',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
+        authorizeExecution
+      },
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
+          patchSessionRuntimeContext: vi.fn(async (command) => {
+            expect(command.expectedRevision).toBe(runtimeContext.revision)
+            command.beforePersist?.(createRestoredContinuationSession())
+            runtimeContext = {
+              ...runtimeContext,
+              ...command.patch,
+              revision: runtimeContext.revision + 1
+            }
+            return structuredClone(runtimeContext)
+          }),
+          containsMessageOnActiveBranch: vi.fn(async () => true),
+          loadSessionForContinuation: vi.fn(async () => createRestoredContinuationSession())
+        }
+      },
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        backendId: 'codex:provider-a',
+        modelRoute: 'codex-responses',
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+    try {
+      await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+      const response: AcpPermissionResponse = {
+        requestId: originalRequest.requestId,
+        optionId: 'allow-once',
+        restored: { sessionId: 'restored-session', projectId: 'project-1' }
+      }
+      await runtime.respondToPermission(response)
+      await vi.waitFor(() => expect(originalResponse).toHaveBeenCalledOnce())
+      expect(originalResponse).toHaveBeenCalledWith({
+        outcome: { outcome: 'selected', optionId: 'allow-once' }
+      })
+      expect(authorizeExecution).toHaveBeenCalledOnce()
+      await vi.waitFor(() =>
+        expect(runtime.getSnapshot().events).toContainEqual(
+          expect.objectContaining({ kind: 'error', title: 'Could not continue the Agent task' })
+        )
+      )
+      await vi.waitFor(() => expect(runtimeContext.permission).toBeUndefined())
+      expect(runtime.getSnapshot().events).not.toContainEqual(
+        expect.objectContaining({ title: 'Restored permission continuation re-armed' })
+      )
+      expect(runtime.getSnapshot().pendingPermissions).toEqual([])
+      await expect(runtime.respondToPermission(response)).rejects.toThrow()
+      expect(originalResponse).toHaveBeenCalledOnce()
+      expect(authorizeExecution).toHaveBeenCalledOnce()
+    } finally {
+      runtime.shutdown()
+    }
   })
 
   it('cancels restored pending authority without a live ACP interaction', async () => {

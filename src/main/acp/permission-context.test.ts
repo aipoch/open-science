@@ -13,7 +13,10 @@ import {
   HUMAN_PERMISSION_ACTION_ORIGIN
 } from './permission-context'
 import type { AcpPermissionContextOptions } from './permission-context'
-import { permissionRequestFingerprint } from './permission-broker'
+import {
+  permissionRequestFingerprint,
+  type RestoredPermissionContinuation
+} from './permission-broker'
 import { isNativeWebFetchPermission, isNativeWebSearchPermission } from './permission-policy'
 
 const NOTEBOOK_SERVERS = ['open-science-notebook']
@@ -333,11 +336,24 @@ describe('ACP permission context', () => {
       })
       expect(restoredPermission).toBeDefined()
       expect(JSON.stringify(restoredPermission)).not.toContain('test-notebook-secret')
+      const continuation: RestoredPermissionContinuation = {
+        projectId: 'default-project',
+        sessionId: request.sessionId,
+        requestId: request.requestId,
+        promptMessageId: 'prompt-1',
+        fingerprint: fingerprint!,
+        released: false,
+        handoffStarted: false,
+        handedOff: false
+      }
       await context.prepareRestoredDecision(
         restoredPermission!,
         request.options[0],
-        'default-project'
+        'default-project',
+        continuation
       )
+      // An older prompt's finally must not clear the newly restored presentation candidate.
+      context.clearRestoredDecision('session-1', { ...continuation })
 
       observe(
         context,

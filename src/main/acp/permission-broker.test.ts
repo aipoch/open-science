@@ -5,16 +5,25 @@ import { join } from 'node:path'
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
-import { createPermissionGrantRegistry } from '../permission-grants/registry'
+import {
+  createPermissionGrantRegistry,
+  type PermissionGrantRegistry
+} from '../permission-grants/registry'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import {
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
   permissionRequestFingerprint,
   resolveCategoryKey,
-  type DurablePermissionWaitCandidate
+  type DurablePermissionWaitCandidate,
+  type RestoredPermissionContinuation
 } from './permission-broker'
-import { withTrustedMcpToolIdentity, withTrustedNativeToolIdentity } from './permission-policy'
+import {
+  withTrustedMcpToolIdentity,
+  withTrustedNativeToolIdentity,
+  type PermissionPolicyContext
+} from './permission-policy'
+import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
 
 type EmittedPermissionRequest = Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]
 
@@ -149,6 +158,56 @@ const createCodexMcpPermissionRequest = (sessionId = 'session-1'): RequestPermis
     { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
   ]
 })
+
+const restoredContinuationFixture = async (): Promise<{
+  permission: SessionPermissionRuntimeContext
+  continuation: RestoredPermissionContinuation
+  policy: PermissionPolicyContext
+  providerRequest: RequestPermissionRequest
+}> => {
+  const emitted: EmittedPermissionRequest[] = []
+  const broker = new AcpPermissionBroker((request) => emitted.push(request))
+  const providerRequest = createToolPermissionRequest({
+    title: 'python verify.py',
+    providerToolName: 'Bash',
+    kind: 'execute',
+    rawInput: { command: 'python verify.py' }
+  })
+  const response = broker.requestPermission(providerRequest, { profile: 'ask', cwd: '/workspace' })
+  const request = emitted[0]
+  broker.cancelAllPending()
+  await response
+  const permission = {
+    state: 'continuing' as const,
+    request,
+    originatingPromptMessageId: 'prompt-1',
+    fingerprint: permissionRequestFingerprint(request)!,
+    categoryKey: resolveCategoryKey(providerRequest, [], true),
+    createdAt: 1
+  }
+  const continuation: RestoredPermissionContinuation = {
+    projectId: 'project-1',
+    sessionId: request.sessionId,
+    requestId: request.requestId,
+    promptMessageId: 'prompt-1',
+    fingerprint: permission.fingerprint,
+    interactionSequence: 7,
+    agentFrameId: 'frame-1',
+    messageBranchId: 'branch-1',
+    isCurrent: () => true,
+    released: false,
+    handoffStarted: false,
+    handedOff: false
+  }
+  const policy = {
+    profile: 'ask' as const,
+    cwd: '/workspace',
+    projectId: 'project-1',
+    promptMessageId: 'prompt-1',
+    interactionSequence: 7
+  }
+  return { permission, continuation, policy, providerRequest }
+}
 
 describe('ACP permission broker', () => {
   it.each(['claude-code', 'opencode', 'codex'] as const)(
@@ -556,6 +615,110 @@ describe('ACP permission broker', () => {
     expect(settleLive).not.toHaveBeenCalled()
     expect(onSettled).not.toHaveBeenCalled()
     expect(broker.getPendingRequests()).toEqual([])
+  })
+
+  it.each(['match', 'miss'] as const)(
+    'cancels a late registry %s after its restored continuation ends',
+    async (result) => {
+      const { permission, continuation, policy } = await restoredContinuationFixture()
+      const emitted = vi.fn()
+      const persist = vi.fn(async () => true)
+      let complete!: (value: Awaited<ReturnType<PermissionGrantRegistry['resolve']>>) => void
+      const resolve = vi.fn(
+        () =>
+          new Promise<Awaited<ReturnType<PermissionGrantRegistry['resolve']>>>((done) => {
+            complete = done
+          })
+      )
+      const registry = { resolve } as unknown as PermissionGrantRegistry
+      const broker = new AcpPermissionBroker(emitted, undefined, registry, undefined, {
+        persist,
+        settleLive: vi.fn(async () => undefined)
+      })
+      await broker.prepareRestoredDecision(
+        permission,
+        permission.request.options[0],
+        'project-1',
+        continuation
+      )
+      const response = broker.requestPermission(
+        withTrustedMcpToolIdentity(
+          createNotebookPermissionRequest(
+            'session-1',
+            'mcp__open-science-notebook__notebook_execute',
+            { language: 'python', code: 'print(2)' }
+          ),
+          'open-science-notebook/notebook_execute'
+        ),
+        { ...policy, mcpServerNames: ['open-science-notebook'] }
+      )
+      expect(resolve).toHaveBeenCalledOnce()
+      continuation.isCurrent = () => false
+      complete(
+        result === 'match'
+          ? {
+              matchedScope: 'project',
+              grant: {
+                id: 'grant',
+                capability: { kind: 'execution', key: 'python' },
+                scope: { kind: 'project', projectId: 'project-1' },
+                revision: 1
+              }
+            }
+          : undefined
+      )
+      await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+      expect(continuation.released).toBe(false)
+      expect(persist).not.toHaveBeenCalled()
+      expect(emitted).not.toHaveBeenCalled()
+    }
+  )
+
+  it('does not reuse a restored Once in a different admitted interaction', async () => {
+    const { permission, continuation, policy, providerRequest } =
+      await restoredContinuationFixture()
+    const emitted = vi.fn()
+    const broker = new AcpPermissionBroker(emitted)
+    await broker.prepareRestoredDecision(
+      permission,
+      permission.request.options[0],
+      'project-1',
+      continuation
+    )
+    await expect(
+      broker.requestPermission(providerRequest, { ...policy, interactionSequence: 8 })
+    ).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(continuation.released).toBe(false)
+    expect(emitted).not.toHaveBeenCalled()
+    await expect(broker.requestPermission(providerRequest, policy)).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(continuation.released).toBe(true)
+  })
+
+  it('does not clear a new restored decision when an older continuation finishes', async () => {
+    const { permission, continuation, policy, providerRequest } =
+      await restoredContinuationFixture()
+    const broker = new AcpPermissionBroker(vi.fn())
+    await broker.prepareRestoredDecision(
+      permission,
+      permission.request.options[0],
+      'project-1',
+      continuation
+    )
+    const next = { ...continuation }
+    await broker.prepareRestoredDecision(
+      permission,
+      permission.request.options[0],
+      'project-1',
+      next
+    )
+    expect(broker.clearRestoredDecision('session-1', continuation)).toBe(false)
+    await expect(broker.requestPermission(providerRequest, policy)).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(next.released).toBe(true)
+    expect(continuation.released).toBe(false)
   })
 
   it('releases a restored allow-once only for the exact parked tool fingerprint', async () => {
