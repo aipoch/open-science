@@ -6262,7 +6262,8 @@ describe('Skill editor leave protection', () => {
     'Cancel',
     'Close settings',
     'close pane',
-    'external intent'
+    'external intent',
+    'host navigation'
   ])('preserves a draft until discard is confirmed through %s', async (route) => {
     const { onClose, handle } = await mountEditor()
     if (route === 'Forward') {
@@ -6279,6 +6280,7 @@ describe('Skill editor leave protection', () => {
           search.focus()
           fireEvent.change(search, { target: { value: 'language' } })
         } else if (route === 'close pane') handle.current!.closeActivePane()
+        else if (route === 'host navigation') handle.current!.requestLeave(onClose)
         else if (route === 'external intent')
           useSettingsStore.getState().openSettingsToPanel('general')
         else if (route !== 'Cancel') field(route).click()
@@ -6298,7 +6300,8 @@ describe('Skill editor leave protection', () => {
     await leave()
     await clickLabel('Discard changes')
     expect(confirmation()).toBeNull()
-    if (route === 'Close settings') expect(onClose).toHaveBeenCalledOnce()
+    if (route === 'Close settings' || route === 'host navigation')
+      expect(onClose).toHaveBeenCalledOnce()
     else expect(field('Skill body')).toBeNull()
   })
 

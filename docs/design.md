@@ -1302,7 +1302,9 @@ continues to use its existing specialized presentation.
 
 Settings owns navigation requests; the mounted Skill editor reports only transient dirty/busy
 state. Back, Forward, breadcrumbs, panel selection, search, external route intents, Cancel, Close
-and the close-active-pane shortcut consult that state before unmounting the editor. A dirty draft
+and the close-active-pane shortcut consult that state before unmounting the editor. Host-driven
+session navigation also calls the Settings handle’s `requestLeave` before changing the workspace
+or closing Settings. A dirty draft
 requires **Keep editing** or **Discard changes**. An in-flight save/import must settle before
 discard becomes available; dismissal does not cancel or roll back a write. A successful Create/Save
 returns to the Skills list without a discard prompt, while a failed or conflicting write retains the

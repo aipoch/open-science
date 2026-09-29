@@ -49,6 +49,7 @@ type ApplicationEventBindingsInput = Readonly<{
   hasDataRootRecovery: boolean
   hasLegacyDataMove: boolean
   closeActiveSettingsPane: () => void
+  requestSettingsLeave: (leave: () => void) => void
 }>
 
 type ApplicationEventProjection = Readonly<{
@@ -85,7 +86,8 @@ const useApplicationEventBindings = ({
   sessionPersistence,
   hasDataRootRecovery,
   hasLegacyDataMove,
-  closeActiveSettingsPane
+  closeActiveSettingsPane,
+  requestSettingsLeave
 }: ApplicationEventBindingsInput): ApplicationEventProjection => {
   const view = useNavigationStore((state) => state.view)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
@@ -232,16 +234,20 @@ const useApplicationEventBindings = ({
         .getState()
         .sessions.some((session) => session.id === sessionId)
       if (!sessionExists) return
-      let completed = false
-      const completeOpen = (): void => {
-        if (completed) return
-        completed = true
-        closeSettings()
-      }
-      const opened = useNavigationStore.getState().openSessionById(sessionId, 'user', completeOpen)
-      if (opened) completeOpen()
+      requestSettingsLeave(() => {
+        let completed = false
+        const completeOpen = (): void => {
+          if (completed) return
+          completed = true
+          closeSettings()
+        }
+        const opened = useNavigationStore
+          .getState()
+          .openSessionById(sessionId, 'user', completeOpen)
+        if (opened) completeOpen()
+      })
     },
-    [closeSettings]
+    [closeSettings, requestSettingsLeave]
   )
 
   useEffect(() => {

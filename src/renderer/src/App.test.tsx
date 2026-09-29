@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from 'react'
+import { act, useImperativeHandle, type ReactNode, type Ref } from 'react'
+import type { SettingsPageHandle } from './pages/settings/SettingsPage'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -85,6 +86,7 @@ const mocks = vi.hoisted(() => {
     })),
     initUpdates: vi.fn(),
     openSessionById: vi.fn(),
+    requestSettingsLeave: vi.fn((leave: () => void) => leave()),
     notificationNudgeBox,
     notifications: {
       onOpenSession: vi.fn((listener: () => void) => {
@@ -378,23 +380,31 @@ vi.mock('@/pages/settings/ComputeApprovalDialog', () => ({
 }))
 vi.mock('@/pages/settings/SettingsPage', () => ({
   SettingsPage: ({
+    ref,
     open,
     onOpenSession
   }: {
+    ref?: Ref<SettingsPageHandle>
     open: boolean
     onOpenSession?: (sessionId: string) => void
-  }): React.JSX.Element => (
-    <div>
-      <span data-testid="settings-page">{open ? 'open' : 'closed'}</span>
-      <button
-        type="button"
-        data-testid="open-settings-session"
-        onClick={() => onOpenSession?.('settings-session')}
-      >
-        Open settings session
-      </button>
-    </div>
-  )
+  }): React.JSX.Element => {
+    useImperativeHandle(ref, () => ({
+      requestLeave: mocks.requestSettingsLeave,
+      closeActivePane: () => false
+    }))
+    return (
+      <div>
+        <span data-testid="settings-page">{open ? 'open' : 'closed'}</span>
+        <button
+          type="button"
+          data-testid="open-settings-session"
+          onClick={() => onOpenSession?.('settings-session')}
+        >
+          Open settings session
+        </button>
+      </div>
+    )
+  }
 }))
 vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
   EnvStatusBanner: ({
@@ -476,6 +486,7 @@ describe('App startup routing', () => {
     mocks.settings.checkEnvironment.mockReset().mockResolvedValue(undefined)
     mocks.settings.openSettings.mockClear()
     mocks.settings.closeSettings.mockClear()
+    mocks.requestSettingsLeave.mockReset().mockImplementation((leave: () => void) => leave())
     mocks.settings.enqueueApproval.mockClear()
     mocks.settings.dismissApproval.mockClear()
     mocks.settings.enqueueCredentialRequest.mockClear()
@@ -1359,6 +1370,27 @@ describe('App startup routing', () => {
     expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
       isSessionContentVisible: false
     })
+  })
+
+  it('waits for the Settings leave guard before host session navigation', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isSettingsOpen = true
+    mocks.sessions = [{ id: 'settings-session' }]
+    mocks.openSessionById.mockReturnValue(true)
+    let acceptLeave: (() => void) | undefined
+    mocks.requestSettingsLeave.mockImplementation((leave) => {
+      acceptLeave = leave
+    })
+    await render()
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="open-settings-session"]')?.click()
+    )
+    expect(mocks.requestSettingsLeave).toHaveBeenCalledOnce()
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+    expect(mocks.settings.closeSettings).not.toHaveBeenCalled()
+    await act(async () => acceptLeave?.())
+    expect(mocks.openSessionById).toHaveBeenCalledOnce()
+    expect(mocks.settings.closeSettings).toHaveBeenCalledOnce()
   })
 
   it('closes Settings only after remembered-session navigation completes', async () => {

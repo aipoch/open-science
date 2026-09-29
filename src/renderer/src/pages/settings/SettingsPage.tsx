@@ -241,6 +241,7 @@ type SettingsPageProps = {
 }
 
 type SettingsPageHandle = {
+  requestLeave: (leave: () => void) => void
   closeActivePane: () => boolean
 }
 
@@ -1080,6 +1081,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   }
 
   useImperativeHandle(ref, () => ({
+    requestLeave,
     closeActivePane: () => {
       if (!open) return false
       const activeDialog = Array.from(
