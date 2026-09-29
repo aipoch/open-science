@@ -51,6 +51,8 @@ const SHELL_NETWORK_TRANSPORT_UNSUPPORTED_PREFIX = 'WSL2_NETWORK_TRANSPORT_UNSUP
 // Result of one shell run. An ordinary nonzero exit is distinct from a process that
 // never started; neither is inferred from stderr, which may also contain warnings on success.
 type NotebookShellResult = {
+  // Durable outcome is projected by the execution owner, including cancellation and timeout.
+  status?: NotebookRunRecord['status']
   stdout: string
   stderr: string
   exitCode: number | null

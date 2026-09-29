@@ -1843,6 +1843,39 @@ describe('bash_execute tool', () => {
     expect(ambiguous).not.toHaveProperty('stderr')
   })
 
+  it('preserves interrupted background status and changed interpreter cwd', () => {
+    expect(
+      compactBackgroundRunResult({
+        run: {
+          kernelKind: 'bash',
+          runId: 'interrupted-shell',
+          status: 'interrupted',
+          text: { stdout: 'partial', stderr: '' }
+        }
+      })
+    ).toMatchObject({ status: 'interrupted', stdout: 'partial' })
+    expect(
+      compactBackgroundRunResult({
+        run: {
+          kernelKind: 'bash',
+          status: 'completed',
+          exitCode: 0,
+          cwdBefore: '/workspace',
+          cwdAfter: '/workspace/child',
+          text: { stdout: '', stderr: '' }
+        }
+      })
+    ).toMatchObject({ status: 'completed', cwdAfter: '/workspace/child' })
+    expect(
+      compactShellExecutionResult({
+        status: 'completed',
+        exitCode: 0,
+        cwdBefore: '/workspace',
+        cwdAfter: '/workspace'
+      })
+    ).not.toHaveProperty('cwdAfter')
+  })
+
   it('preserves a user-written cleanup marker, with recovery only from trusted facts', () => {
     const output = 'SHELL_CLEANUP_INCOMPLETE: user text\n'
     expect(compactShellExecutionResult({ exitCode: 7, stderr: output })).not.toHaveProperty(

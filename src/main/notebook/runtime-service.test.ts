@@ -1236,6 +1236,7 @@ describe('notebook runtime service', () => {
 
     await expect(control).resolves.toMatchObject({ status: 'cancelled' })
     await expect(shell).resolves.toEqual({
+      status: 'cancelled',
       stdout: '',
       stderr: 'Shell command was cancelled.',
       exitCode: null
@@ -4466,6 +4467,7 @@ describe('notebook runtime service', () => {
         grantedRoots: []
       })
       expect(result).toEqual({
+        status: 'failed',
         stdout: 'partial output',
         stderr: 'command failed',
         exitCode: 9,
@@ -4565,8 +4567,8 @@ describe('notebook runtime service', () => {
         command: 'echo hello',
         executionInvocationId: 'same-invocation'
       }
-      expect(await service.executeShell(request)).toEqual(unavailable)
-      expect(await service.executeShell(request)).toEqual(unavailable)
+      expect(await service.executeShell(request)).toEqual({ ...unavailable, status: 'failed' })
+      expect(await service.executeShell(request)).toEqual({ ...unavailable, status: 'failed' })
       expect(execute).toHaveBeenCalledOnce()
     })
 
@@ -4735,8 +4737,8 @@ describe('notebook runtime service', () => {
         releases.get('second')?.()
 
         await expect(Promise.all([first, second])).resolves.toEqual([
-          { stdout: 'first', stderr: '', exitCode: 0 },
-          { stdout: 'second', stderr: '', exitCode: 0 }
+          { status: 'completed', stdout: 'first', stderr: '', exitCode: 0 },
+          { status: 'completed', stdout: 'second', stderr: '', exitCode: 0 }
         ])
       } finally {
         execute.mockImplementation(async ({ command }) => ({
@@ -4878,6 +4880,7 @@ describe('notebook runtime service', () => {
         expect(entered).toEqual(['first'])
         cancellation.abort()
         await expect(queued).resolves.toEqual({
+          status: 'cancelled',
           stdout: '',
           stderr: 'Shell command was cancelled.',
           exitCode: null
@@ -4885,7 +4888,12 @@ describe('notebook runtime service', () => {
         expect(entered).toEqual(['first'])
 
         releases.get('first')?.()
-        await expect(first).resolves.toEqual({ stdout: 'first', stderr: '', exitCode: 0 })
+        await expect(first).resolves.toEqual({
+          status: 'completed',
+          stdout: 'first',
+          stderr: '',
+          exitCode: 0
+        })
         const finalState = await service.state({ sessionId: 'session-1', workspaceCwd: root })
         expect(
           finalState.runs.find((run) => run.script === 'cancelled-before-start')
@@ -5094,8 +5102,8 @@ describe('notebook runtime service', () => {
       const shutdown = service.shutdown(scope)
 
       await expect(Promise.all([running, queued])).resolves.toEqual([
-        { stdout: '', stderr: 'Shell command was cancelled.', exitCode: null },
-        expect.objectContaining({ exitCode: null })
+        { status: 'cancelled', stdout: '', stderr: 'Shell command was cancelled.', exitCode: null },
+        expect.objectContaining({ status: 'cancelled', exitCode: null })
       ])
       await expect(shutdown).resolves.toEqual({ sessionId: 'session-1', status: 'shutdown' })
       expect(execute).toHaveBeenCalledOnce()
@@ -5142,6 +5150,7 @@ describe('notebook runtime service', () => {
 
       const disposal = service.dispose()
       await expect(execution).resolves.toEqual({
+        status: 'cancelled',
         stdout: '',
         stderr: 'Shell command was cancelled.',
         exitCode: null
@@ -5174,10 +5183,11 @@ describe('notebook runtime service', () => {
       await expect(
         Promise.all([service.executeShell(request), service.executeShell(request)])
       ).resolves.toEqual([
-        { stdout: 'once', stderr: 'non-zero', exitCode: 7 },
-        { stdout: 'once', stderr: 'non-zero', exitCode: 7 }
+        { status: 'failed', stdout: 'once', stderr: 'non-zero', exitCode: 7 },
+        { status: 'failed', stdout: 'once', stderr: 'non-zero', exitCode: 7 }
       ])
       await expect(service.executeShell(request)).resolves.toEqual({
+        status: 'failed',
         stdout: 'once',
         stderr: 'non-zero',
         exitCode: 7

@@ -928,9 +928,15 @@ const compactShellExecutionResult = (raw: unknown): Record<string, unknown> => {
       ? rawSystemErrorCode
       : undefined
   const cancelled = record.cancelled === true || record.status === 'cancelled'
-  const runStatus = ['completed', 'failed', 'timeout', 'cancelled', 'running', 'queued'].includes(
-    String(record.status)
-  )
+  const runStatus = [
+    'completed',
+    'failed',
+    'timeout',
+    'cancelled',
+    'interrupted',
+    'running',
+    'queued'
+  ].includes(String(record.status))
     ? String(record.status)
     : undefined
   const status =
@@ -1005,6 +1011,9 @@ const compactShellExecutionResult = (raw: unknown): Record<string, unknown> => {
     ...(stdout.text ? { stdout: stdout.text } : {}),
     ...(diagnosticStderr ? { stderr: diagnosticStderr } : {}),
     ...(workingFiles.length ? { workingFiles } : {}),
+    ...(record.cwdBefore !== record.cwdAfter && typeof record.cwdAfter === 'string'
+      ? { cwdAfter: record.cwdAfter }
+      : {}),
     ...(record.truncated === true ||
     stdout.clipped ||
     (exposeStderr && stderr.clipped) ||

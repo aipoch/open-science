@@ -207,6 +207,9 @@ export class ShellCellSession {
         stdout: cell.stdout,
         stderr: cell.stderr,
         exitCode: cell.exitCode ?? null,
+        ...(cell.exitCode !== undefined && cell.exitCode !== 0
+          ? { errorCode: 'shell-nonzero-exit' as const }
+          : {}),
         cwd: cell.cwd,
         ...(cell.truncated ? { truncated: true } : {})
       })

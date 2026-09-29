@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { Client as ModelContextProtocolClient } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { createNotebookMcpServer } from './mcp-server'
@@ -86,7 +86,7 @@ describe.skipIf(process.platform === 'win32')(
 
       const failed = await h.client.callTool({
         name: 'bash_execute',
-        arguments: { command: "printf 'command diagnosis\\n' >&2; exit 7" }
+        arguments: { command: "printf 'command diagnosis\\n' >&2; (exit 7)" }
       })
       expect(failed.isError).toBe(true)
       expect(resultBody(failed)).toMatchObject({
@@ -100,7 +100,7 @@ describe.skipIf(process.platform === 'win32')(
 
       const warning = await h.client.callTool({
         name: 'bash_execute',
-        arguments: { command: "printf 'warning only\\n' >&2; exit 0" }
+        arguments: { command: "printf 'warning only\\n' >&2; true" }
       })
       expect(warning.isError).not.toBe(true)
       expect(resultBody(warning)).toEqual({
@@ -114,11 +114,60 @@ describe.skipIf(process.platform === 'win32')(
       expect(runs[0]).toMatchObject({ shellErrorCode: 'shell-nonzero-exit', exitCode: 7 })
     }, 30_000)
 
+    it('preserves interpreter-exit diagnostics for explicit exit commands', async () => {
+      const h = (active = await createHarness())
+      for (const code of [7, 0]) {
+        const result = await h.client.callTool({
+          name: 'bash_execute',
+          arguments: { command: `exit ${code}` }
+        })
+        expect(result.isError === true).toBe(code !== 0)
+        expect(resultBody(result)).toMatchObject({
+          status: code === 0 ? 'completed' : 'failed',
+          exitCode: code,
+          stderr: expect.stringContaining('Shell interpreter exited; interpreter state was reset.')
+        })
+      }
+    }, 30_000)
+
+    it('keeps a foreground timeout distinct from command failure', async () => {
+      const h = (active = await createHarness())
+      const result = await h.client.callTool({
+        name: 'bash_execute',
+        arguments: { command: 'sleep 30', timeoutMs: 100 }
+      })
+      expect(result.isError).toBe(true)
+      expect(resultBody(result)).toMatchObject({
+        status: 'timeout',
+        exitCode: null,
+        error: 'Shell command timed out before a verified result was returned.'
+      })
+    }, 30_000)
+
+    it('reports a cancelled foreground Run without claiming command failure', async () => {
+      const h = (active = await createHarness())
+      const result = h.client.callTool({
+        name: 'bash_execute',
+        arguments: { command: 'sleep 30' }
+      })
+      await vi.waitFor(
+        async () => {
+          const state = await h.service.state({ sessionId: 'session-1', workspaceCwd: h.root })
+          expect(state.runs.some((run) => run.status === 'running')).toBe(true)
+        },
+        { timeout: 10_000 }
+      )
+      await h.service.shutdown({ sessionId: 'session-1', workspaceCwd: h.root })
+      const cancelled = await result
+      expect(cancelled.isError).not.toBe(true)
+      expect(resultBody(cancelled)).toMatchObject({ status: 'cancelled', exitCode: null })
+    }, 30_000)
+
     it('returns a failed background Shell Run as a successful query', async () => {
       const h = (active = await createHarness())
       const submission = await h.client.callTool({
         name: 'bash_execute',
-        arguments: { command: 'exit 7', background: true }
+        arguments: { command: '(exit 7)', background: true }
       })
       expect(submission.isError).not.toBe(true)
       const runId = resultBody(submission).runId

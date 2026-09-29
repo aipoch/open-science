@@ -305,6 +305,7 @@ const publicShellResult = (
   run: Pick<
     NotebookRunRecord,
     | 'text'
+    | 'status'
     | 'exitCode'
     | 'truncated'
     | 'shellRuntimeStatus'
@@ -313,6 +314,7 @@ const publicShellResult = (
     | 'recovery'
   >
 ): NotebookShellResult => ({
+  status: run.status,
   stdout: run.text.stdout,
   stderr: run.text.stderr,
   exitCode: run.exitCode ?? null,
@@ -1632,7 +1634,8 @@ class NotebookExecutionOwner {
             durableAdmission.run,
             new Error(SHELL_CANCELLED_MESSAGE)
           )
-          const result = {
+          const result: NotebookShellResult = {
+            status: cancelled.status,
             stdout: cancelled.text.stdout,
             stderr: cancelled.text.stderr,
             exitCode: null,
@@ -1808,6 +1811,7 @@ class NotebookExecutionOwner {
             return publicShellResult(terminalized.run)
           }
           return {
+            status: terminalized.run.status,
             stdout: result.stdout,
             stderr: result.stderr,
             exitCode: result.exitCode,
