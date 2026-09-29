@@ -83,10 +83,16 @@ export const buildSensitiveContentEvidence = (
 const findPackageTextMatch = (
   text: string,
   complete: boolean,
-  jsonBooleans: boolean
+  jsonBooleans: boolean,
+  beforeText = ''
 ): PackageTextMatch | undefined => {
   const booleanField = (index: number): boolean => {
-    if (!jsonBooleans || text[index - 1] !== '"') return false
+    const preceding = index === 0 ? beforeText : text[index - 1]
+    // An overlap may begin at or inside a key. Carry its preceding character so
+    // rescanning cannot turn a validated boolean field into an unquoted assignment.
+    // The closing quote/colon below and whole-input validation still prove its type.
+    if (!jsonBooleans || (preceding !== '"' && !(index === 0 && /^[a-z0-9_-]$/i.test(preceding))))
+      return false
     const field = /^[a-z][a-z0-9_-]*"[ \t\r\n]*:[ \t\r\n]*/i.exec(text.slice(index))
     if (!field) return false
     const rest = text.slice(index + field[0].length)
@@ -365,6 +371,7 @@ type TextFinding = { text: string; match: PackageTextMatch; offset: number }
 export class PackageTextScanner {
   private readonly syntax = new PackageJsonSyntax()
   private tail = ''
+  private beforeTail = ''
   private offset = 0
   private original?: TextFinding
   private structured?: TextFinding
@@ -373,12 +380,13 @@ export class PackageTextScanner {
     this.syntax.write(decoded)
     const text = this.tail + decoded
     const inspect = (jsonBooleans: boolean): TextFinding | undefined => {
-      const match = findPackageTextMatch(text, complete, jsonBooleans)
+      const match = findPackageTextMatch(text, complete, jsonBooleans, this.beforeTail)
       return match ? { text, match, offset: this.offset - this.tail.length } : undefined
     }
     this.original ??= inspect(false)
     if (this.original) this.structured ??= inspect(true)
     this.offset += decoded.length
+    if (text.length > 8192) this.beforeTail = text[text.length - 8192 - 1]
     this.tail = text.slice(-8192)
   }
 

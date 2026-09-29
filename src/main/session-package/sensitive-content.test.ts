@@ -171,6 +171,35 @@ it.each([
   }
 })
 
+it.each(['noCredentials', 'authorization'])(
+  'keeps boolean %s metadata safe at every overlap alignment',
+  (key) => {
+    for (let shift = -key.length; shift <= 1; shift++) {
+      const text =
+        ' '.repeat(65536 - 8192 - 2 + shift) + `{"${key}":true,"notes":"${'a'.repeat(8192)}"}`
+      expect(findSensitivePackageText(text)).toBeUndefined()
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, 65536))
+      scanner.write(text.slice(65536))
+      expect(scanner.finish(), `overlap shift ${shift}`).toBeUndefined()
+    }
+  }
+)
+
+it.each(['true', 'false', '"true"', '"synthetic-private-value"', '123456'])(
+  'preserves the value type after an overlap-truncated key: %s',
+  (value) => {
+    for (const shift of [-2, 0]) {
+      const prefix = ' '.repeat(65536 - 8192 - 2 + shift) + '{"noCredentials":'
+      const text = prefix + ' '.repeat(9000) + value + '}'
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, 65536))
+      scanner.write(text.slice(65536))
+      expect(Boolean(scanner.finish())).toBe(value !== 'true' && value !== 'false')
+    }
+  }
+)
+
 it('reports the actual later credential with its original stream offset', () => {
   const prefix = '{"noCredentials":true}\n' + ' '.repeat(70000)
   const secret = '{"apiKey":"synthetic-private-value"}\n'

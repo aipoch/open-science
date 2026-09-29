@@ -100,6 +100,13 @@ it.each([
   ],
   ['quoted boolean credential', Buffer.from('{"noCredentials":"true"}'), false],
   [
+    'boolean field opening quote outside the retained overlap',
+    Buffer.from(
+      ' '.repeat(65536 - 8192 - 2) + '{"noCredentials":true,"notes":"' + 'a'.repeat(8192) + '"}'
+    ),
+    true
+  ],
+  [
     'numeric credential beside a boolean',
     Buffer.from('{"noCredentials":true,"token":123456}'),
     false
