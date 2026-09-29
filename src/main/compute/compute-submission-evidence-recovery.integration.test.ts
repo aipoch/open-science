@@ -36,9 +36,10 @@ describe.skipIf(process.platform !== 'win32')('Compute submission evidence recov
   let database: Awaited<ReturnType<typeof createMigratedComputeTestDatabase>> | undefined
 
   beforeAll(async () => {
-    // Schema migration is fixture setup; keep its disk I/O outside the receipt-recovery deadline.
+    // Full-ledger migration can exceed the default hook budget on hosted Windows disks.
+    // Match the SQLite migration suites while keeping the receipt-recovery test deadline separate.
     database = await createMigratedComputeTestDatabase('compute-submission-evidence-')
-  })
+  }, 120_000)
 
   afterAll(async () => {
     await database?.dispose()
