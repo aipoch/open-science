@@ -200,6 +200,7 @@
       "src/main/immutable-input-authority.test.ts",
       "src/main/index-fatal-errors.test.ts",
       "src/main/index-startup-failure.test.ts",
+      "src/main/credential-identity/ciphertext-inventory.test.ts",
       "src/main/ipc-surfaces/adapter.test.ts",
       "src/main/ipc-surfaces/artifacts.test.ts",
       "src/main/ipc-surfaces/connector-approvals.test.ts",
