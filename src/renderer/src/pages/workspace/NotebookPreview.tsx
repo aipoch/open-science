@@ -46,6 +46,7 @@ import { hasActiveRuntimeTarget, notebookGated } from './provisioning-view'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookRunEvidence } from './NotebookRunEvidence'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
+import { shellRunFailureLabel } from './shell-run-presentation'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
 import { isCurrentSessionNotebookView } from './follow-notebook-scroll'
 import { useFollowScrollBottom } from './use-follow-scroll-bottom'
@@ -225,7 +226,7 @@ const NotebookRunCell = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
-  const statusLabel = notebookRunStatusLabel(run.status)
+  const statusLabel = shellRunFailureLabel(run) ?? notebookRunStatusLabel(run.status)
   const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
   const kind = resolveRunKernelKind(run)
   const originLabel = kernelOriginLabel(kind)
@@ -248,7 +249,7 @@ const NotebookRunCell = ({
               </span>
             ) : (
               <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">
-                {t('error')}
+                {t(statusLabel ?? 'error')}
               </span>
             )
           ) : statusLabel ? (

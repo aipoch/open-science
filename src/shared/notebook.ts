@@ -701,9 +701,17 @@ export type NotebookRunRecord = {
   // Exact shell outcome. Optional keeps non-shell and historical records compatible.
   exitCode?: number | null
   shellRuntimeStatus?: 'unavailable'
+  // Safe OS errno identifier (for example ENOENT), never an exception message or host path.
+  shellSystemErrorCode?: string
   recovery?: import('./execution-recovery').NotebookExecutionRecovery
   shellErrorCode?:
-    'shell-runtime-unavailable' | 'shell-cleanup-incomplete' | 'shell-network-transport-unsupported'
+    | 'shell-start-failed'
+    | 'shell-nonzero-exit'
+    | 'shell-process-error'
+    | 'shell-command-blocked'
+    | 'shell-runtime-unavailable'
+    | 'shell-cleanup-incomplete'
+    | 'shell-network-transport-unsupported'
   // Named env that produced this run (python/r only; omitted for repl/bash).
   environment?: string
   // Immutable completed-run environment evidence. The cache that helped build it is never referenced.

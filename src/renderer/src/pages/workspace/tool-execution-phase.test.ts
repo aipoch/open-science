@@ -53,6 +53,104 @@ const run = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => (
 })
 
 describe('getToolExecutionPhase', () => {
+  it.each([
+    [{ status: 'failed', errorCode: 'shell-start-failed', exitCode: null }, 'failed'],
+    [{ status: 'failed', errorCode: 'shell-nonzero-exit', exitCode: 7 }, 'failed'],
+    [{ status: 'completed', exitCode: 0, stderr: 'warning' }, 'completed']
+  ] as const)(
+    'restores an unhydrated Shell result from its structured outcome %#',
+    (result, phase) => {
+      const shellActivity = activity({
+        title: 'mcp__open-science-notebook__bash_execute',
+        providerToolName: 'mcp__open-science-notebook__bash_execute',
+        status: phase === 'failed' ? 'failed' : 'completed',
+        rawOutput: { structuredContent: result }
+      })
+
+      expect(getToolExecutionPhase(shellActivity, undefined)).toBe(phase)
+    }
+  )
+
+  it('does not restore a Shell phase from observer status, stderr, or an unrelated query result', () => {
+    const shellActivity = activity({
+      title: 'mcp__open-science-notebook__bash_execute',
+      providerToolName: 'mcp__open-science-notebook__bash_execute',
+      status: 'failed',
+      rawOutput: { stderr: 'permission denied' }
+    })
+    expect(getToolExecutionPhase(shellActivity, undefined)).toBe('prepared')
+    expect(
+      getToolExecutionPhase(
+        { ...shellActivity, rawOutput: { status: 'failed', exitCode: null } },
+        undefined
+      )
+    ).toBe('prepared')
+    expect(
+      getToolExecutionPhase(
+        {
+          ...shellActivity,
+          rawOutput: { status: 'failed', errorCode: 'shell-nonzero-exit', exitCode: 0 }
+        },
+        undefined
+      )
+    ).toBe('prepared')
+    expect(
+      getToolExecutionPhase(
+        {
+          ...shellActivity,
+          providerToolName: 'mcp__other-server__bash_execute',
+          status: 'completed',
+          rawOutput: { status: 'failed', errorCode: 'shell-nonzero-exit', exitCode: 7 }
+        },
+        undefined
+      )
+    ).toBe('prepared')
+
+    const queriedFailedRun = activity({
+      title: 'mcp__open-science-notebook__notebook_state',
+      providerToolName: 'mcp__open-science-notebook__notebook_state',
+      status: 'completed',
+      rawOutput: {
+        structuredContent: { status: 'failed', errorCode: 'shell-nonzero-exit', exitCode: 7 }
+      }
+    })
+    expect(getToolExecutionPhase(queriedFailedRun, undefined)).toBe('completed')
+  })
+
+  it('keeps a hydrated Shell Run authoritative over a contradictory compact tool result', () => {
+    const shellActivity = activity({
+      title: 'mcp__open-science-notebook__bash_execute',
+      providerToolName: 'mcp__open-science-notebook__bash_execute',
+      executionInvocationId: 'invocation-1',
+      status: 'failed',
+      rawOutput: { status: 'failed', errorCode: 'shell-nonzero-exit', exitCode: 7 }
+    })
+    const runs = new Map([['run-1', run({ kernelKind: 'bash', status: 'completed', exitCode: 0 })]])
+
+    expect(getToolExecutionPhase(shellActivity, undefined, runs)).toBe('completed')
+  })
+
+  it('reads a nested Codex MCP result envelope without parsing stream text as JSON', () => {
+    const shellActivity = activity({
+      title: 'mcp__open-science-notebook__bash_execute',
+      providerToolName: 'mcp__open-science-notebook__bash_execute',
+      status: 'completed',
+      rawOutput: {
+        result: {
+          content: [{ type: 'text', text: 'Shell command exited with code 7.' }],
+          structuredContent: {
+            status: 'failed',
+            errorCode: 'shell-nonzero-exit',
+            exitCode: 7,
+            stderr: '{"status":"completed","exitCode":0}'
+          }
+        }
+      }
+    })
+
+    expect(getToolExecutionPhase(shellActivity, undefined)).toBe('failed')
+  })
+
   it('separates prepared code from a matching durable approval wait', () => {
     expect(getToolExecutionPhase(activity(), undefined)).toBe('prepared')
     expect(getToolExecutionPhase(activity(), permission())).toBe('awaiting-approval')

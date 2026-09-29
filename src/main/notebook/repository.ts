@@ -236,6 +236,9 @@ const notebookRunCandidate = (value: unknown): boolean => {
     (value.exitCode !== undefined &&
       value.exitCode !== null &&
       (!Number.isSafeInteger(value.exitCode) || Number(value.exitCode) < 0)) ||
+    (value.shellSystemErrorCode !== undefined &&
+      (typeof value.shellSystemErrorCode !== 'string' ||
+        !/^E[A-Z0-9]{1,31}$/u.test(value.shellSystemErrorCode))) ||
     (value.kernelEpochId !== undefined &&
       (typeof value.kernelEpochId !== 'string' || value.kernelEpochId.length === 0)) ||
     (value.kernelDispatched !== undefined && typeof value.kernelDispatched !== 'boolean') ||

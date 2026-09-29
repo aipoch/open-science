@@ -50,6 +50,27 @@ const renderContent = (props: {
   )
 
 describe('SessionNotebookContent', () => {
+  it('labels a failed Shell Run by its recorded outcome', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      status: 'ready',
+      runs: [
+        makeRun({
+          kernelKind: 'bash',
+          script: 'exit 7',
+          status: 'failed',
+          shellErrorCode: 'shell-nonzero-exit',
+          exitCode: 7,
+          text: { stdout: '', stderr: 'problem', traceback: '', plain: [] }
+        })
+      ]
+    })
+
+    expect(html).toContain('Command failed')
+    expect(html).toContain('The Shell command exited with code 7.')
+    expect(html).toContain('problem')
+  })
+
   it('shows the empty state when there are no runs', () => {
     const html = renderContent({ sessionId: '134d5d81aa', runs: [], status: 'ready' })
 

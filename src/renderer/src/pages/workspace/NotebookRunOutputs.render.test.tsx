@@ -43,6 +43,43 @@ const render = (outputs: NotebookOutput[], textOverride?: Partial<NotebookRunRec
 }
 
 describe('NotebookRunOutputs', () => {
+  it('shows a confirmed Shell launch failure without a persistent-kernel message', () => {
+    render([{ type: 'stream', name: 'stderr', text: 'spawn EACCES\n' }], {
+      kernelKind: 'bash',
+      status: 'failed',
+      shellErrorCode: 'shell-start-failed',
+      exitCode: null,
+      kernelDispatched: false
+    })
+
+    expect(container.querySelector('[data-testid="notebook-run-outcome"]')?.textContent).toBe(
+      'The Shell process did not start. The command was not run.'
+    )
+    expect(container.textContent).toContain('spawn EACCES')
+    expect(container.textContent).not.toContain('kernel')
+  })
+
+  it('shows an exit-code outcome and leaves a warning on exit zero unclassified', () => {
+    render([{ type: 'stream', name: 'stderr', text: 'permission denied\n' }], {
+      kernelKind: 'bash',
+      status: 'failed',
+      shellErrorCode: 'shell-nonzero-exit',
+      exitCode: 7
+    })
+    expect(container.querySelector('[data-testid="notebook-run-outcome"]')?.textContent).toBe(
+      'The Shell command exited with code 7.'
+    )
+    expect(container.textContent).toContain('permission denied')
+
+    render([{ type: 'stream', name: 'stderr', text: 'warning\n' }], {
+      kernelKind: 'bash',
+      status: 'completed',
+      exitCode: 0
+    })
+    expect(container.querySelector('[data-testid="notebook-run-outcome"]')).toBeNull()
+    expect(container.textContent).toContain('warning')
+  })
+
   it('shows the truncation notice even when all output was omitted', () => {
     render([], { truncated: true })
 

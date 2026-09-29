@@ -1274,6 +1274,74 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain('file.txt')
   })
 
+  it('distinguishes a Shell launch failure from command output and keeps its diagnostic in details', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__bash_execute',
+      status: 'failed',
+      rawInput: { command: 'echo hi' },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              status: 'failed',
+              kernelKind: 'bash',
+              errorCode: 'shell-start-failed',
+              exitCode: null,
+              error: 'spawn EACCES',
+              stderr: 'spawn EACCES'
+            })
+          }
+        }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.metaLabel).toBe('Shell did not start')
+    expect(details?.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Command', text: 'echo hi' }),
+        expect.objectContaining({ label: 'Output', text: 'spawn EACCES', collapsible: true })
+      ])
+    )
+    expect(
+      details?.sections.filter((section) => 'label' in section && section.label === 'Error')
+    ).toHaveLength(0)
+  })
+
+  it('shows numeric command failure without treating stderr as an infrastructure summary', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__bash_execute',
+      status: 'failed',
+      rawInput: { command: 'cat missing' },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              status: 'failed',
+              kernelKind: 'bash',
+              errorCode: 'shell-nonzero-exit',
+              exitCode: 7,
+              stdout: 'before\n',
+              stderr: 'missing file\n'
+            })
+          }
+        }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.metaLabel).toBe('Command failed (exit 7)')
+    expect(details?.sections[1]).toMatchObject({
+      label: 'Output',
+      text: 'before\nmissing file',
+      collapsible: true
+    })
+  })
+
   it('summarizes a manage_packages install with method and a cleaned log, not raw JSON', () => {
     const result = {
       ok: true,

@@ -3,7 +3,10 @@ import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { ToolActivity } from '@/stores/session-store'
 
 import { isNotebookExecuteToolName } from './notebook-tool-names'
-import { getNotebookRunStatusFromActivity } from './workspace-tool-activity-details'
+import {
+  getNotebookRunStatusFromActivity,
+  getShellResultStatusFromActivity
+} from './workspace-tool-activity-details'
 
 type ToolExecutionPhase =
   | 'prepared'
@@ -41,7 +44,9 @@ const getToolExecutionPhase = (
     : undefined
   const notebookRunStatus =
     correlatedRun?.status ??
-    (isNotebookExecutionActivity(activity) ? getNotebookRunStatusFromActivity(activity) : undefined)
+    (isNotebookExecutionActivity(activity)
+      ? (getNotebookRunStatusFromActivity(activity) ?? getShellResultStatusFromActivity(activity))
+      : undefined)
   // Notebook owns execution truth. An outer ACP observer failure/closure cannot stop or relabel a
   // Run that the authenticated bridge has already admitted, including multi-hour executions. A
   // compact transcript result restores the same truth when the full historical Run is not loaded.

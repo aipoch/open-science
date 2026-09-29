@@ -77,7 +77,7 @@ import {
   writeReadyMarker,
   writeRReadyMarker
 } from './runtime-paths'
-import type { NotebookShellProcess } from './shell-process'
+import { NotebookShellProcessAdapter, type NotebookShellProcess } from './shell-process'
 import { NOTEBOOK_CODE_LIMIT_BYTES } from './content-limits'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { projectNotebookDependencies, type AnalyzedNotebookRun } from './dependency-analysis'
@@ -4013,6 +4013,95 @@ describe('notebook runtime service', () => {
       })
       expect(state.runs[0].text.stdout).toContain('hi')
     })
+
+    it.runIf(process.platform !== 'win32')(
+      'persists a real missing executable as a start failure and replays its OS code',
+      async () => {
+        const root = await createStorageRoot()
+        const missingExecutable = join(root, 'missing-shell-executable')
+        const logInfo = vi.fn(() => {
+          throw new Error('diagnostic sink unavailable')
+        })
+        const logError = vi.fn(() => {
+          throw new Error('diagnostic sink unavailable')
+        })
+        const shellProcess = new NotebookShellProcessAdapter('linux', {
+          wrap: async (invocation) => ({
+            executable: missingExecutable,
+            args: invocation.args,
+            env: invocation.env,
+            annotateStderr: (stderr) => stderr,
+            cleanup: async () => ({
+              processesTerminated: true,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
+            })
+          })
+        })
+        const service = new NotebookRuntimeService({
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'default-project',
+          repository: new NotebookRunRepository(root),
+          shellProcess,
+          platform: 'linux',
+          logger: { info: logInfo, warn: vi.fn(), error: logError }
+        })
+        const request = {
+          sessionId: 'missing-shell',
+          workspaceCwd: root,
+          command: 'printf never-ran',
+          executionInvocationId: 'missing-shell-invocation'
+        }
+
+        const result = await service.executeShell(request)
+        expect(result).toMatchObject({
+          stdout: '',
+          exitCode: null,
+          errorCode: 'shell-start-failed',
+          systemErrorCode: 'ENOENT'
+        })
+        const state = await service.state(request)
+        expect(state.runs[0]).toMatchObject({
+          status: 'failed',
+          shellErrorCode: 'shell-start-failed',
+          shellSystemErrorCode: 'ENOENT',
+          exitCode: null
+        })
+        expect(
+          (await new NotebookRunRepository(root).findExisting('default-project', request.sessionId))
+            ?.runs[0]
+        ).toMatchObject({
+          shellErrorCode: 'shell-start-failed',
+          shellSystemErrorCode: 'ENOENT',
+          exitCode: null
+        })
+        expect(logError).toHaveBeenCalledWith(
+          'shell process failure',
+          expect.objectContaining({
+            originalError: expect.objectContaining({
+              name: 'Error',
+              code: 'ENOENT',
+              error: expect.stringContaining('ENOENT'),
+              stack: expect.stringContaining('ENOENT')
+            })
+          })
+        )
+        expect(logInfo).toHaveBeenCalledWith(
+          'shell execution completed',
+          expect.objectContaining({
+            stage: 'launch',
+            status: 'failed',
+            terminationReason: 'start-failed',
+            exitCode: null
+          })
+        )
+        expect(await service.executeShell(request)).toMatchObject({
+          errorCode: 'shell-start-failed',
+          systemErrorCode: 'ENOENT'
+        })
+      }
+    )
 
     it('returns a durable background Shell receipt before execution completes and exposes its result', async () => {
       const root = await createStorageRoot()

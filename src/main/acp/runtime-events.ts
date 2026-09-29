@@ -234,6 +234,29 @@ type ToolCallUpdate = Extract<
   { sessionUpdate: 'tool_call' | 'tool_call_update' }
 >
 
+// A completed observer can still carry a failed app-owned Shell MCP result. Limit this
+// compatibility rule to that tool and its protocol envelope, never business output or progress.
+const toolProtocolStatus = (update: ToolCallUpdate): Exclude<ToolCallUpdate['status'], null> => {
+  const isShell = [extractProviderToolName(update), trimProviderValue(update.title)].some(
+    (name) => {
+      const normalized = name
+        ?.toLowerCase()
+        .split(/[^a-z0-9]+/u)
+        .filter(Boolean)
+        .join('/')
+      return (
+        normalized === 'mcp/open/science/notebook/bash/execute' ||
+        normalized === 'open/science/notebook/bash/execute'
+      )
+    }
+  )
+  if (update.status !== 'completed' || !isShell) return update.status ?? undefined
+  const raw = update.rawOutput
+  if (!isRecord(raw)) return update.status
+  const envelope = isRecord(raw.result) ? raw.result : raw
+  return envelope.isError === true && Array.isArray(envelope.content) ? 'failed' : update.status
+}
+
 // codex-acp represents native automatic and manual context compaction as a tool lifecycle with a
 // structural metadata marker. Normalize it before generic tool projection so every framework reaches
 // the renderer through the same compaction interface.
@@ -682,7 +705,7 @@ const toAcpRuntimeEvent = (
         toolKind: update.kind,
         ...projectToolDetailPayload(update),
         title: projectToolTitle(update),
-        status: update.status
+        status: toolProtocolStatus(update)
       }
     case 'tool_call_update':
       if (isContextCompactionUpdate(update)) {
@@ -703,7 +726,7 @@ const toAcpRuntimeEvent = (
         toolKind: update.kind ?? undefined,
         ...projectToolDetailPayload(update),
         title: projectToolTitle(update),
-        status: update.status ?? undefined
+        status: toolProtocolStatus(update) ?? undefined
       }
     case 'plan':
     case 'plan_update':

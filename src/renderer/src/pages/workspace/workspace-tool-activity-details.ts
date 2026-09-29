@@ -13,11 +13,13 @@ import type { NotebookRunStatus } from '../../../../shared/notebook'
 import {
   getNotebookMemoryToolDisplayName,
   isNotebookManagePackagesToolName,
+  matchNotebookRunTool,
   matchNotebookMemoryTool,
   resolveNotebookLanguage,
   resolveNotebookRunToolName
 } from './notebook-tool-names'
 import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
+import { shellFailureMetaLabel } from './shell-run-presentation'
 import {
   extractSkillLoadDocument,
   getLoadedSkillName,
@@ -744,17 +746,36 @@ const getNotebookLanguage = (
 
 // Reads the notebook run summary the execute tool returns as JSON content (or raw output).
 const parseNotebookRunSummary = (activity: ToolActivity): Record<string, unknown> | undefined => {
-  for (const text of collectToolTexts(activity)) {
-    try {
-      const parsed: unknown = JSON.parse(text)
-
-      if (isRecord(parsed)) return parsed
-    } catch {
-      // Not a JSON payload; keep scanning the remaining content blocks.
+  const unwrap = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
+    if (depth > 5) return undefined
+    if (typeof value === 'string') {
+      if (value.length > 128_000) return undefined
+      try {
+        return unwrap(JSON.parse(value) as unknown, depth + 1)
+      } catch {
+        return undefined
+      }
     }
+    if (!isRecord(value)) return undefined
+    for (const field of ['structuredContent', 'result'] as const) {
+      const nested = unwrap(value[field], depth + 1)
+      if (nested && typeof nested.status === 'string') return nested
+    }
+    if (Array.isArray(value.content)) {
+      for (const block of value.content) {
+        if (!isRecord(block) || block.type !== 'text') continue
+        const nested = unwrap(block.text, depth + 1)
+        if (nested && typeof nested.status === 'string') return nested
+      }
+    }
+    return value
+  }
+  for (const text of collectToolTexts(activity)) {
+    const summary = unwrap(text)
+    if (summary) return summary
   }
 
-  return isRecord(activity.rawOutput) ? activity.rawOutput : undefined
+  return unwrap(activity.rawOutput)
 }
 
 // Prefers the executed code from tool input, falling back to the script echoed in the run summary.
@@ -876,9 +897,47 @@ const getNotebookRunStatusFromActivity = (
     : undefined
 }
 
+// Stateless Shell results do not carry the persistent-kernel invocation join. Accept only the
+// exact app Shell tool and a structurally consistent terminal result; ACP observer status and
+// stderr text alone cannot establish that a command ran or failed.
+const getShellResultStatusFromActivity = (
+  activity: ToolActivity
+): 'completed' | 'failed' | undefined => {
+  // A present provider identity is authoritative; a title must not override a different tool.
+  const toolName = activity.providerToolName ?? activity.title
+  if (matchNotebookRunTool(toolName) !== 'bash_execute') return undefined
+  const summary = parseNotebookRunSummary(activity)
+  if (!summary) return undefined
+  const { status, exitCode, errorCode } = summary
+  if (status === 'completed' && exitCode === 0 && errorCode === undefined) return 'completed'
+  if (status !== 'failed') return undefined
+  if (errorCode === undefined) {
+    return typeof exitCode === 'number' && exitCode !== 0 ? 'failed' : undefined
+  }
+  if (errorCode === 'shell-nonzero-exit') {
+    return typeof exitCode === 'number' && exitCode !== 0 ? 'failed' : undefined
+  }
+  if (
+    [
+      'shell-start-failed',
+      'shell-runtime-unavailable',
+      'shell-network-transport-unsupported',
+      'shell-command-blocked',
+      'shell-process-error',
+      'shell-cleanup-incomplete'
+    ].includes(String(errorCode))
+  ) {
+    return 'failed'
+  }
+  return undefined
+}
+
 // Renders a notebook run as its code plus execution output, not the raw summary JSON. Handles every
 // kernel: python/r cells, the repl control-plane (Agent SDK), and bash shell runs.
-const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildNotebookDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
   const summary = parseNotebookRunSummary(activity)
   const language = getNotebookLanguage(activity, summary)
   const code = getNotebookCode(activity, summary)
@@ -894,10 +953,29 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
   // The code leads the cell; keep the output tucked behind a collapsed toggle like the sidebar.
   if (outputSection) sections.push({ ...outputSection, collapsible: true })
 
+  // The protocol's human diagnostic is separate from process output. Preserve both without
+  // promoting stderr into a guessed application-error summary.
+  if (language === 'bash' && summary && typeof summary.error === 'string') {
+    const diagnostic = trimDetail(summary.error)
+    if (diagnostic && !output?.includes(diagnostic)) {
+      const diagnosticSection = createCodeSection('Error', diagnostic)
+      if (diagnosticSection) sections.push({ ...diagnosticSection, collapsible: true })
+    }
+  }
+
   // Without at least the code there is nothing notebook-specific to show; use the generic view.
   if (sections.length === 0) return undefined
 
   const status = summary && typeof summary.status === 'string' ? summary.status : undefined
+  const shellErrorCode =
+    summary && typeof summary.errorCode === 'string' ? summary.errorCode : undefined
+  const shellExitCode =
+    summary && typeof summary.exitCode === 'number' ? summary.exitCode : undefined
+  const metaLabel =
+    language === 'bash'
+      ? (shellFailureMetaLabel({ status, errorCode: shellErrorCode, exitCode: shellExitCode }, t) ??
+        (status === 'completed' ? t('Completed') : status))
+      : status
 
   // Derive display name from language: python/r are Notebook runs, javascript (repl) is Agent SDK,
   // and bash is shell.
@@ -906,7 +984,7 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
 
   return {
     displayName,
-    metaLabel: status,
+    metaLabel,
     notebookRunId: getNotebookRunIdFromActivity(activity),
     sections
   }
@@ -1286,7 +1364,7 @@ const buildToolActivityDetails = (
   }
   // Notebook runs (python/r cells, repl, bash) show their code and output, not the run-summary JSON.
   if (isNotebookKernelRunActivity(activity)) {
-    return buildNotebookDetails(activity) ?? buildGenericDetails(activity)
+    return buildNotebookDetails(activity, t) ?? buildGenericDetails(activity)
   }
   if (activity.toolKind === 'execute') return buildExecuteDetails(activity, t)
   // Tool-discovery steps summarize the tools they found rather than repeating "ToolSearch".
@@ -1301,6 +1379,7 @@ export {
   buildToolActivityDetails,
   getNotebookRunIdFromActivity,
   getNotebookRunStatusFromActivity,
+  getShellResultStatusFromActivity,
   getSkillLoadDocument,
   getToolDisplayName,
   isEditActivity,

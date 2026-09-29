@@ -11,6 +11,85 @@ import {
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 
 describe('ACP runtime event normalization', () => {
+  it.each(['tool_call', 'tool_call_update'] as const)(
+    'retains MCP execution failure in %s even when the provider reports completion',
+    (sessionUpdate) => {
+      for (const wrap of [(result: unknown) => result, (result: unknown) => ({ result })]) {
+        const event = toAcpRuntimeEvent(
+          {
+            sessionId: 'session-shell',
+            update: {
+              sessionUpdate,
+              toolCallId: 'shell-1',
+              title: 'mcp__open-science-notebook__bash_execute',
+              kind: 'execute',
+              status: 'completed',
+              rawOutput: wrap({
+                isError: true,
+                content: [{ type: 'text', text: '{"exitCode":7}' }]
+              })
+            }
+          },
+          'event-shell'
+        )
+        expect(event.status).toBe('failed')
+        expect(
+          sanitizeToolActivity({
+            id: 'shell-1',
+            title: event.title,
+            status: event.status,
+            rawOutput: event.rawOutput
+          })?.status
+        ).toBe('failed')
+      }
+    }
+  )
+
+  it.each([
+    ['mcp__open-science-notebook__bash_execute', 'in_progress'],
+    ['custom_business_tool', 'completed'],
+    ['mcp__other-server__bash_execute', 'completed']
+  ] as const)('does not reinterpret %s %s updates', (title, status) => {
+    const event = toAcpRuntimeEvent(
+      {
+        sessionId: 'session-shell',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'other-1',
+          title,
+          status,
+          rawOutput: { isError: true, content: [] }
+        }
+      },
+      'event-other'
+    )
+    expect(event.status).toBe(status)
+  })
+
+  it.each([
+    { isError: false, content: [{ type: 'text', text: '{"status":"failed"}' }] },
+    { content: [{ type: 'text', text: '{"isError":true,"status":"failed"}' }] },
+    { status: 'failed', isError: true },
+    { structuredContent: { isError: true, status: 'failed' } }
+  ])(
+    'keeps successful queries and business payloads separate from MCP failures (%j)',
+    (rawOutput) => {
+      const event = toAcpRuntimeEvent(
+        {
+          sessionId: 'session-shell',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'query-1',
+            status: 'completed',
+            rawOutput
+          }
+        },
+        'event-query'
+      )
+      expect(event.status).toBe('completed')
+    }
+  )
+
   it('maps assistant text chunks into readable runtime events', () => {
     const notification: SessionNotification = {
       sessionId: 'session-1',
