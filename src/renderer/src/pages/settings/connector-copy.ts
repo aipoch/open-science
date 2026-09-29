@@ -23,7 +23,7 @@ export function connectorDescription(
   }
   if (connector.id === 'variants') {
     return t(
-      'Human genetic variants — gnomAD population frequencies/constraint, ClinVar records/search (direct NCBI), dbSNP, structural and mitochondrial variants.'
+      'Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.'
     )
   }
   if (connector.id === 'omics-archives') {
@@ -48,6 +48,19 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'variants/mavedb_search_score_sets':
+      return t('Search public MaveDB functional score sets.')
+    case 'variants/mavedb_get_score_set':
+      return t('Retrieve MaveDB score set metadata and download links.')
+    case 'variants/mavedb_download_scores':
+      return t('Download a CSV page of MaveDB variant scores.')
+    case 'variants/mavedb_get_mapped_variants':
+      return t('Retrieve existing MaveDB variant mappings in VRS format.')
+    case 'variants/mavedb_get_experiment':
+      return t('Retrieve MaveDB experiment methods and metadata.')
+    case 'variants/mavedb_get_experiment_score_sets':
+      return t('List score sets in a MaveDB experiment.')
+
     case 'expression/bgee_species':
       return t('List or retrieve species in the Bgee expression atlas.')
     case 'expression/bgee_expression_calls':

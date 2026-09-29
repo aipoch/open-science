@@ -7,6 +7,7 @@ import {
   ALL_CONNECTOR_IDS
 } from './registry'
 import { CONNECTOR_CATALOG } from './catalog'
+import { VARIANTS_MAVEDB_TOOLS } from './descriptors/variants-mavedb'
 
 describe('registry + catalog', () => {
   it('registers HMMER search, status and results with the Pfam hmmscan constraint', () => {
@@ -364,5 +365,58 @@ describe('UniProt discovery input contract', () => {
     const minimal = { gene: 'TP53' }
     validateToolArguments(search, minimal)
     expect(minimal).toEqual({ gene: 'TP53' })
+  })
+})
+
+describe('MaveDB registration and input contracts', () => {
+  const SCORE_SET = 'urn:mavedb:00000003-a-1'
+  const EXPERIMENT = 'urn:mavedb:00000003-a'
+  const tool = (id: string): (typeof VARIANTS_MAVEDB_TOOLS)[number] =>
+    getDescriptor('variants', `mavedb_${id}`)!
+
+  it('registers all six public tools and discovery aliases', () => {
+    expect(VARIANTS_MAVEDB_TOOLS).toHaveLength(6)
+    for (const descriptor of VARIANTS_MAVEDB_TOOLS) {
+      expect(getDescriptor('variants', descriptor.id)).toBe(descriptor)
+      expect(descriptor.requiredCredential).toBeUndefined()
+    }
+    expect(CONNECTOR_CATALOG.find((c) => c.id === 'variants')?.aliases).toContain('MaveDB')
+  })
+
+  it.each(['urn:mavedb:00000662-0-1', 'urn:mavedb:00000003-aa-12'])(
+    'accepts published meta-analysis and multi-letter URNs: %s',
+    (id) => {
+      expect(() => validateToolArguments(tool('get_score_set'), { urn: id })).not.toThrow()
+      expect(() =>
+        validateToolArguments(tool('get_experiment'), { urn: id.slice(0, id.lastIndexOf('-')) })
+      ).not.toThrow()
+    }
+  )
+
+  it.each([
+    ['get_score_set', { urn: EXPERIMENT }],
+    ['get_experiment', { urn: SCORE_SET }],
+    ['get_score_set', { urn: `${SCORE_SET}/../../users/me` }],
+    ['get_score_set', { urn: `${SCORE_SET}?secret=1` }],
+    ['get_score_set', { urn: `tmp:446191af-c1f8-4891-9f67-de152e9d328b` }],
+    ['search_score_sets', { text: ' ' }],
+    ['search_score_sets', { text: 'x'.repeat(1001) }],
+    ['search_score_sets', { text: 'BRCA1', limit: 101 }],
+    ['search_score_sets', { text: 'BRCA1', offset: -1 }],
+    ['search_score_sets', { text: 'BRCA1', offset: 0.5 }],
+    ['download_scores', { urn: SCORE_SET, limit: '2' }],
+    ['download_scores', { urn: SCORE_SET, limit: 10001 }],
+    ['download_scores', { urn: SCORE_SET, start: -1 }]
+  ])('rejects invalid MaveDB %s arguments in the registered schema', (id, args) => {
+    expect(() => validateToolArguments(tool(id), args)).toThrow(/invalid_arguments/)
+  })
+
+  it('rejects unsupported input fields in the registered schema', () => {
+    expect(() =>
+      validateToolArguments(tool('get_mapped_variants'), { urn: SCORE_SET, offset: 1 })
+    ).toThrow(/invalid_arguments/)
+    expect(() =>
+      validateToolArguments(tool('search_score_sets'), { text: 'BRCA1', published: false })
+    ).toThrow(/invalid_arguments/)
   })
 })
