@@ -102,3 +102,43 @@ it('omits unrecognized operation vocabulary instead of passing through private t
     })
   ).toEqual({})
 })
+
+it('retains bounded runtime failure context and omits private or unknown diagnostic values', () => {
+  expect(
+    projectDiagnosticLog({
+      msg: 'Runtime Session authority unavailable',
+      data: {
+        operation: 'runtime-session-mutation',
+        phase: 'load-authority',
+        authorityStatus: 'unreadable',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        cachedProjectId: 'project-2',
+        metadataComplete: true,
+        text: 'PRIVATE_PROMPT',
+        error: { stack: 'PRIVATE_STACK' }
+      }
+    })
+  ).toEqual({
+    event: 'Runtime Session authority unavailable',
+    diagnostics: {
+      operation: 'runtime-session-mutation',
+      phase: 'load-authority',
+      authorityStatus: 'unreadable',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      cachedProjectId: 'project-2',
+      metadataComplete: true
+    }
+  })
+  expect(
+    projectDiagnosticLog({
+      data: {
+        authorityStatus: 'PRIVATE_STATUS',
+        phase: 'PRIVATE_PHASE',
+        cachedProjectId: '/PRIVATE_PATH',
+        metadataComplete: 'PRIVATE_BOOL'
+      }
+    })
+  ).toEqual({})
+})

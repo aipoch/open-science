@@ -87,6 +87,74 @@ const splitRedaction =
   serializedRedaction
 
 it.each([
+  ['boolean research metadata in JSON', Buffer.from('{"noCredentials":true,"result":"ok"}'), true],
+  [
+    'boolean research metadata in NDJSON',
+    Buffer.from('{"noCredentials":true}\n{"metadata":{"noCredentials":false}}\n'),
+    true
+  ],
+  [
+    'boolean research metadata crossing a read boundary',
+    Buffer.from(' '.repeat(65536 - '{"noCredentials":tr'.length) + '{"noCredentials":true}'),
+    true
+  ],
+  ['quoted boolean credential', Buffer.from('{"noCredentials":"true"}'), false],
+  [
+    'hyphenated boolean member names',
+    Buffer.from('{"no-authorization":true,"has-cookie":false,"no-api-key":true}'),
+    true
+  ],
+  ...Array.from({ length: 26 }, (_, split): [string, Buffer, boolean] => [
+    `boolean member crossing a read at prefix ${split + 1}`,
+    Buffer.from(' '.repeat(65536 - split - 1) + '{"noCredentials":false,"result":"ok"}'),
+    true
+  ]),
+  [
+    'boolean-like credential suffix in the next read',
+    Buffer.from(' '.repeat(65515) + '{"noCredentials":trueSecret}'),
+    false
+  ],
+  [
+    'boolean-like credential beyond the retained overlap',
+    Buffer.from('{"noCredentials":true' + ' '.repeat(70000) + 'secret}'),
+    false
+  ],
+  [
+    'boolean field opening quote outside the retained overlap',
+    Buffer.from(
+      ' '.repeat(65536 - 8192 - 2) + '{"noCredentials":true,"notes":"' + 'a'.repeat(8192) + '"}'
+    ),
+    true
+  ],
+  [
+    'numeric credential beside a boolean',
+    Buffer.from('{"noCredentials":true,"token":123456}'),
+    false
+  ],
+  ['truncated boolean JSON', Buffer.from('{"noCredentials":true'), false],
+  ['malformed boolean JSON', Buffer.from('{"noCredentials":true,}'), false],
+  [
+    'malformed final NDJSON record after boolean metadata',
+    Buffer.from('{"noCredentials":true}\n' + ' '.repeat(70000) + '{"result":}'),
+    false
+  ],
+  [
+    'boolean metadata in UTF-16 with BOM',
+    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('{"noCredentials":false}', 'utf16le')]),
+    true
+  ],
+  [
+    'boolean metadata after a large research value',
+    Buffer.from(JSON.stringify({ notes: 'a'.repeat(150000), noCredentials: false })),
+    true
+  ],
+  [
+    'real credential after boolean research metadata in a later chunk',
+    Buffer.from(
+      '{"noCredentials":true}\n' + ' '.repeat(70000) + '{"apiKey":"synthetic-private-value"}\n'
+    ),
+    false
+  ],
   ['nested JSON redaction', Buffer.from(serializedRedaction), true],
   ['nested JSON closing escapes split across reads', Buffer.from(splitRedaction), true],
   [
@@ -278,7 +346,14 @@ it.each([
       await expect(
         service.exportTo(imported, join(fixture.storageRoot, 'forwarded.science'))
       ).resolves.toBeDefined()
-    } else await expect(pending).rejects.toThrow('Sensitive content detected')
+    } else {
+      await expect(pending).rejects.toThrow('Sensitive content detected')
+      if (label === 'real credential after boolean research metadata in a later chunk')
+        await expect(pending).rejects.toMatchObject({
+          rule: 'field',
+          evidence: { label: '"apiKey"' }
+        })
+    }
     expect(await readFile(source)).toEqual(bytes)
   } finally {
     await service.close()

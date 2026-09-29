@@ -236,11 +236,11 @@ describe('ConnectorAddForm copy', () => {
       ],
       [
         'variants',
-        'Human genetic variants — gnomAD population frequencies/constraint, ClinVar records/search (direct NCBI), dbSNP, structural and mitochondrial variants.'
+        'Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.'
       ],
       [
         'omics-archives',
-        'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).'
+        'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).'
       ],
       ['literature', 'Literature and research data via OpenAlex, arXiv, Crossref and DataCite.']
     ] as const
@@ -251,6 +251,25 @@ describe('ConnectorAddForm copy', () => {
     expect(connectorDescription({ id: 'custom', description: fallback }, t)).toBe(fallback)
 
     const toolCases = [
+      [
+        'omics-archives/workbench_search_compounds',
+        'Look up Metabolomics Workbench compound structures and cross-references.'
+      ],
+      ['omics-archives/workbench_search_studies', 'Search Metabolomics Workbench study records.'],
+      [
+        'omics-archives/workbench_get_study',
+        'Retrieve Metabolomics Workbench study, sample and experimental metadata.'
+      ],
+      ['variants/mavedb_search_score_sets', 'Search public MaveDB functional score sets.'],
+      ['variants/mavedb_get_score_set', 'Retrieve MaveDB score set metadata and download links.'],
+      ['variants/mavedb_download_scores', 'Download a CSV page of MaveDB variant scores.'],
+      [
+        'variants/mavedb_get_mapped_variants',
+        'Retrieve existing MaveDB variant mappings in VRS format.'
+      ],
+      ['variants/mavedb_get_experiment', 'Retrieve MaveDB experiment methods and metadata.'],
+      ['variants/mavedb_get_experiment_score_sets', 'List score sets in a MaveDB experiment.'],
+
       ['expression/bgee_species', 'List or retrieve species in the Bgee expression atlas.'],
       [
         'expression/bgee_expression_calls',

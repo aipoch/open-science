@@ -105,6 +105,7 @@ type NotebookSourceFileAccessContext = {
   managedEnvironmentSafe?: boolean
   replContainerNames?: string[]
   replNamespaceUncertain?: boolean
+  replPersistentBindings?: true
   staticStrings: Array<{ name: string; value: string }>
   staticCollections: Array<{
     name: string

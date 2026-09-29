@@ -719,8 +719,22 @@ class SessionPersistenceStateOwner {
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(scope.projectId, scope.sessionId, 'mutate')
     const loaded = await loadAuthority(this.options.repository, scope.projectId, scope.sessionId)
-    if (loaded.status !== 'found')
+    if (loaded.status !== 'found') {
+      try {
+        this.options.log.warn('Runtime Session authority unavailable', {
+          operation: 'runtime-session-mutation',
+          phase: 'load-authority',
+          projectId: scope.projectId,
+          sessionId: scope.sessionId,
+          authorityStatus: loaded.status,
+          cachedProjectId: this.sessionMetadata.get(scope.sessionId)?.projectId,
+          metadataComplete: this.isSessionMetadataComplete
+        })
+      } catch {
+        // Diagnostics must not replace the original rejection or recreate missing authority.
+      }
       throw new Error(`Cannot update a ${loaded.status} runtime Session.`)
+    }
     const previous = loaded.session
     const mutation = mutate(structuredClone(previous))
     const transcriptUnchanged =

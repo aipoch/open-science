@@ -874,6 +874,23 @@ describe('startWebHttpServer', () => {
       expect(response.status).toBe(200)
       expect(response.headers.get('content-security-policy')).toContain("default-src 'self'")
       expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'")
+      const directives = new Map(
+        response.headers
+          .get('content-security-policy')!
+          .split(';')
+          .map((directive) => {
+            const [name, ...sources] = directive.trim().split(/\s+/)
+            return [name, sources]
+          })
+      )
+      // The shared PDF loader creates a Blob module worker, including in Remote Web.
+      const workerSources =
+        directives.get('worker-src') ??
+        directives.get('child-src') ??
+        directives.get('script-src') ??
+        directives.get('default-src')
+      expect(workerSources).toContain('blob:')
+      expect(directives.get('script-src')).toEqual(["'self'"])
       expect(response.headers.get('x-frame-options')).toBe('DENY')
       expect(response.headers.get('referrer-policy')).toBe('no-referrer')
     }

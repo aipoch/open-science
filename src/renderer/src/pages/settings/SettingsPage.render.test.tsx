@@ -1232,6 +1232,35 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
+  it.each([{ isComposing: true }, { keyCode: 229 }])(
+    'preserves the native composing Escape action through the Settings dialog: %j',
+    async (composition) => {
+      const onClose = vi.fn()
+      await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+      const search = document.querySelector<HTMLInputElement>(
+        '[data-slot="settings-global-search"] input'
+      )!
+      await act(async () => {
+        search.focus()
+        fireEvent.change(search, { target: { value: 'proxy' } })
+      })
+      const event = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+        ...composition
+      })
+      await act(async () => {
+        search.dispatchEvent(event)
+      })
+      expect(event.defaultPrevented).toBe(false)
+      expect(search.value).toBe('proxy')
+      expect(document.activeElement).toBe(search)
+      expect(document.querySelector('[role="listbox"]')).not.toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+    }
+  )
+
   it('keeps the dialog open when Escape closes the global search results', async () => {
     const onClose = vi.fn()
     await act(async () => root.render(<SettingsPage open onClose={onClose} />))
@@ -6216,4 +6245,148 @@ describe('SettingsPage Codex framework', () => {
     expect(details?.open).toBe(false)
     expect(details?.textContent).toContain('The Codex adapter failed to spawn.')
   })
+})
+
+describe('Skill editor leave protection', () => {
+  const field = (label: string): HTMLInputElement =>
+    document.querySelector(`[aria-label="${label}"]`)!
+  const clickLabel = async (label: string): Promise<void> => {
+    const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (item) => item.textContent?.trim() === label
+    )!
+    expect(button, label).toBeDefined()
+    await act(async () => button.click())
+  }
+  const confirmation = (): HTMLElement | null =>
+    document.querySelector('[data-testid="skill-discard-confirmation"]')
+  const mountEditor = async (): Promise<{
+    onClose: ReturnType<typeof vi.fn<() => void>>
+    handle: ReturnType<typeof createRef<SettingsPageHandle>>
+  }> => {
+    const onClose = vi.fn<() => void>()
+    const handle = createRef<SettingsPageHandle>()
+    await act(async () => root.render(<SettingsPage ref={handle} open onClose={onClose} />))
+    await act(async () => navButton('Skills')!.click())
+    openRadixMenu(document.querySelector<HTMLElement>('[data-settings-anchor="skills.add"]'))
+    const create = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) =>
+      item.textContent?.includes('Write from scratch')
+    )!
+    clickRadixMenuItem(create)
+    await waitFor(() => expect(field('Skill name')).not.toBeNull())
+    return { onClose, handle }
+  }
+  const edit = async (): Promise<void> => {
+    await act(async () => {
+      fireEvent.change(field('Skill name'), { target: { value: 'draft-skill' } })
+      fireEvent.change(field('Skill body'), { target: { value: 'Research instructions' } })
+    })
+  }
+
+  it.each([
+    'Back',
+    'Forward',
+    'breadcrumb',
+    'panel',
+    'search',
+    'Cancel',
+    'Close settings',
+    'close pane',
+    'external intent',
+    'host navigation'
+  ])('preserves a draft until discard is confirmed through %s', async (route) => {
+    const { onClose, handle } = await mountEditor()
+    if (route === 'Forward') {
+      await act(async () => navButton('General')!.click())
+      await act(async () => field('Back').click())
+    }
+    await edit()
+    const leave = async (): Promise<void> => {
+      await act(async () => {
+        if (route === 'breadcrumb') field('Back to skills').click()
+        else if (route === 'panel') navButton('General')!.click()
+        else if (route === 'search') {
+          const search = field('Search settings')
+          search.focus()
+          fireEvent.change(search, { target: { value: 'language' } })
+        } else if (route === 'close pane') handle.current!.closeActivePane()
+        else if (route === 'host navigation') handle.current!.requestLeave(onClose)
+        else if (route === 'external intent')
+          useSettingsStore.getState().openSettingsToPanel('general')
+        else if (route !== 'Cancel') field(route).click()
+      })
+      if (route === 'Cancel') await clickLabel('Cancel')
+      if (route === 'search')
+        await act(async () => fireEvent.keyDown(field('Search settings'), { key: 'Enter' }))
+    }
+    await leave()
+    expect(confirmation()).not.toBeNull()
+    expect(field('Skill body').value).toBe('Research instructions')
+    expect(onClose).not.toHaveBeenCalled()
+    if (route === 'search') expect(field('Search settings').value).toBe('language')
+    await clickLabel('Keep editing')
+    expect(confirmation()).toBeNull()
+    expect(field('Skill body').value).toBe('Research instructions')
+    await leave()
+    await clickLabel('Discard changes')
+    expect(confirmation()).toBeNull()
+    if (route === 'Close settings' || route === 'host navigation')
+      expect(onClose).toHaveBeenCalledOnce()
+    else expect(field('Skill body')).toBeNull()
+  })
+
+  it('does not prompt after edits are reverted to the original values', async () => {
+    await mountEditor()
+    await edit()
+    await act(async () => {
+      fireEvent.change(field('Skill name'), { target: { value: '' } })
+      fireEvent.change(field('Skill body'), { target: { value: '' } })
+    })
+    await clickLabel('Cancel')
+    expect(confirmation()).toBeNull()
+    expect(field('Skill body')).toBeNull()
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'waits for a pending create to %s before allowing leave',
+    async (outcome) => {
+      let resolve!: () => void
+      let reject!: (error: Error) => void
+      const createSkill = vi.fn().mockReturnValue(
+        new Promise<void>((yes, no) => {
+          resolve = yes
+          reject = no
+        })
+      )
+      const previous = useSettingsStore.getState().createSkill
+      useSettingsStore.setState({ createSkill })
+      try {
+        const { onClose } = await mountEditor()
+        await edit()
+        await clickLabel('Create skill')
+        await act(async () => field('Close settings').click())
+        expect(confirmation()?.textContent).toContain('Wait for the current skill operation')
+        expect(
+          [...confirmation()!.querySelectorAll('button')].every((button) => button.disabled)
+        ).toBe(true)
+        expect(field('Skill body').closest('fieldset')?.disabled).toBe(true)
+        expect(onClose).not.toHaveBeenCalled()
+        await act(async () => {
+          if (outcome === 'resolve') resolve()
+          else reject(new Error('Write failed'))
+        })
+        if (outcome === 'resolve') {
+          expect(confirmation()).toBeNull()
+          expect(field('Skill body')).toBeNull()
+          expect(onClose).not.toHaveBeenCalled()
+        } else {
+          await clickLabel('Keep editing')
+          expect(field('Skill body').value).toBe('Research instructions')
+          expect(document.body.textContent).toContain('Write failed')
+        }
+        expect(createSkill).toHaveBeenCalledOnce()
+      } finally {
+        useSettingsStore.setState({ createSkill: previous })
+      }
+    }
+  )
 })

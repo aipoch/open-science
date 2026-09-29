@@ -34,6 +34,9 @@ for (const dark of [false, true]) {
     await page.mouse.click(metadata.x + metadata.width / 2, metadata.y + metadata.height / 2)
     await expect(page.getByTestId('actions')).toHaveText('project,project,project,project,project')
     const actions = page.getByRole('button', { name: 'Open actions for P1' })
+    const target = (await actions.boundingBox())!
+    expect(target.width).toBeGreaterThanOrEqual(28)
+    expect(target.height).toBeGreaterThanOrEqual(28)
     await actions.click()
     await expect(page.getByRole('menu')).toBeVisible()
     await page.keyboard.press('Escape')

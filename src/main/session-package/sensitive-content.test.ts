@@ -3,10 +3,96 @@ import { createHash } from 'node:crypto'
 import {
   buildSensitiveContentEvidence,
   findSensitivePackageText,
-  isPrivatePackageValue
+  isPrivatePackageValue,
+  PackageTextScanner
 } from './sensitive-content'
 
 describe('package text policy', () => {
+  it.each([
+    'noCredentials',
+    'hasCredentials',
+    'authentication',
+    'authorization',
+    'cookie',
+    'apiKey',
+    'no-authorization',
+    'has-cookie',
+    'no-api-key'
+  ])('accepts boolean member types without allowlisting the %s key', (key) => {
+    for (const value of ['true', 'false']) {
+      for (const text of [
+        `{"${key}":${value}}`,
+        `{"nested":[{"${key}" : ${value},"result":"ok"}]}`,
+        `{\n "${key}"\t:\r\n ${value} \t\r\n}`,
+        `{"${key}":${value}}\n{"${key}":${value},"result":"ok"}\n`
+      ]) {
+        expect(findSensitivePackageText(text), text).toBeUndefined()
+        for (let end = 1; end < text.length; end++)
+          expect(
+            findSensitivePackageText(text.slice(0, end), false),
+            `prefix ${end}: ${text}`
+          ).toBeUndefined()
+      }
+    }
+    for (const value of [
+      '"true"',
+      '"false"',
+      '"synthetic-private-value"',
+      '123456',
+      'trueSecret',
+      'falseSecret',
+      'true || secret',
+      'False'
+    ])
+      expect(findSensitivePackageText(`{"${key}":${value}}`), value).toBeDefined()
+    for (const text of [
+      `${key}=true`,
+      `${key}: false`,
+      `'${key}': true`,
+      `--${key} true`,
+      `{"${key}":true`,
+      `{"${key}":false `,
+      `{"${key}":true,"password":"synthetic-private-value"}`,
+      `{"${key}":false}\npassword=synthetic-private-value`,
+      `{"${key}":true,"token":123456}`,
+      `{"${key}":false,"note":"Bearer synthetic-private-value"}`,
+      `"${key}": true, actual-secret`,
+      `{\\"${key}":true}`,
+      `{"${key}":os.environ["VALUE"]}`,
+      `{"${key}"=true}`,
+      `{"${key}":true\u00a0}`,
+      `{"${key}":true${' '.repeat(9000)}secret}`
+    ])
+      expect(findSensitivePackageText(text), text.slice(0, 100)).toBeDefined()
+  })
+
+  it.each([
+    '{"noCredentials":true}',
+    '{"noCredentials":false,"result":"ok"}',
+    '{"metadata":{"noCredentials":true},"result":"ok"}',
+    '{"noCredentials":true}\n{"noCredentials":false}\n'
+  ])('does not classify boolean research metadata as a credential: %s', (text) => {
+    expect(findSensitivePackageText(text)).toBeUndefined()
+  })
+  it.each(['true', 'false'])('defers incomplete boolean metadata %s', (value) => {
+    const text = `{"noCredentials":${value},"result":"ok"}`
+    for (let length = 1; length < text.length; length++)
+      expect(
+        findSensitivePackageText(text.slice(0, length), false),
+        `prefix length ${length}`
+      ).toBeUndefined()
+    expect(findSensitivePackageText(text)).toBeUndefined()
+  })
+  it.each([
+    '{"noCredentials":"true"}',
+    '{"noCredentials":"false"}',
+    '{"noCredentials":"synthetic-private-value"}',
+    '{"noCredentials":123456}',
+    '{"noCredentials":true,"apiKey":"synthetic-private-value"}',
+    '{"noCredentials":true}\n{"apiKey":"synthetic-private-value"}\n'
+  ])('still blocks credentials alongside or in place of boolean metadata: %s', (text) => {
+    expect(findSensitivePackageText(text)).toBeDefined()
+  })
   it.each([
     'Authorization: Bearer [redacted]',
     '--authorization Bearer [redacted]',
@@ -108,6 +194,86 @@ describe('package text policy', () => {
     expect(isPrivatePackageValue('Bearer [redacted]')).toBe(false)
     expect(isPrivatePackageValue('[redacted]extra')).toBe(true)
   })
+})
+
+it.each([
+  ['{"noCredentials":true}', false],
+  ['{"noCredentials":false}\n{"noCredentials":true}\n', false],
+  ['{\n "metadata": {"noCredentials":false}\n}', false],
+  ['{"authorization":true,"cookie":false,"api-key":true}', false],
+  ['{"noCredentials":"true"}', true],
+  ['{"noCredentials":123}', true],
+  ['{"noCredentials":true,"password":"synthetic-private-value"}', true],
+  ['{"password":"synthetic-private-value","password":true}', true],
+  ['{"noCredentials":true,"note":"password=synthetic-private-value"}', true],
+  ['{"noCredentials":true,"note":"ghp_syntheticprivatevalue"}', true],
+  ['{"noCredentials":true,"note":"https://example.org/?token=true"}', true],
+  ['{"noCredentials":true}\npassword=synthetic-private-value', true],
+  ['{"noCredentials":true,}', true],
+  ['{"noCredentials":true', true],
+  ['{"noCredentials":tru}', true],
+  ['{"noCredentials":trueSuffix}', true],
+  ['{"noCredentials":TRUE}', true],
+  ["{'noCredentials':true}", true],
+  ['noCredentials=true', true],
+  ['{"noCredentials":true} garbage', true],
+  ['{"noCredentials":true}\n{"result":}', true],
+  ['{"noCredentials":true}\n{"password":os.environ["PASSWORD"]}', true]
+] as const)('preserves boolean policy across every stream split: %s', (text, blocked) => {
+  expect(Boolean(findSensitivePackageText(text))).toBe(blocked)
+  for (let split = 0; split <= text.length; split++) {
+    const scanner = new PackageTextScanner()
+    scanner.write(text.slice(0, split))
+    scanner.write(text.slice(split))
+    expect(Boolean(scanner.finish()), `split ${split}`).toBe(blocked)
+  }
+})
+
+it.each(['noCredentials', 'authorization', 'no-authorization', 'has-cookie', 'no-api-key'])(
+  'keeps boolean %s metadata safe at every overlap alignment',
+  (key) => {
+    for (let shift = -key.length; shift <= 1; shift++) {
+      const text =
+        ' '.repeat(65536 - 8192 - 2 + shift) + `{"${key}":true,"notes":"${'a'.repeat(8192)}"}`
+      expect(findSensitivePackageText(text)).toBeUndefined()
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, 65536))
+      scanner.write(text.slice(65536))
+      expect(scanner.finish(), `overlap shift ${shift}`).toBeUndefined()
+    }
+  }
+)
+
+it.each(['true', 'false', '"true"', '"synthetic-private-value"', '123456'])(
+  'preserves the value type after an overlap-truncated key: %s',
+  (value) => {
+    for (const shift of [-2, 0]) {
+      const prefix = ' '.repeat(65536 - 8192 - 2 + shift) + '{"noCredentials":'
+      const text = prefix + ' '.repeat(9000) + value + '}'
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, 65536))
+      scanner.write(text.slice(65536))
+      expect(Boolean(scanner.finish())).toBe(value !== 'true' && value !== 'false')
+    }
+  }
+)
+
+it('reports the actual later credential with its original stream offset', () => {
+  const prefix = '{"noCredentials":true}\n' + ' '.repeat(70000)
+  const secret = '{"apiKey":"synthetic-private-value"}\n'
+  const text = prefix + secret
+  const scanner = new PackageTextScanner()
+  for (let start = 0; start < text.length; start += 65536)
+    scanner.write(text.slice(start, start + 65536))
+  const result = scanner.finish()!
+  expect(result.match).toMatchObject({ rule: 'field', label: '"apiKey"' })
+  expect(result.offset + result.match.offset).toBe(prefix.length + 1)
+  expect(
+    result.text.slice(
+      result.match.valueOffset,
+      result.match.valueOffset! + result.match.valueLength!
+    )
+  ).toBe('synthetic-private-value')
 })
 
 it('hashes and measures the sensitive value instead of the detector span', () => {

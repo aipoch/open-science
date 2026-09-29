@@ -7,6 +7,9 @@ import {
   ALL_CONNECTOR_IDS
 } from './registry'
 import { CONNECTOR_CATALOG } from './catalog'
+import { renderSkillDoc } from './skill-doc'
+import { WORKBENCH_OMICS_TOOLS } from './descriptors/omics-workbench'
+import { VARIANTS_MAVEDB_TOOLS } from './descriptors/variants-mavedb'
 
 describe('registry + catalog', () => {
   it('registers HMMER search, status and results with the Pfam hmmscan constraint', () => {
@@ -168,6 +171,83 @@ describe('registry + catalog', () => {
         ids: Array.from({ length: 100_000 }, (_, i) => `id${i}`)
       })
     ).not.toThrow()
+  })
+})
+
+describe('Metabolomics Workbench registration and input contracts', () => {
+  it('registers all tools in Omics Archives and includes discovery guidance and examples', () => {
+    const catalog = CONNECTOR_CATALOG.find((entry) => entry.id === 'omics-archives')!
+    expect(catalog.sources).toContain('Metabolomics Workbench')
+    const doc = renderSkillDoc(catalog.id)
+    for (const descriptor of WORKBENCH_OMICS_TOOLS) {
+      expect(getDescriptor('omics-archives', descriptor.id)).toBe(descriptor)
+      expect(doc).toContain(descriptor.id)
+      expect(doc).toContain(descriptor.example!)
+    }
+  })
+
+  it('accepts supported compound fields, study search fields and study sections', () => {
+    for (const field of [
+      'regno',
+      'formula',
+      'inchi_key',
+      'lm_id',
+      'pubchem_cid',
+      'hmdb_id',
+      'kegg_id',
+      'chebi_id',
+      'metacyc_id'
+    ]) {
+      expect(() =>
+        validateToolArguments(getDescriptor('omics-archives', 'workbench_search_compounds')!, {
+          field,
+          query: '5793'
+        })
+      ).not.toThrow()
+    }
+    for (const field of [undefined, 'study_title', 'institute']) {
+      expect(() =>
+        validateToolArguments(getDescriptor('omics-archives', 'workbench_search_studies')!, {
+          ...(field === undefined ? {} : { field }),
+          query: 'Fatb'
+        })
+      ).not.toThrow()
+    }
+    for (const section of [undefined, 'summary', 'factors', 'analysis', 'metabolites']) {
+      expect(() =>
+        validateToolArguments(getDescriptor('omics-archives', 'workbench_get_study')!, {
+          ...(section === undefined ? {} : { section }),
+          study_id: 'ST000001'
+        })
+      ).not.toThrow()
+    }
+  })
+
+  it.each([
+    ['workbench_search_compounds', { field: 'name', query: 'glucose' }],
+    ['workbench_search_compounds', { field: 'abbrev', query: 'PC(34:1)' }],
+    ['workbench_search_compounds', { field: 'regno', query: 11 }],
+    ['workbench_search_studies', {}],
+    ['workbench_search_studies', { query: '' }],
+    ['workbench_search_studies', { query: 'x'.repeat(201) }],
+    ['workbench_search_studies', { query: 'Fatb', field: 'species' }],
+    ['workbench_search_studies', { query: 'Fatb', limit: 0 }],
+    ['workbench_search_studies', { query: 'Fatb', limit: 1001 }],
+    ['workbench_search_studies', { query: 'Fatb', limit: 1.5 }],
+    ['workbench_search_studies', { query: 'Fatb', limit: '10' }],
+    ['workbench_search_studies', { query: 'Fatb', offset: 1 }],
+    ['workbench_get_study', { study_id: 'ST' }],
+    ['workbench_get_study', { study_id: 'ST000001/../ST000002' }],
+    ['workbench_get_study', { study_id: 'ST000001', section: 'data' }],
+    ['workbench_get_study', { study_id: 'ST000001', download: true }],
+    ['workbench_search_studies', { field: 'last_name', query: 'Kind' }]
+  ])('rejects invalid %s arguments at the registry boundary: %j', (id, args) => {
+    expect(() =>
+      validateToolArguments(
+        getDescriptor('omics-archives', id as string)!,
+        args as Record<string, unknown>
+      )
+    ).toThrow(/invalid_arguments/)
   })
 })
 
@@ -364,5 +444,58 @@ describe('UniProt discovery input contract', () => {
     const minimal = { gene: 'TP53' }
     validateToolArguments(search, minimal)
     expect(minimal).toEqual({ gene: 'TP53' })
+  })
+})
+
+describe('MaveDB registration and input contracts', () => {
+  const SCORE_SET = 'urn:mavedb:00000003-a-1'
+  const EXPERIMENT = 'urn:mavedb:00000003-a'
+  const tool = (id: string): (typeof VARIANTS_MAVEDB_TOOLS)[number] =>
+    getDescriptor('variants', `mavedb_${id}`)!
+
+  it('registers all six public tools and discovery aliases', () => {
+    expect(VARIANTS_MAVEDB_TOOLS).toHaveLength(6)
+    for (const descriptor of VARIANTS_MAVEDB_TOOLS) {
+      expect(getDescriptor('variants', descriptor.id)).toBe(descriptor)
+      expect(descriptor.requiredCredential).toBeUndefined()
+    }
+    expect(CONNECTOR_CATALOG.find((c) => c.id === 'variants')?.aliases).toContain('MaveDB')
+  })
+
+  it.each(['urn:mavedb:00000662-0-1', 'urn:mavedb:00000003-aa-12'])(
+    'accepts published meta-analysis and multi-letter URNs: %s',
+    (id) => {
+      expect(() => validateToolArguments(tool('get_score_set'), { urn: id })).not.toThrow()
+      expect(() =>
+        validateToolArguments(tool('get_experiment'), { urn: id.slice(0, id.lastIndexOf('-')) })
+      ).not.toThrow()
+    }
+  )
+
+  it.each([
+    ['get_score_set', { urn: EXPERIMENT }],
+    ['get_experiment', { urn: SCORE_SET }],
+    ['get_score_set', { urn: `${SCORE_SET}/../../users/me` }],
+    ['get_score_set', { urn: `${SCORE_SET}?secret=1` }],
+    ['get_score_set', { urn: `tmp:446191af-c1f8-4891-9f67-de152e9d328b` }],
+    ['search_score_sets', { text: ' ' }],
+    ['search_score_sets', { text: 'x'.repeat(1001) }],
+    ['search_score_sets', { text: 'BRCA1', limit: 101 }],
+    ['search_score_sets', { text: 'BRCA1', offset: -1 }],
+    ['search_score_sets', { text: 'BRCA1', offset: 0.5 }],
+    ['download_scores', { urn: SCORE_SET, limit: '2' }],
+    ['download_scores', { urn: SCORE_SET, limit: 10001 }],
+    ['download_scores', { urn: SCORE_SET, start: -1 }]
+  ])('rejects invalid MaveDB %s arguments in the registered schema', (id, args) => {
+    expect(() => validateToolArguments(tool(id), args)).toThrow(/invalid_arguments/)
+  })
+
+  it('rejects unsupported input fields in the registered schema', () => {
+    expect(() =>
+      validateToolArguments(tool('get_mapped_variants'), { urn: SCORE_SET, offset: 1 })
+    ).toThrow(/invalid_arguments/)
+    expect(() =>
+      validateToolArguments(tool('search_score_sets'), { text: 'BRCA1', published: false })
+    ).toThrow(/invalid_arguments/)
   })
 })

@@ -23,12 +23,12 @@ export function connectorDescription(
   }
   if (connector.id === 'variants') {
     return t(
-      'Human genetic variants — gnomAD population frequencies/constraint, ClinVar records/search (direct NCBI), dbSNP, structural and mitochondrial variants.'
+      'Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.'
     )
   }
   if (connector.id === 'omics-archives') {
     return t(
-      'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).'
+      'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).'
     )
   }
   if (connector.id === 'hmmer') {
@@ -48,6 +48,19 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'variants/mavedb_search_score_sets':
+      return t('Search public MaveDB functional score sets.')
+    case 'variants/mavedb_get_score_set':
+      return t('Retrieve MaveDB score set metadata and download links.')
+    case 'variants/mavedb_download_scores':
+      return t('Download a CSV page of MaveDB variant scores.')
+    case 'variants/mavedb_get_mapped_variants':
+      return t('Retrieve existing MaveDB variant mappings in VRS format.')
+    case 'variants/mavedb_get_experiment':
+      return t('Retrieve MaveDB experiment methods and metadata.')
+    case 'variants/mavedb_get_experiment_score_sets':
+      return t('List score sets in a MaveDB experiment.')
+
     case 'expression/bgee_species':
       return t('List or retrieve species in the Bgee expression atlas.')
     case 'expression/bgee_expression_calls':
@@ -139,6 +152,12 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('List Enrichr gene-set libraries and their coverage statistics for an organism.')
     case 'genes/enrich_gene_set_enrichr':
       return t('Run Enrichr enrichment for gene symbols or identifiers.')
+    case 'omics-archives/workbench_search_compounds':
+      return t('Look up Metabolomics Workbench compound structures and cross-references.')
+    case 'omics-archives/workbench_search_studies':
+      return t('Search Metabolomics Workbench study records.')
+    case 'omics-archives/workbench_get_study':
+      return t('Retrieve Metabolomics Workbench study, sample and experimental metadata.')
     case 'omics-archives/ena_query_runs':
       return t('Discover ENA sequencing runs with metadata filters.')
     case 'omics-archives/ena_get_submitted_files':

@@ -632,7 +632,7 @@ export type NotebookRunRecord = {
   frozenPermissionScope?: {
     allowedHelperSkillIds: string[]
   }
-  // Exact stateless-shell launch context captured before durable admission. Optional keeps legacy
+  // Exact shell launch context captured before durable admission. Optional keeps legacy
   // records readable; new bash Runs never re-read mutable Session paths or host environment at
   // dispatch time.
   frozenShellContext?: {
@@ -656,6 +656,9 @@ export type NotebookRunRecord = {
   // Identifies one live persistent-kernel generation. A new value is allocated after process/app
   // restart; optional keeps legacy run.json documents readable without a migration.
   kernelEpochId?: string
+  // New REPL cells publish initialized declarations. Absence preserves historical IIFE-local
+  // semantics when rebuilding provenance; this never stores or restores live variable values.
+  replPersistentBindings?: true
   // Whether this run's source was handed to the persistent data kernel. Pre-dispatch failures set
   // false so dependency projection never invents mutations; absent legacy evidence stays conservative.
   kernelDispatched?: boolean
@@ -666,7 +669,7 @@ export type NotebookRunRecord = {
   // Stable identity of the external runtime used by this run. Managed runs are reproducible from
   // their environment; external runs need this identity to rebuild a missing derived sidecar.
   runtimeId?: string
-  // Exact shell capability captured before a stateless shell Run. Optional keeps legacy run.json
+  // Exact shell capability captured before a shell Run. Optional keeps legacy run.json
   // documents readable without inventing a backend that was never recorded.
   shellRuntime?: ShellRuntimeBinding
   cellId: string
@@ -695,7 +698,7 @@ export type NotebookRunRecord = {
   // documents readable; repository normalization supplies an empty array for old records.
   inputFiles?: NotebookRunInputFile[]
   truncated?: boolean
-  // Exact stateless-shell outcome. Optional keeps non-shell and historical records compatible.
+  // Exact shell outcome. Optional keeps non-shell and historical records compatible.
   exitCode?: number | null
   shellRuntimeStatus?: 'unavailable'
   recovery?: import('./execution-recovery').NotebookExecutionRecovery
@@ -1125,8 +1128,8 @@ export type ExecuteNotebookControlRequest = NotebookSessionRequest & {
   timeoutMs?: number
 }
 
-// Runs one shell command in a fresh, stateless process in the session workspace. It has no
-// persistent process or NotebookLanguage, but each invocation is persisted as a "bash" Run.
+// Runs a command in the live session lane's shell. State lasts until the interpreter stops;
+// each invocation is still persisted as a separate "bash" Run, without variable snapshots.
 export type ExecuteShellRequest = NotebookSessionRequest & {
   command: string
   background?: boolean

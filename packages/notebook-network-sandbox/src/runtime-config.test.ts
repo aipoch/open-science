@@ -566,6 +566,7 @@ describe('Notebook runtime configuration updates', () => {
     const wrapped = await NotebookNetworkRuntime.wrap({
       command: 'curl https://example.com',
       commandId: 'supervised-windows-command',
+      windowsShellControlPipe: 'OpenScience.Shell.0123456789abcdef0123456789abcdef',
       cwd: '/workspace',
       env: {},
       superviseProcessTree: true,
@@ -578,6 +579,11 @@ describe('Notebook runtime configuration updates', () => {
     })
 
     expect(windowsSupervisedLaunch).toHaveBeenCalledOnce()
+    expect(windowsSupervisedLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        windowsShellControlPipe: 'OpenScience.Shell.0123456789abcdef0123456789abcdef'
+      })
+    )
     await expect(wrapped.confirmProcessTreeTermination?.()).resolves.toBe(true)
   })
 })

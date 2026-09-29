@@ -1238,7 +1238,7 @@ describe('SkillsPanel (sub-views)', () => {
     )
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     act(() => publish?.click())
 
@@ -1293,7 +1293,7 @@ describe('SkillsPanel (sub-views)', () => {
     setValue('Skill body', body)
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     act(() => publish?.click())
 
@@ -1339,7 +1339,7 @@ describe('SkillsPanel (sub-views)', () => {
     setValue('Skill body', '# Body')
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     act(() => publish?.click())
 
@@ -1421,7 +1421,7 @@ describe('SkillsPanel (sub-views)', () => {
       })
 
       const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-        (button) => button.textContent?.trim() === 'Publish'
+        (button) => button.textContent?.trim() === 'Create skill'
       )
       expect(pending).toHaveLength(1)
       expect(input?.disabled).toBe(true)
@@ -1459,7 +1459,7 @@ describe('SkillsPanel (sub-views)', () => {
     setValue('Skill body', '# Body')
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     await act(async () => {
       publish?.click()
@@ -1567,7 +1567,7 @@ describe('SkillsPanel (sub-views)', () => {
     setValue('Skill body', '# Body')
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     expect(document.body.textContent).toContain(
       'Use up to 64 lowercase letters, numbers, and single hyphens.'
@@ -1595,7 +1595,7 @@ describe('SkillsPanel (sub-views)', () => {
       document.body.querySelector<HTMLTextAreaElement>('[aria-label="Skill body"]')?.value
     ).toBe(pasted)
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     act(() => publish?.click())
 

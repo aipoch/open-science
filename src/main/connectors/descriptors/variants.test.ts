@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { VARIANTS_TOOLS } from './variants'
 
 // Integration: the aggregate "Variants" tool set. Per-tool behavior is covered in
-// variants-{gnomad,clinvar,dbsnp}.test.ts.
+// variants-{gnomad,clinvar,dbsnp,mavedb}.test.ts.
 const EXPECTED_IDS = [
   'get_variant',
   'search_variants',
@@ -18,7 +18,13 @@ const EXPECTED_IDS = [
   'clinvar_get_records',
   'clinvar_variant_by_rsid',
   'dbsnp_get_rsids',
-  'dbsnp_search_by_region'
+  'dbsnp_search_by_region',
+  'mavedb_search_score_sets',
+  'mavedb_get_score_set',
+  'mavedb_download_scores',
+  'mavedb_get_mapped_variants',
+  'mavedb_get_experiment',
+  'mavedb_get_experiment_score_sets'
 ]
 
 describe('variants / aggregate', () => {

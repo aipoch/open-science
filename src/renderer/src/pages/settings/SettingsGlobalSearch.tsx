@@ -173,7 +173,7 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
 
 type SettingsGlobalSearchProps = {
   panels: ReadonlyArray<{ id: SettingsPanelId; labelKey: string }>
-  onNavigate: (panel: SettingsPanelId) => void
+  onNavigate: (panel: SettingsPanelId, onNavigated: () => void) => void
 }
 
 // Elements that can already receive keyboard focus; anything else is lent a temporary tabindex.
@@ -263,6 +263,7 @@ const SettingsGlobalSearch = ({
   const [isOpen, setIsOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const listId = useId()
   const cancelHighlightRef = useRef<(() => void) | null>(null)
 
@@ -274,6 +275,25 @@ const SettingsGlobalSearch = ({
     },
     []
   )
+
+  useEffect(() => {
+    const ownerWindow = containerRef.current?.ownerDocument.defaultView
+    if (!ownerWindow) return
+    const preserveComposingEscape = (event: KeyboardEvent): void => {
+      if (
+        event.key === 'Escape' &&
+        (event.isComposing || event.keyCode === 229) &&
+        event.target instanceof Node &&
+        containerRef.current?.contains(event.target)
+      ) {
+        // Radix handles Escape on document capture and cancels its default action. Intercept
+        // at window capture so the IME keeps its native action and no dialog/drawer dismisses.
+        event.stopPropagation()
+      }
+    }
+    ownerWindow.addEventListener('keydown', preserveComposingEscape, true)
+    return () => ownerWindow.removeEventListener('keydown', preserveComposingEscape, true)
+  }, [])
 
   const panelLabel = (panel: SettingsPanelId): string => {
     const entry = panels.find((candidate) => candidate.id === panel)
@@ -296,16 +316,28 @@ const SettingsGlobalSearch = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, t, panels])
 
+  useEffect(() => {
+    const list = listRef.current
+    const option = list?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (!isOpen || !list || !option) return
+    const viewport = list.getBoundingClientRect()
+    const selected = option.getBoundingClientRect()
+    // Scroll only the result list, without moving input focus or the surrounding Settings page.
+    if (selected.top < viewport.top) list.scrollTop += selected.top - viewport.top
+    else if (selected.bottom > viewport.bottom) list.scrollTop += selected.bottom - viewport.bottom
+  }, [activeIndex, isOpen, results])
+
   const selectEntry = (entry: SettingsSearchEntry): void => {
-    setQuery('')
-    setIsOpen(false)
-    setActiveIndex(0)
-    onNavigate(entry.panel)
-    cancelHighlightRef.current?.()
-    cancelHighlightRef.current = highlightNavigatedPanel(
-      entry.panel,
-      entry.skipAnchor ? undefined : entry.id
-    )
+    onNavigate(entry.panel, () => {
+      setQuery('')
+      setIsOpen(false)
+      setActiveIndex(0)
+      cancelHighlightRef.current?.()
+      cancelHighlightRef.current = highlightNavigatedPanel(
+        entry.panel,
+        entry.skipAnchor ? undefined : entry.id
+      )
+    })
   }
 
   return (
@@ -318,6 +350,7 @@ const SettingsGlobalSearch = ({
       onKeyDown={(event) => {
         // Container-level fallback: Escape closes the results list wherever focus sits inside the
         // combobox, and never reaches the dialog's own Escape handling while the list is open.
+        if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
         if (event.key !== 'Escape' || !isOpen) return
         event.stopPropagation()
         setIsOpen(false)
@@ -334,6 +367,7 @@ const SettingsGlobalSearch = ({
         }}
         onFocus={() => setIsOpen(true)}
         onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
           if (event.key === 'Escape') return
           if (!isOpen || results.length === 0) return
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -362,6 +396,7 @@ const SettingsGlobalSearch = ({
       />
       {isOpen ? (
         <div
+          ref={listRef}
           id={listId}
           role="listbox"
           aria-label={t('Search settings')}

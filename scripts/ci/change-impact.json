@@ -215,6 +215,7 @@
         "src/main/notebook/python-command.ts",
         "src/main/notebook/r-command.ts",
         "src/main/notebook/runtime-workflows.ts",
+        "src/main/notebook/shell-cell-session.ts",
         "src/main/notebook/shell-process.ts",
         "src/main/notebook/shell-runtime.ts",
         "src/main/notebook/shell-search-scope.ts",

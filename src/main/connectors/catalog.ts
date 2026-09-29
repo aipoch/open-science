@@ -100,12 +100,12 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'variants',
     displayName: 'Variants',
-    aliases: ['gnomAD', 'ClinVar', 'dbSNP', 'genetic variant'],
+    aliases: ['gnomAD', 'ClinVar', 'dbSNP', 'MaveDB', 'MAVE', 'genetic variant'],
     description:
-      'Human genetic variants — gnomAD population frequencies/constraint, ClinVar records/search (direct NCBI), dbSNP, structural and mitochondrial variants.',
+      'Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.',
     useWhen:
-      'Use when you need human genetic-variant data — gnomAD population allele frequencies, gene constraint (pLI/LOEUF), structural or mitochondrial variants, and build liftover; ClinVar clinical significance (gnomAD mirror or direct NCBI search/records by accession or rsID); or dbSNP RefSNP records and region lookups.',
-    sources: ['gnomAD', 'ClinVar', 'dbSNP'],
+      'Use when you need genetic-variant data — gnomAD population allele frequencies, gene constraint (pLI/LOEUF), structural or mitochondrial variants, and build liftover; ClinVar clinical significance (gnomAD mirror or direct NCBI search/records by accession or rsID); dbSNP RefSNP records and region lookups; or MaveDB multiplexed assays of variant effect (MAVE), score set search and metadata, CSV functional scores, existing GA4GH VRS variant mappings, and experiments. MaveDB public data needs no API key or contact email; functional scores are assay-specific, not clinical classifications.',
+    sources: ['gnomAD', 'ClinVar', 'dbSNP', 'MaveDB'],
     termsUrl: 'https://www.ncbi.nlm.nih.gov/clinvar/docs/maintenance_use/',
     requiresNcbi: true
   },
@@ -268,10 +268,18 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     id: 'omics-archives',
     displayName: 'Omics Archives',
     description:
-      'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).',
+      'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).',
     useWhen:
-      'Use when finding or looking up omics datasets across the major archives — functional-genomics / expression experiments in ArrayExpress (BioStudies) or NCBI GEO series (by keyword, organism, assay, or accession, with per-sample metadata); metabolomics studies and data files in MetaboLights (MTBLS); metagenomics studies, analyses and downloadable result files in MGnify (MGYS, by free text or biome lineage); or proteomics projects, proteins and paged project file inventories with download locations in PRIDE Archive (PXD/PRD, by keyword/organism/instrument/disease, or protein↔project). Discover ENA sequencing runs by taxonomy, library strategy and title/description keywords, or resolve ENA/INSDC study, experiment or sample accessions to runs. List archive-generated FASTQ URLs or original submitted file locations (including BAM/CRAM), sizes and MD5 checksums for a run; resolve GEO/ArrayExpress/MGnify IDs to linked INSDC accessions first. Sourced from ArrayExpress, GEO, ENA, MetaboLights, MGnify and PRIDE.',
-    sources: ['ArrayExpress', 'GEO', 'ENA', 'MetaboLights', 'MGnify', 'PRIDE'],
+      'Use when finding or looking up omics datasets across the major archives — functional-genomics / expression experiments in ArrayExpress (BioStudies) or NCBI GEO series (by keyword, organism, assay, or accession, with per-sample metadata); metabolomics studies and data files in MetaboLights (MTBLS), or Metabolomics Workbench (ST) study records, samples, experimental factors, analysis metadata and compound structures/cross-references; metagenomics studies, analyses and downloadable result files in MGnify (MGYS, by free text or biome lineage); or proteomics projects, proteins and paged project file inventories with download locations in PRIDE Archive (PXD/PRD, by keyword/organism/instrument/disease, or protein↔project). Discover ENA sequencing runs by taxonomy, library strategy and title/description keywords, or resolve ENA/INSDC study, experiment or sample accessions to runs. List archive-generated FASTQ URLs or original submitted file locations (including BAM/CRAM), sizes and MD5 checksums for a run; resolve GEO/ArrayExpress/MGnify IDs to linked INSDC accessions first. Sourced from ArrayExpress, GEO, ENA, MetaboLights, Metabolomics Workbench, MGnify and PRIDE.',
+    sources: [
+      'ArrayExpress',
+      'GEO',
+      'ENA',
+      'MetaboLights',
+      'Metabolomics Workbench',
+      'MGnify',
+      'PRIDE'
+    ],
     termsUrl: 'https://www.ebi.ac.uk/about/terms-of-use',
     requiresNcbi: true
   },

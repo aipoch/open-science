@@ -34,7 +34,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { SkillDetailView } from './SkillDetailView'
-import { SkillEditor, SkillEditLoader } from './SkillEditor'
+import { SkillEditor, SkillEditLoader, type SkillEditorLeaveState } from './SkillEditor'
 import { SkillImportView } from './SkillImportView'
 import { SkillUploadView } from './SkillUploadView'
 import { AgentHomeImportView } from './AgentHomeImportView'
@@ -167,6 +167,8 @@ const SOURCE_GROUPS = [
 ] as const satisfies ReadonlyArray<{ source: SkillSource; labelKey: string; subtitleKey: string }>
 
 type SkillsPanelProps = {
+  onEditorLeaveStateChange?: (state: SkillEditorLeaveState | null) => void
+  onSaved?: () => void
   view: SkillsView
   onNavigate: (view: SkillsView) => void
   onOpenTag?: (tagId: string) => void
@@ -178,6 +180,8 @@ type SkillsPanelProps = {
 const SkillsPanel = ({
   view,
   onNavigate,
+  onEditorLeaveStateChange,
+  onSaved,
   onOpenTag,
   onOpenSpecialist,
   onOpenGitHubCredential,
@@ -391,6 +395,7 @@ const SkillsPanel = ({
     return (
       <SkillEditor
         initial={{ name: '', description: '', body: '' }}
+        onLeaveStateChange={onEditorLeaveStateChange}
         onCancel={() => onNavigate({ kind: 'list' })}
         onSave={async (draft) => {
           await createSkill({
@@ -400,7 +405,7 @@ const SkillsPanel = ({
             ...(draft.metadata === undefined ? {} : { metadata: draft.metadata }),
             references: draft.references
           })
-          onNavigate({ kind: 'list' })
+          ;(onSaved ?? (() => onNavigate({ kind: 'list' })))()
         }}
       />
     )
@@ -416,6 +421,8 @@ const SkillsPanel = ({
         <SkillEditLoader
           key={view.id}
           skillId={view.id}
+          onLeaveStateChange={onEditorLeaveStateChange}
+          onSaved={onSaved}
           onDone={() => onNavigate({ kind: 'list' })}
         />
       </div>
@@ -905,7 +912,7 @@ const SkillsPanel = ({
                 ) : (
                   <p className="mt-2 py-2 text-xs text-muted-foreground">
                     {group.source === 'personal'
-                      ? t('Create a skill to teach Claude a workflow you use.')
+                      ? t('Create a skill to teach the Agent a workflow you use.')
                       : group.source === 'imported'
                         ? t('No imported skills yet.')
                         : t('No skills match your search.')}

@@ -479,6 +479,23 @@ const parseAuthority = (
 
 const LOCAL_RPC_BROKER_HOST = 'open-science-notebook-rpc.invalid'
 
+const gatewayListenError = (error: NodeJS.ErrnoException, sharedPort?: number): Error => {
+  const target = sharedPort === undefined ? '127.0.0.1 (temporary port)' : `127.0.0.1:${sharedPort}`
+  const recovery =
+    sharedPort === undefined
+      ? 'Check local port restrictions or security software, then retry the Notebook cell.'
+      : 'Open Settings > Network, check Notebook network protection, and run Set up if required before retrying the Notebook cell.'
+  return Object.assign(
+    new Error(
+      `Notebook network gateway could not listen on ${target}. ${recovery}\n${error.message}`,
+      {
+        cause: error
+      }
+    ),
+    { code: error.code }
+  )
+}
+
 class CommandGateway {
   readonly #options: CommandGatewayOptions
   #parent: ParentProxy | undefined
@@ -521,7 +538,7 @@ class CommandGateway {
       new Promise((resolve, reject) => {
         const failed = (error: Error): void => {
           gateway.#ingress.removeListener('listening', ready)
-          reject(error)
+          reject(gatewayListenError(error))
         }
         const ready = (): void => {
           gateway.#ingress.removeListener('error', failed)
@@ -589,9 +606,10 @@ class CommandGateway {
         }
         ingress.on('connection', (socket) => CommandGateway.#routeShared(state, socket))
         await new Promise<void>((resolve, reject) => {
-          ingress.once('error', reject)
+          const failed = (error: Error): void => reject(gatewayListenError(error, port))
+          ingress.once('error', failed)
           ingress.listen(port, '127.0.0.1', () => {
-            ingress.removeListener('error', reject)
+            ingress.removeListener('error', failed)
             resolve()
           })
         })

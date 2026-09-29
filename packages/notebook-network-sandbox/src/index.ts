@@ -222,6 +222,9 @@ class NotebookNetworkSandbox {
           ? { inheritedFileDescriptorCount: command.inheritedFileDescriptorCount }
           : {}),
         ...(command.superviseProcessTree ? { superviseProcessTree: true } : {}),
+        ...(command.windowsShellControlPipe
+          ? { windowsShellControlPipe: command.windowsShellControlPipe }
+          : {}),
         windowsProtectionRequired: command.windowsProtectionRequired,
         windowsRuntimeAccessRequired: command.windowsRuntimeAccessRequired,
         signal: controller.signal,
