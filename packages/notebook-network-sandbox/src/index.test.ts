@@ -319,6 +319,7 @@ describe('NotebookNetworkSandbox', () => {
       command: 'python notebook.py',
       cwd: '/workspace',
       superviseProcessTree: true,
+      windowsShellControlPipe: 'OpenScience.Shell.0123456789abcdef0123456789abcdef',
       onNetworkAccessRequest: denyNetwork
     })
     expect(wrapped).toMatchObject({
@@ -332,7 +333,10 @@ describe('NotebookNetworkSandbox', () => {
     expect(beginSpawn).toHaveBeenCalledOnce()
     await expect(wrapped.confirmProcessTreeTermination?.()).resolves.toBe(true)
     expect(backend.wrap).toHaveBeenCalledWith(
-      expect.objectContaining({ superviseProcessTree: true })
+      expect.objectContaining({
+        superviseProcessTree: true,
+        windowsShellControlPipe: 'OpenScience.Shell.0123456789abcdef0123456789abcdef'
+      })
     )
 
     first.updatePolicy({ allowedDomains: ['api.crossref.org'], deniedDomains: [] })

@@ -425,6 +425,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { inheritedFileDescriptorCount: invocation.inheritedFileDescriptorCount }
           : {}),
         ...(invocation.superviseProcessTree ? { superviseProcessTree: true } : {}),
+        ...(invocation.windowsShellControlPipe
+          ? { windowsShellControlPipe: invocation.windowsShellControlPipe }
+          : {}),
         filesystem: {
           privateRoot: homedir(),
           readOnlyRoots: [

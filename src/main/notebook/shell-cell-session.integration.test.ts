@@ -52,6 +52,38 @@ describe('persistent platform shell cells', () => {
     expect(second).toMatchObject({ exitCode: 0, stdout: '41:kept:hello:child' })
   })
 
+  it.skipIf(!windows)('gives PowerShell cells EOF instead of the cell protocol input', async () => {
+    expect(await adapter.execute(request('[Console]::Write("ready")'))).toMatchObject({
+      stdout: 'ready',
+      exitCode: 0
+    })
+    const result = await adapter.execute({
+      ...request('[Console]::Write($null -eq [Console]::ReadLine())'),
+      timeoutMs: 1000
+    })
+    expect(result).toMatchObject({ stdout: 'True', exitCode: 0 })
+  })
+
+  it.skipIf(!windows)(
+    'gives native children EOF and still supports explicit pipeline input',
+    async () => {
+      const executable = process.execPath.replaceAll("'", "''")
+      const script = `process.stdout.write(require('node:fs').readFileSync(0,'utf8') || 'eof')`
+      const child = `& '${executable}' -e '${script.replaceAll("'", "''")}'`
+      expect(await adapter.execute(request(`$value = 'kept'; ${child}`))).toMatchObject({
+        stdout: 'eof',
+        exitCode: 0
+      })
+      const piped = await adapter.execute(request(`'payload' | ${child}`))
+      expect(piped.exitCode).toBe(0)
+      expect(piped.stdout.trim()).toBe('payload')
+      expect(await adapter.execute(request('[Console]::Write($value)'))).toMatchObject({
+        stdout: 'kept',
+        exitCode: 0
+      })
+    }
+  )
+
   it('serializes concurrent submissions without sharing state between sessions', async () => {
     const first = adapter.execute(request(command('value=41', '$value=41')))
     const second = adapter.execute(

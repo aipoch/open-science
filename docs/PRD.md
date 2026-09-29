@@ -159,6 +159,15 @@ it; ambiguous identity retains the receipt and blocks installation. Normal compl
 receipt only after process cleanup. The host and its supervised children are process-scoped; no new
 system service, uninstall hook, or database schema is introduced.
 
+Persistent PowerShell cells use a dedicated, read-only control pipe rather than workload stdin.
+The Windows native launcher owns this transient pipe, grants access to the current user and exact
+command capability, verifies the connecting child PID, and forwards the application protocol while
+the workload and normally inherited child stdin receive EOF. The pipe closes before termination
+proof is published; a host crash closes its handles and the existing kill-on-close Job Object.
+The optional `shellControlPipe` launch field travels only in the launch specification. It adds no
+receipt format, public status, database migration, or durable interpreter-state snapshot. The
+application and its bundled native helpers are shipped together with this protocol support.
+
 Version-1 launch intents without process identity cannot be upgraded into proof of stopped work.
 After identifiable backends stop, the update dialog offers explicit recovery for old intact launch
 intents only. Confirmation is bound to their exact bytes; changed, current-instance, malformed and

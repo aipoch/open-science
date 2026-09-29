@@ -281,6 +281,7 @@ const prepareShellLaunch = async (
   options: NotebookShellProcessRequest & {
     previewAvailable?: () => boolean
     launchCommand?: string
+    windowsShellControlPipe?: string
     deferExecution?: boolean
   },
   platform: NodeJS.Platform = process.platform,
@@ -295,6 +296,7 @@ const prepareShellLaunchOptions = async (
     processSandbox?: NotebookProcessSandbox
     previewAvailable?: () => boolean
     launchCommand?: string
+    windowsShellControlPipe?: string
     deferExecution?: boolean
   }
 ): Promise<PreparedShellLaunch> => {
@@ -387,6 +389,9 @@ const prepareShellLaunchOptions = async (
           sessionId: options.sessionId,
           projectId: options.projectId,
           runtime: 'bash',
+          ...(options.windowsShellControlPipe
+            ? { windowsShellControlPipe: options.windowsShellControlPipe }
+            : {}),
           ...(platform === 'win32' && runtimeBinding.kind === 'powershell'
             ? { superviseProcessTree: true }
             : {}),
@@ -989,11 +994,17 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
     if (!session) {
       session = new ShellCellSession(
         request,
-        async (cell, startup, signal, onProcess) => {
+        async (cell, startup, signal, onProcess, controlPipe) => {
           let preparedLaunch: PreparedShellLaunch
           try {
             preparedLaunch = await prepareShellLaunch(
-              { ...cell, signal, launchCommand: startup, deferExecution: true },
+              {
+                ...cell,
+                signal,
+                launchCommand: startup,
+                deferExecution: true,
+                windowsShellControlPipe: controlPipe
+              },
               this.platform,
               this.processSandbox
             )
@@ -1041,7 +1052,8 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
             platform: shellRuntimePlatform(cell.runtimeBinding!, this.platform)
           })
           if (mutation) throw new Error(`MANAGED_RUNTIME_MUTATION_BLOCKED: ${mutation.message}`)
-        }
+        },
+        Boolean(this.processSandbox)
       )
       this.sessions.set(key, session)
     }

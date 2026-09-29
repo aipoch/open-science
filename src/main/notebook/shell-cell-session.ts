@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { createServer, type Server, type Socket } from 'node:net'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process'
 import {
@@ -12,7 +13,8 @@ type Launch = (
   request: NotebookShellProcessRequest,
   startup: string,
   signal: AbortSignal,
-  onProcess: (child: ChildProcessWithoutNullStreams) => void
+  onProcess: (child: ChildProcessWithoutNullStreams) => void,
+  controlPipe?: string
 ) => Promise<{
   completion: Promise<NotebookShellResult>
   beginExecution: (command: string) => () => void
@@ -43,6 +45,8 @@ const cancelledResult = (): NotebookShellResult => ({
 export class ShellCellSession {
   private tail: Promise<unknown> = Promise.resolve()
   private child?: ChildProcessWithoutNullStreams
+  private controlServer?: Server
+  private controlSocket?: Socket
   private completion?: Promise<NotebookShellResult>
   private processResult?: NotebookShellResult
   private launchedProcess = false
@@ -59,7 +63,8 @@ export class ShellCellSession {
   constructor(
     readonly identity: NotebookShellProcessRequest,
     private readonly launch: Launch,
-    private readonly validate: (request: NotebookShellProcessRequest) => Promise<void>
+    private readonly validate: (request: NotebookShellProcessRequest) => Promise<void>,
+    private readonly nativeControl = false
   ) {}
 
   execute(request: NotebookShellProcessRequest): Promise<NotebookShellResult> {
@@ -101,10 +106,45 @@ export class ShellCellSession {
     return this.cleanupVerified
   }
 
-  private startup(powershell: boolean): string {
+  private closeControl(): void {
+    this.controlSocket?.destroy()
+    this.controlSocket = undefined
+    this.controlServer?.close()
+    this.controlServer = undefined
+  }
+
+  private async openControl(): Promise<{ name: string; connected: Promise<void> }> {
+    const name = `OpenScience.Shell.${randomUUID().replaceAll('-', '')}`
+    if (this.nativeControl) return { name, connected: Promise.resolve() }
+    const lifetime = this.lifetime
+    const connected = Promise.withResolvers<void>()
+    const server = createServer((socket) => {
+      if (lifetime.signal.aborted || this.controlSocket) {
+        socket.destroy()
+        return
+      }
+      this.controlSocket = socket
+      socket.on('error', () => lifetime.abort())
+      // Only the interpreter connects. Stop accepting once its private stream is established.
+      server.close()
+      connected.resolve()
+    })
+    this.controlServer = server
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(`\\\\.\\pipe\\${name}`, () => {
+        server.removeListener('error', reject)
+        server.on('error', () => lifetime.abort())
+        resolve()
+      })
+    })
+    return { name, connected: connected.promise }
+  }
+
+  private startup(powershell: boolean, pipeName?: string): string {
     const name = this.protocolName
     return powershell
-      ? `while ($null -ne ($${name} = [Console]::ReadLine())) { . ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($${name})))) }`
+      ? `$${name}_pipe = [IO.Pipes.NamedPipeClientStream]::new('.', '${pipeName}', [IO.Pipes.PipeDirection]::In); $${name}_pipe.Connect(10000); $${name}_reader = [IO.StreamReader]::new($${name}_pipe); try { while ($null -ne ($${name} = $${name}_reader.ReadLine())) { . ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($${name})))) } } finally { $${name}_reader.Dispose(); $${name}_pipe.Dispose() }`
       : `while IFS= read -r ${name}; do eval "$${name}"; done`
   }
 
@@ -206,6 +246,7 @@ export class ShellCellSession {
     const powershell = request.runtimeBinding?.kind === 'powershell'
     let endExecution: (() => void) | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
+    let connectionTimer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
     if (!this.child) this.lifetime = new AbortController()
     const abort = (): void => {
@@ -229,10 +270,11 @@ export class ShellCellSession {
         this.launchedProcess = false
         this.cleanupVerified = false
         this.launchContext = context
+        const control = powershell ? await this.openControl() : undefined
         const ready = Promise.withResolvers<void>()
         const launched = await this.launch(
           request,
-          this.startup(powershell),
+          this.startup(powershell, control?.name),
           this.lifetime.signal,
           (child) => {
             this.launchedProcess = true
@@ -240,12 +282,16 @@ export class ShellCellSession {
             child.stdout.on('data', (chunk: string) => this.accept('stdout', chunk))
             child.stderr.on('data', (chunk: string) => this.accept('stderr', chunk))
             child.stdin.on('error', () => this.lifetime.abort())
+            // Both Console.ReadLine and native descendants see EOF, never protocol frames.
+            if (powershell && !this.nativeControl) child.stdin.end()
             ready.resolve()
-          }
+          },
+          this.nativeControl ? control?.name : undefined
         )
         this.beginExecution = launched.beginExecution
         this.retryCleanup = launched.retryCleanup
         this.completion = launched.completion.then((exit) => {
+          this.closeControl()
           this.child = undefined
           this.cwd = undefined
           this.processResult = exit
@@ -268,6 +314,11 @@ export class ShellCellSession {
           return exit
         })
         await ready.promise
+        if (control && this.child) {
+          connectionTimer = setTimeout(() => this.lifetime.abort(), 10_000)
+          await Promise.race([control.connected, this.completion])
+          clearTimeout(connectionTimer)
+        }
       }
       if (!this.child) return await result
       endExecution = this.beginExecution?.(request.command)
@@ -278,7 +329,8 @@ export class ShellCellSession {
           timedOut = true
           abort()
         }, timeoutMs)
-        this.child.stdin.write(this.frame(request.command, this.cell!.marker, powershell))
+        const input = powershell && !this.nativeControl ? this.controlSocket! : this.child.stdin
+        input.write(this.frame(request.command, this.cell!.marker, powershell))
       }
       const completed = await result
       if (completed.cwd) this.cwd = completed.cwd
@@ -298,6 +350,7 @@ export class ShellCellSession {
     } catch (error) {
       this.lifetime.abort()
       await this.completion
+      this.closeControl()
       if (
         this.processResult?.ownedTreeReaped === false ||
         this.processResult?.errorCode === 'shell-cleanup-incomplete'
@@ -310,6 +363,7 @@ export class ShellCellSession {
       }
     } finally {
       clearTimeout(timer)
+      clearTimeout(connectionTimer)
       request.signal?.removeEventListener('abort', abort)
       endExecution?.()
       this.cell = undefined

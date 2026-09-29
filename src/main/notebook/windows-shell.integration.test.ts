@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import * as fsPromises from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { execFile, spawn } from 'node:child_process'
@@ -122,6 +122,73 @@ const runPowerShell = (command: string): ReturnType<typeof runShellCommand> =>
   })
 
 describe.runIf(process.platform === 'win32')('Windows notebook shell integration', () => {
+  it.for([false, true])(
+    'separates PowerShell control input through the native owner (protected: %s)',
+    { timeout: 60_000 },
+    async (protectedMode, { skip }) => {
+      if (protectedMode && process.env.OPEN_SCIENCE_TEST_PROTECTED_SHELL !== '1') skip()
+      const root = await mkdtemp(join(tmpdir(), 'shell-native-stdin-'))
+      if (!protectedMode) vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+      await mkdir(join(root, 'workspace'))
+      await mkdir(join(root, 'runtime'))
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+        temporaryRoot: join(root, 'commands'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      const registry = new ShellProcessOwnershipRegistry(root)
+      const adapter = new NotebookShellProcessAdapter('win32', owner, registry)
+      const wrap = owner.wrap.bind(owner)
+      const launches: string[] = []
+      const wrapping = vi.spyOn(owner, 'wrap').mockImplementation(async (invocation) => {
+        const wrapped = await wrap(invocation)
+        launches.push(wrapped.args[0])
+        return wrapped
+      })
+      const request = {
+        ...shellRequest(root),
+        cwd: join(root, 'workspace'),
+        handoffDir: join(root, 'workspace'),
+        runtimeRoot: join(root, 'runtime')
+      }
+      try {
+        const executable = process.execPath.replaceAll("'", "''")
+        const script = `process.stdout.write(require('node:fs').readFileSync(0,'utf8') || 'eof')`
+        const child = `& '${executable}' -e '${script.replaceAll("'", "''")}'`
+        const first = await adapter.execute({
+          ...request,
+          command: `$value = "kept"; [Console]::Write($null -eq [Console]::ReadLine()); ${protectedMode ? '' : child}`
+        })
+        expect(first, JSON.stringify(first)).toMatchObject({
+          stdout: protectedMode ? 'True' : 'Trueeof',
+          exitCode: 0
+        })
+        // The installed protected runtime checks IPC without depending on this machine's drive
+        // authorization. The isolated standard fixture also checks native invocation and cwd/state.
+        if (!protectedMode) {
+          const second = await adapter.execute({
+            ...request,
+            command: `#${'x'.repeat(24_000)}\n[Console]::Write($value)`
+          })
+          expect(second, JSON.stringify(second)).toMatchObject({ stdout: 'kept', exitCode: 0 })
+        }
+        expect(registry.hasReceipts()).toBe(true)
+        expect(launches).toEqual([protectedMode ? 'launch' : 'supervise'])
+      } finally {
+        const shutdown = await adapter.shutdown()
+        await owner.dispose()
+        wrapping.mockRestore()
+        vi.unstubAllEnvs()
+        expect(shutdown).toEqual({ reaped: true })
+        expect(registry.hasReceipts()).toBe(false)
+        expect(await readdir(join(root, 'commands'))).toEqual([])
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('persists two real standard REPL commands and releases their native owner on shutdown', async () => {
     const root = await mkdtemp(join(tmpdir(), 'repl-native-persistence-'))
     vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)

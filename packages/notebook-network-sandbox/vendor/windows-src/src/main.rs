@@ -33,6 +33,7 @@ struct LaunchSpec {
     denied_write_roots: Vec<String>,
     termination_proof_path: Option<String>,
     termination_proof_token: Option<String>,
+    shell_control_pipe: Option<String>,
 }
 
 fn decode_launch_spec(encoded: &str) -> Result<LaunchSpec> {
@@ -171,9 +172,9 @@ mod windows_host {
     use anyhow::{Context, Result, bail};
     use serde::{Deserialize, Serialize};
     use windows::Win32::Foundation::{
-        CloseHandle, ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE, HANDLE,
-        HANDLE_FLAG_INHERIT, HLOCAL, LocalFree, SetHandleInformation, WAIT_ABANDONED,
-        WAIT_OBJECT_0, WAIT_TIMEOUT,
+        CloseHandle, ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, GENERIC_READ, GENERIC_WRITE,
+        HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, LocalFree, SetHandleInformation, WAIT_ABANDONED,
+        WAIT_EVENT, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows::Win32::NetworkManagement::WindowsFirewall::{
         NetworkIsolationGetAppContainerConfig, NetworkIsolationSetAppContainerConfig,
@@ -204,7 +205,7 @@ mod windows_host {
         CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS,
         FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ,
         FILE_SHARE_WRITE, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-        OPEN_EXISTING, PIPE_ACCESS_DUPLEX, WRITE_DAC,
+        OPEN_EXISTING, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_OUTBOUND, ReadFile, WRITE_DAC,
     };
     use windows::Win32::System::Com::{CoCreateGuid, CoTaskMemFree};
     use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -225,12 +226,12 @@ mod windows_host {
     use windows::Win32::System::SystemServices::{SE_GROUP_ENABLED, SECURITY_DESCRIPTOR_REVISION};
     use windows::Win32::System::Threading::{
         CREATE_SUSPENDED, CreateMutexW, CreateProcessW, DeleteProcThreadAttributeList,
-        EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcessId, GetExitCodeProcess, INFINITE,
-        InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess,
-        OpenProcessToken, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_ACCESS_RIGHTS,
-        PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ReleaseMutex,
-        ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
-        UpdateProcThreadAttribute, WaitForSingleObject,
+        EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetCurrentProcessId, GetExitCodeProcess,
+        GetProcessId, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+        OpenProcess, OpenProcessToken, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+        PROCESS_ACCESS_RIGHTS, PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
+        PROCESS_TERMINATE, ReleaseMutex, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+        STARTUPINFOW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
     };
     use windows::core::{BOOL, PCWSTR, PWSTR};
 
@@ -2834,6 +2835,160 @@ mod windows_host {
         }
     }
 
+    // This pipe is a per-process resource, never an ACL lease on a user-owned object. Only the
+    // current user and this command's capability may read it; the exact child must connect.
+    struct ShellControlPipe {
+        pipe: fs::File,
+        null_input: Handle,
+    }
+
+    impl ShellControlPipe {
+        fn create(spec: &LaunchSpec, capability: Option<PSID>) -> Result<Option<Self>> {
+            let Some(name) = &spec.shell_control_pipe else {
+                return Ok(None);
+            };
+            let suffix = name
+                .strip_prefix("OpenScience.Shell.")
+                .context("invalid Shell control pipe prefix")?;
+            if suffix.len() != 32 || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                bail!("invalid Shell control pipe identity");
+            }
+            let grant = capability
+                .map(sid_text)
+                .transpose()?
+                .map(|sid| format!("(A;;GR;;;{sid})"))
+                .unwrap_or_default();
+            let sddl = wide(&format!(
+                "D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GR;;;{}){grant}",
+                process_user_sid(unsafe { GetCurrentProcess() })?
+            ));
+            let mut descriptor = PSECURITY_DESCRIPTOR::default();
+            unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    PCWSTR(sddl.as_ptr()),
+                    SDDL_REVISION_1,
+                    &mut descriptor,
+                    None,
+                )
+            }
+            .context("create Shell pipe security")?;
+            let attributes = SECURITY_ATTRIBUTES {
+                nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: descriptor.0,
+                bInheritHandle: false.into(),
+            };
+            let path = wide(&format!(r"\\.\pipe\{name}"));
+            let handle = unsafe {
+                CreateNamedPipeW(
+                    PCWSTR(path.as_ptr()),
+                    PIPE_ACCESS_OUTBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                    1,
+                    65536,
+                    0,
+                    0,
+                    Some(&attributes),
+                )
+            };
+            unsafe { LocalFree(Some(HLOCAL(descriptor.0))) };
+            if handle.is_invalid() {
+                return Err(windows::core::Error::from_thread().into());
+            }
+            let pipe = unsafe { fs::File::from_raw_handle(handle.0) };
+            let inherited = SECURITY_ATTRIBUTES {
+                nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+                bInheritHandle: true.into(),
+                ..Default::default()
+            };
+            let null_input = Handle(
+                unsafe {
+                    CreateFileW(
+                        PCWSTR(wide("NUL").as_ptr()),
+                        GENERIC_READ.0,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        Some(&inherited),
+                        OPEN_EXISTING,
+                        FILE_ATTRIBUTE_NORMAL,
+                        None,
+                    )
+                }
+                .context("open Shell null stdin")?,
+            );
+            // Do not leak the application's protocol-input handle into the workload/descendants.
+            unsafe {
+                SetHandleInformation(
+                    HANDLE(std::io::stdin().as_raw_handle()),
+                    HANDLE_FLAG_INHERIT.0,
+                    Default::default(),
+                )
+            }
+            .context("make Shell protocol input private")?;
+            Ok(Some(Self { pipe, null_input }))
+        }
+
+        fn forward(&mut self, process: HANDLE, timeout: u32) -> Result<WAIT_EVENT> {
+            let started = Instant::now();
+            loop {
+                let state = unsafe { WaitForSingleObject(process, 10) };
+                if state != WAIT_TIMEOUT {
+                    return Ok(state);
+                }
+                if started.elapsed() > Duration::from_secs(30) {
+                    bail!("Shell control pipe connection timed out");
+                }
+                match unsafe { ConnectNamedPipe(pipe_handle(&self.pipe), None) } {
+                    Ok(()) => break,
+                    Err(error) if error.code() == ERROR_PIPE_CONNECTED.to_hresult() => break,
+                    Err(error) if error.code() == ERROR_PIPE_LISTENING.to_hresult() => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            let mut peer = 0;
+            unsafe { GetNamedPipeClientProcessId(pipe_handle(&self.pipe), &mut peer) }
+                .context("identify Shell control client")?;
+            if peer != unsafe { GetProcessId(process) } {
+                bail!("unexpected Shell control client")
+            }
+            let input = HANDLE(std::io::stdin().as_raw_handle());
+            let mut buffer = [0u8; 8192];
+            let mut pending = 0;
+            let mut offset = 0;
+            loop {
+                let state = unsafe { WaitForSingleObject(process, 10) };
+                if state != WAIT_TIMEOUT {
+                    return Ok(state);
+                }
+                if timeout != INFINITE && started.elapsed() >= Duration::from_millis(timeout.into())
+                {
+                    return Ok(WAIT_TIMEOUT);
+                }
+                if offset == pending {
+                    let mut available = 0;
+                    unsafe { PeekNamedPipe(input, None, 0, None, Some(&mut available), None) }
+                        .context("read Shell protocol input")?;
+                    if available == 0 {
+                        continue;
+                    }
+                    let count = (available as usize).min(buffer.len());
+                    let mut read = 0;
+                    unsafe { ReadFile(input, Some(&mut buffer[..count]), Some(&mut read), None) }
+                        .context("read Shell control frame")?;
+                    pending = read as usize;
+                    offset = 0;
+                    if pending == 0 {
+                        bail!("Shell protocol input closed")
+                    }
+                }
+                match self.pipe.write(&buffer[offset..pending]) {
+                    Ok(count) => offset += count,
+                    // A nonblocking byte pipe can be full while the interpreter runs a cell.
+                    Err(error) if error.raw_os_error() == Some(232) => {}
+                    Err(error) => return Err(error).context("write Shell control frame"),
+                }
+            }
+        }
+    }
+
     fn run_suspended_process_in_job(
         spec: &LaunchSpec,
         process: &Handle,
@@ -2841,6 +2996,7 @@ mod windows_host {
         terminate: &mut TerminateOnDrop,
         operation_lock: Option<OperationLock>,
         timeout: u32,
+        mut control: Option<ShellControlPipe>,
     ) -> Result<u32> {
         let job = Handle(
             unsafe { CreateJobObjectW(None, PCWSTR::null()) }.context("create process job")?,
@@ -2862,7 +3018,16 @@ mod windows_host {
         }
         terminate.armed = false;
         drop(operation_lock);
-        let process_wait = unsafe { WaitForSingleObject(process.0, timeout) };
+        let wait = match &mut control {
+            Some(pipe) => pipe.forward(process.0, timeout),
+            None => Ok(unsafe { WaitForSingleObject(process.0, timeout) }),
+        };
+        if wait.is_err() {
+            unsafe { TerminateJobObject(job.0, 1) }
+                .context("stop failed Shell control transport")?;
+            unsafe { WaitForSingleObject(process.0, INFINITE) };
+        }
+        let process_wait = *wait.as_ref().unwrap_or(&WAIT_OBJECT_0);
         if process_wait == WAIT_TIMEOUT {
             unsafe { TerminateJobObject(job.0, 1) }.context("stop timed-out R verification")?;
             unsafe { WaitForSingleObject(process.0, INFINITE) };
@@ -2898,6 +3063,7 @@ mod windows_host {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+        drop(control);
         match (&spec.termination_proof_path, &spec.termination_proof_token) {
             (Some(path), Some(token)) => {
                 fs::write(path, token).context("write process tree termination proof")?;
@@ -2906,6 +3072,7 @@ mod windows_host {
             _ => bail!("incomplete process tree termination proof specification"),
         }
         drop(job);
+        wait?;
         if process_wait == WAIT_TIMEOUT {
             bail!("R verification timed out");
         }
@@ -2920,6 +3087,7 @@ mod windows_host {
         timeout: u32,
         stdout: Option<HANDLE>,
     ) -> Result<u32> {
+        let control = ShellControlPipe::create(spec, Some(capability.sid()))?;
         let capabilities = SECURITY_CAPABILITIES {
             AppContainerSid: app_container_sid,
             Capabilities: capability.entries.as_mut_ptr(),
@@ -2930,7 +3098,11 @@ mod windows_host {
         let mut startup = STARTUPINFOEXW::default();
         startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
         startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-        startup.StartupInfo.hStdInput = HANDLE(std::io::stdin().as_raw_handle());
+        startup.StartupInfo.hStdInput = control
+            .as_ref()
+            .map_or(HANDLE(std::io::stdin().as_raw_handle()), |pipe| {
+                pipe.null_input.0
+            });
         startup.StartupInfo.hStdOutput =
             stdout.unwrap_or(HANDLE(std::io::stdout().as_raw_handle()));
         startup.StartupInfo.hStdError = HANDLE(std::io::stderr().as_raw_handle());
@@ -2981,14 +3153,20 @@ mod windows_host {
             &mut terminate,
             Some(operation_lock),
             timeout,
+            control,
         )
     }
 
     pub fn supervise(spec: LaunchSpec) -> Result<u32> {
+        let control = ShellControlPipe::create(&spec, None)?;
         let mut startup = STARTUPINFOW {
             cb: size_of::<STARTUPINFOW>() as u32,
             dwFlags: STARTF_USESTDHANDLES,
-            hStdInput: HANDLE(std::io::stdin().as_raw_handle()),
+            hStdInput: control
+                .as_ref()
+                .map_or(HANDLE(std::io::stdin().as_raw_handle()), |pipe| {
+                    pipe.null_input.0
+                }),
             hStdOutput: HANDLE(std::io::stdout().as_raw_handle()),
             hStdError: HANDLE(std::io::stderr().as_raw_handle()),
             ..Default::default()
@@ -3017,7 +3195,15 @@ mod windows_host {
             process: process.0,
             armed: true,
         };
-        run_suspended_process_in_job(&spec, &process, &thread, &mut terminate, None, INFINITE)
+        run_suspended_process_in_job(
+            &spec,
+            &process,
+            &thread,
+            &mut terminate,
+            None,
+            INFINITE,
+            control,
+        )
     }
 
     pub fn launch(installation_id: &str, requested_root: &str, spec: LaunchSpec) -> Result<u32> {
@@ -3066,6 +3252,23 @@ mod windows_host {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn shell_control_pipe_rejects_unowned_names_before_creating_resources() {
+            for name in [
+                "other-pipe",
+                "OpenScience.Shell.short",
+                "OpenScience.Shell.0000000000000000000000000000000/",
+            ] {
+                let spec: LaunchSpec = serde_json::from_value(serde_json::json!({
+                    "executable": "unused", "arguments": [], "cwd": ".",
+                    "readOnlyRoots": [], "readWriteRoots": [], "deniedReadRoots": [],
+                    "deniedWriteRoots": [], "shellControlPipe": name
+                }))
+                .unwrap();
+                assert!(ShellControlPipe::create(&spec, None).is_err());
+            }
+        }
 
         fn unique_test_root(label: &str) -> PathBuf {
             std::env::temp_dir().join(format!(
@@ -3645,6 +3848,7 @@ mod windows_host {
                 denied_write_roots: vec![],
                 termination_proof_path: None,
                 termination_proof_token: None,
+                shell_control_pipe: None,
             };
             let result = AclLease::acquire(installation_id, &root, id, &capability, &spec)
                 .and_then(|mut lease| lease.release());
@@ -3677,6 +3881,7 @@ mod windows_host {
                 denied_write_roots: vec![],
                 termination_proof_path: None,
                 termination_proof_token: None,
+                shell_control_pipe: None,
             };
             let (id, capability) = make_capability();
             let mut live =
@@ -3840,6 +4045,7 @@ mod windows_host {
                     denied_write_roots: vec![],
                     termination_proof_path: None,
                     termination_proof_token: None,
+                    shell_control_pipe: None,
                 },
             );
             server.join().unwrap();
@@ -3909,6 +4115,7 @@ mod windows_host {
                 denied_write_roots: vec![],
                 termination_proof_path: None,
                 termination_proof_token: None,
+                shell_control_pipe: None,
             };
             validate_runtime_verification(pending.pending_runtime_access.as_ref().unwrap(), &spec)
                 .unwrap();
@@ -4082,6 +4289,7 @@ mod windows_host {
                     denied_write_roots: vec![],
                     termination_proof_path: None,
                     termination_proof_token: None,
+                    shell_control_pipe: None,
                 },
             );
             stop.join().unwrap();
@@ -4106,6 +4314,7 @@ mod windows_host {
                 denied_write_roots: vec![],
                 termination_proof_path: Some(proof.to_string_lossy().into_owned()),
                 termination_proof_token: Some("owned-timeout-proof".into()),
+                shell_control_pipe: None,
             };
             let startup = STARTUPINFOW {
                 cb: size_of::<STARTUPINFOW>() as u32,
@@ -4136,8 +4345,15 @@ mod windows_host {
                 armed: true,
             };
             let started = Instant::now();
-            let result =
-                run_suspended_process_in_job(&spec, &process, &thread, &mut terminate, None, 100);
+            let result = run_suspended_process_in_job(
+                &spec,
+                &process,
+                &thread,
+                &mut terminate,
+                None,
+                100,
+                None,
+            );
             let proof_value = fs::read_to_string(&proof).ok();
             assert!(format!("{:#}", result.unwrap_err()).contains("R verification timed out"));
             assert!(started.elapsed() < Duration::from_secs(5));
@@ -4677,6 +4893,7 @@ mod tests {
             denied_write_roots: Vec::new(),
             termination_proof_path: None,
             termination_proof_token: None,
+            shell_control_pipe: None,
         };
         assert_eq!(
             command_line(&spec),
@@ -4703,6 +4920,7 @@ mod tests {
             denied_write_roots: Vec::new(),
             termination_proof_path: None,
             termination_proof_token: None,
+            shell_control_pipe: None,
         };
         assert_eq!(
             command_line(&spec),
@@ -4779,6 +4997,7 @@ mod tests {
             denied_write_roots: vec![git.to_string_lossy().into_owned()],
             termination_proof_path: None,
             termination_proof_token: None,
+            shell_control_pipe: None,
         };
 
         let grants = plan_writable_acl_grants(&spec).unwrap();

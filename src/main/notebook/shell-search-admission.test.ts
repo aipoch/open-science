@@ -15,6 +15,7 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
     root = await mkdtemp(join(tmpdir(), 'shell-search-admission-'))
     cwd = join(root, 'workspace')
     await mkdir(cwd)
+    await mkdir(join(root, 'runtime'))
     await mkdir(join(root, 'outside'))
     await mkdir(join(cwd, 'data'))
     await symlink(join(root, 'outside'), join(cwd, 'escape'))
@@ -39,7 +40,7 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
         command,
         cwd,
         handoffDir: cwd,
-        runtimeRoot: root,
+        runtimeRoot: join(root, 'runtime'),
         environment: {},
         sessionId: 'search-admission-session',
         projectId: 'search-admission-project'
@@ -60,7 +61,7 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
     const request = {
       cwd,
       handoffDir: cwd,
-      runtimeRoot: root,
+      runtimeRoot: join(root, 'runtime'),
       environment: {},
       sessionId: 's',
       projectId: 'p'
