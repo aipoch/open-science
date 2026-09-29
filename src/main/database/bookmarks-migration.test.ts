@@ -33,7 +33,8 @@ it('installs the Bookmark table with durable ownership, JSON, and paging constra
       '0043_pdf_annotations',
       '0044_literature_smart_collections',
       '0045_literature_smart_pause_run',
-      '0046_journal_attributes'
+      '0046_journal_attributes',
+      '0047_research_workspaces'
     ]
   })
 

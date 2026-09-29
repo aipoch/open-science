@@ -9,13 +9,15 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
 
 import { NO_VISIBLE_SESSIONS, visibleProjectSessions } from './visible-project-sessions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
+import { projectResearchSidebar } from './research-sidebar-projection'
 
 type WorkspaceSidebarContainerProps = Omit<
   React.ComponentProps<typeof WorkspaceSidebar>,
-  'sessions' | 'onPreviewSession' | 'otherProjects' | 'onOpenProject'
+  'sessions' | 'onPreviewSession' | 'otherProjects' | 'onOpenProject' | 'activitySessionsByEntryId'
 > & {
   projectId: string
   isProjectArchived: boolean
@@ -37,6 +39,15 @@ const WorkspaceSidebarContainer = ({
     )
   )
   const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
+  const workspaces = useResearchWorkspaceStore(
+    useShallow((state) =>
+      Object.values(state.snapshots).filter((workspace) => workspace.projectId === projectId)
+    )
+  )
+  const researchSidebar = useMemo(
+    () => projectResearchSidebar(sessions, workspaces, sidebarProps.activeSessionId),
+    [sessions, workspaces, sidebarProps.activeSessionId]
+  )
   const credentialPendingSessionIds = useMemo(
     () =>
       new Set(
@@ -91,7 +102,9 @@ const WorkspaceSidebarContainer = ({
       {...sidebarProps}
       importProjectId={projectId}
       onMobileClose={onMobileClose}
-      sessions={sessions}
+      sessions={researchSidebar.sessions}
+      activeSessionId={researchSidebar.activeSessionId}
+      activitySessionsByEntryId={researchSidebar.activitySessionsByEntryId}
       credentialPendingSessionIds={credentialPendingSessionIds}
       otherProjects={otherProjects}
       onOpenProject={handleOpenProject}

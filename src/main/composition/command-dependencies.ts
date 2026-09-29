@@ -1,4 +1,14 @@
+import { ResearchAttachmentCleanup } from '../research-drafts/attachment-cleanup'
+import { ContentRepository } from '../storage/content-repository'
+import { ResearchDraftService } from '../research-drafts/service'
+import type { createDefaultUploadRepository } from '../uploads/ipc'
+import type { UploadedAttachment } from '../../shared/uploads'
+import { ResearchSubmissionService } from '../research-submissions/service'
 import type { ApplicationEvents } from '../application-events'
+import { ResearchWorkspaceRepository } from '../research-workspaces/repository'
+import { ResearchWorkspaceService } from '../research-workspaces/service'
+import { getProjectDbClient } from '../projects/prisma-client'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { BrowserWindow, dialog, webContents, type WebContents } from 'electron'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { type ApplicationCommandCompositionDependencies } from '../application-command-composition'
@@ -42,6 +52,7 @@ export function composeCommandDependencies({
   settingsBootstrap,
   storageStartup,
   managedFileVersionService,
+  uploadRepository,
   runtimeRef,
   sessionFoundation,
   sessionPackages,
@@ -76,6 +87,7 @@ export function composeCommandDependencies({
   settingsBootstrap: Awaited<ReturnType<typeof composeSettingsBootstrap>>
   storageStartup: Awaited<ReturnType<typeof composeStorageStartup>>
   managedFileVersionService: ManagedFileVersionService
+  uploadRepository: ReturnType<typeof createDefaultUploadRepository>
   runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined }
   sessionFoundation: Awaited<ReturnType<typeof composeSessionFoundation>>
   sessionPackages: Awaited<ReturnType<typeof composeSessionPackages>>
@@ -117,7 +129,90 @@ export function composeCommandDependencies({
     }
     return sender
   }
+  const researchWorkspaces = new ResearchWorkspaceService(
+    new ResearchWorkspaceRepository(() => getProjectDbClient(resolveConfigRoot())),
+    {
+      read: (projectId, sessionId) =>
+        sessionFoundation.sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
+          mode: 'read-only',
+          preserveRuntimeState: true
+        }),
+      save: (session) => sessionAuthority.sessionPersistenceCoordinator.saveSession(session)
+    },
+    (projectId, operation) =>
+      withDataRootWrite(() =>
+        projectLifecycle.archiveCoordinator.withProjectAvailable(projectId, operation)
+      ),
+    withDataRootWrite
+  )
+  const preserveResearchAttachments = async (
+    projectId: string,
+    ownerId: string,
+    attachments: UploadedAttachment[]
+  ): Promise<UploadedAttachment[]> => {
+    const pending = attachments.filter((item) => !item.versionId)
+    const finalized = pending.length
+      ? await uploadRepository.finalizePendingSessionUploads(ownerId, pending, projectId, {
+          deferVisibility: true
+        })
+      : []
+    const byId = new Map(finalized.map((item) => [item.id, item]))
+    return attachments.map((item) => byId.get(item.id) ?? item)
+  }
+  const researchContent = new ContentRepository({
+    storageRoot: resolveDataRoot(),
+    getClient: () => getProjectDbClient(resolveConfigRoot())
+  })
+  const researchAttachmentCleanup = new ResearchAttachmentCleanup(
+    () => getProjectDbClient(resolveConfigRoot()),
+    async () => {
+      const scan = await sessionFoundation.sessionRepository.loadAllWithDiagnostics({
+        mode: 'read-only',
+        quarantinedIsIncomplete: true,
+        preserveRuntimeState: true
+      })
+      return { complete: scan.isComplete, sessions: scan.result.sessions }
+    },
+    (request) => researchContent.sweep(request),
+    () => BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed()).length === 1
+  )
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
+    researchDrafts: new ResearchDraftService(
+      () => getProjectDbClient(resolveConfigRoot()),
+      preserveResearchAttachments,
+      withDataRootWrite,
+      (projectId, operation) =>
+        projectLifecycle.archiveCoordinator.withProjectAvailable(projectId, operation),
+      async (projectId, draftId, attachments) => {
+        try {
+          await researchAttachmentCleanup.release(projectId, draftId, attachments)
+        } catch (error) {
+          storageStartup.storageLog.warn(
+            'Research attachment cleanup retained managed archive data',
+            { error: error instanceof Error ? error.message : String(error) }
+          )
+        }
+      }
+    ),
+    researchWorkspaces,
+    researchSubmissions: {
+      service: new ResearchSubmissionService(
+        () => getProjectDbClient(resolveConfigRoot()),
+        researchWorkspaces,
+        {
+          read: (projectId, sessionId) =>
+            sessionFoundation.sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
+              mode: 'read-only',
+              preserveRuntimeState: true
+            })
+        },
+        preserveResearchAttachments,
+        (projectId, operation) =>
+          projectLifecycle.archiveCoordinator.withProjectAvailable(projectId, operation)
+      ),
+      writer: artifactSurfaces.runtimeWriter,
+      withWrite: withDataRootWrite
+    },
     specialist: sessionSurfaces.specialistApplicationOwner,
     bookmarks: documentReading.bookmarkService,
     pdfAnnotations: documentReading.pdfAnnotationService,

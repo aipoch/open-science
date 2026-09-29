@@ -89,7 +89,8 @@ describe('Content blob migration', () => {
         '0043_pdf_annotations',
         '0044_literature_smart_collections',
         '0045_literature_smart_pause_run',
-        '0046_journal_attributes'
+        '0046_journal_attributes',
+        '0047_research_workspaces'
       ]
     })
     await expect(
@@ -180,10 +181,11 @@ describe('Content blob migration', () => {
                 '0043_pdf_annotations',
                 '0044_literature_smart_collections',
                 '0045_literature_smart_pause_run',
-                '0046_journal_attributes'
+                '0046_journal_attributes',
+                '0047_research_workspaces'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0046_journal_attributes'
+        to: '0047_research_workspaces'
       })
 
       await expect(

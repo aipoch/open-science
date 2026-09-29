@@ -86,7 +86,8 @@
     "src/main/database/sqlite-schema-migrations.ts",
     "src/main/database/startup-diagnostics.test.ts",
     "src/main/database/startup-diagnostics.ts",
-    "src/main/database/tag-ordering-migration.test.ts"
+    "src/main/database/tag-ordering-migration.test.ts",
+    "src/main/database/migrations/0047-research-workspaces.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -94,7 +95,8 @@
     "src/main/database/database-startup-owner.ts",
     "src/main/database/migration-service.ts",
     "src/main/database/migration-sql-executor.ts",
-    "src/main/database/startup-diagnostics.ts"
+    "src/main/database/startup-diagnostics.ts",
+    "src/main/database/migrations/0047-research-workspaces.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -481,7 +483,12 @@
       "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
       "src/main/acp/library-auto-policy.test.ts",
       "src/main/literature/journal-attributes.scale.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/research-drafts/service.test.ts",
+      "src/main/research-submissions/service.test.ts",
+      "src/main/research-workspaces/service.test.ts",
+      "src/main/research-drafts/attachment-cleanup.test.ts",
+      "src/main/uploads/research-preview.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

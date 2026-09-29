@@ -26,6 +26,15 @@ let scope: string | undefined
 let drafts: StoredDraft[] = []
 let failed = false
 const writers = new Set<() => void>()
+const draftObservers = new Set<(projectId: string, key: string, draft: ComposerDraft) => void>()
+export const observeComposerDrafts = (
+  observer: (projectId: string, key: string, draft: ComposerDraft) => void
+): (() => void) => {
+  draftObservers.add(observer)
+  return () => {
+    draftObservers.delete(observer)
+  }
+}
 const deletedProjects = new Set<string>()
 const deletedSessions = new Set<string>()
 
@@ -131,6 +140,7 @@ export const readComposerDraft = (
 }
 
 export const writeComposerDraft = (projectId: string, key: string, draft: ComposerDraft): void => {
+  for (const observer of draftObservers) observer(projectId, key, draft)
   if (!enabled || deletedProjects.has(projectId) || deletedSessions.has(key)) return
   // Old chips are restored as editable labels; a restored draft never silently reattaches stale
   // context or queue intents. Long-paste anchors retain their complete source text.

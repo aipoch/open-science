@@ -20,6 +20,7 @@ import { bindNotificationInboxDeletionRuntime } from '../notifications/notificat
 import { createPermissionGrantRegistry } from '../permission-grants/registry'
 import { createProjectFilesHandlers } from '../project-files/ipc'
 import { createManagedFileIndexRepository } from '../project-files/repository'
+import { ResearchWorkspaceRepository } from '../research-workspaces/repository'
 import {
   ProjectDeletionCoordinator,
   ProjectDeletionRecoveryLoop,
@@ -43,6 +44,7 @@ import { detectActiveSessions } from '../storage/detect-active'
 import { withDataRootWrite } from '../storage/migration-state'
 import { createUploadCommandOwner } from '../uploads/command-owner'
 import { createDefaultUploadRepository } from '../uploads/ipc'
+import { openUploadPreviewVersion } from '../uploads/research-preview'
 
 export function composeProjectLifecycle({
   applicationEvents,
@@ -165,10 +167,11 @@ export function composeProjectLifecycle({
         fileId: request.fileId!
       }),
     openManagedFileVersion: (request) =>
-      managedFileVersionService.openVersion(
-        { source: 'upload', projectId: request.projectId!, fileId: request.fileId! },
-        request.versionId
-      ),
+      openUploadPreviewVersion(managedFileVersionService, () => getProjectDbClient(configRoot), {
+        ...request,
+        projectId: request.projectId!,
+        fileId: request.fileId!
+      }),
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
   })
@@ -306,7 +309,10 @@ export function composeProjectLifecycle({
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
         visionEvidenceRepository.deleteSessions(sessionIds),
-        bookmarkRepository.deleteSessions(sessionIds)
+        bookmarkRepository.deleteSessions(sessionIds),
+        new ResearchWorkspaceRepository(() => getProjectDbClient(configRoot)).sessionsDeleted(
+          sessionIds
+        )
       ])
     },
     onSessionsReconciled: async (sessionIds) => {

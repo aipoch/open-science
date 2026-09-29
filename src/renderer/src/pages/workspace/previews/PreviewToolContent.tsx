@@ -16,6 +16,7 @@ import {
   useReviewStore
 } from '@/stores/review-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { ResearchReplayPreview } from '../ResearchReplayPreview'
 import { type PreviewToolItem, usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { type ChatSession, type SessionStore, useSessionStore } from '@/stores/session-store'
 
@@ -309,6 +310,15 @@ export const PreviewToolContent = ({
   restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element | null => {
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+
+  if (item.toolKind === 'replay')
+    return (
+      <ResearchReplayPreview
+        key={`${item.projectId}:${item.sessionId}`}
+        item={item}
+        isActive={isActive}
+      />
+    )
 
   // Remount the Files tool per project so its transient dialog cannot outlive the project it opened.
   if (item.toolKind === 'files') {

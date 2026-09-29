@@ -217,7 +217,12 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
       "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
-      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
+      "src/renderer/src/lib/research-submissions/dispatcher.test.ts",
+      "src/renderer/src/pages/workspace/ResearchDraftRecovery.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchReplayPreview.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchSubmissionQueue.test.tsx",
+      "src/renderer/src/pages/workspace/research-draft-persistence.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -1,4 +1,5 @@
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
+import { researchWorkspacesMigration } from './migrations/0047-research-workspaces'
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
 import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
@@ -883,6 +884,17 @@ const MIGRATION_MANIFEST = [
       journalAttributesMigration.statements,
       journalAttributesMigration.verifiers,
       journalAttributesMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...researchWorkspacesMigration,
+    checksum: checksumMigrationPayload(
+      researchWorkspacesMigration.id,
+      researchWorkspacesMigration.statements,
+      researchWorkspacesMigration.verifiers,
+      researchWorkspacesMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

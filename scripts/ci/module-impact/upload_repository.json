@@ -23,7 +23,9 @@
     "src/main/uploads/repository.architecture.test.ts",
     "src/main/uploads/repository.characterization.test.ts",
     "src/main/uploads/repository.test-utils.ts",
-    "src/main/uploads/repository.test.ts"
+    "src/main/uploads/repository.test.ts",
+    "src/main/uploads/research-preview.ts",
+    "src/main/uploads/research-preview.test.ts"
   ],
   "interfacePaths": [
     "src/main/uploads/repository.ts",
@@ -32,7 +34,8 @@
     "src/main/uploads/command-owner.ts",
     "src/main/uploads/ipc.ts",
     "src/main/uploads/repository.test-utils.ts",
-    "src/main/uploads/storage-helpers.ts"
+    "src/main/uploads/storage-helpers.ts",
+    "src/main/uploads/research-preview.ts"
   ],
   "consumerModules": ["session_persistence"],
   "testFiles": {
@@ -46,7 +49,8 @@
       "src/main/uploads/attachment-media.pdf-preview.test.ts",
       "src/main/uploads/attachment-media.sharp.test.ts",
       "src/main/uploads/attachment-media.test.ts",
-      "src/main/uploads/caller-cancellation.test.ts"
+      "src/main/uploads/caller-cancellation.test.ts",
+      "src/main/uploads/research-preview.test.ts"
     ],
     "contract": [
       "src/main/uploads/ipc.test.ts",
@@ -479,7 +483,9 @@
       "src/main/acp/library-auto-policy.test.ts",
       "src/main/reviewer/correction-resume.test.ts",
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/research-submissions/service.test.ts",
+      "src/main/research-drafts/attachment-cleanup.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

@@ -22,6 +22,7 @@ import { createDefaultSessionRepository } from '../session-persistence/ipc'
 import { SettingsService } from '../settings/service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { ContentRepository } from '../storage/content-repository'
+import { openUploadPreviewVersion } from '../uploads/research-preview'
 
 export function composeManagedFiles({
   grantedRootsRepositoryRef,
@@ -153,10 +154,16 @@ export function composeManagedFiles({
     openLatestManagedFile: (source, request) =>
       managedFileVersionService.openLatest({ source, ...request }),
     openManagedFileVersion: (source, request) =>
-      managedFileVersionService.openVersion(
-        { source, projectId: request.projectId, fileId: request.fileId },
-        request.versionId
-      ),
+      source === 'upload'
+        ? openUploadPreviewVersion(
+            managedFileVersionService,
+            () => getProjectDbClient(resolveConfigRoot()),
+            request
+          )
+        : managedFileVersionService.openVersion(
+            { source, projectId: request.projectId, fileId: request.fileId },
+            request.versionId
+          ),
     openNotebookInput: (request) => getNotebookInputRegistry().openPreviewKey(request.path)
   })
   const managedPreviewOwners = createManagedPreviewOwnerRegistry(previewResources)

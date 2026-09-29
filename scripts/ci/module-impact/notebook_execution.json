@@ -910,7 +910,10 @@
       "src/main/acp/library-auto-policy.test.ts",
       "src/main/reviewer/correction-resume.test.ts",
       "src/main/notebook/mcp-wsl-diagnostics.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/research-submissions/service.test.ts",
+      "src/main/research-drafts/attachment-cleanup.test.ts",
+      "src/main/uploads/research-preview.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

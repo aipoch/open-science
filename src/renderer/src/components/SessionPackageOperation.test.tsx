@@ -1067,6 +1067,60 @@ it('navigates once after this desktop window confirms an import', async () => {
   expect(navigate).toHaveBeenCalledExactlyOnceWith('target', 'imported', 'user')
 })
 
+it.each(['before-completion', 'during-project-refresh'])(
+  'does not reclaim navigation %s after import confirmation',
+  async (when) => {
+    const operation: PackageOperationSnapshot = {
+      id: 'background-confirmed-import',
+      kind: 'import',
+      state: 'awaiting-selection',
+      progress: { phase: 'confirming' },
+      importTarget: { projectId: 'target' },
+      importPreview: {
+        title: 'Source',
+        projectName: 'Source',
+        branchCount: 1,
+        messageCount: 1,
+        fileCount: 0,
+        totalBytes: 1,
+        omissions: []
+      }
+    }
+    const navigate = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(true)
+    navigate.mockClear()
+    let resolveProjects!: (rows: never[]) => void
+    const listing = new Promise<never[]>((resolve) => {
+      resolveProjects = resolve
+    })
+    vi.stubGlobal('api', {
+      sessions: {
+        packageOperation: async () => operation,
+        onPackageOperation: () => () => undefined
+      },
+      projects: { list: () => listing }
+    })
+    usePackageOperationStore.setState({ operation, open: true })
+    await act(async () => root.render(<SessionPackageOperation />))
+    await act(async () => button('Import').click())
+    const leave = (): void =>
+      useNavigationStore.setState((state) => ({
+        explicitNavigationRevision: state.explicitNavigationRevision + 1
+      }))
+    if (when === 'before-completion') leave()
+    await act(async () =>
+      usePackageOperationStore.getState().receive({
+        ...operation,
+        state: 'succeeded',
+        importPreview: undefined,
+        result: { imported: { projectId: 'target', sessionId: 'imported' } }
+      })
+    )
+    if (when === 'during-project-refresh') leave()
+    await act(async () => resolveProjects([]))
+    expect(navigate).not.toHaveBeenCalled()
+  }
+)
+
 it('restores a hidden transfer only for an explicit presentation request', () => {
   const operation: PackageOperationSnapshot = {
     id: 'background',

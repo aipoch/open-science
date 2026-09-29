@@ -5,6 +5,8 @@ import {
   PackageOperationIndicator
 } from '@/components/SessionPackageOperation'
 import { SessionInfoPopover } from './SessionInfoPopover'
+import { ResearchDiscussionNotice } from './ResearchDiscussionNotice'
+import { ResearchSubmissionQueue } from './ResearchSubmissionQueue'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
@@ -140,6 +142,7 @@ import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
+import { ResearchDraftRecovery } from './ResearchDraftRecovery'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
@@ -439,7 +442,9 @@ type ConversationPanelSubagents = {
 type ConversationPanelProps = {
   view: ConversationPanelView
   composer: Pick<WorkspaceComposerController, 'view' | 'actions'>
-  conversation: WorkspaceConversationController
+  conversation: WorkspaceConversationController & {
+    research?: import('./workspace-research-controller').ResearchWorkspaceController
+  }
   sideChat: SideChatController
   specialist: ConversationPanelSpecialist
   layout: ConversationPanelLayout
@@ -495,6 +500,7 @@ const ConversationPanel = ({
   submissions
 }: ConversationPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const { research, researchSubmissions } = conversation
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
     view
@@ -1272,7 +1278,9 @@ const ConversationPanel = ({
                 onTogglePin={sessionTools.togglePin}
               />
             ) : (
-              <span className="block truncate">{t('New conversation')}</span>
+              <span className="block truncate">
+                {research?.research?.sourceTitle ?? t('New conversation')}
+              </span>
             )}
           </h1>
           {activeSession && sessionTools.exportDiagnostics && (
@@ -1328,12 +1336,25 @@ const ConversationPanel = ({
         </header>
         <PackageOperationIndicator />
 
+        {research ? (
+          <ResearchDiscussionNotice
+            key={`${research.research?.projectId}:${research.research?.sourceSessionId}`}
+            controller={research}
+          />
+        ) : null}
+
+        {researchSubmissions ? <ResearchSubmissionQueue controller={researchSubmissions} /> : null}
+        {composer.view.researchDraftRecovery ? (
+          <ResearchDraftRecovery {...composer.view.researchDraftRecovery} />
+        ) : null}
+
         {activeSession?.contentLoaded === false ? (
           <SessionSwitchSkeleton />
         ) : (
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
+              researchTitle={research?.research?.sourceTitle}
               onStartResearch={
                 canEditDraft &&
                 !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())

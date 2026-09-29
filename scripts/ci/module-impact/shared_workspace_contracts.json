@@ -33,7 +33,12 @@
     "src/shared/storage.test.ts",
     "src/shared/storage.ts",
     "src/shared/uploads.test.ts",
-    "src/shared/uploads.ts"
+    "src/shared/uploads.ts",
+    "src/shared/replay.ts",
+    "src/shared/research-draft.ts",
+    "src/shared/research-submission.ts",
+    "src/shared/research-workspace.test.ts",
+    "src/shared/research-workspace.ts"
   ],
   "interfacePaths": [
     "src/shared/artifact-code-reconstruction.ts",
@@ -58,7 +63,11 @@
     "src/shared/projects.ts",
     "src/shared/provenance-read-result.ts",
     "src/shared/storage.ts",
-    "src/shared/uploads.ts"
+    "src/shared/uploads.ts",
+    "src/shared/replay.ts",
+    "src/shared/research-draft.ts",
+    "src/shared/research-submission.ts",
+    "src/shared/research-workspace.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -73,7 +82,8 @@
       "src/shared/project-scope.test.ts",
       "src/shared/projects.test.ts",
       "src/shared/storage.test.ts",
-      "src/shared/uploads.test.ts"
+      "src/shared/uploads.test.ts",
+      "src/shared/research-workspace.test.ts"
     ],
     "contract": [],
     "consumer": []

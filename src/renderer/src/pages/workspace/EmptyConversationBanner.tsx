@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button'
 import { FlaskLogo } from '@/components/flask-logo'
 
 const EmptyConversationBanner = ({
-  onStartResearch
+  onStartResearch,
+  researchTitle
 }: {
   onStartResearch?: (prompt: string) => void
+  researchTitle?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -19,10 +21,14 @@ const EmptyConversationBanner = ({
       <FlaskLogo className="size-28 text-text-300 opacity-40 md:size-32 dark:opacity-80" />
       <div className="flex flex-col gap-2">
         <h2 className="text-balance text-lg font-normal text-text-000 md:text-xl">
-          {t('What will you research in Open-Science?')}
+          {researchTitle
+            ? t('What would you like to understand about this research?')
+            : t('What will you research in Open-Science?')}
         </h2>
         <p className="text-xs text-text-100">
-          {t('Attach data or papers, then describe what you want to find out.')}
+          {researchTitle
+            ? t('Play the replay on the right, or ask about the archived methods and results.')
+            : t('Attach data or papers, then describe what you want to find out.')}
         </p>
       </div>
       {onStartResearch ? (

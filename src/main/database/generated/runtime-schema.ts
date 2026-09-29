@@ -231,6 +231,39 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ProjectPreviewState_panelState_check" CHECK ("panelState" IN ('open', 'collapsed')),
     CONSTRAINT "ProjectPreviewState_itemsJson_check" CHECK (json_valid("items") AND json_type("items") = 'array')
 );`,
+  `CREATE TABLE IF NOT EXISTS "ResearchWorkspace" (
+    "projectId" TEXT NOT NULL,
+    "sourceSessionId" TEXT NOT NULL,
+    "discussionSessionId" TEXT,
+    "discussionState" TEXT NOT NULL DEFAULT 'none',
+    "discussionTitle" TEXT,
+    "discussionCreatedAt" DATETIME,
+    "linkRevision" INTEGER NOT NULL DEFAULT 0,
+    "viewJson" TEXT,
+    "viewRevision" INTEGER NOT NULL DEFAULT 0,
+
+    PRIMARY KEY ("projectId", "sourceSessionId"),
+    CONSTRAINT "ResearchWorkspace_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "ResearchDraft" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sourceSessionId" TEXT NOT NULL,
+    "editorId" TEXT NOT NULL,
+    "revision" INTEGER NOT NULL,
+    "state" TEXT NOT NULL DEFAULT 'active',
+    "payloadJson" TEXT NOT NULL,
+    "requestHash" TEXT NOT NULL,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ResearchDraft_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "ReplayQuestionContext" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sourceSessionId" TEXT NOT NULL,
+    "contextJson" TEXT NOT NULL,
+    CONSTRAINT "ReplayQuestionContext_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
   `CREATE TABLE IF NOT EXISTS "UnreadTaskSession" (
     "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     "sessionId" TEXT NOT NULL
@@ -1180,6 +1213,23 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "revision" TEXT NOT NULL,
     CONSTRAINT "JournalItemBinding_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "LiteratureItem" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "JournalItemBinding_journalId_fkey" FOREIGN KEY ("journalId") REFERENCES "Journal" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "ResearchSubmission" (
+    "sequence" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "id" TEXT NOT NULL,
+    "projectId" TEXT NOT NULL,
+    "sourceSessionId" TEXT NOT NULL,
+    "discussionSessionId" TEXT,
+    "messageId" TEXT NOT NULL,
+    "requestHash" TEXT NOT NULL,
+    "payloadJson" TEXT NOT NULL,
+    "state" TEXT NOT NULL DEFAULT 'queued',
+    "claimToken" TEXT,
+    "ownerEpoch" TEXT,
+    "ownerClientId" TEXT,
+    "error" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ResearchSubmission_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );`
 ] as const
 
@@ -1205,6 +1255,9 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "PermissionGrant_fingerprint_key" ON "PermissionGrant"("fingerprint");`,
   `CREATE INDEX IF NOT EXISTS "PermissionGrant_capabilityKind_capabilityKey_qualifierMode_qualifierValue_scopeKind_projectId_sessionId_idx" ON "PermissionGrant"("capabilityKind", "capabilityKey", "qualifierMode", "qualifierValue", "scopeKind", "projectId", "sessionId");`,
   `CREATE INDEX IF NOT EXISTS "PermissionGrant_projectId_sessionId_idx" ON "PermissionGrant"("projectId", "sessionId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ResearchWorkspace_discussionSessionId_key" ON "ResearchWorkspace"("discussionSessionId");`,
+  `CREATE INDEX IF NOT EXISTS "ResearchDraft_projectId_sourceSessionId_state_idx" ON "ResearchDraft"("projectId", "sourceSessionId", "state");`,
+  `CREATE INDEX IF NOT EXISTS "ReplayQuestionContext_projectId_sourceSessionId_idx" ON "ReplayQuestionContext"("projectId", "sourceSessionId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "UnreadTaskSession_sessionId_key" ON "UnreadTaskSession"("sessionId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "NotificationInboxItem_id_key" ON "NotificationInboxItem"("id");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "NotificationInboxItem_dedupeKey_key" ON "NotificationInboxItem"("dedupeKey");`,
@@ -1336,6 +1389,9 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "JournalDataset_source_year_key" ON "JournalDataset"("source", "year");`,
   `CREATE INDEX IF NOT EXISTS "JournalDatasetEntry_journalId_idx" ON "JournalDatasetEntry"("journalId");`,
   `CREATE INDEX IF NOT EXISTS "JournalItemBinding_journalId_idx" ON "JournalItemBinding"("journalId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ResearchSubmission_id_key" ON "ResearchSubmission"("id");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "ResearchSubmission_messageId_key" ON "ResearchSubmission"("messageId");`,
+  `CREATE INDEX IF NOT EXISTS "ResearchSubmission_projectId_sourceSessionId_sequence_idx" ON "ResearchSubmission"("projectId", "sourceSessionId", "sequence");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`,
   `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_project_visible_idx" ON "BackgroundResultDelivery"("projectId", "updatedAt" DESC, "id") WHERE "state" IN ('waiting-result', 'pending', 'claimed', 'dispatching', 'needs-attention')`,
@@ -1364,6 +1420,9 @@ const RUNTIME_SCHEMA_TABLES = [
   'PermissionGrant',
   'PermissionGrantSeed',
   'ProjectPreviewState',
+  'ResearchWorkspace',
+  'ResearchDraft',
+  'ReplayQuestionContext',
   'UnreadTaskSession',
   'NotificationInboxItem',
   'Review',
@@ -1420,7 +1479,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'Journal',
   'JournalDataset',
   'JournalDatasetEntry',
-  'JournalItemBinding'
+  'JournalItemBinding',
+  'ResearchSubmission'
 ] as const
 
 export {

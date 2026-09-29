@@ -5,6 +5,7 @@
 import { MAX_COMPOSER_ATTACHMENTS } from '../../../../../shared/uploads'
 
 import { getExtensionPreservingFileNameParts } from '../extension-preserving-file-name'
+import { splitReplayReferenceText } from '../replay-reference-text'
 
 import type { FileReference } from '../../../../../shared/artifacts'
 import {
@@ -509,6 +510,11 @@ const readDom = (
     }
     if (child.nodeType === Node.ELEMENT_NODE) {
       const el = child as HTMLElement
+      const replayText = el.getAttribute('data-replay-reference-text')
+      if (replayText !== null) {
+        appendText(replayText)
+        return
+      }
       if (el.tagName === 'BR') {
         appendText('\n')
         return
@@ -733,8 +739,19 @@ export const syncPastedTextAnchors = (root: HTMLElement, doc: ComposerDoc): void
 export const applyDocToDom = (root: HTMLElement, doc: ComposerDoc): void => {
   root.textContent = ''
   for (const node of doc.nodes) {
-    if (node.type === 'text') root.appendChild(document.createTextNode(node.text))
-    else if (node.type === 'skill') root.appendChild(createSkillChip(node))
+    if (node.type === 'text') {
+      for (const part of splitReplayReferenceText(node.text)) {
+        if (part.kind === 'text') root.appendChild(document.createTextNode(part.text))
+        else {
+          const chip = document.createElement('span')
+          chip.setAttribute('contenteditable', 'false')
+          chip.setAttribute('data-replay-reference-text', part.text)
+          chip.textContent = part.label
+          chip.className = 'rounded-md bg-accent px-1.5 text-accent-foreground'
+          root.appendChild(chip)
+        }
+      }
+    } else if (node.type === 'skill') root.appendChild(createSkillChip(node))
     else if (node.type === 'artifact') root.appendChild(createArtifactChip(node))
     else if (node.type === 'literature') root.appendChild(createLiteratureChip(node))
     else if (node.type === 'literature-scope') root.appendChild(createLiteratureScopeChip(node))

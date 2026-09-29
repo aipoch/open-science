@@ -664,6 +664,7 @@ const createPanelDefaults = (): PanelProps => ({
     }
   },
   conversation: {
+    researchSubmissions: { items: [], retry: vi.fn(), cancel: vi.fn(), restore: vi.fn() },
     optimisticMessage: undefined,
     planProjectionRecoveryError: false,
     availability: {

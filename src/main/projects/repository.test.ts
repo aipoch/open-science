@@ -28,6 +28,10 @@ const createMockClient = (
   project: Record<string, ReturnType<typeof vi.fn>>
   projectDeletionIntent: Record<string, ReturnType<typeof vi.fn>>
   projectPreviewState: { deleteMany: ReturnType<typeof vi.fn> }
+  researchWorkspace: { deleteMany: ReturnType<typeof vi.fn> }
+  researchSubmission: { deleteMany: ReturnType<typeof vi.fn> }
+  researchDraft: { deleteMany: ReturnType<typeof vi.fn> }
+  replayQuestionContext: { deleteMany: ReturnType<typeof vi.fn> }
   projectLiterature: { deleteMany: ReturnType<typeof vi.fn> }
   pdfAnnotation: { deleteMany: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> }
   bookmark: { deleteMany: ReturnType<typeof vi.fn> }
@@ -52,6 +56,10 @@ const createMockClient = (
   const executeRaw = vi.fn().mockResolvedValue(1)
   const projectLiterature = { deleteMany: vi.fn(() => Promise.resolve({ count: 1 })) }
   const projectPreviewState = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const researchWorkspace = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const researchSubmission = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const researchDraft = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const replayQuestionContext = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const pdfAnnotation = {
     findMany: vi.fn().mockResolvedValue([{ id: 'annotation-1' }]),
     deleteMany: vi.fn().mockResolvedValue({ count: 1 })
@@ -69,6 +77,10 @@ const createMockClient = (
     project,
     projectDeletionIntent,
     projectPreviewState,
+    researchWorkspace,
+    researchDraft,
+    researchSubmission,
+    replayQuestionContext,
     bookmark,
     pdfAnnotation,
     pdfAnnotationImport: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
@@ -80,6 +92,10 @@ const createMockClient = (
   } as unknown as ProjectClient
 
   return {
+    researchWorkspace,
+    researchDraft,
+    researchSubmission,
+    replayQuestionContext,
     client,
     executeRaw,
     project,
@@ -344,6 +360,10 @@ describe('project repository', () => {
       client,
       project,
       projectPreviewState,
+      researchWorkspace,
+      researchDraft,
+      researchSubmission,
+      replayQuestionContext,
       bookmark,
       pdfAnnotation,
       visionEvidence,
@@ -361,6 +381,14 @@ describe('project repository', () => {
       where: { projectId: 'project-1' }
     })
     expect(bookmark.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
+    expect(researchWorkspace.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
+    expect(researchDraft.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
+    expect(researchSubmission.deleteMany).toHaveBeenCalledWith({
+      where: { projectId: 'project-1' }
+    })
+    expect(replayQuestionContext.deleteMany).toHaveBeenCalledWith({
+      where: { projectId: 'project-1' }
+    })
     expect(pdfAnnotation.findMany).toHaveBeenCalledWith({
       where: { projectId: 'project-1' },
       select: { id: true }

@@ -75,6 +75,8 @@ import {
   starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
+import { useWorkspaceResearchController } from './workspace-research-controller'
+import { useWorkspaceResearchContext } from './workspace-research-context'
 import { useConversationSubmissions } from './use-conversation-submissions'
 import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
 import { ConversationExportDialog } from './ConversationExportDialog'
@@ -195,8 +197,12 @@ const WorkspacePage = ({
   const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
   const loadSpecialists = useSpecialistStore((state) => state.load)
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
+  const researchWorkspace = useWorkspaceResearchController(
+    scopedProjectId,
+    isSessionPersistenceReady
+  )
   const newConversationDraftKey = newConversationDraftKeyFor(scopedProjectId)
-  const currentDraftKey = selectedSessionId ?? newConversationDraftKey
+  const currentDraftKey = selectedSessionId ?? researchWorkspace.draftKey ?? newConversationDraftKey
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
@@ -479,6 +485,8 @@ const WorkspacePage = ({
     : false
   const canEditDraft =
     isSessionPersistenceReady &&
+    !researchWorkspace.blocked &&
+    !researchWorkspace.loading &&
     !activeSession?.packageOrigin &&
     !activeSessionHasSendPreparation &&
     activeSession?.status !== 'waiting-plan-approval'
@@ -515,12 +523,24 @@ const WorkspacePage = ({
     activeSession,
     historyPolicy: composerHistoryPolicy,
     canStageAttachments: canEditDraft,
+    researchDraftScope: researchWorkspace.research
+      ? {
+          projectId: researchWorkspace.research.projectId,
+          sourceSessionId: researchWorkspace.research.sourceSessionId
+        }
+      : undefined,
     supportsImageInput,
     uploads: window.api.uploads,
     onSessionSizeLimit
   })
   const { doc: draftDoc, error: attachmentError } = composer.view
   const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
+  useWorkspaceResearchContext({
+    controller: researchWorkspace,
+    composer,
+    draftKey: currentDraftKey,
+    editable: canEditDraft
+  })
   const delegationControl = useWorkspaceSessionDelegationControlOwner({
     activeSession,
     selectedSessionId,
@@ -640,9 +660,12 @@ const WorkspacePage = ({
     activeSession,
     projectId: scopedProjectId,
     currentDraftKey,
+    isResearchDispatcherReady: isSessionPersistenceReady,
     persistenceBlockedSessionIds,
     isPersistenceReady:
       isSessionPersistenceReady &&
+      !researchWorkspace.blocked &&
+      !researchWorkspace.loading &&
       (!activeSession || !persistenceBlockedSessionIds.includes(activeSession.id)),
     supportsImageInput,
     agentConfiguration: activeAgentConfiguration,
@@ -664,6 +687,19 @@ const WorkspacePage = ({
     composer,
     session: sessionController,
     runtime,
+    prepareNewSession: researchWorkspace.prepareDiscussion,
+    onNewSessionAccepted: researchWorkspace.acceptDiscussion,
+    researchSubmissionPorts: {
+      enqueue: (request) => window.api.researchSubmissions.enqueue(request),
+      act: (request) => window.api.researchSubmissions.act(request),
+      navigationRevision: () => useNavigationStore.getState().explicitNavigationRevision
+    },
+    researchSubmissionScope: researchWorkspace.research
+      ? {
+          projectId: researchWorkspace.research.projectId,
+          sourceSessionId: researchWorkspace.research.sourceSessionId
+        }
+      : undefined,
     sideChat: !sideChatDisabledReason ? { start: sideChat.start } : undefined,
     sideChatOpen: sideChat.view !== undefined,
     resetNewConversationSettings: () => {
@@ -1491,7 +1527,7 @@ const WorkspacePage = ({
                 projectId={scopedProjectId}
                 isProjectArchived={activeProject?.archivedAt !== undefined}
                 projectName={activeProject?.name ?? t('Project')}
-                activeSessionId={selectedSessionId}
+                activeSessionId={selectedSessionId ?? researchWorkspace.research?.sourceSessionId}
                 canCreateConversation={isSessionPersistenceReady}
                 canMutateConversations={isSessionPersistenceReady}
                 canDeleteConversations={canDeleteConversations}
@@ -1548,7 +1584,7 @@ const WorkspacePage = ({
                 projectId={scopedProjectId}
                 isProjectArchived={activeProject?.archivedAt !== undefined}
                 projectName={activeProject?.name ?? t('Project')}
-                activeSessionId={selectedSessionId}
+                activeSessionId={selectedSessionId ?? researchWorkspace.research?.sourceSessionId}
                 canCreateConversation={isSessionPersistenceReady}
                 canMutateConversations={isSessionPersistenceReady}
                 canDeleteConversations={canDeleteConversations}
@@ -1685,7 +1721,7 @@ const WorkspacePage = ({
                   sideChatDisabledReason
                 }}
                 composer={composer}
-                conversation={conversation}
+                conversation={{ ...conversation, research: researchWorkspace }}
                 sideChat={sideChat}
                 specialist={sessionController}
                 layout={{

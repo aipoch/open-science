@@ -9,6 +9,9 @@ import {
   useSessionStore
 } from '@/stores/session-store'
 import type { TextAnnotation } from '../../../../shared/annotations'
+import type { ResearchSubmission } from '../../../../shared/research-submission'
+import * as researchJournal from '@/lib/research-submissions/use-research-submissions'
+import { useNavigationStore } from '@/stores/navigation-store'
 
 import type { ComposerDoc } from './composer/composer-doc'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
@@ -96,6 +99,11 @@ const options = (
   return {
     activeSession,
     projectId: 'project-a',
+    researchSubmissionPorts: {
+      enqueue: (request) => window.api.researchSubmissions.enqueue(request),
+      act: (request) => window.api.researchSubmissions.act(request),
+      navigationRevision: () => useNavigationStore.getState().explicitNavigationRevision
+    },
     currentDraftKey: 'session-a',
     persistenceBlockedSessionIds: [],
     isPersistenceReady: true,
@@ -1861,4 +1869,269 @@ it('does not overlap a hanging Plan read or apply its result after leaving the S
     hook.unmount()
     vi.useRealTimers()
   }
+})
+
+describe('research submission durable handoff', () => {
+  const scope = { projectId: 'project-a', sourceSessionId: 'imported-source' }
+  const record = (state: ResearchSubmission['state'] = 'queued'): ResearchSubmission => ({
+    ...scope,
+    id: 'stable-intent',
+    sequence: 1,
+    messageId: 'research-stable-intent',
+    discussionSessionId: 'discussion',
+    state,
+    createdAt: 1,
+    payload: {
+      text: 'hello',
+      annotations: [],
+      attachments: [],
+      permissionProfile: 'ask',
+      agentConfiguration: { providerId: 'codex', reasoningEffort: 'default' },
+      forcedSkillIds: []
+    }
+  })
+  const observe = (
+    items: ResearchSubmission[] = []
+  ): { notify: (items: ResearchSubmission[]) => void } => {
+    const callback: { notify: (items: ResearchSubmission[]) => void } = { notify: () => undefined }
+    vi.spyOn(researchJournal, 'useResearchSubmissions').mockImplementation((input) => {
+      callback.notify = input.changed
+      return items
+    })
+    return callback
+  }
+
+  it('keeps the elected queue dispatcher ready while the selected research source is blocked', async () => {
+    const observer = vi.spyOn(researchJournal, 'useResearchSubmissions').mockReturnValue([])
+    const input = options({ isPersistenceReady: false, isResearchDispatcherReady: true })
+    const hook = await renderController(input)
+    expect(observer).toHaveBeenLastCalledWith(expect.objectContaining({ ready: true }))
+    hook.unmount()
+  })
+
+  it('waits for durable draft and attachments, then clears only after message acceptance and navigation preparation', async () => {
+    const callback = observe()
+    const enqueue = vi.fn(async () => record())
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { researchSubmissions: { enqueue } }
+    })
+    let publish!: () => void
+    let prepare!: (id: string) => void
+    const input = options({
+      activeSession: undefined,
+      researchSubmissionScope: scope,
+      prepareNewSession: vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            prepare = resolve
+          })
+      ),
+      onNewSessionAccepted: vi.fn()
+    })
+    const snapshot = input.composer.lifecycle.captureSend()
+    const attachment = {
+      id: 'file',
+      versionId: 'version',
+      sessionId: 'draft-owner',
+      name: 'evidence.txt',
+      originalName: 'evidence.txt',
+      path: 'upload-version://version',
+      size: 10
+    }
+    input.composer.lifecycle.persistResearchDraft = vi.fn(
+      () =>
+        new Promise<typeof snapshot>((resolve) => {
+          publish = () =>
+            resolve({
+              ...snapshot,
+              attachments: [attachment],
+              researchDraft: { id: 'draft-id', revision: 1, intentId: 'stable-intent' }
+            })
+        })
+    )
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => {
+      hook.result.current.actions.submit.draft({ forcedSkillIds: [] })
+      hook.result.current.actions.submit.draft({ forcedSkillIds: [] })
+    })
+    expect(input.composer.lifecycle.persistResearchDraft).toHaveBeenCalledOnce()
+    expect(enqueue).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    await act(async () => publish())
+    expect(enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        ...scope,
+        id: 'stable-intent',
+        payload: expect.objectContaining({ attachments: [attachment] })
+      })
+    )
+    act(() => callback.notify([record('accepted')]))
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    await act(async () => prepare('discussion'))
+    act(() => callback.notify([record('accepted')]))
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledExactlyOnceWith(
+      snapshot.draftKey,
+      snapshot.version
+    )
+    expect(input.onNewSessionAccepted).toHaveBeenCalledExactlyOnceWith('discussion')
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it.each(['navigation', 'new-draft', 'new-settings', 'rejected-navigation'] as const)(
+    'does not reset a newer composer intent after late acceptance (%s)',
+    async (change) => {
+      const callback = observe()
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: {
+          researchSubmissions: { enqueue: vi.fn(async () => record()) }
+        }
+      })
+      const input = options({
+        activeSession: undefined,
+        researchSubmissionScope: scope,
+        onNewSessionAccepted: vi.fn(() => change !== 'rejected-navigation')
+      })
+      const snapshot = input.composer.lifecycle.captureSend()
+      input.composer.lifecycle.persistResearchDraft = async () => ({
+        ...snapshot,
+        researchDraft: { id: 'draft', revision: 1, intentId: 'stable-intent' }
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      if (change === 'navigation') {
+        useNavigationStore.setState({
+          explicitNavigationRevision: useNavigationStore.getState().explicitNavigationRevision + 1
+        })
+      } else if (change === 'new-draft') {
+        input.composer.lifecycle.captureRevision = vi.fn(() => ({ ...snapshot, version: 2 }))
+      } else if (change === 'new-settings') {
+        hook.rerender({
+          ...input,
+          agentConfiguration: { providerId: 'different-provider', reasoningEffort: 'default' }
+        })
+      }
+      act(() => callback.notify([record('accepted')]))
+      expect(input.resetNewConversationSettings).not.toHaveBeenCalled()
+      expect(input.session.actions.resetNewConversationSpecialist).not.toHaveBeenCalled()
+      if (change !== 'rejected-navigation')
+        expect(input.onNewSessionAccepted).not.toHaveBeenCalled()
+      expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith(
+        snapshot.draftKey,
+        snapshot.version
+      )
+    }
+  )
+
+  it('reuses the saved intent after a lost enqueue response and preserves the visible draft', async () => {
+    observe()
+    const enqueue = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Lost response'))
+      .mockResolvedValue(record())
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { researchSubmissions: { enqueue } }
+    })
+    const input = options({ activeSession: undefined, researchSubmissionScope: scope })
+    const snapshot = input.composer.lifecycle.captureSend()
+    input.composer.lifecycle.persistResearchDraft = vi.fn(async () => ({
+      ...snapshot,
+      researchDraft: { id: 'draft-id', revision: 4, intentId: 'stable-intent' }
+    }))
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(enqueue.mock.calls.map(([request]) => request.id)).toEqual([
+      'stable-intent',
+      'stable-intent'
+    ])
+    expect(input.composer.view.doc).toEqual(textDoc('hello'))
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('retains a failed or uncertain question without restoring over newer input', async () => {
+    const callback = observe()
+    const enqueue = vi.fn(async () => record())
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { researchSubmissions: { enqueue } }
+    })
+    const input = options({ activeSession: undefined, researchSubmissionScope: scope })
+    const snapshot = input.composer.lifecycle.captureSend()
+    input.composer.lifecycle.persistResearchDraft = vi.fn(async () => ({
+      ...snapshot,
+      researchDraft: { id: 'draft-id', revision: 1, intentId: 'stable-intent' }
+    }))
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    input.composer.view.doc = textDoc('A newer question')
+    act(() => callback.notify([record('uncertain')]))
+    expect(input.composer.view.doc).toEqual(textDoc('A newer question'))
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+  it.each(['new-input', 'navigation'] as const)(
+    'does not restore after a deferred cancellation and %s',
+    async (change) => {
+      observe([record('failed')])
+      let cancelled!: (value: ResearchSubmission) => void
+      const cancel = vi.fn(
+        () =>
+          new Promise<ResearchSubmission>((resolve) => {
+            cancelled = resolve
+          })
+      )
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: { researchSubmissions: { act: cancel } }
+      })
+      const input = options({ activeSession: undefined, researchSubmissionScope: scope })
+      input.composer.view.doc = textDoc('')
+      input.composer.lifecycle.captureSend = vi.fn(() => ({
+        draftKey: input.currentDraftKey,
+        version: 1,
+        doc: textDoc(''),
+        annotations: [],
+        attachments: []
+      }))
+      const hook = renderController(input)
+      mounted.push(hook)
+      let result!: Promise<boolean>
+      act(() => {
+        result = hook.result.current.researchSubmissions.restore('stable-intent')
+      })
+      expect(cancel).toHaveBeenCalledOnce()
+      if (change === 'new-input') {
+        input.composer.view.doc = textDoc('Do not overwrite this newer question')
+        input.composer.lifecycle.captureSend = vi.fn(() => ({
+          draftKey: input.currentDraftKey,
+          version: 2,
+          doc: input.composer.view.doc,
+          annotations: [],
+          attachments: []
+        }))
+        hook.rerender({ ...input })
+      } else {
+        hook.rerender({
+          ...input,
+          currentDraftKey: 'other-source',
+          researchSubmissionScope: { ...scope, sourceSessionId: 'other-source' }
+        })
+      }
+      await act(async () => {
+        cancelled(record('cancelled'))
+        expect(await result).toBe(false)
+      })
+      expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
+    }
+  )
 })

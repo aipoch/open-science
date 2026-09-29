@@ -1373,7 +1373,21 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/file-type-icon.test.ts',
           'src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts',
           'src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx',
-          'src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx'
+          'src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx',
+          'src/renderer/src/lib/replay/notebook-details.test.ts',
+          'src/renderer/src/lib/replay/replay.test.ts',
+          'src/renderer/src/lib/replay/source-uploads.test.ts',
+          'src/renderer/src/lib/research-submissions/dispatcher.test.ts',
+          'src/renderer/src/pages/workspace/ReplayReferenceText.test.tsx',
+          'src/renderer/src/pages/workspace/ResearchDraftRecovery.test.tsx',
+          'src/renderer/src/pages/workspace/ResearchReplayPreview.test.tsx',
+          'src/renderer/src/pages/workspace/ResearchSubmissionQueue.test.tsx',
+          'src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx',
+          'src/renderer/src/pages/workspace/replay/replay-context.test.ts',
+          'src/renderer/src/pages/workspace/research-draft-persistence.test.ts',
+          'src/renderer/src/pages/workspace/research-sidebar-projection.test.ts',
+          'src/renderer/src/pages/workspace/workspace-research-context.test.tsx',
+          'src/renderer/src/pages/workspace/workspace-research-controller.test.tsx'
         ]
       },
       capabilityOverlays: ['renderer_state'],

@@ -109,7 +109,8 @@ const renderController = (
   historyPolicy: Partial<
     Parameters<typeof useWorkspaceComposerController>[0]['historyPolicy']
   > = {},
-  strictMode = false
+  strictMode = false,
+  researchDraftScope?: Parameters<typeof useWorkspaceComposerController>[0]['researchDraftScope']
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
   let selectedActiveSession = activeSession ?? undefined
@@ -123,6 +124,7 @@ const renderController = (
   const Harness = (): null => {
     result.current = useWorkspaceComposerController({
       currentDraftKey,
+      researchDraftScope,
       newConversationDraftKey: 'new:project',
       activeProjectId: 'project',
       pendingCustomizePrefill,
@@ -202,6 +204,143 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('recovers research drafts only on request and keeps newer typing during async recovery', async () => {
+    const recovered = {
+      id: 'recovery-test-draft',
+      projectId: 'project',
+      sourceSessionId: 'recovery-test-source',
+      editorId: 'previous-window',
+      revision: 1,
+      state: 'active' as const,
+      updatedAt: 1,
+      payload: {
+        doc: textDoc('recovered question'),
+        annotations: [],
+        attachments: [],
+        transfers: [],
+        automaticReadingEnabled: true,
+        editRevision: 1,
+        intentId: 'stable-recovered-intent'
+      }
+    }
+    const claim = deferred<{ status: 'saved'; draft: typeof recovered }>()
+    window.api = {
+      ...window.api,
+      researchDrafts: {
+        list: vi.fn(async () => [recovered]),
+        save: vi.fn(async (request) => ({
+          status: 'saved' as const,
+          draft: { ...recovered, ...request, revision: request.expectedRevision + 1 }
+        })),
+        act: vi.fn(() => claim.promise)
+      }
+    }
+    const hook = renderController(uploads(), undefined, [], null, undefined, {}, false, {
+      projectId: 'project',
+      sourceSessionId: recovered.sourceSessionId
+    })
+    mounted.push(hook)
+    await flushAsyncWork()
+    expect(docToText(hook.result.current.view.doc)).toBe('')
+    expect(hook.result.current.view.researchDraftRecovery?.drafts).toHaveLength(1)
+    let restoring!: Promise<void>
+    act(() => {
+      restoring = hook.result.current.view.researchDraftRecovery!.onRestore(recovered)
+    })
+    act(() => hook.result.current.actions.changeDoc(textDoc('newer local input')))
+    await act(async () => {
+      claim.resolve({ status: 'saved', draft: { ...recovered, revision: 2 } })
+      await restoring
+    })
+    expect(docToText(hook.result.current.view.doc)).toBe('newer local input')
+    expect(hook.result.current.view.researchDraftRecovery?.error).toContain('newer draft was kept')
+  })
+
+  it('restores a saved research question over the automatically injected source chip', async () => {
+    const sourceSessionId = 'empty-chip-recovery-source'
+    const recovered = {
+      id: 'empty-chip-recovery',
+      projectId: 'project',
+      sourceSessionId,
+      editorId: 'old-window',
+      revision: 1,
+      state: 'active' as const,
+      updatedAt: 1,
+      payload: {
+        doc: textDoc('restore this real question'),
+        annotations: [],
+        attachments: [],
+        transfers: [],
+        automaticReadingEnabled: true,
+        editRevision: 1,
+        intentId: 'empty-chip-send'
+      }
+    }
+    window.api = {
+      ...window.api,
+      researchDrafts: {
+        list: vi.fn(async () => [recovered]),
+        save: vi.fn(async (request) => ({
+          status: 'saved' as const,
+          draft: { ...recovered, ...request, revision: request.expectedRevision + 1 }
+        })),
+        act: vi.fn(async () => ({ status: 'saved' as const, draft: { ...recovered, revision: 2 } }))
+      }
+    }
+    const hook = renderController(uploads(), undefined, [], null, undefined, {}, false, {
+      projectId: 'project',
+      sourceSessionId
+    })
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.changeDoc({
+        nodes: [
+          { type: 'session', sessionId: sourceSessionId, title: 'Source' },
+          { type: 'text', text: ' ' }
+        ]
+      })
+    )
+    await flushAsyncWork()
+    expect(window.api.researchDrafts.save).not.toHaveBeenCalled()
+    await act(async () => hook.result.current.view.researchDraftRecovery!.onRestore(recovered))
+    expect(docToText(hook.result.current.view.doc)).toBe('restore this real question')
+  })
+  it('moves newer research input and its send identity into the lazily created Discussion', async () => {
+    const sourceSessionId = 'migration-test-source'
+    window.api = {
+      ...window.api,
+      researchDrafts: {
+        list: vi.fn(async () => []),
+        save: vi.fn(async (request) => ({
+          status: 'saved' as const,
+          draft: {
+            ...request,
+            state: 'active' as const,
+            updatedAt: 1,
+            revision: request.expectedRevision + 1
+          }
+        })),
+        act: vi.fn()
+      }
+    }
+    const hook = renderController(uploads(), undefined, [], null, undefined, {}, false, {
+      projectId: 'project',
+      sourceSessionId
+    })
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('newer unsent question')))
+    const before = hook.result.current.lifecycle.captureSend()
+    hook.selectSession({ id: 'new-discussion', projectId: 'project' })
+    expect(docToText(hook.result.current.view.doc)).toBe('newer unsent question')
+    const after = hook.result.current.lifecycle.captureSend()
+    expect(after.researchDraft).toEqual(before.researchDraft)
+    expect(after.version).toBe(before.version)
+    await act(async () => {
+      await hook.result.current.lifecycle.persistResearchDraft(after)
+    })
+    expect(window.api.researchDrafts.save).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps first-message PDF evidence with its draft through undo, switching and failed-send recovery', () => {
     const hook = renderController(uploads(), undefined, [], null)
     mounted.push(hook)

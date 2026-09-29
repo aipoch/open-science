@@ -30,6 +30,15 @@ import {
 export type NavigationView = 'home' | 'library' | 'workspace'
 export type NavigationOrigin = 'user' | 'notification' | 'automatic'
 
+// The visible imported-research entry is independent of the writable conversation selected in
+// SessionStore. Keeping that distinction here prevents runtime actions targeting the archive.
+export type ResearchWorkspaceNavigation = {
+  projectId: string
+  sourceSessionId: string
+  sourceTitle: string
+  discussionSessionId?: string
+}
+
 // Workspace owns the mutable composer draft. It projects only the capability Global Search needs,
 // avoiding a second draft model or cross-Project mention handoff.
 export type ArtifactMentionAvailability = {
@@ -65,6 +74,7 @@ export type WslSupportPrefillIntent = {
 type NavigationStore = {
   view: NavigationView
   activeProjectId: string | undefined
+  researchWorkspace: ResearchWorkspaceNavigation | undefined
   // Advances only for explicit user navigation. Deferred startup intents observe this instead of
   // treating lifecycle/deep-link redirects as user choices.
   userNavigationRevision: number
@@ -175,9 +185,14 @@ const navigationState = (
   next: Pick<NavigationStore, 'view'> & Partial<Pick<NavigationStore, 'activeProjectId'>>
 ): Pick<
   NavigationStore,
-  'view' | 'activeProjectId' | 'userNavigationRevision' | 'explicitNavigationRevision'
+  | 'view'
+  | 'activeProjectId'
+  | 'userNavigationRevision'
+  | 'explicitNavigationRevision'
+  | 'researchWorkspace'
 > => ({
   view: next.view,
+  researchWorkspace: next.view === 'home' ? undefined : state.researchWorkspace,
   activeProjectId:
     next.view === 'home' ? undefined : (next.activeProjectId ?? state.activeProjectId),
   userNavigationRevision:
@@ -236,6 +251,7 @@ const requestPreviewLeaveForNavigation = (
 export const useNavigationStore = create<NavigationStore>((set, get) => ({
   view: 'home',
   activeProjectId: undefined,
+  researchWorkspace: undefined,
   userNavigationRevision: 0,
   explicitNavigationRevision: 0,
   pendingCustomizePrefill: undefined,
@@ -255,6 +271,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   // Conversation draft clears Session selection without changing the top-level view).
   recordUserNavigation: () =>
     set((state) => ({
+      researchWorkspace: undefined,
       userNavigationRevision: state.userNavigationRevision + 1,
       explicitNavigationRevision: state.explicitNavigationRevision + 1
     })),
@@ -346,9 +363,10 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
 
       if (origin === 'user') recordLastOpenedProject(projectId)
 
-      set((state) =>
-        navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })
-      )
+      set((state) => ({
+        ...navigationState(state, origin, { view: 'workspace', activeProjectId: projectId }),
+        researchWorkspace: undefined
+      }))
       usePreviewWorkbenchStore.getState().activateProject(projectId, undefined, true)
       afterNavigate?.()
       return true
@@ -365,9 +383,10 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
 
       if (origin === 'user') recordLastOpenedProject(projectId)
 
-      set((state) =>
-        navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })
-      )
+      set((state) => ({
+        ...navigationState(state, origin, { view: 'workspace', activeProjectId: projectId }),
+        researchWorkspace: undefined
+      }))
       usePreviewWorkbenchStore.getState().activateProject(projectId, undefined, true)
       afterNavigate?.()
       return true
@@ -391,7 +410,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     if (navigation.view !== 'workspace' || navigation.activeProjectId !== projectId) return
 
     useSessionStore.getState().clearSelection()
-    set({ view: 'home', activeProjectId: undefined })
+    set({ view: 'home', activeProjectId: undefined, researchWorkspace: undefined })
   },
 
   // Opens a project's New Conversation draft carrying a `/customize` prefill. Clears session selection
@@ -411,6 +430,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         })
         return {
           ...navigation,
+          researchWorkspace: undefined,
           pendingWslSupportPrefill: undefined,
           pendingCustomizePrefill: {
             projectId,
@@ -435,6 +455,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         })
         return {
           ...navigation,
+          researchWorkspace: undefined,
           pendingLiteratureReviewPrefill: {
             projectId,
             scope,
@@ -469,9 +490,10 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
       useSessionStore.getState().clearSelection()
       recordLastOpenedProject(projectId)
-      set((state) =>
-        navigationState(state, 'user', { view: 'workspace', activeProjectId: projectId })
-      )
+      set((state) => ({
+        ...navigationState(state, 'user', { view: 'workspace', activeProjectId: projectId }),
+        researchWorkspace: undefined
+      }))
 
       const preview = usePreviewWorkbenchStore.getState()
       preview.activateProject(projectId, undefined, true)
@@ -509,6 +531,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         })
         return {
           ...navigation,
+          researchWorkspace: undefined,
           pendingCustomizePrefill: undefined,
           pendingWslSupportPrefill: {
             projectId,

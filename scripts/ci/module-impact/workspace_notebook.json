@@ -143,7 +143,14 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx",
+      "src/renderer/src/lib/replay/notebook-details.test.ts",
+      "src/renderer/src/lib/replay/replay.test.ts",
+      "src/renderer/src/lib/replay/source-uploads.test.ts",
+      "src/renderer/src/pages/workspace/ResearchReplayEvidence.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchReplayPreview.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
+      "src/renderer/src/pages/workspace/replay/replay-context.test.ts"
     ]
   },
   "capabilityOverlays": [],

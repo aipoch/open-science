@@ -26,6 +26,7 @@ type StagedPublicationOptions = {
 }
 
 type PublicationOptions = {
+  deferVisibility?: boolean
   preserveLegacySource?: boolean
   requireExistingAuthority?: boolean
   legacySessionUpload?: boolean
@@ -107,7 +108,7 @@ type StagedPublicationDependencies = {
     sessionId: string,
     attachment: UploadedAttachment,
     version: UploadVersionRecord,
-    options?: { preserveSource?: boolean; legacySessionUpload?: boolean }
+    options?: { preserveSource?: boolean; legacySessionUpload?: boolean; deferVisibility?: boolean }
   ) => Promise<UploadedAttachment>
   hasOrphanLegacyCandidate: (
     projectId: string,
@@ -136,9 +137,10 @@ class StagedPublicationOwner {
   async finalizePendingSessionUploads(
     sessionId: string,
     attachments: UploadedAttachment[],
-    projectId = DEFAULT_UPLOAD_PROJECT_ID
+    projectId = DEFAULT_UPLOAD_PROJECT_ID,
+    options: { deferVisibility?: boolean } = {}
   ): Promise<UploadedAttachment[]> {
-    return this.finalizeSessionUploads(sessionId, attachments, projectId)
+    return this.finalizeSessionUploads(sessionId, attachments, projectId, options)
   }
 
   async finalizeSessionUploads(
@@ -248,6 +250,7 @@ class StagedPublicationOwner {
         existingVersion,
         {
           preserveSource: options.preserveLegacySource === true,
+          deferVisibility: options.deferVisibility,
           legacySessionUpload
         }
       )
@@ -378,6 +381,7 @@ class StagedPublicationOwner {
 
     return this.dependencies.completeStagingUpload(projectId, sessionId, attachment, registered, {
       preserveSource: options.preserveLegacySource === true,
+      deferVisibility: options.deferVisibility,
       legacySessionUpload:
         options.legacySessionUpload === true && attachment.sessionId === sessionId
     })

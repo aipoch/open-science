@@ -1,3 +1,13 @@
+import type { ResearchWorkspaceRequest } from '../../../../shared/research-workspace'
+import {
+  researchDraftPersistence,
+  hasResearchDraftContent,
+  type ResearchDraftIdentity
+} from './research-draft-persistence'
+import {
+  useResearchDraftRecovery,
+  type ResearchDraftRecoveryProps
+} from './use-research-draft-recovery'
 import { useTranslation } from 'react-i18next'
 import {
   composerDraftStorageFailed,
@@ -96,6 +106,7 @@ const samePdfContextSources = (
   left.every((source, index) => pdfContextSourceKey(source) === pdfContextSourceKey(right[index]))
 
 export type ComposerSendSnapshot = {
+  researchDraft?: ResearchDraftIdentity
   setupSessionToken?: string
   queuedEdit?: ComposerDraft['queuedEdit']
   draftKey: string
@@ -116,6 +127,7 @@ export type ComposerSendSnapshot = {
 }
 
 type WorkspaceComposerControllerInput = {
+  researchDraftScope?: ResearchWorkspaceRequest
   currentDraftKey: string
   newConversationDraftKey: string
   activeProjectId: string | undefined
@@ -143,6 +155,7 @@ type WorkspaceComposerControllerInput = {
 
 type WorkspaceComposerController = {
   view: {
+    researchDraftRecovery?: ResearchDraftRecoveryProps
     queuedEdit?: ComposerDraft['queuedEdit']
     doc: ComposerDoc
     annotations: Annotation[]
@@ -190,6 +203,7 @@ type WorkspaceComposerController = {
     dismissAutomaticReading: () => void
   }
   lifecycle: {
+    persistResearchDraft: (snapshot: ComposerSendSnapshot) => Promise<ComposerSendSnapshot>
     captureSend: (includeReadingContext?: boolean) => ComposerSendSnapshot
     captureRevision: (doc: ComposerDoc, annotations: Annotation[]) => ComposerSendSnapshot
     clearDraft: (draftKey: string, expectedVersion?: number) => boolean
@@ -232,6 +246,7 @@ const blank = (): ComposerDraft => ({
 })
 
 const useWorkspaceComposerController = ({
+  researchDraftScope,
   currentDraftKey,
   newConversationDraftKey,
   activeProjectId,
@@ -411,6 +426,45 @@ const useWorkspaceComposerController = ({
     beginSessionDeletion,
     settleSessionDeletion
   } = uploadController.lifecycle
+  const researchDraftRecovery = useResearchDraftRecovery({
+    scope: researchDraftScope,
+    draftKey: currentDraftKey,
+    version: () => versionsRef.current[activeDraftKeyRef.current] ?? 0,
+    apply: (draft, expectedVersion) => {
+      const key = activeDraftKeyRef.current
+      const uploads = captureDraftAttachments()
+      if (
+        deletedDraftKeysRef.current.has(key) ||
+        (versionsRef.current[key] ?? 0) !== expectedVersion ||
+        (researchDraftScope
+          ? hasResearchDraftContent(
+              {
+                doc: docRef.current,
+                annotations: annotationsRef.current,
+                ...uploads,
+                automaticReadingEnabled: automaticReadingEnabledRef.current
+              },
+              researchDraftScope
+            )
+          : !docIsEmpty(docRef.current)) ||
+        annotationsRef.current.length > 0 ||
+        uploads.attachments.length > 0 ||
+        uploads.attachmentTransfers.length > 0 ||
+        queuedEditRef.current
+      )
+        return false
+      clearHistory(key)
+      clearPastedTextUndo(key)
+      clearUndo(key)
+      markChanged(key)
+      setActiveDoc(draft.doc)
+      setActiveAnnotations(draft.annotations)
+      activateDraftAttachments(draft)
+      setActiveAutomaticReadingEnabled(draft.automaticReadingEnabled)
+      setError(null)
+      return true
+    }
+  })
   useLayoutEffect(() => {
     const drafts = draftsRef.current
     const deletedDraftKeys = deletedDraftKeysRef.current
@@ -461,7 +515,11 @@ const useWorkspaceComposerController = ({
     window.addEventListener('pagehide', persistDrafts)
     const beforeUnload = (event: BeforeUnloadEvent): void => {
       persistDrafts()
-      if (composerDraftStorageFailed()) {
+      if (
+        composerDraftStorageFailed() ||
+        researchDraftPersistence().saving ||
+        researchDraftPersistence().error
+      ) {
         event.preventDefault()
         event.returnValue = ''
       }
@@ -912,6 +970,21 @@ const useWorkspaceComposerController = ({
     setHistoryStatus('')
     setCaretRequest(undefined)
 
+    const previousResearch = researchDraftPersistence().scopeFor(
+      draftProjectsRef.current[previousDraftKey] ?? projectIdRef.current,
+      previousDraftKey
+    )
+    const sameResearch =
+      researchDraftScope &&
+      previousResearch?.projectId === researchDraftScope.projectId &&
+      previousResearch.sourceSessionId === researchDraftScope.sourceSessionId
+    // Creating the lazy Discussion changes the underlying Session key, not the user's editor.
+    // Move any newer input typed during submission along with its local revision and uploads.
+    if (sameResearch && outgoingDraft && !draftsRef.current[currentDraftKey]) {
+      draftsRef.current[currentDraftKey] = outgoingDraft
+      versionsRef.current[currentDraftKey] = versionsRef.current[previousDraftKey] ?? 0
+      delete draftsRef.current[previousDraftKey]
+    }
     const nextDraft =
       draftsRef.current[currentDraftKey] ??
       readComposerDraft(activeProjectId ?? 'default-project', currentDraftKey, retryMessage) ??
@@ -929,6 +1002,8 @@ const useWorkspaceComposerController = ({
     annotations,
     attachments,
     currentDraftKey,
+    researchDraftScope,
+    versionsRef,
     doc,
     deletedDraftKeysRef,
     draftsRef,
@@ -1204,7 +1279,7 @@ const useWorkspaceComposerController = ({
           return true
         })
         .slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - includedDurableBindings.length))
-      return {
+      const snapshot: ComposerSendSnapshot = {
         setupSessionToken: setupSessionTokenRef.current,
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
@@ -1247,6 +1322,8 @@ const useWorkspaceComposerController = ({
         ...(pendingPdfContextAttachmentIds.length > 0 ? { pendingPdfContextAttachmentIds } : {}),
         ...(pendingPdfContextVersions.length > 0 ? { pendingPdfContextVersions } : {})
       }
+      snapshot.researchDraft = researchDraftPersistence().capture(projectIdRef.current, snapshot)
+      return snapshot
     },
     [
       attachments,
@@ -1411,6 +1488,7 @@ const useWorkspaceComposerController = ({
 
   return {
     view: {
+      researchDraftRecovery,
       queuedEdit,
       doc,
       annotations,
@@ -1496,6 +1574,19 @@ const useWorkspaceComposerController = ({
       dismissAutomaticReading
     },
     lifecycle: {
+      persistResearchDraft: async (snapshot) => {
+        try {
+          return await researchDraftPersistence().persist(
+            draftProjectsRef.current[snapshot.draftKey] ?? projectIdRef.current,
+            snapshot
+          )
+        } catch (cause) {
+          throw new Error(
+            t('Draft storage is unavailable. Copy your draft before leaving this page.'),
+            { cause }
+          )
+        }
+      },
       captureSend,
       captureRevision,
       clearDraft,

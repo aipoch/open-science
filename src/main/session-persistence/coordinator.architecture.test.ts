@@ -1685,7 +1685,10 @@ describe('Session persistence coordinator architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts',
       'src/main/acp/library-auto-policy.test.ts',
       'src/main/notebook/wsl2-scheduling.integration.test.ts',
-      'src/main/literature/journal-attributes.test.ts'
+      'src/main/literature/journal-attributes.test.ts',
+      'src/main/research-submissions/service.test.ts',
+      'src/main/research-drafts/attachment-cleanup.test.ts',
+      'src/main/uploads/research-preview.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

@@ -335,7 +335,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const [operationError, setError] = useState<{ id: string; message: string }>()
   const [retrying, setRetrying] = useState(false)
   const titleRef = useRef<HTMLHeadingElement>(null)
-  const navigationIntent = useRef<string | undefined>(undefined)
+  const navigationIntent = useRef<{ operationId: string; revision: number } | undefined>(undefined)
   const isWeb = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) === 'true'
   useEffect(() => {
     if (isWeb || !window.api?.sessions?.onPackageOperation) return
@@ -360,18 +360,21 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   useEffect(() => {
     if (
       isWeb ||
-      navigationIntent.current !== operation?.id ||
+      navigationIntent.current?.operationId !== operation?.id ||
       operation?.state !== 'succeeded' ||
       !operation.result?.imported ||
       openedImport.current === operation.id
     )
       return
     openedImport.current = operation.id
+    const revision = navigationIntent.current?.revision
+    if (revision !== useNavigationStore.getState().explicitNavigationRevision) return
     const identity = operation.result.imported
     void useProjectStore
       .getState()
       .loadProjects()
       .then(() => {
+        if (revision !== useNavigationStore.getState().explicitNavigationRevision) return
         useNavigationStore.getState().openSession(identity.projectId, identity.sessionId, 'user')
       })
       .catch(() => undefined)
@@ -391,11 +394,16 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
     operation.state === 'succeeded' ? Check : waiting ? Clock3 : busy ? LoaderCircle : PackageOpen
   const respond = async (request: PackageOperationRequest): Promise<void> => {
     setError(undefined)
-    if (request.action === 'confirm-import') navigationIntent.current = operation.id
+    if (request.action === 'confirm-import')
+      navigationIntent.current = {
+        operationId: operation.id,
+        revision: useNavigationStore.getState().explicitNavigationRevision
+      }
     try {
       await window.api.sessions.packageOperation(request)
     } catch (caught) {
-      if (navigationIntent.current === operation.id) navigationIntent.current = undefined
+      if (navigationIntent.current?.operationId === operation.id)
+        navigationIntent.current = undefined
       setError({
         id: operation.id,
         message: caught instanceof Error ? caught.message : String(caught)

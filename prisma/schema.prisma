@@ -33,6 +33,10 @@ model Project {
   updatedAt            DateTime              @updatedAt
   permissionGrants     PermissionGrant[]
   previewState         ProjectPreviewState?
+  researchSubmissions ResearchSubmission[]
+  researchWorkspaces   ResearchWorkspace[]
+  researchDrafts ResearchDraft[]
+  replayQuestionContexts ReplayQuestionContext[]
   visionEvidence       VisionEvidence[]
   sessions             Session[]
   memoryEntries        MemoryEntry[]
@@ -298,6 +302,50 @@ model ProjectPreviewState {
   items        String   @default("[]")
   updatedAt    DateTime @updatedAt
   project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// Local viewing/Discussion ownership, deliberately independent from the rebuildable Session index.
+// Source and Discussion JSON may be deleted independently; the relation retains their identities.
+model ResearchWorkspace {
+  projectId            String
+  sourceSessionId      String
+  discussionSessionId  String?  @unique
+  discussionState      String   @default("none")
+  discussionTitle      String?
+  discussionCreatedAt  DateTime?
+  linkRevision         Int      @default(0)
+  viewJson             String?
+  viewRevision         Int      @default(0)
+  project              Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, sourceSessionId])
+}
+
+// Local unsent research drafts, independent of Session projections and .science archives.
+model ResearchDraft {
+  id String @id
+  projectId String
+  sourceSessionId String
+  editorId String
+  revision Int
+  state String @default("active")
+  payloadJson String
+  requestHash String
+  updatedAt DateTime @updatedAt
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sourceSessionId, state])
+}
+
+// Immutable local discussion references; retained if the imported source Session is removed.
+model ReplayQuestionContext {
+  id              String @id
+  projectId       String
+  sourceSessionId String
+  contextJson     String
+  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sourceSessionId])
 }
 
 // Legacy unread-task rows retained only as the source for the message-center startup migration.
@@ -1433,4 +1481,25 @@ model JournalItemBinding {
   journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
 
   @@index([journalId])
+}
+
+// Local durable user-intent handoff; excluded from Session packages and source research.
+model ResearchSubmission {
+  sequence Int @id @default(autoincrement())
+  id String @unique
+  projectId String
+  sourceSessionId String
+  discussionSessionId String?
+  messageId String @unique
+  requestHash String
+  payloadJson String
+  state String @default("queued")
+  claimToken String?
+  ownerEpoch String?
+  ownerClientId String?
+  error String?
+  createdAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sourceSessionId, sequence])
 }

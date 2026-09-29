@@ -1,3 +1,9 @@
+import type {
+  ResearchSubmission,
+  ResearchSubmissionPayload
+} from '../../../../shared/research-submission'
+import type { ResearchWorkspaceRequest } from '../../../../shared/research-workspace'
+import { useResearchSubmissions } from '@/lib/research-submissions/use-research-submissions'
 import { i18next } from '@/i18n'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
@@ -24,6 +30,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
 import {
+  docFromMessageParts,
   docIsEmpty,
   docToArtifactRefs,
   docToMessageParts,
@@ -75,7 +82,8 @@ type ConversationComposer = {
   lifecycle: Pick<
     WorkspaceComposerController['lifecycle'],
     'captureSend' | 'clearDraft' | 'restoreFailedSend' | 'discardSnapshot' | 'captureRevision'
-  >
+  > &
+    Partial<Pick<WorkspaceComposerController['lifecycle'], 'persistResearchDraft'>>
 }
 
 type ConversationSession = {
@@ -102,6 +110,8 @@ type WorkspaceConversationControllerOptions = {
   currentDraftKey: string
   persistenceBlockedSessionIds: readonly string[]
   isPersistenceReady: boolean
+  // Global persistence availability, independent of the currently selected read-only source.
+  isResearchDispatcherReady?: boolean
   supportsImageInput: boolean | undefined
   agentConfiguration: SessionAgentConfiguration | undefined
   agentConfigurationReady: boolean
@@ -121,6 +131,14 @@ type WorkspaceConversationControllerOptions = {
   composer: ConversationComposer
   session: ConversationSession
   runtime: WorkspaceConversationRuntime
+  // A research discussion obtains its durable identity on the first send. The ordinary runtime
+  // still owns message admission, permissions and execution after this preparation completes.
+  researchSubmissionScope?: ResearchWorkspaceRequest
+  researchSubmissionPorts: Pick<Window['api']['researchSubmissions'], 'enqueue' | 'act'> & {
+    navigationRevision: () => number
+  }
+  prepareNewSession?: () => Promise<string>
+  onNewSessionAccepted?: (sessionId: string) => boolean | void
   sideChat?: Readonly<{ start: (text: string) => Promise<boolean> }>
   sideChatOpen: boolean
   resetNewConversationSettings: () => void
@@ -132,6 +150,12 @@ type WorkspaceConversationControllerOptions = {
 }
 
 type WorkspaceConversationController = {
+  researchSubmissions: {
+    items: ResearchSubmission[]
+    retry: (id: string) => Promise<void>
+    cancel: (id: string) => Promise<void>
+    restore: (id: string) => Promise<boolean>
+  }
   optimisticMessage: ChatMessage | undefined
   planProjectionRecoveryError: boolean
   availability: {
@@ -389,6 +413,43 @@ const useWorkspaceConversationController = (
   }, [options])
   const inFlightDraftKeysRef = useRef(new Set<string>())
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, ChatMessage>>({})
+  const researchPendingRef = useRef(
+    new Map<
+      string,
+      {
+        snapshot: ReturnType<ConversationComposer['lifecycle']['captureSend']>
+        submissionKey: string
+        prepared: boolean
+        accepted: (sessionId: string) => void
+      }
+    >()
+  )
+  const researchItems = useResearchSubmissions({
+    scope: options.researchSubmissionScope,
+    ready: options.isResearchDispatcherReady ?? options.isPersistenceReady,
+    send: (input) => optionsRef.current.runtime.sendMessage(input),
+    changed: (items) => {
+      for (const item of items) {
+        const pending = researchPendingRef.current.get(item.id)
+        if (!pending) continue
+        if (item.state === 'accepted' && item.discussionSessionId && pending.prepared) {
+          const composer = optionsRef.current.composer
+          pending.accepted(item.discussionSessionId)
+          composer.lifecycle.clearDraft(pending.snapshot.draftKey, pending.snapshot.version)
+          researchPendingRef.current.delete(item.id)
+          inFlightDraftKeysRef.current.delete(pending.submissionKey)
+        } else if (
+          item.state === 'failed' ||
+          item.state === 'uncertain' ||
+          item.state === 'cancelled'
+        ) {
+          // The durable journal retains the immutable attachments and original prompt. Never
+          // overwrite a newer draft or release the saved prompt's resources after a failed send.
+          inFlightDraftKeysRef.current.delete(pending.submissionKey)
+        }
+      }
+    }
+  })
   const planProjectionRecoveryError = usePlanProjectionRecovery(
     options.activeSession,
     options.planProjectionRecovery
@@ -461,7 +522,11 @@ const useWorkspaceConversationController = (
         )
         return
       }
-      if ((queueDraft || restored) && activeSession) {
+      if (
+        (queueDraft || restored) &&
+        activeSession &&
+        (!current.researchSubmissionScope || restored)
+      ) {
         const { hasPendingSwitch } = session.lifecycle.captureSendIntent(false)
         if (hasPendingSwitch) return
         const snapshot = composer.lifecycle.captureSend()
@@ -483,9 +548,10 @@ const useWorkspaceConversationController = (
 
       const snapshot = composer.lifecycle.captureSend(!branchInNewSession)
       // A distinct new draft can start while an earlier conversation is still preparing.
-      const submissionKey = activeSession
-        ? snapshot.draftKey
-        : `${snapshot.draftKey}:${snapshot.version}`
+      const submissionKey =
+        activeSession && !current.researchSubmissionScope
+          ? snapshot.draftKey
+          : `${snapshot.draftKey}:${snapshot.version}`
       if (inFlightDraftKeysRef.current.has(submissionKey)) return
       inFlightDraftKeysRef.current.add(submissionKey)
 
@@ -498,6 +564,110 @@ const useWorkspaceConversationController = (
       const selectedComputeHosts = current.newConversationSelectedComputeHosts ?? []
       const { draftSpecialistId, hasPendingSwitch, pendingSpecialistId } =
         session.lifecycle.captureSendIntent(branchInNewSession)
+
+      if (current.researchSubmissionScope && !branchInNewSession && !restored) {
+        if (hasPendingSwitch) {
+          inFlightDraftKeysRef.current.delete(submissionKey)
+          return
+        }
+        const scope = current.researchSubmissionScope
+        const agentConfiguration = current.agentConfiguration
+        const navigationRevision = current.researchSubmissionPorts.navigationRevision()
+        const preferenceIdentity = (value: WorkspaceConversationControllerOptions): string =>
+          JSON.stringify([
+            value.agentConfiguration,
+            value.permissionProfile,
+            value.newConversationAutoReviewEnabled,
+            value.newConversationMemoryEnabled,
+            value.newConversationDelegationPolicyOverride,
+            value.newConversationEnabledComputeHosts,
+            value.newConversationSelectedComputeHosts,
+            value.session.lifecycle.captureSendIntent(false)
+          ])
+        const submittedPreferences = preferenceIdentity(current)
+        void (async () => {
+          if (!composer.lifecycle.persistResearchDraft)
+            throw new Error(
+              i18next.t('Draft storage is unavailable. Copy your draft before leaving this page.')
+            )
+          const savedSnapshot = await composer.lifecycle.persistResearchDraft(snapshot)
+          const id = savedSnapshot.researchDraft?.intentId
+          if (!id)
+            throw new Error(
+              i18next.t('Draft storage is unavailable. Copy your draft before leaving this page.')
+            )
+          const payload: ResearchSubmissionPayload = {
+            text: docToText(savedSnapshot.doc),
+            attachments: savedSnapshot.attachments,
+            annotations: savedSnapshot.annotations,
+            parts: docToMessageParts(savedSnapshot.doc),
+            referencedArtifacts: docToArtifactRefs(savedSnapshot.doc),
+            pdfContext: savedSnapshot.pdfContext,
+            pdfReadingPosition: savedSnapshot.pdfReadingPosition,
+            pdfReadingPositionSource: savedSnapshot.pdfReadingPositionSource,
+            pendingPdfContextAttachmentIds: savedSnapshot.pendingPdfContextAttachmentIds,
+            pendingPdfContextVersions: savedSnapshot.pendingPdfContextVersions,
+            permissionProfile: current.permissionProfile,
+            agentConfiguration,
+            forcedSkillIds,
+            specialistId: draftSpecialistId,
+            memoryEnabled,
+            ...(wasNewConversation
+              ? {
+                  autoReviewEnabled,
+                  enabledComputeHosts: computeHosts,
+                  selectedComputeHosts,
+                  setupSessionToken: savedSnapshot.setupSessionToken
+                }
+              : {}),
+            delegationPolicy: resolveDelegationPolicyForSend(
+              false,
+              activeSession,
+              current.newConversationDelegationPolicyOverride
+            ),
+            ...(mode === 'plan-first' ? { turnIntent: 'plan-first' as const } : {})
+          }
+
+          researchPendingRef.current.set(id, {
+            snapshot: savedSnapshot,
+            submissionKey,
+            prepared: !current.prepareNewSession,
+            accepted: (sessionId) => {
+              const latest = optionsRef.current
+              const revision = latest.composer.lifecycle.captureRevision(
+                latest.composer.view.doc,
+                latest.composer.view.annotations
+              )
+              if (
+                latest.researchSubmissionPorts.navigationRevision() !== navigationRevision ||
+                latest.currentDraftKey !== snapshot.draftKey ||
+                latest.researchSubmissionScope?.projectId !== scope.projectId ||
+                latest.researchSubmissionScope.sourceSessionId !== scope.sourceSessionId ||
+                revision.draftKey !== snapshot.draftKey ||
+                revision.version !== snapshot.version ||
+                preferenceIdentity(latest) !== submittedPreferences
+              )
+                return
+              if (current.onNewSessionAccepted?.(sessionId) === false) return
+              current.resetNewConversationSettings()
+              session.actions.resetNewConversationSpecialist()
+            }
+          })
+          const saved = await current.researchSubmissionPorts.enqueue({ ...scope, id, payload })
+          const pending = researchPendingRef.current.get(id)
+          if (pending)
+            pending.snapshot = { ...savedSnapshot, attachments: saved.payload.attachments }
+          // Record navigation only after the original question and attachments are durable.
+          // Preparation is idempotent across the service and all renderer windows.
+          if (current.prepareNewSession) await current.prepareNewSession()
+          const prepared = researchPendingRef.current.get(id)
+          if (prepared) prepared.prepared = true
+        })().catch((error: unknown) => {
+          composer.actions.setError(errorMessage(error))
+          inFlightDraftKeysRef.current.delete(submissionKey)
+        })
+        return
+      }
 
       const dispatch = (sessionId: string | undefined): void => {
         const optimisticMessage = sessionId
@@ -530,6 +700,7 @@ const useWorkspaceConversationController = (
         void runtime
           .sendMessage({
             sessionId,
+            ...(current.prepareNewSession ? { preserveSelection: true } : {}),
             onMessageAppended: clearOptimisticMessage,
             ...(branchInNewSession && activeSession
               ? { branchSourceSessionId: activeSession.id }
@@ -577,9 +748,10 @@ const useWorkspaceConversationController = (
               composer.lifecycle.restoreFailedSend(snapshot)
               return
             }
-            if (snapshot.annotations.length > 0) {
+            if (snapshot.annotations.length > 0 || current.prepareNewSession) {
               composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
             }
+            if (current.prepareNewSession) current.onNewSessionAccepted?.(result.sessionId)
             current.resetNewConversationSettings()
             session.actions.resetNewConversationSpecialist()
           })
@@ -603,7 +775,19 @@ const useWorkspaceConversationController = (
         return
       }
 
-      if (snapshot.annotations.length === 0) composer.lifecycle.clearDraft(current.currentDraftKey)
+      if (snapshot.annotations.length === 0 && !current.prepareNewSession)
+        composer.lifecycle.clearDraft(current.currentDraftKey)
+      if (!activeSession && current.prepareNewSession) {
+        void current
+          .prepareNewSession()
+          .then(dispatch)
+          .catch((error: unknown) => {
+            inFlightDraftKeysRef.current.delete(submissionKey)
+            composer.actions.setError(errorMessage(error))
+            composer.lifecycle.restoreFailedSend(snapshot)
+          })
+        return
+      }
       dispatch(branchInNewSession ? undefined : activeSession?.id)
     }
 
@@ -745,6 +929,61 @@ const useWorkspaceConversationController = (
   const queueDraft = canQueueDraft(options)
 
   return {
+    researchSubmissions: {
+      items: researchItems,
+      retry: async (id) => {
+        const scope = optionsRef.current.researchSubmissionScope
+        if (scope)
+          await optionsRef.current.researchSubmissionPorts.act({ ...scope, id, action: 'retry' })
+      },
+      cancel: async (id) => {
+        const scope = optionsRef.current.researchSubmissionScope
+        if (scope)
+          await optionsRef.current.researchSubmissionPorts.act({ ...scope, id, action: 'cancel' })
+      },
+      restore: async (id) => {
+        const current = optionsRef.current
+        const scope = current.researchSubmissionScope
+        const item = researchItems.find((row) => row.id === id)
+        if (!scope || !item || !['failed', 'uncertain', 'queued', 'cancelled'].includes(item.state))
+          return false
+        const empty = (composer: ConversationComposer): boolean =>
+          docIsEmpty(composer.view.doc) &&
+          composer.view.annotations.length === 0 &&
+          composer.view.attachments.length === 0 &&
+          composer.view.transfers.length === 0 &&
+          !composer.view.queuedEdit
+        if (!empty(current.composer)) return false
+        const revision = current.composer.lifecycle.captureSend()
+        if (item.state !== 'cancelled')
+          await optionsRef.current.researchSubmissionPorts.act({ ...scope, id, action: 'cancel' })
+        const latest = optionsRef.current
+        if (
+          latest.currentDraftKey !== current.currentDraftKey ||
+          latest.researchSubmissionScope?.projectId !== scope.projectId ||
+          latest.researchSubmissionScope?.sourceSessionId !== scope.sourceSessionId ||
+          !empty(latest.composer)
+        )
+          return false
+        const latestRevision = latest.composer.lifecycle.captureSend()
+        if (
+          latestRevision.draftKey !== revision.draftKey ||
+          latestRevision.version !== revision.version
+        )
+          return false
+        return current.composer.lifecycle.restoreFailedSend(
+          {
+            ...revision,
+            ...item.payload,
+            doc: item.payload.parts
+              ? docFromMessageParts(item.payload.parts)
+              : { nodes: [{ type: 'text', text: item.payload.text }] },
+            draftKey: current.currentDraftKey
+          },
+          true
+        )
+      }
+    },
     admitApplicationMessage: messageQueue.lifecycle.enqueueApplication,
     optimisticMessage: options.activeSession
       ? optimisticMessages[options.activeSession.id]

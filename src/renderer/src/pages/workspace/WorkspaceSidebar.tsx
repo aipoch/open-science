@@ -68,6 +68,7 @@ type WorkspaceSidebarProps = {
   }>
   onOpenProject?: (projectId: string) => void
   sessions: ChatSession[]
+  activitySessionsByEntryId?: ReadonlyMap<string, ChatSession>
   credentialPendingSessionIds?: ReadonlySet<string>
   activeSessionId: string | undefined
   canCreateConversation: boolean
@@ -214,6 +215,7 @@ const sessionStatusLabelKeys = {
 
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
 const EMPTY_CREDENTIAL_SESSION_IDS = new Set<string>()
+const EMPTY_ACTIVITY_SESSIONS = new Map<string, ChatSession>()
 const INITIAL_PROJECT_MENU_LIMIT = 5
 const FIRST_PROJECT_MENU_DESTINATION_SELECTOR = '[data-project-id], [data-project-new]'
 const OPEN_DIALOG_SELECTOR =
@@ -254,7 +256,8 @@ const startOfLocalDay = (timestamp: number): number => {
 const getSessionSections = (
   sessions: ChatSession[],
   now: number,
-  credentialPendingSessionIds: ReadonlySet<string>
+  credentialPendingSessionIds: ReadonlySet<string>,
+  activitySessionsByEntryId: ReadonlyMap<string, ChatSession> = EMPTY_ACTIVITY_SESSIONS
 ): SidebarSessionSection[] => {
   const todayStartedAt = startOfLocalDay(now)
   const yesterday = new Date(todayStartedAt)
@@ -272,18 +275,20 @@ const getSessionSections = (
   const older: ChatSession[] = []
 
   sessions.forEach((session) => {
+    const activitySession = activitySessionsByEntryId.get(session.id) ?? session
     if (session.pinned) {
       pinned.push(session)
     } else if (
-      isLiveSession(session, credentialPendingSessionIds) ||
-      (session.status === 'idle' && now - session.updatedAt < ACTIVE_SESSION_GRACE_MS)
+      isLiveSession(activitySession, credentialPendingSessionIds) ||
+      (activitySession.status === 'idle' &&
+        now - activitySession.updatedAt < ACTIVE_SESSION_GRACE_MS)
     ) {
       active.push(session)
-    } else if (session.updatedAt >= todayStartedAt) {
+    } else if (activitySession.updatedAt >= todayStartedAt) {
       today.push(session)
-    } else if (session.updatedAt >= yesterdayStartedAt) {
+    } else if (activitySession.updatedAt >= yesterdayStartedAt) {
       yesterdaySessions.push(session)
-    } else if (session.updatedAt >= weekStartedAt) {
+    } else if (activitySession.updatedAt >= weekStartedAt) {
       thisWeek.push(session)
     } else {
       older.push(session)
@@ -301,13 +306,18 @@ const getSessionSections = (
   return sections.filter((section) => section.items.length > 0)
 }
 
-const getNextSessionSectionRefreshAt = (sessions: ChatSession[], now: number): number => {
+const getNextSessionSectionRefreshAt = (
+  sessions: ChatSession[],
+  now: number,
+  activitySessionsByEntryId: ReadonlyMap<string, ChatSession> = EMPTY_ACTIVITY_SESSIONS
+): number => {
   const tomorrow = new Date(now)
   tomorrow.setHours(24, 0, 0, 0)
 
   return sessions.reduce((nextRefreshAt, session) => {
-    if (session.pinned || session.status !== 'idle') return nextRefreshAt
-    const activeUntil = session.updatedAt + ACTIVE_SESSION_GRACE_MS
+    const activitySession = activitySessionsByEntryId.get(session.id) ?? session
+    if (session.pinned || activitySession.status !== 'idle') return nextRefreshAt
+    const activeUntil = activitySession.updatedAt + ACTIVE_SESSION_GRACE_MS
     return activeUntil > now ? Math.min(nextRefreshAt, activeUntil) : nextRefreshAt
   }, tomorrow.getTime())
 }
@@ -437,6 +447,7 @@ type SessionRowProps = {
   imported: boolean
   shortcutNumber?: number
   presentedStatus: SessionStatus
+  displayStatus?: SessionStatus
   archiveAvailable: boolean
   mobileMode: boolean
   isMac: boolean
@@ -468,6 +479,7 @@ const SessionRow = memo(function SessionRow({
   imported,
   shortcutNumber,
   presentedStatus,
+  displayStatus = presentedStatus,
   archiveAvailable,
   mobileMode,
   isMac,
@@ -558,17 +570,17 @@ const SessionRow = memo(function SessionRow({
         <span
           className={cn(
             'size-[7px] shrink-0 rounded-full',
-            sessionStatusDotClassName[presentedStatus]
+            sessionStatusDotClassName[displayStatus]
           )}
         />
       </span>
       <span className="sr-only">
-        {t('Session status: {{status}}', { status: t(sessionStatusLabelKeys[presentedStatus]) })}
+        {t('Session status: {{status}}', { status: t(sessionStatusLabelKeys[displayStatus]) })}
       </span>
       <span
         className={cn(
           'min-w-0 flex-1 truncate',
-          sectionLabel === 'Active' && presentedStatus !== 'idle' && 'font-semibold'
+          sectionLabel === 'Active' && displayStatus !== 'idle' && 'font-semibold'
         )}
       >
         {session.title}
@@ -687,6 +699,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
     otherProjects = [],
     onOpenProject,
     sessions,
+    activitySessionsByEntryId = EMPTY_ACTIVITY_SESSIONS,
     credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
     activeSessionId,
     canCreateConversation,
@@ -734,7 +747,12 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
   } = props
   const { t } = useTranslation()
   const rowActions = props.rowActions ?? sessionRowCallbacks(props)
-  const sections = getSessionSections(sessions, now, credentialPendingSessionIds)
+  const sections = getSessionSections(
+    sessions,
+    now,
+    credentialPendingSessionIds,
+    activitySessionsByEntryId
+  )
   const shortcutNumberBySessionId = new Map(
     sections
       .flatMap((section) => section.items)
@@ -1233,6 +1251,10 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                           }
                           shortcutNumber={shortcutNumberBySessionId.get(session.id)}
                           presentedStatus={presentedStatus}
+                          displayStatus={getPresentedSessionStatus(
+                            activitySessionsByEntryId.get(session.id) ?? session,
+                            credentialPendingSessionIds
+                          )}
                           archiveAvailable={canArchiveSession?.(session) ?? false}
                           mobileMode={mobileMode}
                           isMac={isMac}
@@ -1334,7 +1356,8 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const {
     credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
     onOpenSession,
-    sessions
+    sessions,
+    activitySessionsByEntryId = EMPTY_ACTIVITY_SESSIONS
   } = props
   const [now, setNow] = useState(Date.now)
   const [showSessionShortcuts, setShowSessionShortcuts] = useState(false)
@@ -1351,7 +1374,11 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
     () => matchProjects(props.otherProjects ?? [], effectiveProjectQuery),
     [effectiveProjectQuery, props.otherProjects]
   )
-  const nextSectionRefreshAt = getNextSessionSectionRefreshAt(sessions, now)
+  const nextSectionRefreshAt = getNextSessionSectionRefreshAt(
+    sessions,
+    now,
+    activitySessionsByEntryId
+  )
   const isMac = window.api?.platform === 'darwin'
 
   // Reclassify recent completions at 15 minutes and date groups at local midnight without waiting
@@ -1390,7 +1417,12 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       const shortcutNumber = Number(event.key)
       if (!Number.isInteger(shortcutNumber) || shortcutNumber < 1 || shortcutNumber > 9) return
 
-      const session = getSessionSections(sessions, now, credentialPendingSessionIds)
+      const session = getSessionSections(
+        sessions,
+        now,
+        credentialPendingSessionIds,
+        activitySessionsByEntryId
+      )
         .flatMap((section) => section.items)
         .at(shortcutNumber - 1)
       if (!session) return
@@ -1413,7 +1445,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', hideSessionShortcuts)
     }
-  }, [credentialPendingSessionIds, isMac, now, onOpenSession, sessions])
+  }, [credentialPendingSessionIds, isMac, now, onOpenSession, sessions, activitySessionsByEntryId])
 
   return (
     <WorkspaceSidebarConnectedView

@@ -714,7 +714,12 @@
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
       "src/main/notebook/mcp-wsl-diagnostics.test.ts",
       "src/main/wsl/wsl-setup-owner.integration.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/research-submissions/service.test.ts",
+      "src/main/research-drafts/attachment-cleanup.test.ts",
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "src/main/uploads/research-preview.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

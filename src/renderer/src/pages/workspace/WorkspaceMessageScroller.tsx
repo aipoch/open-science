@@ -181,6 +181,7 @@ type WorkspaceMessageScrollerProps = {
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: SendEditedMessage
   onStartResearch?: (prompt: string) => void
+  researchTitle?: string
   onOpenLibraryMention?: (scope: LibraryMentionScopeRequest) => void
   optimisticMessage?: ChatMessage
   annotations?: readonly Annotation[]
@@ -586,6 +587,7 @@ const WorkspaceMessageScrollerImpl = ({
   onSendEditedMessage,
   onOpenLibraryMention,
   onStartResearch,
+  researchTitle,
   annotations = EMPTY_ANNOTATIONS,
   onAddAnnotation,
   onUpdateAnnotationNote,
@@ -1615,7 +1617,10 @@ const WorkspaceMessageScrollerImpl = ({
             className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-bg-10 to-bg-10/0"
           />
           {showEmptyConversationBanner ? (
-            <EmptyConversationBanner onStartResearch={onStartResearch} />
+            <EmptyConversationBanner
+              onStartResearch={onStartResearch}
+              researchTitle={researchTitle}
+            />
           ) : null}
           <MessageScrollerViewport
             ref={handleMessageScrollerViewportRef}
@@ -2272,6 +2277,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   (previous.scrollIntentActive ?? true) === (next.scrollIntentActive ?? true) &&
   previous.onSendEditedMessage === next.onSendEditedMessage &&
   previous.onStartResearch === next.onStartResearch &&
+  previous.researchTitle === next.researchTitle &&
   previous.onOpenLibraryMention === next.onOpenLibraryMention &&
   (previous.credentialPending ?? false) === (next.credentialPending ?? false) &&
   (previous.visiblePermissionPending ?? false) === (next.visiblePermissionPending ?? false) &&

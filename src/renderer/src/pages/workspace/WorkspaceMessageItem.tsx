@@ -29,6 +29,8 @@ import {
 } from 'lucide-react'
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ReplayReferenceText } from './ReplayReferenceText'
+import { splitReplayReferenceText } from './replay-reference-text'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
@@ -1159,7 +1161,7 @@ const MessagePartsContent = ({
   const { t } = useTranslation()
 
   return (
-    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+    <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
       {parts.map((part, index) => {
         if (part.type === 'skill') {
           // A static (provenance) part carries no id, so it renders as a plain pill.
@@ -1329,13 +1331,13 @@ const MessagePartsContent = ({
           )
         }
 
-        return (
-          <span key={index} className="whitespace-pre-wrap">
-            {part.text}
-          </span>
+        return isStatic ? (
+          <span key={index}>{part.text}</span>
+        ) : (
+          <ReplayReferenceText key={index} text={part.text} projectId={projectId} />
         )
       })}
-    </p>
+    </div>
   )
 }
 
@@ -1583,20 +1585,23 @@ const WorkspaceMessageItemImpl = ({
         onPreviewMentionArtifact={onPreviewMentionArtifact}
       />
     ) : message.content ? (
-      <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.content}</p>
+      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+        <ReplayReferenceText text={message.content} projectId={projectId} />
+      </div>
     ) : null
   const hasInteractiveUserMessageContent = Boolean(
     !staticParts &&
-    message.parts?.some(
-      (part) =>
-        part.type === 'skill' ||
-        part.type === 'artifact' ||
-        part.type === 'literature' ||
-        part.type === 'session' ||
-        (onOpenLibraryMention &&
-          part.type === 'literature-scope' &&
-          (part.scope === 'collection' || (part.scope === 'project' && Boolean(projectId))))
-    )
+    (splitReplayReferenceText(message.content).some((part) => part.kind === 'reference') ||
+      message.parts?.some(
+        (part) =>
+          part.type === 'skill' ||
+          part.type === 'artifact' ||
+          part.type === 'literature' ||
+          part.type === 'session' ||
+          (onOpenLibraryMention &&
+            part.type === 'literature-scope' &&
+            (part.scope === 'collection' || (part.scope === 'project' && Boolean(projectId))))
+      ))
   )
 
   return (

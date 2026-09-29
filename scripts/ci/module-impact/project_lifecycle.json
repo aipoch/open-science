@@ -251,7 +251,12 @@
       "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
       "src/main/acp/library-auto-policy.test.ts",
       "src/main/literature/journal-attributes.scale.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/research-drafts/service.test.ts",
+      "src/main/research-submissions/service.test.ts",
+      "src/main/research-workspaces/service.test.ts",
+      "src/main/research-drafts/attachment-cleanup.test.ts",
+      "src/main/uploads/research-preview.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

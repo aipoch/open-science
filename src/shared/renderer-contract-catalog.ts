@@ -1,4 +1,29 @@
+import type {
+  ResearchDraft,
+  SaveResearchDraftRequest,
+  ActResearchDraftRequest,
+  ResearchDraftMutationResult
+} from './research-draft'
+import type {
+  EnqueueResearchSubmissionRequest,
+  ResearchSubmission,
+  ResearchSubmissionClaimRequest,
+  ResearchSubmissionClaim,
+  ResearchSubmissionFinishRequest,
+  ResearchSubmissionActionRequest
+} from './research-submission'
 import type { JournalRequest, JournalResult } from './journal-attributes'
+import type {
+  ResearchWorkspaceRequest,
+  ResearchWorkspaceListRequest,
+  ResearchWorkspaceSnapshot,
+  EnsureResearchDiscussionRequest,
+  SaveResearchReplayViewRequest,
+  SaveResearchReplayViewResult,
+  ReplayQuestionContext,
+  SaveReplayQuestionContextRequest,
+  GetReplayQuestionContextRequest
+} from './research-workspace'
 import type {
   SessionDiagnosticRequest,
   SessionDiagnosticInspection,
@@ -1629,6 +1654,123 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: PermissionGrantRevokeRequest) => Promise<PermissionGrantMutationView>
   >()('permissions', ['permissions:revoke']),
   platform: value<string>()('platform-file-save'),
+  'researchSubmissions.enqueue': callable<
+    (request: EnqueueResearchSubmissionRequest) => Promise<ResearchSubmission>
+  >()('research-submissions', [
+    'research-submissions:enqueue',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchSubmissions.list': callable<
+    (request: ResearchWorkspaceRequest) => Promise<ResearchSubmission[]>
+  >()('research-submissions', [
+    'research-submissions:list',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchSubmissions.claim': callable<
+    (request: ResearchSubmissionClaimRequest) => Promise<ResearchSubmissionClaim>
+  >()('research-submissions', [
+    'research-submissions:claim',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchSubmissions.finish': callable<
+    (request: ResearchSubmissionFinishRequest) => Promise<ResearchSubmission>
+  >()('research-submissions', [
+    'research-submissions:finish',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchSubmissions.act': callable<
+    (request: ResearchSubmissionActionRequest) => Promise<ResearchSubmission>
+  >()('research-submissions', [
+    'research-submissions:act',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchDrafts.list': callable<
+    (request: ResearchWorkspaceRequest) => Promise<ResearchDraft[]>
+  >()('research-drafts', ['research-drafts:list', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'researchDrafts.save': callable<
+    (request: SaveResearchDraftRequest) => Promise<ResearchDraftMutationResult>
+  >()('research-drafts', ['research-drafts:save', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'researchDrafts.act': callable<
+    (request: ActResearchDraftRequest) => Promise<ResearchDraftMutationResult>
+  >()('research-drafts', ['research-drafts:act', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'researchWorkspaces.get': callable<
+    (request: ResearchWorkspaceRequest) => Promise<ResearchWorkspaceSnapshot>
+  >()('research-workspaces', [
+    'research-workspaces:get',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchWorkspaces.list': callable<
+    (request: ResearchWorkspaceListRequest) => Promise<ResearchWorkspaceSnapshot[]>
+  >()('research-workspaces', [
+    'research-workspaces:list',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchWorkspaces.ensureDiscussion': callable<
+    (request: EnsureResearchDiscussionRequest) => Promise<ResearchWorkspaceSnapshot>
+  >()('research-workspaces', [
+    'research-workspaces:ensure-discussion',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchWorkspaces.saveView': callable<
+    (request: SaveResearchReplayViewRequest) => Promise<SaveResearchReplayViewResult>
+  >()('research-workspaces', [
+    'research-workspaces:save-view',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchWorkspaces.saveQuestionContext': callable<
+    (request: SaveReplayQuestionContextRequest) => Promise<void>
+  >()('research-workspaces', [
+    'research-workspaces:save-question-context',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchWorkspaces.getQuestionContext': callable<
+    (request: GetReplayQuestionContextRequest) => Promise<ReplayQuestionContext | undefined>
+  >()('research-workspaces', [
+    'research-workspaces:get-question-context',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'researchWorkspaces.listQuestionContexts': callable<
+    (request: ResearchWorkspaceRequest) => Promise<ReplayQuestionContext[]>
+  >()('research-workspaces', [
+    'research-workspaces:list-question-contexts',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'preview.delete': callable<(request: DeletePreviewStateRequest) => Promise<void>>()('preview', [
     'preview:delete'
   ]),
