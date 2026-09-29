@@ -72,7 +72,7 @@ describe('ArchivedPanel', () => {
     )
 
     const restore = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.includes('Restore')
+      (button) => button.textContent?.match(/Restore|Restoring/)
     )
     await act(async () => restore?.click())
 
@@ -102,11 +102,13 @@ describe('ArchivedPanel', () => {
 
     const restoreButtons = Array.from(
       container.querySelectorAll<HTMLButtonElement>('button')
-    ).filter((button) => button.textContent?.includes('Restore'))
+    ).filter((button) => button.textContent?.match(/Restore|Restoring/))
     await act(async () => restoreButtons[0]?.click())
     await act(async () => restoreButtons[1]?.click())
 
     expect(restoreButtons.map((button) => button.disabled)).toEqual([true, true])
+    expect(restoreButtons.map((button) => button.textContent)).toEqual(['Restoring…', 'Restoring…'])
+    expect(restoreButtons.every((button) => button.getAttribute('aria-busy') === 'true')).toBe(true)
 
     await act(async () => {
       firstRestore.resolve({ ...session, archivedAt: undefined })
@@ -115,7 +117,7 @@ describe('ArchivedPanel', () => {
 
     const remainingRestore = Array.from(
       container.querySelectorAll<HTMLButtonElement>('button')
-    ).find((button) => button.textContent?.includes('Restore'))
+    ).find((button) => button.textContent?.match(/Restore|Restoring/))
     expect(remainingRestore?.disabled).toBe(true)
 
     await act(async () => {
@@ -495,7 +497,7 @@ describe('ArchivedPanel', () => {
 
     await act(async () => useProjectStore.getState().removeProject(project.id))
 
-    expect(container.querySelector('[role="status"]')).toBeNull()
+    expect(container.querySelector('[role="status"]')?.textContent?.trim()).toBe('')
   })
 
   it('shows Project recovery in Settings and keeps deletion unavailable until retry succeeds', async () => {
@@ -532,6 +534,15 @@ describe('ArchivedPanel', () => {
       (button) => button.textContent?.includes('Delete project')
     )
     expect(deleteButton?.disabled).toBe(true)
+    const reason = document.getElementById(deleteButton!.getAttribute('aria-describedby')!)
+    expect(reason?.textContent).toContain('Retry project recovery before deleting projects.')
+    const restore = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Restore'
+    )!
+    expect(restore.disabled).toBe(true)
+    expect(document.getElementById(restore.getAttribute('aria-describedby')!)?.textContent).toBe(
+      'Restore the project first.'
+    )
   })
 
   it('keeps whole-Project deletion available with conservative copy for damaged authority', async () => {
