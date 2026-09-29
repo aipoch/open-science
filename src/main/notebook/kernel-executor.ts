@@ -1,4 +1,5 @@
 import { createLogger } from '../logger'
+import { prepareReplCellBindings, type ReplCellBindings } from './repl-cell-bindings'
 import {
   NotebookExecutionStopError,
   markNotebookKernelExitCleanedUp,
@@ -642,7 +643,21 @@ class NotebookKernelExecutor implements NotebookExecutor {
           throw helperInitializationError(helperModules, initialization.response.error)
         }
       }
-      workingFileObservation = await startWorkingFileObservation(request)
+      const replBindings = kind === 'repl' ? await prepareReplCellBindings(request.code) : undefined
+      workingFileObservation = await startWorkingFileObservation({
+        ...request,
+        ...(kind === 'repl'
+          ? {
+              sourceFileAccessContext: {
+                staticStrings: [],
+                staticCollections: [],
+                localFileWrappers: [],
+                ...request.sourceFileAccessContext,
+                replPersistentBindings: true
+              }
+            }
+          : {})
+      })
       // sendRequest installs proc.pending synchronously. Revalidate immediately before that handoff:
       // an involuntary drop while ensureProc was finishing must settle this execute() locally rather
       // than dispatching to a stale child whose guarded exit handler can no longer reject the run.
@@ -651,9 +666,15 @@ class NotebookKernelExecutor implements NotebookExecutor {
       }
 
       const reqId = randomUUID()
-      const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request, () => {
-        kernelDispatched = true
-      })
+      const { response, timedOut, cancelled } = await this.sendRequest(
+        proc,
+        reqId,
+        request,
+        () => {
+          kernelDispatched = true
+        },
+        replBindings
+      )
       const fileObservation = await workingFileObservation.finish(
         timedOut || cancelled ? AbortSignal.abort() : request.signal
       )
@@ -1475,7 +1496,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     proc: ProcState,
     reqId: string,
     request: NotebookExecutionRequest,
-    onDispatch: () => void
+    onDispatch: () => void,
+    replBindings?: ReplCellBindings
   ): Promise<{ response: KernelLoopResponse; timedOut: boolean; cancelled: boolean }> {
     return new Promise((resolve, reject) => {
       if (request.signal?.aborted) {
@@ -1607,10 +1629,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
           proc.child.stdin.write(
             framePythonRequest(
               reqId,
-              request.code,
+              replBindings?.source ?? request.code,
               request.controlInvocationId,
               protectedDirAdditions,
-              request.language === 'python' ? request.pythonRandomState : undefined
+              request.language === 'python' ? request.pythonRandomState : undefined,
+              replBindings?.publisher
             )
           )
           for (const directory of protectedDirAdditions) proc.protectedDirs.add(directory)

@@ -571,6 +571,8 @@ class NotebookExecutionOwner {
     )
     for (const run of runs) run.controller.abort(reason)
     const settlements = await Promise.allSettled(runs.map((run) => run.settled))
+    const shellShutdown =
+      scope.runId === undefined ? await this.shellProcess.shutdown?.(scope) : undefined
     const failures = cancellationWrites.flatMap((result) =>
       result.status === 'rejected' ? [result.reason] : []
     )
@@ -578,7 +580,9 @@ class NotebookExecutionOwner {
       throw new AggregateError(failures, 'Shell cancellation intent could not be persisted.')
     }
     return {
-      reaped: settlements.every((result) => result.status === 'fulfilled' && result.value)
+      reaped:
+        shellShutdown?.reaped !== false &&
+        settlements.every((result) => result.status === 'fulfilled' && result.value)
     }
   }
 
@@ -1140,6 +1144,7 @@ class NotebookExecutionOwner {
       source: 'agent',
       inputKind: 'cell',
       kernelKind: 'repl',
+      replPersistentBindings: true,
       script: request.code,
       status: 'queued',
       startedAt: admittedAt,
@@ -1563,6 +1568,7 @@ class NotebookExecutionOwner {
         // Recheck admission after async lookup - shutdown or revocation could have happened
         this.assertShellAdmissionAvailable(session)
         const shellProcessRequest = {
+          laneKey: notebookLaneKey(session.lane),
           runId,
           executionReference: runId,
           runtimeBinding,
@@ -1582,8 +1588,8 @@ class NotebookExecutionOwner {
         let durableAdmission: Awaited<ReturnType<NotebookRunTerminalizationOwner['admit']>>
         try {
           if (lifecycleSignal.aborted) throw lifecycleSignal.reason
-          // Production freezes sandbox roots, trust material, network decision state, and one-shot
-          // grants before durable admission. Injected test adapters may keep the legacy execute port.
+          // Freeze this request before admission. The lane validates it against the live cwd and
+          // activates per-command network grants when it reaches the front of its execution queue.
           preparedShell = await this.shellProcess.prepare?.(shellProcessRequest)
           durableAdmission = await this.options.runTerminalization.admit({ session, queuedRun })
         } catch (error) {
@@ -1732,7 +1738,8 @@ class NotebookExecutionOwner {
                 stdout: shellResult.stdout,
                 stderr: shellResult.stderr,
                 traceback: '',
-                cwdAfter: frozenShellContext.cwd,
+                cwdAfter: shellResult.cwd ?? frozenShellContext.cwd,
+                cwdBefore: shellResult.cwdBefore,
                 outputs,
                 truncated: shellResult.truncated,
                 workingFiles,

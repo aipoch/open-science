@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  NotebookShellProcessAdapter,
   buildShellEnv,
   normalizePowerShellStderr,
   resolveShellInvocation,
@@ -23,6 +24,7 @@ import type { NotebookProcessSandbox } from './process-sandbox'
 import { normalizeFilesystemLayout } from '../../../packages/notebook-network-sandbox/runtime/src/platform/filesystem-layout.js'
 import { terminateProcessTree } from '../process-tree'
 import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
+import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
 
 let portableRuntimeRoot: string
 
@@ -38,6 +40,90 @@ afterEach(async () => {
 const previewAvailable = (): boolean => true
 
 describe('notebook shell process behavior', () => {
+  it.skipIf(process.platform === 'win32' && !process.env.OPEN_SCIENCE_TEST_BASH)(
+    'retains a random temporary path across consecutive Bash cells',
+    async () => {
+      const shell = process.env.OPEN_SCIENCE_TEST_BASH ?? '/bin/bash'
+      // Git Bash is only a local Windows test interpreter. Use the production Job Object
+      // supervisor so normal shell exit still has authoritative process-tree cleanup proof.
+      const sandbox: NotebookProcessSandbox | undefined =
+        process.platform === 'win32'
+          ? {
+              wrap: async (invocation) => {
+                const launch = windowsSupervisedLaunch({
+                  executable: invocation.executable,
+                  args: [...invocation.args],
+                  command: '',
+                  cwd: portableRuntimeRoot,
+                  env: invocation.env,
+                  gatewayPort: 1,
+                  gatewayCredentials: { username: 'unused', password: 'unused' },
+                  hostPath: join(
+                    process.cwd(),
+                    'packages/notebook-network-sandbox/vendor/windows',
+                    process.arch,
+                    'notebook-appcontainer-host.exe'
+                  )
+                })
+                return {
+                  executable: launch.argv[0],
+                  args: launch.argv.slice(1),
+                  env: launch.env,
+                  confirmProcessTreeTermination: launch.confirmProcessTreeTermination,
+                  annotateStderr: (stderr) => stderr,
+                  cleanup: async (_reason, outcome) => ({
+                    processesTerminated: outcome.processesTerminated,
+                    networkClosed: true,
+                    temporaryResourcesRemoved: true
+                  })
+                }
+              }
+            }
+          : undefined
+      const adapter = new NotebookShellProcessAdapter(process.platform, sandbox)
+      try {
+        const request = {
+          cwd: portableRuntimeRoot,
+          handoffDir: portableRuntimeRoot,
+          runtimeRoot: join(portableRuntimeRoot, 'runtime'),
+          projectId: 'cross-cell-project',
+          sessionId: 'cross-cell-session',
+          runtimeBinding: { kind: 'native-posix' as const, shell }
+        }
+        const first = await adapter.execute({
+          ...request,
+          command: 'cross_cell_tmp="/tmp/cell-$RANDOM-$RANDOM"; printf "%s" "$cross_cell_tmp"'
+        })
+        expect(first, JSON.stringify(first)).toMatchObject({ exitCode: 0 })
+        expect(first.stdout).toMatch(/^\/tmp\/cell-\d+-\d+$/)
+        const second = await adapter.execute({
+          ...request,
+          command: 'printf "%s" "${cross_cell_tmp-UNSET}"'
+        })
+        expect(second.exitCode).toBe(0)
+        expect(second.stdout).toBe(first.stdout)
+        expect(
+          await adapter.execute({
+            ...request,
+            command:
+              'export CELL_EXPORT=kept; greet() { printf hello; }; mkdir child; cd child; set -u'
+          })
+        ).toMatchObject({ exitCode: 0 })
+        const state = await adapter.execute({
+          ...request,
+          command:
+            'printf "%s:%s:" "$cross_cell_tmp" "$CELL_EXPORT"; greet; printf ":%s:" "${PWD##*/}"; case "$-" in *u*) printf nounset;; esac'
+        })
+        expect(state).toMatchObject({
+          exitCode: 0,
+          stdout: `${first.stdout}:kept:hello:child:nounset`
+        })
+      } finally {
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+      }
+    }
+  )
+
   it('returns application recovery facts when earlier cleanup blocks native preparation', async () => {
     const result = await runShellCommand({
       command: 'printf never-started',
@@ -61,6 +147,33 @@ describe('notebook shell process behavior', () => {
       recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
     })
   })
+  it('keeps a persistent lane blocked until incomplete cleanup is verified', async () => {
+    const wrap = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.')
+      )
+    const adapter = new NotebookShellProcessAdapter(process.platform, { wrap })
+    const request = {
+      command: 'echo never-started',
+      cwd: process.cwd(),
+      handoffDir: process.cwd(),
+      runtimeRoot: portableRuntimeRoot,
+      sessionId: 'session',
+      projectId: 'project'
+    }
+    const first = await adapter.execute(request)
+    expect(first).toMatchObject({
+      exitCode: null,
+      errorCode: 'shell-cleanup-incomplete',
+      recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
+    })
+    expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
+    expect(wrap).toHaveBeenCalledOnce()
+    expect(await adapter.shutdown()).toEqual({ reaped: false })
+    expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
+  })
+
   it('rejects unavailable process ownership before sandbox preparation', async () => {
     const admission = vi.spyOn(processTree, 'assertProcessTreeSupport').mockImplementation(() => {
       throw new processTree.ProcessTreeUnavailableError(new Error('native module missing'))

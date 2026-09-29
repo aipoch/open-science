@@ -63,7 +63,7 @@ export type NotebookSandboxedSpawn = Readonly<{
   // Validates the native launcher's one-time proof that its Job Object is empty.
   confirmProcessTreeTermination?: () => Promise<boolean>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
-  beginExecution?: () => () => void
+  beginExecution?: (request?: { commandText: string }) => () => void
   annotateStderr: (stderr: string) => string
   cleanup: (
     reason: NotebookSandboxCleanupReason,

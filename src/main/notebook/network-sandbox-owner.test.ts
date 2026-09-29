@@ -721,6 +721,29 @@ describe('NotebookNetworkSandboxOwner', () => {
     const nextExecution = wrapped.beginExecution?.()
     await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
     nextExecution?.()
+    // A live interpreter must charge a grant to the actual cell, not its original launch command.
+    const changedCell = wrapped.beginExecution?.({ commandText: 'next cell' })
+    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
+    changedCell?.()
+    await expect(
+      owner.requestNetworkAccess({
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        hostname: 'data.example.org',
+        reason: 'Retry the next cell.',
+        runtime: 'python',
+        command: 'next cell'
+      })
+    ).resolves.toMatchObject({ status: 'allowedOnce' })
+    const unrelatedCell = wrapped.beginExecution?.()
+    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
+    unrelatedCell?.()
+    const retryCell = wrapped.beginExecution?.({ commandText: 'next cell' })
+    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(true)
+    retryCell?.()
+    const afterRetry = wrapped.beginExecution?.({ commandText: 'next cell' })
+    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
+    afterRetry?.()
     await wrapped.cleanup('exit', { processesTerminated: true })
 
     const nextCommand = await owner.wrap({

@@ -1290,6 +1290,7 @@ const checksumFor = (run: NotebookRunRecord): string =>
         run.environment,
         run.kernelEpochId,
         run.runtimeId,
+        run.replPersistentBindings,
         run.script,
         run.fileEvidence?.checksum,
         run.helperEvidenceStatus,
@@ -1929,6 +1930,8 @@ class NotebookDependencyAnalyzer {
       const contextWithoutHelpers = priorContext
         ? { ...priorContext }
         : { staticStrings: [], staticCollections: [], localFileWrappers: [] }
+      // The marker belongs to this run, never to inherited context or historical runs.
+      contextWithoutHelpers.replPersistentBindings = run.replPersistentBindings
       delete contextWithoutHelpers.pythonHelperModules
       const analysisContext =
         helperModules.length > 0 || helperEvidenceIncomplete

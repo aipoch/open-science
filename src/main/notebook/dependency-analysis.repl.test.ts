@@ -35,6 +35,59 @@ const run = (
 })
 
 describe('REPL dependency and file analysis', () => {
+  it('publishes new declarations and their final string values without changing historical locals', async () => {
+    const context = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      replPersistentBindings: true as const
+    }
+    const source =
+      'let path = "before.csv"; path = "after.csv"; const rows = [1]; rows.push(2); { let hidden = 3; var visible = 4; }'
+    const current = await analyzeReplNotebookSource(source, context)
+    expect(current.facts.definedNames).toEqual(['path', 'rows', 'visible'])
+    expect(current.facts.mutatedNames).toContain('rows')
+    expect(current.fileAccess?.context.staticStrings).toContainEqual({
+      name: 'path',
+      value: 'after.csv'
+    })
+    const historical = await analyzeReplNotebookSource(source)
+    expect(historical.facts.definedNames).toEqual([])
+    expect(historical.fileAccess?.context.staticStrings).toEqual([])
+    const nested = await analyzeReplNotebookSource(
+      'const rows = [1].map(x => { var privateValue = x; return privateValue; });',
+      context
+    )
+    expect(nested.facts.definedNames).toEqual(['rows'])
+  })
+
+  it('uses the run marker after reload and invalidates cached historical interpretation', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'repl-semantics-'))
+    const runs = [run('1', 'const rows = [1, 2]'), run('2', 'JSON.stringify(rows)')]
+    const repository = { readSessionRuns: async () => runs }
+    const request = { projectId: 'project', sessionId: 'session' }
+    try {
+      const historical = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(
+        request
+      )
+      expect(historical.stalenessByRunId['2'].state).toBe('unknown')
+      runs[0].replPersistentBindings = true
+      runs[1].replPersistentBindings = true
+      const reloaded = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(
+        request
+      )
+      expect(reloaded.dependenciesByRunId?.['2']).toEqual(['1'])
+      expect(reloaded.stalenessByRunId['2'].state).toBe('clear')
+      delete runs[0].replPersistentBindings
+      expect(
+        (await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(request))
+          .stalenessByRunId['2'].state
+      ).toBe('unknown')
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  })
+
   it('loads the pinned official grammar and verifies its checked-in checksum', async () => {
     const root = join(process.cwd(), 'resources/tree-sitter')
     const provenance = JSON.parse(

@@ -330,8 +330,8 @@ describe('notebook MCP server config', () => {
     ].join('\n')
 
     expect(agentGuidance).not.toMatch(/\b4,?000\b/)
-    expect(REPL_EXECUTE_DOC).toContain('hand off large data from the REPL to Python/R')
-    expect(REPL_EXECUTE_DOC).toContain('Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path')
+    expect(REPL_EXECUTE_DOC).toContain('Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR')
+    expect(REPL_EXECUTE_DOC).toContain('shared with Python/R')
     expect(REPL_EXECUTE_DOC).not.toContain('Do not echo large data')
   })
 
@@ -1798,11 +1798,11 @@ describe('bash_execute tool', () => {
     })
   })
 
-  it('describes the stateless per-call shell distinctly from the persistent kernels', () => {
+  it('describes shell continuity and the boundaries that reset its state', () => {
     expect(tool?.description).toBe(BASH_EXECUTE_DOC)
-    expect(tool?.description.toLowerCase()).toContain('stateless')
-    expect(tool?.description).toContain('fresh process')
-    expect(tool?.description.toLowerCase()).toContain('persist')
+    expect(tool?.description).toContain('retain variables, exports, functions, and cwd')
+    expect(tool?.description).toContain('earlier commands are never replayed')
+    expect(tool?.description).toContain('resets its state')
   })
 
   it('documents the actual Windows PowerShell dialect and keeps generated notebook files out of shell copies', () => {

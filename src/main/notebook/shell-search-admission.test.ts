@@ -27,22 +27,28 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
   const prepare = (
     command: string
   ): {
-    result: ReturnType<NotebookShellProcessAdapter['prepare']>
+    result: Promise<void>
     wrap: ReturnType<typeof vi.fn>
     reachedSandbox: Error
   } => {
     const reachedSandbox = new Error('test stopped before launching a process')
     const wrap = vi.fn().mockRejectedValue(reachedSandbox)
     const adapter = new NotebookShellProcessAdapter('linux', { wrap })
-    const result = adapter.prepare({
-      command,
-      cwd,
-      handoffDir: cwd,
-      runtimeRoot: root,
-      environment: {},
-      sessionId: 'search-admission-session',
-      projectId: 'search-admission-project'
-    })
+    const result = adapter
+      .prepare({
+        command,
+        cwd,
+        handoffDir: cwd,
+        runtimeRoot: root,
+        environment: {},
+        sessionId: 'search-admission-session',
+        projectId: 'search-admission-project'
+      })
+      .then(async (prepared) => {
+        const result = await prepared.execute()
+        if (result.exitCode !== 0) throw new Error(result.stderr)
+      })
+      .finally(() => adapter.shutdown())
     return { result, wrap, reachedSandbox }
   }
 
@@ -212,7 +218,7 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
     'Rscript analysis.R'
   ])('retains scoped search and ordinary scientific commands: %s', async (command) => {
     const { result, wrap, reachedSandbox } = prepare(command)
-    await expect(result).rejects.toBe(reachedSandbox)
+    await expect(result).rejects.toThrow(reachedSandbox.message)
     expect(wrap).toHaveBeenCalledOnce()
   })
 })

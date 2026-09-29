@@ -363,6 +363,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
     let activeExecutionGrants: ReadonlySet<string> = new Set()
     let executionActive = false
+    let activeCommandText = invocation.commandText
     const allowedNetworkHosts = new Set(
       (invocation.allowedNetworkHosts ?? []).flatMap((host) => {
         const normalized = validateCustomAllowedDomain(host)
@@ -430,7 +431,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           this.isCommandGrantAllowed(
             invocation.sessionId,
             invocation.runtime,
-            invocation.commandText,
+            activeCommandText,
             executionActive,
             activeExecutionGrants,
             allowedNetworkHosts,
@@ -664,7 +665,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         : wrapped.beginSpawn
           ? { beginSpawn: wrapped.beginSpawn }
           : {}),
-      beginExecution: () => {
+      beginExecution: (request) => {
         // Cleanup can be retried, but the command can never execute again.
         if (cleanupReason !== undefined) {
           throw new Error('Notebook sandbox process is already closed.')
@@ -672,11 +673,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
         wrapped.resetNetworkConnections()
         executionActive = true
+        activeCommandText = request?.commandText ?? invocation.commandText
         wrapped.setExecutionActive(true)
         const grantKey = commandGrantKey(
           invocation.sessionId,
           invocation.runtime,
-          invocation.commandText
+          activeCommandText
         )
         activeExecutionGrants = this.nextExecutionGrants.get(grantKey) ?? new Set()
         this.nextExecutionGrants.delete(grantKey)
