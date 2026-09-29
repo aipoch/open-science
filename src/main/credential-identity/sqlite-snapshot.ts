@@ -29,19 +29,26 @@ const sameFileState = (left: BigIntStats, right: BigIntStats): boolean =>
 const sourceState = (path: string): BigIntStats | undefined =>
   lstatSync(path, { bigint: true, throwIfNoEntry: false })
 
-const validateRollback = (source: SourceFile): void => {
-  if (source.initial.size === 0n) return
+// Return whether the private copy needs recovery; completed journals remain valid snapshot inputs.
+const validateRollback = (source: SourceFile): boolean => {
+  if (source.initial.size === 0n) return false
   const magic = 'd9d505f920a163d7'
-  const header = Buffer.alloc(8)
+  const header = Buffer.alloc(28)
   const trailer = Buffer.alloc(8)
-  readSync(source.descriptor, header, 0, 8, 0)
-  if (source.initial.size <= 512n || header.toString('hex') !== magic)
+  if (readSync(source.descriptor, header, 0, header.length, 0) !== header.length)
+    throw new Error('SQLite rollback journal header cannot be read safely')
+  // SQLite's PERSIST commit zeros all 28 header bytes instead of deleting the journal.
+  // Require the whole cleared header, not just missing magic, before accepting it as inactive.
+  // https://www.sqlite.org/lockingv3.html#writing_to_a_database_file
+  if (header.every((byte) => byte === 0)) return false
+  if (source.initial.size <= 512n || header.subarray(0, 8).toString('hex') !== magic)
     throw new Error('SQLite rollback journal cannot be recovered safely')
   readSync(source.descriptor, trailer, 0, 8, Number(source.initial.size) - 8)
   // An attached-database super-journal can reference files outside the private copy.
   // Keep rejecting it: only SQLite's single-database rollback is safe to run here.
   if (trailer.toString('hex') === magic)
     throw new Error('SQLite super-journal requires recovery before inspection')
+  return true
 }
 
 const openSource = (path: string): SourceFile | undefined => {
@@ -116,9 +123,10 @@ export const withReadOnlySqliteSnapshot = (
   try {
     const journalPath = `${path}-journal`
     const journal = openSource(journalPath)
+    let needsRecovery = false
     if (journal) {
       sources.push(journal)
-      validateRollback(journal)
+      needsRecovery = validateRollback(journal)
     }
     const walPath = `${path}-wal`
     const wal = openSource(walPath)
@@ -142,7 +150,7 @@ export const withReadOnlySqliteSnapshot = (
     const sqlite = process.getBuiltinModule('node:sqlite') as
       typeof import('node:sqlite') | undefined
     if (!sqlite) throw new Error('Read-only SQLite inspection is unavailable')
-    if (journal?.initial.size) {
+    if (needsRecovery) {
       const recovery = new sqlite.DatabaseSync(snapshot)
       try {
         // The first actual read makes SQLite roll back a hot journal. Never recover the source.

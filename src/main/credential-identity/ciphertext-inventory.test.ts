@@ -1,9 +1,21 @@
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readCredentialCiphertexts, verifyCredentialCiphertexts } from './ciphertext-inventory'
+import { prepareCredentialValidation, selectStartupCredentialIdentity } from './bootstrap'
+import { CredentialIdentityError } from './selection'
+import { resolveBootstrapConfigRoot, resolveElectronProfile } from '../storage/electron-profile'
 
 const roots: string[] = []
 const fixture = (): { configRoot: string; profilePath: string } => {
@@ -19,6 +31,103 @@ const ref = (text: string): string => `enc:${Buffer.from(text).toString('base64'
 afterEach(() => roots.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })))
 
 describe('read-only ciphertext inventory', () => {
+  it.each(['DELETE', 'PERSIST'])(
+    'accepts an existing .open-science directory without renaming it after a completed %s transaction',
+    (mode) => {
+      const home = mkdtempSync(join(tmpdir(), 'credential-upgrade-home-'))
+      roots.push(home)
+      const appData = join(home, 'AppData', 'Roaming')
+      const legacyProfile = join(appData, 'Open Science')
+      mkdirSync(legacyProfile, { recursive: true })
+      const configRoot = resolveBootstrapConfigRoot(home, true, {})
+      expect(configRoot).toBe(join(home, '.open-science'))
+      mkdirSync(configRoot)
+      writeFileSync(
+        join(configRoot, 'settings.json'),
+        JSON.stringify({ version: 1, providers: [] })
+      )
+      const path = join(configRoot, 'open-science.db')
+      const db = new DatabaseSync(path)
+      // Only committed SQLite page writes are needed. This does not invent a historical app schema.
+      db.exec(`PRAGMA journal_mode=${mode}; PRAGMA user_version=1; PRAGMA user_version=2`)
+      db.close()
+      const contents = (directory: string): Record<string, Buffer> =>
+        Object.fromEntries(
+          readdirSync(directory).map((name) => [name, readFileSync(join(directory, name))])
+        )
+      const original = contents(configRoot)
+      if (mode === 'PERSIST') {
+        expect(original['open-science.db-journal'].length).toBeGreaterThan(512)
+        expect(original['open-science.db-journal'].subarray(0, 28)).toEqual(Buffer.alloc(28))
+      }
+      const preflight = (): string => {
+        const selectedRoot = resolveBootstrapConfigRoot(home, true, {})
+        const profilePath = resolveElectronProfile({
+          appData,
+          configRoot: selectedRoot,
+          packaged: true,
+          env: {}
+        })
+        // Renaming the configuration directory must not replace the Electron profile.
+        expect(profilePath).toBe(legacyProfile)
+        try {
+          const identity = selectStartupCredentialIdentity({ platform: 'win32', packaged: true })
+          prepareCredentialValidation(identity, { configRoot: selectedRoot, profilePath })
+          return 'ready'
+        } catch (error) {
+          if (!(error instanceof CredentialIdentityError)) throw error
+          return error.reason
+        }
+      }
+      const beforeRename = preflight()
+      expect(contents(configRoot)).toEqual(original)
+      const backup = join(home, '.open-science.backup')
+      renameSync(configRoot, backup)
+      const afterRename = preflight()
+      expect(afterRename).toBe('ready')
+      expect(existsSync(configRoot)).toBe(false)
+      expect(contents(backup)).toEqual(original)
+      renameSync(backup, configRoot)
+      const afterRestore = preflight()
+      expect(contents(configRoot)).toEqual(original)
+      expect(readdirSync(legacyProfile)).toEqual([])
+      expect({ beforeRename, afterRename, afterRestore }).toEqual({
+        beforeRename: 'ready',
+        afterRename: 'ready',
+        afterRestore: 'ready'
+      })
+    }
+  )
+
+  it.each(['DELETE', 'PERSIST'])(
+    'reads committed profile cookies after a completed %s transaction',
+    (mode) => {
+      const paths = fixture()
+      const directory = join(paths.profilePath, 'Network')
+      mkdirSync(directory)
+      const path = join(directory, 'Cookies')
+      const db = new DatabaseSync(path)
+      db.exec(`PRAGMA journal_mode=${mode}; CREATE TABLE cookies(encrypted_value BLOB)`)
+      db.prepare('INSERT INTO cookies VALUES (?)').run(Buffer.from('legacy-cookie'))
+      db.close()
+      const before = Object.fromEntries(
+        readdirSync(directory).map((name) => [name, readFileSync(join(directory, name))])
+      )
+      if (mode === 'PERSIST') {
+        expect(before['Cookies-journal'].length).toBeGreaterThan(512)
+        expect(before['Cookies-journal'].subarray(0, 28)).toEqual(Buffer.alloc(28))
+      }
+      expect(readCredentialCiphertexts(paths).map((value) => value.toString())).toEqual([
+        'legacy-cookie'
+      ])
+      expect(
+        Object.fromEntries(
+          readdirSync(directory).map((name) => [name, readFileSync(join(directory, name))])
+        )
+      ).toEqual(before)
+    }
+  )
+
   it('finds refs in settings and the shared credentials document without rewriting either', () => {
     const paths = fixture()
     const settings = JSON.stringify({
