@@ -42,6 +42,8 @@ export type NotebookSandboxInvocation = Readonly<{
   inheritedFileDescriptorCount?: number
   // Package installers opt in so standard Windows mode can contain helpers in a native Job Object.
   superviseProcessTree?: boolean
+  /** Native Windows host forwards its stdin into this private Shell control pipe. */
+  windowsShellControlPipe?: string
   /** Transient R admission decision; launch must retain this protection requirement. */
   windowsProtectionRequired?: boolean
   /** A durable grant used for admission must still be authorized at launch. */
@@ -63,7 +65,7 @@ export type NotebookSandboxedSpawn = Readonly<{
   // Validates the native launcher's one-time proof that its Job Object is empty.
   confirmProcessTreeTermination?: () => Promise<boolean>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
-  beginExecution?: () => () => void
+  beginExecution?: (request?: { commandText: string }) => () => void
   annotateStderr: (stderr: string) => string
   cleanup: (
     reason: NotebookSandboxCleanupReason,

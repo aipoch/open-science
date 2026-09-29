@@ -133,6 +133,12 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Search public MaveDB functional score sets.": "공개 MaveDB 기능 점수 세트를 검색합니다.",
+    "Retrieve MaveDB score set metadata and download links.": "MaveDB 점수 세트 메타데이터와 다운로드 링크를 가져옵니다.",
+    "Download a CSV page of MaveDB variant scores.": "MaveDB 변이 점수 한 페이지를 CSV 형식으로 다운로드합니다.",
+    "Retrieve existing MaveDB variant mappings in VRS format.": "기존 MaveDB 변이 매핑을 VRS 형식으로 가져옵니다.",
+    "Retrieve MaveDB experiment methods and metadata.": "MaveDB 실험 방법과 메타데이터를 가져옵니다.",
+    "List score sets in a MaveDB experiment.": "MaveDB 실험의 점수 세트를 나열합니다.",
     "Batch actions": "일괄 작업",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 이름으로 ClinPGx 약물/화학물질 레코드를 확인합니다.",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 HGNC 기호로 ClinPGx 유전자 레코드를 확인합니다.",
@@ -6246,7 +6252,7 @@
     "Check a Clustal Omega job once. Wait at least 10 seconds between checks.": "Clustal Omega 작업 상태를 한 번 확인합니다. 확인 사이에 최소 10초를 기다리세요.",
     "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "완료된 Clustal Omega 작업의 정렬 파일을 가져옵니다. 결과는 서비스에서 만료됩니다.",
     "Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.": "유전자/단백질 식별, 온톨로지 용어 및 유전자 집합 풍부화 — mygene.info, UniProt, OLS4 온톨로지, GO 주석, Reactome 경로, g:Profiler 및 Enrichr.",
-    "Human genetic variants — gnomAD population frequencies/constraint, ClinVar records/search (direct NCBI), dbSNP, structural and mitochondrial variants.": "인간 유전 변이 — gnomAD 집단 빈도/제약, ClinVar 레코드/검색(NCBI 직접), dbSNP, 구조 변이 및 미토콘드리아 변이.",
+    "Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.": "유전 변이 — gnomAD 빈도 및 제약, ClinVar, dbSNP, MaveDB 기능 점수, 매핑 및 실험.",
     "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).": "오믹스 데이터 아카이브 — 발현(ArrayExpress, GEO), 시퀀싱 리드(ENA), 대사체학(MetaboLights, Metabolomics Workbench), 메타유전체학(MGnify), 단백질체학(PRIDE).",
     "Look up Metabolomics Workbench compound structures and cross-references.": "Metabolomics Workbench의 화합물 구조와 상호 참조를 조회합니다.",
     "Search Metabolomics Workbench study records.": "Metabolomics Workbench의 연구 기록을 검색합니다.",

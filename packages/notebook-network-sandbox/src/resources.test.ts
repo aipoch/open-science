@@ -14,11 +14,11 @@ describe('Notebook network sandbox resources', () => {
   it.each([
     [
       'vendor/windows/x64/notebook-appcontainer-host.exe',
-      '16e2c00509dfc85739f60e56308562cf3f327ff07eec0da625d7579aed51c974'
+      '580f54e54bc87c218f1045b74e4942e68d03f6bd4b9f6a805162813a23ffe393'
     ],
     [
       'vendor/windows/arm64/notebook-appcontainer-host.exe',
-      '7dc991eaa2fa6d25ca9341649d2f5973990fb06a45d834df159d3d93cdb504c2'
+      'e5d102c3270a693afafdc44c88e4a3288816350cf525cdf9a2df542e8a554f5e'
     ]
   ])('verifies %s', (relativePath, expectedHash) => {
     expect(sha256(relativePath)).toBe(expectedHash)

@@ -135,6 +135,12 @@
     "More items": "Plus de sessions"
   },
   "renderer": {
+    "Search public MaveDB functional score sets.": "Rechercher des jeux de scores fonctionnels publics dans MaveDB.",
+    "Retrieve MaveDB score set metadata and download links.": "Récupérer les métadonnées et les liens de téléchargement d’un jeu de scores MaveDB.",
+    "Download a CSV page of MaveDB variant scores.": "Télécharger une page de scores de variants MaveDB au format CSV.",
+    "Retrieve existing MaveDB variant mappings in VRS format.": "Récupérer les correspondances existantes des variants MaveDB au format VRS.",
+    "Retrieve MaveDB experiment methods and metadata.": "Récupérer les méthodes et les métadonnées d’une expérience MaveDB.",
+    "List score sets in a MaveDB experiment.": "Lister les jeux de scores d’une expérience MaveDB.",
     "Batch actions": "Actions groupées",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Résoudre les enregistrements de médicaments ou de substances chimiques ClinPGx par identifiant d’accès ClinPGx ou par nom avant d’interroger les annotations pharmacogénomiques.",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "Résoudre les enregistrements de gènes ClinPGx par identifiant d’accès ClinPGx ou par symbole HGNC avant d’interroger les annotations pharmacogénomiques.",
@@ -6574,7 +6580,7 @@
     "Check a Clustal Omega job once. Wait at least 10 seconds between checks.": "Vérifier une fois le statut d’une tâche Clustal Omega. Attendre au moins 10 secondes entre les vérifications.",
     "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "Récupérer le fichier d’alignement d’une tâche Clustal Omega terminée. Les résultats expirent sur le service.",
     "Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.": "Identité des gènes/protéines, termes d’ontologie et enrichissement d’ensembles de gènes — mygene.info, UniProt, ontologies OLS4, annotations GO, voies de Reactome, g:Profiler et Enrichr.",
-    "Human genetic variants — gnomAD population frequencies/constraint, ClinVar records/search (direct NCBI), dbSNP, structural and mitochondrial variants.": "Variants génétiques humains — fréquences/contraintes de population gnomAD, enregistrements/recherche ClinVar (NCBI direct), dbSNP et variants structuraux et mitochondriaux.",
+    "Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.": "Variants génétiques — fréquences et contraintes gnomAD, ClinVar, dbSNP, ainsi que scores fonctionnels, correspondances et expériences MaveDB.",
     "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).": "Archives de données omiques — expression (ArrayExpress, GEO), lectures de séquençage (ENA), métabolomique (MetaboLights, Metabolomics Workbench), métagénomique (MGnify) et protéomique (PRIDE).",
     "Look up Metabolomics Workbench compound structures and cross-references.": "Consulter les structures des composés et les références croisées de Metabolomics Workbench.",
     "Search Metabolomics Workbench study records.": "Rechercher des études dans Metabolomics Workbench.",

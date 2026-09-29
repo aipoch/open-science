@@ -5,6 +5,7 @@ import {
 } from '../../shared/diagnostic-redaction'
 import type { SensitiveContentEvidence } from '../../shared/session-package'
 import { createHash } from 'node:crypto'
+import { PackageJsonSyntax } from './json-syntax'
 
 // Export decisions are distinct from log redaction: empty values and the exact redaction
 // marker are not credentials, and a URL parser failure alone is not evidence of a secret.
@@ -79,10 +80,31 @@ export const buildSensitiveContentEvidence = (
   }
 }
 
-export const findSensitivePackageText = (
+const findPackageTextMatch = (
   text: string,
-  complete = true
+  complete: boolean,
+  jsonBooleans: boolean,
+  beforeText = ''
 ): PackageTextMatch | undefined => {
+  const booleanField = (index: number): boolean => {
+    if (!jsonBooleans) return false
+    // Header rules can start at a hyphenated key's suffix; recover the member name
+    // before deciding whether its value is a JSON boolean (also across overlaps).
+    while (index > 0 && /[a-z0-9_-]/i.test(text[index - 1])) index--
+    const preceding = index === 0 ? beforeText : text[index - 1]
+    // An overlap may begin at or inside a key. Carry its preceding character so
+    // rescanning cannot turn a validated boolean field into an unquoted assignment.
+    // The closing quote/colon below and whole-input validation still prove its type.
+    if (preceding !== '"' && !(index === 0 && /^[a-z0-9_-]$/i.test(preceding))) return false
+    const field = /^[a-z0-9_-]+"[ \t\r\n]*:[ \t\r\n]*/i.exec(text.slice(index))
+    if (!field) return false
+    const rest = text.slice(index + field[0].length)
+    if (/^(?:true|false)[ \t\r\n]*(?=[,}])/.test(rest)) return true
+    // This is provisional until the whole JSON/NDJSON input validates. Preserve
+    // the original match separately so truncated/invalid input still fails closed.
+    const prefix = rest.replace(/[ \t\r\n]+$/, '')
+    return !complete && ['true', 'false'].some((literal) => literal.startsWith(prefix))
+  }
   const finished = (end: number): boolean =>
     complete || (end < text.length && text.slice(end).trim() !== '')
   const privateValue = (value: string, end: number): boolean => {
@@ -218,6 +240,7 @@ export const findSensitivePackageText = (
   for (const match of text.matchAll(
     /\b(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b\s*["']?\s*:\s*["']?([^"'\r\n}]*)/gi
   )) {
+    if (booleanField(match.index)) continue
     if (privateValue(match[1], match.index + match[0].length))
       return {
         offset: match.index,
@@ -231,6 +254,7 @@ export const findSensitivePackageText = (
   // Match prefixes independently so a harmless outer field cannot hide an inner assignment.
   for (const match of text.matchAll(/\b([a-z][a-z0-9_-]*)(\s*["']?\s*[:=]\s*)/gi)) {
     if (!isSensitiveDiagnosticKey(match[1])) continue
+    if (booleanField(match.index)) continue
     const start = match.index + match[0].length
     const rest = text.slice(start)
     // Serialized context/model usage counts are numbers, not credentials. Keep this exception
@@ -331,6 +355,48 @@ export const findSensitivePackageText = (
       }
   }
   return undefined
+}
+
+export const findSensitivePackageText = (
+  text: string,
+  complete = true
+): PackageTextMatch | undefined => {
+  if (!complete) return findPackageTextMatch(text, false, true)
+  const syntax = new PackageJsonSyntax()
+  syntax.write(text)
+  return findPackageTextMatch(text, true, syntax.finish())
+}
+
+type TextFinding = { text: string; match: PackageTextMatch; offset: number }
+
+// Keep validation, overlap and both candidate policies under one stream owner.
+// Boolean-looking fields are exempt only after the entire file validates.
+export class PackageTextScanner {
+  private readonly syntax = new PackageJsonSyntax()
+  private tail = ''
+  private beforeTail = ''
+  private offset = 0
+  private original?: TextFinding
+  private structured?: TextFinding
+
+  write(decoded: string, complete = false): void {
+    this.syntax.write(decoded)
+    const text = this.tail + decoded
+    const inspect = (jsonBooleans: boolean): TextFinding | undefined => {
+      const match = findPackageTextMatch(text, complete, jsonBooleans, this.beforeTail)
+      return match ? { text, match, offset: this.offset - this.tail.length } : undefined
+    }
+    this.original ??= inspect(false)
+    if (this.original) this.structured ??= inspect(true)
+    this.offset += decoded.length
+    if (text.length > 8192) this.beforeTail = text[text.length - 8192 - 1]
+    this.tail = text.slice(-8192)
+  }
+
+  finish(): TextFinding | undefined {
+    this.write('', true)
+    return this.syntax.finish() ? this.structured : this.original
+  }
 }
 
 export class PackageSensitiveContentError extends Error {

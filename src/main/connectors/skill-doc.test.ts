@@ -287,3 +287,36 @@ describe('renderSkillDoc', () => {
     expect(md).toContain('errors are preserved in messages as "[code] message"')
   })
 })
+
+describe('MaveDB generated skill contracts', () => {
+  it('documents all six public tools and their scope', () => {
+    const doc = renderSkillDoc('variants')
+    for (const id of [
+      'search_score_sets',
+      'get_score_set',
+      'download_scores',
+      'get_mapped_variants',
+      'get_experiment',
+      'get_experiment_score_sets'
+    ]) {
+      expect(doc).toContain(`### mavedb_${id}`)
+    }
+    expect(doc).toContain('a page is not the full dataset')
+    expect(doc).toContain('does not submit variants or perform liftover')
+    expect(doc).toContain('No API key or contact email is required')
+  })
+
+  it('documents unknown totals, upstream absence and manual-download boundaries', () => {
+    const doc = renderSkillDoc('variants')
+    expect(doc).toContain('total: number|null')
+    expect(doc).toContain('An empty page at offset>0 returns total=null (unknown)')
+    expect(doc).toContain('HTTP 404 can mean no mapping records exist')
+    expect(doc).toContain('HTTP 404 can mean no associated score sets are available')
+    expect(doc).toContain('not a complete version history')
+    for (const id of ['get_score_set', 'download_scores', 'get_mapped_variants']) {
+      const section = doc.split(`### mavedb_${id}\n`)[1]?.split('\n### ')[0]
+      expect(section).toContain('manual download by the user')
+      expect(section).toContain('do not fetch these URLs with raw HTTP to bypass host.mcp')
+    }
+  })
+})

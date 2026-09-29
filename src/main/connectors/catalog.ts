@@ -100,12 +100,12 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'variants',
     displayName: 'Variants',
-    aliases: ['gnomAD', 'ClinVar', 'dbSNP', 'genetic variant'],
+    aliases: ['gnomAD', 'ClinVar', 'dbSNP', 'MaveDB', 'MAVE', 'genetic variant'],
     description:
-      'Human genetic variants — gnomAD population frequencies/constraint, ClinVar records/search (direct NCBI), dbSNP, structural and mitochondrial variants.',
+      'Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.',
     useWhen:
-      'Use when you need human genetic-variant data — gnomAD population allele frequencies, gene constraint (pLI/LOEUF), structural or mitochondrial variants, and build liftover; ClinVar clinical significance (gnomAD mirror or direct NCBI search/records by accession or rsID); or dbSNP RefSNP records and region lookups.',
-    sources: ['gnomAD', 'ClinVar', 'dbSNP'],
+      'Use when you need genetic-variant data — gnomAD population allele frequencies, gene constraint (pLI/LOEUF), structural or mitochondrial variants, and build liftover; ClinVar clinical significance (gnomAD mirror or direct NCBI search/records by accession or rsID); dbSNP RefSNP records and region lookups; or MaveDB multiplexed assays of variant effect (MAVE), score set search and metadata, CSV functional scores, existing GA4GH VRS variant mappings, and experiments. MaveDB public data needs no API key or contact email; functional scores are assay-specific, not clinical classifications.',
+    sources: ['gnomAD', 'ClinVar', 'dbSNP', 'MaveDB'],
     termsUrl: 'https://www.ncbi.nlm.nih.gov/clinvar/docs/maintenance_use/',
     requiresNcbi: true
   },

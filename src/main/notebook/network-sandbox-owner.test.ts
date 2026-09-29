@@ -721,6 +721,29 @@ describe('NotebookNetworkSandboxOwner', () => {
     const nextExecution = wrapped.beginExecution?.()
     await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
     nextExecution?.()
+    // A live interpreter must charge a grant to the actual cell, not its original launch command.
+    const changedCell = wrapped.beginExecution?.({ commandText: 'next cell' })
+    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
+    changedCell?.()
+    await expect(
+      owner.requestNetworkAccess({
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        hostname: 'data.example.org',
+        reason: 'Retry the next cell.',
+        runtime: 'python',
+        command: 'next cell'
+      })
+    ).resolves.toMatchObject({ status: 'allowedOnce' })
+    const unrelatedCell = wrapped.beginExecution?.()
+    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
+    unrelatedCell?.()
+    const retryCell = wrapped.beginExecution?.({ commandText: 'next cell' })
+    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(true)
+    retryCell?.()
+    const afterRetry = wrapped.beginExecution?.({ commandText: 'next cell' })
+    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
+    afterRetry?.()
     await wrapped.cleanup('exit', { processesTerminated: true })
 
     const nextCommand = await owner.wrap({
@@ -3486,7 +3509,9 @@ describe('macOS retained cleanup admission', () => {
         const otherRoot = runtimeWrap.mock.calls[0][0].env.TMPDIR!
         await writeFile(join(otherRoot, 'sentinel'), 'other session')
         runtimeWrap.mockRejectedValueOnce(new Error('transient preparation failure'))
-        await expect(owner.wrap(invocation)).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+        const preparationError = await owner.wrap(invocation).catch((error) => error)
+        expect(preparationError.message).toContain('SHELL_CLEANUP_INCOMPLETE')
+        expect(preparationError.retryCleanup).toBeTypeOf('function')
         const failedCommand = runtimeWrap.mock.calls[1][0]
         const failedRoot = failedCommand.env.TMPDIR!
         await expect(owner.wrap(invocation)).rejects.toThrow()
@@ -3495,6 +3520,8 @@ describe('macOS retained cleanup admission', () => {
         expect(existsSync(failedRoot)).toBe(true)
         expect(existsSync(failedRoot + '.receipt')).toBe(true)
         recovered = true
+        expect(await preparationError.retryCleanup()).toBe(true)
+        expect(runtimeWrap).toHaveBeenCalledTimes(2)
         const next = await owner.wrap(invocation)
         expect(runtimeWrap).toHaveBeenCalledTimes(3)
         expect(cleanup.mock.calls.map(([id]) => id)).toEqual([

@@ -133,6 +133,12 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "Search public MaveDB functional score sets.": "公開されている MaveDB の機能スコアセットを検索します。",
+    "Retrieve MaveDB score set metadata and download links.": "MaveDB スコアセットのメタデータとダウンロードリンクを取得します。",
+    "Download a CSV page of MaveDB variant scores.": "MaveDB の変異スコアを CSV 形式で1ページダウンロードします。",
+    "Retrieve existing MaveDB variant mappings in VRS format.": "既存の MaveDB 変異マッピングを VRS 形式で取得します。",
+    "Retrieve MaveDB experiment methods and metadata.": "MaveDB の実験方法とメタデータを取得します。",
+    "List score sets in a MaveDB experiment.": "MaveDB の実験に含まれるスコアセットを一覧表示します。",
     "Batch actions": "一括操作",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "薬理ゲノム注釈を検索する前に、ClinPGx の accession ID または名前で ClinPGx の薬物・化学物質レコードを解決します。",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "薬理ゲノム注釈を検索する前に、ClinPGx の accession ID または HGNC シンボルで ClinPGx の遺伝子レコードを解決します。",
@@ -6248,7 +6254,7 @@
     "Check a Clustal Omega job once. Wait at least 10 seconds between checks.": "Clustal Omega ジョブの状態を1回確認します。確認の間隔は10秒以上空けてください。",
     "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "完了した Clustal Omega ジョブのアラインメントファイルを取得します。結果にはサービス側の有効期限があります。",
     "Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.": "遺伝子・タンパク質の同定、オントロジー用語、遺伝子セット濃縮 — mygene.info、UniProt、OLS4 オントロジー、GO アノテーション、Reactome パスウェイ、g:Profiler、Enrichr。",
-    "Human genetic variants — gnomAD population frequencies/constraint, ClinVar records/search (direct NCBI), dbSNP, structural and mitochondrial variants.": "ヒト遺伝子バリアント — gnomAD の集団頻度・制約、ClinVar レコード・検索（NCBI 直接）、dbSNP、構造バリアント、ミトコンドリアバリアント。",
+    "Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.": "遺伝的変異 — gnomAD の頻度と制約、ClinVar、dbSNP、および MaveDB の機能スコア、マッピング、実験。",
     "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).": "オミクスデータアーカイブ — 発現（ArrayExpress、GEO）、シーケンスリード（ENA）、メタボロミクス（MetaboLights、Metabolomics Workbench）、メタゲノミクス（MGnify）、プロテオミクス（PRIDE）。",
     "Look up Metabolomics Workbench compound structures and cross-references.": "Metabolomics Workbench の化合物構造と相互参照を検索します。",
     "Search Metabolomics Workbench study records.": "Metabolomics Workbench の研究記録を検索します。",

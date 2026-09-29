@@ -102,6 +102,7 @@ type NetworkWrapRequest = Readonly<{
   localRpcSocketPath?: string
   inheritedFileDescriptorCount?: number
   superviseProcessTree?: boolean
+  windowsShellControlPipe?: string
   windowsProtectionRequired?: boolean
   /** A durable grant used for admission must still be authorized at launch. */
   windowsRuntimeAccessRequired?: boolean
@@ -486,6 +487,9 @@ const wrap = async (
         : {}
       const launchRequest = {
         command: request.command,
+        ...(request.windowsShellControlPipe
+          ? { windowsShellControlPipe: request.windowsShellControlPipe }
+          : {}),
         ...(request.executable ? { executable: request.executable, args: request.args ?? [] } : {}),
         ...(request.shell ? { shell: request.shell } : {}),
         gatewayPort: gateway.port,
