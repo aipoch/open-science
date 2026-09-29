@@ -2915,11 +2915,26 @@ describe('ACP runtime restored permission continuation', () => {
     ).toBe(false)
   })
 
-  it.each(['different input', 'the same input'] as const)(
-    'requires a new decision for %s after consuming a restored Allow once',
-    async (followingInput) => {
+  it.each(
+    RESTORED_CONTINUATION_FRAMEWORKS.flatMap(([name, framework, modelRoute, backendId]) =>
+      (['different input', 'the same input'] as const).map((followingInput) => ({
+        name,
+        framework,
+        modelRoute,
+        backendId,
+        followingInput
+      }))
+    )
+  )(
+    'requires a new $name decision for $followingInput after consuming a restored Allow once',
+    async ({ framework, modelRoute, backendId, followingInput }) => {
       const process = new FakeAgentProcess()
-      const toolTitle = 'mcp.open-science-notebook.notebook_execute'
+      const isCodex = framework.id === 'codex'
+      const toolTitle = isCodex
+        ? 'mcp.open-science-notebook.notebook_execute'
+        : framework.id === 'claude-code'
+          ? 'mcp__open-science-notebook__notebook_execute'
+          : 'open_science_notebook_notebook_execute'
       const rawInput = { language: 'python', code: 'print("original")' }
       const followingRawInput =
         followingInput === 'the same input'
@@ -2930,7 +2945,7 @@ describe('ACP runtime restored permission continuation', () => {
         sessionId: 'restored-session',
         toolCallId: 'notebook-original',
         title: toolTitle,
-        providerToolName: 'notebook_execute',
+        providerToolName: isCodex ? 'notebook_execute' : toolTitle,
         isMcp: true,
         mcpIdentity: 'open-science-notebook/notebook_execute',
         toolKind: 'execute',
@@ -2957,13 +2972,22 @@ describe('ACP runtime restored permission continuation', () => {
         toolTitle,
         toolKind: 'execute',
         toolRawInput: rawInput,
-        codexMcpIdentity: {
-          server: 'open-science-notebook',
-          tool: 'notebook_execute',
-          arguments: rawInput
-        },
-        sparseCodexMcpApproval: true,
-        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+        ...(isCodex
+          ? {
+              codexMcpIdentity: {
+                server: 'open-science-notebook',
+                tool: 'notebook_execute',
+                arguments: rawInput
+              },
+              sparseCodexMcpApproval: true,
+              modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+            }
+          : {
+              announceToolCall: true,
+              announcedProviderToolName: toolTitle,
+              providerToolName: toolTitle,
+              ...(framework.id === 'opencode' ? { permissionRawInput: {} } : {})
+            }),
         onPermissionResponse: originalResponse,
         followingPermission: {
           toolCall: {
@@ -3002,15 +3026,22 @@ describe('ACP runtime restored permission continuation', () => {
           }
         },
         resolveBackend: () => ({
-          framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
-          backendId: 'codex:provider-a',
-          modelRoute: 'codex-responses',
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
           executablePath: '/bin/agent',
-          env: {}
+          env: {},
+          ...(modelRoute === 'codex-bridge'
+            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            : {})
         })
       })
       try {
-        await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+        await runtime.createSession({
+          cwd: '/workspace',
+          projectId: 'project-1',
+          permissionProfile: 'ask'
+        })
         await runtime.respondToPermission({
           requestId: originalRequest.requestId,
           optionId: 'allow-once',
