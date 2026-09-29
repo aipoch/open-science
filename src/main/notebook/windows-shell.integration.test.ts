@@ -529,7 +529,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           provisioning: false
         })
         expect(result).toMatchObject({ stdout: 'finished', exitCode: 0 })
-        expect(result.stderr).toContain('interpreter state was reset')
+        expect(result.executionNotice).toBe('Shell launch context changed before this command.')
         expect(registry.hasReceipts()).toBe(false)
         const service = new NotebookRuntimeService({
           configRoot: root,
@@ -788,7 +788,8 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
       const result = await adapter.execute(shellRequest(root))
       expect(result).toMatchObject({
         stdout: 'x'.repeat(256 * 1024),
-        stderr: 'y'.repeat(12 * 1024) + '\nShell interpreter exited; interpreter state was reset.',
+        stderr: 'y'.repeat(12 * 1024),
+        executionNotice: 'Shell interpreter exited.',
         exitCode: 0
       })
       expect(result.truncated).not.toBe(true)

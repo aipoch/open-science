@@ -259,7 +259,10 @@ const REPL_EXECUTE_DOC = [
   'Declarations and globals persist until restart/process loss; top-level return/await and later redeclaration work. No replay. Expressions return results. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
 ].join('\n')
 
-// Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
+const SHELL_FAILURE_GUIDANCE =
+  'For a denied path or unavailable runtime, stop dependent work; do not retry through another runtime or request unsupported escalation. Load Skill documents with the current framework Skill loader. For other command errors, correct the cause before retrying once.'
+
+// Persistent shell contract, embedded as the bash_execute description so the agent always sees it.
 // The tool name is retained for backward compatibility, but Windows deliberately runs PowerShell.
 const buildShellExecuteDoc = (
   runtime: NodeJS.Platform | ShellRuntimeBinding = process.platform
@@ -280,8 +283,9 @@ const buildShellExecuteDoc = (
   return [
     agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
-    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, or launch-context change resets its state; earlier commands are never replayed. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
+    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancelling an active command, timeout, exit, restart, or launch-context change resets its state; cancelling a queued command does not; earlier commands are never replayed. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
     exitCodeContract,
+    SHELL_FAILURE_GUIDANCE,
     'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
     'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
     'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
@@ -326,8 +330,8 @@ class NotebookRpcError extends Error {
     const message =
       typeof detail === 'string'
         ? detail
-        : typeof asRecord(detail)?.message === 'string'
-          ? String(asRecord(detail)?.message)
+        : detail !== undefined
+          ? JSON.stringify(detail)
           : `Notebook RPC failed with status ${statusCode}`
     super(message)
     this.name = 'NotebookRpcError'
@@ -792,9 +796,6 @@ const compactExecutionOutputs = (
   return { outputs, truncated, omitted }
 }
 
-const SHELL_FAILURE_GUIDANCE =
-  'For a denied path or unavailable runtime, stop dependent work; do not retry through another runtime or request unsupported escalation. Load Skill documents with the current framework Skill loader. For other command errors, correct the cause before retrying once.'
-
 const BUNDLED_KERNEL_SKILL_PSEUDO_MODULES = new Map([
   ['figure_style', 'figure-style'],
   ['figure_composer', 'figure-composer'],
@@ -851,9 +852,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
   const hint =
     importedKernelSkillId && requestedKernelSkillIds.includes(importedKernelSkillId)
       ? `Kernel Skill "${importedKernelSkillId}" is injected by kernelSkillIds and is not a Python package. Remove the "${missingModule}" import, keep kernelSkillIds: ${JSON.stringify(requestedKernelSkillIds)}, call its exported functions directly, and retry. Do not install ${missingModule}.`
-      : record.kernelKind === 'bash' && record.status === 'failed'
-        ? SHELL_FAILURE_GUIDANCE
-        : undefined
+      : undefined
   const invalidatedRuns = Array.isArray(record.invalidatedRuns)
     ? record.invalidatedRuns.slice(0, 50).flatMap((value) => {
         const invalidated = asRecord(value)
@@ -964,7 +963,6 @@ const compactShellExecutionResult = (raw: unknown): Record<string, unknown> => {
     : []
   const exposeStderr = ![
     'shell-start-failed',
-    'shell-process-error',
     'shell-runtime-unavailable',
     'shell-network-transport-unsupported'
   ].includes(errorCode ?? '')
@@ -1011,8 +1009,8 @@ const compactShellExecutionResult = (raw: unknown): Record<string, unknown> => {
       : {}),
     ...(error ? { error } : {}),
     ...(nextStep ? { nextStep } : {}),
-    ...(record.kernelKind === 'bash' && status === 'failed'
-      ? { hint: SHELL_FAILURE_GUIDANCE }
+    ...(typeof (record.executionNotice ?? record.shellExecutionNotice) === 'string'
+      ? { hint: record.executionNotice ?? record.shellExecutionNotice }
       : {}),
     ...(stdout.text ? { stdout: stdout.text } : {}),
     ...(diagnosticStderr ? { stderr: diagnosticStderr } : {}),
@@ -1258,6 +1256,7 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
     'errorCode',
     'systemErrorCode',
     'nextStep',
+    'hint',
     'runId',
     'executionInvocationId',
     'sessionId',
@@ -1355,7 +1354,14 @@ const shellRpcFailureResult = (error: unknown): Record<string, unknown> => {
   const rejected =
     error instanceof NotebookRpcError && error.statusCode >= 400 && error.statusCode < 500
   const detail = error instanceof NotebookRpcError ? asRecord(error.detail) : undefined
-  const message = error instanceof NotebookRpcError ? error.message : ''
+  const message =
+    error instanceof NotebookRpcError
+      ? typeof error.detail === 'string'
+        ? error.detail
+        : typeof detail?.message === 'string'
+          ? detail.message
+          : ''
+      : ''
   const reason =
     rejected && message ? clipAgentText(message.split(/\r?\n/u)[0], 300).text : undefined
   return {

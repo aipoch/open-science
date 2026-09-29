@@ -203,7 +203,13 @@ describe.skipIf(process.platform === 'win32')(
         expect(resultBody(result)).toMatchObject({
           status: code === 0 ? 'completed' : 'failed',
           exitCode: code,
-          stderr: expect.stringContaining('Shell interpreter exited; interpreter state was reset.')
+          hint: 'Shell interpreter exited.'
+        })
+        expect(resultBody(result)).not.toHaveProperty('stderr')
+        const runs = (await h.service.state({ sessionId: 'session-1', workspaceCwd: h.root })).runs
+        expect(runs.at(-1)).toMatchObject({
+          shellExecutionNotice: 'Shell interpreter exited.',
+          text: { stderr: '' }
         })
       }
     }, 30_000)

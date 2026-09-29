@@ -208,7 +208,9 @@ describe('persistent platform shell cells', () => {
       timeoutMs: 100
     })
     expect(result.exitCode).toBeNull()
-    expect(result.stderr).toContain('timed out')
+    expect(result.status).toBe('timeout')
+    expect(result.stderr).toBe('')
+    expect(result.executionNotice).toBeUndefined()
     expect(
       await adapter.execute(
         request(
@@ -239,7 +241,7 @@ describe('persistent platform shell cells', () => {
       protectedDirs: [join(root, 'private')]
     })
     expect(result).toMatchObject({ exitCode: 0, stdout: 'unset' })
-    expect(result.stderr).toContain('interpreter state was reset')
+    expect(result.executionNotice).toBe('Shell launch context changed before this command.')
     expect(
       await adapter.execute(request(command('value=other', '$value="other"'), 'two'))
     ).toMatchObject({ exitCode: 0 })

@@ -310,6 +310,7 @@ const publicShellResult = (
     | 'truncated'
     | 'shellRuntimeStatus'
     | 'shellSystemErrorCode'
+    | 'shellExecutionNotice'
     | 'shellErrorCode'
     | 'recovery'
   >
@@ -321,6 +322,7 @@ const publicShellResult = (
   ...(run.shellRuntimeStatus ? { runtimeStatus: run.shellRuntimeStatus } : {}),
   ...(run.shellSystemErrorCode ? { systemErrorCode: run.shellSystemErrorCode } : {}),
   ...(run.shellErrorCode ? { errorCode: run.shellErrorCode } : {}),
+  ...(run.shellExecutionNotice ? { executionNotice: run.shellExecutionNotice } : {}),
   ...(run.recovery ? { recovery: run.recovery } : {}),
   ...(run.truncated ? { truncated: true } : {})
 })
@@ -1798,6 +1800,7 @@ class NotebookExecutionOwner {
                 exitCode: shellResult.exitCode,
                 runtimeStatus: shellResult.runtimeStatus,
                 systemErrorCode: shellResult.systemErrorCode,
+                executionNotice: shellResult.executionNotice,
                 errorCode: shellResult.errorCode,
                 recovery: shellResult.recovery
               }
@@ -1817,6 +1820,7 @@ class NotebookExecutionOwner {
             exitCode: result.exitCode,
             ...(result.runtimeStatus ? { runtimeStatus: result.runtimeStatus } : {}),
             ...(result.systemErrorCode ? { systemErrorCode: result.systemErrorCode } : {}),
+            ...(result.executionNotice ? { executionNotice: result.executionNotice } : {}),
             ...(result.errorCode ? { errorCode: result.errorCode } : {}),
             ...(result.recovery ? { recovery: result.recovery } : {}),
             ...(result.truncated ? { truncated: true } : {})

@@ -307,10 +307,13 @@ export class ShellCellSession {
               stderr:
                 cell.stderr +
                 cell.buffers.stderr +
-                (timedOut && exit.cancelled && !exit.errorCode ? '' : exit.stderr) +
-                (this.launchedProcess
-                  ? '\nShell interpreter exited; interpreter state was reset.'
-                  : ''),
+                (exit.cancelled && !exit.errorCode ? '' : exit.stderr),
+              ...(this.launchedProcess &&
+              !timedOut &&
+              !exit.cancelled &&
+              exit.errorCode !== 'shell-start-failed'
+                ? { executionNotice: 'Shell interpreter exited.' }
+                : {}),
               ...(cell.truncated ? { truncated: true } : {})
             })
           ready.resolve()
@@ -338,16 +341,18 @@ export class ShellCellSession {
       const completed = await result
       if (completed.cwd) this.cwd = completed.cwd
       if (reset)
-        completed.stderr =
-          'Shell launch context changed; interpreter state was reset.\n' + completed.stderr
+        completed.executionNotice = [
+          'Shell launch context changed before this command.',
+          completed.executionNotice
+        ]
+          .filter(Boolean)
+          .join(' ')
       return timedOut
         ? {
             ...completed,
             cancelled: undefined,
             exitCode: null,
-            stderr:
-              completed.stderr +
-              `\nShell command timed out after ${request.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS}ms; interpreter state was reset.`
+            status: 'timeout'
           }
         : { ...completed, cwdBefore: request.cwd }
     } catch (error) {

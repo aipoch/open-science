@@ -809,7 +809,7 @@ describe('notebook shell process behavior', () => {
 
     const result = await completion
     expect(result).toMatchObject({ exitCode: null })
-    expect(result.stderr).toContain('null bytes')
+    expect(result.stderr).toBe('')
     expect(result.errorCode).toBe('shell-start-failed')
     expect(result.failureDiagnostic).toMatchObject({ error: expect.stringContaining('null bytes') })
     const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
@@ -1040,6 +1040,34 @@ describe('notebook shell process behavior', () => {
       await rm(runtimeRoot, { recursive: true, force: true })
     })
 
+    it('preserves captured command stderr when the running process reports an error', async () => {
+      const result = await runShellCommand({
+        command: 'sleep 30',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'linux',
+        claimProcess(child) {
+          setImmediate(() => {
+            child.stderr!.emit('data', 'command diagnostic\n')
+            child.emit(
+              'error',
+              Object.assign(new Error('internal process failure'), { code: 'EIO' })
+            )
+          })
+          return () => undefined
+        }
+      })
+      expect(result).toMatchObject({
+        errorCode: 'shell-process-error',
+        systemErrorCode: 'EIO',
+        stderr: 'command diagnostic\n',
+        failureDiagnostic: { code: 'EIO', error: 'internal process failure' }
+      })
+    })
+
     it('settles a missing executable without an unhandled asynchronous spawn error', async () => {
       const registry = new ShellProcessOwnershipRegistry(runtimeRoot)
       const cleanup = vi.fn()
@@ -1071,7 +1099,7 @@ describe('notebook shell process behavior', () => {
         systemErrorCode: 'ENOENT',
         exitCode: null
       })
-      expect(result.stderr).toContain('ENOENT')
+      expect(result.stderr).toBe('')
       expect(result.failureDiagnostic).toMatchObject({ code: 'ENOENT' })
       expect(registry.hasReceipts()).toBe(false)
       expect(cleanup).toHaveBeenCalledOnce()
@@ -1122,7 +1150,10 @@ describe('notebook shell process behavior', () => {
               })
             }
           })
-          expect(result.stderr).toContain('identity could not be confirmed')
+          expect(result.stderr).not.toContain('identity could not be confirmed')
+          expect(result.failureDiagnostic).toMatchObject({
+            error: expect.stringContaining('identity could not be confirmed')
+          })
           expect(abort).toHaveBeenCalledTimes(outcome === 'reaped' ? 1 : 0)
           expect(registry.hasReceipts()).toBe(outcome !== 'reaped')
           expect(cleanup).toHaveBeenCalledTimes(outcome === 'reaped' ? 1 : 0)

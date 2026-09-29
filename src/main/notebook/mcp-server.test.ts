@@ -1306,7 +1306,7 @@ describe('background_run tool', () => {
     ).rejects.toMatchObject({
       name: 'NotebookRpcError',
       statusCode: 500,
-      message: 'Notebook RPC failed with status 500',
+      message: JSON.stringify(detail),
       detail
     } satisfies Partial<NotebookRpcError>)
   })
@@ -1840,7 +1840,7 @@ describe('bash_execute tool', () => {
       error: 'Shell process failed before a verified result; the command may have started.',
       nextStep: expect.stringContaining('Check the Run and partial file or external effects')
     })
-    expect(ambiguous).not.toHaveProperty('stderr')
+    expect(ambiguous.stderr).toBe('partial diagnostic')
   })
 
   it('preserves interrupted background status and changed interpreter cwd', () => {

@@ -53,6 +53,8 @@ const SHELL_NETWORK_TRANSPORT_UNSUPPORTED_PREFIX = 'WSL2_NETWORK_TRANSPORT_UNSUP
 type NotebookShellResult = {
   // Durable outcome is projected by the execution owner, including cancellation and timeout.
   status?: NotebookRunRecord['status']
+  // Lifecycle fact, separate from command output; projected as natural-language context.
+  executionNotice?: string
   stdout: string
   stderr: string
   exitCode: number | null
@@ -88,7 +90,7 @@ const shellSystemErrorFields = (error: unknown): Pick<NotebookShellResult, 'syst
 
 const shellStartFailure = (error: unknown): NotebookShellResult => ({
   stdout: '',
-  stderr: error instanceof Error ? error.message : String(error),
+  stderr: '',
   exitCode: null,
   errorCode: 'shell-start-failed',
   ...shellSystemErrorFields(error),
@@ -738,7 +740,7 @@ const runShellCommand = (
               // observed, so retain the original error without claiming it never executed.
               const result: NotebookShellResult = {
                 stdout: '',
-                stderr: error instanceof Error ? error.message : String(error),
+                stderr: '',
                 exitCode: null,
                 errorCode: child.pid === undefined ? 'shell-start-failed' : 'shell-process-error',
                 ...shellSystemErrorFields(error),
@@ -920,7 +922,7 @@ const runShellCommand = (
           void finish(
             {
               stdout,
-              stderr: stderr || error.message,
+              stderr,
               exitCode: null,
               errorCode: child.pid === undefined ? 'shell-start-failed' : 'shell-process-error',
               ...shellSystemErrorFields(error),

@@ -703,6 +703,7 @@ export type NotebookRunRecord = {
   shellRuntimeStatus?: 'unavailable'
   // Safe OS errno identifier (for example ENOENT), never an exception message or host path.
   shellSystemErrorCode?: string
+  shellExecutionNotice?: string
   recovery?: import('./execution-recovery').NotebookExecutionRecovery
   shellErrorCode?:
     | 'shell-start-failed'
