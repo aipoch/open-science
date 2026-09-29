@@ -17,12 +17,6 @@ export const resolveWsl2BashPreviewBuildEnabled = (
 export default defineConfig(({ command }) => ({
   main: {
     plugins: [nativeLocaleAssets()],
-    esbuild: {
-      // Node-worker wrappers are generated JavaScript, but their importer query ends in .ts.
-      // Avoid looking up tsconfig from these relative virtual IDs outside the worktree.
-      // Preserve Vite's default JavaScript exclusion; real worker TypeScript still compiles.
-      exclude: [/\.js$/, /\?nodeWorker&importer=/]
-    },
     define: {
       __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
       __OPEN_SCIENCE_WSL2_BASH_PREVIEW__: resolveWsl2BashPreviewBuildEnabled(
