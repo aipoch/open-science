@@ -87,6 +87,34 @@ const splitRedaction =
   serializedRedaction
 
 it.each([
+  ['boolean research metadata', Buffer.from('{"noCredentials":true,"result":"ok"}'), true],
+  [
+    'nested boolean research metadata in NDJSON',
+    Buffer.from('{"nested":[{"noCredentials":true}]}\n{"authorization":false,"cookie":true}\n'),
+    true
+  ],
+  ...Array.from({ length: 26 }, (_, split): [string, Buffer, boolean] => [
+    `boolean metadata split across reads at ${split + 1}`,
+    Buffer.from(' '.repeat(65536 - split - 1) + '{"noCredentials":false,"result":"ok"}'),
+    true
+  ]),
+  [
+    'credential after boolean metadata',
+    Buffer.from('{"noCredentials":true,"password":"synthetic-private-value"}'),
+    false
+  ],
+  ['quoted boolean credential', Buffer.from('{"noCredentials":"true"}'), false],
+  [
+    'boolean-like credential suffix arriving in the next read',
+    Buffer.from(' '.repeat(65515) + '{"noCredentials":trueSecret}'),
+    false
+  ],
+  ['unterminated boolean member at EOF', Buffer.from('{"noCredentials":true'), false],
+  [
+    'boolean-like credential longer than the scanning overlap',
+    Buffer.from('{"noCredentials":true' + ' '.repeat(70000) + 'secret}'),
+    false
+  ],
   ['nested JSON redaction', Buffer.from(serializedRedaction), true],
   ['nested JSON closing escapes split across reads', Buffer.from(splitRedaction), true],
   [

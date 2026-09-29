@@ -105,6 +105,25 @@ export const findSensitivePackageText = (
       .replace(/%[0-9a-f]?$/i, '')
     return !'[redacted]'.startsWith(bare) && !'%5bredacted%5d'.startsWith(bare.toLowerCase())
   }
+  const jsonBooleanField = (offset: number): boolean => {
+    // Match a JSON member's literal type, not its name or the string "true". Header rules
+    // can start at a hyphenated key's suffix, so recover the complete key first.
+    let keyStart = offset
+    while (keyStart > 0 && /[a-z0-9_-]/i.test(text[keyStart - 1])) keyStart--
+    if (text[keyStart - 1] !== '"') return false
+    let separator = keyStart - 2
+    while (separator >= 0 && /[ \t\r\n]/.test(text[separator])) separator--
+    if (text[separator] !== '{' && text[separator] !== ',') return false
+    const prefix = /^[a-z][a-z0-9_-]*"[ \t\r\n]*:[ \t\r\n]*/i.exec(text.slice(keyStart))
+    if (!prefix) return false
+    const value = text.slice(keyStart + prefix[0].length)
+    if (/^(?:true|false)[ \t\r\n]*(?=[,}])/.test(value)) return true
+    // A file read may end inside the literal. Defer only a short candidate so its key
+    // cannot leave the file scanner's 8192-character overlap before a secret suffix arrives.
+    if (complete || text.length - separator > 256) return false
+    const pending = value.replace(/[ \t\r\n]+$/, '')
+    return ['true', 'false'].some((literal) => literal.startsWith(pending))
+  }
   for (const match of text.matchAll(/\b[a-z][a-z0-9+.-]*:(?:\\?\/){2}[^\s"'<>]+/gi)) {
     try {
       const rawUrl = match[0]
@@ -218,6 +237,7 @@ export const findSensitivePackageText = (
   for (const match of text.matchAll(
     /\b(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b\s*["']?\s*:\s*["']?([^"'\r\n}]*)/gi
   )) {
+    if (jsonBooleanField(match.index)) continue
     if (privateValue(match[1], match.index + match[0].length))
       return {
         offset: match.index,
@@ -231,6 +251,7 @@ export const findSensitivePackageText = (
   // Match prefixes independently so a harmless outer field cannot hide an inner assignment.
   for (const match of text.matchAll(/\b([a-z][a-z0-9_-]*)(\s*["']?\s*[:=]\s*)/gi)) {
     if (!isSensitiveDiagnosticKey(match[1])) continue
+    if (jsonBooleanField(match.index)) continue
     const start = match.index + match[0].length
     const rest = text.slice(start)
     // Serialized context/model usage counts are numbers, not credentials. Keep this exception
