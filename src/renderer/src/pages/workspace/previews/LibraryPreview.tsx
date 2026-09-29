@@ -55,6 +55,11 @@ type Selection = {
   batchMode?: boolean
 }
 
+type PdfAttachment = {
+  attachment: LiteratureItemView['attachments'][number]
+  version: LiteratureItemView['attachments'][number]['versions'][number]
+}
+
 const externalUrl = (value: string): string | undefined => {
   try {
     const url = new URL(value)
@@ -64,14 +69,14 @@ const externalUrl = (value: string): string | undefined => {
   }
 }
 
-const pdfAttachments = (entry: LiteratureItemView): LiteratureItemView['attachments'] =>
-  entry.attachments.filter(({ versions }) => {
-    const version = versions[0]
-    return (
-      version &&
-      (version.contentType.split(';')[0].trim().toLowerCase() === 'application/pdf' ||
-        version.filename.toLowerCase().endsWith('.pdf'))
+const pdfAttachments = (entry: LiteratureItemView): PdfAttachment[] =>
+  entry.attachments.flatMap((attachment) => {
+    const version = attachment.versions.find(
+      (version) =>
+        version.contentType.split(';')[0].trim().toLowerCase() === 'application/pdf' ||
+        version.filename.toLowerCase().endsWith('.pdf')
     )
+    return version ? [{ attachment, version }] : []
   })
 
 function ReferenceRow({
@@ -135,10 +140,9 @@ function ReferenceRow({
   if (url && !links.some((link) => link.href === url))
     links.unshift({ label: t('URL'), value: entry.item.url, href: url })
   const pdfButton = (
-    attachment: LiteratureItemView['attachments'][number],
+    { attachment, version }: PdfAttachment,
     compact = false
   ): React.JSX.Element => {
-    const version = attachment.versions[0]
     return (
       <Button
         key={attachment.id}
@@ -318,9 +322,7 @@ function ReferenceRow({
       {expanded && (
         <div id={detailId} className="min-w-0 pb-3 text-xs [overflow-wrap:anywhere]">
           {pdfs.length > 1 && (
-            <div className="mb-3 space-y-1">
-              {pdfs.slice(1).map((attachment) => pdfButton(attachment))}
-            </div>
+            <div className="mb-3 space-y-1">{pdfs.slice(1).map((pdf) => pdfButton(pdf))}</div>
           )}
           <h3 className="mb-2 font-medium">{t('Abstract')}</h3>
           <p className="whitespace-pre-wrap leading-relaxed text-muted-foreground">
