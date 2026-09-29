@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto'
 import {
   buildSensitiveContentEvidence,
   findSensitivePackageText,
-  isPrivatePackageValue
+  isPrivatePackageValue,
+  PackageTextScanner
 } from './sensitive-content'
 
 describe('package text policy', () => {
@@ -135,6 +136,57 @@ describe('package text policy', () => {
     expect(isPrivatePackageValue('Bearer [redacted]')).toBe(false)
     expect(isPrivatePackageValue('[redacted]extra')).toBe(true)
   })
+})
+
+it.each([
+  ['{"noCredentials":true}', false],
+  ['{"noCredentials":false}\n{"noCredentials":true}\n', false],
+  ['{\n "metadata": {"noCredentials":false}\n}', false],
+  ['{"authorization":true,"cookie":false,"api-key":true}', false],
+  ['{"noCredentials":"true"}', true],
+  ['{"noCredentials":123}', true],
+  ['{"noCredentials":true,"password":"synthetic-private-value"}', true],
+  ['{"password":"synthetic-private-value","password":true}', true],
+  ['{"noCredentials":true,"note":"password=synthetic-private-value"}', true],
+  ['{"noCredentials":true,"note":"ghp_syntheticprivatevalue"}', true],
+  ['{"noCredentials":true,"note":"https://example.org/?token=true"}', true],
+  ['{"noCredentials":true}\npassword=synthetic-private-value', true],
+  ['{"noCredentials":true,}', true],
+  ['{"noCredentials":true', true],
+  ['{"noCredentials":tru}', true],
+  ['{"noCredentials":trueSuffix}', true],
+  ['{"noCredentials":TRUE}', true],
+  ["{'noCredentials':true}", true],
+  ['noCredentials=true', true],
+  ['{"noCredentials":true} garbage', true],
+  ['{"noCredentials":true}\n{"result":}', true],
+  ['{"noCredentials":true}\n{"password":os.environ["PASSWORD"]}', true]
+] as const)('preserves boolean policy across every stream split: %s', (text, blocked) => {
+  expect(Boolean(findSensitivePackageText(text))).toBe(blocked)
+  for (let split = 0; split <= text.length; split++) {
+    const scanner = new PackageTextScanner()
+    scanner.write(text.slice(0, split))
+    scanner.write(text.slice(split))
+    expect(Boolean(scanner.finish()), `split ${split}`).toBe(blocked)
+  }
+})
+
+it('reports the actual later credential with its original stream offset', () => {
+  const prefix = '{"noCredentials":true}\n' + ' '.repeat(70000)
+  const secret = '{"apiKey":"synthetic-private-value"}\n'
+  const text = prefix + secret
+  const scanner = new PackageTextScanner()
+  for (let start = 0; start < text.length; start += 65536)
+    scanner.write(text.slice(start, start + 65536))
+  const result = scanner.finish()!
+  expect(result.match).toMatchObject({ rule: 'field', label: '"apiKey"' })
+  expect(result.offset + result.match.offset).toBe(prefix.length + 1)
+  expect(
+    result.text.slice(
+      result.match.valueOffset,
+      result.match.valueOffset! + result.match.valueLength!
+    )
+  ).toBe('synthetic-private-value')
 })
 
 it('hashes and measures the sensitive value instead of the detector span', () => {

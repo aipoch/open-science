@@ -89,6 +89,7 @@ import {
   findSensitivePackageText,
   isPrivatePackageValue,
   PackageSensitiveContentError,
+  PackageTextScanner,
   type PackageSensitiveContentSource
 } from './sensitive-content'
 import { SessionRepository, loadSessionMutationAuthority } from '../session-persistence/repository'
@@ -310,30 +311,7 @@ const assertShareableFile = async (
   // by its BOM. PDF is a container even when all its bytes happen to be valid UTF-8.
   // Binary/archived content is not certified free of private information.
   let decoder: TextDecoder | undefined
-  let tail = ''
-  let offset = 0
-  let sensitiveError: PackageSensitiveContentError | undefined
-  const inspect = (decoded: string, complete: boolean): void => {
-    const text = tail + decoded
-    if (!sensitiveError) {
-      const match = findSensitivePackageText(text, complete)
-      if (match)
-        sensitiveError = new PackageSensitiveContentError(
-          `${location} @${offset - tail.length + match.offset}`,
-          match.rule,
-          buildSensitiveContentEvidence(
-            text,
-            match,
-            `${location} @${offset - tail.length + match.offset}`,
-            sourceStorageKey,
-            offset - tail.length
-          ),
-          source
-        )
-    }
-    offset += decoded.length
-    tail = text.slice(-8192)
-  }
+  const scanner = new PackageTextScanner()
   for await (const chunk of createReadStream(path, { highWaterMark: 64 * 1024, signal })) {
     await paceFileIo(chunk.length, signal)
     signal?.throwIfAborted()
@@ -355,7 +333,7 @@ const assertShareableFile = async (
     }
     if (decoded.includes('\0')) return
     // Do not reject a text-like prefix before the remainder has been classified.
-    inspect(decoded, false)
+    scanner.write(decoded)
   }
   signal?.throwIfAborted()
   let final = ''
@@ -364,8 +342,18 @@ const assertShareableFile = async (
   } catch {
     return
   }
-  inspect(final, true)
-  if (sensitiveError) throw sensitiveError
+  scanner.write(final)
+  const finding = scanner.finish()
+  if (finding) {
+    const { text, match, offset } = finding
+    const at = `${location} @${offset + match.offset}`
+    throw new PackageSensitiveContentError(
+      at,
+      match.rule,
+      buildSensitiveContentEvidence(text, match, at, sourceStorageKey, offset),
+      source
+    )
+  }
 }
 
 export class SessionPackageService {

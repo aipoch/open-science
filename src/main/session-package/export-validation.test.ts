@@ -100,6 +100,28 @@ it.each([
   ],
   ['quoted boolean credential', Buffer.from('{"noCredentials":"true"}'), false],
   [
+    'numeric credential beside a boolean',
+    Buffer.from('{"noCredentials":true,"token":123456}'),
+    false
+  ],
+  ['truncated boolean JSON', Buffer.from('{"noCredentials":true'), false],
+  ['malformed boolean JSON', Buffer.from('{"noCredentials":true,}'), false],
+  [
+    'malformed final NDJSON record after boolean metadata',
+    Buffer.from('{"noCredentials":true}\n' + ' '.repeat(70000) + '{"result":}'),
+    false
+  ],
+  [
+    'boolean metadata in UTF-16 with BOM',
+    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('{"noCredentials":false}', 'utf16le')]),
+    true
+  ],
+  [
+    'boolean metadata after a large research value',
+    Buffer.from(JSON.stringify({ notes: 'a'.repeat(150000), noCredentials: false })),
+    true
+  ],
+  [
     'real credential after boolean research metadata in a later chunk',
     Buffer.from(
       '{"noCredentials":true}\n' + ' '.repeat(70000) + '{"apiKey":"synthetic-private-value"}\n'
@@ -297,7 +319,14 @@ it.each([
       await expect(
         service.exportTo(imported, join(fixture.storageRoot, 'forwarded.science'))
       ).resolves.toBeDefined()
-    } else await expect(pending).rejects.toThrow('Sensitive content detected')
+    } else {
+      await expect(pending).rejects.toThrow('Sensitive content detected')
+      if (label === 'real credential after boolean research metadata in a later chunk')
+        await expect(pending).rejects.toMatchObject({
+          rule: 'field',
+          evidence: { label: '"apiKey"' }
+        })
+    }
     expect(await readFile(source)).toEqual(bytes)
   } finally {
     await service.close()
