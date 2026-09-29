@@ -20,6 +20,8 @@ export default defineConfig({
     }
   },
   plugins: [react(), tailwindcss()],
+  // The journal import worker uses split modules in browser tests as it does in the web build.
+  worker: { format: 'es' },
   build: {
     outDir: resolve('out/browser-tests'),
     emptyOutDir: true,

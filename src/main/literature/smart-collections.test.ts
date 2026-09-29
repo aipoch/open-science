@@ -3426,7 +3426,9 @@ it('reconciles automatic collections on startup and model configuration without 
   configured = true
   classificationChanged?.()
   await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(1), { timeout: 5000 })
-  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
+    timeout: 5000
+  })
   expect((await owner.view(paused)).automaticPauseReason).toBe('daily-limit')
   classificationChanged?.()
   await new Promise((resolve) => setTimeout(resolve, 850))

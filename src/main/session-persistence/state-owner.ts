@@ -1166,7 +1166,18 @@ class SessionPersistenceStateOwner {
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(session.projectId, session.id, 'save')
     const { projectId, id: sessionId } = session
-    const authoritative = await loadAuthority(this.options.repository, projectId, sessionId)
+    let authoritative = await loadAuthority(this.options.repository, projectId, sessionId)
+    if (
+      authoritative.status === 'found' &&
+      authoritative.session.runtimeTranscriptOwner === 'main' &&
+      authoritative.session.activeRun &&
+      !this.options.repository.hasLiveRuntimeSession?.(projectId, sessionId)
+    ) {
+      // A preference save after restart must not publish the abandoned run back to the renderer.
+      // Commit the same recovery used by Resume before rebasing user intent onto its authority.
+      await this.prepareRuntimeResume({ projectId, sessionId })
+      authoritative = await loadAuthority(this.options.repository, projectId, sessionId)
+    }
     if (authoritative.status === 'unreadable') {
       throw new Error(
         'Cannot save Session projection because main-owned runtime context is unreadable.'

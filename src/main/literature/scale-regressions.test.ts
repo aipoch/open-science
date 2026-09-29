@@ -79,16 +79,20 @@ it.each(['library', 'global-search'] as const)(
     await migrateApplicationDatabase(client)
     const catalog = new LiteratureCatalog(async () => client)
     const abstract = 'a'.repeat(180_000)
-    for (let index = 0; index < 100; index++) {
-      await catalog.transact({
-        kind: 'create-item',
-        item: literatureItemInputSchema.parse({
-          itemType: 'journalArticle',
-          title: `Reference ${index}`,
-          abstract
-        })
+    const receipt = await catalog.transact({
+      kind: 'create-item',
+      item: literatureItemInputSchema.parse({
+        itemType: 'journalArticle',
+        title: 'Long abstract reference',
+        abstract
       })
-    }
+    })
+    if (receipt.kind !== 'item') throw new Error('Expected a reference')
+    const template = await client.literatureItem.findUniqueOrThrow({ where: { id: receipt.id } })
+    // This regression covers reads over RPC; seed scale without 100 serialized catalog writes.
+    await client.literatureItem.createMany({
+      data: Array.from({ length: 99 }, () => ({ ...template, id: randomUUID() }))
+    })
     const small = await rpc('literature:search', () => catalog.search({ scope, limit: 50 }))
     expect(small.status).toBe(200)
     const result = await rpc('literature:search', () => catalog.search({ scope, limit: 100 }))

@@ -104,8 +104,12 @@ test('resolves journals through real IPC in two windows and persists colors outs
   await primary.getByRole('button', { name: 'Customize columns', exact: true }).click()
   await primary.getByRole('button', { name: 'Edit category colors', exact: true }).click()
   await primary.getByRole('textbox', { name: 'Search choices', exact: true }).fill('Band 134')
-  await primary.getByRole('combobox', { name: 'Color for Band 134', exact: true }).click()
-  await primary.getByRole('option', { name: 'Blue', exact: true }).click()
+  await primary.getByRole('button', { name: 'Color for Band 134', exact: true }).click()
+  await primary.getByRole('button', { name: 'Blue', exact: true }).click()
+  await primary.keyboard.press('Escape')
+  await expect(
+    primary.getByRole('dialog', { name: 'Editorial band: Edit category colors', exact: true })
+  ).toBeHidden()
   await primary.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(
     primary.getByRole('button', { name: 'Customize columns', exact: true })

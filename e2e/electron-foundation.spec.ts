@@ -66,7 +66,7 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
 test('localizes CSL validation failures across the desktop bridge', async ({ app }, testInfo) => {
   const page = await app.completeOnboarding()
   await page.getByRole('button', { name: 'Library', exact: true }).click()
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Citation styles', exact: true }).click()
   await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
   await expect(page.getByRole('heading', { name: '引文样式', exact: true })).toBeVisible()
 

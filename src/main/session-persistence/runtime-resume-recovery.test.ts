@@ -114,6 +114,37 @@ describe('durable restart recovery before runtime attachment', () => {
     expect(committed.session.revision).toBeGreaterThan(h.initial.revision!)
   })
 
+  it.each([false, true])(
+    'preserves recovery or a live run when saving a model preference (live=%s)',
+    async (live) => {
+      const h = await harness(live)
+      const restored = await h.restored()
+      if (restored.status !== 'found') throw new Error('Missing fixture')
+      const saved = await h.owner.saveSession(
+        {
+          ...restored.session,
+          agentConfiguration: {
+            providerId: 'provider-1',
+            model: 'alternate-model',
+            reasoningEffort: 'default'
+          }
+        },
+        { conflictRebaseFields: ['agentConfiguration'] }
+      )
+      expect(saved.status).toBe(restored.session.status)
+      expect(saved.activeRun).toEqual(restored.session.activeRun)
+      expect(saved.resumeRecovery).toEqual(restored.session.resumeRecovery)
+      expect(saved.conversationGraph).toEqual(restored.session.conversationGraph)
+      const persisted = await h.raw()
+      if (persisted.status !== 'found') throw new Error('Missing saved fixture')
+      expect(persisted.session.status).toBe(saved.status)
+      expect(persisted.session.activeRun).toEqual(saved.activeRun)
+      expect(persisted.session.resumeRecovery).toEqual(saved.resumeRecovery)
+      expect(persisted.session.agentConfiguration).toEqual(saved.agentConfiguration)
+      expect(saved.agentConfiguration?.model).toBe('alternate-model')
+    }
+  )
+
   it('leaves a live running Session untouched', async () => {
     const h = await harness(true)
     const before = await h.raw()

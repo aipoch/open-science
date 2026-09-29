@@ -19,6 +19,19 @@ it('builds newly added browser fixture pages without falling back to the default
         `<!doctype html><html><head><title>${name}</title></head><body>${name}</body></html>`
       )
     }
+    writeFileSync(
+      join(fixtureRoot, 'media-privacy.html'),
+      '<title>media-privacy</title><script type="module" src="./main.js"></script>'
+    )
+    writeFileSync(
+      join(fixtureRoot, 'main.js'),
+      "new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })"
+    )
+    writeFileSync(
+      join(fixtureRoot, 'worker.js'),
+      "self.onmessage = async () => self.postMessage((await import('./lazy.js')).value)"
+    )
+    writeFileSync(join(fixtureRoot, 'lazy.js'), "export const value = 'lazy worker dependency'")
     const run = spawnSync(
       process.execPath,
       [
