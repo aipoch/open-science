@@ -40,7 +40,7 @@
     "eval:reviewer:live": "electron scripts/reviewer-model-evaluation-live.mjs",
     "typecheck:node": "node --max-old-space-size=6144 node_modules/typescript/bin/tsc --noEmit -p tsconfig.node.json --composite false && npm run typecheck:sandbox",
     "typecheck:sandbox": "npm --prefix packages/notebook-network-sandbox run typecheck",
-    "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck:web": "node --max-old-space-size=6144 node_modules/typescript/bin/tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "gen:web-api-map": "node scripts/generate-web-api-map.mjs",
     "check:web-api-map": "node scripts/generate-web-api-map.mjs --check",
