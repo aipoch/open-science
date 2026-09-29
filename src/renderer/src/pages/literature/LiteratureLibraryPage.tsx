@@ -1984,6 +1984,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [detailController] = useState(createLiteratureDetailController)
   const selectedItem = detailController.getSnapshot().item
   const selectedItemId = selectedItem?.id
+  const selectedItemExternalUrl = selectedItem
+    ? getExternalLiteratureUrl(selectedItem.item.url)
+    : undefined
   const [isCreatingItem, setIsCreatingItem] = useState(false)
   const [isSavingNewItem, setIsSavingNewItem] = useState(false)
   const [createItemError, setCreateItemError] = useState<string>()
@@ -8087,6 +8090,23 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                   </dd>
                                 </div>
                               ))}
+                            {selectedItemExternalUrl ? (
+                              <div className="min-w-0">
+                                <dt className="text-xs text-muted-foreground">{t('URL')}</dt>
+                                <dd
+                                  className="mt-0.5 truncate"
+                                  title={selectedItemExternalUrl.href}
+                                >
+                                  <ExternalTextLink
+                                    href={selectedItemExternalUrl.href}
+                                    aria-label={`${t('URL')}: ${selectedItemExternalUrl.href}`}
+                                    className="max-w-full truncate"
+                                  >
+                                    {selectedItemExternalUrl.href}
+                                  </ExternalTextLink>
+                                </dd>
+                              </div>
+                            ) : null}
                           </dl>
                           {selectedItem.item.identifiers.length > 0 ? (
                             <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 border-t border-border-300/70 pt-3">

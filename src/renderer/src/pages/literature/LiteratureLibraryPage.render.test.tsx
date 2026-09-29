@@ -2561,14 +2561,28 @@ describe('LiteratureLibraryPage', () => {
   })
 
   it('opens the Literature detail selected by a one-shot navigation intent', async () => {
-    get.mockResolvedValue(libraryItem)
-    useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user')
+    const urlOnlyItem: LiteratureItemView = {
+      ...libraryItem,
+      item: {
+        ...libraryItem.item,
+        url: 'https://example.test/reference',
+        identifiers: []
+      }
+    }
+    get.mockResolvedValue(urlOnlyItem)
+    useNavigationStore.getState().openLiteratureItem(urlOnlyItem.id, 'user')
 
     render(<LiteratureLibraryPage />)
 
-    await waitFor(() => expect(get).toHaveBeenCalledWith(libraryItem.id))
-    expect(await screen.findByRole('dialog')).not.toBeNull()
-    expect(await screen.findByRole('heading', { name: libraryItem.item.title })).not.toBeNull()
+    await waitFor(() => expect(get).toHaveBeenCalledWith(urlOnlyItem.id))
+    const dialog = await screen.findByRole('dialog')
+    expect(await screen.findByRole('heading', { name: urlOnlyItem.item.title })).not.toBeNull()
+    const urlLink = within(dialog).getByRole('link', {
+      name: `URL: ${urlOnlyItem.item.url}`
+    })
+    expect(urlLink.getAttribute('href')).toBe(urlOnlyItem.item.url)
+    expect(urlLink.getAttribute('target')).toBe('_blank')
+    expect(urlLink.getAttribute('rel')).toBe('noreferrer')
     expect(useNavigationStore.getState().pendingLiteratureItemId).toBeUndefined()
   })
 
