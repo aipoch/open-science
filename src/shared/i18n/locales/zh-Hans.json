@@ -133,6 +133,14 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "Retrieve an Alliance gene summary and genomic location.": "获取 Alliance 基因摘要和基因组位置。",
+    "Search Alliance genes by symbol, name or identifier.": "按符号、名称或标识符搜索 Alliance 基因。",
+    "Retrieve cross-species orthologs and prediction methods.": "获取跨物种直系同源基因及预测方法。",
+    "Retrieve disease models associated with an Alliance gene.": "获取与 Alliance 基因相关的疾病模型。",
+    "Retrieve phenotype annotations for an Alliance gene.": "获取 Alliance 基因的表型注释。",
+    "Retrieve alleles and variants associated with an Alliance gene.": "获取与 Alliance 基因相关的等位基因和变异。",
+    "Retrieve anatomical and developmental expression annotations.": "获取解剖部位和发育阶段的表达注释。",
+    "Retrieve genes associated with a Disease Ontology term.": "获取与疾病本体术语相关的基因。",
     "Batch actions": "批量操作",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "在查询药物基因组学注释前，按 ClinPGx accession ID 或名称解析 ClinPGx 药物/化学物质记录。",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "在查询药物基因组学注释前，按 ClinPGx accession ID 或 HGNC 符号解析 ClinPGx 基因记录。",

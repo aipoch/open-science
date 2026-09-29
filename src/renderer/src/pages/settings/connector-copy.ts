@@ -95,6 +95,23 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
         'Retrieve HMMER results after the job succeeds; results may be paginated or contain jackhmmer iterations.'
       )
 
+    case 'alliance/alliance_get_gene':
+      return t('Retrieve an Alliance gene summary and genomic location.')
+    case 'alliance/alliance_search_genes':
+      return t('Search Alliance genes by symbol, name or identifier.')
+    case 'alliance/alliance_get_gene_orthologs':
+      return t('Retrieve cross-species orthologs and prediction methods.')
+    case 'alliance/alliance_get_gene_disease_models':
+      return t('Retrieve disease models associated with an Alliance gene.')
+    case 'alliance/alliance_get_gene_phenotypes':
+      return t('Retrieve phenotype annotations for an Alliance gene.')
+    case 'alliance/alliance_get_gene_alleles':
+      return t('Retrieve alleles and variants associated with an Alliance gene.')
+    case 'alliance/alliance_get_gene_expression':
+      return t('Retrieve anatomical and developmental expression annotations.')
+    case 'alliance/alliance_get_disease_genes':
+      return t('Retrieve genes associated with a Disease Ontology term.')
+
     case 'zenodo/search_records':
       return t('Search public Zenodo records, one page at a time.')
     case 'zenodo/get_record':

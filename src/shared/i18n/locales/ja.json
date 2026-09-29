@@ -133,6 +133,14 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "Retrieve an Alliance gene summary and genomic location.": "Alliance の遺伝子概要とゲノム上の位置を取得します。",
+    "Search Alliance genes by symbol, name or identifier.": "シンボル、名称、識別子で Alliance の遺伝子を検索します。",
+    "Retrieve cross-species orthologs and prediction methods.": "種間のオルソログと予測手法を取得します。",
+    "Retrieve disease models associated with an Alliance gene.": "Alliance の遺伝子に関連する疾患モデルを取得します。",
+    "Retrieve phenotype annotations for an Alliance gene.": "Alliance の遺伝子の表現型アノテーションを取得します。",
+    "Retrieve alleles and variants associated with an Alliance gene.": "Alliance の遺伝子に関連するアレルとバリアントを取得します。",
+    "Retrieve anatomical and developmental expression annotations.": "解剖学的部位と発生段階に関する発現アノテーションを取得します。",
+    "Retrieve genes associated with a Disease Ontology term.": "疾患オントロジーの用語に関連する遺伝子を取得します。",
     "Batch actions": "一括操作",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "薬理ゲノム注釈を検索する前に、ClinPGx の accession ID または名前で ClinPGx の薬物・化学物質レコードを解決します。",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "薬理ゲノム注釈を検索する前に、ClinPGx の accession ID または HGNC シンボルで ClinPGx の遺伝子レコードを解決します。",

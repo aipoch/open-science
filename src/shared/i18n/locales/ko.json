@@ -133,6 +133,14 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Retrieve an Alliance gene summary and genomic location.": "Alliance 유전자 요약과 유전체 위치를 가져옵니다.",
+    "Search Alliance genes by symbol, name or identifier.": "기호, 이름 또는 식별자로 Alliance 유전자를 검색합니다.",
+    "Retrieve cross-species orthologs and prediction methods.": "종 간 직계상동유전자와 예측 방법을 가져옵니다.",
+    "Retrieve disease models associated with an Alliance gene.": "Alliance 유전자와 관련된 질병 모델을 가져옵니다.",
+    "Retrieve phenotype annotations for an Alliance gene.": "Alliance 유전자의 표현형 주석을 가져옵니다.",
+    "Retrieve alleles and variants associated with an Alliance gene.": "Alliance 유전자와 관련된 대립유전자와 변이를 가져옵니다.",
+    "Retrieve anatomical and developmental expression annotations.": "해부학적 위치 및 발생 단계별 발현 주석을 가져옵니다.",
+    "Retrieve genes associated with a Disease Ontology term.": "질병 온톨로지 용어와 관련된 유전자를 가져옵니다.",
     "Batch actions": "일괄 작업",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 이름으로 ClinPGx 약물/화학물질 레코드를 확인합니다.",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 HGNC 기호로 ClinPGx 유전자 레코드를 확인합니다.",

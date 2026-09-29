@@ -1,5 +1,6 @@
 import Ajv2020, { type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js'
 
+import { ALLIANCE_TOOLS } from './descriptors/alliance'
 import { BIOMART_TOOLS } from './descriptors/biomart'
 import { BIORXIV_TOOLS } from './descriptors/biorxiv'
 import { CANCER_MODELS_TOOLS } from './descriptors/cancer-models'
@@ -33,6 +34,7 @@ import { ZINC_TOOLS } from './descriptors/zinc'
 import type { ToolDescriptor } from './types'
 
 const ALL_TOOLS: ToolDescriptor[] = [
+  ...ALLIANCE_TOOLS,
   ...BIOMART_TOOLS,
   ...BIORXIV_TOOLS,
   ...CANCER_MODELS_TOOLS,

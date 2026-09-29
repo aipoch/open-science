@@ -134,6 +134,14 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
+    "Retrieve an Alliance gene summary and genomic location.": "Eine Zusammenfassung und die genomische Position eines Alliance-Gens abrufen.",
+    "Search Alliance genes by symbol, name or identifier.": "Alliance-Gene anhand von Symbol, Name oder Kennung suchen.",
+    "Retrieve cross-species orthologs and prediction methods.": "Artübergreifende Orthologe und Vorhersagemethoden abrufen.",
+    "Retrieve disease models associated with an Alliance gene.": "Mit einem Alliance-Gen verknüpfte Krankheitsmodelle abrufen.",
+    "Retrieve phenotype annotations for an Alliance gene.": "Phänotyp-Annotationen für ein Alliance-Gen abrufen.",
+    "Retrieve alleles and variants associated with an Alliance gene.": "Mit einem Alliance-Gen verknüpfte Allele und Varianten abrufen.",
+    "Retrieve anatomical and developmental expression annotations.": "Expressionsannotationen zu anatomischen Strukturen und Entwicklungsstadien abrufen.",
+    "Retrieve genes associated with a Disease Ontology term.": "Mit einem Begriff der Disease Ontology verknüpfte Gene abrufen.",
     "Batch actions": "Stapelaktionen",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Lösen Sie ClinPGx-Arzneimittel-/Chemikaliendatensätze anhand der ClinPGx-Accession-ID oder des Namens auf, bevor Sie pharmakogenomische Annotationen abfragen.",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "Lösen Sie ClinPGx-Gendatensätze anhand der ClinPGx-Accession-ID oder des HGNC-Symbols auf, bevor Sie pharmakogenomische Annotationen abfragen.",

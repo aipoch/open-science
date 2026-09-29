@@ -8,7 +8,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CustomServerView } from '../../../../shared/settings'
-import { i18next } from '@/i18n'
+import { i18next, initI18n, prepareI18nLocale } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ConnectorAddForm } from './ConnectorAddForm'
 import { connectorDescription, connectorToolDescription } from './connector-copy'
@@ -93,6 +93,57 @@ afterEach(() => {
 })
 
 describe('ConnectorAddForm copy', () => {
+  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
+    'renders all Alliance tool descriptions from the %s catalog without English fallback',
+    async (locale) => {
+      await prepareI18nLocale(locale)
+      act(() => {
+        initI18n(locale)
+      })
+      const descriptions = [
+        ['alliance_get_gene', 'Retrieve an Alliance gene summary and genomic location.'],
+        ['alliance_search_genes', 'Search Alliance genes by symbol, name or identifier.'],
+        ['alliance_get_gene_orthologs', 'Retrieve cross-species orthologs and prediction methods.'],
+        [
+          'alliance_get_gene_disease_models',
+          'Retrieve disease models associated with an Alliance gene.'
+        ],
+        ['alliance_get_gene_phenotypes', 'Retrieve phenotype annotations for an Alliance gene.'],
+        [
+          'alliance_get_gene_alleles',
+          'Retrieve alleles and variants associated with an Alliance gene.'
+        ],
+        [
+          'alliance_get_gene_expression',
+          'Retrieve anatomical and developmental expression annotations.'
+        ],
+        ['alliance_get_disease_genes', 'Retrieve genes associated with a Disease Ontology term.']
+      ] as const
+      const t = i18next.getFixedT(locale, 'renderer')
+      act(() => {
+        root.render(
+          <div>
+            {descriptions.map(([method, english]) => (
+              <p key={method}>{connectorToolDescription(`alliance/${method}`, english, t)}</p>
+            ))}
+          </div>
+        )
+      })
+      const paragraphs = container.querySelectorAll('p')
+      expect(paragraphs).toHaveLength(descriptions.length)
+      descriptions.forEach(([method, english], index) => {
+        const translated = i18next.getResource(locale, 'renderer', english)
+        expect(typeof translated).toBe('string')
+        expect(translated).not.toBe('')
+        expect(translated).not.toBe(english)
+        expect(paragraphs[index].textContent).toBe(translated)
+        expect(connectorToolDescription(`alliance/${method}`, '', i18next.getFixedT('en'))).toBe(
+          english
+        )
+      })
+    }
+  )
+
   it('translates the mode switch and the trust confirmation', () => {
     render()
     expect(container.textContent).toContain('Local command')
