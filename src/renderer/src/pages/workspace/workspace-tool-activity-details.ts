@@ -897,17 +897,29 @@ const getNotebookRunStatusFromActivity = (
 }
 
 // Shell results do not carry the persistent-kernel invocation join. Accept only the
-// exact app Shell tool and a structurally consistent terminal result; ACP observer status and
+// exact app Shell tool and a structurally consistent result; ACP observer status and
 // stderr text alone cannot establish that a command ran or failed.
 const getShellResultStatusFromActivity = (
   activity: ToolActivity
-): 'completed' | 'failed' | undefined => {
+): NotebookRunStatus | undefined => {
   // A present provider identity is authoritative; a title must not override a different tool.
   const toolName = activity.providerToolName ?? activity.title
   if (matchNotebookRunTool(toolName) !== 'bash_execute') return undefined
   const summary = parseNotebookRunSummary(activity)
   if (!summary) return undefined
   const { status, exitCode, errorCode } = summary
+  if ((status === 'queued' || status === 'running') && typeof summary.runId === 'string') {
+    return status
+  }
+  if (
+    (status === 'timeout' || status === 'cancelled' || status === 'interrupted') &&
+    exitCode === null
+  ) {
+    return status
+  }
+  if (status === 'failed' && summary.execution === 'unknown' && typeof summary.error === 'string') {
+    return 'failed'
+  }
   if (status === 'completed' && exitCode === 0 && errorCode === undefined) return 'completed'
   if (status !== 'failed') return undefined
   if (errorCode === undefined) {

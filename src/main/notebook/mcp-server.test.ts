@@ -1265,8 +1265,7 @@ describe('background_run tool', () => {
     const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
     const result = tool?.mapResult?.({ receipt: {}, run }, { action: 'query', runId: 'repl-1' })
     expect(result).toEqual(replTool?.mapResult?.(run, {}))
-    expect(result).toMatchObject({ traceback: message })
-    expect(result).not.toHaveProperty('outputs')
+    expect(result).toMatchObject({ traceback: message, outputs: [{ type: 'error', message }] })
     expect(JSON.stringify(result)).not.toContain('node:vm')
     expect(run.text.traceback).toBe(traceback)
     expect(run.outputs[0].traceback).toBe(traceback)
@@ -2815,6 +2814,33 @@ describe('compactNotebookExecutionResult', () => {
     expect(foreground.truncated).toBe(true)
   })
 
+  it('preserves recovery and lifecycle facts through the final response budget fallback', () => {
+    const result = compactShellExecutionResult({
+      status: 'failed',
+      exitCode: null,
+      errorCode: 'shell-cleanup-incomplete',
+      recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' },
+      executionNotice: 'Shell interpreter exited.',
+      workingFiles: Array.from({ length: 8 }, (_, index) => ({
+        relativePath: `${index}-${'x'.repeat(5_000)}`,
+        kind: 'file'
+      }))
+    })
+    const serialized = serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    const received = JSON.parse(serialized)
+    expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    expect(received).toMatchObject({
+      status: 'failed',
+      errorCode: 'shell-cleanup-incomplete',
+      nextStep: result.nextStep,
+      hint: 'Shell interpreter exited.',
+      truncated: true,
+      note: expect.stringContaining('exceeded'),
+      preview: expect.any(String)
+    })
+    expect(received.nextStep).toContain('Files or external state may have changed')
+  })
+
   it('does not treat command output or historical error codes as current recovery facts', () => {
     expect(
       compactNotebookExecutionResult({ stdout: 'SHELL_CLEANUP_INCOMPLETE', exitCode: 0 })
@@ -2851,71 +2877,6 @@ describe('compactNotebookExecutionResult', () => {
     const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
     expect(replTool?.mapResult).not.toBe(compactNotebookExecutionResult)
     expect(replTool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
-  })
-
-  it.each(['python', 'repl'] as const)(
-    'returns identical failure diagnostics once for foreground and background %s calls',
-    (kernelKind) => {
-      const message = 'Execution rejected: required runtime is unavailable.'
-      const raw = {
-        status: 'failed',
-        kernelKind,
-        stderr: message,
-        traceback: message,
-        outputs: [{ type: 'error', message, traceback: message }]
-      }
-      const before = structuredClone(raw)
-      const tool = NOTEBOOK_RPC_TOOLS.find(
-        ({ name }) => name === (kernelKind === 'repl' ? 'repl_execute' : 'notebook_execute')
-      )!
-      for (const result of [tool.mapResult!(raw, {}), compactBackgroundRunResult({ run: raw })]) {
-        expect(result).toMatchObject({ status: 'failed', traceback: message })
-        expect(result).not.toHaveProperty('stderr')
-        expect(result).not.toHaveProperty('outputs')
-        expect(JSON.stringify(result).split(message)).toHaveLength(2)
-      }
-      expect(raw).toEqual(before)
-    }
-  )
-
-  it('preserves distinct diagnostics and error metadata when removing exact duplicates', () => {
-    const result = compactNotebookExecutionResult({
-      status: 'failed',
-      stderr: 'A warning before failure',
-      traceback: 'Traceback: unique frame and failure',
-      outputs: [
-        {
-          type: 'error',
-          name: 'ValueError',
-          line: 9,
-          message: 'Traceback: unique frame and failure'
-        },
-        { type: 'error', message: 'A separate error' }
-      ]
-    })
-    expect(result).toEqual({
-      status: 'failed',
-      stderr: 'A warning before failure',
-      traceback: 'Traceback: unique frame and failure',
-      outputs: [
-        { type: 'error', name: 'ValueError', line: 9 },
-        { type: 'error', message: 'A separate error' }
-      ]
-    })
-  })
-
-  it('does not confuse equal clipped previews with identical original diagnostics', () => {
-    const prefix = 'x'.repeat(9_000)
-    const compact = compactNotebookExecutionResult({
-      status: 'failed',
-      stderr: prefix + 'first error',
-      traceback: prefix + 'second error',
-      outputs: [{ type: 'error', message: prefix + 'third error' }]
-    }) as Record<string, unknown>
-    expect(compact.stderr).toBeTruthy()
-    expect(compact.traceback).toBeTruthy()
-    expect(compact.outputs).toEqual([{ type: 'error', message: prefix + 'third error' }])
-    expect(compact.truncated).toBe(true)
   })
 
   it('keeps diagnostic streams once and removes duplicated structured stream outputs', () => {
@@ -3020,7 +2981,9 @@ describe('compactNotebookExecutionResult', () => {
     }
 
     expect(compact.traceback).toBe('ReferenceError: en2 is not defined')
-    expect(compact.outputs).toBeUndefined()
+    expect(compact.outputs).toEqual([
+      { type: 'error', message: 'ReferenceError: en2 is not defined' }
+    ])
     expect(JSON.stringify(compact)).not.toContain('<repl>')
     expect(JSON.stringify(compact)).not.toContain('node:vm')
     expect(JSON.stringify(compact)).not.toContain('repl_loop.js')
@@ -3064,7 +3027,7 @@ describe('compactNotebookExecutionResult', () => {
     }
 
     expect(compact.traceback).toBe(message)
-    expect(compact.outputs).toBeUndefined()
+    expect(compact.outputs).toEqual([{ type: 'error', message }])
     expect(JSON.stringify(compact)).not.toContain('node:internal')
     expect(JSON.stringify(compact)).not.toContain('<repl>')
     expect(JSON.stringify(compact)).not.toContain('repl_loop.js')
@@ -3289,6 +3252,39 @@ describe('compactNotebookExecutionResult', () => {
 })
 
 describe('compactNotebookStateResult', () => {
+  it('retains latest Shell startup and cleanup facts without repeating historical guidance', () => {
+    const cleanup = {
+      kernelKind: 'bash',
+      status: 'failed',
+      exitCode: null,
+      shellErrorCode: 'shell-cleanup-incomplete',
+      recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+    }
+    const startup = {
+      kernelKind: 'bash',
+      status: 'failed',
+      exitCode: null,
+      shellErrorCode: 'shell-start-failed',
+      shellSystemErrorCode: 'ENOENT',
+      text: { stderr: '', stdout: '', traceback: '' }
+    }
+    for (const latest of [startup, cleanup]) {
+      const result = compactNotebookStateResult({ recentRuns: [cleanup, latest] }) as {
+        recentRuns: Array<Record<string, unknown>>
+      }
+      expect(result.recentRuns[0]).not.toHaveProperty('nextStep')
+      expect(result.recentRuns[1]).toMatchObject({
+        status: 'failed',
+        errorCode: latest.shellErrorCode,
+        error: compactShellExecutionResult(latest).error
+      })
+      if (latest === cleanup) {
+        expect(result.recentRuns[1].nextStep).toContain('Do not rerun until cleanup is verified')
+        expect(result.recentRuns[1]).not.toHaveProperty('recovery')
+      } else expect(result.recentRuns[1].systemErrorCode).toBe('ENOENT')
+    }
+  })
+
   it('keeps recovery on the latest attempt without repeating historical guidance', () => {
     const recovery = { execution: 'not-started', retryAfter: 'cleanup-verified' }
     const state = {

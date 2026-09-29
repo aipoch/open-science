@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises'
-import { parsePowerShellSearchCommands } from './powershell-search-parser'
+import { parsePowerShellSearchCommands, PowerShellSyntaxError } from './powershell-search-parser'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fieldChildren, withParsedNotebookSource, type Node } from './dependency-analysis-parser'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
@@ -19,8 +19,15 @@ const mapWsl2GuestPathToHost = (guestPath: string): string => {
   return windowsPath ? `${driveLetter}:${windowsPath}` : `${driveLetter}:\\`
 }
 
+export class ShellSearchScopeDeniedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ShellSearchScopeDeniedError'
+  }
+}
+
 const denied = (reason: string): never => {
-  throw new Error(
+  throw new ShellSearchScopeDeniedError(
     `Shell search scope denied: ${reason}. Search an explicit directory inside the session cwd, or use host.artifacts() for managed files.`
   )
 }
@@ -549,7 +556,12 @@ export const assertShellSearchScope = async (
     runtimeBinding?.kind !== 'wsl2-bash' &&
     runtimeBinding?.kind !== 'native-posix'
   ) {
-    const commands = await parsePowerShellSearchCommands(command, signal)
+    const commands = await parsePowerShellSearchCommands(command, signal).catch(
+      (error: unknown) => {
+        if (error instanceof PowerShellSyntaxError) return denied(error.message)
+        throw error
+      }
+    )
     if (!commands) {
       // Not a PowerShell command or parse failed, continue with bash analysis
       await analyze(command, { cwd: undefined, variables: new Map() })

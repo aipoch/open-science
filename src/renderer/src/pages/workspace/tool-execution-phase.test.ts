@@ -71,6 +71,23 @@ describe('getToolExecutionPhase', () => {
     }
   )
 
+  it.each([
+    [{ status: 'timeout', exitCode: null }, 'limit-reached'],
+    [{ status: 'cancelled', exitCode: null }, 'cancelled'],
+    [{ status: 'interrupted', exitCode: null }, 'interrupted'],
+    [{ status: 'queued', runId: 'shell-background' }, 'executing'],
+    [{ status: 'running', runId: 'shell-background' }, 'executing'],
+    [{ status: 'failed', execution: 'unknown', error: 'Shell request failed.' }, 'failed']
+  ] as const)('restores the actual Shell result %j without a hydrated Run', (result, phase) => {
+    const shellActivity = activity({
+      title: 'mcp__open-science-notebook__bash_execute',
+      providerToolName: 'mcp__open-science-notebook__bash_execute',
+      status: 'completed',
+      rawOutput: { structuredContent: result }
+    })
+    expect(getToolExecutionPhase(shellActivity, undefined)).toBe(phase)
+  })
+
   it('does not restore a Shell phase from observer status, stderr, or an unrelated query result', () => {
     const shellActivity = activity({
       title: 'mcp__open-science-notebook__bash_execute',

@@ -27,7 +27,11 @@ try {
   $tokens = $null
   $errors = $null
   $ast = [System.Management.Automation.Language.Parser]::ParseInput([Console]::In.ReadToEnd(), [ref]$tokens, [ref]$errors)
-  if ($errors.Count -gt 0) { throw 'Shell search scope denied: PowerShell syntax could not be parsed.' }
+  if ($errors.Count -gt 0) {
+    $message = (@($errors | Select-Object -First 3 | ForEach-Object { 'line {0}, column {1}: {2}' -f $_.Extent.StartLineNumber, $_.Extent.StartColumnNumber, $_.Message }) -join [Environment]::NewLine)
+    [Console]::Out.Write((ConvertTo-Json -InputObject @{ syntaxError = $message } -Compress))
+    exit 0
+  }
   $commands = @($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.CommandAst]}, $true) | ForEach-Object {
     $arguments = @()
     foreach ($element in $_.CommandElements | Select-Object -Skip 1) { $arguments += Read-Literal $element }
@@ -39,6 +43,13 @@ try {
   exit 1
 }
 `
+
+export class PowerShellSyntaxError extends Error {
+  constructor(message: string) {
+    super(`PowerShell syntax error: ${message}`)
+    this.name = 'PowerShellSyntaxError'
+  }
+}
 
 export type ParsedPowerShellCommand = { name: string | null; arguments: (string | null)[] }
 
@@ -68,6 +79,15 @@ export const parsePowerShellSearchCommands = (
         }
         try {
           const value: unknown = JSON.parse(stdout.replace(/^\uFEFF/, ''))
+          if (
+            value !== null &&
+            typeof value === 'object' &&
+            'syntaxError' in value &&
+            typeof value.syntaxError === 'string'
+          ) {
+            reject(new PowerShellSyntaxError(value.syntaxError.slice(0, 1_000)))
+            return
+          }
           if (
             !Array.isArray(value) ||
             value.some(

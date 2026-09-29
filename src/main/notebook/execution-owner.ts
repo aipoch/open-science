@@ -1808,7 +1808,14 @@ class NotebookExecutionOwner {
           })
           // Cancellation must report an unconfirmed stop to its owning turn. Ordinary launch/exit
           // cleanup failures retain the existing result and recovery instructions for their caller.
-          if (!ownedTreeReaped && lifecycleSignal.aborted) throw new NotebookExecutionStopError()
+          if (!ownedTreeReaped && lifecycleSignal.aborted) {
+            throw new NotebookExecutionStopError(undefined, {
+              recovery: terminalized.run.recovery ?? {
+                execution: 'may-have-run',
+                retryAfter: 'cleanup-verified'
+              }
+            })
+          }
           const result = terminalized.result
           if (!result) {
             return publicShellResult(terminalized.run)

@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { ShellCellSession } from './shell-cell-session'
+import { ShellCellSession, shellFailureResult } from './shell-cell-session'
 import { dirname } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
-import { assertShellSearchScope } from './shell-search-scope'
+import { assertShellSearchScope, ShellSearchScopeDeniedError } from './shell-search-scope'
 import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 
@@ -72,30 +72,6 @@ type NotebookShellResult = {
   // host stack/errno into a tool result or copy them into the user's command stderr.
   failureDiagnostic?: Record<string, unknown>
 }
-
-const shellSystemErrorCode = (error: unknown): string | undefined => {
-  if (error === null || typeof error !== 'object') return undefined
-  try {
-    const code = (error as NodeJS.ErrnoException).code
-    return typeof code === 'string' && /^E[A-Z0-9]{1,31}$/u.test(code) ? code : undefined
-  } catch {
-    return undefined
-  }
-}
-
-const shellSystemErrorFields = (error: unknown): Pick<NotebookShellResult, 'systemErrorCode'> => {
-  const code = shellSystemErrorCode(error)
-  return code ? { systemErrorCode: code } : {}
-}
-
-const shellStartFailure = (error: unknown): NotebookShellResult => ({
-  stdout: '',
-  stderr: '',
-  exitCode: null,
-  errorCode: 'shell-start-failed',
-  ...shellSystemErrorFields(error),
-  failureDiagnostic: runtimeChildProcessErrorFields(error)
-})
 
 type NotebookShellProcessRequest = {
   laneKey?: string
@@ -304,7 +280,10 @@ class ShellPreparationError extends Error {
     readonly result: NotebookShellResult,
     readonly retryCleanup?: () => Promise<boolean>
   ) {
-    super(result.stderr)
+    super(
+      result.stderr ||
+        String(result.failureDiagnostic?.error ?? result.errorCode ?? 'Shell preparation failed.')
+    )
   }
 }
 
@@ -361,14 +340,29 @@ const prepareShellLaunchOptions = async (
     })
   }
   const runtimePlatform = shellRuntimePlatform(runtimeBinding, hostPlatform)
-  await assertShellSearchScope(
-    options.command,
-    options.cwd,
-    options.grantedRoots ?? [],
-    runtimePlatform,
-    options.signal,
-    runtimeBinding
-  )
+  try {
+    await assertShellSearchScope(
+      options.command,
+      options.cwd,
+      options.grantedRoots ?? [],
+      runtimePlatform,
+      options.signal,
+      runtimeBinding
+    )
+  } catch (error) {
+    if (options.signal?.aborted) {
+      throw new ShellPreparationError({ stdout: '', stderr: '', exitCode: null, cancelled: true })
+    }
+    throw new ShellPreparationError(
+      error instanceof ShellSearchScopeDeniedError
+        ? {
+            ...shellFailureResult(error),
+            errorCode: 'shell-command-blocked',
+            stderr: error.message
+          }
+        : shellFailureResult(error)
+    )
+  }
 
   let shellEnv: NodeJS.ProcessEnv
   let workloadCacheEnv: NodeJS.ProcessEnv
@@ -386,7 +380,7 @@ const prepareShellLaunchOptions = async (
     if (options.inputRoot) shellEnv.OPEN_SCIENCE_INPUT_DIR = options.inputRoot
     else delete shellEnv.OPEN_SCIENCE_INPUT_DIR
   } catch (error) {
-    throw new ShellPreparationError(shellStartFailure(error))
+    throw new ShellPreparationError(shellFailureResult(error))
   }
 
   const platform = hostPlatform
@@ -488,7 +482,7 @@ const prepareShellLaunchOptions = async (
       )
     }
     if (runtimeBinding.kind !== 'wsl2-bash')
-      throw new ShellPreparationError(shellStartFailure(error))
+      throw new ShellPreparationError(shellFailureResult(error))
     if (options.signal?.aborted) {
       throw new ShellPreparationError({
         stdout: '',
@@ -563,7 +557,7 @@ const runShellCommand = (
       (await prepareShellLaunch(options, options.platform, options.processSandbox).catch(
         (error) => {
           if (error instanceof ShellPreparationError) throw error
-          throw new ShellPreparationError(shellStartFailure(error))
+          throw new ShellPreparationError(shellFailureResult(error))
         }
       ))
     const { platform, invocation, baseEnv, sandboxed, endSandboxExecution } = prepared
@@ -677,7 +671,7 @@ const runShellCommand = (
       } catch {
         // The stable cleanup failure below preserves the executor's never-reject contract.
       }
-      const result = shellStartFailure(error)
+      const result = shellFailureResult(error)
       return complete ? result : withIncompleteCleanup(result, 'not-started')
     }
     // Node reports spawn failures asynchronously. An absent PID is already authoritative that
@@ -739,12 +733,7 @@ const runShellCommand = (
               // The child may have existed before ownership failed. A numeric exit was never
               // observed, so retain the original error without claiming it never executed.
               const result: NotebookShellResult = {
-                stdout: '',
-                stderr: '',
-                exitCode: null,
-                errorCode: child.pid === undefined ? 'shell-start-failed' : 'shell-process-error',
-                ...shellSystemErrorFields(error),
-                failureDiagnostic: runtimeChildProcessErrorFields(error)
+                ...shellFailureResult(error, child.pid !== undefined)
               }
               const completed = reaped ? result : withIncompleteCleanup(result, 'may-have-run')
               if (!reaped) Object.defineProperty(completed, 'ownedTreeReaped', { value: false })
@@ -921,12 +910,9 @@ const runShellCommand = (
         void terminateShellOnTimeout(child, platform, options.terminateTree).then(({ reaped }) => {
           void finish(
             {
+              ...shellFailureResult(error, child.pid !== undefined),
               stdout,
               stderr,
-              exitCode: null,
-              errorCode: child.pid === undefined ? 'shell-start-failed' : 'shell-process-error',
-              ...shellSystemErrorFields(error),
-              failureDiagnostic: runtimeChildProcessErrorFields(error),
               ...(truncated ? { truncated: true } : {})
             },
             'spawn-failed',
@@ -946,7 +932,11 @@ const runShellCommand = (
               stdout,
               stderr,
               exitCode: code,
-              ...(code !== null && code !== 0 ? { errorCode: 'shell-nonzero-exit' as const } : {}),
+              ...(code === null
+                ? { errorCode: 'shell-process-error' as const }
+                : code !== 0
+                  ? { errorCode: 'shell-nonzero-exit' as const }
+                  : {}),
               ...(truncated ? { truncated: true } : {})
             },
             'exit',
@@ -966,7 +956,11 @@ const runShellCommand = (
               stdout,
               stderr,
               exitCode: code,
-              ...(code !== null && code !== 0 ? { errorCode: 'shell-nonzero-exit' as const } : {}),
+              ...(code === null
+                ? { errorCode: 'shell-process-error' as const }
+                : code !== 0
+                  ? { errorCode: 'shell-nonzero-exit' as const }
+                  : {}),
               ...(truncated ? { truncated: true } : {})
             },
             'exit',
@@ -985,7 +979,7 @@ const runShellCommand = (
     error instanceof ShellPreparationError
       ? error.result
       : {
-          ...shellStartFailure(error),
+          ...shellFailureResult(error),
           // An unexpected rejection here is not proof that process creation never occurred.
           errorCode: 'shell-process-error'
         }
@@ -1097,14 +1091,24 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
           }
         },
         async (cell) => {
-          await assertShellSearchScope(
-            cell.command,
-            cell.cwd,
-            cell.grantedRoots ?? [],
-            shellRuntimePlatform(cell.runtimeBinding!, this.platform),
-            cell.signal,
-            cell.runtimeBinding
-          )
+          try {
+            await assertShellSearchScope(
+              cell.command,
+              cell.cwd,
+              cell.grantedRoots ?? [],
+              shellRuntimePlatform(cell.runtimeBinding!, this.platform),
+              cell.signal,
+              cell.runtimeBinding
+            )
+          } catch (error) {
+            if (!(error instanceof ShellSearchScopeDeniedError)) throw error
+            return {
+              stdout: '',
+              stderr: error.message,
+              exitCode: null,
+              errorCode: 'shell-command-blocked'
+            }
+          }
           const mutation = detectManagedRuntimeMutation({
             source: cell.command,
             surface: cell.runtimeBinding?.kind === 'powershell' ? 'powershell' : 'bash',
@@ -1112,7 +1116,14 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
             cwd: cell.cwd,
             platform: shellRuntimePlatform(cell.runtimeBinding!, this.platform)
           })
-          if (mutation) throw new Error(`MANAGED_RUNTIME_MUTATION_BLOCKED: ${mutation.message}`)
+          if (mutation)
+            return {
+              stdout: '',
+              stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${mutation.message}`,
+              exitCode: null,
+              errorCode: 'shell-command-blocked'
+            }
+          return undefined
         },
         Boolean(this.processSandbox)
       )

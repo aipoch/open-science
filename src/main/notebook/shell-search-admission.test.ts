@@ -47,7 +47,16 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
       })
       .then(async (prepared) => {
         const result = await prepared.execute()
-        if (result.exitCode !== 0) throw new Error(result.stderr)
+        if (result.errorCode === 'shell-start-failed') {
+          // Host exceptions are retained privately, never forged as command stderr.
+          expect(result.stderr).toBe('')
+          expect(result.failureDiagnostic?.error).toBe(reachedSandbox.message)
+          throw new Error(String(result.failureDiagnostic?.error))
+        }
+        if (result.exitCode !== 0) {
+          expect(result.errorCode).toBe('shell-command-blocked')
+          throw new Error(result.stderr)
+        }
       })
       .finally(() => adapter.shutdown())
     return { result, wrap, reachedSandbox }
@@ -71,6 +80,7 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
       environment: { PATH: probeBin },
       command: 'printf launched > started; find / -name chart.png'
     })
+    expect(denied).toMatchObject({ errorCode: 'shell-command-blocked', exitCode: null })
     expect(denied.stderr).toMatch(/search scope denied/i)
     await expect(access(join(cwd, 'started'))).rejects.toMatchObject({ code: 'ENOENT' })
     await writeFile(join(cwd, 'chart.png'), 'fixture')

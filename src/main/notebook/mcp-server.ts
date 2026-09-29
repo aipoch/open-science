@@ -286,6 +286,7 @@ const buildShellExecuteDoc = (
     `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancelling an active command, timeout, exit, restart, or launch-context change resets its state; cancelling a queued command does not; earlier commands are never replayed. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
     exitCodeContract,
     SHELL_FAILURE_GUIDANCE,
+    'A new Shell request checks pending cleanup before running; passing that check does not make replay of earlier side effects safe.',
     'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
     'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
     'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
@@ -562,6 +563,33 @@ const clipAgentText = (text: string, limit: number): { text: string; clipped: bo
   }
 }
 
+// Shell output is serialized as JSON. Budget escaped text rather than raw code units so
+// control characters cannot displace diagnostics in the final response. stderr keeps both ends.
+const clipShellText = (
+  value: string,
+  limit: number,
+  preserveTail = false
+): { text: string; clipped: boolean } => {
+  if (JSON.stringify(value).length <= limit) return { text: value, clipped: false }
+  const candidate = (keep: number): string => {
+    const head = preserveTail ? Math.ceil(keep / 2) : keep
+    const tail = preserveTail ? Math.floor(keep / 2) : 0
+    return `${value.slice(0, head)}\n…[${value.length - keep} chars omitted; full output in notebook preview]${tail ? '\n' + value.slice(-tail) : ''}`
+  }
+  let low = 0
+  let high = Math.min(value.length, limit)
+  let text = candidate(0)
+  while (low <= high) {
+    const keep = Math.floor((low + high) / 2)
+    const next = candidate(keep)
+    if (JSON.stringify(next).length <= limit) {
+      text = next
+      low = keep + 1
+    } else high = keep - 1
+  }
+  return { text, clipped: true }
+}
+
 const clipToolDiagnostic = (text: string, limit: number): string =>
   text.length <= limit
     ? text
@@ -721,7 +749,7 @@ const compactFileEvidence = (value: unknown): Record<string, unknown> | undefine
 
 const compactExecutionOutputs = (
   value: unknown,
-  canonicalDiagnostics: readonly string[]
+  canonicalTraceback: string
 ): { outputs: unknown[]; truncated: boolean; omitted: number } => {
   if (!Array.isArray(value)) return { outputs: [], truncated: false, omitted: 0 }
 
@@ -781,22 +809,12 @@ const compactExecutionOutputs = (
 
     if (record.type === 'error') {
       const error = pickDefined(record, ['type', 'name', 'message', 'line'])
-      const duplicateMessage =
-        typeof record.message === 'string' && canonicalDiagnostics.includes(record.message)
-      const duplicateTraceback =
-        typeof record.traceback === 'string' && canonicalDiagnostics.includes(record.traceback)
-      if (duplicateMessage) {
-        delete error.message
-      }
-      if (typeof record.traceback === 'string' && !duplicateTraceback) {
+      if (typeof record.traceback === 'string' && record.traceback !== canonicalTraceback) {
         const clipped = clipAgentText(record.traceback, MIME_INLINE_LIMIT)
         error.traceback = clipped.text
         truncated = truncated || clipped.clipped
       }
-      // The top-level diagnostic already carries the entire error unless metadata adds facts.
-      if (Object.keys(error).length > 1 || (!duplicateMessage && !duplicateTraceback)) {
-        outputs.push(error)
-      }
+      outputs.push(error)
       continue
     }
 
@@ -825,18 +843,9 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     return typeof value === 'string' ? value : ''
   }
   const stdout = clipAgentText(stream('stdout'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
-  const rawStderr = stream('stderr')
-  const rawTraceback = stream('traceback')
-  // Compare original values before clipping: equal previews can hide different diagnostics.
-  const stderr = clipAgentText(
-    rawStderr === rawTraceback ? '' : rawStderr,
-    NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT
-  )
-  const traceback = clipAgentText(rawTraceback, NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
-  const compactOutputs = compactExecutionOutputs(
-    record.outputs,
-    [rawStderr, rawTraceback].filter(Boolean)
-  )
+  const stderr = clipAgentText(stream('stderr'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const traceback = clipAgentText(stream('traceback'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const compactOutputs = compactExecutionOutputs(record.outputs, stream('traceback'))
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const artifacts = compactArtifacts(record.artifacts)
   const fileEvidence = compactFileEvidence(record.fileEvidence)
@@ -853,6 +862,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     staleness.truncated
   const captureTruncated = record.truncated === true
   const truncated = captureTruncated || resultCompacted
+  const rawTraceback = stream('traceback')
   const pythonFrames = [...rawTraceback.matchAll(/^\s*File "([^"]+)", line \d+/gmu)]
   const missingModule =
     record.status === 'failed' && pythonFrames.at(-1)?.[1] === '<cell>'
@@ -971,8 +981,8 @@ const compactShellExecutionResult = (raw: unknown): Record<string, unknown> => {
   const recovery = executionRecoveryContext(record.recovery)
   const sourceStdout = record.stdout ?? text?.stdout
   const sourceStderr = record.stderr ?? text?.stderr
-  const stdout = clipAgentText(typeof sourceStdout === 'string' ? sourceStdout : '', 6_000)
-  const stderr = clipAgentText(typeof sourceStderr === 'string' ? sourceStderr : '', 6_000)
+  const stdout = clipShellText(typeof sourceStdout === 'string' ? sourceStdout : '', 6_000)
+  const stderr = clipShellText(typeof sourceStderr === 'string' ? sourceStderr : '', 6_000, true)
   const workingFiles = Array.isArray(record.workingFiles)
     ? record.workingFiles.slice(0, MAX_EXECUTION_FILES).flatMap((value) => {
         const file = asRecord(value)
@@ -1174,11 +1184,19 @@ const compactStateRun = (
   const output = diagnosticOutput ?? displayOutput
   const outputPreview =
     includeOutputPreview && typeof output === 'string'
-      ? clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT).text
+      ? (record.kernelKind === 'bash'
+          ? clipShellText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT, true)
+          : clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT)
+        ).text
+      : undefined
+  const shellResult =
+    includeOutputPreview && record.kernelKind === 'bash'
+      ? compactShellExecutionResult(record)
       : undefined
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const compactedStaleness = compactStaleness(staleness, STATE_STALENESS_LIMITS)
-  const recovery = includeOutputPreview ? executionRecoveryContext(record.recovery) : undefined
+  const recovery =
+    includeOutputPreview && !shellResult ? executionRecoveryContext(record.recovery) : undefined
 
   return {
     ...pickDefined(record, [
@@ -1197,7 +1215,17 @@ const compactStateRun = (
     ...(workingFiles.length ? { workingFiles } : {}),
     ...(compactedStaleness.value ? { staleness: compactedStaleness.value } : {}),
     ...(recovery ? { recovery } : {}),
-    ...(outputPreview ? { outputPreview } : {})
+    ...(outputPreview ? { outputPreview } : {}),
+    ...(shellResult
+      ? pickDefined(shellResult, [
+          'exitCode',
+          'error',
+          'errorCode',
+          'systemErrorCode',
+          'nextStep',
+          'hint'
+        ])
+      : {})
   }
 }
 
@@ -1372,6 +1400,15 @@ const shellRpcFailureResult = (error: unknown): Record<string, unknown> => {
   const rejected =
     error instanceof NotebookRpcError && error.statusCode >= 400 && error.statusCode < 500
   const detail = error instanceof NotebookRpcError ? asRecord(error.detail) : undefined
+  const recovery = executionRecoveryContext(detail?.recovery)
+  if (recovery?.retryAfter === 'cleanup-verified') {
+    return compactShellExecutionResult({
+      status: 'failed',
+      exitCode: null,
+      errorCode: 'shell-cleanup-incomplete',
+      recovery
+    })
+  }
   const message =
     error instanceof NotebookRpcError
       ? typeof error.detail === 'string'

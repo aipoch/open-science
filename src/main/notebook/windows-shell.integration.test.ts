@@ -529,7 +529,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           provisioning: false
         })
         expect(result).toMatchObject({ stdout: 'finished', exitCode: 0 })
-        expect(result.executionNotice).toBe('Shell launch context changed before this command.')
+        expect(result.executionNotice).toBe('Shell interpreter exited.')
         expect(registry.hasReceipts()).toBe(false)
         const service = new NotebookRuntimeService({
           configRoot: root,
@@ -684,8 +684,7 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
         expect(result.errorCode, diagnostic).toBeUndefined()
         expect(result.ownedTreeReaped).not.toBe(false)
         if (ending === 'exit') expect(result.exitCode).toBe(0)
-        if (ending === 'timeout')
-          expect(result.stderr).toContain(`timed out after ${POWERSHELL_PROCESS_TIMEOUT_MS}ms`)
+        if (ending === 'timeout') expect(result.status).toBe('timeout')
         if (ending === 'cancel') expect(result.cancelled).toBe(true)
         expect(registry.hasReceipts()).toBe(false)
         await expect(new ShellProcessOwnershipRegistry(root).recover()).resolves.toBeUndefined()
@@ -856,7 +855,8 @@ Write-Output "__OPEN_SCIENCE_INTERNAL__=[$env:OPEN_SCIENCE_PSMODULEPATH]"
 
       expect(result.exitCode).toBeNull()
       expect(result.stdout).toBe('')
-      expect(result.stderr).toMatch(/parse|syntax/i)
+      expect(result.errorCode).toBe('shell-command-blocked')
+      expect(result.stderr).toMatch(/PowerShell syntax error/i)
     },
     POWERSHELL_TEST_TIMEOUT_MS
   )
