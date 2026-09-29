@@ -169,8 +169,8 @@ describe('notebook shell process behavior', () => {
       recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
     })
     expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
-    expect(wrap).toHaveBeenCalledOnce()
-    expect(await adapter.shutdown()).toEqual({ reaped: false })
+    expect(wrap).toHaveBeenCalledTimes(2)
+    expect(await adapter.shutdown()).toEqual({ reaped: true })
     expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
   })
 

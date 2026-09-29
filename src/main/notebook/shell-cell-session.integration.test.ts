@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { NotebookShellProcessAdapter } from './shell-process'
 import type { NotebookShellProcessRequest } from './shell-process'
+import { NOTEBOOK_TEXT_LIMIT_BYTES, NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES } from './content-limits'
 
 // Exercise the native platform interpreter through the actual adapter and cleanup owner.
 describe('persistent platform shell cells', () => {
@@ -85,6 +86,27 @@ describe('persistent platform shell cells', () => {
     expect(
       await adapter.execute(request(command('printf "%s" "$value"', '[Console]::Write($value)')))
     ).toMatchObject({ exitCode: 0, stdout: 'kept' })
+  })
+
+  it('reserves diagnostics when stdout exceeds the cell budget', async () => {
+    const size = NOTEBOOK_TEXT_LIMIT_BYTES + 1024
+    const result = await adapter.execute(
+      request(
+        command(
+          `printf '%*s' ${size} '' | tr ' ' x; printf important >&2; false`,
+          `[Console]::Write(('x' * ${size})); [Console]::Error.Write('important'); throw 'failure'`
+        )
+      )
+    )
+    expect(result.exitCode).toBe(1)
+    expect(result.truncated).toBe(true)
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(
+      NOTEBOOK_TEXT_LIMIT_BYTES - NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES
+    )
+    expect(result.stderr).toContain('important')
+    expect(
+      await adapter.execute(request(command('printf next', '[Console]::Write("next")')))
+    ).toMatchObject({ stdout: 'next', stderr: '', exitCode: 0 })
   })
 
   it('cancels a running cell, reaps the interpreter and starts with empty state', async () => {

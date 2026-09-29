@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process'
-import { NOTEBOOK_TEXT_LIMIT_BYTES, limitUtf8 } from './content-limits'
+import {
+  NOTEBOOK_TEXT_LIMIT_BYTES,
+  NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES,
+  limitUtf8
+} from './content-limits'
 import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 
 type Launch = (
@@ -12,6 +16,7 @@ type Launch = (
 ) => Promise<{
   completion: Promise<NotebookShellResult>
   beginExecution: (command: string) => () => void
+  retryCleanup?: () => Promise<boolean>
 }>
 
 type Cell = {
@@ -40,6 +45,9 @@ export class ShellCellSession {
   private child?: ChildProcessWithoutNullStreams
   private completion?: Promise<NotebookShellResult>
   private processResult?: NotebookShellResult
+  private launchedProcess = false
+  private cleanupVerified = false
+  private retryCleanup?: () => Promise<boolean>
   private lifetime = new AbortController()
   private beginExecution?: (command: string) => () => void
   private cell?: Cell
@@ -78,10 +86,20 @@ export class ShellCellSession {
     this.closed = true
     this.lifetime.abort()
     await this.tail
-    const result = await this.completion
-    return {
-      reaped: result?.ownedTreeReaped !== false && result?.errorCode !== 'shell-cleanup-incomplete'
-    }
+    await this.completion
+    return { reaped: await this.verifyCleanup() }
+  }
+
+  private async verifyCleanup(): Promise<boolean> {
+    if (
+      (!this.launchedProcess && this.processResult?.ownedTreeReaped !== false) ||
+      this.cleanupVerified ||
+      (this.processResult?.ownedTreeReaped !== false &&
+        this.processResult?.errorCode !== 'shell-cleanup-incomplete')
+    )
+      return true
+    this.cleanupVerified = (await this.retryCleanup?.().catch(() => false)) ?? false
+    return this.cleanupVerified
   }
 
   private startup(powershell: boolean): string {
@@ -113,15 +131,17 @@ export class ShellCellSession {
     let buffer = cell.buffers[stream] + chunk
     const index = buffer.indexOf(prefix)
     const append = (value: string): void => {
-      const limited = limitUtf8(
-        value,
-        Math.max(0, NOTEBOOK_TEXT_LIMIT_BYTES - Buffer.byteLength(cell.stdout + cell.stderr))
-      )
+      const budget =
+        stream === 'stdout'
+          ? NOTEBOOK_TEXT_LIMIT_BYTES - NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES
+          : NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES - 512
+      const limited = limitUtf8(value, Math.max(0, budget - Buffer.byteLength(cell[stream])))
       cell[stream] += limited.text
       cell.truncated ||= limited.truncated
     }
     if (index < 0) {
-      const safe = Math.max(0, buffer.length - prefix.length)
+      let safe = Math.max(0, buffer.length - prefix.length)
+      if (safe > 0 && /[\uD800-\uDBFF]/u.test(buffer[safe - 1])) safe--
       append(buffer.slice(0, safe))
       cell.buffers[stream] = buffer.slice(safe)
       return
@@ -154,11 +174,7 @@ export class ShellCellSession {
   }
 
   private async run(request: NotebookShellProcessRequest): Promise<NotebookShellResult> {
-    if (
-      this.processResult?.errorCode === 'shell-cleanup-incomplete' ||
-      this.processResult?.ownedTreeReaped === false
-    )
-      return this.processResult
+    if (!(await this.verifyCleanup())) return this.processResult!
     if (this.closed || request.signal?.aborted) return cancelledResult()
     const context = JSON.stringify([
       request.cwd,
@@ -173,9 +189,8 @@ export class ShellCellSession {
     const reset = this.child && this.launchContext !== context
     if (reset) {
       this.lifetime.abort()
-      const stopped = await this.completion
-      if (stopped?.ownedTreeReaped === false || stopped?.errorCode === 'shell-cleanup-incomplete')
-        return stopped
+      await this.completion
+      if (!(await this.verifyCleanup())) return this.processResult!
     }
     request = { ...request, cwd: this.cwd ?? request.cwd }
     try {
@@ -212,6 +227,8 @@ export class ShellCellSession {
     try {
       if (!this.child) {
         this.processResult = undefined
+        this.launchedProcess = false
+        this.cleanupVerified = false
         this.launchContext = context
         const ready = Promise.withResolvers<void>()
         const launched = await this.launch(
@@ -219,6 +236,7 @@ export class ShellCellSession {
           this.startup(powershell),
           this.lifetime.signal,
           (child) => {
+            this.launchedProcess = true
             this.child = child
             child.stdout.on('data', (chunk: string) => this.accept('stdout', chunk))
             child.stderr.on('data', (chunk: string) => this.accept('stderr', chunk))
@@ -227,6 +245,7 @@ export class ShellCellSession {
           }
         )
         this.beginExecution = launched.beginExecution
+        this.retryCleanup = launched.retryCleanup
         this.completion = launched.completion.then((exit) => {
           this.child = undefined
           this.cwd = undefined
@@ -240,8 +259,10 @@ export class ShellCellSession {
               stderr:
                 cell.stderr +
                 cell.buffers.stderr +
-                exit.stderr +
-                '\nShell interpreter exited; interpreter state was reset.',
+                (timedOut && exit.cancelled && !exit.errorCode ? '' : exit.stderr) +
+                (this.launchedProcess
+                  ? '\nShell interpreter exited; interpreter state was reset.'
+                  : ''),
               ...(cell.truncated ? { truncated: true } : {})
             })
           ready.resolve()
@@ -270,7 +291,9 @@ export class ShellCellSession {
             ...completed,
             cancelled: undefined,
             exitCode: null,
-            stderr: completed.stderr + '\nShell command timed out; interpreter state was reset.'
+            stderr:
+              completed.stderr +
+              `\nShell command timed out after ${request.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS}ms; interpreter state was reset.`
           }
         : { ...completed, cwdBefore: request.cwd }
     } catch (error) {

@@ -490,6 +490,7 @@ const runShellCommand = (
     terminateTree?: (process: ChildProcess) => Promise<ProcessTreeKillResult>
     previewAvailable?: () => boolean
     onProcess?: (child: ChildProcessWithoutNullStreams) => void
+    onCleanupRetry?: (retry: () => Promise<boolean>) => void
   }
 ): Promise<NotebookShellResult> => {
   const run = async (): Promise<NotebookShellResult> => {
@@ -727,36 +728,42 @@ const runShellCommand = (
           // verified, receipt removal may retry without consuming that proof or signalling a PID.
           let nativeTreeReaped = processesTerminated
           const confirmNativeTermination = sandboxed?.confirmProcessTreeTermination
-          complete = cleanupCompleted(
-            await cleanupSandboxWithRetry(cleanupReason, {
-              processesTerminated,
-              ...(!processesTerminated && confirmNativeTermination
+          const cleanupOutcome: NotebookSandboxProcessOutcome = {
+            processesTerminated,
+            ...(!processesTerminated && confirmNativeTermination
+              ? {
+                  confirmTermination: async () => {
+                    nativeTreeReaped ||= await confirmNativeTermination()
+                    if (nativeTreeReaped) releaseProcessOwnership?.()
+                    return nativeTreeReaped
+                  }
+                }
+              : !processesTerminated && runtimeBinding.kind === 'native-posix'
                 ? {
                     confirmTermination: async () => {
-                      nativeTreeReaped ||= await confirmNativeTermination()
-                      if (nativeTreeReaped) releaseProcessOwnership?.()
-                      return nativeTreeReaped
+                      const { reaped } = await terminateShellOnTimeout(
+                        child,
+                        platform,
+                        options.terminateTree
+                      )
+                      if (reaped) releaseProcessOwnership?.()
+                      return reaped
                     }
                   }
-                : !processesTerminated && runtimeBinding.kind === 'native-posix'
-                  ? {
-                      confirmTermination: async () => {
-                        const { reaped } = await terminateShellOnTimeout(
-                          child,
-                          platform,
-                          options.terminateTree
-                        )
-                        if (reaped) releaseProcessOwnership?.()
-                        return reaped
-                      }
-                    }
-                  : {})
-            })
-          )
+                : {})
+          }
+          const retryCleanup = async (): Promise<boolean> => {
+            const done = cleanupCompleted(
+              await cleanupSandboxWithRetry(cleanupReason, cleanupOutcome)
+            )
+            if (done) releaseProcessOwnership?.()
+            return done
+          }
+          options.onCleanupRetry?.(retryCleanup)
+          complete = await retryCleanup()
         } catch {
           complete = false
         }
-        if (complete) releaseProcessOwnership?.()
         const normalizedResult = { ...result, stderr }
         const completed = complete
           ? normalizedResult
@@ -984,6 +991,7 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
               beginExecution: () => () => undefined
             }
           }
+          let retryCleanup: (() => Promise<boolean>) | undefined
           return {
             completion: runShellCommand({
               ...cell,
@@ -991,11 +999,15 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
               platform: this.platform,
               preparedLaunch,
               onProcess,
+              onCleanupRetry: (retry) => {
+                retryCleanup = retry
+              },
               ...this.ownershipClaim(cell)
             }),
             beginExecution: (command) =>
               preparedLaunch.sandboxed?.beginExecution?.({ commandText: command }) ??
-              (() => undefined)
+              (() => undefined),
+            retryCleanup: async () => (await retryCleanup?.()) ?? false
           }
         },
         async (cell) => {

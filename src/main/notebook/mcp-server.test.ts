@@ -330,7 +330,9 @@ describe('notebook MCP server config', () => {
     ].join('\n')
 
     expect(agentGuidance).not.toMatch(/\b4,?000\b/)
-    expect(REPL_EXECUTE_DOC).toContain('Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR')
+    expect(REPL_EXECUTE_DOC).toContain(
+      'Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR'
+    )
     expect(REPL_EXECUTE_DOC).toContain('shared with Python/R')
     expect(REPL_EXECUTE_DOC).not.toContain('Do not echo large data')
   })

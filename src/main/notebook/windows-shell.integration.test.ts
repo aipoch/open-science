@@ -264,7 +264,10 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       let receiptRemoval: ReturnType<typeof vi.spyOn> | undefined
       let allNativeProofs = false
       try {
-        const a = await service.executeShell({ ...scope('A'), command: `Write-Output '${nonceA}'` })
+        const a = await service.executeShell({
+          ...scope('A'),
+          command: `Write-Output '${nonceA}'; exit 0`
+        })
         expect(a).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
         expect(a.stdout).toContain(nonceA)
         expect(info).toHaveBeenCalledWith(
@@ -284,7 +287,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         for (let attempt = 0; attempt < 2; attempt++) {
           const blocked = await service.executeShell({
             ...scope('B'),
-            command: `Write-Output '${nonceB}'`
+            command: `Write-Output '${nonceB}'; exit 0`
           })
           expect(blocked).toMatchObject({
             errorCode: 'shell-cleanup-incomplete',
@@ -314,13 +317,16 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         if (receiptRetry) {
           const stillBlocked = await service.executeShell({
             ...scope('B'),
-            command: `Write-Output '${nonceB}'`
+            command: `Write-Output '${nonceB}'; exit 0`
           })
           expect(stillBlocked).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
           expect(proofs).toHaveLength(1)
           expect(await readFile(join(root, 'commands', receiptName), 'utf8')).toBe(receipt)
         }
-        const b = await service.executeShell({ ...scope('B'), command: `Write-Output '${nonceB}'` })
+        const b = await service.executeShell({
+          ...scope('B'),
+          command: `Write-Output '${nonceB}'; exit 0`
+        })
         expect(b).toMatchObject({ exitCode: 0 })
         expect(b.errorCode).toBeUndefined()
         expect(b.stdout.trim()).toBe(nonceB)
@@ -455,7 +461,8 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         await expect(lifecycle.status(), JSON.stringify(result)).resolves.toMatchObject({
           provisioning: false
         })
-        expect(result).toMatchObject({ stdout: 'finished', stderr: '', exitCode: 0 })
+        expect(result).toMatchObject({ stdout: 'finished', exitCode: 0 })
+        expect(result.stderr).toContain('interpreter state was reset')
         expect(registry.hasReceipts()).toBe(false)
         const service = new NotebookRuntimeService({
           configRoot: root,
@@ -626,6 +633,46 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
     POWERSHELL_TEST_TIMEOUT_MS
   )
 
+  it(
+    'releases ownership after retrying temporary cleanup with termination already proved',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-cleanup-retry-'))
+      const registry = new ShellProcessOwnershipRegistry(root)
+      const sandbox = fixtureSandbox(root, 'process.stdout.write("finished")')
+      const outcomes: boolean[] = []
+      const adapter = new NotebookShellProcessAdapter(
+        'win32',
+        {
+          wrap: async (invocation) => {
+            const wrapped = await sandbox.wrap(invocation)
+            return {
+              ...wrapped,
+              cleanup: async (reason, outcome) => {
+                outcomes.push(outcome.processesTerminated)
+                const result = await wrapped.cleanup(reason, outcome)
+                return { ...result, temporaryResourcesRemoved: outcomes.length > 1 }
+              }
+            }
+          }
+        },
+        registry
+      )
+      try {
+        const result = await adapter.execute(shellRequest(root))
+        expect(result).toMatchObject({ errorCode: 'shell-cleanup-incomplete', stdout: 'finished' })
+        expect(outcomes).toEqual([true])
+        expect(registry.hasReceipts()).toBe(true)
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+        expect(outcomes).toEqual([true, true])
+        expect(registry.hasReceipts()).toBe(false)
+      } finally {
+        const shutdown = await adapter.shutdown()
+        if (shutdown.reaped) await rm(root, { recursive: true, force: true })
+      }
+    },
+    POWERSHELL_TEST_TIMEOUT_MS
+  )
+
   it('retains the receipt when the native termination proof cannot be verified', async () => {
     const root = await mkdtemp(join(tmpdir(), 'shell-missing-proof-'))
     const registry = new ShellProcessOwnershipRegistry(root)
@@ -674,7 +721,7 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
       const result = await adapter.execute(shellRequest(root))
       expect(result).toMatchObject({
         stdout: 'x'.repeat(256 * 1024),
-        stderr: 'y'.repeat(12 * 1024),
+        stderr: 'y'.repeat(12 * 1024) + '\nShell interpreter exited; interpreter state was reset.',
         exitCode: 0
       })
       expect(result.truncated).not.toBe(true)
