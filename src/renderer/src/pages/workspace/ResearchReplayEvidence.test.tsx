@@ -55,6 +55,37 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 describe('static original evidence reader', () => {
+  it.each(['', undefined])(
+    'reads imported Notebook evidence without a live workspace (%s)',
+    async (workspaceCwd) => {
+      render(
+        <ResearchReplayEvidence
+          source={{ ...source, workspaceCwd }}
+          step={step}
+          resources={[]}
+          onBack={vi.fn()}
+          onOpenResource={vi.fn()}
+        />
+      )
+      await screen.findByText(run.script)
+      expect(screen.getByText(run.text.stdout)).toBeTruthy()
+      expect(notebook.getReference).toHaveBeenCalledWith({
+        projectId: 'project',
+        sessionId: 'source',
+        workspaceCwd: ''
+      })
+      expect(notebook.state).toHaveBeenCalledWith({
+        projectId: 'project',
+        sessionId: 'source',
+        workspaceCwd: '',
+        runIds: [run.runId]
+      })
+      expect(notebook.mount).not.toHaveBeenCalled()
+      expect(notebook.attach).not.toHaveBeenCalled()
+      expect(notebook.execute).not.toHaveBeenCalled()
+    }
+  )
+
   it('reads the exact recorded run, preserves long outputs and never starts execution', async () => {
     const stdout = `${'archived '.repeat(17_000)}FINAL ORIGINAL RESULT`
     notebook.state.mockResolvedValue({ runs: [{ ...run, text: { ...run.text, stdout } }] })

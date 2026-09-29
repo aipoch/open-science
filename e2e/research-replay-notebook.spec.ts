@@ -18,7 +18,8 @@ test('asks about a standalone Notebook input and restores its exact step offset 
     id: 'imported-standalone-notebook',
     projectId,
     title: 'Archived standalone Notebook',
-    cwd: '/archived/workspace',
+    // Native package import deliberately removes the originating machine's workspace path.
+    cwd: '',
     status: 'idle',
     messages: [],
     activities: [],

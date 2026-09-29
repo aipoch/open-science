@@ -48,11 +48,11 @@ const RecordedNotebook = ({
       setError(true)
     }, 10_000)
     const read = async (): Promise<void> => {
-      if (!source.workspaceCwd) throw new Error('Notebook not recorded')
       const request = {
         projectId: source.projectId,
         sessionId: source.sessionId,
-        workspaceCwd: source.workspaceCwd
+        // Imported history has no live workspace; the persisted reference establishes presence.
+        workspaceCwd: source.workspaceCwd ?? ''
       }
       if (!(await window.api.notebook.getReference(request)))
         throw new Error('Notebook not recorded')

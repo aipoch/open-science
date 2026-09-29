@@ -143,6 +143,31 @@ describe('complete compact Notebook index', () => {
 })
 
 describe('on-demand Notebook detail reads', () => {
+  it.each(['', undefined])(
+    'reads imported history without a live workspace (%s)',
+    async (workspaceCwd) => {
+      const original = run('imported-run')
+      const api = apiFor([original])
+      const detail = await readReplayNotebookRun(
+        api,
+        { ...source, workspaceCwd },
+        indexReplayRun(original)
+      )
+      expect(detail.status).toBe('ready')
+      expect(api.getReference).toHaveBeenCalledWith({
+        projectId: 'project',
+        sessionId: 'source',
+        workspaceCwd: ''
+      })
+      expect(api.state).toHaveBeenCalledWith({
+        projectId: 'project',
+        sessionId: 'source',
+        workspaceCwd: '',
+        runIds: ['imported-run']
+      })
+    }
+  )
+
   it('uses exact runIds and preserves recorded details only', async () => {
     const original = run('one')
     const api = apiFor([original])

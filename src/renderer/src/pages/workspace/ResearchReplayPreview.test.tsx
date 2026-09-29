@@ -6,7 +6,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
 import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
-import type { ReplayDocument, ReplayStep } from '../../../../shared/replay'
+import type { ReplayDocument, ReplayResource, ReplayStep } from '../../../../shared/replay'
 import type {
   ReplayViewState,
   ResearchWorkspaceSnapshot
@@ -250,9 +250,7 @@ describe('ResearchReplayPreview lifecycle', () => {
 
   it('pins exact artifact versions and reports unavailable evidence without a head fallback', async () => {
     const open = vi.spyOn(usePreviewWorkbenchStore.getState(), 'upsertAndActivateItem')
-    render(<ResearchReplayPreview item={item()} />)
-    await screen.findByTestId('replay-panel')
-    const resource = {
+    const resource: ReplayResource = {
       id: 'artifact-version:v1',
       name: 'figure.png',
       projectId: 'project',
@@ -260,19 +258,127 @@ describe('ResearchReplayPreview lifecycle', () => {
       artifactId: 'figure',
       versionId: 'v1',
       locator: '/mutable/figure.png',
-      availability: 'recorded' as const
+      availability: 'recorded'
     }
+    mocks.load.mockResolvedValue({ ...doc(), resources: [resource] })
+    render(<ResearchReplayPreview item={item()} />)
+    await screen.findByTestId('replay-panel')
     act(() => props().onOpenEvidence(resource, step))
     expect(open).toHaveBeenCalledWith(
       expect.objectContaining({
         selectedVersionId: 'v1',
         artifactId: 'figure',
+        managedFileId: 'figure',
+        source: 'artifact',
         path: expect.stringContaining('v1')
       })
     )
     expect(open.mock.calls[0][0]).not.toHaveProperty('path', resource.locator)
     act(() => props().onOpenEvidence({ ...resource, versionId: undefined }, step))
     expect(open).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('The recorded evidence is unavailable.')).toBeTruthy()
+    open.mockRestore()
+  })
+
+  it.each(['archive.zip', 'notes.txt'])(
+    'opens archived upload %s at its exact Version and original storage owner',
+    async (name) => {
+      const open = vi.spyOn(usePreviewWorkbenchStore.getState(), 'upsertAndActivateItem')
+      const resource: ReplayResource = {
+        id: 'upload-version:old-version',
+        source: 'upload',
+        name,
+        projectId: 'project',
+        sessionId: 'original-upload-owner',
+        fileId: 'uploaded-file',
+        versionId: 'old-version',
+        versionNumber: 2,
+        locator: '/mutable/latest-file',
+        availability: 'recorded'
+      }
+      const resourceStep = { ...step, resourceIds: [resource.id] }
+      mocks.load.mockResolvedValue({
+        ...doc(),
+        resources: [resource],
+        branches: [{ ...doc().branches[0], steps: [resourceStep] }]
+      })
+      render(<ResearchReplayPreview item={item()} />)
+      await screen.findByTestId('replay-panel')
+      act(() => props().onOpenEvidence(resource, resourceStep))
+      expect(open).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          projectId: 'project',
+          sessionId: 'original-upload-owner',
+          source: 'upload',
+          name,
+          managedFileId: 'uploaded-file',
+          selectedVersionId: 'old-version',
+          versionNumber: 2,
+          path: 'upload-version:project/original-upload-owner/uploaded-file/old-version'
+        })
+      )
+      expect(open.mock.lastCall![0]).not.toHaveProperty('artifactId')
+      expect(open.mock.lastCall![0]).toHaveProperty(
+        'format',
+        name.endsWith('.zip') ? 'unknown' : 'text'
+      )
+      // The static evidence view uses the same archive-scoped upload action as the material drawer.
+      act(() => props().onOpenEvidence(undefined, resourceStep))
+      fireEvent.click(screen.getByRole('button', { name }))
+      expect(open).toHaveBeenCalledTimes(2)
+      expect(open.mock.calls[1][0]).toEqual(open.mock.calls[0][0])
+      expect(screen.queryByText('The recorded evidence is unavailable.')).toBeNull()
+      open.mockRestore()
+    }
+  )
+
+  it('rejects foreign and incomplete resources instead of trusting caller metadata or a mutable path', async () => {
+    const open = vi.spyOn(usePreviewWorkbenchStore.getState(), 'upsertAndActivateItem')
+    const resource: ReplayResource = {
+      id: 'upload-version:old-version',
+      source: 'upload',
+      name: 'archived.txt',
+      projectId: 'project',
+      sessionId: 'upload-owner',
+      fileId: 'upload',
+      versionId: 'old-version',
+      availability: 'recorded'
+    }
+    const unavailable = { ...resource, id: 'unavailable', availability: 'unavailable' as const }
+    const unversioned = {
+      ...resource,
+      id: 'unversioned',
+      versionId: undefined,
+      locator: '/mutable/latest'
+    }
+    const foreignProject = { ...resource, id: 'foreign-project', projectId: 'another-project' }
+    const foreignArtifact = {
+      ...resource,
+      id: 'foreign-artifact',
+      source: 'artifact' as const,
+      artifactId: 'foreign',
+      fileId: undefined
+    }
+    mocks.load.mockResolvedValue({
+      ...doc(),
+      resources: [resource, unavailable, unversioned, foreignProject, foreignArtifact]
+    })
+    render(<ResearchReplayPreview item={item()} />)
+    await screen.findByTestId('replay-panel')
+    for (const invalid of [
+      { ...resource, id: 'not-in-this-archive' },
+      { ...resource, projectId: 'another-project' },
+      { ...resource, sessionId: 'another-owner' },
+      { ...resource, fileId: 'another-file' },
+      { ...resource, versionId: 'latest-version' },
+      { ...resource, source: 'artifact' as const, artifactId: 'upload' },
+      unavailable,
+      unversioned,
+      foreignProject,
+      foreignArtifact
+    ])
+      act(() => props().onOpenEvidence(invalid, step))
+    expect(open).not.toHaveBeenCalled()
     expect(screen.getByText('The recorded evidence is unavailable.')).toBeTruthy()
     open.mockRestore()
   })

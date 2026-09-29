@@ -10,6 +10,7 @@ import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import type { ReplayDocument, ReplayResource, ReplayStep } from '../../../../shared/replay'
 import type { ReplayViewState } from '../../../../shared/research-workspace'
 import { createArtifactVersionLocator } from '../../../../shared/artifact-provenance'
+import { createUploadVersionReference } from '../../../../shared/uploads'
 import { ReplayPanel } from './replay/ReplayPanel'
 import type { ReplayStepContext } from './replay/replay-context'
 import { createPreviewFileItem } from './preview-file-item'
@@ -139,34 +140,58 @@ const ResearchReplaySession = ({ item, isActive = true }: Props): React.JSX.Elem
       setEvidenceStep(step)
       return
     }
+    // An upload can be owned by a different Session while still being archived in this research.
+    // Only the loaded source's exact record may authorize that cross-Session preview.
+    const recorded = loaded?.document.resources.find(
+      (candidate) =>
+        candidate.id === resource.id &&
+        (candidate.source ?? 'artifact') === (resource.source ?? 'artifact') &&
+        candidate.projectId === resource.projectId &&
+        candidate.sessionId === resource.sessionId &&
+        candidate.artifactId === resource.artifactId &&
+        candidate.fileId === resource.fileId &&
+        candidate.versionId === resource.versionId
+    )
+    const source = recorded?.source ?? 'artifact'
+    const fileId = source === 'upload' ? recorded?.fileId : recorded?.artifactId
     if (
-      !resource.artifactId ||
-      !resource.versionId ||
-      resource.availability !== 'recorded' ||
-      resource.projectId !== projectId ||
-      resource.sessionId !== sourceSessionId
+      !recorded ||
+      !fileId ||
+      !recorded.versionId ||
+      !recorded.sessionId ||
+      recorded.availability !== 'recorded' ||
+      recorded.projectId !== projectId ||
+      (source === 'artifact' && recorded.sessionId !== sourceSessionId)
     ) {
       setSaveError(t('The recorded evidence is unavailable.'))
       return
     }
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(
       createPreviewFileItem({
-        id: `replay-evidence:${projectId}:${sourceSessionId}:${resource.versionId}`,
+        id: `replay-evidence:${projectId}:${sourceSessionId}:${source}:${fileId}:${recorded.versionId}`,
         projectId,
-        sessionId: sourceSessionId,
-        path: createArtifactVersionLocator({
-          projectId,
-          appSessionId: sourceSessionId,
-          artifactId: resource.artifactId,
-          versionId: resource.versionId
-        }),
-        name: resource.name,
-        mimeType: resource.mimeType,
-        artifactId: resource.artifactId,
-        selectedVersionId: resource.versionId,
-        versionNumber: resource.versionNumber,
-        size: resource.size,
-        source: 'artifact'
+        sessionId: recorded.sessionId,
+        path:
+          source === 'upload'
+            ? createUploadVersionReference(recorded.versionId, {
+                projectId,
+                sessionId: recorded.sessionId,
+                fileId
+              })
+            : createArtifactVersionLocator({
+                projectId,
+                appSessionId: recorded.sessionId,
+                artifactId: fileId,
+                versionId: recorded.versionId
+              }),
+        name: recorded.name,
+        mimeType: recorded.mimeType,
+        artifactId: source === 'artifact' ? fileId : undefined,
+        managedFileId: fileId,
+        selectedVersionId: recorded.versionId,
+        versionNumber: recorded.versionNumber,
+        size: recorded.size,
+        source
       })
     )
   }

@@ -115,11 +115,12 @@ const readRecordedNotebookRun = async (
 ): Promise<ReplayNotebookRunDetails> => {
   try {
     signal?.throwIfAborted()
-    if (!source.workspaceCwd) return { status: 'unavailable', reason: 'not-recorded' }
+    // Imports clear the original workspace path. Persisted history is scoped by project/Session;
+    // getReference below verifies it exists before any state read.
     const request = {
       projectId: source.projectId,
       sessionId: source.sessionId,
-      workspaceCwd: source.workspaceCwd
+      workspaceCwd: source.workspaceCwd ?? ''
     }
     if (!(await api.getReference(request))) return { status: 'unavailable', reason: 'not-recorded' }
     signal?.throwIfAborted()
