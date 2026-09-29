@@ -239,6 +239,8 @@ const notebookRunCandidate = (value: unknown): boolean => {
     (value.kernelEpochId !== undefined &&
       (typeof value.kernelEpochId !== 'string' || value.kernelEpochId.length === 0)) ||
     (value.kernelDispatched !== undefined && typeof value.kernelDispatched !== 'boolean') ||
+    (value.replPersistentBindings !== undefined &&
+      (value.replPersistentBindings !== true || value.kernelKind !== 'repl')) ||
     (value.runtimeId !== undefined && typeof value.runtimeId !== 'string') ||
     (value.kernelKind !== undefined &&
       value.kernelKind !== 'python' &&

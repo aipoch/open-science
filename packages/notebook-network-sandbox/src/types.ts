@@ -90,6 +90,7 @@ export type NotebookSandboxCommand = Readonly<{
   // Opt-in Job Object ownership for standard-mode Windows process trees that require verifiable
   // descendant cleanup.
   superviseProcessTree?: boolean
+  windowsShellControlPipe?: string
   /** Transient R admission decision; launch must retain this protection requirement. */
   windowsProtectionRequired?: boolean
   /** A durable grant used for admission must still be authorized at launch. */

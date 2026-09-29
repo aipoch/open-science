@@ -256,7 +256,7 @@ const REPL_EXECUTE_DOC = [
   'Load Remote Compute (SSH) (`remote-compute-ssh`) for jobs. Compute Environment Setup (`compute-env-setup`) prepares named environment setup/repair instructions for users or administrators to execute.',
   HOST_SDK_DISCOVERY_GUIDANCE,
   'Use foreground when reasoning needs the result now; use background:true only for longer independent work. Background-safe calls include host.mcp, host.compute, host.llm, host.delegate, and read-only Host SDK operations. host.viewImage, host.agents.switch, and live user input are unsafe in background execution because their results require the live foreground response. Save the returned runId; do not poll frequently. A Turn end or MCP disconnect does not cancel an accepted background Run; cancel it explicitly with background_run. If a Host SDK operation reports BACKGROUND_HOST_METHOD_UNSAFE, continue in foreground.',
-  'Globals persist; trailing expressions return results for Agent inspection. Defaults allow the Host SDK maximum 30-minute bounded wait; timeoutMs overrides. To hand off large data from the REPL to Python/R, write under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis.'
+  'Declarations and globals persist until restart/process loss; top-level return/await and later redeclaration work. No replay. Expressions return results. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -280,7 +280,7 @@ const buildShellExecuteDoc = (
   return [
     agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
-    `Stateless: each call is a fresh process, so cwd, variables, jobs, and functions do not persist. It starts in the data-kernel workspace and shares the handoff directory exposed as ${handoffVariable}; do not resolve handoff relative to cwd.`,
+    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, or launch-context change resets its state; earlier commands are never replayed. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
     exitCodeContract,
     'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
     'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
@@ -1589,7 +1589,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   },
   {
     name: 'bash_execute',
-    title: 'Execute a stateless shell command',
+    title: 'Execute a command in the session shell',
     description: BASH_EXECUTE_DOC,
     method: 'executeShell',
     inputSchema: bashExecuteToolSchema,

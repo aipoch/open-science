@@ -120,6 +120,8 @@ const analyzeReplTree = (
   let unresolvedWrites = false
   let external = false
   let conditionalDepth = 0
+  let functionDepth = 0
+  const persistentLocals = new Set<string>()
   const scopes: Array<Map<string, Value>> = [new Map()]
   const local = (name: string): Map<string, Value> | undefined =>
     scopes.findLast((scope) => scope.has(name))
@@ -159,7 +161,11 @@ const analyzeReplTree = (
   }
   const globalTarget = (node: Node | null): string | undefined => {
     if (!node) return undefined
-    if (node.type === 'identifier' && !local(node.text)) return node.text
+    if (
+      node.type === 'identifier' &&
+      (!local(node.text) || (persistentLocals.has(node.text) && local(node.text) === scopes[0]))
+    )
+      return node.text
     if (
       ['member_expression', 'subscript_expression'].includes(node.type) &&
       dotted(fieldChild(node, 'object')) === 'globalThis'
@@ -196,7 +202,9 @@ const analyzeReplTree = (
       shared: receiverRoots.length > 0
     })
     conditionalDepth++
+    functionDepth++
     const result = visit(fieldChild(node, 'body'))
+    functionDepth--
     conditionalDepth--
     scopes.pop()
     return result
@@ -219,6 +227,13 @@ const analyzeReplTree = (
         for (const source of value.shared ? value.roots : [])
           if (source !== name) aliases.push({ target: name, source, kind: 'possible-reference' })
       }
+      if (target.type === 'identifier' && persistentLocals.has(name) && local(name) === scopes[0])
+        scopes[0].set(name, {
+          ...value,
+          text: update || conditionalDepth ? undefined : value.text,
+          roots: [name],
+          shared: true
+        })
       return
     }
     if (target.type === 'identifier') {
@@ -339,12 +354,42 @@ const analyzeReplTree = (
     unsupported()
     return combined
   }
+  const bindPersistent = (node: Node | null, value: Value): void => {
+    if (!node) return
+    if (node.type === 'identifier' || node.type === 'shorthand_property_identifier_pattern') {
+      persistentLocals.add(node.text)
+      assign(node, value)
+      scopes[0].set(node.text, { ...value, roots: [node.text], shared: true })
+    } else if (node.type === 'pair_pattern') {
+      bindPersistent(fieldChild(node, 'value'), value)
+    } else {
+      unsupported('dynamic-assignment')
+      if (['assignment_pattern', 'object_assignment_pattern'].includes(node.type))
+        bindPersistent(fieldChild(node, 'left'), empty())
+      else node.namedChildren.forEach((child) => bindPersistent(child, empty()))
+    }
+  }
   const visit = (node: Node | null): Value => {
     if (!node) return empty()
     switch (node.type) {
+      case 'program': {
+        const values: Value[] = []
+        for (const statement of node.namedChildren) {
+          values.push(visit(statement))
+          if (
+            context?.replPersistentBindings &&
+            ['return_statement', 'throw_statement'].includes(statement.type)
+          )
+            break
+        }
+        return merge(values)
+      }
       case 'identifier': {
         const binding = local(node.text)
-        if (binding) return binding.get(node.text)!
+        if (binding) {
+          if (binding === scopes[0] && persistentLocals.has(node.text)) global(node.text)
+          return binding.get(node.text)!
+        }
         if (builtins.has(node.text)) return empty()
         return global(node.text)
       }
@@ -389,7 +434,13 @@ const analyzeReplTree = (
       case 'variable_declarator': {
         const name = fieldChild(node, 'name')
         const value = visit(fieldChild(node, 'value'))
-        if (name?.type === 'identifier') scopes.at(-1)!.set(name.text, value)
+        if (
+          context?.replPersistentBindings &&
+          functionDepth === 0 &&
+          (node.parent?.type === 'variable_declaration' || node.parent?.parent?.id === root.id)
+        )
+          bindPersistent(name, value)
+        else if (name?.type === 'identifier') scopes.at(-1)!.set(name.text, value)
         else bindPattern(name, value)
         return value
       }
@@ -481,7 +532,13 @@ const analyzeReplTree = (
         const value = visit(fieldChild(node, 'right'))
         scopes.push(new Map())
         conditionalDepth++
-        if (fieldChild(node, 'kind'))
+        if (
+          context?.replPersistentBindings &&
+          functionDepth === 0 &&
+          fieldChild(node, 'kind')?.text === 'var'
+        )
+          bindPersistent(fieldChild(node, 'left'), { ...value, text: undefined })
+        else if (fieldChild(node, 'kind'))
           bindPattern(fieldChild(node, 'left'), { ...value, text: undefined })
         else assign(fieldChild(node, 'left'), { ...value, text: undefined })
         visit(fieldChild(node, 'body'))
@@ -499,6 +556,7 @@ const analyzeReplTree = (
         conditionalDepth--
         return empty()
       case 'return_statement':
+        if (context?.replPersistentBindings) unsupported('control-flow')
         return visit(node.namedChildren[0] ?? null)
       case 'statement_block': {
         scopes.push(new Map())
@@ -515,8 +573,12 @@ const analyzeReplTree = (
       case 'method_definition':
       case 'arrow_function':
       case 'function_expression':
+      case 'generator_function':
       case 'function_declaration':
+      case 'generator_function_declaration':
       case 'class_declaration':
+        if (context?.replPersistentBindings && node.parent?.id === root.id)
+          bindPersistent(fieldChild(node, 'name'), empty())
         unsupported('function-scope')
         return empty()
       default:

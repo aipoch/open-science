@@ -85,6 +85,7 @@ import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { NotebookEnvironmentManager } from './environment-management'
 
 let storageRoot: string | undefined
+const liveShellServices: NotebookRuntimeService[] = []
 
 const helperDigest = (source: string): string => createHash('sha256').update(source).digest('hex')
 
@@ -106,6 +107,9 @@ const createDeferred = <Value>(): {
 
 afterEach(async () => {
   vi.unstubAllEnvs()
+  for (const service of liveShellServices.splice(0)) {
+    expect(await service.shutdownAll()).toMatchObject({ reaped: true })
+  }
   if (storageRoot) {
     await rm(storageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     storageRoot = undefined
@@ -1748,6 +1752,12 @@ describe('notebook runtime service', () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ kind: 'repl', code: '1 + 1' }))
     expect(execute.mock.calls[0]?.[0].sourceFileAccessContext).toBeUndefined()
     expect(result).toMatchObject({ status: 'completed', stdout: 'ran' })
+    expect(
+      (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs[0]
+    ).toMatchObject({
+      kernelKind: 'repl',
+      replPersistentBindings: true
+    })
   })
 
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
@@ -3963,8 +3973,8 @@ describe('notebook runtime service', () => {
   })
 
   describe('executeShell', () => {
-    const createShellService = (root: string): NotebookRuntimeService =>
-      new NotebookRuntimeService({
+    const createShellService = (root: string): NotebookRuntimeService => {
+      const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
@@ -3973,8 +3983,11 @@ describe('notebook runtime service', () => {
         // semantic-policy path here; managed-runtime-guard.test.ts verifies the Seatbelt wrapper.
         platform: process.platform === 'darwin' ? 'linux' : process.platform
       })
+      liveShellServices.push(service)
+      return service
+    }
 
-    it('runs a command in a fresh sh process and captures stdout/exitCode', async () => {
+    it('runs a command in the session shell and captures stdout/exitCode', async () => {
       const root = await createStorageRoot()
       const service = createShellService(root)
 
@@ -4341,6 +4354,7 @@ describe('notebook runtime service', () => {
 
       expect(execute).toHaveBeenCalledWith({
         command: 'opaque command',
+        laneKey: expect.any(String),
         runId: expect.any(String),
         cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
         executionReference: expect.any(String),
@@ -5704,7 +5718,7 @@ describe('notebook runtime service', () => {
       })
     })
 
-    it('spawns a fresh process per call instead of reusing a persistent shell', async () => {
+    it('retains shell variables across calls while keeping distinct run records', async () => {
       const root = await createStorageRoot()
       const service = createShellService(root)
 
@@ -5713,20 +5727,36 @@ describe('notebook runtime service', () => {
         workspaceCwd: root,
         command: process.platform === 'win32' ? "$env:FOO='bar'" : 'FOO=bar'
       })
-      // A persistent shell would remember FOO from the previous call; a fresh process never does.
       const result = await service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
         command: process.platform === 'win32' ? 'Write-Output "[$env:FOO]"' : 'echo "[$FOO]"'
       })
 
-      expect(result.stdout).toContain('[]')
+      expect(result.stdout).toContain('[bar]')
 
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       // Each executeShell call produces its own record: two calls, two distinct runIds.
       expect(state.runs).toHaveLength(2)
       expect(state.runs.every((run) => run.kernelKind === 'bash')).toBe(true)
       expect(new Set(state.runs.map((run) => run.runId)).size).toBe(2)
+    })
+
+    it('resets only the restarted lane shell and preserves targeted kernel restart isolation', async () => {
+      const root = await createStorageRoot()
+      const service = createShellService(root)
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+      const other = { ...request, sessionId: 'session-2' }
+      const set = process.platform === 'win32' ? '$value="kept"' : 'value=kept'
+      const read =
+        process.platform === 'win32' ? '[Console]::Write("[$value]")' : 'printf "[%s]" "${value-}"'
+      await service.executeShell({ ...request, command: set })
+      await service.executeShell({ ...other, command: set })
+      await service.restart({ ...request, kernel: 'repl' })
+      expect((await service.executeShell({ ...request, command: read })).stdout).toBe('[kept]')
+      await service.restart(request)
+      expect((await service.executeShell({ ...request, command: read })).stdout).toBe('[]')
+      expect((await service.executeShell({ ...other, command: read })).stdout).toBe('[kept]')
     })
 
     // POSIX-only: relies on process-group signals and signal-0 process probes. Windows semantics
@@ -8080,6 +8110,47 @@ describe('notebook runtime service', () => {
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.runs[0].kernelKind).toBe('r')
   })
+
+  it.each([false, true])(
+    'waits for shell cleanup on restart and requires proof (%s)',
+    async (reaped) => {
+      const root = await createStorageRoot()
+      const cleanup = Promise.withResolvers<{ reaped: boolean }>()
+      const shutdown = vi.fn(() => cleanup.promise)
+      const restart = vi.fn(async () => undefined)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: {
+          execute: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 })),
+          shutdown
+        },
+        executorFactory: () => ({
+          execute: vi.fn(),
+          shutdown: async () => ({ reaped: true }),
+          restart
+        })
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+      const restarting = service.restart(request)
+      await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce())
+      expect(restart).not.toHaveBeenCalled()
+      await expect(service.executeShell({ ...request, command: 'echo blocked' })).rejects.toThrow(
+        'admission is closed'
+      )
+      cleanup.resolve({ reaped })
+      if (reaped) {
+        await restarting
+        expect(restart).toHaveBeenCalledOnce()
+      } else {
+        await expect(restarting).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+        expect(restart).not.toHaveBeenCalled()
+      }
+      await service.dispose()
+    }
+  )
 
   it('restart calls executor.restart when the executor supports it', async () => {
     const root = await createStorageRoot()

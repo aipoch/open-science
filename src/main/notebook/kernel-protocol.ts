@@ -207,14 +207,16 @@ export function framePythonRequest(
   code: string,
   controlInvocationId?: string,
   protectedDirs?: readonly string[],
-  pythonRandomState?: import('../../shared/notebook-execution-context').NotebookExecutionContext['before']['pythonRandomState']
+  pythonRandomState?: import('../../shared/notebook-execution-context').NotebookExecutionContext['before']['pythonRandomState'],
+  replPublisher?: string
 ): string {
   return `${JSON.stringify({
     req_id: reqId,
     code,
     ...(controlInvocationId ? { control_invocation_id: controlInvocationId } : {}),
     ...(protectedDirs?.length ? { protected_dirs: protectedDirs } : {}),
-    ...(pythonRandomState ? { python_random_state: pythonRandomState } : {})
+    ...(pythonRandomState ? { python_random_state: pythonRandomState } : {}),
+    ...(replPublisher ? { repl_publisher: replPublisher } : {})
   })}\n`
 }
 

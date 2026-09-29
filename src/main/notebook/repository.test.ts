@@ -956,6 +956,8 @@ describe('notebook run repository', () => {
 
   it.each([
     ['helper modules', { helperModules: {} }],
+    ['REPL marker value', { kernelKind: 'repl', replPersistentBindings: false }],
+    ['REPL marker kernel', { kernelKind: 'python', replPersistentBindings: true }],
     ['helper evidence status', { helperEvidenceStatus: { state: 'unknown' } }]
   ])('rejects a run with malformed persisted %s', async (_label, malformedRun) => {
     const root = await createStorageRoot()
