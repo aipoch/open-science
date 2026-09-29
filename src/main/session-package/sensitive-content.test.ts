@@ -8,6 +8,33 @@ import {
 
 describe('package text policy', () => {
   it.each([
+    '{"noCredentials":true}',
+    '{"noCredentials":false,"result":"ok"}',
+    '{"metadata":{"noCredentials":true},"result":"ok"}',
+    '{"noCredentials":true}\n{"noCredentials":false}\n'
+  ])('does not classify boolean research metadata as a credential: %s', (text) => {
+    expect(findSensitivePackageText(text)).toBeUndefined()
+  })
+  it.each(['true', 'false'])('defers incomplete boolean metadata %s', (value) => {
+    const text = `{"noCredentials":${value},"result":"ok"}`
+    for (let length = 1; length < text.length; length++)
+      expect(
+        findSensitivePackageText(text.slice(0, length), false),
+        `prefix length ${length}`
+      ).toBeUndefined()
+    expect(findSensitivePackageText(text)).toBeUndefined()
+  })
+  it.each([
+    '{"noCredentials":"true"}',
+    '{"noCredentials":"false"}',
+    '{"noCredentials":"synthetic-private-value"}',
+    '{"noCredentials":123456}',
+    '{"noCredentials":true,"apiKey":"synthetic-private-value"}',
+    '{"noCredentials":true}\n{"apiKey":"synthetic-private-value"}\n'
+  ])('still blocks credentials alongside or in place of boolean metadata: %s', (text) => {
+    expect(findSensitivePackageText(text)).toBeDefined()
+  })
+  it.each([
     'Authorization: Bearer [redacted]',
     '--authorization Bearer [redacted]',
     '{"authorization":"\\u005bredacted]"}',

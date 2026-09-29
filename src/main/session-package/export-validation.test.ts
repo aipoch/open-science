@@ -87,6 +87,25 @@ const splitRedaction =
   serializedRedaction
 
 it.each([
+  ['boolean research metadata in JSON', Buffer.from('{"noCredentials":true,"result":"ok"}'), true],
+  [
+    'boolean research metadata in NDJSON',
+    Buffer.from('{"noCredentials":true}\n{"metadata":{"noCredentials":false}}\n'),
+    true
+  ],
+  [
+    'boolean research metadata crossing a read boundary',
+    Buffer.from(' '.repeat(65536 - '{"noCredentials":tr'.length) + '{"noCredentials":true}'),
+    true
+  ],
+  ['quoted boolean credential', Buffer.from('{"noCredentials":"true"}'), false],
+  [
+    'real credential after boolean research metadata in a later chunk',
+    Buffer.from(
+      '{"noCredentials":true}\n' + ' '.repeat(70000) + '{"apiKey":"synthetic-private-value"}\n'
+    ),
+    false
+  ],
   ['nested JSON redaction', Buffer.from(serializedRedaction), true],
   ['nested JSON closing escapes split across reads', Buffer.from(splitRedaction), true],
   [
