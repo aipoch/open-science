@@ -49,6 +49,8 @@ AIPOCH Open-Science 是面向科學家與研究人員的 AI 研究工作台，�
 
 AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
+已完成的研究會話也可以匯出為可攜式 `.science` 研究套件，用於審閱、交接與封存，並攜帶所選的對話分支、檔案版本、Notebook 記錄與驗證證據。
+
 > 💡 **[AIPOCH Open-Science v0.34.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。 AIPOCH Open-Science v0.34.0 帶來原生 Linux ARM64 安裝程式，新增 Pathway Commons 連接器，並擴充 cBioPortal、openFDA、MGnify 與 Bgee 跨物種表現量資料來源；文獻庫也新增具參考屬性的期刊資料集。此外，應用程式新增 MiniMax M3.1 Flash Preview 與 Claude Sonnet 5.5 模型選項。詳情請查看[最新發行說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
@@ -59,6 +61,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 
 - [快速開始](#-快速開始)
 - [產品導覽](#產品導覽)
+- [AIPOCH Open-Science `.science` 研究套件](#aipoch-open-science-science-研究套件)
 - [基準測試表現](#基準測試表現)
 - [核心能力](#核心能力)
 - [模型服務商](#模型服務商)
@@ -153,6 +156,18 @@ Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資�
 <p align="center">
   <img src="../images/readme/product-tour-provenance.jpg" alt="AIPOCH Open-Science 研究產物預覽，其中包含用於追溯生成結果的 Provenance 入口" width="900">
 </p>
+
+## AIPOCH Open-Science `.science` 研究套件
+
+將已完成的研究會話匯出為可攜式 `.science` 研究套件，用於審閱、交接與封存。選擇要納入的對話分支、檔案版本、Notebook 記錄與驗證證據，然後將研究套件匯入其他專案或電腦。
+
+**匯出 → 傳遞 → 檢查**
+
+1. 匯出已完成的會話，並選擇要納入的內容。
+2. 將 `.science` 檔案傳遞給協作者，或轉移到另一台電腦。
+3. 將它匯入專案，檢查唯讀歷史、所含檔案、Notebook 記錄與驗證證據。
+
+匯入的研究套件為唯讀內容，不會執行程式碼或還原憑證。後續工作請在新會話中繼續。若要重新執行結果，仍需要完整配方、必要輸入與可用執行環境。
 
 ## 基準測試表現
 

@@ -49,6 +49,8 @@ AIPOCH Open-Science es un entorno de investigación con IA para científicos e i
 
 AIPOCH Open-Science respalda la investigación computacional y con uso intensivo de datos en todas las disciplinas, incluidos el aprendizaje automático, la estadística, las ciencias biológicas, la química, la ciencia de los materiales, la física y las ciencias ambientales. Acompaña todo el proceso de investigación, desde la revisión bibliográfica y el desarrollo de hipótesis hasta la ejecución de código, el análisis de datos, la simulación, la visualización y la producción de resultados rastreables.
 
+Las sesiones de investigación terminadas también pueden exportarse como paquetes `.science` portátiles para revisión, traspaso y archivo, con ramas de conversación, versiones de archivos, registros de Notebook y evidencias de verificación seleccionados.
+
 > 💡 **[AIPOCH Open-Science v0.34.0 publicado](https://github.com/aipoch/open-science/releases/latest)** _(actualizado por última vez en septiembre de 2026)_. AIPOCH Open-Science v0.34.0 aporta instaladores nativos de Linux ARM64, añade el conector de Pathway Commons junto a las fuentes ampliadas de expresión entre especies de cBioPortal, openFDA, MGnify y Bgee, y gana conjuntos de datos de revistas con atributos de referencia en la biblioteca de literature. La app también añade las opciones de modelo MiniMax M3.1 Flash Preview y Claude Sonnet 5.5. Consulta las [notas de la versión más recientes](https://github.com/aipoch/open-science/releases/latest) para más detalles.
 
 <p align="center">
@@ -59,6 +61,7 @@ AIPOCH Open-Science respalda la investigación computacional y con uso intensivo
 
 - [Inicio rápido](#-inicio-rápido)
 - [Recorrido por el producto](#recorrido-por-el-producto)
+- [Paquetes de investigación `.science` de AIPOCH Open-Science](#paquetes-de-investigación-science-de-aipoch-open-science)
 - [Rendimiento en benchmarks](#rendimiento-en-benchmarks)
 - [Capacidades principales](#capacidades-principales)
 - [Proveedores de modelos](#proveedores-de-modelos)
@@ -154,6 +157,18 @@ Cada artefacto generado se almacena como una versión inmutable con suma de comp
 <p align="center">
   <img src="../images/readme/product-tour-provenance.jpg" alt="Vista previa de un artefacto de investigación de AIPOCH Open-Science con acceso a Provenance para rastrear un resultado generado" width="900">
 </p>
+
+## Paquetes de investigación `.science` de AIPOCH Open-Science
+
+Exporte una sesión de investigación terminada como un paquete `.science` portátil para revisión, traspaso y archivo. Elija las ramas de conversación, versiones de archivos, registros de Notebook y evidencias de verificación que desea incluir, y luego importe el paquete en otro proyecto o equipo.
+
+**Exportar → transferir → inspeccionar**
+
+1. Exporte una sesión terminada y elija el contenido que desea incluir.
+2. Transfiera el archivo `.science` a un colaborador o a otro equipo.
+3. Importe el paquete en un proyecto e inspeccione el historial de solo lectura, los archivos incluidos, los registros de Notebook y las evidencias de verificación.
+
+Los paquetes importados son de solo lectura. No ejecutan código ni restauran credenciales. Continúe el trabajo posterior en una sesión nueva. Para volver a ejecutar un resultado se necesitan una receta completa, las entradas necesarias y un entorno de ejecución disponible.
 
 ## Rendimiento en benchmarks
 

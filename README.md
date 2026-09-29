@@ -47,6 +47,8 @@ AIPOCH Open-Science is an AI research workbench for scientists and researchers, 
 
 AIPOCH Open-Science supports computational and data-intensive research across disciplines, including machine learning, statistics, life sciences, chemistry, materials science, physics and environmental science. It supports the research process from literature review and hypothesis development to code execution, data analysis, simulation, visualization, and the production of traceable research outputs.
 
+Completed research sessions can also be exported as portable `.science` packages for review, handoff, and archiving, with selected conversation branches, file versions, Notebook records, and verification evidence.
+
 > 💡 **[AIPOCH Open-Science v0.34.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated September 2026)_. AIPOCH Open-Science v0.34.0 brings native Linux ARM64 installers, adds the Pathway Commons connector alongside expanded cBioPortal, openFDA, MGnify, and Bgee cross-species expression sources, and gains journal datasets with reference attributes in the literature library. The app also adds the MiniMax M3.1 Flash Preview and Claude Sonnet 5.5 model options. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for full details.
 
 <p align="center">
@@ -57,6 +59,7 @@ AIPOCH Open-Science supports computational and data-intensive research across di
 
 - [Quick Start](#-quick-start)
 - [Product Tour](#product-tour)
+- [AIPOCH Open-Science `.science` Research Packages](#aipoch-open-science-science-research-packages)
 - [Benchmark Performance](#benchmark-performance)
 - [Core Capabilities](#core-capabilities)
 - [Model Providers](#model-providers)
@@ -152,6 +155,18 @@ Each generated artifact is stored as an immutable, checksummed version. Its **Pr
 <p align="center">
   <img src="docs/images/readme/product-tour-provenance.jpg" alt="AIPOCH Open-Science research artifact preview with the Provenance entry for tracing a generated result" width="900">
 </p>
+
+## AIPOCH Open-Science `.science` Research Packages
+
+Export a completed research session as a portable `.science` package for review, handoff, and archiving. Choose the conversation branches, file versions, Notebook records, and verification evidence to include, then import the package into another project or computer.
+
+**Export → transfer → inspect**
+
+1. Export a completed session and choose the contents to include.
+2. Move the `.science` file to a collaborator or another computer.
+3. Import it into a project and inspect the read-only history, included files, Notebook records, and verification evidence.
+
+Imported packages are read-only. They do not execute code or restore credentials. Continue follow-up work in a new session. Replaying a result still requires a complete recipe, required inputs, and an available runtime.
 
 ## Benchmark Performance
 

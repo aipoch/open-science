@@ -49,6 +49,8 @@ AIPOCH Open-Science ist eine KI-Forschungsumgebung für Wissenschaftler und Fors
 
 AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlreichen Disziplinen, darunter maschinelles Lernen, Statistik, Biowissenschaften, Chemie, Materialwissenschaften, Physik und Umweltwissenschaften. Die Umgebung begleitet den Forschungsprozess von der Literaturrecherche und Hypothesenbildung über Codeausführung, Datenanalyse, Simulation und Visualisierung bis zur Erstellung nachvollziehbarer Forschungsergebnisse.
 
+Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pakete zur Prüfung, Übergabe und Archivierung exportiert werden, einschließlich ausgewählter Gesprächsverzweigungen, Dateiversionen, Notebook-Aufzeichnungen und Verifikationsevidenz.
+
 > 💡 **[AIPOCH Open-Science v0.34.0 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert September 2026)_. AIPOCH Open-Science v0.34.0 bringt native Linux-ARM64-Installer, fügt den Pathway-Commons-Konnektor neben erweiterten cBioPortal-, openFDA-, MGnify- und Bgee-Expressionsquellen für Querschnittsarten hinzu und erhält Journal-Datensätze mit Referenzattributen in der Literaturbibliothek. Die App fügt außerdem die Modelloptionen MiniMax M3.1 Flash Preview und Claude Sonnet 5.5 hinzu. Details finden Sie in den [neuesten Release Notes](https://github.com/aipoch/open-science/releases/latest).
 
 <p align="center">
@@ -59,6 +61,7 @@ AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlrei
 
 - [Schnellstart](#-schnellstart)
 - [Produkttour](#produkttour)
+- [AIPOCH Open-Science `.science`-Forschungspakete](#aipoch-open-science-science-forschungspakete)
 - [Benchmark-Ergebnisse](#benchmark-ergebnisse)
 - [Kernkompetenzen](#kernkompetenzen)
 - [Modellanbieter](#modellanbieter)
@@ -154,6 +157,18 @@ Jedes erzeugte Artefakt wird als unveränderliche Version mit Prüfsumme gespeic
 <p align="center">
   <img src="../images/readme/product-tour-provenance.jpg" alt="Vorschau eines Open-Science-Forschungsartefakts mit Provenance-Zugang zur Rückverfolgung eines erzeugten Ergebnisses" width="900">
 </p>
+
+## AIPOCH Open-Science `.science`-Forschungspakete
+
+Exportieren Sie eine abgeschlossene Forschungssitzung als portables `.science`-Paket zur Prüfung, Übergabe und Archivierung. Wählen Sie die Gesprächsverzweigungen, Dateiversionen, Notebook-Aufzeichnungen und Verifikationsevidenz aus, die enthalten sein sollen, und importieren Sie das Paket anschließend in ein anderes Projekt oder auf einen anderen Rechner.
+
+**Exportieren → übertragen → prüfen**
+
+1. Exportieren Sie eine abgeschlossene Sitzung und wählen Sie die einzuschließenden Inhalte aus.
+2. Übertragen Sie die `.science`-Datei an eine mitwirkende Person oder auf einen anderen Rechner.
+3. Importieren Sie sie in ein Projekt und prüfen Sie den schreibgeschützten Verlauf, die enthaltenen Dateien, Notebook-Aufzeichnungen und Verifikationsevidenz.
+
+Importierte Pakete sind schreibgeschützt. Sie führen keinen Code aus und stellen keine Anmeldedaten wieder her. Setzen Sie Folgearbeiten in einer neuen Sitzung fort. Für die erneute Ausführung eines Ergebnisses sind weiterhin ein vollständiges Rezept, die erforderlichen Eingaben und eine verfügbare Laufzeit nötig.
 
 ## Benchmark-Ergebnisse
 

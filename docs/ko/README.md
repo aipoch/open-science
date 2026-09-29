@@ -49,6 +49,8 @@ AIPOCH Open-Science는 과학자와 연구자를 위한 AI 연구 워크벤치�
 
 AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
+완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
+
 > 💡 **[AIPOCH Open-Science v0.34.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 9월 업데이트)_. AIPOCH Open-Science v0.34.0는 리눅스용 네이티브 ARM64 설치 패키지를 제공하고, Pathway Commons 커넥터를 새로 추가하며 cBioPortal, openFDA, MGnify, Bgee 종 간 발현 데이터 소스를 확장합니다. 또한 Literature 라이브러리에 참조 속성을 갖춘 저널 데이터 세트가 추가되고, MiniMax M3.1 Flash Preview와 Claude Sonnet 5.5 모델 옵션이 새로 지원됩니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
 
 <p align="center">
@@ -59,6 +61,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 - [빠른 시작](#-빠른-시작)
 - [제품 둘러보기](#제품-둘러보기)
+- [AIPOCH Open-Science `.science` 연구 패키지](#aipoch-open-science-science-연구-패키지)
 - [벤치마크 성능](#벤치마크-성능)
 - [핵심 기능](#핵심-기능)
 - [모델 제공업체](#모델-제공업체)
@@ -153,6 +156,18 @@ Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화�
 <p align="center">
   <img src="../images/readme/product-tour-provenance.jpg" alt="생성 결과를 추적하는 Provenance 진입점이 있는 AIPOCH Open-Science 연구 아티팩트 미리 보기" width="900">
 </p>
+
+## AIPOCH Open-Science `.science` 연구 패키지
+
+완료된 연구 세션을 검토, 인계 및 보관에 사용할 수 있는 이동 가능한 `.science` 패키지로 내보낼 수 있습니다. 연구 기록과 함께 포함할 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 선택한 다음 다른 프로젝트나 컴퓨터로 가져오세요.
+
+**내보내기 → 전송 → 검토**
+
+1. 완료된 세션을 내보내고 포함할 내용을 선택합니다.
+2. `.science` 파일을 협업자나 다른 컴퓨터로 전송합니다.
+3. 프로젝트로 가져온 뒤 읽기 전용 기록, 포함된 파일, Notebook 기록 및 검증 증거를 확인합니다.
+
+가져온 패키지는 읽기 전용입니다. 코드를 실행하거나 자격 증명을 복원하지 않습니다. 후속 작업은 새 세션에서 진행하세요. 결과를 다시 실행하려면 완전한 레시피, 필요한 입력 및 사용 가능한 런타임이 필요합니다.
 
 ## 벤치마크 성능
 
