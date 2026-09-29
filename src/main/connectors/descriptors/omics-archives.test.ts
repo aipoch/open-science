@@ -90,7 +90,10 @@ describe('omics-archives tool set', () => {
         'pride_get_projects',
         'pride_get_project_files',
         'pride_search_project_proteins',
-        'pride_search_projects'
+        'pride_search_projects',
+        'workbench_get_study',
+        'workbench_search_compounds',
+        'workbench_search_studies'
       ].sort()
     )
     expect(OMICS_ARCHIVES_TOOLS.every((t) => t.connector === 'omics-archives')).toBe(true)
