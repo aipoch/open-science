@@ -10,4 +10,10 @@ describe('renderer content security policy', () => {
     expect(html).toContain("worker-src 'self' blob:")
     expect(html).toContain("font-src 'self' data: blob:")
   })
+
+  it('permits Blob workers in the Remote Web index', () => {
+    const html = readFileSync(resolve(__dirname, '../web/index.html'), 'utf8')
+
+    expect(html).toContain("worker-src 'self' blob:")
+  })
 })
