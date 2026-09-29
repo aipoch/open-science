@@ -20,6 +20,19 @@ export type ConnectorMeta = {
 // Static connector metadata for the settings UI (tool lists come from the registry).
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
+    id: 'alliance',
+    displayName: 'Alliance Genome Resources',
+    aliases: ['Alliance', 'AGR', 'model organism genes', 'model organism genomics'],
+    description:
+      'Model-organism and human gene knowledge via the Alliance of Genome Resources — gene summaries, orthology, disease models, phenotypes, alleles and expression.',
+    useWhen:
+      'Use when you need cross-species model-organism gene knowledge from the Alliance of Genome Resources — search or summarize genes from human, mouse, rat, fly, worm, zebrafish, yeast and frog; retrieve orthologs, disease models, phenotype annotations, alleles/variants, or developmental and anatomical expression; or find genes associated with a Disease Ontology term. The public API is read-only and does not require authentication.',
+    sources: ['Alliance of Genome Resources'],
+    termsUrl: 'https://www.alliancegenome.org/terms-of-use',
+    requiresNcbi: false,
+    group: 'directory'
+  },
+  {
     id: 'chemistry',
     displayName: 'Chemistry',
     description: 'Small-molecule chemistry via PubChem, ChEBI, Rhea and BindingDB.',

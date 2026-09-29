@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { read } from 'styled-exceljs'
 import { JournalManager } from './JournalManager'
+import { ApplicationCommandError } from '../../../../shared/application-command-contract'
 import type {
   JournalDataset,
   JournalRequest,
@@ -846,6 +847,74 @@ it('shows the shared journal pagination, changes pages, and resets the page when
   )
   expect(document.querySelector('[data-row-number]')?.textContent).toBe('1')
   expect(screen.getByRole('button', { name: 'Page 1' }).getAttribute('aria-current')).toBe('page')
+})
+
+it.each([
+  new Error('Journal data changed. Reload the dataset.'),
+  new ApplicationCommandError('command-failed', 'Journal data changed. Reload the dataset.')
+])('retries a journal read invalidated by a concurrent write (%s)', async (conflict) => {
+  const entries = vi
+    .fn()
+    .mockRejectedValueOnce(conflict)
+    .mockResolvedValue({ entries: [], total: 123 })
+  const journals = vi.fn(async (request: JournalRequest): Promise<JournalResult> =>
+    request.action === 'entries' ? entries(request) : { datasets: [dataset] }
+  )
+  const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+  Object.defineProperty(window, 'api', { configurable: true, value: { literature: { journals } } })
+  try {
+    render(<JournalManager onOpenItem={() => {}} embedded onClose={() => {}} />)
+    await screen.findByRole('button', { name: 'Next page' })
+    expect(entries).toHaveBeenCalledTimes(2)
+    expect(entries.mock.calls[1]).toEqual(entries.mock.calls[0])
+    expect(screen.queryByText('Could not load journals. Reload to try again.')).toBeNull()
+    expect(errorLog).not.toHaveBeenCalled()
+  } finally {
+    errorLog.mockRestore()
+  }
+})
+
+it.each([
+  ['Journal data changed. Reload the dataset.', 2],
+  ['Fixture connection unavailable', 1]
+])('retains the load error with bounded attempts for %s', async (message, attempts) => {
+  const entries = vi.fn().mockRejectedValue(new Error(message))
+  const journals = vi.fn(async (request: JournalRequest): Promise<JournalResult> =>
+    request.action === 'entries' ? entries(request) : { datasets: [dataset] }
+  )
+  const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+  Object.defineProperty(window, 'api', { configurable: true, value: { literature: { journals } } })
+  try {
+    render(<JournalManager onOpenItem={() => {}} embedded onClose={() => {}} />)
+    await screen.findByText('Could not load journals. Reload to try again.')
+    expect(entries).toHaveBeenCalledTimes(attempts)
+    expect(errorLog).toHaveBeenCalledTimes(1)
+  } finally {
+    errorLog.mockRestore()
+  }
+})
+
+it('does not retry an invalidated journal read after the manager unmounts', async () => {
+  let reject!: (error: Error) => void
+  const pending = new Promise<JournalResult>((_, rejectRead) => {
+    reject = rejectRead
+  })
+  const entries = vi.fn().mockReturnValue(pending)
+  const journals = vi.fn(async (request: JournalRequest): Promise<JournalResult> =>
+    request.action === 'entries' ? entries(request) : { datasets: [dataset] }
+  )
+  const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+  Object.defineProperty(window, 'api', { configurable: true, value: { literature: { journals } } })
+  try {
+    const view = render(<JournalManager onOpenItem={() => {}} embedded onClose={() => {}} />)
+    await waitFor(() => expect(entries).toHaveBeenCalledTimes(1))
+    view.unmount()
+    await act(async () => reject(new Error('Journal data changed. Reload the dataset.')))
+    expect(entries).toHaveBeenCalledTimes(1)
+    expect(errorLog).not.toHaveBeenCalled()
+  } finally {
+    errorLog.mockRestore()
+  }
 })
 
 it('shows a load error instead of an empty count and reloads successfully in Strict Mode', async () => {
