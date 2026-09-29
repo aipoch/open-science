@@ -276,6 +276,25 @@ const SettingsGlobalSearch = ({
     []
   )
 
+  useEffect(() => {
+    const ownerWindow = containerRef.current?.ownerDocument.defaultView
+    if (!ownerWindow) return
+    const preserveComposingEscape = (event: KeyboardEvent): void => {
+      if (
+        event.key === 'Escape' &&
+        (event.isComposing || event.keyCode === 229) &&
+        event.target instanceof Node &&
+        containerRef.current?.contains(event.target)
+      ) {
+        // Radix handles Escape on document capture and cancels its default action. Intercept
+        // at window capture so the IME keeps its native action and no dialog/drawer dismisses.
+        event.stopPropagation()
+      }
+    }
+    ownerWindow.addEventListener('keydown', preserveComposingEscape, true)
+    return () => ownerWindow.removeEventListener('keydown', preserveComposingEscape, true)
+  }, [])
+
   const panelLabel = (panel: SettingsPanelId): string => {
     const entry = panels.find((candidate) => candidate.id === panel)
     return entry ? t(entry.labelKey) : panel

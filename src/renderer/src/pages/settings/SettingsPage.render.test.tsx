@@ -1232,6 +1232,35 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
+  it.each([{ isComposing: true }, { keyCode: 229 }])(
+    'preserves the native composing Escape action through the Settings dialog: %j',
+    async (composition) => {
+      const onClose = vi.fn()
+      await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+      const search = document.querySelector<HTMLInputElement>(
+        '[data-slot="settings-global-search"] input'
+      )!
+      await act(async () => {
+        search.focus()
+        fireEvent.change(search, { target: { value: 'proxy' } })
+      })
+      const event = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+        ...composition
+      })
+      await act(async () => {
+        search.dispatchEvent(event)
+      })
+      expect(event.defaultPrevented).toBe(false)
+      expect(search.value).toBe('proxy')
+      expect(document.activeElement).toBe(search)
+      expect(document.querySelector('[role="listbox"]')).not.toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+    }
+  )
+
   it('keeps the dialog open when Escape closes the global search results', async () => {
     const onClose = vi.fn()
     await act(async () => root.render(<SettingsPage open onClose={onClose} />))
