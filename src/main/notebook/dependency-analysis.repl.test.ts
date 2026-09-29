@@ -61,6 +61,33 @@ describe('REPL dependency and file analysis', () => {
     expect(nested.facts.definedNames).toEqual(['rows'])
   })
 
+  it.each([
+    '{ { var hoisted = 1; let hidden = 2; } }',
+    'for (var hoisted = 0; hoisted < 1; hoisted++) {}',
+    'for (var hoisted in {a: 1}) {}',
+    'for (var hoisted of [1]) {}'
+  ])('records published hoisted var declarations: %s', async (source) => {
+    const result = await analyzeReplNotebookSource(source, {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      replPersistentBindings: true
+    })
+    expect([
+      ...(result.facts.definedNames ?? []),
+      ...(result.facts.conditionallyDefinedNames ?? [])
+    ]).toContain('hoisted')
+    expect([
+      ...(result.facts.definedNames ?? []),
+      ...(result.facts.conditionallyDefinedNames ?? [])
+    ]).not.toContain('hidden')
+    const historical = await analyzeReplNotebookSource(source)
+    expect([
+      ...(historical.facts.definedNames ?? []),
+      ...(historical.facts.conditionallyDefinedNames ?? [])
+    ]).not.toContain('hoisted')
+  })
+
   it('uses the run marker after reload and invalidates cached historical interpretation', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'repl-semantics-'))
     const runs = [run('1', 'const rows = [1, 2]'), run('2', 'JSON.stringify(rows)')]

@@ -5742,6 +5742,23 @@ describe('notebook runtime service', () => {
       expect(new Set(state.runs.map((run) => run.runId)).size).toBe(2)
     })
 
+    it('resets only the restarted lane shell and preserves targeted kernel restart isolation', async () => {
+      const root = await createStorageRoot()
+      const service = createShellService(root)
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+      const other = { ...request, sessionId: 'session-2' }
+      const set = process.platform === 'win32' ? '$value="kept"' : 'value=kept'
+      const read =
+        process.platform === 'win32' ? '[Console]::Write("[$value]")' : 'printf "[%s]" "${value-}"'
+      await service.executeShell({ ...request, command: set })
+      await service.executeShell({ ...other, command: set })
+      await service.restart({ ...request, kernel: 'repl' })
+      expect((await service.executeShell({ ...request, command: read })).stdout).toBe('[kept]')
+      await service.restart(request)
+      expect((await service.executeShell({ ...request, command: read })).stdout).toBe('[]')
+      expect((await service.executeShell({ ...other, command: read })).stdout).toBe('[kept]')
+    })
+
     // POSIX-only: relies on process-group signals and signal-0 process probes. Windows semantics
     // differ entirely and use taskkill-backed tree termination instead.
     it.skipIf(process.platform === 'win32')(
@@ -8093,6 +8110,47 @@ describe('notebook runtime service', () => {
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.runs[0].kernelKind).toBe('r')
   })
+
+  it.each([false, true])(
+    'waits for shell cleanup on restart and requires proof (%s)',
+    async (reaped) => {
+      const root = await createStorageRoot()
+      const cleanup = Promise.withResolvers<{ reaped: boolean }>()
+      const shutdown = vi.fn(() => cleanup.promise)
+      const restart = vi.fn(async () => undefined)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: {
+          execute: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 })),
+          shutdown
+        },
+        executorFactory: () => ({
+          execute: vi.fn(),
+          shutdown: async () => ({ reaped: true }),
+          restart
+        })
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+      const restarting = service.restart(request)
+      await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce())
+      expect(restart).not.toHaveBeenCalled()
+      await expect(service.executeShell({ ...request, command: 'echo blocked' })).rejects.toThrow(
+        'admission is closed'
+      )
+      cleanup.resolve({ reaped })
+      if (reaped) {
+        await restarting
+        expect(restart).toHaveBeenCalledOnce()
+      } else {
+        await expect(restarting).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+        expect(restart).not.toHaveBeenCalled()
+      }
+      await service.dispose()
+    }
+  )
 
   it('restart calls executor.restart when the executor supports it', async () => {
     const root = await createStorageRoot()
