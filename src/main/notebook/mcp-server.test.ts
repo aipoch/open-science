@@ -1265,7 +1265,8 @@ describe('background_run tool', () => {
     const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
     const result = tool?.mapResult?.({ receipt: {}, run }, { action: 'query', runId: 'repl-1' })
     expect(result).toEqual(replTool?.mapResult?.(run, {}))
-    expect(result).toMatchObject({ traceback: message, outputs: [{ type: 'error', message }] })
+    expect(result).toMatchObject({ traceback: message })
+    expect(result).not.toHaveProperty('outputs')
     expect(JSON.stringify(result)).not.toContain('node:vm')
     expect(run.text.traceback).toBe(traceback)
     expect(run.outputs[0].traceback).toBe(traceback)
@@ -2852,6 +2853,71 @@ describe('compactNotebookExecutionResult', () => {
     expect(replTool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
   })
 
+  it.each(['python', 'repl'] as const)(
+    'returns identical failure diagnostics once for foreground and background %s calls',
+    (kernelKind) => {
+      const message = 'Execution rejected: required runtime is unavailable.'
+      const raw = {
+        status: 'failed',
+        kernelKind,
+        stderr: message,
+        traceback: message,
+        outputs: [{ type: 'error', message, traceback: message }]
+      }
+      const before = structuredClone(raw)
+      const tool = NOTEBOOK_RPC_TOOLS.find(
+        ({ name }) => name === (kernelKind === 'repl' ? 'repl_execute' : 'notebook_execute')
+      )!
+      for (const result of [tool.mapResult!(raw, {}), compactBackgroundRunResult({ run: raw })]) {
+        expect(result).toMatchObject({ status: 'failed', traceback: message })
+        expect(result).not.toHaveProperty('stderr')
+        expect(result).not.toHaveProperty('outputs')
+        expect(JSON.stringify(result).split(message)).toHaveLength(2)
+      }
+      expect(raw).toEqual(before)
+    }
+  )
+
+  it('preserves distinct diagnostics and error metadata when removing exact duplicates', () => {
+    const result = compactNotebookExecutionResult({
+      status: 'failed',
+      stderr: 'A warning before failure',
+      traceback: 'Traceback: unique frame and failure',
+      outputs: [
+        {
+          type: 'error',
+          name: 'ValueError',
+          line: 9,
+          message: 'Traceback: unique frame and failure'
+        },
+        { type: 'error', message: 'A separate error' }
+      ]
+    })
+    expect(result).toEqual({
+      status: 'failed',
+      stderr: 'A warning before failure',
+      traceback: 'Traceback: unique frame and failure',
+      outputs: [
+        { type: 'error', name: 'ValueError', line: 9 },
+        { type: 'error', message: 'A separate error' }
+      ]
+    })
+  })
+
+  it('does not confuse equal clipped previews with identical original diagnostics', () => {
+    const prefix = 'x'.repeat(9_000)
+    const compact = compactNotebookExecutionResult({
+      status: 'failed',
+      stderr: prefix + 'first error',
+      traceback: prefix + 'second error',
+      outputs: [{ type: 'error', message: prefix + 'third error' }]
+    }) as Record<string, unknown>
+    expect(compact.stderr).toBeTruthy()
+    expect(compact.traceback).toBeTruthy()
+    expect(compact.outputs).toEqual([{ type: 'error', message: prefix + 'third error' }])
+    expect(compact.truncated).toBe(true)
+  })
+
   it('keeps diagnostic streams once and removes duplicated structured stream outputs', () => {
     const result = {
       ...runSummary({ stdout: 'answer\n', stderr: 'warning\n' }),
@@ -2954,9 +3020,7 @@ describe('compactNotebookExecutionResult', () => {
     }
 
     expect(compact.traceback).toBe('ReferenceError: en2 is not defined')
-    expect(compact.outputs).toEqual([
-      { type: 'error', message: 'ReferenceError: en2 is not defined' }
-    ])
+    expect(compact.outputs).toBeUndefined()
     expect(JSON.stringify(compact)).not.toContain('<repl>')
     expect(JSON.stringify(compact)).not.toContain('node:vm')
     expect(JSON.stringify(compact)).not.toContain('repl_loop.js')
@@ -3000,7 +3064,7 @@ describe('compactNotebookExecutionResult', () => {
     }
 
     expect(compact.traceback).toBe(message)
-    expect(compact.outputs).toEqual([{ type: 'error', message }])
+    expect(compact.outputs).toBeUndefined()
     expect(JSON.stringify(compact)).not.toContain('node:internal')
     expect(JSON.stringify(compact)).not.toContain('<repl>')
     expect(JSON.stringify(compact)).not.toContain('repl_loop.js')

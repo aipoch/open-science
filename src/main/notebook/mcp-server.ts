@@ -721,7 +721,7 @@ const compactFileEvidence = (value: unknown): Record<string, unknown> | undefine
 
 const compactExecutionOutputs = (
   value: unknown,
-  canonicalTraceback: string
+  canonicalDiagnostics: readonly string[]
 ): { outputs: unknown[]; truncated: boolean; omitted: number } => {
   if (!Array.isArray(value)) return { outputs: [], truncated: false, omitted: 0 }
 
@@ -781,12 +781,22 @@ const compactExecutionOutputs = (
 
     if (record.type === 'error') {
       const error = pickDefined(record, ['type', 'name', 'message', 'line'])
-      if (typeof record.traceback === 'string' && record.traceback !== canonicalTraceback) {
+      const duplicateMessage =
+        typeof record.message === 'string' && canonicalDiagnostics.includes(record.message)
+      const duplicateTraceback =
+        typeof record.traceback === 'string' && canonicalDiagnostics.includes(record.traceback)
+      if (duplicateMessage) {
+        delete error.message
+      }
+      if (typeof record.traceback === 'string' && !duplicateTraceback) {
         const clipped = clipAgentText(record.traceback, MIME_INLINE_LIMIT)
         error.traceback = clipped.text
         truncated = truncated || clipped.clipped
       }
-      outputs.push(error)
+      // The top-level diagnostic already carries the entire error unless metadata adds facts.
+      if (Object.keys(error).length > 1 || (!duplicateMessage && !duplicateTraceback)) {
+        outputs.push(error)
+      }
       continue
     }
 
@@ -815,9 +825,18 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     return typeof value === 'string' ? value : ''
   }
   const stdout = clipAgentText(stream('stdout'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
-  const stderr = clipAgentText(stream('stderr'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
-  const traceback = clipAgentText(stream('traceback'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
-  const compactOutputs = compactExecutionOutputs(record.outputs, stream('traceback'))
+  const rawStderr = stream('stderr')
+  const rawTraceback = stream('traceback')
+  // Compare original values before clipping: equal previews can hide different diagnostics.
+  const stderr = clipAgentText(
+    rawStderr === rawTraceback ? '' : rawStderr,
+    NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT
+  )
+  const traceback = clipAgentText(rawTraceback, NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const compactOutputs = compactExecutionOutputs(
+    record.outputs,
+    [rawStderr, rawTraceback].filter(Boolean)
+  )
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const artifacts = compactArtifacts(record.artifacts)
   const fileEvidence = compactFileEvidence(record.fileEvidence)
@@ -834,7 +853,6 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     staleness.truncated
   const captureTruncated = record.truncated === true
   const truncated = captureTruncated || resultCompacted
-  const rawTraceback = stream('traceback')
   const pythonFrames = [...rawTraceback.matchAll(/^\s*File "([^"]+)", line \d+/gmu)]
   const missingModule =
     record.status === 'failed' && pythonFrames.at(-1)?.[1] === '<cell>'
