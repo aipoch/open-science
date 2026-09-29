@@ -41,3 +41,36 @@ for (const platform of ['Win32', 'MacIntel']) {
     }
   })
 }
+
+test('keeps every keyboard-selected settings result visible without moving input focus', async ({
+  page
+}) => {
+  await page.goto('/?search-shortcuts')
+  const settings = await openGeneralSettings(page)
+  const input = settings.getByRole('combobox', { name: 'Search settings' })
+  await input.focus()
+  const list = settings.getByRole('listbox', { name: 'Search settings' })
+  for (let index = 0; index < 36; index++) {
+    await input.press('ArrowDown')
+    await expect(input).toBeFocused()
+    await expect
+      .poll(async () => {
+        const viewport = await list.boundingBox()
+        const option = await list.locator('[aria-selected="true"]').boundingBox()
+        return Boolean(
+          viewport &&
+          option &&
+          option.y >= viewport.y &&
+          option.y + option.height <= viewport.y + viewport.height
+        )
+      })
+      .toBe(true)
+  }
+  await input.fill('language')
+  await input.dispatchEvent('keydown', { key: 'Enter', isComposing: true })
+  await expect(input).toHaveValue('language')
+  await expect(list).toBeVisible()
+  await input.press('Enter')
+  await expect(list).toBeHidden()
+  await expect(settings.locator('[data-settings-anchor="general.language"]')).toBeFocused()
+})

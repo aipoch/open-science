@@ -1258,7 +1258,6 @@
     "Could not check the command-line tool.": "無法檢查命令列工具。",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "無法取得模型：{{reason}}。將使用內建清單。",
     "Couldn't load hosts.": "無法載入主機。",
-    "Create a skill to teach Claude a workflow you use.": "建立一個技能，把你常用的流程教給 Claude。",
     "Create agent": "建立智能體",
     "Create new…": "新建……",
     "Create project": "建立專案",
@@ -2265,7 +2264,6 @@
     "Proxy server": "代理伺服器",
     "Proxy settings": "代理設定",
     "Proxy settings saved.": "代理設定已儲存。",
-    "Publish": "發布",
     "Publish skill": "發佈技能",
     "Python": "Python",
     "Python kernel · shared with the agent": "Python 核心 · 與智能體共用",
@@ -6609,6 +6607,11 @@
     "Search FAERS adverse-event reports with bounded filters.": "使用有界篩選條件搜尋 FAERS 不良事件報告。",
     "Count matching FAERS adverse-event reports by selected buckets.": "按所選分組統計相符的 FAERS 不良事件報告。",
     "Search FDA drug enforcement and recall reports.": "搜尋 FDA 藥品執法和回收報告。",
-    "List result-file metadata and download URLs for an MGnify analysis.": "列出 MGnify 分析的結果檔案中繼資料和下載 URL。"
+    "List result-file metadata and download URLs for an MGnify analysis.": "列出 MGnify 分析的結果檔案中繼資料和下載 URL。",
+    "Create skill": "建立技能",
+    "Create a skill to teach the Agent a workflow you use.": "建立一個技能，把常用的流程教給智能體。",
+    "Wait for the current skill operation to finish before leaving.": "請等待目前的技能操作完成後再離開。",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "技能修改尚未儲存。要捨棄修改並離開編輯器嗎？",
+    "Please wait…": "請稍候…"
   }
 }

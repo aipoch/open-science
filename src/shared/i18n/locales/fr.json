@@ -1223,7 +1223,6 @@
     "Could not check the command-line tool.": "Impossible de vérifier l'outil de ligne de commande.",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "Impossible de récupérer les modèles : {{reason}}. Utilisation de la liste groupée.",
     "Couldn't load hosts.": "Impossible de charger les hôtes.",
-    "Create a skill to teach Claude a workflow you use.": "Créez une compétence pour enseigner à Claude un flux de travail que vous utilisez.",
     "Create agent": "Créer un agent",
     "Create new…": "Créer un nouveau…",
     "Create project": "Créer un projet",
@@ -2249,7 +2248,6 @@
     "Proxy server": "Serveur proxy",
     "Proxy settings": "Paramètres du proxy",
     "Proxy settings saved.": "Paramètres du proxy enregistrés.",
-    "Publish": "Publier",
     "Publish skill": "Publier la compétence",
     "Python": "Python",
     "Python kernel · shared with the agent": "Noyau Python · partagé avec l'agent",
@@ -6937,6 +6935,11 @@
     "Search FAERS adverse-event reports with bounded filters.": "Rechercher des rapports d’événements indésirables FAERS avec des filtres bornés.",
     "Count matching FAERS adverse-event reports by selected buckets.": "Compter les rapports d’événements indésirables FAERS correspondants par catégorie sélectionnée.",
     "Search FDA drug enforcement and recall reports.": "Rechercher les rapports d’application et de rappel de médicaments de la FDA.",
-    "List result-file metadata and download URLs for an MGnify analysis.": "Lister les métadonnées des fichiers de résultats et les URL de téléchargement d’une analyse MGnify."
+    "List result-file metadata and download URLs for an MGnify analysis.": "Lister les métadonnées des fichiers de résultats et les URL de téléchargement d’une analyse MGnify.",
+    "Create skill": "Créer une compétence",
+    "Create a skill to teach the Agent a workflow you use.": "Créez une compétence pour enseigner à l’Agent un flux de travail que vous utilisez.",
+    "Wait for the current skill operation to finish before leaving.": "Attendez la fin de l’opération en cours sur la compétence avant de quitter l’éditeur.",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "Vos modifications de la compétence n’ont pas été enregistrées. Les abandonner et quitter l’éditeur ?",
+    "Please wait…": "Veuillez patienter…"
   }
 }

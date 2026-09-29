@@ -1172,7 +1172,6 @@
     "Could not check the command-line tool.": "コマンドラインツールを確認できませんでした。",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "モデルを取得できませんでした：{{reason}}。バンドルリストを使用します。",
     "Couldn't load hosts.": "ホストを読み込めませんでした。",
-    "Create a skill to teach Claude a workflow you use.": "スキルを作成して、よく使うワークフローを Claude に教えます。",
     "Create agent": "エージェントを作成",
     "Create new…": "新規作成…",
     "Create project": "プロジェクトを作成",
@@ -2180,7 +2179,6 @@
     "Proxy server": "プロキシサーバー",
     "Proxy settings": "プロキシ設定",
     "Proxy settings saved.": "プロキシ設定が保存されました。",
-    "Publish": "公開",
     "Publish skill": "スキルを公開する",
     "Python": "Python",
     "Python kernel · shared with the agent": "Python カーネル · エージェントと共有",
@@ -6609,6 +6607,11 @@
     "Search FAERS adverse-event reports with bounded filters.": "制限付きフィルターで FAERS 有害事象報告を検索します。",
     "Count matching FAERS adverse-event reports by selected buckets.": "選択した分類で一致する FAERS 有害事象報告を集計します。",
     "Search FDA drug enforcement and recall reports.": "FDA 医薬品の執行および回収報告を検索します。",
-    "List result-file metadata and download URLs for an MGnify analysis.": "MGnify 解析の結果ファイルメタデータとダウンロード URL を一覧表示します。"
+    "List result-file metadata and download URLs for an MGnify analysis.": "MGnify 解析の結果ファイルメタデータとダウンロード URL を一覧表示します。",
+    "Create skill": "スキルを作成",
+    "Create a skill to teach the Agent a workflow you use.": "スキルを作成して、よく使うワークフローをエージェントに教えます。",
+    "Wait for the current skill operation to finish before leaving.": "現在のスキル操作が完了してからエディターを離れてください。",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "スキルの変更は保存されていません。変更を破棄してエディターを離れますか？",
+    "Please wait…": "お待ちください…"
   }
 }

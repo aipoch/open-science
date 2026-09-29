@@ -103,6 +103,7 @@ describe('SkillEditLoader', () => {
 
 it('submits the loaded etag and retains the draft on a stale-save rejection', async () => {
   const onDone = vi.fn()
+  const onLeaveStateChange = vi.fn()
   const updateSkill = vi
     .fn()
     .mockRejectedValue(new Error('This Skill changed. Reload it before saving.'))
@@ -113,8 +114,15 @@ it('submits the loaded etag and retains the draft on a stale-save rejection', as
     }
   }
   await act(async () => {
-    root.render(<SkillEditLoader skillId={detail.id} onDone={onDone} />)
+    root.render(
+      <SkillEditLoader
+        skillId={detail.id}
+        onDone={onDone}
+        onLeaveStateChange={onLeaveStateChange}
+      />
+    )
   })
+  expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
   const body = container.querySelector<HTMLTextAreaElement>('[aria-label="Skill body"]')!
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
@@ -139,6 +147,7 @@ it('submits the loaded etag and retains the draft on a stale-save rejection', as
   expect(document.querySelector('[role=dialog]')?.textContent).toContain('Review Skill changes')
   expect(onDone).not.toHaveBeenCalled()
   expect(save.disabled).toBe(false)
+  expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
 })
 
 const clickButton = async (label: string): Promise<void> => {

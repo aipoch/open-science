@@ -1219,7 +1219,6 @@
     "Could not check the command-line tool.": "Не удалось проверить инструмент командной строки.",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "Не удалось загрузить модели: {{reason}}. Используется встроенный список.",
     "Couldn't load hosts.": "Не удалось загрузить хосты.",
-    "Create a skill to teach Claude a workflow you use.": "Создайте навык, чтобы научить Claude работе с рабочим процессом, который вы используете.",
     "Create agent": "Создать агента",
     "Create new…": "Создать новый…",
     "Create project": "Создать проект",
@@ -2252,7 +2251,6 @@
     "Proxy server": "Прокси-сервер",
     "Proxy settings": "Настройки прокси",
     "Proxy settings saved.": "Настройки прокси сохранены.",
-    "Publish": "Опубликовать",
     "Publish skill": "Опубликовать навык",
     "Python": "Python",
     "Python kernel · shared with the agent": "Python ядро · передано агенту",
@@ -7076,6 +7074,11 @@
     "Search FAERS adverse-event reports with bounded filters.": "Поиск сообщений FAERS о нежелательных явлениях с ограниченными фильтрами.",
     "Count matching FAERS adverse-event reports by selected buckets.": "Подсчёт совпадающих сообщений FAERS о нежелательных явлениях по выбранным группам.",
     "Search FDA drug enforcement and recall reports.": "Поиск сообщений FDA о мерах контроля и отзывах лекарств.",
-    "List result-file metadata and download URLs for an MGnify analysis.": "Список метаданных файлов результатов и URL загрузки для анализа MGnify."
+    "List result-file metadata and download URLs for an MGnify analysis.": "Список метаданных файлов результатов и URL загрузки для анализа MGnify.",
+    "Create skill": "Создать навык",
+    "Create a skill to teach the Agent a workflow you use.": "Создайте навык, чтобы научить Агента вашему рабочему процессу.",
+    "Wait for the current skill operation to finish before leaving.": "Дождитесь завершения текущей операции с навыком, прежде чем выйти.",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "Изменения навыка не сохранены. Отменить их и выйти из редактора?",
+    "Please wait…": "Подождите…"
   }
 }

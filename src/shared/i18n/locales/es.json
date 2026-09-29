@@ -1223,7 +1223,6 @@
     "Could not check the command-line tool.": "No se pudo comprobar la herramienta de línea de comandos.",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "No se pudieron obtener los modelos: {{reason}}. Se usará la lista incluida.",
     "Couldn't load hosts.": "No se pudieron cargar los hosts.",
-    "Create a skill to teach Claude a workflow you use.": "Cree una habilidad para enseñarle a Claude un flujo de trabajo que utiliza.",
     "Create agent": "Crear agente",
     "Create new…": "Crear nuevo…",
     "Create project": "Crear proyecto",
@@ -2249,7 +2248,6 @@
     "Proxy server": "Servidor proxy",
     "Proxy settings": "Configuración de proxy",
     "Proxy settings saved.": "Configuración de proxy guardada.",
-    "Publish": "Publicar",
     "Publish skill": "Publicar habilidad",
     "Variables": "Variables",
     "Variables: {{count}}_one": "{{count}} variable",
@@ -6937,6 +6935,11 @@
     "Search FAERS adverse-event reports with bounded filters.": "Buscar informes de eventos adversos de FAERS con filtros acotados.",
     "Count matching FAERS adverse-event reports by selected buckets.": "Contar informes de eventos adversos de FAERS coincidentes por categorías seleccionadas.",
     "Search FDA drug enforcement and recall reports.": "Buscar informes de aplicación y retiradas de medicamentos de la FDA.",
-    "List result-file metadata and download URLs for an MGnify analysis.": "Enumerar metadatos de archivos de resultados y URL de descarga de un análisis de MGnify."
+    "List result-file metadata and download URLs for an MGnify analysis.": "Enumerar metadatos de archivos de resultados y URL de descarga de un análisis de MGnify.",
+    "Create skill": "Crear habilidad",
+    "Create a skill to teach the Agent a workflow you use.": "Cree una habilidad para enseñarle al Agente un flujo de trabajo que utiliza.",
+    "Wait for the current skill operation to finish before leaving.": "Espere a que termine la operación actual de la habilidad antes de salir.",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "Los cambios en la habilidad no se han guardado. ¿Desea descartarlos y salir del editor?",
+    "Please wait…": "Espere…"
   }
 }
