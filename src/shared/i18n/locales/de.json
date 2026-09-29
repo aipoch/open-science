@@ -1142,7 +1142,6 @@
     "Could not update the command-line tool.": "Das Befehlszeilentool konnte nicht aktualisiert werden.",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "Modelle konnten nicht abgerufen werden: {{reason}}. Stattdessen wird die integrierte Liste verwendet.",
     "Couldn't load hosts.": "Hosts konnten nicht geladen werden.",
-    "Create a skill to teach Claude a workflow you use.": "Erstellen Sie eine Fähigkeit, um Claude einen von Ihnen verwendeten Arbeitsablauf beizubringen.",
     "Create agent": "Agent erstellen",
     "Create new…": "Neu erstellen…",
     "Create project": "Projekt erstellen",
@@ -2051,7 +2050,6 @@
     "Proxy server": "Proxyserver",
     "Proxy settings": "Proxy-Einstellungen",
     "Proxy settings saved.": "Proxy-Einstellungen gespeichert.",
-    "Publish": "Veröffentlichen",
     "Publish skill": "Fähigkeit veröffentlichen",
     "Python": "Python",
     "Python kernel · shared with the agent": "Python-Kernel · gemeinsam mit dem Agenten",
@@ -6414,7 +6412,10 @@
     "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "Die Alignment-Datei eines abgeschlossenen Clustal-Omega-Auftrags abrufen. Ergebnisse verfallen beim Dienst.",
     "Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.": "Gen-/Proteinidentität, Ontologiebegriffe und Gen-Set-Anreicherung — mygene.info, UniProt, OLS4-Ontologien, GO-Annotationen, Reactome-Pfade, g:Profiler und Enrichr.",
     "Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.": "Genetische Varianten — gnomAD-Häufigkeiten und -Constraints, ClinVar, dbSNP sowie funktionelle Scores, Zuordnungen und Experimente aus MaveDB.",
-    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).": "Omics-Datenarchive — Expression (ArrayExpress, GEO), Sequenzierungs-Reads (ENA), Metabolomik (MetaboLights), Metagenomik (MGnify) und Proteomik (PRIDE).",
+    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).": "Omics-Datenarchive — Expression (ArrayExpress, GEO), Sequenzierungs-Reads (ENA), Metabolomik (MetaboLights, Metabolomics Workbench), Metagenomik (MGnify) und Proteomik (PRIDE).",
+    "Look up Metabolomics Workbench compound structures and cross-references.": "Verbindungsstrukturen und Querverweise in Metabolomics Workbench nachschlagen.",
+    "Search Metabolomics Workbench study records.": "Studieneinträge in Metabolomics Workbench durchsuchen.",
+    "Retrieve Metabolomics Workbench study, sample and experimental metadata.": "Studien-, Proben- und experimentelle Metadaten aus Metabolomics Workbench abrufen.",
     "Discover UniProt proteins with cursor pagination.": "UniProt-Proteine mit Cursor-Paginierung entdecken.",
     "Submit an asynchronous UniProt identifier mapping job.": "Einen asynchronen UniProt-Identifier-Mapping-Auftrag einreichen.",
     "Check the status of a UniProt identifier mapping job.": "Den Status eines UniProt-Identifier-Mapping-Auftrags prüfen.",
@@ -6883,6 +6884,11 @@
     "Saved draft answers": "Gespeicherte Antwortentwürfe",
     "Recorded decision": "Aufgezeichnete Entscheidung",
     "Permission request was closed.": "Die Berechtigungsanfrage wurde geschlossen.",
-    "Recorded terminal output": "Aufgezeichnete Terminalausgabe"
+    "Recorded terminal output": "Aufgezeichnete Terminalausgabe",
+    "Create skill": "Fähigkeit erstellen",
+    "Create a skill to teach the Agent a workflow you use.": "Erstellen Sie eine Fähigkeit, um dem Agenten einen von Ihnen verwendeten Arbeitsablauf beizubringen.",
+    "Wait for the current skill operation to finish before leaving.": "Warten Sie, bis der aktuelle Vorgang für die Fähigkeit abgeschlossen ist, bevor Sie den Editor verlassen.",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "Ihre Änderungen an der Fähigkeit wurden nicht gespeichert. Änderungen verwerfen und den Editor verlassen?",
+    "Please wait…": "Bitte warten…"
   }
 }

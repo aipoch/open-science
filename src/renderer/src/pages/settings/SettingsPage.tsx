@@ -58,6 +58,8 @@ import {
 import { APP } from '../../../../shared/app-config'
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
+import type { SkillEditorLeaveState } from './SkillEditor'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
@@ -239,6 +241,7 @@ type SettingsPageProps = {
 }
 
 type SettingsPageHandle = {
+  requestLeave: (leave: () => void) => void
   closeActivePane: () => boolean
 }
 
@@ -488,6 +491,28 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // panel route, so unrelated panel views cannot form impossible combinations.
   const [history, setHistory] = useState<SettingsRoute[]>([INITIAL_SETTINGS_ROUTE])
   const [historyIndex, setHistoryIndex] = useState(0)
+  const skillLeaveReturnFocus = useRef<HTMLElement | null>(null)
+  const skillEditorLeaveState = useRef<SkillEditorLeaveState | null>(null)
+  const [skillEditorBusy, setSkillEditorBusy] = useState(false)
+  const [pendingSkillLeave, setPendingSkillLeave] = useState<(() => void) | null>(null)
+  const onSkillEditorLeaveStateChange = useCallback((state: SkillEditorLeaveState | null) => {
+    skillEditorLeaveState.current = state
+    setSkillEditorBusy(state?.busy ?? false)
+  }, [])
+  const requestLeave = useCallback((leave: () => void) => {
+    const state = skillEditorLeaveState.current
+    if (state?.dirty || state?.busy) {
+      const focused = document.activeElement
+      if (
+        focused instanceof HTMLElement &&
+        !focused.closest('[data-testid="skill-discard-confirmation"]')
+      ) {
+        skillLeaveReturnFocus.current = focused
+      }
+      setPendingSkillLeave(() => leave)
+    } else leave()
+  }, [])
+  const requestClose = (): void => requestLeave(onClose)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   // Whether the dialog is enlarged to near-fullscreen via the maximize control.
   const [isExpanded, setIsExpanded] = useState(false)
@@ -574,29 +599,26 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     mobileNavTriggerRef.current?.focus()
   }, [isMobile, isMobileNavOpen])
 
-  // External entry points publish one route intent with an event identity. Guard by request rather
-  // than target value so two separate requests for the same route are both honored.
-  const [seededIntentId, setSeededIntentId] = useState<number | undefined>()
-  if (
-    open &&
-    pendingSettingsIntent !== undefined &&
-    pendingSettingsIntent.requestId !== seededIntentId
-  ) {
-    setSeededIntentId(pendingSettingsIntent.requestId)
-    setHistory([pendingSettingsIntent.route])
-    setHistoryIndex(0)
-  }
-  if (!open && seededIntentId !== undefined) {
-    setSeededIntentId(undefined)
-  }
-
-  // Consume only the request applied above. A newer intent that arrives before this effect runs must
-  // remain pending for the next render.
+  // External route intents pass through the same draft protection as local navigation.
+  // Keep request identity independent of store consumption and Strict Mode effect replay.
+  const seededIntentId = useRef<number | undefined>(undefined)
   useEffect(() => {
-    if (open && pendingSettingsIntent !== undefined) {
-      consumePendingSettingsIntent(pendingSettingsIntent.requestId)
+    if (!open) {
+      seededIntentId.current = undefined
+      return
     }
-  }, [consumePendingSettingsIntent, open, pendingSettingsIntent])
+    if (!pendingSettingsIntent || pendingSettingsIntent.requestId === seededIntentId.current) return
+    seededIntentId.current = pendingSettingsIntent.requestId
+    consumePendingSettingsIntent(pendingSettingsIntent.requestId)
+    requestLeave(() => {
+      setHistory([pendingSettingsIntent.route])
+      setHistoryIndex(0)
+    })
+  }, [consumePendingSettingsIntent, open, pendingSettingsIntent, requestLeave])
+
+  useEffect(() => {
+    if (!open) setPendingSkillLeave(null)
+  }, [open])
 
   const currentRoute = history[historyIndex]
   const activePanel = currentRoute.panel
@@ -703,20 +725,26 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   // Pushes a complete active route, dropping any forward entries. Routes contain only serializable
   // navigation values, so comparing the whole route automatically covers fields added later.
-  const navigate = (route: SettingsRoute): void => {
-    if (JSON.stringify(route) === JSON.stringify(currentRoute)) return
-    setHistory((entries) => [...entries.slice(0, historyIndex + 1), route])
-    setHistoryIndex((index) => index + 1)
-  }
-
-  // Internal panel transitions must use this dialog's history instead of reseeding an external
-  // entry point, so Back returns to the recovery panel the user just completed.
-  const navigatePanel = (panel: SettingsPanelId): void => {
-    if (panel === 'tags') {
-      navigate({ panel, view: { kind: 'list', tagId: browserSelectedTagId } })
+  const navigate = (route: SettingsRoute, onNavigated?: () => void): void => {
+    if (JSON.stringify(route) === JSON.stringify(currentRoute)) {
+      onNavigated?.()
       return
     }
-    navigate(settingsPanelRoute(panel))
+    requestLeave(() => {
+      setHistory((entries) => [...entries.slice(0, historyIndex + 1), route])
+      setHistoryIndex((index) => index + 1)
+      onNavigated?.()
+    })
+  }
+
+  // Internal transitions retain history instead of reseeding an external entry point.
+  const navigatePanel = (panel: SettingsPanelId, onNavigated?: () => void): void => {
+    navigate(
+      panel === 'tags'
+        ? { panel, view: { kind: 'list', tagId: browserSelectedTagId } }
+        : settingsPanelRoute(panel),
+      onNavigated
+    )
   }
 
   const navigateTag = (tagId: string): void => {
@@ -1044,15 +1072,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const goBack = (): void => {
     if (!canGoBack) return
-    setHistoryIndex((index) => index - 1)
+    requestLeave(() => setHistoryIndex((index) => index - 1))
   }
 
   const goForward = (): void => {
     if (!canGoForward) return
-    setHistoryIndex((index) => index + 1)
+    requestLeave(() => setHistoryIndex((index) => index + 1))
   }
 
   useImperativeHandle(ref, () => ({
+    requestLeave,
     closeActivePane: () => {
       if (!open) return false
       const activeDialog = Array.from(
@@ -1073,15 +1102,17 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         return true
       }
       if (breadcrumb) {
-        if (canGoBack) setHistoryIndex((index) => index - 1)
+        if (canGoBack) goBack()
         else {
-          setHistory((entries) =>
-            entries.map((entry, index) => (index === historyIndex ? breadcrumb.rootTo : entry))
+          requestLeave(() =>
+            setHistory((entries) =>
+              entries.map((entry, index) => (index === historyIndex ? breadcrumb.rootTo : entry))
+            )
           )
         }
       } else {
         setIsMobileNavOpen(false)
-        onClose()
+        requestClose()
       }
       return true
     }
@@ -1298,7 +1329,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       onOpenChange={(next) => {
         if (next) return
         setIsMobileNavOpen(false)
-        onClose()
+        requestClose()
       }}
     >
       <Dialog.Portal>
@@ -1426,9 +1457,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       <div data-slot="settings-global-search" className="mb-4">
                         <SettingsGlobalSearch
                           panels={SETTINGS_PANELS}
-                          onNavigate={(panel) => {
-                            navigatePanel(panel)
-                            setIsMobileNavOpen(false)
+                          onNavigate={(panel, onNavigated) => {
+                            navigatePanel(panel, () => {
+                              setIsMobileNavOpen(false)
+                              onNavigated()
+                            })
                           }}
                         />
                       </div>
@@ -1447,8 +1480,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                                   type="button"
                                   aria-current={isActive ? 'page' : undefined}
                                   onClick={() => {
-                                    setIsMobileNavOpen(false)
-                                    navigatePanel(id)
+                                    navigatePanel(id, () => setIsMobileNavOpen(false))
                                   }}
                                   className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm ${
                                     isActive
@@ -1721,12 +1753,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
                             : `${activePanel}:${historyIndex}`
                     }
-                    onClose={onClose}
+                    onClose={requestClose}
                   >
                     {activePanel === 'skills' ? (
                       <SkillsPanel
                         view={skillsView}
                         onNavigate={navigateSkills}
+                        onEditorLeaveStateChange={onSkillEditorLeaveStateChange}
+                        onSaved={() => {
+                          // Only the completed write can bypass the dirty/pending guard.
+                          onSkillEditorLeaveStateChange(null)
+                          skillLeaveReturnFocus.current = null
+                          setPendingSkillLeave(null)
+                          navigateSkills({ kind: 'list' })
+                        }}
                         onOpenGitHubCredential={() =>
                           navigate({
                             panel: 'credentials',
@@ -1813,7 +1853,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                               useNavigationStore
                                 .getState()
                                 .openLiteratureItem(reference.resourceId, 'user')
-                              onClose()
+                              requestClose()
                               return
                             }
                             const specialist = specialistItems.find(
@@ -2265,6 +2305,36 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      <ConfirmActionDialog
+        open={open && pendingSkillLeave !== null}
+        title={t('Discard unsaved changes?')}
+        description={
+          skillEditorBusy
+            ? t('Wait for the current skill operation to finish before leaving.')
+            : t('Your skill edits have not been saved. Discard them and leave the editor?')
+        }
+        cancelLabel={t('Keep editing')}
+        confirmLabel={t('Discard changes')}
+        loading={skillEditorBusy}
+        loadingLabel={t('Please wait…')}
+        destructive
+        testId="skill-discard-confirmation"
+        onCancel={() => setPendingSkillLeave(null)}
+        onCloseAutoFocus={(event) => {
+          const target = skillLeaveReturnFocus.current
+          skillLeaveReturnFocus.current = null
+          if (!target?.isConnected) return
+          event.preventDefault()
+          target.focus({ preventScroll: true })
+        }}
+        onConfirm={() => {
+          if (skillEditorLeaveState.current?.busy) return
+          const leave = pendingSkillLeave
+          skillLeaveReturnFocus.current = null
+          setPendingSkillLeave(null)
+          leave?.()
+        }}
+      />
       {open && tagAnnotationPreview ? (
         <Suspense fallback={null}>
           <PdfAnnotationPreviewDialog

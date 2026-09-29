@@ -1,3 +1,4 @@
+import { openGeneralSettings } from '../fixtures/settings-preferences'
 import { expect, test, type Locator } from '@playwright/test'
 
 const observeExit = async (surface: Locator): Promise<void> => {
@@ -93,3 +94,47 @@ test('mobile search dismisses results before navigation and Settings', async ({ 
   await expect(page.locator('nav[aria-label="Settings"]')).toHaveAttribute('aria-hidden', 'true')
   await expect(page.locator('[data-slot="settings-surface"]')).toBeVisible()
 })
+
+for (const mobile of [false, true]) {
+  test(`protects a skill draft through history and search (${mobile ? 'mobile' : 'desktop'})`, async ({
+    page
+  }) => {
+    if (mobile) await page.setViewportSize({ width: 390, height: 850 })
+    await page.goto('/?search-shortcuts')
+    const settings = await openGeneralSettings(page)
+    if (mobile) await settings.getByRole('button', { name: 'Open settings navigation' }).click()
+    await settings
+      .getByRole('navigation', { name: 'Settings', exact: true })
+      .getByRole('button', { name: 'Skills', exact: true })
+      .click()
+    await settings.getByRole('button', { name: 'Add skill', exact: true }).click()
+    await page.getByRole('menuitem', { name: /Write from scratch/ }).click()
+    await settings.getByRole('textbox', { name: 'Skill name', exact: true }).fill('research-draft')
+    const body = settings.getByRole('textbox', { name: 'Skill body', exact: true })
+    await body.fill('Preserve these research instructions.')
+    const back = settings.getByRole('button', { name: 'Back', exact: true })
+    await back.click()
+    const confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes?' })
+    await expect(confirmation).toBeVisible()
+    await expect(confirmation.getByRole('button', { name: 'Keep editing' })).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(confirmation).toBeHidden()
+    await expect(back).toBeFocused()
+    await expect(body).toHaveValue('Preserve these research instructions.')
+    if (mobile) await settings.getByRole('button', { name: 'Open settings navigation' }).click()
+    const search = settings.getByRole('combobox', { name: 'Search settings' })
+    await search.fill('language')
+    await search.press('Enter')
+    await expect(confirmation).toBeVisible()
+    await confirmation.getByRole('button', { name: 'Keep editing' }).click()
+    await expect(search).toBeFocused()
+    await expect(search).toHaveValue('language')
+    await search.press('Enter')
+    await expect(confirmation).toBeVisible()
+    await confirmation.getByRole('button', { name: 'Discard changes' }).click()
+    await expect(body).toBeHidden()
+    await expect(settings.locator('[data-settings-anchor="general.language"]')).toBeFocused()
+    if (mobile) await settings.getByRole('button', { name: 'Open settings navigation' }).click()
+    await expect(search).toHaveValue('')
+  })
+}

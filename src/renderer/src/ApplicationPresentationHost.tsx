@@ -105,12 +105,17 @@ const ApplicationPresentationContent = ({
   const { t } = useTranslation()
   const settingsPageRef = useRef<SettingsPageHandle>(null)
   const closeActiveSettingsPane = useCallback(() => settingsPageRef.current?.closeActivePane(), [])
+  const requestSettingsLeave = useCallback((leave: () => void) => {
+    if (settingsPageRef.current) settingsPageRef.current.requestLeave(leave)
+    else leave()
+  }, [])
   const events = useApplicationEventBindings({
     startupView: startup.settings.startupView,
     sessionPersistence: startup.sessions,
     hasDataRootRecovery: startup.storageRecovery.missingDataRoot !== undefined,
     hasLegacyDataMove: startup.storageRecovery.legacyMove !== undefined,
-    closeActiveSettingsPane
+    closeActiveSettingsPane,
+    requestSettingsLeave
   })
   const { sessions } = startup
   const { presentation } = events

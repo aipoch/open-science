@@ -1258,7 +1258,6 @@
     "Could not check the command-line tool.": "無法檢查命令列工具。",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "無法取得模型：{{reason}}。將使用內建清單。",
     "Couldn't load hosts.": "無法載入主機。",
-    "Create a skill to teach Claude a workflow you use.": "建立一個技能，把你常用的流程教給 Claude。",
     "Create agent": "建立智能體",
     "Create new…": "新建……",
     "Create project": "建立專案",
@@ -2265,7 +2264,6 @@
     "Proxy server": "代理伺服器",
     "Proxy settings": "代理設定",
     "Proxy settings saved.": "代理設定已儲存。",
-    "Publish": "發布",
     "Publish skill": "發佈技能",
     "Python": "Python",
     "Python kernel · shared with the agent": "Python 核心 · 與智能體共用",
@@ -6255,7 +6253,10 @@
     "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "取得已完成 Clustal Omega 工作的比對檔案。結果會在服務端過期。",
     "Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.": "基因/蛋白質身分、本體論術語與基因集富集分析 — mygene.info、UniProt、OLS4 本體論、GO 註釋、Reactome 路徑、g:Profiler 與 Enrichr。",
     "Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.": "遺傳變異 — gnomAD 頻率與約束、ClinVar、dbSNP，以及 MaveDB 功能評分、對應和實驗。",
-    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).": "組學資料檔案 — 表現（ArrayExpress、GEO）、定序讀段（ENA）、代謝體學（MetaboLights）、宏基因組學（MGnify）與蛋白質體學（PRIDE）。",
+    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).": "組學資料檔案 — 表現（ArrayExpress、GEO）、定序讀段（ENA）、代謝體學（MetaboLights、Metabolomics Workbench）、宏基因組學（MGnify）與蛋白質體學（PRIDE）。",
+    "Look up Metabolomics Workbench compound structures and cross-references.": "查詢 Metabolomics Workbench 化合物結構與交叉引用。",
+    "Search Metabolomics Workbench study records.": "搜尋 Metabolomics Workbench 研究紀錄。",
+    "Retrieve Metabolomics Workbench study, sample and experimental metadata.": "取得 Metabolomics Workbench 研究、樣本與實驗中繼資料。",
     "Discover UniProt proteins with cursor pagination.": "使用游標分頁探索 UniProt 蛋白質。",
     "Submit an asynchronous UniProt identifier mapping job.": "提交非同步 UniProt 識別碼對映工作。",
     "Check the status of a UniProt identifier mapping job.": "檢查 UniProt 識別碼對映工作的狀態。",
@@ -6723,6 +6724,11 @@
     "Saved draft answers": "已儲存的回答草稿",
     "Recorded decision": "已記錄的決定",
     "Permission request was closed.": "權限請求已關閉。",
-    "Recorded terminal output": "已記錄的終端輸出"
+    "Recorded terminal output": "已記錄的終端輸出",
+    "Create skill": "建立技能",
+    "Create a skill to teach the Agent a workflow you use.": "建立一個技能，把常用的流程教給智能體。",
+    "Wait for the current skill operation to finish before leaving.": "請等待目前的技能操作完成後再離開。",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "技能修改尚未儲存。要捨棄修改並離開編輯器嗎？",
+    "Please wait…": "請稍候…"
   }
 }

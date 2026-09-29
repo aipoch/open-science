@@ -1258,7 +1258,6 @@
     "Could not check the command-line tool.": "无法检查命令行工具。",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "无法获取模型：{{reason}}。将使用内置列表。",
     "Couldn't load hosts.": "无法加载主机。",
-    "Create a skill to teach Claude a workflow you use.": "创建一个技能，把你常用的流程教给 Claude。",
     "Create agent": "创建智能体",
     "Create new…": "新建……",
     "Create project": "创建项目",
@@ -2267,7 +2266,6 @@
     "Proxy server": "代理服务器",
     "Proxy settings": "代理设置",
     "Proxy settings saved.": "代理设置已保存。",
-    "Publish": "发布",
     "Publish skill": "发布技能",
     "Python": "Python",
     "Python kernel · shared with the agent": "Python 内核 · 与智能体共享",
@@ -6255,7 +6253,10 @@
     "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "获取已完成 Clustal Omega 任务的比对文件。结果会在服务端过期。",
     "Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.": "基因/蛋白质身份、术语和基因集富集分析 — mygene.info、UniProt、OLS4、本体、GO 注释、Reactome 通路、g:Profiler 和 Enrichr。",
     "Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.": "遗传变异 — gnomAD 频率与约束、ClinVar、dbSNP，以及 MaveDB 功能评分、映射和实验。",
-    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).": "组学数据档案 — 表达（ArrayExpress、GEO）、测序读段（ENA）、代谢组学（MetaboLights）、宏基因组学（MGnify）和蛋白质组学（PRIDE）。",
+    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).": "组学数据档案 — 表达（ArrayExpress、GEO）、测序读段（ENA）、代谢组学（MetaboLights、Metabolomics Workbench）、宏基因组学（MGnify）和蛋白质组学（PRIDE）。",
+    "Look up Metabolomics Workbench compound structures and cross-references.": "查询 Metabolomics Workbench 化合物结构和交叉引用。",
+    "Search Metabolomics Workbench study records.": "搜索 Metabolomics Workbench 研究记录。",
+    "Retrieve Metabolomics Workbench study, sample and experimental metadata.": "获取 Metabolomics Workbench 研究、样本和实验元数据。",
     "Discover UniProt proteins with cursor pagination.": "使用游标分页发现 UniProt 蛋白质。",
     "Submit an asynchronous UniProt identifier mapping job.": "提交异步 UniProt 标识符映射任务。",
     "Check the status of a UniProt identifier mapping job.": "检查 UniProt 标识符映射任务状态。",
@@ -6723,6 +6724,11 @@
     "Saved draft answers": "已保存的回答草稿",
     "Recorded decision": "已记录的决定",
     "Permission request was closed.": "权限请求已关闭。",
-    "Recorded terminal output": "已记录的终端输出"
+    "Recorded terminal output": "已记录的终端输出",
+    "Create skill": "创建技能",
+    "Create a skill to teach the Agent a workflow you use.": "创建一个技能，把常用的流程教给智能体。",
+    "Wait for the current skill operation to finish before leaving.": "请等待当前技能操作完成后再离开。",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "技能修改尚未保存。要放弃修改并离开编辑器吗？",
+    "Please wait…": "请稍候…"
   }
 }

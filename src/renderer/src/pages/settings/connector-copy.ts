@@ -28,7 +28,7 @@ export function connectorDescription(
   }
   if (connector.id === 'omics-archives') {
     return t(
-      'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).'
+      'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).'
     )
   }
   if (connector.id === 'hmmer') {
@@ -152,6 +152,12 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('List Enrichr gene-set libraries and their coverage statistics for an organism.')
     case 'genes/enrich_gene_set_enrichr':
       return t('Run Enrichr enrichment for gene symbols or identifiers.')
+    case 'omics-archives/workbench_search_compounds':
+      return t('Look up Metabolomics Workbench compound structures and cross-references.')
+    case 'omics-archives/workbench_search_studies':
+      return t('Search Metabolomics Workbench study records.')
+    case 'omics-archives/workbench_get_study':
+      return t('Retrieve Metabolomics Workbench study, sample and experimental metadata.')
     case 'omics-archives/ena_query_runs':
       return t('Discover ENA sequencing runs with metadata filters.')
     case 'omics-archives/ena_get_submitted_files':

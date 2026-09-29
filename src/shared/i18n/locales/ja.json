@@ -1172,7 +1172,6 @@
     "Could not check the command-line tool.": "コマンドラインツールを確認できませんでした。",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "モデルを取得できませんでした：{{reason}}。バンドルリストを使用します。",
     "Couldn't load hosts.": "ホストを読み込めませんでした。",
-    "Create a skill to teach Claude a workflow you use.": "スキルを作成して、よく使うワークフローを Claude に教えます。",
     "Create agent": "エージェントを作成",
     "Create new…": "新規作成…",
     "Create project": "プロジェクトを作成",
@@ -2180,7 +2179,6 @@
     "Proxy server": "プロキシサーバー",
     "Proxy settings": "プロキシ設定",
     "Proxy settings saved.": "プロキシ設定が保存されました。",
-    "Publish": "公開",
     "Publish skill": "スキルを公開する",
     "Python": "Python",
     "Python kernel · shared with the agent": "Python カーネル · エージェントと共有",
@@ -6255,7 +6253,10 @@
     "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "完了した Clustal Omega ジョブのアラインメントファイルを取得します。結果にはサービス側の有効期限があります。",
     "Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.": "遺伝子・タンパク質の同定、オントロジー用語、遺伝子セット濃縮 — mygene.info、UniProt、OLS4 オントロジー、GO アノテーション、Reactome パスウェイ、g:Profiler、Enrichr。",
     "Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.": "遺伝的変異 — gnomAD の頻度と制約、ClinVar、dbSNP、および MaveDB の機能スコア、マッピング、実験。",
-    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).": "オミクスデータアーカイブ — 発現（ArrayExpress、GEO）、シーケンスリード（ENA）、メタボロミクス（MetaboLights）、メタゲノミクス（MGnify）、プロテオミクス（PRIDE）。",
+    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).": "オミクスデータアーカイブ — 発現（ArrayExpress、GEO）、シーケンスリード（ENA）、メタボロミクス（MetaboLights、Metabolomics Workbench）、メタゲノミクス（MGnify）、プロテオミクス（PRIDE）。",
+    "Look up Metabolomics Workbench compound structures and cross-references.": "Metabolomics Workbench の化合物構造と相互参照を検索します。",
+    "Search Metabolomics Workbench study records.": "Metabolomics Workbench の研究記録を検索します。",
+    "Retrieve Metabolomics Workbench study, sample and experimental metadata.": "Metabolomics Workbench の研究、サンプル、実験のメタデータを取得します。",
     "Discover UniProt proteins with cursor pagination.": "カーソルページネーションで UniProt タンパク質を検索。",
     "Submit an asynchronous UniProt identifier mapping job.": "非同期 UniProt 識別子マッピングジョブを送信。",
     "Check the status of a UniProt identifier mapping job.": "UniProt 識別子マッピングジョブの状態を確認。",
@@ -6723,6 +6724,11 @@
     "Saved draft answers": "保存された回答の下書き",
     "Recorded decision": "記録された判断",
     "Permission request was closed.": "権限リクエストは終了しました。",
-    "Recorded terminal output": "記録されたターミナル出力"
+    "Recorded terminal output": "記録されたターミナル出力",
+    "Create skill": "スキルを作成",
+    "Create a skill to teach the Agent a workflow you use.": "スキルを作成して、よく使うワークフローをエージェントに教えます。",
+    "Wait for the current skill operation to finish before leaving.": "現在のスキル操作が完了してからエディターを離れてください。",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "スキルの変更は保存されていません。変更を破棄してエディターを離れますか？",
+    "Please wait…": "お待ちください…"
   }
 }

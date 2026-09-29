@@ -1,8 +1,9 @@
 import { ncbiEtiquette } from './ncbi'
 import type { ToolContext, ToolDescriptor } from '../types'
 import { ENA_OMICS_TOOLS } from './omics-ena'
+import { WORKBENCH_OMICS_TOOLS } from './omics-workbench'
 
-// Public read-only endpoints for the five omics data archives grouped under this connector.
+// Public read-only endpoints for the omics data archives grouped under this connector.
 // Ported faithfully from the upstream openscience-mcp `mcp_omics_archives` fleet packages
 // (arrayexpress-experiments, geo-meta, metabolights-meta, mgnify-studies, pride-projects):
 // same request flow, pagination / count-verification, field names and output shapes.
@@ -1184,10 +1185,11 @@ async function prideProjectFiles(ctx: ToolContext, args: Obj): Promise<Obj> {
 }
 
 // ===========================================================================
-// Descriptors (18 archive tools plus 2 ENA tools; connector = 'omics-archives')
+// Descriptors (connector = 'omics-archives')
 // ===========================================================================
 export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
   ...ENA_OMICS_TOOLS,
+  ...WORKBENCH_OMICS_TOOLS,
   // ---- ArrayExpress (BioStudies) ----
   {
     id: 'arrayexpress_search_experiments',

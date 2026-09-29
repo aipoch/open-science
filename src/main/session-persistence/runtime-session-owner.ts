@@ -19,6 +19,9 @@ import {
   type RuntimeSessionScope
 } from '../../shared/runtime-session-projection'
 import { matchPlanDelivery } from '../session-plan/plan-delivery'
+import { createLogger, diagnosticErrorFields } from '../logger'
+
+const log = createLogger('session-persistence')
 
 const DEFAULT_FLUSH_INTERVAL_MS = 2_000
 const MAX_RETAINED_TURNS = 500
@@ -527,7 +530,7 @@ export class RuntimeSessionOwner {
     }
     // The coordinator stamps Main's runtime ownership in this identity mutation. Await it before
     // provider dispatch so a renderer save can never become the first durable writer for the turn.
-    const session = await this.dependencies.mutateSession(scope, (latest) => {
+    const session = await this.mutateSession(scope, 'begin-turn', (latest) => {
       latest = admitApplicationPrompt(latest, scope, admission, this.now())
       latest = admitDelegatedMessage(latest, scope, admission, this.now())
       // Re-derive against the durable record Main is about to write: only a still-parked turn may
@@ -627,7 +630,7 @@ export class RuntimeSessionOwner {
     if (!turn) throw new Error('Permission request has no registered Runtime Session execution.')
     // The ACP permission RPC contains the actual tool call. Its preceding notification can still
     // be suspended behind provider-acceptance persistence, so flushing that lane alone is not proof.
-    const committed = await this.dependencies.mutateSession(turn.scope, (latest) => {
+    const committed = await this.mutateSession(turn.scope, 'prepare-permission', (latest) => {
       assertScopeMatchesSession(turn.scope, latest, true, turn.promptRuntimeSegmentId)
       const graph = latest.conversationGraph!
       const frame = graph.frames.find(({ id }) => id === turn.scope.agentFrameId)
@@ -735,7 +738,7 @@ export class RuntimeSessionOwner {
     while (turn.pending.length > 0 || turn.replayConsumptionPending) {
       const batch = turn.pending.slice()
       const consumeReplay = turn.replayConsumptionPending
-      committed = await this.dependencies.mutateSession(turn.scope, (latest) => {
+      committed = await this.mutateSession(turn.scope, 'flush-events', (latest) => {
         assertScopeMatchesSession(turn.scope, latest, false, turn.promptRuntimeSegmentId)
         const next = applyRuntimeSessionEvents(latest, turn.scope, batch)
         if (consumeReplay) {
@@ -827,7 +830,7 @@ export class RuntimeSessionOwner {
 
     if (!attempt.messageId) {
       let stagedMessageId: string | undefined
-      const staged = await this.dependencies.mutateSession(turn.scope, (latest) => {
+      const staged = await this.mutateSession(turn.scope, 'stage-artifacts', (latest) => {
         assertScopeMatchesSession(turn.scope, latest, false, turn.promptRuntimeSegmentId)
         const attached = attachRuntimeSessionArtifacts(latest, turn.scope, {
           // This durable marker proves which claim was attached before irreversible finalization.
@@ -863,7 +866,7 @@ export class RuntimeSessionOwner {
       artifacts: [...attempt.finalizedArtifacts]
     }
     try {
-      const session = await this.dependencies.mutateSession(turn.scope, (latest) => {
+      const session = await this.mutateSession(turn.scope, 'attach-artifacts', (latest) => {
         assertScopeMatchesSession(turn.scope, latest, false, turn.promptRuntimeSegmentId)
         return attachRuntimeSessionArtifacts(latest, turn.scope, {
           messageId: attempt.messageId,
@@ -884,6 +887,35 @@ export class RuntimeSessionOwner {
         committedIdentity,
         { cause }
       )
+    }
+  }
+
+  private async mutateSession(
+    scope: RuntimeSessionTurnScope,
+    phase:
+      'begin-turn' | 'prepare-permission' | 'flush-events' | 'stage-artifacts' | 'attach-artifacts',
+    mutate: (latest: PersistedChatSession) => PersistedChatSession
+  ): Promise<PersistedChatSession> {
+    try {
+      return await this.dependencies.mutateSession(scope, mutate)
+    } catch (error) {
+      try {
+        log.warn('Runtime Session mutation failed', {
+          operation: 'runtime-session-mutation',
+          phase,
+          projectId: scope.projectId,
+          sessionId: scope.sessionId,
+          promptMessageId: scope.promptMessageId,
+          executionId: scope.executionId,
+          agentFrameId: scope.agentFrameId,
+          messageBranchId: scope.messageBranchId,
+          runtimeSegmentId: scope.runtimeSegmentId,
+          ...diagnosticErrorFields(error)
+        })
+      } catch {
+        // Logging cannot change the rejection or discard the batch retained for retry.
+      }
+      throw error
     }
   }
 

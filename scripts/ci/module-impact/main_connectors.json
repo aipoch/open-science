@@ -179,6 +179,7 @@
       "src/main/connectors/descriptors/literature.test.ts",
       "src/main/connectors/descriptors/molecule.test.ts",
       "src/main/connectors/descriptors/omics-archives.test.ts",
+      "src/main/connectors/descriptors/omics-workbench.test.ts",
       "src/main/connectors/descriptors/protein-annotation.test.ts",
       "src/main/connectors/descriptors/pubmed.test.ts",
       "src/main/connectors/descriptors/regulation.test.ts",

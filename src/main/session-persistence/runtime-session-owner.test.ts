@@ -696,11 +696,10 @@ describe('RuntimeSessionOwner', () => {
     const { owner, mutateSession, sessions } = harness()
     await owner.begin(turn)
     owner.accept(messageEvent(turn, 'event-1', 'kept'))
-    mutateSession.mockRejectedValueOnce(new Error('disk unavailable'))
+    const failure = new Error('disk unavailable')
+    mutateSession.mockRejectedValueOnce(failure)
 
-    await expect(owner.flush(turn.sessionId, turn.promptMessageId)).rejects.toThrow(
-      'disk unavailable'
-    )
+    await expect(owner.flush(turn.sessionId, turn.promptMessageId)).rejects.toBe(failure)
     expect(sessions.get(turn.sessionId)?.messages).toHaveLength(1)
 
     await owner.flush(turn.sessionId, turn.promptMessageId)

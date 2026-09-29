@@ -1191,7 +1191,6 @@
     "Could not check the command-line tool.": "명령줄 도구를 확인할 수 없습니다.",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "모델을 가져올 수 없습니다: {{reason}}. 번들 목록을 사용합니다.",
     "Couldn't load hosts.": "호스트를 로드할 수 없습니다.",
-    "Create a skill to teach Claude a workflow you use.": "스킬을 만들어 사용하는 작업 흐름을 Claude에 가르치세요.",
     "Create agent": "에이전트 만들기",
     "Create new…": "새로 만들기…",
     "Create project": "프로젝트 만들기",
@@ -2191,7 +2190,6 @@
     "Proxy server": "프록시 서버",
     "Proxy settings": "프록시 설정",
     "Proxy settings saved.": "프록시 설정이 저장되었습니다.",
-    "Publish": "게시",
     "Publish skill": "스킬 게시",
     "Python": "Python",
     "Python kernel · shared with the agent": "Python 커널 · 에이전트와 공유됨",
@@ -6253,7 +6251,10 @@
     "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "완료된 Clustal Omega 작업의 정렬 파일을 가져옵니다. 결과는 서비스에서 만료됩니다.",
     "Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.": "유전자/단백질 식별, 온톨로지 용어 및 유전자 집합 풍부화 — mygene.info, UniProt, OLS4 온톨로지, GO 주석, Reactome 경로, g:Profiler 및 Enrichr.",
     "Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.": "유전 변이 — gnomAD 빈도 및 제약, ClinVar, dbSNP, MaveDB 기능 점수, 매핑 및 실험.",
-    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).": "오믹스 데이터 아카이브 — 발현(ArrayExpress, GEO), 시퀀싱 리드(ENA), 대사체학(MetaboLights), 메타유전체학(MGnify), 단백질체학(PRIDE).",
+    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).": "오믹스 데이터 아카이브 — 발현(ArrayExpress, GEO), 시퀀싱 리드(ENA), 대사체학(MetaboLights, Metabolomics Workbench), 메타유전체학(MGnify), 단백질체학(PRIDE).",
+    "Look up Metabolomics Workbench compound structures and cross-references.": "Metabolomics Workbench의 화합물 구조와 상호 참조를 조회합니다.",
+    "Search Metabolomics Workbench study records.": "Metabolomics Workbench의 연구 기록을 검색합니다.",
+    "Retrieve Metabolomics Workbench study, sample and experimental metadata.": "Metabolomics Workbench의 연구, 시료 및 실험 메타데이터를 가져옵니다.",
     "Discover UniProt proteins with cursor pagination.": "커서 페이지네이션으로 UniProt 단백질 검색.",
     "Submit an asynchronous UniProt identifier mapping job.": "비동기 UniProt 식별자 매핑 작업 제출.",
     "Check the status of a UniProt identifier mapping job.": "UniProt 식별자 매핑 작업 상태 확인.",
@@ -6721,6 +6722,11 @@
     "Saved draft answers": "저장된 답변 초안",
     "Recorded decision": "기록된 결정",
     "Permission request was closed.": "권한 요청이 닫혔습니다.",
-    "Recorded terminal output": "기록된 터미널 출력"
+    "Recorded terminal output": "기록된 터미널 출력",
+    "Create skill": "스킬 만들기",
+    "Create a skill to teach the Agent a workflow you use.": "스킬을 만들어 사용하는 작업 흐름을 에이전트에게 가르치세요.",
+    "Wait for the current skill operation to finish before leaving.": "현재 스킬 작업이 완료될 때까지 기다린 후 나가세요.",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "스킬 변경 사항이 저장되지 않았습니다. 변경 사항을 버리고 편집기를 나가시겠습니까?",
+    "Please wait…": "잠시 기다려 주세요…"
   }
 }

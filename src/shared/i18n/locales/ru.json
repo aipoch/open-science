@@ -1219,7 +1219,6 @@
     "Could not check the command-line tool.": "Не удалось проверить инструмент командной строки.",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "Не удалось загрузить модели: {{reason}}. Используется встроенный список.",
     "Couldn't load hosts.": "Не удалось загрузить хосты.",
-    "Create a skill to teach Claude a workflow you use.": "Создайте навык, чтобы научить Claude работе с рабочим процессом, который вы используете.",
     "Create agent": "Создать агента",
     "Create new…": "Создать новый…",
     "Create project": "Создать проект",
@@ -2252,7 +2251,6 @@
     "Proxy server": "Прокси-сервер",
     "Proxy settings": "Настройки прокси",
     "Proxy settings saved.": "Настройки прокси сохранены.",
-    "Publish": "Опубликовать",
     "Publish skill": "Опубликовать навык",
     "Python": "Python",
     "Python kernel · shared with the agent": "Python ядро · передано агенту",
@@ -6719,7 +6717,10 @@
     "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "Получить файл выравнивания завершённого задания Clustal Omega. Срок хранения результатов на сервисе ограничен.",
     "Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.": "Идентификация генов и белков, термины онтологий и обогащение наборов генов — mygene.info, UniProt, онтологии OLS4, аннотации GO, пути Reactome, g:Profiler и Enrichr.",
     "Genetic variants — gnomAD frequencies and constraint, ClinVar, dbSNP, and MaveDB functional scores, mappings and experiments.": "Генетические варианты — частоты и ограничения gnomAD, ClinVar, dbSNP, а также функциональные оценки, сопоставления и эксперименты MaveDB.",
-    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).": "Архивы омиксных данных — экспрессия (ArrayExpress, GEO), чтения секвенирования (ENA), метаболомика (MetaboLights), метагеномика (MGnify) и протеомика (PRIDE).",
+    "Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights, Metabolomics Workbench), metagenomics (MGnify) and proteomics (PRIDE).": "Архивы омиксных данных — экспрессия (ArrayExpress, GEO), чтения секвенирования (ENA), метаболомика (MetaboLights, Metabolomics Workbench), метагеномика (MGnify) и протеомика (PRIDE).",
+    "Look up Metabolomics Workbench compound structures and cross-references.": "Поиск структур соединений и перекрёстных ссылок в Metabolomics Workbench.",
+    "Search Metabolomics Workbench study records.": "Поиск записей об исследованиях в Metabolomics Workbench.",
+    "Retrieve Metabolomics Workbench study, sample and experimental metadata.": "Получение метаданных исследований, образцов и экспериментов из Metabolomics Workbench.",
     "Discover UniProt proteins with cursor pagination.": "Находить белки UniProt с постраничной навигацией по курсору.",
     "Submit an asynchronous UniProt identifier mapping job.": "Отправить асинхронное задание сопоставления идентификаторов UniProt.",
     "Check the status of a UniProt identifier mapping job.": "Проверить состояние задания сопоставления идентификаторов UniProt.",
@@ -7190,6 +7191,11 @@
     "Saved draft answers": "Сохранённые черновики ответов",
     "Recorded decision": "Записанное решение",
     "Permission request was closed.": "Запрос разрешения был закрыт.",
-    "Recorded terminal output": "Записанный вывод терминала"
+    "Recorded terminal output": "Записанный вывод терминала",
+    "Create skill": "Создать навык",
+    "Create a skill to teach the Agent a workflow you use.": "Создайте навык, чтобы научить Агента вашему рабочему процессу.",
+    "Wait for the current skill operation to finish before leaving.": "Дождитесь завершения текущей операции с навыком, прежде чем выйти.",
+    "Your skill edits have not been saved. Discard them and leave the editor?": "Изменения навыка не сохранены. Отменить их и выйти из редактора?",
+    "Please wait…": "Подождите…"
   }
 }

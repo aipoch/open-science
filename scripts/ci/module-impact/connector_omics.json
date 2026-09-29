@@ -3,17 +3,21 @@
     "src/main/connectors/descriptors/omics-archives.test.ts",
     "src/main/connectors/descriptors/omics-archives.ts",
     "src/main/connectors/descriptors/omics-ena.ts",
-    "src/main/connectors/descriptors/omics-ena.test.ts"
+    "src/main/connectors/descriptors/omics-ena.test.ts",
+    "src/main/connectors/descriptors/omics-workbench.ts",
+    "src/main/connectors/descriptors/omics-workbench.test.ts"
   ],
   "interfacePaths": [
     "src/main/connectors/descriptors/omics-archives.ts",
-    "src/main/connectors/descriptors/omics-ena.ts"
+    "src/main/connectors/descriptors/omics-ena.ts",
+    "src/main/connectors/descriptors/omics-workbench.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
       "src/main/connectors/descriptors/omics-archives.test.ts",
-      "src/main/connectors/descriptors/omics-ena.test.ts"
+      "src/main/connectors/descriptors/omics-ena.test.ts",
+      "src/main/connectors/descriptors/omics-workbench.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
