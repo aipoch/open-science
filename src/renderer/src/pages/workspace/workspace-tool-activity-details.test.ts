@@ -1274,7 +1274,7 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain('file.txt')
   })
 
-  it('distinguishes a Shell launch failure from command output and keeps its diagnostic in details', () => {
+  it('preserves Shell failure output without adding a diagnostic classification', () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__bash_execute',
       status: 'failed',
@@ -1298,7 +1298,7 @@ describe('workspace tool activity details', () => {
     })
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.metaLabel).toBe('Shell did not start')
+    expect(details?.metaLabel).toBe('failed')
     expect(details?.sections).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: 'Command', text: 'echo hi' }),
@@ -1310,7 +1310,7 @@ describe('workspace tool activity details', () => {
     ).toHaveLength(0)
   })
 
-  it('shows numeric command failure without treating stderr as an infrastructure summary', () => {
+  it('unwraps a structured Shell result and preserves original command output', () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__bash_execute',
       status: 'failed',
@@ -1321,12 +1321,14 @@ describe('workspace tool activity details', () => {
           content: {
             type: 'text',
             text: JSON.stringify({
-              status: 'failed',
-              kernelKind: 'bash',
-              errorCode: 'shell-nonzero-exit',
-              exitCode: 7,
-              stdout: 'before\n',
-              stderr: 'missing file\n'
+              structuredContent: {
+                status: 'failed',
+                kernelKind: 'bash',
+                errorCode: 'shell-nonzero-exit',
+                exitCode: 7,
+                stdout: 'before\n',
+                stderr: 'missing file\n'
+              }
             })
           }
         }
@@ -1334,7 +1336,7 @@ describe('workspace tool activity details', () => {
     })
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.metaLabel).toBe('Command failed (exit 7)')
+    expect(details?.metaLabel).toBe('failed')
     expect(details?.sections[1]).toMatchObject({
       label: 'Output',
       text: 'before\nmissing file',

@@ -3,7 +3,6 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { Notice } from '@/components/notice'
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
 import { resolveNotebookRunFigures } from './notebook-run-figures'
-import { shellRunOutcomeNotice } from './shell-run-presentation'
 
 // Shared cell-output area for Notebook, Session dialog, and conversation tool rows. Text and figures
 // are intentionally separate: text owns its collapse control, while every figure stays visible in an
@@ -265,7 +264,7 @@ const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.
       .map((output, index) => renderTextOutput(output, index, errorClassName))
       .filter((node): node is React.JSX.Element => node !== null)
   } else {
-    const legacy = <LegacyTextOutput key="legacy" run={run} />
+    const legacy = <LegacyTextOutput run={run} />
     const hasLegacyText = [run.text.stdout, run.text.stderr, run.text.traceback].some(
       (value) => value.trim().length > 0
     )
@@ -389,25 +388,19 @@ const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Elem
         ? t('Request accepted and queued. Code has not started.')
         : run.status === 'running'
           ? t('Execution is in progress. Background execution still depends on this app process.')
-          : run.kernelKind === 'bash' && run.recovery?.retryAfter === 'cleanup-verified'
-            ? t(
-                'Shell cleanup could not be verified. Do not retry until cleanup is verified; check for partial effects.'
-              )
-            : run.kernelKind === 'bash' && run.status === 'failed'
-              ? shellRunOutcomeNotice(run, t)
-              : run.kernelDispatched === false && !networkRecovery
-                ? t('Code was not dispatched to the kernel.')
-                : run.interruptionReason === 'app-terminated'
-                  ? t(
-                      'The app stopped before a final outcome was saved. Execution may have had effects; check before retrying.'
-                    )
-                  : run.status === 'completed' &&
-                      run.environmentCapture?.state === 'unavailable' &&
-                      run.environmentCapture.reason !== 'environment-not-supported'
-                    ? t(
-                        'Code completed, but environment evidence could not be saved. This does not mean the code failed.'
-                      )
-                    : undefined
+          : run.kernelDispatched === false && !networkRecovery
+            ? t('Code was not dispatched to the kernel.')
+            : run.interruptionReason === 'app-terminated'
+              ? t(
+                  'The app stopped before a final outcome was saved. Execution may have had effects; check before retrying.'
+                )
+              : run.status === 'completed' &&
+                  run.environmentCapture?.state === 'unavailable' &&
+                  run.environmentCapture.reason !== 'environment-not-supported'
+                ? t(
+                    'Code completed, but environment evidence could not be saved. This does not mean the code failed.'
+                  )
+                : undefined
 
   if (!hasText && !hasFigures && !run.truncated && !notice && !networkRecovery) return null
 

@@ -792,6 +792,9 @@ const compactExecutionOutputs = (
   return { outputs, truncated, omitted }
 }
 
+const SHELL_FAILURE_GUIDANCE =
+  'For a denied path or unavailable runtime, stop dependent work; do not retry through another runtime or request unsupported escalation. Load Skill documents with the current framework Skill loader. For other command errors, correct the cause before retrying once.'
+
 const BUNDLED_KERNEL_SKILL_PSEUDO_MODULES = new Map([
   ['figure_style', 'figure-style'],
   ['figure_composer', 'figure-composer'],
@@ -849,7 +852,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     importedKernelSkillId && requestedKernelSkillIds.includes(importedKernelSkillId)
       ? `Kernel Skill "${importedKernelSkillId}" is injected by kernelSkillIds and is not a Python package. Remove the "${missingModule}" import, keep kernelSkillIds: ${JSON.stringify(requestedKernelSkillIds)}, call its exported functions directly, and retry. Do not install ${missingModule}.`
       : record.kernelKind === 'bash' && record.status === 'failed'
-        ? 'For a denied path or unavailable runtime, stop dependent work; do not retry through another runtime or request unsupported escalation. Load Skill documents with the current framework Skill loader. For other command errors, correct the cause before retrying once.'
+        ? SHELL_FAILURE_GUIDANCE
         : undefined
   const invalidatedRuns = Array.isArray(record.invalidatedRuns)
     ? record.invalidatedRuns.slice(0, 50).flatMap((value) => {
@@ -1008,6 +1011,9 @@ const compactShellExecutionResult = (raw: unknown): Record<string, unknown> => {
       : {}),
     ...(error ? { error } : {}),
     ...(nextStep ? { nextStep } : {}),
+    ...(record.kernelKind === 'bash' && status === 'failed'
+      ? { hint: SHELL_FAILURE_GUIDANCE }
+      : {}),
     ...(stdout.text ? { stdout: stdout.text } : {}),
     ...(diagnosticStderr ? { stderr: diagnosticStderr } : {}),
     ...(workingFiles.length ? { workingFiles } : {}),

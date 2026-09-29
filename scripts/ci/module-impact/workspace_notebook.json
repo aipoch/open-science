@@ -33,8 +33,6 @@
     "src/renderer/src/pages/workspace/session-notebook-data.test.ts",
     "src/renderer/src/pages/workspace/session-notebook-data.ts",
     "src/renderer/src/pages/workspace/session-notebook-projection.ts",
-    "src/renderer/src/pages/workspace/shell-run-presentation.test.ts",
-    "src/renderer/src/pages/workspace/shell-run-presentation.ts",
     "src/renderer/src/pages/workspace/tool-execution-phase.test.ts",
     "src/renderer/src/pages/workspace/tool-execution-phase.ts",
     "src/renderer/src/pages/workspace/use-notebook-runs-by-id.test.ts",
@@ -56,7 +54,6 @@
     "src/renderer/src/pages/workspace/notebook-tool-names.ts",
     "src/renderer/src/pages/workspace/notebook-tool-presentation.ts",
     "src/renderer/src/pages/workspace/session-notebook-data.ts",
-    "src/renderer/src/pages/workspace/shell-run-presentation.ts",
     "src/renderer/src/pages/workspace/tool-execution-phase.ts",
     "src/renderer/src/pages/workspace/use-notebook-runs-by-id.ts",
     "src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts"
@@ -80,7 +77,6 @@
       "src/renderer/src/pages/workspace/notebook-tool-names.test.ts",
       "src/renderer/src/pages/workspace/notebook-tool-presentation.test.tsx",
       "src/renderer/src/pages/workspace/session-notebook-data.test.ts",
-      "src/renderer/src/pages/workspace/shell-run-presentation.test.ts",
       "src/renderer/src/pages/workspace/tool-execution-phase.test.ts",
       "src/renderer/src/pages/workspace/use-notebook-runs-by-id.test.ts",
       "src/renderer/src/pages/workspace/workspace-compute-host-access-controller.test.ts"

@@ -10,7 +10,6 @@ import {
 } from './notebook-run-figures'
 import { NotebookToolFigureOutputs } from './NotebookToolFigureOutputs'
 import { notebookRunStatusLabel } from './notebook-cell-utils'
-import { shellRunFailureLabel } from './shell-run-presentation'
 import { useNearViewport } from './previews/useNearViewport'
 import type {
   ToolActivityDetails,
@@ -135,9 +134,7 @@ const WorkspaceToolDetailsRow = ({
   const notebookOutputLineMeta = notebookRun
     ? formatNotebookRunOutputLineMeta(notebookRun, t)
     : undefined
-  const notebookRunStatus = notebookRun
-    ? (shellRunFailureLabel(notebookRun) ?? notebookRunStatusLabel(notebookRun.status))
-    : undefined
+  const notebookRunStatus = notebookRun ? notebookRunStatusLabel(notebookRun.status) : undefined
   const notebookTerminalMeta = notebookRunStatus
     ? t(notebookRunStatus)
     : notebookRun?.status === 'completed'

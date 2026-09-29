@@ -19,7 +19,6 @@ import {
   resolveNotebookRunToolName
 } from './notebook-tool-names'
 import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
-import { shellFailureMetaLabel } from './shell-run-presentation'
 import {
   extractSkillLoadDocument,
   getLoadedSkillName,
@@ -897,7 +896,7 @@ const getNotebookRunStatusFromActivity = (
     : undefined
 }
 
-// Stateless Shell results do not carry the persistent-kernel invocation join. Accept only the
+// Shell results do not carry the persistent-kernel invocation join. Accept only the
 // exact app Shell tool and a structurally consistent terminal result; ACP observer status and
 // stderr text alone cannot establish that a command ran or failed.
 const getShellResultStatusFromActivity = (
@@ -934,10 +933,7 @@ const getShellResultStatusFromActivity = (
 
 // Renders a notebook run as its code plus execution output, not the raw summary JSON. Handles every
 // kernel: python/r cells, the repl control-plane (Agent SDK), and bash shell runs.
-const buildNotebookDetails = (
-  activity: ToolActivity,
-  t: TranslateClause = identityTranslate
-): ToolActivityDetails | undefined => {
+const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
   const summary = parseNotebookRunSummary(activity)
   const language = getNotebookLanguage(activity, summary)
   const code = getNotebookCode(activity, summary)
@@ -953,29 +949,10 @@ const buildNotebookDetails = (
   // The code leads the cell; keep the output tucked behind a collapsed toggle like the sidebar.
   if (outputSection) sections.push({ ...outputSection, collapsible: true })
 
-  // The protocol's human diagnostic is separate from process output. Preserve both without
-  // promoting stderr into a guessed application-error summary.
-  if (language === 'bash' && summary && typeof summary.error === 'string') {
-    const diagnostic = trimDetail(summary.error)
-    if (diagnostic && !output?.includes(diagnostic)) {
-      const diagnosticSection = createCodeSection('Error', diagnostic)
-      if (diagnosticSection) sections.push({ ...diagnosticSection, collapsible: true })
-    }
-  }
-
   // Without at least the code there is nothing notebook-specific to show; use the generic view.
   if (sections.length === 0) return undefined
 
   const status = summary && typeof summary.status === 'string' ? summary.status : undefined
-  const shellErrorCode =
-    summary && typeof summary.errorCode === 'string' ? summary.errorCode : undefined
-  const shellExitCode =
-    summary && typeof summary.exitCode === 'number' ? summary.exitCode : undefined
-  const metaLabel =
-    language === 'bash'
-      ? (shellFailureMetaLabel({ status, errorCode: shellErrorCode, exitCode: shellExitCode }, t) ??
-        (status === 'completed' ? t('Completed') : status))
-      : status
 
   // Derive display name from language: python/r are Notebook runs, javascript (repl) is Agent SDK,
   // and bash is shell.
@@ -984,7 +961,7 @@ const buildNotebookDetails = (
 
   return {
     displayName,
-    metaLabel,
+    metaLabel: status,
     notebookRunId: getNotebookRunIdFromActivity(activity),
     sections
   }
@@ -1364,7 +1341,7 @@ const buildToolActivityDetails = (
   }
   // Notebook runs (python/r cells, repl, bash) show their code and output, not the run-summary JSON.
   if (isNotebookKernelRunActivity(activity)) {
-    return buildNotebookDetails(activity, t) ?? buildGenericDetails(activity)
+    return buildNotebookDetails(activity) ?? buildGenericDetails(activity)
   }
   if (activity.toolKind === 'execute') return buildExecuteDetails(activity, t)
   // Tool-discovery steps summarize the tools they found rather than repeating "ToolSearch".
