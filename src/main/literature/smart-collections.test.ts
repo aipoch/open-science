@@ -502,11 +502,15 @@ it('resumes a manual refresh with recorded manual usage', async () => {
     }
   })
   expect((await owner.view(id)).run).toMatchObject({ manualResumeAllowed: true })
-  classify.mockResolvedValue({
-    verdict: 'match',
-    model: 'jev-1.13.0',
-    confidence: 1,
-    probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
+  classify.mockImplementation(async () => {
+    // A valid resumed classification can outlast waitFor's default one-second budget.
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    return {
+      verdict: 'match',
+      model: 'jev-1.13.0',
+      confidence: 1,
+      probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
+    }
   })
 
   await owner.execute({
@@ -517,7 +521,9 @@ it('resumes a manual refresh with recorded manual usage', async () => {
     offset: 0
   })
 
-  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
+    timeout: 15000
+  })
   expect((await owner.view(id)).run?.id).toBe(runId)
   expect(await owner.view(id)).toMatchObject({
     automaticPauseReason: 'interrupted',
