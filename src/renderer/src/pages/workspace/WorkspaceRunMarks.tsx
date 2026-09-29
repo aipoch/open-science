@@ -317,7 +317,8 @@ const WorkspaceRunMarks = ({
     image: t('Image')
   }
 
-  const previewMark = marks.find((mark) => mark.id === preview?.id)
+  const previewIndex = marks.findIndex((mark) => mark.id === preview?.id)
+  const previewMark = marks[previewIndex]
   // A measured preview belongs to one rail position. ResizeObserver may move the rail
   // without a window resize; invalidate the old anchor without another state update.
   const previewOpen =
@@ -470,26 +471,35 @@ const WorkspaceRunMarks = ({
         </ol>
       </nav>
       {preview && previewMark ? (
-        <div
+        <button
+          type="button"
+          tabIndex={-1}
           id={previewId}
-          role="tooltip"
+          disabled={!previewOpen || (!onRevealMessage && !availableMessageIds.has(previewMark.id))}
+          onClick={() => {
+            railRef.current
+              ?.querySelector<HTMLButtonElement>(`button[data-run-index="${previewIndex}"]`)
+              ?.focus({ preventScroll: true })
+            closePreview()
+            scrollToRun(previewMark, previewIndex)
+          }}
           aria-hidden={!previewOpen}
           data-slot="run-mark-preview"
           data-open={previewOpen || undefined}
           onPointerEnter={cancelPreviewClose}
           onPointerLeave={schedulePreviewClose}
-          className="fixed left-0 top-0 z-50 hidden h-[88px] w-64 max-w-[calc(100vw-24px)] rounded-xl border border-border-200 bg-bg-000 p-3 text-start text-text-000 shadow-dialog transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] md:block data-[open]:opacity-100 [&:not([data-open])]:pointer-events-none [&:not([data-open])]:opacity-0 starting:opacity-0 motion-reduce:transition-none"
+          className="fixed left-0 top-0 z-50 hidden h-[88px] w-64 max-w-[calc(100vw-24px)] flex-col rounded-xl border border-border-200 bg-bg-000 p-3 text-start text-text-000 shadow-dialog transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] md:flex data-[open]:opacity-100 [&:not([data-open])]:pointer-events-none [&:not([data-open])]:opacity-0 starting:opacity-0 motion-reduce:transition-none"
           style={{ transform: `translate3d(${preview.left}px, ${preview.top}px, 0)` }}
         >
-          <p className="truncate text-xs font-semibold leading-4 text-text-000">
+          <span className="block truncate text-xs font-semibold leading-4 text-text-000">
             {normalizePreviewText(previewMark.userMessage, previewFallback)}
-          </p>
+          </span>
           {previewMark.agentMessage ? (
-            <p className="mt-1 line-clamp-2 break-words text-xs leading-4 text-text-200">
+            <span className="mt-1 line-clamp-2 break-words text-xs leading-4 text-text-200">
               {normalizePreviewText(previewMark.agentMessage, previewFallback)}
-            </p>
+            </span>
           ) : null}
-        </div>
+        </button>
       ) : null}
     </>,
     document.body

@@ -10,7 +10,9 @@ test('shows four runs, hides three, and previews the hovered message', async ({
   const marks = page.getByRole('button', { name: /Go to run/ })
   await expect(marks).toHaveCount(4)
   await marks.nth(2).hover()
-  await expect(page.getByRole('tooltip')).toContainText('3. Compare the RNA family')
+  await expect(page.locator('button[data-slot="run-mark-preview"][data-open]')).toContainText(
+    '3. Compare the RNA family'
+  )
   await page.screenshot({
     animations: 'disabled',
     path: testInfo.outputPath('four-runs-hover.png')
@@ -51,7 +53,9 @@ test('follows transcript reading at both edges with bounded spacing and no indep
   expect((await railTop()) - before).toBeLessThan(8)
   expect(await pitch()).toBe(8)
   await page.getByRole('button', { name: /^Go to run 76:/ }).hover()
-  await expect(page.getByRole('tooltip')).toContainText('76. Compare')
+  await expect(page.locator('button[data-slot="run-mark-preview"][data-open]')).toContainText(
+    '76. Compare'
+  )
   await page.screenshot({
     animations: 'disabled',
     path: testInfo.outputPath('long-conversation-hover.png')
@@ -164,7 +168,7 @@ test('moves one preview card between marks and disables motion when requested', 
   await page.goto('/run-marks.html?count=4')
   const marks = page.getByRole('navigation', { name: 'Run marks' }).getByRole('button')
   await marks.nth(0).hover()
-  const preview = page.getByRole('tooltip')
+  const preview = page.locator('button[data-slot="run-mark-preview"][data-open]')
   await expect(preview).toBeVisible()
   await preview.evaluate((element) => element.setAttribute('data-test-retained', 'true'))
   await expect(preview).toHaveCSS('width', '256px')
@@ -176,7 +180,7 @@ test('moves one preview card between marks and disables motion when requested', 
     .poll(() => preview.evaluate((element) => element.getBoundingClientRect().top))
     .toBeGreaterThan(initialTop + 20)
   await page.keyboard.press('Escape')
-  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await expect(page.locator('button[data-slot="run-mark-preview"][data-open]')).toHaveCount(0)
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await marks.nth(1).focus()
   await expect(preview).toBeVisible()
@@ -193,7 +197,7 @@ test('dismisses the preview when panel resizing moves the rail without a window 
   await page.goto('/run-marks.html?count=4')
   const mark = page.getByRole('navigation', { name: 'Run marks' }).getByRole('button').nth(1)
   await mark.focus()
-  await expect(page.getByRole('tooltip')).toBeVisible()
+  await expect(page.locator('button[data-slot="run-mark-preview"][data-open]')).toBeVisible()
   const previousLeft = await mark.evaluate((element) => element.getBoundingClientRect().left)
   await page.locator('aside').evaluate((element) => {
     element.style.width = '320px'
@@ -201,15 +205,15 @@ test('dismisses the preview when panel resizing moves the rail without a window 
   await expect
     .poll(() => mark.evaluate((element) => element.getBoundingClientRect().left))
     .toBeGreaterThan(previousLeft)
-  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await expect(page.locator('button[data-slot="run-mark-preview"][data-open]')).toHaveCount(0)
   await mark.evaluate((element) => element.blur())
   await mark.focus()
-  await expect(page.getByRole('tooltip')).toBeVisible()
+  await expect(page.locator('button[data-slot="run-mark-preview"][data-open]')).toBeVisible()
   await expect
     .poll(async () => {
       const markRight = await mark.evaluate((element) => element.getBoundingClientRect().right)
       const previewLeft = await page
-        .getByRole('tooltip')
+        .locator('button[data-slot="run-mark-preview"][data-open]')
         .evaluate((element) => element.getBoundingClientRect().left)
       return Math.abs(previewLeft - markRight - 8)
     })
@@ -287,7 +291,7 @@ test('keeps a virtualized rail and its preview on the correct side in RTL', asyn
   await page.setViewportSize({ width: 1100, height: 800 })
   const mark = page.getByRole('button', { name: /^Go to run 1:/ })
   await mark.focus()
-  const preview = page.getByRole('tooltip')
+  const preview = page.locator('button[data-slot="run-mark-preview"][data-open]')
   await expect(preview).toBeVisible()
   expect((await preview.boundingBox())!.x).toBeLessThan((await mark.boundingBox())!.x)
   const railRight = (await page.getByRole('navigation', { name: 'Run marks' }).boundingBox())!
@@ -309,14 +313,18 @@ test('moves a continuous wave within one target without changing hit geometry', 
       .locator('span')
       .evaluate((element) => parseFloat((element as HTMLElement).style.scale))
   await page.mouse.move(before.x + 12, before.y + 4)
-  await expect(page.getByRole('tooltip')).toContainText('31. Compare')
+  await expect(page.locator('button[data-slot="run-mark-preview"][data-open]')).toContainText(
+    '31. Compare'
+  )
   await expect.poll(() => scale(30)).toBeCloseTo(1)
   await page.mouse.move(before.x + 12, before.y + 6)
   await expect.poll(() => scale(30)).toBeLessThan(1)
   expect(await scale(31)).toBeGreaterThan(await scale(29))
   expect(await scale(30)).toBeGreaterThan(await scale(31))
   expect(await scale(26)).toBeCloseTo(0.4)
-  await expect(page.getByRole('tooltip')).toContainText('31. Compare')
+  await expect(page.locator('button[data-slot="run-mark-preview"][data-open]')).toContainText(
+    '31. Compare'
+  )
   expect(await mark.boundingBox()).toEqual(before)
   await page.screenshot({ path: testInfo.outputPath('dense-wave.png') })
   await page.mouse.move(before.x + 12, before.y + 8)
@@ -326,3 +334,29 @@ test('moves a continuous wave within one target without changing hit geometry', 
   await page.mouse.move(before.x + 100, before.y + 100)
   await expect.poll(() => scale(30)).toBe(0.4)
 })
+
+for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+  test(`navigates to the previewed message on card click (${reducedMotion})`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion })
+    await page.goto('/run-marks.html?count=4')
+    const mark = page.getByRole('button', { name: /^Go to run 3:/ })
+    await mark.hover()
+    const preview = page.locator('button[data-slot="run-mark-preview"][data-open]')
+    await expect(preview).toContainText('3. Compare the RNA family')
+    await preview.click()
+    await expect(preview).toHaveCount(0)
+    await expect(mark).toBeFocused()
+    await expect(mark).toHaveAttribute('aria-current', 'location')
+    const conversation = page.getByRole('region', { name: 'Conversation' })
+    await expect
+      .poll(() =>
+        conversation.evaluate((element) => {
+          const message = element.querySelector('[data-message-id="user-2"]')!
+          return Math.round(
+            message.getBoundingClientRect().top - element.getBoundingClientRect().top
+          )
+        })
+      )
+      .toBe(8)
+  })
+}

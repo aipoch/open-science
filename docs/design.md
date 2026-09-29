@@ -697,7 +697,9 @@ The upper-right pin toggles the current Session through the shared Session contr
   opens the same preview and supplies `aria-describedby`. Position is clamped to 12px viewport
   margins, with the preferred side mirrored in RTL. Reduced motion disables transitions and entry
   animation. The preview remains hidden below `md`, like the rail.
-  Activating a mark scrolls that Message to the top with reduced-motion support. The preview shows
+  Activating a mark or its preview card scrolls that Message to the top with reduced-motion support.
+  The preview is a native button outside the Tab sequence; activating it returns focus to its mark
+  and closes the preview. Off-screen Messages use the same transcript reveal path as the marks. The preview shows
   the user Message as a dark single-line excerpt plus up to two muted lines from the first visible
   Agent Message explicitly linked through `responseToMessageId`; historical Agent Messages without
   that link are not inferred and leave the preview user-only. Hidden control Messages never appear
