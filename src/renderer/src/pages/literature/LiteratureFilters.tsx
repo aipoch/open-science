@@ -46,6 +46,7 @@ type Field = {
   field?: JournalField
 }
 type Row = { id: number; key: string; operator: JournalAttributeFilter['operator']; value: string }
+type AppliedRow = { id: number; filter: JournalAttributeFilter }
 const fixedFields: FixedField[] = ['tags', 'type', 'year', 'pdf']
 const journalKey = (datasetId: string, fieldId: string): string =>
   JSON.stringify([datasetId, fieldId])
@@ -215,8 +216,28 @@ export function LiteratureFilters({
     }))
   ]
   const [rows, setRows] = useState(initialRows)
+  const [appliedRows, setAppliedRows] = useState<AppliedRow[]>(() =>
+    journalFilters.map((filter, index) => ({ id: index + 4, filter }))
+  )
   const nextId = useRef(rows.length)
   const applied = JSON.stringify(journalFilters)
+  const previousFilter = (row: Row): JournalAttributeFilter | undefined => {
+    const filter = appliedRows.find(
+      (entry) =>
+        entry.id === row.id && journalKey(entry.filter.datasetId, entry.filter.fieldId) === row.key
+    )?.filter
+    // A parent reset or removed dataset must not be restored from local row history.
+    return filter &&
+      journalFilters.some(
+        (current) =>
+          current.datasetId === filter.datasetId &&
+          current.fieldId === filter.fieldId &&
+          current.operator === filter.operator &&
+          current.value === filter.value
+      )
+      ? filter
+      : undefined
+  }
   const invalidRows = new Set(
     rows
       .filter(
@@ -228,38 +249,42 @@ export function LiteratureFilters({
       )
       .map((row) => row.id)
   )
-  const pending = JSON.stringify(
-    invalidRows.size
-      ? journalFilters
-      : rows.flatMap((row): JournalAttributeFilter[] => {
-          const field = fields.find((field) => field.key === row.key)
-          if (!field) {
-            // Keep an applied condition while its dataset definitions are still loading.
-            const existing = journalFilters.find(
-              (filter) => journalKey(filter.datasetId, filter.fieldId) === row.key
-            )
-            return existing ? [existing] : []
-          }
-          if (!field.datasetId || !field.field || (row.operator !== 'missing' && !row.value.trim()))
-            return []
-          return [
-            {
-              datasetId: field.datasetId,
-              fieldId: field.field.id,
-              operator: row.operator,
-              ...(row.operator === 'missing' ? {} : { value: row.value.trim() })
-            }
-          ]
-        })
-  )
+  const pendingRows = rows.flatMap((row): AppliedRow[] => {
+    const field = fields.find((field) => field.key === row.key)
+    if (!field || invalidRows.has(row.id)) {
+      // Preserve only this row's applied condition, including duplicate fields.
+      const existing = previousFilter(row)
+      return existing ? [{ id: row.id, filter: existing }] : []
+    }
+    if (!field.datasetId || !field.field || (row.operator !== 'missing' && !row.value.trim()))
+      return []
+    return [
+      {
+        id: row.id,
+        filter: {
+          datasetId: field.datasetId,
+          fieldId: field.field.id,
+          operator: row.operator,
+          ...(row.operator === 'missing' ? {} : { value: row.value.trim() })
+        }
+      }
+    ]
+  })
+  const pending = JSON.stringify(pendingRows.map(({ filter }) => filter))
+  const pendingRowState = JSON.stringify(pendingRows)
+  const appliedRowState = JSON.stringify(appliedRows)
   useEffect(() => {
-    if (pending === applied) return
+    if (pending === applied && pendingRowState === appliedRowState) return
     const timer = window.setTimeout(() => {
-      onJournalFiltersChange(JSON.parse(pending))
-      onFilterChange()
+      // Equal query values can still belong to different rows after replacement or removal.
+      setAppliedRows(JSON.parse(pendingRowState))
+      if (pending !== applied) {
+        onJournalFiltersChange(JSON.parse(pending))
+        onFilterChange()
+      }
     }, 400)
     return () => window.clearTimeout(timer)
-  }, [pending, applied, onJournalFiltersChange, onFilterChange])
+  }, [pending, applied, pendingRowState, appliedRowState, onJournalFiltersChange, onFilterChange])
   const latest = useRef({ pending, applied, onJournalFiltersChange, onFilterChange })
   useEffect(() => {
     latest.current = { pending, applied, onJournalFiltersChange, onFilterChange }
@@ -443,9 +468,11 @@ export function LiteratureFilters({
                         role="alert"
                         className="mt-1 text-xs text-destructive"
                       >
-                        {t(
-                          'Enter a valid number. The last valid journal filters are still applied.'
-                        )}
+                        {previousFilter(row)
+                          ? t(
+                              'Enter a valid number. This condition keeps its last applied setting.'
+                            )
+                          : t('Enter a valid number. This condition has not been applied.')}
                       </p>
                     ) : null}
                   </>

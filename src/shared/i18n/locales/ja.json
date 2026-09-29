@@ -133,7 +133,8 @@
     "More items": "その他のセッション"
   },
   "renderer": {
-    "Enter a valid number. The last valid journal filters are still applied.": "有効な数値を入力してください。直前の有効なジャーナルの絞り込み条件が引き続き適用されています。",
+    "Enter a valid number. This condition keeps its last applied setting.": "有効な数値を入力してください。この条件には前回適用した設定が引き続き使用されます。",
+    "Enter a valid number. This condition has not been applied.": "有効な数値を入力してください。この条件はまだ適用されていません。",
     "Batch actions": "一括操作",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "薬理ゲノム注釈を検索する前に、ClinPGx の accession ID または名前で ClinPGx の薬物・化学物質レコードを解決します。",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "薬理ゲノム注釈を検索する前に、ClinPGx の accession ID または HGNC シンボルで ClinPGx の遺伝子レコードを解決します。",

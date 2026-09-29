@@ -133,7 +133,8 @@
     "More items": "更多會話"
   },
   "renderer": {
-    "Enter a valid number. The last valid journal filters are still applied.": "請輸入有效數字。仍在使用上一次有效的期刊篩選條件。",
+    "Enter a valid number. This condition keeps its last applied setting.": "請輸入有效數字。此條件仍使用上一次已套用的設定。",
+    "Enter a valid number. This condition has not been applied.": "請輸入有效數字。此條件尚未套用。",
     "Batch actions": "批次操作",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "在查詢藥物基因組學註釋前，依 ClinPGx accession ID 或名稱解析 ClinPGx 藥物／化學物質記錄。",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "在查詢藥物基因組學註釋前，依 ClinPGx accession ID 或 HGNC 符號解析 ClinPGx 基因記錄。",

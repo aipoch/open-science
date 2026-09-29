@@ -135,7 +135,8 @@
     "More items": "Plus de sessions"
   },
   "renderer": {
-    "Enter a valid number. The last valid journal filters are still applied.": "Saisissez un nombre valide. Les derniers filtres de revues valides restent appliqués.",
+    "Enter a valid number. This condition keeps its last applied setting.": "Saisissez un nombre valide. Cette condition conserve le dernier réglage appliqué.",
+    "Enter a valid number. This condition has not been applied.": "Saisissez un nombre valide. Cette condition n’a pas encore été appliquée.",
     "Batch actions": "Actions groupées",
     "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "Résoudre les enregistrements de médicaments ou de substances chimiques ClinPGx par identifiant d’accès ClinPGx ou par nom avant d’interroger les annotations pharmacogénomiques.",
     "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "Résoudre les enregistrements de gènes ClinPGx par identifiant d’accès ClinPGx ou par symbole HGNC avant d’interroger les annotations pharmacogénomiques.",
