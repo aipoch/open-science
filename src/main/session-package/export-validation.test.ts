@@ -100,6 +100,26 @@ it.each([
   ],
   ['quoted boolean credential', Buffer.from('{"noCredentials":"true"}'), false],
   [
+    'hyphenated boolean member names',
+    Buffer.from('{"no-authorization":true,"has-cookie":false,"no-api-key":true}'),
+    true
+  ],
+  ...Array.from({ length: 26 }, (_, split): [string, Buffer, boolean] => [
+    `boolean member crossing a read at prefix ${split + 1}`,
+    Buffer.from(' '.repeat(65536 - split - 1) + '{"noCredentials":false,"result":"ok"}'),
+    true
+  ]),
+  [
+    'boolean-like credential suffix in the next read',
+    Buffer.from(' '.repeat(65515) + '{"noCredentials":trueSecret}'),
+    false
+  ],
+  [
+    'boolean-like credential beyond the retained overlap',
+    Buffer.from('{"noCredentials":true' + ' '.repeat(70000) + 'secret}'),
+    false
+  ],
+  [
     'boolean field opening quote outside the retained overlap',
     Buffer.from(
       ' '.repeat(65536 - 8192 - 2) + '{"noCredentials":true,"notes":"' + 'a'.repeat(8192) + '"}'

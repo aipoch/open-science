@@ -87,13 +87,16 @@ const findPackageTextMatch = (
   beforeText = ''
 ): PackageTextMatch | undefined => {
   const booleanField = (index: number): boolean => {
+    if (!jsonBooleans) return false
+    // Header rules can start at a hyphenated key's suffix; recover the member name
+    // before deciding whether its value is a JSON boolean (also across overlaps).
+    while (index > 0 && /[a-z0-9_-]/i.test(text[index - 1])) index--
     const preceding = index === 0 ? beforeText : text[index - 1]
     // An overlap may begin at or inside a key. Carry its preceding character so
     // rescanning cannot turn a validated boolean field into an unquoted assignment.
     // The closing quote/colon below and whole-input validation still prove its type.
-    if (!jsonBooleans || (preceding !== '"' && !(index === 0 && /^[a-z0-9_-]$/i.test(preceding))))
-      return false
-    const field = /^[a-z][a-z0-9_-]*"[ \t\r\n]*:[ \t\r\n]*/i.exec(text.slice(index))
+    if (preceding !== '"' && !(index === 0 && /^[a-z0-9_-]$/i.test(preceding))) return false
+    const field = /^[a-z0-9_-]+"[ \t\r\n]*:[ \t\r\n]*/i.exec(text.slice(index))
     if (!field) return false
     const rest = text.slice(index + field[0].length)
     if (/^(?:true|false)[ \t\r\n]*(?=[,}])/.test(rest)) return true

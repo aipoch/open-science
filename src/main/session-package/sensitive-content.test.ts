@@ -9,6 +9,64 @@ import {
 
 describe('package text policy', () => {
   it.each([
+    'noCredentials',
+    'hasCredentials',
+    'authentication',
+    'authorization',
+    'cookie',
+    'apiKey',
+    'no-authorization',
+    'has-cookie',
+    'no-api-key'
+  ])('accepts boolean member types without allowlisting the %s key', (key) => {
+    for (const value of ['true', 'false']) {
+      for (const text of [
+        `{"${key}":${value}}`,
+        `{"nested":[{"${key}" : ${value},"result":"ok"}]}`,
+        `{\n "${key}"\t:\r\n ${value} \t\r\n}`,
+        `{"${key}":${value}}\n{"${key}":${value},"result":"ok"}\n`
+      ]) {
+        expect(findSensitivePackageText(text), text).toBeUndefined()
+        for (let end = 1; end < text.length; end++)
+          expect(
+            findSensitivePackageText(text.slice(0, end), false),
+            `prefix ${end}: ${text}`
+          ).toBeUndefined()
+      }
+    }
+    for (const value of [
+      '"true"',
+      '"false"',
+      '"synthetic-private-value"',
+      '123456',
+      'trueSecret',
+      'falseSecret',
+      'true || secret',
+      'False'
+    ])
+      expect(findSensitivePackageText(`{"${key}":${value}}`), value).toBeDefined()
+    for (const text of [
+      `${key}=true`,
+      `${key}: false`,
+      `'${key}': true`,
+      `--${key} true`,
+      `{"${key}":true`,
+      `{"${key}":false `,
+      `{"${key}":true,"password":"synthetic-private-value"}`,
+      `{"${key}":false}\npassword=synthetic-private-value`,
+      `{"${key}":true,"token":123456}`,
+      `{"${key}":false,"note":"Bearer synthetic-private-value"}`,
+      `"${key}": true, actual-secret`,
+      `{\\"${key}":true}`,
+      `{"${key}":os.environ["VALUE"]}`,
+      `{"${key}"=true}`,
+      `{"${key}":true\u00a0}`,
+      `{"${key}":true${' '.repeat(9000)}secret}`
+    ])
+      expect(findSensitivePackageText(text), text.slice(0, 100)).toBeDefined()
+  })
+
+  it.each([
     '{"noCredentials":true}',
     '{"noCredentials":false,"result":"ok"}',
     '{"metadata":{"noCredentials":true},"result":"ok"}',
@@ -171,7 +229,7 @@ it.each([
   }
 })
 
-it.each(['noCredentials', 'authorization'])(
+it.each(['noCredentials', 'authorization', 'no-authorization', 'has-cookie', 'no-api-key'])(
   'keeps boolean %s metadata safe at every overlap alignment',
   (key) => {
     for (let shift = -key.length; shift <= 1; shift++) {
