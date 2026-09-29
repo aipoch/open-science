@@ -344,6 +344,38 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    try {
+      return await this.prepare(invocation)
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === 'NotebookSandboxPreparationCleanupError' ||
+          error.message === 'SHELL_CLEANUP_INCOMPLETE: Retained command cleanup is unverified.' ||
+          error.message ===
+            'SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.')
+      ) {
+        const target = invocation.target ?? { kind: 'native' as const }
+        // Retain only the original cleanup capabilities. Admission of another command is not
+        // proof that these resources were reaped (notably on macOS).
+        const pending = [...this.pendingCommandCleanups].filter((cleanup) =>
+          sameCleanupDomain(cleanup.target, target)
+        )
+        if (pending.length > 0) {
+          Object.assign(error, {
+            retryCleanup: async (): Promise<boolean> => {
+              const results = await Promise.all(pending.map((cleanup) => cleanup.retry()))
+              if (!results.every(cleanupComplete)) return false
+              await this.reconcilePendingCommandCleanups(target)
+              return true
+            }
+          })
+        }
+      }
+      throw error
+    }
+  }
+
+  private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
     assertProcessTreeSupport(this.platform)
     const runtimeAccessRevision = this.runtimeAccessRevision
@@ -363,6 +395,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
     let activeExecutionGrants: ReadonlySet<string> = new Set()
     let executionActive = false
+    let activeCommandText = invocation.commandText
     const allowedNetworkHosts = new Set(
       (invocation.allowedNetworkHosts ?? []).flatMap((host) => {
         const normalized = validateCustomAllowedDomain(host)
@@ -392,6 +425,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { inheritedFileDescriptorCount: invocation.inheritedFileDescriptorCount }
           : {}),
         ...(invocation.superviseProcessTree ? { superviseProcessTree: true } : {}),
+        ...(invocation.windowsShellControlPipe
+          ? { windowsShellControlPipe: invocation.windowsShellControlPipe }
+          : {}),
         filesystem: {
           privateRoot: homedir(),
           readOnlyRoots: [
@@ -430,7 +466,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           this.isCommandGrantAllowed(
             invocation.sessionId,
             invocation.runtime,
-            invocation.commandText,
+            activeCommandText,
             executionActive,
             activeExecutionGrants,
             allowedNetworkHosts,
@@ -664,7 +700,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         : wrapped.beginSpawn
           ? { beginSpawn: wrapped.beginSpawn }
           : {}),
-      beginExecution: () => {
+      beginExecution: (request) => {
         // Cleanup can be retried, but the command can never execute again.
         if (cleanupReason !== undefined) {
           throw new Error('Notebook sandbox process is already closed.')
@@ -672,11 +708,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
         wrapped.resetNetworkConnections()
         executionActive = true
+        activeCommandText = request?.commandText ?? invocation.commandText
         wrapped.setExecutionActive(true)
         const grantKey = commandGrantKey(
           invocation.sessionId,
           invocation.runtime,
-          invocation.commandText
+          activeCommandText
         )
         activeExecutionGrants = this.nextExecutionGrants.get(grantKey) ?? new Set()
         this.nextExecutionGrants.delete(grantKey)

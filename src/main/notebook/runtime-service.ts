@@ -2016,7 +2016,18 @@ class NotebookRuntimeService {
         (restartingDocument.kernel.terminatedKernelInstances?.length ?? 0) > 0
       this.sessionLifecycle.notifyChanged(session)
 
+      const laneKey = notebookLaneKey(session.lane)
+      const releaseShellFence = this.executionOwner.fenceShellRuns({ laneKey })
       try {
+        const shell = await this.executionOwner.cancelShellRuns(
+          { laneKey },
+          new Error('Notebook Session is restarting.')
+        )
+        if (!shell.reaped) {
+          throw new Error(
+            'SHELL_CLEANUP_INCOMPLETE: Notebook restart requires verified Shell cleanup.'
+          )
+        }
         await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
         for (const key of envKeys) {
           this.environmentOperations.clearRestartRecommendations(
@@ -2047,6 +2058,8 @@ class NotebookRuntimeService {
         )
         this.sessionLifecycle.notifyChanged(session)
         throw error
+      } finally {
+        releaseShellFence()
       }
       this.sessionLifecycle.notifyChanged(session)
 

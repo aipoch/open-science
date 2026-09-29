@@ -32,6 +32,7 @@ type WindowsLaunchRequest = Readonly<{
   gatewayCredentials: GatewayCredentials
   env: NodeJS.ProcessEnv
   localRpcSocketPath?: string
+  windowsShellControlPipe?: string
   filesystem: FilesystemLayoutInput
   hostPath: string
   installationId: string
@@ -80,6 +81,7 @@ type WindowsStandardLaunchRequest = Readonly<
     | 'gatewayCredentials'
     | 'env'
     | 'localRpcSocketPath'
+    | 'windowsShellControlPipe'
   >
 >
 
@@ -652,6 +654,9 @@ const windowsLaunch = (
   const specification = Buffer.from(
     JSON.stringify({
       executable: directInvocation.executable,
+      ...(request.windowsShellControlPipe
+        ? { shellControlPipe: request.windowsShellControlPipe }
+        : {}),
       arguments: directInvocation.args,
       ...('verbatimArguments' in directInvocation
         ? { verbatimArguments: directInvocation.verbatimArguments }
@@ -740,6 +745,9 @@ const windowsSupervisedLaunch = (
     JSON.stringify({
       executable,
       arguments: args,
+      ...(request.windowsShellControlPipe
+        ? { shellControlPipe: request.windowsShellControlPipe }
+        : {}),
       cwd: request.cwd,
       readOnlyRoots: [],
       readWriteRoots: [],
