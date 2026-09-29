@@ -92,8 +92,15 @@ const chart =
   '<svg xmlns="http://www.w3.org/2000/svg" width="560" height="300"><rect width="560" height="300" fill="white"/><path d="M30 260L280 40L530 200" fill="none" stroke="#167f85" stroke-width="12"/></svg>'
 
 test('independent 1280×720 Stage paints the same frame by sequential advance and direct seek', async ({
-  page
+  page,
+  stageApp
 }, info) => {
+  const graphics = await stageApp.evaluate(({ app }) => app.getGPUFeatureStatus())
+  expect(graphics.gpu_compositing).toBe('disabled_software')
+  await info.attach('capture-renderer', {
+    body: JSON.stringify(graphics, null, 2),
+    contentType: 'application/json'
+  })
   const unexpectedNetwork: string[] = []
   page.on('request', (request) => {
     if (!request.url().startsWith(new URL(url).origin) && !request.url().startsWith('data:'))
@@ -251,11 +258,14 @@ test('keeps fixed system-font pixels after a web-font timeout and late arrival',
       'base64'
     )
   const before = await capture()
+  await writeFile(info.outputPath('font-timeout-before.png'), before)
   releaseFont()
   await page.evaluate(() => document.fonts.ready)
   await seek(page, 6100)
   await seek(page, 6000)
-  expect((await capture()).equals(before)).toBe(true)
+  const after = await capture()
+  await writeFile(info.outputPath('font-timeout-after.png'), after)
+  expect(after.equals(before)).toBe(true)
   await info.attach('fixed-font-timeout-frame', { body: before, contentType: 'image/png' })
 })
 

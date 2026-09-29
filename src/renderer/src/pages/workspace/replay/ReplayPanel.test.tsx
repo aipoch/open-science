@@ -349,6 +349,70 @@ describe('replay source and evidence isolation', () => {
 })
 
 describe('replay readiness clock', () => {
+  it('keeps resources available while a seek waits for paint and cancels the preceding frame', async () => {
+    let sequence = 0
+    const frames = new Map<number, FrameRequestCallback>()
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.set(++sequence, callback)
+      return sequence
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+    const tick = async (time: number): Promise<void> => {
+      await act(async () => {
+        const scheduled = [...frames.values()]
+        frames.clear()
+        scheduled.forEach((callback) => callback(time))
+      })
+    }
+    const document = makeDocument()
+    const onReady = vi.fn()
+    const view = render(
+      <ReplayStage
+        document={document}
+        scene={projectReplayScene(document, 'main', 0)}
+        onReady={onReady}
+      />
+    )
+    await tick(0)
+    expect(onReady).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ready: false, resourcesReady: true, positionMs: 0 })
+    )
+    await tick(16)
+    await tick(32)
+    expect(onReady).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ready: true, resourcesReady: true, positionMs: 0 })
+    )
+    view.rerender(
+      <ReplayStage
+        document={document}
+        scene={projectReplayScene(document, 'main', 500)}
+        onReady={onReady}
+      />
+    )
+    await tick(48)
+    expect(onReady).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ready: false, resourcesReady: true, positionMs: 500 })
+    )
+    view.rerender(
+      <ReplayStage
+        document={document}
+        scene={projectReplayScene(document, 'main', 750)}
+        onReady={onReady}
+      />
+    )
+    await tick(64)
+    expect(onReady).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ready: false, resourcesReady: true, positionMs: 750 })
+    )
+    expect(onReady.mock.calls.some(([value]) => value.ready && value.positionMs === 500)).toBe(
+      false
+    )
+    await tick(80)
+    expect(onReady).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ready: true, resourcesReady: true, positionMs: 750 })
+    )
+  })
+
   it('freezes logical time while required bytes are pending, then resumes without adding wait time', async () => {
     let resolveMaterial!: (value: ReplayPreparedResource) => void
     const pending = new Promise<ReplayPreparedResource>((resolve) => {
@@ -386,6 +450,12 @@ describe('replay readiness clock', () => {
     expect(
       Number((screen.getByLabelText('Replay progress') as HTMLInputElement).value)
     ).toBeLessThan(2000)
+    const position = Number((screen.getByLabelText('Replay progress') as HTMLInputElement).value)
+    // Capture readiness is pending as logical time advances; it must not throttle the player.
+    for (const time of [5516, 5532, 5548]) await tick(time)
+    expect(Number((screen.getByLabelText('Replay progress') as HTMLInputElement).value)).toBe(
+      position + 48
+    )
   })
 })
 

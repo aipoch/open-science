@@ -31,7 +31,11 @@ import {
 } from './replay-presentation'
 
 export const REPLAY_VIEWPORT = { width: 1280, height: 720 } as const
-export type ReplayStageReadiness = ReplayFrameReadiness & { frameKey: string; positionMs: number }
+export type ReplayStageReadiness = ReplayFrameReadiness & {
+  frameKey: string
+  positionMs: number
+  resourcesReady: boolean
+}
 export type ReplayStageProps = {
   document: ReplayDocument
   scene: ReplayScene
@@ -321,6 +325,10 @@ const ReplayStageContent = ({
   const transcript = useRef<HTMLDivElement>(null)
   const material = useRef<HTMLDivElement>(null)
   const [preparation, setPreparation] = useState<{ key: string; result: ReplayFrameReadiness }>()
+  const [paintedFrame, setPaintedFrame] = useState<{
+    key: string
+    preparation: typeof preparation
+  }>()
   const [failedImages, setFailedImages] = useState(new Set<string>())
   const readyCallback = useRef(onReady)
   useLayoutEffect(() => {
@@ -359,6 +367,8 @@ const ReplayStageContent = ({
       ? preparation.result
       : { ready: false, degraded: false, diagnostics: [] }
   const frameKey = JSON.stringify([preparationKey, scene.positionMs])
+  const frameReady =
+    readiness.ready && paintedFrame?.key === frameKey && paintedFrame.preparation === preparation
   const unavailableImages = useMemo(
     () =>
       new Set([
@@ -425,10 +435,31 @@ const ReplayStageContent = ({
   }, [scene.positionMs, scene.stepProgress, frameKey, reducedMotion, preparation])
 
   useLayoutEffect(() => {
-    readyCallback.current?.({ ...readiness, frameKey, positionMs: scene.positionMs })
-    // This runs after deterministic scroll/layout and placeholder commits for this exact frame.
+    if (!readiness.ready) return
+    let committed = 0
+    // Native capturePage can otherwise return the previous scroll compositor frame even after
+    // React layout effects finish. Cross a paint boundary after the exact frame's layout and any
+    // timeout placeholders commit. A subsequent seek cancels both callbacks and invalidates ready.
+    const paint = requestAnimationFrame(() => {
+      committed = requestAnimationFrame(() => setPaintedFrame({ key: frameKey, preparation }))
+    })
+    return () => {
+      cancelAnimationFrame(paint)
+      cancelAnimationFrame(committed)
+    }
+  }, [frameKey, preparation, readiness.ready])
+
+  useLayoutEffect(() => {
+    readyCallback.current?.({
+      ...readiness,
+      ready: frameReady,
+      resourcesReady: readiness.ready,
+      frameKey,
+      positionMs: scene.positionMs
+    })
+    // Playback needs resource readiness; capture additionally needs the committed paint boundary.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frameKey, preparation])
+  }, [frameKey, preparation, frameReady])
 
   const style = replayPresentationStyle(presentation)
   return (
@@ -436,7 +467,7 @@ const ReplayStageContent = ({
       ref={stage}
       style={style}
       data-testid="replay-stage"
-      data-replay-frame-ready={readiness.ready}
+      data-replay-frame-ready={frameReady}
       data-replay-frame-key={frameKey}
       data-replay-preparation={preparationId}
       lang={presentation.locale}

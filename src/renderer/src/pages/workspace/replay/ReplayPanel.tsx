@@ -528,7 +528,7 @@ const ReplayPanelContent = ({
               runDetails={runDetails}
               onInspect={pause}
               onReady={(result) => {
-                setReady(result.ready)
+                setReady(result.resourcesReady)
                 setDegraded(result.degraded)
               }}
             />
