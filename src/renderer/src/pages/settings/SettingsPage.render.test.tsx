@@ -6231,10 +6231,10 @@ describe('Skill editor leave protection', () => {
   const confirmation = (): HTMLElement | null =>
     document.querySelector('[data-testid="skill-discard-confirmation"]')
   const mountEditor = async (): Promise<{
-    onClose: ReturnType<typeof vi.fn>
+    onClose: ReturnType<typeof vi.fn<() => void>>
     handle: ReturnType<typeof createRef<SettingsPageHandle>>
   }> => {
-    const onClose = vi.fn()
+    const onClose = vi.fn<() => void>()
     const handle = createRef<SettingsPageHandle>()
     await act(async () => root.render(<SettingsPage ref={handle} open onClose={onClose} />))
     await act(async () => navButton('Skills')!.click())
