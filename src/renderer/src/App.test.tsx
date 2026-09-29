@@ -138,6 +138,7 @@ const mocks = vi.hoisted(() => {
     getStatus: vi.fn(),
     getInfo: vi.fn(),
     onboarding: {
+      pending: undefined as Promise<void> | undefined,
       props: undefined as { loadStorageInfo: () => Promise<unknown> } | undefined
     },
     syncWindowFindAppearance: vi.fn(),
@@ -346,6 +347,7 @@ vi.mock('@/pages/literature/LiteratureLibraryPage', () => ({
 }))
 vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
   OnboardingWizard: (props: { loadStorageInfo: () => Promise<unknown> }): React.JSX.Element => {
+    if (mocks.onboarding.pending) throw mocks.onboarding.pending
     mocks.onboarding.props = props
     return <div data-testid="onboarding-page" />
   }
@@ -539,6 +541,7 @@ describe('App startup routing', () => {
       usage: { categories: [], totalBytes: 0 },
       availableBytes: 1_000_000_000
     })
+    mocks.onboarding.pending = undefined
     mocks.onboarding.props = undefined
     window.api = {
       storage: { getStatus: mocks.getStatus, getInfo: mocks.getInfo },
@@ -1184,6 +1187,40 @@ describe('App startup routing', () => {
 
     expect(container.querySelector('[data-testid="settings-startup-loading"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="onboarding-page"]')).toBeNull()
+  })
+
+  it('keeps the startup logo centered while onboarding suspends, then shows the wizard', async () => {
+    mocks.settings.isLoaded = true
+    mocks.startupView = 'onboarding'
+    let finishLoading!: () => void
+    mocks.onboarding.pending = new Promise<void>((resolve) => {
+      finishLoading = resolve
+    })
+
+    await render()
+
+    const logo = container.querySelector('[data-testid="open-science-logo-loader"]')
+    expect(logo).not.toBeNull()
+    const shell = logo?.closest('main')
+    expect(shell).not.toBeNull()
+    for (const className of [
+      'flex',
+      'min-h-svh',
+      'items-center',
+      'justify-center',
+      'bg-background'
+    ]) {
+      expect(shell?.classList.contains(className)).toBe(true)
+    }
+    expect(container.querySelector('[data-testid="onboarding-page"]')).toBeNull()
+
+    await act(async () => {
+      mocks.onboarding.pending = undefined
+      finishLoading()
+    })
+
+    expect(container.querySelector('[data-testid="open-science-logo-loader"]')).toBeNull()
+    expect(container.querySelector('[data-testid="onboarding-page"]')).not.toBeNull()
   })
 
   it('shows a settings load error in the standard error notice and retries initialization', async () => {

@@ -163,7 +163,13 @@ const ApplicationPresentationContent = ({
           ui={startup.environment.ui}
           onRetry={() => void startup.environment.retry()}
         />
-        <Suspense fallback={<OpenScienceLogoLoader />}>
+        <Suspense
+          fallback={
+            <main className="flex min-h-svh items-center justify-center bg-background text-foreground">
+              <OpenScienceLogoLoader />
+            </main>
+          }
+        >
           <OnboardingWizard loadStorageInfo={startup.storageRecovery.loadInfo} />
         </Suspense>
       </>
