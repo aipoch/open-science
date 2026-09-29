@@ -202,6 +202,8 @@ const diagnosticEvents = new Set([
   'Session runtime deletion failed',
   'Session persistence deletion failed',
   'Session runtime remained attached after deletion',
+  'Runtime Session authority unavailable',
+  'Runtime Session mutation failed',
   'Session result delivery fence failed',
   'Session details generation completed',
   'set session effort failed',
@@ -217,6 +219,11 @@ const diagnosticEvents = new Set([
 const operationPhases = [
   'operation-start',
   'load-authority',
+  'begin-turn',
+  'prepare-permission',
+  'flush-events',
+  'stage-artifacts',
+  'attach-artifacts',
   'authority-loaded',
   'recover-delegation',
   'recover-session',
@@ -242,7 +249,13 @@ const operationPhases = [
   'install-lifecycle'
 ]
 const operationFields: Record<string, readonly string[]> = {
-  operation: ['application-startup', 'session-hydration', 'delegation-recovery'],
+  operation: [
+    'application-startup',
+    'session-hydration',
+    'delegation-recovery',
+    'runtime-session-mutation'
+  ],
+  authorityStatus: ['missing', 'unreadable'],
   phase: operationPhases,
   cpuIntervalPhase: operationPhases,
   outcome: ['started', 'completed', 'cancelled', 'failed'],
@@ -292,9 +305,9 @@ export function projectDiagnosticLog(value: unknown): ObjectValue {
   const diagnostic = fields(data)
   for (const [key, allowed] of Object.entries(operationFields))
     if (allowed.includes(data[key] as string)) diagnostic[key] = data[key]
-  for (const key of ['hydrationAvailable', 'startupCleanupEligible'])
+  for (const key of ['hydrationAvailable', 'startupCleanupEligible', 'metadataComplete'])
     if (typeof data[key] === 'boolean') diagnostic[key] = data[key]
-  for (const key of ['sessionId', 'messageId', 'operationId', 'requestId'])
+  for (const key of ['sessionId', 'messageId', 'operationId', 'requestId', 'cachedProjectId'])
     if (identifier(data[key])) diagnostic[key] = data[key]
   for (const key of [
     'unresponsiveDurationMs',

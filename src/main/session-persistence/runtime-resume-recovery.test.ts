@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -9,6 +9,9 @@ import { materializeSessionConversationGraph } from '../../shared/session-persis
 import { initDataRoot } from '../storage-root'
 import { loadSessionMutationAuthority, SessionRepository } from './repository'
 import { SessionPersistenceStateOwner } from './state-owner'
+import { RuntimeSessionOwner } from './runtime-session-owner'
+import { createLogger, flushLogs, initLogger } from '../logger'
+import { projectDiagnosticLog } from '../session-diagnostics/projection'
 
 const roots: string[] = []
 const scope = { projectId: 'project-1', sessionId: 'session-1' }
@@ -47,6 +50,7 @@ const harness = async (liveSession = false, activePrompt = false) => {
       updatedAt: 2
     })
   )
+  const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const owner = new SessionPersistenceStateOwner({
     repository,
     fileIndex: { syncSession: vi.fn(async () => []) },
@@ -54,20 +58,115 @@ const harness = async (liveSession = false, activePrompt = false) => {
     notifyFilesChanged: vi.fn(),
     notifyRuntimeContextSessionUpdated: vi.fn(),
     notifyRuntimeTranscriptSessionUpdated: vi.fn(),
-    log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    log
   })
   return {
     repository,
     owner,
     initial,
+    root,
+    log,
     raw: () => loadSessionMutationAuthority(repository, scope.projectId, scope.sessionId),
     restored: () => repository.loadSessionWithDiagnostics(scope.projectId, scope.sessionId)
   }
 }
 
 afterEach(async () => {
+  await flushLogs()
   vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+it('exports runtime mutation failure diagnostics without changing the missing Session rejection', async () => {
+  const h = await harness(true, true)
+  const logDir = join(h.root, 'logs')
+  initLogger({ logDir, mirrorToConsole: false })
+  h.log.warn.mockImplementation(createLogger('session-persistence').warn)
+  const graph = h.initial.conversationGraph!
+  const turn = {
+    ...scope,
+    promptMessageId: 'prompt-1',
+    executionId: 'execution-1',
+    agentFrameId: graph.activeFrameId,
+    messageBranchId: graph.frames[0].activeBranchId,
+    runtimeSegmentId: graph.runtimeSegments[0].id
+  }
+  const runtime = new RuntimeSessionOwner({
+    loadSession: async () => {
+      const loaded = await h.raw()
+      return loaded.status === 'found' ? loaded.session : undefined
+    },
+    mutateSession: (identity, mutate) => h.owner.mutateRuntimeSession(identity, mutate),
+    finalizeArtifacts: vi.fn(async () => []),
+    scheduleFlush: () => () => undefined
+  })
+  await runtime.begin(turn)
+  // Fault injection verifies observability only; it is not a reproduction of the user trigger.
+  await h.repository.deleteSession(scope.projectId, scope.sessionId)
+  runtime.accept({
+    id: 'event-1',
+    timestamp: Date.now(),
+    kind: 'message',
+    level: 'info',
+    sessionId: scope.sessionId,
+    promptMessageId: turn.promptMessageId,
+    messageId: 'response-1',
+    role: 'assistant',
+    text: 'PRIVATE_RESPONSE'
+  })
+  await expect(runtime.flush(scope.sessionId, turn.promptMessageId)).rejects.toThrow(
+    'Cannot update a missing runtime Session.'
+  )
+  expect(await h.raw()).toEqual({ status: 'missing' })
+  expect(h.log.warn).toHaveBeenCalledWith(
+    'Runtime Session authority unavailable',
+    expect.objectContaining({
+      ...scope,
+      operation: 'runtime-session-mutation',
+      phase: 'load-authority',
+      authorityStatus: 'missing',
+      cachedProjectId: scope.projectId,
+      metadataComplete: false
+    })
+  )
+  await flushLogs()
+  const raw = await readFile(join(logDir, 'main.log'), 'utf8')
+  const exported = raw
+    .trim()
+    .split('\n')
+    .map((line) => projectDiagnosticLog(JSON.parse(line)))
+  expect(exported).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        event: 'Runtime Session authority unavailable',
+        diagnostics: expect.objectContaining({
+          ...scope,
+          authorityStatus: 'missing',
+          cachedProjectId: scope.projectId,
+          metadataComplete: false
+        })
+      }),
+      expect.objectContaining({
+        event: 'Runtime Session mutation failed',
+        diagnostics: expect.objectContaining({
+          ...turn,
+          operation: 'runtime-session-mutation',
+          phase: 'flush-events',
+          errorCategory: 'error'
+        })
+      })
+    ])
+  )
+  expect(raw).not.toContain('PRIVATE_RESPONSE')
+  expect(raw).not.toContain(h.initial.title)
+  expect(raw).not.toContain(h.initial.cwd)
+  h.log.warn.mockImplementationOnce(() => {
+    throw new Error('Diagnostic sink unavailable')
+  })
+  await expect(runtime.flush(scope.sessionId, turn.promptMessageId)).rejects.toThrow(
+    'Cannot update a missing runtime Session.'
+  )
+  expect(await h.raw()).toEqual({ status: 'missing' })
 })
 
 describe('durable restart recovery before runtime attachment', () => {
