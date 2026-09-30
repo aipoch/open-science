@@ -147,6 +147,8 @@ describe('claude-install: custom install target (opencode)', () => {
 })
 
 describe.skipIf(process.platform !== 'win32')('claude-install: Windows response guard', () => {
+  // These cases launch real PowerShell; cold Windows startup can exceed the unit-test budget.
+  // Kill a hung fixture before the outer test deadline so runResponse can remove its files.
   const runResponse = async (
     body: string,
     contentType: string,
@@ -183,7 +185,8 @@ describe.skipIf(process.platform !== 'win32')('claude-install: Windows response 
             command,
             ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fixturePath],
             {
-              windowsHide: true
+              windowsHide: true,
+              timeout: 30_000
             }
           )
         },
@@ -209,7 +212,7 @@ describe.skipIf(process.platform !== 'win32')('claude-install: Windows response 
       expect(output).toContain('Official installer returned HTML instead of PowerShell')
       expect(output).not.toMatch(/unexpected-execution|ParserError|ParseException/)
     },
-    15_000
+    40_000
   )
 
   it('runs a legitimate script even if it mentions an HTML tag in a string', async () => {
@@ -219,7 +222,7 @@ describe.skipIf(process.platform !== 'win32')('claude-install: Windows response 
     )
     expect(result.ok, JSON.stringify({ result, output })).toBe(true)
     expect(output).toContain('installer-ran <html>')
-  }, 15_000)
+  }, 40_000)
 
   it('preserves the npm fallback after rejecting HTML', async () => {
     const { result, commands } = await runResponse(
@@ -229,7 +232,7 @@ describe.skipIf(process.platform !== 'win32')('claude-install: Windows response 
     )
     expect(result.ok).toBe(true)
     expect(commands).toEqual(['powershell', 'npm'])
-  }, 15_000)
+  }, 40_000)
 
   it('decodes an octet-stream script before execution', async () => {
     const { result, output } = await runResponse(
@@ -240,14 +243,14 @@ describe.skipIf(process.platform !== 'win32')('claude-install: Windows response 
     )
     expect(result.ok, JSON.stringify({ result, output })).toBe(true)
     expect(output).toContain('binary-script-ran')
-  }, 15_000)
+  }, 40_000)
 
   it('does not classify a legitimate installer failure as an HTML response', async () => {
     const { result, commands } = await runResponse("throw 'installer-failed'", 'text/plain', true)
     expect(result.ok).toBe(false)
     expect(result.regionBlocked).toBeUndefined()
     expect(commands).toEqual(['powershell'])
-  }, 15_000)
+  }, 40_000)
 })
 
 describe('claude-install: region-block detection', () => {
