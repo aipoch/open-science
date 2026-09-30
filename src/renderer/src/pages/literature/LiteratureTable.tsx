@@ -2,10 +2,12 @@ import {
   useEffect,
   useRef,
   type ComponentProps,
+  type ComponentPropsWithoutRef,
+  type RefObject,
   type ReactElement,
-  type ReactNode,
   type SyntheticEvent
 } from 'react'
+import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 // One delay/skip-delay context for every text and attachment hint in the table.
@@ -18,11 +20,15 @@ export function LiteratureTable(props: ComponentProps<'table'>): React.JSX.Eleme
 }
 
 export function LiteratureTableScrollArea({
-  children
-}: {
-  children: ReactNode
+  children,
+  viewportRef,
+  className,
+  ...props
+}: ComponentPropsWithoutRef<'div'> & {
+  viewportRef?: RefObject<HTMLDivElement | null>
 }): React.JSX.Element {
-  const viewport = useRef<HTMLDivElement>(null)
+  const internalViewport = useRef<HTMLDivElement>(null)
+  const viewport = viewportRef ?? internalViewport
   useEffect(() => {
     const element = viewport.current!
     const update = (): void => {
@@ -38,11 +44,15 @@ export function LiteratureTableScrollArea({
       observer.disconnect()
       element.removeEventListener('scroll', update)
     }
-  }, [])
+  }, [viewport])
   return (
     <div
+      {...props}
       ref={viewport}
-      className="group/journal-scroll min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]"
+      className={cn(
+        'group/journal-scroll min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]',
+        className
+      )}
     >
       {children}
     </div>

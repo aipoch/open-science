@@ -162,7 +162,11 @@ import { useTagStore } from '@/stores/tag-store'
 import { LiteratureMergeReview } from './LiteratureMergeReview'
 import { LiteratureBatchLookupDialog, type BatchLookupMode } from './LiteratureBatchLookupDialog'
 import { LiteratureBackgroundTasks } from './LiteratureBackgroundTasks'
-import { LiteratureTable, LiteratureTextTooltip } from './LiteratureTable'
+import {
+  LiteratureTable,
+  LiteratureTableScrollArea,
+  LiteratureTextTooltip
+} from './LiteratureTable'
 import { buildLiteratureMergeItem, mergeScalarFields } from './literature-merge'
 import type {
   LiteratureCatalogCommand,
@@ -1637,7 +1641,7 @@ const LiteratureItemRow = memo(function LiteratureItemRow({
             return null
         }
       })}
-      <td className="sticky right-12 z-20 w-28 min-w-28 max-w-28 border-l border-border-300/80 bg-inherit px-3 py-2 text-center align-middle shadow-card-opaque">
+      <td className="sticky right-12 z-20 w-28 min-w-28 max-w-28 border-l border-transparent bg-inherit group-data-[overflow-right=true]/journal-scroll:border-border-300/60 px-3 py-2 text-center align-middle before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-2 before:bg-linear-to-l before:from-foreground/5 before:to-transparent before:opacity-0 group-data-[overflow-right=true]/journal-scroll:before:opacity-100">
         {attachmentVersion ? (
           <LiteratureTextTooltip text={attachmentVersion.filename}>
             <Button
@@ -6917,8 +6921,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   ) : items.length > 0 || entriesPageTransitionLoading ? (
                     <div className="isolate flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border-300/80 bg-bg-000">
                       <div className="relative min-h-0 flex-1 overflow-hidden">
-                        <div
-                          ref={tableScrollRef}
+                        <LiteratureTableScrollArea
+                          viewportRef={tableScrollRef}
                           data-slot="literature-table-scroll"
                           className="h-full overflow-auto pb-3 [scrollbar-gutter:stable]"
                         >
@@ -6989,7 +6993,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 ))}
                                 <th
                                   scope="col"
-                                  className="sticky right-12 z-30 w-28 min-w-28 max-w-28 overflow-hidden border-l border-border-300/80 bg-bg-200 px-2 py-2.5 text-center text-[11px] whitespace-nowrap shadow-card-opaque"
+                                  className="sticky right-12 z-30 w-28 min-w-28 max-w-28 border-l border-transparent bg-bg-200 group-data-[overflow-right=true]/journal-scroll:border-border-300/60 px-2 py-2.5 text-center text-[11px] whitespace-nowrap before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-2 before:bg-linear-to-l before:from-foreground/5 before:to-transparent before:opacity-0 group-data-[overflow-right=true]/journal-scroll:before:opacity-100"
                                 >
                                   {t('Attachment')}
                                 </th>
@@ -7051,7 +7055,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               </LiteratureRowNumbers.Provider>
                             </TooltipProvider>
                           </LiteratureTable>
-                        </div>
+                        </LiteratureTableScrollArea>
                         {entriesPageTransitionLoading ? (
                           <div
                             role="status"
