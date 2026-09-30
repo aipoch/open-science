@@ -191,17 +191,22 @@ console.log(JSON.stringify(result))
           { mode: 0o755 }
         )
         await symlink('../lib/node_modules/npm/bin/npm-cli.js', join(hostBin, 'npm'))
+        // Runtime packages are readable and inherit the runtime root's read-only mount.
+        // A denied-read directory would instead receive Linux's anonymous filesystem mask.
         const isolated = await adapter.execute({
           ...request('npm', 'private-node'),
-          environment: { ...process.env, PATH: `${hostBin}:${process.env.PATH}` },
-          protectedDirs: [protectedRoot]
+          environment: { ...process.env, PATH: `${hostBin}:${process.env.PATH}` }
         })
+        const deniedRead =
+          process.platform === 'linux' ? /^(EPERM|EACCES|ENOENT)$/ : /^(EPERM|EACCES)$/
+        const deniedWrite =
+          process.platform === 'linux' ? /^(EPERM|EACCES|EROFS)$/ : /^(EPERM|EACCES)$/
         expect(isolated, JSON.stringify(isolated)).toMatchObject({ exitCode: 0 })
         expect(JSON.parse(isolated.stdout)).toEqual({
           package: 'npm',
-          sibling: expect.stringMatching(/^(EPERM|EACCES)$/),
-          npmWrite: expect.stringMatching(/^(EPERM|EACCES)$/),
-          runtimeWrite: expect.stringMatching(/^(EPERM|EACCES)$/)
+          sibling: expect.stringMatching(deniedRead),
+          npmWrite: expect.stringMatching(deniedWrite),
+          runtimeWrite: expect.stringMatching(deniedWrite)
         })
         await expect(access(join(hostNpm, 'pwn.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
         await expect(access(join(protectedRoot, 'pwn.txt'))).rejects.toMatchObject({
@@ -220,7 +225,7 @@ console.log(JSON.stringify(result))
           )
         )
         expect(probe, JSON.stringify(probe)).toMatchObject({ exitCode: 0 })
-        expect(probe.stdout.trim()).toMatch(/^(EPERM|EACCES)$/)
+        expect(probe.stdout.trim()).toMatch(deniedRead)
         expect(redirected.stdout).not.toContain('"package":"npm"')
       }
     }
