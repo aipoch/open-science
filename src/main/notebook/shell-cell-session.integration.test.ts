@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -110,9 +110,15 @@ describe('persistent platform shell cells', () => {
         exitCode: 0,
         stdout: 'shared-tool'
       })
+      // Each sandbox can read its own workspace, not another session's temporary workspace.
+      // Stage the fixture as a local input without changing either session's read grants.
+      await copyFile(
+        join(workspace, 'open-science-npm-fixture-1.0.0.tgz'),
+        join(secondWorkspace, 'open-science-npm-fixture-1.0.0.tgz')
+      )
       const local = await adapter.execute(
         second(
-          `${npm} install ${quote(join(workspace, 'open-science-npm-fixture-1.0.0.tgz'))} --offline --ignore-scripts --no-audit --no-fund`
+          `${npm} install ./open-science-npm-fixture-1.0.0.tgz --offline --ignore-scripts --no-audit --no-fund`
         )
       )
       expect(local, JSON.stringify(local)).toMatchObject({ exitCode: 0 })
