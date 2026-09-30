@@ -1,5 +1,5 @@
 import { load } from 'js-yaml'
-import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -138,23 +138,59 @@ describe('Windows updater certification', () => {
     async () => {
       const root = await mkdtemp(join(tmpdir(), 'updater-observer-'))
       const installer = join(root, 'observer-fixture.exe')
+      const release = join(root, 'release')
       const controller = new AbortController()
       await copyFile(process.execPath, installer)
-      const observer = observeInstaller({ installer, env: process.env, signal: controller.signal })
+      const acquired = Promise.withResolvers<void>()
+      const observer = observeInstaller({
+        installer,
+        env: process.env,
+        signal: controller.signal,
+        runProcessImpl: (executable, args, options) =>
+          runProcess(executable, args, {
+            ...options,
+            onStdout: (output) => {
+              options.onStdout?.(output)
+              if (output.split(/\r?\n/).includes('OPEN_SCIENCE_INSTALLER_OBSERVER_ACQUIRED'))
+                acquired.resolve()
+            }
+          })
+      })
+      let processExit: ReturnType<typeof runProcess> | undefined
       try {
         await observer.ready
-        const processExit = runProcess(
+        processExit = runProcess(
           installer,
-          ['-e', 'setTimeout(() => process.exit(7), 1500)'],
+          [
+            '-e',
+            'setInterval(() => { if (require("node:fs").existsSync(process.argv[1])) process.exit(7) }, 20)',
+            release
+          ],
           {
-            allowNonZero: true
+            allowNonZero: true,
+            signal: controller.signal,
+            timeoutMs: 15_000
           }
         )
+        // CIM readiness is not handle acquisition. Release the real process
+        // only once the observer owns its handle, including under CI contention.
+        await Promise.race([
+          acquired.promise,
+          observer.exit.then((result) => {
+            throw new Error(
+              `Observer exited before acquiring the process: ${JSON.stringify(result)}`
+            )
+          }),
+          processExit.then((result) => {
+            throw new Error(`Fixture exited before observation: ${JSON.stringify(result)}`)
+          })
+        ])
+        await writeFile(release, '')
         await expect(observer.exit).resolves.toMatchObject({ code: 7 })
         await expect(processExit).resolves.toMatchObject({ code: 7 })
       } finally {
         controller.abort()
-        await observer.exit.catch(() => undefined)
+        await Promise.allSettled([observer.exit, processExit])
         await rm(root, { recursive: true, force: true })
       }
     },
