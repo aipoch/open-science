@@ -6995,6 +6995,12 @@
     "Create a skill to teach the Agent a workflow you use.": "Créez une compétence pour enseigner à l’Agent un flux de travail que vous utilisez.",
     "Wait for the current skill operation to finish before leaving.": "Attendez la fin de l’opération en cours sur la compétence avant de quitter l’éditeur.",
     "Your skill edits have not been saved. Discard them and leave the editor?": "Vos modifications de la compétence n’ont pas été enregistrées. Les abandonner et quitter l’éditeur ?",
-    "Please wait…": "Veuillez patienter…"
+    "Please wait…": "Veuillez patienter…",
+    "Your provider edits have not been saved. Discard them and leave the editor?": "Vos modifications du fournisseur n’ont pas été enregistrées. Les abandonner et quitter l’éditeur ?",
+    "Wait for the provider save to finish before leaving.": "Attendez la fin de l’enregistrement du fournisseur avant de quitter l’éditeur.",
+    "Your project edits have not been saved. Discard them and close the form?": "Vos modifications du projet n’ont pas été enregistrées. Les abandonner et fermer le formulaire ?",
+    "Search is partially unavailable": "La recherche est partiellement indisponible",
+    "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "Les messages, les fichiers et la bibliothèque ne peuvent pas être recherchés tant que les conversations enregistrées ne sont pas prêtes. Les projets et les titres des sessions peuvent encore apparaître.",
+    "Review recovery options": "Examiner les options de récupération"
   }
 }

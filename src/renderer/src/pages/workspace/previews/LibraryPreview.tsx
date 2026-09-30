@@ -143,15 +143,18 @@ function ReferenceRow({
     compact = false
   ): React.JSX.Element => {
     const version = attachment.versions[0]
-    return (
+    const unavailable = version.availability === 'unavailable'
+    const unavailableReasonId = `${detailId}-${encodeURIComponent(attachment.id)}-unavailable`
+    const button = (
       <Button
         key={attachment.id}
         variant="outline"
         size="xs"
         className={cn('min-w-0 max-w-full', !compact && 'w-full justify-start')}
         aria-label={version.filename}
-        disabled={version.availability === 'unavailable'}
-        title={version.availability === 'unavailable' ? t('PDF unavailable') : version.filename}
+        aria-describedby={unavailable ? unavailableReasonId : undefined}
+        disabled={unavailable}
+        title={unavailable ? t('PDF unavailable') : version.filename}
         onClick={() =>
           usePreviewWorkbenchStore.getState().upsertAndActivateItem({
             id: `literature:${version.id}`,
@@ -174,6 +177,24 @@ function ReferenceRow({
         <span className="truncate">{compact ? t('PDF') : version.filename}</span>
         {compact && <ArrowUpRight aria-hidden="true" />}
       </Button>
+    )
+    return unavailable ? (
+      <div
+        key={attachment.id}
+        className={cn('flex min-w-0 max-w-full flex-col items-start gap-1', !compact && 'w-full')}
+      >
+        {button}
+        <button
+          type="button"
+          id={unavailableReasonId}
+          className="max-w-full rounded-sm text-left text-xs text-destructive underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+          onClick={(event) => onDetails(event.currentTarget)}
+        >
+          {t('Attachment unavailable')}
+        </button>
+      </div>
+    ) : (
+      button
     )
   }
   return (

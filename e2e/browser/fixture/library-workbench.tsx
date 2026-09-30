@@ -45,7 +45,31 @@ const entry: LiteratureItemView = {
       { creatorType: 'author', nameMode: 'organization', literalName: 'Example research group' }
     ]
   }),
-  attachments: [],
+  attachments: params.has('unavailable-pdf')
+    ? ['missing-reference.pdf', 'additional-missing-reference.pdf', 'available-reference.pdf'].map(
+        (filename, index) => ({
+          id: `fixture-attachment-${index}`,
+          kind: 'fullText' as const,
+          title: '',
+          sortOrder: index,
+          createdAt: 1,
+          updatedAt: 1,
+          versions: [
+            {
+              id: `fixture-version-${index}`,
+              versionNumber: 1,
+              filename,
+              contentType: 'application/pdf',
+              sizeBytes: 1024,
+              checksum: 'a'.repeat(64),
+              createdAt: 1,
+              pageCount: 1,
+              ...(index < 2 ? { availability: 'unavailable' as const } : {})
+            }
+          ]
+        })
+      )
+    : [],
   collectionIds: [],
   projectIds: ['fixture-project']
 }

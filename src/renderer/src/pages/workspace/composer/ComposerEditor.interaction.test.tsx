@@ -810,6 +810,33 @@ describe('ComposerEditor', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    { boundary: 'before compositionstart', native: { isComposing: true } },
+    { boundary: 'after compositionend', native: { isComposing: true } },
+    { boundary: 'after compositionend with keyCode 229', native: { keyCode: 229 } }
+  ])('leaves Enter to the IME $boundary', ({ boundary, native }) => {
+    const onSubmit = vi.fn()
+    renderEditor({ onSubmit })
+    if (boundary.startsWith('after')) {
+      act(() => {
+        editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+        editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+      })
+    }
+    const enter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+      ...native
+    })
+    act(() => editor().dispatchEvent(enter))
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(enter.defaultPrevented).toBe(false)
+
+    dispatchKey(editor(), 'Enter')
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
   it('emits one undoable document edit for an IME composition', () => {
     const onDocChange = vi.fn()
     renderEditor({ onDocChange })

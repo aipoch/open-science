@@ -231,6 +231,8 @@ export function Fixture(): React.JSX.Element {
       {surface === 'sidebar' ? (
         <div className="h-[700px] w-72">
           <WorkspaceSidebarView
+            mobileMode={params.has('mobile')}
+            isMobileOpen
             projectName="P1"
             sessions={[session]}
             activeSessionId={undefined}

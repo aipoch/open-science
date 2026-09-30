@@ -28,6 +28,7 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
+import { LiteratureSearchInput } from './LiteratureSearchInput'
 import { useAttachmentOperations } from './literature-attachment-operations'
 import { i18next } from '@/i18n'
 
@@ -742,6 +743,95 @@ describe('LiteratureLibraryPage', () => {
       expect(search).toHaveBeenCalledWith(
         expect.objectContaining({ scope: 'library', query: 'draft' })
       )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['committed', 'pending'] as const)(
+    'clears the catalog search and its %s draft without a stale debounce restoring it',
+    async (phase) => {
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(expect.objectContaining({ scope: 'library' }))
+      )
+      if (phase === 'pending') {
+        fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+        fireEvent.change(screen.getByLabelText('From year'), { target: { value: '2020' } })
+        await waitFor(() =>
+          expect(search).toHaveBeenCalledWith(
+            expect.objectContaining({ filter: expect.objectContaining({ yearFrom: 2020 }) })
+          )
+        )
+        fireEvent.keyDown(screen.getByLabelText('From year'), { key: 'Escape' })
+      }
+      const input = screen.getByLabelText('Search references') as HTMLInputElement
+      vi.useFakeTimers()
+      try {
+        fireEvent.change(input, { target: { value: 'missing' } })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(phase === 'committed' ? 301 : 200)
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+        expect(input.value).toBe('')
+        expect(screen.getByLabelText('Search references')).toBe(input)
+        search.mockClear()
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(301)
+        })
+        expect(search).not.toHaveBeenCalledWith(expect.objectContaining({ query: 'missing' }))
+        fireEvent.change(input, { target: { value: 'new search' } })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(300)
+        })
+        expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: 'new search' }))
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('keeps a newer search draft when its own earlier commit is acknowledged', async () => {
+    const commit = vi.fn()
+    const props = { resetRevision: 0, onCommit: commit, onDraftChange: vi.fn() }
+    const { rerender } = render(<LiteratureSearchInput initialValue="" {...props} />)
+    const input = screen.getByLabelText('Search references') as HTMLInputElement
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(input, { target: { value: 'first' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+      expect(commit).toHaveBeenCalledExactlyOnceWith('first')
+      fireEvent.change(input, { target: { value: 'newer' } })
+      rerender(<LiteratureSearchInput initialValue="first" {...props} />)
+      expect(input.value).toBe('newer')
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+      expect(commit).toHaveBeenLastCalledWith('newer')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('resets a composing search draft even when the owner query is already empty', async () => {
+    const commit = vi.fn()
+    const props = { initialValue: '', onCommit: commit, onDraftChange: vi.fn() }
+    const { rerender } = render(<LiteratureSearchInput resetRevision={0} {...props} />)
+    const input = screen.getByLabelText('Search references') as HTMLInputElement
+    vi.useFakeTimers()
+    try {
+      fireEvent.compositionStart(input)
+      fireEvent.change(input, { target: { value: 'zhong' } })
+      rerender(<LiteratureSearchInput resetRevision={1} {...props} />)
+      expect(input.value).toBe('')
+      fireEvent.compositionEnd(input)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+      expect(commit).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

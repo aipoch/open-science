@@ -757,7 +757,13 @@ export const ComposerEditor = ({
       }
     }
     // Enter submits; Shift+Enter inserts a newline; IME composition never submits.
-    if (event.key === 'Enter' && !event.shiftKey && !composingRef.current) {
+    if (
+      event.key === 'Enter' &&
+      !event.shiftKey &&
+      !composingRef.current &&
+      !event.nativeEvent.isComposing &&
+      event.nativeEvent.keyCode !== 229
+    ) {
       event.preventDefault()
       onSubmit()
     }

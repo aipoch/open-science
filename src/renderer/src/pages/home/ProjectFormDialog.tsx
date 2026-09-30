@@ -2,9 +2,11 @@ import type { Project } from '../../../../shared/projects'
 import { LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
+import { useRef } from 'react'
 
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
@@ -43,6 +45,9 @@ type ProjectFormDialogProps = {
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
+  discardConfirmationOpen: boolean
+  onKeepEditing: () => void
+  onDiscardChanges: () => void
   onCancel: () => void
   onConfirm: (event: React.FormEvent<HTMLFormElement>) => void
 }
@@ -66,10 +71,21 @@ const ProjectFormDialog = ({
   onNameChange,
   onDescriptionChange,
   onAgentContextChange,
+  discardConfirmationOpen,
+  onKeepEditing,
+  onDiscardChanges,
   onCancel,
   onConfirm
 }: ProjectFormDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const nameInputRef = useRef<HTMLInputElement>(null)
+  const dialogReturnFocus = useRef<HTMLElement | null>(null)
+  const discardReturnFocus = useRef<HTMLElement | null>(null)
+  const requestCancel = (): void => {
+    discardReturnFocus.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    onCancel()
+  }
   const dialogTitle = useRetainedDialogValue(open ? title : undefined) ?? title
   const dialogDescription = useRetainedDialogValue(open ? description : undefined) ?? description
   const dialogSubmitLabel = useRetainedDialogValue(open ? submitLabel : undefined) ?? submitLabel
@@ -80,12 +96,25 @@ const ProjectFormDialog = ({
       onOpenChange={(nextOpen) => {
         if (nextOpen) return
 
-        onCancel()
+        requestCancel()
       }}
     >
       <Dialog.Portal>
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
+          onOpenAutoFocus={(event) => {
+            dialogReturnFocus.current =
+              document.activeElement instanceof HTMLElement ? document.activeElement : null
+            event.preventDefault()
+            nameInputRef.current?.focus({ preventScroll: true })
+          }}
+          onCloseAutoFocus={(event) => {
+            const target = dialogReturnFocus.current
+            dialogReturnFocus.current = null
+            if (!target?.isConnected) return
+            event.preventDefault()
+            target.focus({ preventScroll: true })
+          }}
           onInteractOutside={(event) => event.preventDefault()}
           className={dialogPanelClassName(
             'max-h-[calc(100dvh-2rem)] w-[min(460px,calc(100vw-2rem))] overflow-y-auto p-0'
@@ -103,7 +132,7 @@ const ProjectFormDialog = ({
                 size="icon-sm"
                 aria-label={t('Close')}
                 className={dialogCloseButtonClassName}
-                onClick={onCancel}
+                onClick={requestCancel}
                 disabled={isSubmitting}
               >
                 <X className="size-4" aria-hidden="true" />
@@ -115,13 +144,13 @@ const ProjectFormDialog = ({
                   {t('Name')}
                 </label>
                 <Input
+                  ref={nameInputRef}
                   id="project-form-name"
                   disabled={isSubmitting}
                   aria-required={true}
                   value={nameDraft}
                   onChange={(event) => onNameChange(event.target.value)}
                   placeholder={t('e.g. Reproduction of published research')}
-                  autoFocus
                   maxLength={PROJECT_NAME_MAX_LENGTH}
                   className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
                 />
@@ -222,7 +251,7 @@ const ProjectFormDialog = ({
                 type="button"
                 variant="ghost"
                 className={dialogCancelButtonClassName}
-                onClick={onCancel}
+                onClick={requestCancel}
                 disabled={isSubmitting}
               >
                 {t('Cancel')}
@@ -246,6 +275,28 @@ const ProjectFormDialog = ({
           </form>
         </Dialog.Content>
       </Dialog.Portal>
+      <ConfirmActionDialog
+        open={open && discardConfirmationOpen}
+        title={t('Discard unsaved changes?')}
+        description={t('Your project edits have not been saved. Discard them and close the form?')}
+        cancelLabel={t('Keep editing')}
+        confirmLabel={t('Discard changes')}
+        destructive
+        testId="project-discard-confirmation"
+        onCancel={onKeepEditing}
+        onCloseAutoFocus={(event) => {
+          const target = discardReturnFocus.current
+          discardReturnFocus.current = null
+          if (!open) return
+          event.preventDefault()
+          if (target?.isConnected) target.focus({ preventScroll: true })
+          else nameInputRef.current?.focus({ preventScroll: true })
+        }}
+        onConfirm={() => {
+          discardReturnFocus.current = null
+          onDiscardChanges()
+        }}
+      />
     </Dialog.Root>
   )
 }

@@ -320,7 +320,7 @@ const sessionRowClassName = cn(
 )
 
 const sessionRowActionClassName =
-  'absolute right-1.5 top-1/2 z-10 -translate-y-1/2 rounded p-0.5 text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100'
+  'absolute right-1.5 top-1/2 z-10 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100'
 
 const SESSION_ACTION_TARGET_PREFIX = 'session:'
 const sessionActionDangerClassName =

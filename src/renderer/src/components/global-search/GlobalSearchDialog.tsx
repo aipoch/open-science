@@ -49,6 +49,7 @@ import { searchSessionTitles } from './global-search-catalog'
 import { SearchDetails } from './SearchDetails'
 import { SearchResultFilters } from './SearchResultFilters'
 import { ErrorNotice } from '@/components/error-notice'
+import { Notice } from '@/components/notice'
 import { useSearchSummaryCounts } from './use-search-summary-counts'
 import { SearchHighlight } from './SearchHighlight'
 import {
@@ -82,6 +83,7 @@ type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
   isSessionPersistenceReady: boolean
+  onOpenRecovery?: () => void
 }
 const icons = {
   messages: MessageCircle,
@@ -249,15 +251,35 @@ const SearchResultRow = memo(function SearchResultRow({
 export const GlobalSearchDialog = ({
   open,
   onOpenChange,
-  isSessionPersistenceReady
+  isSessionPersistenceReady,
+  onOpenRecovery
 }: Props): React.JSX.Element => {
   const { t, i18n } = useTranslation()
   const locale = resolveLocaleFromTags([i18n.resolvedLanguage ?? i18n.language])
   const listboxId = useId()
   const advancedPanelId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const loadMoreRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    // The portal mounts after this effect; the event handler reads its ref when a key arrives.
+    const ownerWindow = window
+    const preserveComposingEscape = (event: KeyboardEvent): void => {
+      if (
+        event.key === 'Escape' &&
+        (event.isComposing || event.keyCode === 229) &&
+        event.target instanceof Node &&
+        dialogRef.current?.contains(event.target)
+      ) {
+        // Intercept before Radix's document capture without cancelling the input method's default.
+        event.stopPropagation()
+      }
+    }
+    ownerWindow.addEventListener('keydown', preserveComposingEscape, true)
+    return () => ownerWindow.removeEventListener('keydown', preserveComposingEscape, true)
+  }, [open])
   const stickyFrame = useRef<number | undefined>(undefined)
   const scheduleStickyHeadings = useCallback(() => {
     if (stickyFrame.current !== undefined) return
@@ -793,7 +815,7 @@ export const GlobalSearchDialog = ({
             .join(' · ')
   }
   const keyboard = (event: React.KeyboardEvent): void => {
-    if (event.nativeEvent.isComposing) return
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
       if ((event.key === 'Home' || event.key === 'End') && query) return
       event.preventDefault()
@@ -866,6 +888,7 @@ export const GlobalSearchDialog = ({
           className={`${dialogOverlayClassName} pointer-events-auto`}
         />
         <Dialog.Content
+          ref={dialogRef}
           aria-describedby={undefined}
           onInteractOutside={(event) => {
             // The file preview is a sibling portal, so its menu dismissal also reaches search.
@@ -887,6 +910,7 @@ export const GlobalSearchDialog = ({
             if (
               event.key !== 'Escape' ||
               event.nativeEvent.isComposing ||
+              event.nativeEvent.keyCode === 229 ||
               !(event.target instanceof Node) ||
               !event.currentTarget.contains(event.target)
             )
@@ -969,19 +993,21 @@ export const GlobalSearchDialog = ({
                     >
                       <Icon aria-hidden="true" />
                       {labels[key]}
-                      {query.trim() && (
-                        <small>
-                          {(
-                            key === 'all'
-                              ? SEARCH_CATEGORIES.some(
-                                  (category) => groups[category].loading || groups[category].error
-                                )
-                              : groups[key].loading || groups[key].error
-                          )
-                            ? '…'
-                            : count}
-                        </small>
-                      )}
+                      {query.trim() &&
+                        (isSessionPersistenceReady ||
+                          (key !== 'all' && !isRemoteCategory(key))) && (
+                          <small>
+                            {(
+                              key === 'all'
+                                ? SEARCH_CATEGORIES.some(
+                                    (category) => groups[category].loading || groups[category].error
+                                  )
+                                : groups[key].loading || groups[key].error
+                            )
+                              ? '…'
+                              : count}
+                          </small>
+                        )}
                     </button>
                   )
                 })}
@@ -1033,6 +1059,23 @@ export const GlobalSearchDialog = ({
                 ref={listRef}
                 onScroll={scrollMore}
               >
+                {!isSessionPersistenceReady && (
+                  <Notice
+                    inline
+                    role="status"
+                    level={onOpenRecovery ? 'warning' : 'info'}
+                    className="px-4 py-3"
+                    title={t('Search is partially unavailable')}
+                    description={t(
+                      'Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.'
+                    )}
+                    secondaryButton={
+                      onOpenRecovery
+                        ? { label: t('Review recovery options'), onClick: onOpenRecovery }
+                        : undefined
+                    }
+                  />
+                )}
                 <div id={listboxId} role="listbox" aria-label={t('Search results')}>
                   {shownCategories.map((key) => {
                     const group = groups[key]

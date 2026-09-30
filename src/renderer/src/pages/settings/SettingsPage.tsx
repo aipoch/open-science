@@ -493,6 +493,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [historyIndex, setHistoryIndex] = useState(0)
   const skillLeaveReturnFocus = useRef<HTMLElement | null>(null)
   const skillEditorLeaveState = useRef<SkillEditorLeaveState | null>(null)
+  const providerEditorLeaveState = useRef<SkillEditorLeaveState | null>(null)
   const [skillEditorBusy, setSkillEditorBusy] = useState(false)
   const [pendingSkillLeave, setPendingSkillLeave] = useState<(() => void) | null>(null)
   const onSkillEditorLeaveStateChange = useCallback((state: SkillEditorLeaveState | null) => {
@@ -500,7 +501,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setSkillEditorBusy(state?.busy ?? false)
   }, [])
   const requestLeave = useCallback((leave: () => void) => {
-    const state = skillEditorLeaveState.current
+    const state = providerEditorLeaveState.current ?? skillEditorLeaveState.current
     if (state?.dirty || state?.busy) {
       const focused = document.activeElement
       if (
@@ -542,6 +543,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const browserSelectedTagId = useTagStore((state) => state.browserSelectedId)
   const setSelectedTagId = useTagStore((state) => state.setBrowserSelectedId)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
+    createEmptyProviderFormValue()
+  )
+  const [providerDraftBaseline, setProviderDraftBaseline] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
   const [providerBase, setProviderBase] = useState<ProviderView>()
@@ -1146,20 +1150,37 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // loads). A create pre-selects the official vendor matching the active agent framework. Also
   // clears any stale status message on entry.
   const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
-  const [seededModelView, setSeededModelView] = useState(modelViewKey)
-  if (modelViewKey !== seededModelView) {
+  const [seededModelView, setSeededModelView] = useState<string | undefined>(modelViewKey)
+  if (open && modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)
     if (modelView.kind === 'create') {
-      setFormValue(
-        createEmptyProviderFormValue(providerKindPatch(defaultProviderKindKey(agentFrameworkId)))
+      const initial = createEmptyProviderFormValue(
+        providerKindPatch(defaultProviderKindKey(agentFrameworkId))
       )
+      setFormValue(initial)
+      setProviderDraftBaseline(initial)
     } else if (modelView.kind === 'edit') {
       const provider = providers.find((entry) => entry.id === modelView.providerId)
-      if (provider) setFormValue(toFormValue(provider))
+      if (provider) {
+        const initial = toFormValue(provider)
+        setFormValue(initial)
+        setProviderDraftBaseline(initial)
+      }
       setProviderBase(provider)
     }
     setStatusMessage(undefined)
   }
+
+  const providerFormDirty = Object.entries({ ...providerDraftBaseline, ...formValue }).some(
+    ([key, value]) =>
+      key !== 'providerFormTouched' &&
+      value !== providerDraftBaseline[key as keyof ProviderFormValue]
+  )
+  useEffect(() => {
+    // This draft shares Settings' existing leave decision; the baseline contains no secret input.
+    providerEditorLeaveState.current =
+      open && isProviderFormOpen ? { dirty: providerFormDirty, busy: isSaving } : null
+  }, [open, isProviderFormOpen, providerFormDirty, isSaving])
 
   // Invalidate observations when the user leaves, edits inputs, or the saved target changes.
   useEffect(() => {
@@ -1276,6 +1297,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             })
         }
       }
+      // The completed write has settled this draft. It must not prompt or honor an older leave request.
+      providerEditorLeaveState.current = null
+      skillLeaveReturnFocus.current = null
+      setPendingSkillLeave(null)
       closeForm()
     } catch (error) {
       if (generation !== formOperationGeneration.current) return
@@ -1985,12 +2010,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       )
                     ) : activePanel === 'compute' ? (
                       computeView.kind === 'add' ? (
-                        <ComputeAddForm
-                          onCreated={(providerId) =>
-                            navigateCompute({ kind: 'detail', providerId })
-                          }
-                          onCancel={() => navigateCompute({ kind: 'list' })}
-                        />
+                        // Revoke completion authority before the dialog's exit animation unmounts.
+                        open && (
+                          <ComputeAddForm
+                            onCreated={(providerId) =>
+                              navigateCompute({ kind: 'detail', providerId })
+                            }
+                            onCancel={() => navigateCompute({ kind: 'list' })}
+                          />
+                        )
                       ) : computeView.kind === 'detail' ? (
                         <ComputeHostDetail
                           providerId={computeView.providerId}
@@ -2151,6 +2179,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                                   )
                                 )
                                 setFormValue({ ...latest, ...changes })
+                                setProviderDraftBaseline(latest)
                                 setProviderBase(editingProvider)
                                 setStatusMessage(undefined)
                               }}
@@ -2309,13 +2338,17 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         open={open && pendingSkillLeave !== null}
         title={t('Discard unsaved changes?')}
         description={
-          skillEditorBusy
-            ? t('Wait for the current skill operation to finish before leaving.')
-            : t('Your skill edits have not been saved. Discard them and leave the editor?')
+          isProviderFormOpen
+            ? isSaving
+              ? t('Wait for the provider save to finish before leaving.')
+              : t('Your provider edits have not been saved. Discard them and leave the editor?')
+            : skillEditorBusy
+              ? t('Wait for the current skill operation to finish before leaving.')
+              : t('Your skill edits have not been saved. Discard them and leave the editor?')
         }
         cancelLabel={t('Keep editing')}
         confirmLabel={t('Discard changes')}
-        loading={skillEditorBusy}
+        loading={skillEditorBusy || (isProviderFormOpen && isSaving)}
         loadingLabel={t('Please wait…')}
         destructive
         testId="skill-discard-confirmation"
@@ -2328,7 +2361,17 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           target.focus({ preventScroll: true })
         }}
         onConfirm={() => {
-          if (skillEditorLeaveState.current?.busy) return
+          if (skillEditorLeaveState.current?.busy || providerEditorLeaveState.current?.busy) return
+          if (isProviderFormOpen) {
+            // Settings stays mounted while closed. Clear the draft and seed a fresh saved revision
+            // on entry, even when closing does not change the current create/edit route.
+            const empty = createEmptyProviderFormValue()
+            setFormValue(empty)
+            setProviderDraftBaseline(empty)
+            setProviderBase(undefined)
+            setSeededModelView(undefined)
+            providerEditorLeaveState.current = null
+          }
           const leave = pendingSkillLeave
           skillLeaveReturnFocus.current = null
           setPendingSkillLeave(null)

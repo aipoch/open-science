@@ -83,6 +83,41 @@ test('empty states offer recovery and hidden preview performs no reads', async (
   ).toBe(counts.reads + 1)
 })
 
+for (const { width, query, reasonLabel, closeLabel } of [
+  { width: 320, query: '', reasonLabel: 'Attachment unavailable', closeLabel: 'Close' },
+  { width: 375, query: '&zh&dark', reasonLabel: '附件不可用', closeLabel: '关闭' }
+]) {
+  test(`unavailable PDF reasons remain visible and keyboard accessible at ${width}px`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width, height: 850 })
+    await page.goto(`/library-workbench.html?unavailable-pdf${query}`)
+    const pdf = page.getByRole('button', { name: 'missing-reference.pdf', exact: true })
+    const reason = page.getByRole('button', { name: reasonLabel, exact: true })
+    await expect(pdf).toBeDisabled()
+    await expect(reason).toBeVisible()
+    await expect(pdf).toHaveAccessibleDescription(reasonLabel)
+    await reason.focus()
+    await reason.press('Enter')
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('button', { name: closeLabel, exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(reason).toBeFocused()
+    await page.getByRole('button', { name: /Example reference/ }).click()
+    const extraPdf = page.getByRole('button', {
+      name: 'additional-missing-reference.pdf',
+      exact: true
+    })
+    await expect(extraPdf).toBeDisabled()
+    await expect(extraPdf).toHaveAccessibleDescription(reasonLabel)
+    await expect(page.getByRole('button', { name: reasonLabel, exact: true })).toHaveCount(2)
+    await expect(
+      page.getByRole('button', { name: 'available-reference.pdf', exact: true })
+    ).toBeEnabled()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  })
+}
+
 test('conversation search opens in place and supports keyboard selection among many sessions', async ({
   page
 }) => {

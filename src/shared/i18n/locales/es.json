@@ -6995,6 +6995,12 @@
     "Create a skill to teach the Agent a workflow you use.": "Cree una habilidad para enseñarle al Agente un flujo de trabajo que utiliza.",
     "Wait for the current skill operation to finish before leaving.": "Espere a que termine la operación actual de la habilidad antes de salir.",
     "Your skill edits have not been saved. Discard them and leave the editor?": "Los cambios en la habilidad no se han guardado. ¿Desea descartarlos y salir del editor?",
-    "Please wait…": "Espere…"
+    "Please wait…": "Espere…",
+    "Your provider edits have not been saved. Discard them and leave the editor?": "Los cambios del proveedor no se han guardado. ¿Desea descartarlos y salir del editor?",
+    "Wait for the provider save to finish before leaving.": "Espere a que termine de guardarse el proveedor antes de salir.",
+    "Your project edits have not been saved. Discard them and close the form?": "Los cambios del proyecto no se han guardado. ¿Desea descartarlos y cerrar el formulario?",
+    "Search is partially unavailable": "La búsqueda no está disponible por completo",
+    "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "No se pueden buscar mensajes, archivos ni en la biblioteca hasta que las conversaciones guardadas estén listas. Los proyectos y los títulos de las sesiones pueden seguir apareciendo.",
+    "Review recovery options": "Revisar opciones de recuperación"
   }
 }

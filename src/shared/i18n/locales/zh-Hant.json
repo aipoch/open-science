@@ -6667,6 +6667,12 @@
     "Create a skill to teach the Agent a workflow you use.": "建立一個技能，把常用的流程教給智能體。",
     "Wait for the current skill operation to finish before leaving.": "請等待目前的技能操作完成後再離開。",
     "Your skill edits have not been saved. Discard them and leave the editor?": "技能修改尚未儲存。要捨棄修改並離開編輯器嗎？",
-    "Please wait…": "請稍候…"
+    "Please wait…": "請稍候…",
+    "Your provider edits have not been saved. Discard them and leave the editor?": "您對服務提供者的修改尚未儲存。是否放棄修改並離開編輯器？",
+    "Wait for the provider save to finish before leaving.": "請等待服務提供者儲存完成後再離開。",
+    "Your project edits have not been saved. Discard them and close the form?": "您對專案的修改尚未儲存。是否放棄修改並關閉表單？",
+    "Search is partially unavailable": "部分搜尋功能暫時無法使用",
+    "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "已儲存的對話尚未就緒，因此無法搜尋訊息、檔案和文獻庫。專案和對話標題仍可能顯示。",
+    "Review recovery options": "檢視復原選項"
   }
 }

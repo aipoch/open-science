@@ -217,9 +217,14 @@ export const teardownSearch = (): void => {
   vi.useRealTimers()
   void i18next.changeLanguage('en')
 }
-export const renderSearch = async (open = true): Promise<void> => {
+export const renderSearch = async (
+  open = true,
+  props: { isSessionPersistenceReady?: boolean; onOpenRecovery?: () => void } = {}
+): Promise<void> => {
   await act(async () => {
-    root.render(<GlobalSearchDialog open={open} onOpenChange={onClose} isSessionPersistenceReady />)
+    root.render(
+      <GlobalSearchDialog open={open} onOpenChange={onClose} isSessionPersistenceReady {...props} />
+    )
   })
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 20))

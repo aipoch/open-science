@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { Children, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { AlertDialog } from 'radix-ui'
 import { describe, expect, it, vi } from 'vitest'
@@ -10,6 +11,11 @@ import { expectDialogFormFieldClassName } from '@/test-utils/dialog-form'
 // The stub resolves against the actual English catalog rather than echoing keys back: a renamed or
 // deleted key surfaces here as a failed text assertion instead of silently passing.
 vi.mock('react-i18next', () => createI18nTestStub())
+
+vi.mock('react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('react')>()),
+  useRef: <T,>(value: T): { current: T } => ({ current: value })
+}))
 
 vi.mock('@/components/ui/button', () => ({
   Button: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
@@ -132,11 +138,18 @@ describe('home dialogs shared chrome', () => {
       onNameChange: vi.fn(),
       onDescriptionChange: vi.fn(),
       onAgentContextChange: vi.fn(),
+      discardConfirmationOpen: false,
+      onKeepEditing: vi.fn(),
+      onDiscardChanges: vi.fn(),
       onCancel,
       onConfirm: vi.fn()
     })
 
-    expectSettingsDialogChrome(tree, 'w-[min(460px,calc(100vw-2rem))]', onCancel)
+    const close = collectElements(tree).find((element) => element.props['aria-label'] === 'Close')
+      ?.props.onClick as () => void
+    expectSettingsDialogChrome(tree, 'w-[min(460px,calc(100vw-2rem))]', close)
+    close()
+    expect(onCancel).toHaveBeenCalledOnce()
     expect(getTextContent(tree)).toContain(
       "Shown in the project list for your reference — not included in the agent's prompt."
     )
@@ -178,7 +191,7 @@ describe('home dialogs shared chrome', () => {
     expect(cancelButton?.props.variant).toBe('ghost')
     expect(cancelButton?.props.className).toContain('cursor-pointer')
     expect(cancelButton?.props.className).toContain('hover:bg-bg-200')
-    expect(cancelButton?.props.onClick).toBe(onCancel)
+    expect(cancelButton?.props.onClick).toBe(close)
     expect(getTextContent(tree)).toContain('Agent Context')
     expect(getTextContent(tree)).toContain(
       'Injected into the system prompt of every agent session in this project, including resumed ones.'
@@ -202,6 +215,9 @@ describe('home dialogs shared chrome', () => {
       onNameChange: vi.fn(),
       onDescriptionChange: vi.fn(),
       onAgentContextChange,
+      discardConfirmationOpen: false,
+      onKeepEditing: vi.fn(),
+      onDiscardChanges: vi.fn(),
       onCancel: vi.fn(),
       onConfirm: vi.fn()
     })

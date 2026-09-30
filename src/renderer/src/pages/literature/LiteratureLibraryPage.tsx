@@ -1886,6 +1886,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   )
   const [projectId, setProjectId] = useState<string>()
   const [query, setQuery] = useState('')
+  const [searchResetRevision, setSearchResetRevision] = useState(0)
   const [tagId, setTagId] = useState('all')
   const [sortBy, setSortBy] = useState<keyof typeof literatureSorts>('updated')
   const [initialTablePreferences] = useState(loadLiteratureTablePreferences)
@@ -5628,6 +5629,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 ) : null}
                 <LiteratureSearchInput
                   initialValue={query}
+                  resetRevision={searchResetRevision}
                   onCommit={setQuery}
                   onDraftChange={clearSelection}
                 />
@@ -5702,6 +5704,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   <div className={screeningOpen ? 'hidden' : 'contents'}>
                     <LiteratureSearchInput
                       initialValue={query}
+                      resetRevision={searchResetRevision}
                       onCommit={setQuery}
                       onDraftChange={clearSelection}
                     />
@@ -7123,6 +7126,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             variant="outline"
                             onClick={() => {
                               setQuery('')
+                              setSearchResetRevision((revision) => revision + 1)
                               clearFilters()
                             }}
                           >

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { Project } from '../../../shared/projects'
@@ -26,6 +26,9 @@ type ProjectFormDialogProps = {
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
+  discardConfirmationOpen: boolean
+  onKeepEditing: () => void
+  onDiscardChanges: () => void
   onCancel: () => void
   onConfirm: (event: React.FormEvent<HTMLFormElement>) => void
 }
@@ -60,11 +63,15 @@ const useProjectFormDialog = (
   const [errorDetail, setErrorDetail] = useState<string>()
   const [conflictProject, setConflictProject] = useState<Project>()
   const [formError, setFormError] = useState<string | undefined>(undefined)
+  const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false)
+  const initialDraft = useRef({ name: '', description: '', agentContext: '' })
 
   const openCreateDialog = useCallback((): void => {
     // A submission is in flight: ignore reopens so the pending mutation keeps its drafts.
     if (isSubmitting) return
 
+    initialDraft.current = { name: '', description: '', agentContext: '' }
+    setDiscardConfirmationOpen(false)
     setConflictProject(undefined)
     setFormState({ mode: 'create' })
     setNameDraft('')
@@ -79,6 +86,12 @@ const useProjectFormDialog = (
       // A submission is in flight: ignore reopens so the pending mutation keeps its drafts.
       if (isSubmitting) return
 
+      initialDraft.current = {
+        name: project.name,
+        description: project.description,
+        agentContext: project.agentContext ?? ''
+      }
+      setDiscardConfirmationOpen(false)
       setConflictProject(undefined)
       setFormState({
         mode: 'edit',
@@ -95,10 +108,23 @@ const useProjectFormDialog = (
   )
 
   const closeFormDialog = (): void => {
-    if (isSubmitting) return
+    if (isSubmitting || !formState) return
 
-    if (formState?.mode === 'create') options.onCreateCancelled?.()
+    setDiscardConfirmationOpen(false)
+    if (formState.mode === 'create') options.onCreateCancelled?.()
     setFormState(null)
+  }
+  const requestCloseFormDialog = (): void => {
+    if (isSubmitting || !formState) return
+    if (
+      nameDraft !== initialDraft.current.name ||
+      descriptionDraft !== initialDraft.current.description ||
+      agentContextDraft !== initialDraft.current.agentContext
+    ) {
+      setDiscardConfirmationOpen(true)
+      return
+    }
+    closeFormDialog()
   }
 
   // Creates or renames a project. On create, navigate into the new (empty) workspace. Failures keep
@@ -108,7 +134,7 @@ const useProjectFormDialog = (
 
     const name = nameDraft.trim()
 
-    if (!formState || !name || isSubmitting || conflictProject) return
+    if (!formState || !name || isSubmitting || conflictProject || discardConfirmationOpen) return
 
     const description = descriptionDraft.trim()
     const agentContext = agentContextDraft.trim()
@@ -199,6 +225,11 @@ const useProjectFormDialog = (
       onLoadLatest: conflictProject ? () => openEditDialog(conflictProject) : undefined,
       onKeepDraft: conflictProject
         ? () => {
+            initialDraft.current = {
+              name: conflictProject.name,
+              description: conflictProject.description,
+              agentContext: conflictProject.agentContext ?? ''
+            }
             setFormState({
               mode: 'edit',
               projectId: conflictProject.id,
@@ -212,7 +243,10 @@ const useProjectFormDialog = (
       onNameChange: setNameDraft,
       onDescriptionChange: setDescriptionDraft,
       onAgentContextChange: setAgentContextDraft,
-      onCancel: closeFormDialog,
+      discardConfirmationOpen,
+      onKeepEditing: () => setDiscardConfirmationOpen(false),
+      onDiscardChanges: closeFormDialog,
+      onCancel: requestCloseFormDialog,
       onConfirm: confirmForm
     }
   }

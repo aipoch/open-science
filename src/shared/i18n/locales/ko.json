@@ -6665,6 +6665,12 @@
     "Create a skill to teach the Agent a workflow you use.": "스킬을 만들어 사용하는 작업 흐름을 에이전트에게 가르치세요.",
     "Wait for the current skill operation to finish before leaving.": "현재 스킬 작업이 완료될 때까지 기다린 후 나가세요.",
     "Your skill edits have not been saved. Discard them and leave the editor?": "스킬 변경 사항이 저장되지 않았습니다. 변경 사항을 버리고 편집기를 나가시겠습니까?",
-    "Please wait…": "잠시 기다려 주세요…"
+    "Please wait…": "잠시 기다려 주세요…",
+    "Your provider edits have not been saved. Discard them and leave the editor?": "모델 제공업체 변경 사항이 저장되지 않았습니다. 변경 사항을 버리고 편집기를 나가시겠습니까?",
+    "Wait for the provider save to finish before leaving.": "모델 제공업체 저장이 완료될 때까지 기다려 주세요.",
+    "Your project edits have not been saved. Discard them and close the form?": "프로젝트 변경 사항이 저장되지 않았습니다. 변경 사항을 버리고 양식을 닫으시겠습니까?",
+    "Search is partially unavailable": "일부 검색을 사용할 수 없습니다",
+    "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "저장된 대화가 준비될 때까지 메시지, 파일 및 라이브러리를 검색할 수 없습니다. 프로젝트와 세션 제목은 계속 표시될 수 있습니다.",
+    "Review recovery options": "복구 옵션 확인"
   }
 }

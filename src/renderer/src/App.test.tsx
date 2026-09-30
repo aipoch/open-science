@@ -145,7 +145,11 @@ const mocks = vi.hoisted(() => {
     },
     syncWindowFindAppearance: vi.fn(),
     syncUnreadTaskView: vi.fn(),
-    globalSearch: { props: undefined as { open: boolean } | undefined },
+    globalSearch: {
+      props: undefined as
+        | { open: boolean; isSessionPersistenceReady: boolean; onOpenRecovery?: () => void }
+        | undefined
+    },
     literaturePage: { renderCount: 0 },
     homePage: { props: undefined as { onOpenGlobalSearch: () => void } | undefined },
     closeActiveModal: {
@@ -194,7 +198,11 @@ vi.mock('@/hooks/useUnreadTaskViewSync', () => ({
   useUnreadTaskViewSync: mocks.syncUnreadTaskView
 }))
 vi.mock('@/components/global-search/GlobalSearchDialog', () => ({
-  GlobalSearchDialog: (props: { open: boolean }) => {
+  GlobalSearchDialog: (props: {
+    open: boolean
+    isSessionPersistenceReady: boolean
+    onOpenRecovery?: () => void
+  }) => {
     mocks.globalSearch.props = props
     return <div data-testid="global-search" />
   }
@@ -485,6 +493,7 @@ describe('App startup routing', () => {
     mocks.settings.load.mockReset().mockResolvedValue(true)
     mocks.settings.checkEnvironment.mockReset().mockResolvedValue(undefined)
     mocks.settings.openSettings.mockClear()
+    mocks.settings.openSettingsToPanel.mockClear()
     mocks.settings.closeSettings.mockClear()
     mocks.requestSettingsLeave.mockReset().mockImplementation((leave: () => void) => leave())
     mocks.settings.enqueueApproval.mockClear()
@@ -770,6 +779,29 @@ describe('App startup routing', () => {
       )
     })
     expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
+  })
+
+  it('routes blocked search to existing recovery settings after closing search', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isReady = false
+    mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
+    await render()
+    await act(async () => mocks.homePage.props?.onOpenGlobalSearch())
+    expect(mocks.globalSearch.props?.isSessionPersistenceReady).toBe(false)
+    expect(mocks.globalSearch.props?.onOpenRecovery).toBeTypeOf('function')
+    await act(async () => mocks.globalSearch.props?.onOpenRecovery?.())
+    expect(mocks.settings.openSettingsToPanel).toHaveBeenCalledWith('archived')
+    expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
+  })
+
+  it('does not offer catalog recovery for temporary search unavailability', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isReady = false
+    await render()
+    await act(async () => mocks.homePage.props?.onOpenGlobalSearch())
+    expect(mocks.globalSearch.props?.isSessionPersistenceReady).toBe(false)
+    expect(mocks.globalSearch.props?.onOpenRecovery).toBeUndefined()
+    expect(mocks.settings.openSettingsToPanel).not.toHaveBeenCalled()
   })
 
   it.each(['metaKey', 'ctrlKey'] as const)(
