@@ -484,6 +484,8 @@ export const validateNewDataRoot = async (
 // reactivate a runtime quarantined after an interrupted or identity-changing operation. Nested paths
 // are intentional: copyAndVerify mirrors `from/<path>` → `to/<path>` and accepts regular files as roots.
 const RUNTIME_PKGS_DIR = join('runtime', 'pkgs')
+// npm's relative command links and package tree survive relocation; its download cache does not.
+export const RUNTIME_NPM_DIR = join('runtime', 'npm')
 const RUNTIME_ENVS_LOCK_DIR = join('runtime', 'envs.lock')
 export const RUNTIME_REPAIR_REGISTRY_FILE = join('runtime', '.repair-required.json')
 export const RUNTIME_ENVIRONMENT_MANIFESTS_DIR = join(
@@ -499,7 +501,8 @@ const BASE_MIGRATION_DIRS = [
   ...MIGRATED_DIRS,
   RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
   RUNTIME_ENVIRONMENT_LOCKS_DIR,
-  RUNTIME_REPAIR_REGISTRY_FILE
+  RUNTIME_REPAIR_REGISTRY_FILE,
+  RUNTIME_NPM_DIR
 ]
 
 const defaultValidateProvenanceState = (dataRoot: string): Promise<void> =>
@@ -1062,7 +1065,7 @@ export const commitDataRootSwitch = async (
   }
 
   const migratedDirs = marker.migratedDirs ?? [...MIGRATED_DIRS]
-  const currentDataPaths = MIGRATED_DIRS.filter((path) =>
+  const currentDataPaths = [...MIGRATED_DIRS, RUNTIME_NPM_DIR].filter((path) =>
     existsSync(join(deps.currentDataRoot, path))
   )
   if (currentDataPaths.some((path) => !migratedDirs.includes(path))) {

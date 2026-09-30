@@ -36,6 +36,7 @@ import {
   limitUtf8
 } from './content-limits'
 import { buildNotebookShellEnvironment, environmentPathRoots } from './process-environment'
+import { prepareShellNpmEnvironment, shellNpmPaths } from './shell-npm-environment'
 import {
   defaultShellRuntimeBinding,
   shellRuntimePlatform,
@@ -247,7 +248,9 @@ const resolveShellProcessInvocation = (
   const invocation = resolveShellInvocation(command, runtimeBinding)
   return hasProcessSandbox
     ? invocation
-    : protectManagedRuntimeWrites(invocation, runtimeRoot, hostPlatform)
+    : protectManagedRuntimeWrites(invocation, runtimeRoot, hostPlatform, [
+        shellNpmPaths(runtimeRoot, shellRuntimePlatform(runtimeBinding, hostPlatform)).prefix
+      ])
 }
 
 // Cancellation and timeout settle only after the bounded process-tree terminator finishes, so callers
@@ -351,6 +354,7 @@ const prepareShellLaunchOptions = async (
           options.runtimeRoot,
           workloadCacheEnv
         )
+    shellEnv = prepareShellNpmEnvironment(options.runtimeRoot, runtimePlatform, shellEnv)
     if (options.inputRoot) shellEnv.OPEN_SCIENCE_INPUT_DIR = options.inputRoot
     else delete shellEnv.OPEN_SCIENCE_INPUT_DIR
   } catch (error) {
@@ -381,6 +385,8 @@ const prepareShellLaunchOptions = async (
           pathEnvironment: {
             OPEN_SCIENCE_HANDOFF_DIR: options.handoffDir,
             ...workloadCacheEnv,
+            NPM_CONFIG_PREFIX: shellEnv.NPM_CONFIG_PREFIX,
+            NPM_CONFIG_CACHE: shellEnv.NPM_CONFIG_CACHE,
             ...(options.inputRoot ? { OPEN_SCIENCE_INPUT_DIR: options.inputRoot } : {})
           },
           cwd: options.cwd,
@@ -415,7 +421,8 @@ const prepareShellLaunchOptions = async (
               options.notebookSessionRoot ?? options.cwd,
               options.cwd,
               options.handoffDir,
-              notebookWorkloadCacheRoot(options.runtimeRoot)
+              notebookWorkloadCacheRoot(options.runtimeRoot),
+              shellEnv.NPM_CONFIG_PREFIX!
             ],
             deniedReadRoots: options.protectedDirs ?? [],
             deniedWriteRoots: [

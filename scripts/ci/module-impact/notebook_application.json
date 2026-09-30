@@ -274,7 +274,9 @@
     "src/main/notebook/working-file-observer.ts",
     "src/main/notebook/wsl-setup-powershell.integration.test.ts",
     "src/main/notebook/wsl2-shell.integration.test.ts",
-    "src/main/notebook/file-evidence-publication.integration.test.ts"
+    "src/main/notebook/file-evidence-publication.integration.test.ts",
+    "src/main/notebook/shell-npm-environment.ts",
+    "src/main/notebook/shell-npm-environment.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-version.ts",
@@ -339,7 +341,8 @@
     "src/main/notebook/source-file-access-analysis.ts",
     "src/main/notebook/timeout-controller.ts",
     "src/main/notebook/trust-bundle.ts",
-    "src/main/notebook/working-file-observer.ts"
+    "src/main/notebook/working-file-observer.ts",
+    "src/main/notebook/shell-npm-environment.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -528,7 +531,8 @@
       "src/main/notebook/working-file-observer.test.ts",
       "src/main/notebook/wsl-setup-powershell.integration.test.ts",
       "src/main/notebook/wsl2-shell.integration.test.ts",
-      "src/main/notebook/file-evidence-publication.integration.test.ts"
+      "src/main/notebook/file-evidence-publication.integration.test.ts",
+      "src/main/notebook/shell-npm-environment.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

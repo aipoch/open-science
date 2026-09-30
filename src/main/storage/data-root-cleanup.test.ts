@@ -38,6 +38,38 @@ afterEach(async () => {
 })
 
 describe('DataRootCleanupJournal', () => {
+  it('recovers cleanup of a copied npm prefix after the data-root pointer committed', async () => {
+    const directory = join('runtime', 'npm')
+    for (const dataRoot of [source, target]) {
+      await mkdir(join(dataRoot, directory), { recursive: true })
+      await writeFile(join(dataRoot, directory, 'installed-tool'), 'retained')
+    }
+    await writeMigrationMarker(target, {
+      version: 1,
+      token: 'cleanup-token',
+      source,
+      target,
+      createdAt: 1,
+      status: 'verified',
+      migratedDirs: [directory],
+      inventory: await scanInventory(target, [directory])
+    })
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({ token: 'cleanup-token', source, target, dirs: [directory], createdAt: 1 })
+    await journal.markCommitted('cleanup-token')
+    const restarted = new DataRootCleanupJournal(configRoot)
+    expect(await restarted.recover(target, deleteSources)).toEqual({
+      pending: false,
+      failureCount: 0
+    })
+    await expect(readFile(join(target, directory, 'installed-tool'), 'utf8')).resolves.toBe(
+      'retained'
+    )
+    await expect(readFile(join(source, directory, 'installed-tool'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
   it('preserves old runtime access before commit and retries cancelled removal after commit', async () => {
     const runtime = join(source, 'runtime')
     await mkdir(runtime)

@@ -716,7 +716,8 @@
       "src/main/notebook/mcp-wsl-diagnostics.test.ts",
       "src/main/wsl/wsl-setup-owner.integration.test.ts",
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/notebook/shell-cell-session.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

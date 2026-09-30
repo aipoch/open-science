@@ -1227,15 +1227,16 @@ const seatbeltString = (value: string): string => JSON.stringify(value)
 
 // macOS Seatbelt is the hard filesystem layer beneath the semantic policy above. It applies to the
 // whole child process tree, so dynamically constructed paths and nested R/Python/subprocess writers
-// cannot modify managed runtime state. The sole writable exception is the marker-owned workload-cache
-// subtree, which contains disposable third-party cache data rather than environments or app metadata.
+// cannot modify managed runtime state. The workload-cache subtree and explicitly prepared shell npm
+// storage are writable exceptions; kernels do not receive the shell's npm write grant.
 // The trusted main-process package manager is spawned outside this wrapper and remains the only managed
 // runtime writer. Other platforms still use the main-process policy; their native process-sandbox
 // adapters can be added at this same seam without changing callers.
 export const protectManagedRuntimeWrites = (
   invocation: RuntimeProcessInvocation,
   runtimeRoot: string,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  writableRoots: readonly string[] = []
 ): RuntimeProcessInvocation => {
   if (platform !== 'darwin') return invocation
 
@@ -1247,6 +1248,17 @@ export const protectManagedRuntimeWrites = (
     // A first-use runtime may not exist yet. The resolved target still protects the path once created.
   }
   const protectedRoots = [...new Set([resolvedRoot, physicalRoot])]
+  const writablePaths = [
+    ...new Set(
+      writableRoots.flatMap((path) => {
+        try {
+          return [resolve(path), realpathSync(path)]
+        } catch {
+          return [resolve(path)]
+        }
+      })
+    )
+  ]
   const profile = [
     '(version 1)',
     '(allow default)',
@@ -1255,7 +1267,9 @@ export const protectManagedRuntimeWrites = (
       `(deny file-write* (require-all`,
       `  (subpath ${seatbeltString(root)})`,
       `  (require-not (literal ${seatbeltString(join(root, 'cache', 'notebook'))}))`,
-      `  (require-not (subpath ${seatbeltString(join(root, 'cache', 'notebook'))}))))`
+      `  (require-not (subpath ${seatbeltString(join(root, 'cache', 'notebook'))}))`,
+      ...writablePaths.map((path) => `  (require-not (subpath ${seatbeltString(path)}))`),
+      '))'
     ])
   ].join('\n')
 

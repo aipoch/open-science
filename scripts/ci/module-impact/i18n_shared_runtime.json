@@ -651,7 +651,8 @@
       "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/notebook/shell-cell-session.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

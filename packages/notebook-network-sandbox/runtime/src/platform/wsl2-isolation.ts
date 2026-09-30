@@ -703,6 +703,9 @@ const createGuestEnvironment = async (
     }
     environment[key] = await map(value)
   }
+  if (environment.NPM_CONFIG_PREFIX) {
+    environment.PATH = `${environment.NPM_CONFIG_PREFIX}/bin:${environment.PATH}`
+  }
   return environment
 }
 

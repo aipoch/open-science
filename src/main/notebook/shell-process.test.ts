@@ -24,6 +24,7 @@ import type { NotebookProcessSandbox } from './process-sandbox'
 import { normalizeFilesystemLayout } from '../../../packages/notebook-network-sandbox/runtime/src/platform/filesystem-layout.js'
 import { terminateProcessTree } from '../process-tree'
 import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
+import { shellNpmPaths } from './shell-npm-environment'
 import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
 
 let portableRuntimeRoot: string
@@ -405,10 +406,15 @@ describe('notebook shell process behavior', () => {
           pathEnvironment: {
             OPEN_SCIENCE_HANDOFF_DIR: 'C:\\handoff',
             ...notebookWorkloadCacheEnv(portableRuntimeRoot),
+            NPM_CONFIG_PREFIX: shellNpmPaths(portableRuntimeRoot, 'linux').prefix,
+            NPM_CONFIG_CACHE: shellNpmPaths(portableRuntimeRoot, 'linux').cache,
             OPEN_SCIENCE_INPUT_DIR: 'C:\\inputs'
           },
           filesystem: expect.objectContaining({
-            readOnlyRoots: expect.arrayContaining(['C:\\inputs'])
+            readOnlyRoots: expect.arrayContaining(['C:\\inputs']),
+            readWriteRoots: expect.arrayContaining([
+              shellNpmPaths(portableRuntimeRoot, 'linux').prefix
+            ])
           })
         })
       )
