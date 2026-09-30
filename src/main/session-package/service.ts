@@ -157,6 +157,8 @@ type PackageOptions = {
 }
 
 type PackageExportOptions = {
+  // Per-attempt policy; the desktop owner requires explicit acknowledgement of a failed export.
+  allowSensitiveContent?: boolean
   selectFiles?: (
     files: PackageSelectableFile[],
     signal: AbortSignal,
@@ -507,7 +509,8 @@ export class SessionPackageService {
       const manifest = await validatePackageDirectory(source, this.signal)
       if (manifest.source.projectId !== origin.sourceManifest.source.projectId)
         throw new Error('Session package source identity mismatch.')
-      if (!options.consumeSnapshot) await assertShareable(manifest, this.signal, 'manifest.json')
+      if (!options.consumeSnapshot && !options.allowSensitiveContent)
+        await assertShareable(manifest, this.signal, 'manifest.json')
       const sourceSessionEnvelope = await readPackageJson(join(source, 'session.json'))
       const sourceSession = await readSession(source)
       const forwardedSession = withoutPrivateAuthority(
@@ -520,7 +523,7 @@ export class SessionPackageService {
             ) as PersistedChatSession)
           : sourceSession
       )
-      if (!options.consumeSnapshot)
+      if (!options.consumeSnapshot && !options.allowSensitiveContent)
         await assertShareable(forwardedSession, this.signal, 'session.json')
       // Inspect the raw envelope so malformed legacy Side Chat data dropped by the Session
       // sanitizer cannot bypass the rewrite and be copied into the forwarded package.
@@ -529,7 +532,8 @@ export class SessionPackageService {
           ? JSON.stringify({ version: 2, session: forwardedSession })
           : undefined
       const records = parseNativeRecords(await readPackageJson(join(source, 'records.json')))
-      if (!options.consumeSnapshot) await assertShareable(records, this.signal, 'records.json')
+      if (!options.consumeSnapshot && !options.allowSensitiveContent)
+        await assertShareable(records, this.signal, 'records.json')
       const alreadyExcluded = validateExcludedFiles(records, manifest.excludedFiles)
       const notebooks = await Promise.all(
         manifest.inventory
@@ -623,7 +627,7 @@ export class SessionPackageService {
               await writeFile(join(staging, entry.path), forwardedSessionJson)
               continue
             }
-            if (!options.consumeSnapshot)
+            if (!options.consumeSnapshot && !options.allowSensitiveContent)
               await assertShareableFile(
                 join(source, entry.path),
                 this.signal,
@@ -803,7 +807,8 @@ export class SessionPackageService {
     if (excludedKeys.size !== excludedFiles.length)
       throw new Error('Invalid package content selection.')
     validateExcludedFiles(records, excludedFiles)
-    if (!options.consumeSnapshot) await assertShareable(sharedSession, this.signal, 'session.json')
+    if (!options.consumeSnapshot && !options.allowSensitiveContent)
+      await assertShareable(sharedSession, this.signal, 'session.json')
     const directory = await mkdtemp(
       join(
         options.consumeSnapshot ? this.options.storageRoot : tmpdir(),
@@ -812,7 +817,8 @@ export class SessionPackageService {
     )
     return withPackageCleanup(
       async () => {
-        if (!options.consumeSnapshot) await assertShareable(records, this.signal, 'records.json')
+        if (!options.consumeSnapshot && !options.allowSensitiveContent)
+          await assertShareable(records, this.signal, 'records.json')
         let totalBytes = metadataBytes
         const storageKeys = [
           ...new Set([
@@ -891,7 +897,7 @@ export class SessionPackageService {
           if (copied.sizeBytes !== metadata.size)
             throw new Error('The Session changed during export. Try again.')
           assertNoExcludedContentCopies(records, excludedFiles, [copied])
-          if (!options.consumeSnapshot)
+          if (!options.consumeSnapshot && !options.allowSensitiveContent)
             await assertShareableFile(
               join(directory, objectPath),
               this.signal,

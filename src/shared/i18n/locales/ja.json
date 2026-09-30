@@ -133,6 +133,9 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "Export anyway": "リスクを承知でエクスポート",
+    "I understand the risk and want to export anyway": "リスクを理解した上でエクスポートします",
+    "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "このパッケージには認証情報や個人情報が含まれている可能性があります。続行すると、検出された内容がマスクされずに含まれます。共有する前にパッケージを確認してください。",
     "Enter a valid number. This condition keeps its last applied setting.": "有効な数値を入力してください。この条件には前回適用した設定が引き続き使用されます。",
     "Enter a valid number. This condition has not been applied.": "有効な数値を入力してください。この条件はまだ適用されていません。",
     "Retrieve an Alliance gene summary and genomic location.": "Alliance の遺伝子概要とゲノム上の位置を取得します。",

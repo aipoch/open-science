@@ -133,6 +133,9 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Export anyway": "위험을 감수하고 내보내기",
+    "I understand the risk and want to export anyway": "위험을 이해했으며 내보내기를 계속합니다",
+    "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "이 패키지에는 자격 증명이나 개인 정보가 포함될 수 있습니다. 계속 내보내면 표시된 내용이 가려지지 않은 채 포함됩니다. 공유하기 전에 패키지를 검토하세요.",
     "Enter a valid number. This condition keeps its last applied setting.": "유효한 숫자를 입력하세요. 이 조건에는 마지막으로 적용된 설정이 유지됩니다.",
     "Enter a valid number. This condition has not been applied.": "유효한 숫자를 입력하세요. 이 조건은 아직 적용되지 않았습니다.",
     "Retrieve an Alliance gene summary and genomic location.": "Alliance 유전자 요약과 유전체 위치를 가져옵니다.",

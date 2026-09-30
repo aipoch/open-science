@@ -263,6 +263,7 @@ export class SessionPackageOperation {
         'discard-import',
         'next-import',
         'retry-import',
+        'export-with-sensitive-content',
         'dismiss-queue-warning'
       ].includes(request.action)
     )

@@ -135,6 +135,9 @@
     "More items": "Más sesiones"
   },
   "renderer": {
+    "Export anyway": "Exportar de todos modos",
+    "I understand the risk and want to export anyway": "Comprendo el riesgo y quiero exportar de todos modos",
+    "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "Este paquete puede contener credenciales o información privada. Al exportar de todos modos, se incluye el contenido señalado sin ocultarlo. Revise el paquete antes de compartirlo.",
     "Enter a valid number. This condition keeps its last applied setting.": "Introduzca un número válido. Esta condición conserva la última configuración aplicada.",
     "Enter a valid number. This condition has not been applied.": "Introduzca un número válido. Esta condición aún no se ha aplicado.",
     "Retrieve an Alliance gene summary and genomic location.": "Obtener un resumen de un gen de Alliance y su ubicación genómica.",

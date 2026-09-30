@@ -134,6 +134,9 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
+    "Export anyway": "Trotzdem exportieren",
+    "I understand the risk and want to export anyway": "Ich verstehe das Risiko und möchte trotzdem exportieren",
+    "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "Dieses Paket kann Zugangsdaten oder private Informationen enthalten. Beim Exportieren werden die markierten Inhalte ohne Schwärzung eingeschlossen. Prüfen Sie das Paket, bevor Sie es teilen.",
     "Enter a valid number. This condition keeps its last applied setting.": "Geben Sie eine gültige Zahl ein. Für diese Bedingung bleibt die zuletzt angewendete Einstellung erhalten.",
     "Enter a valid number. This condition has not been applied.": "Geben Sie eine gültige Zahl ein. Diese Bedingung wurde noch nicht angewendet.",
     "Retrieve an Alliance gene summary and genomic location.": "Eine Zusammenfassung und die genomische Position eines Alliance-Gens abrufen.",

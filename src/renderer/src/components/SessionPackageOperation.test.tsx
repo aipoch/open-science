@@ -1,3 +1,5 @@
+import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
+import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 // @vitest-environment jsdom
@@ -11,6 +13,13 @@ import {
 } from './SessionPackageOperation'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import type { PackageOperationSnapshot } from '../../../shared/session-package'
+
+vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
+  drainWorkspaceRuntimeEventsForPersistence: vi.fn(async () => undefined)
+}))
+vi.mock('@/lib/session-persistence/session-persistence', () => ({
+  flushSessionPersistence: vi.fn(async () => undefined)
+}))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root
@@ -1284,4 +1293,88 @@ it('never labels required Literature PDF evidence as Essential export', async ()
   expect(document.body.textContent).toContain(
     'Essential export is unavailable because a Literature PDF is required evidence.'
   )
+})
+
+const sensitiveFailure: PackageOperationSnapshot = {
+  ...snapshot,
+  state: 'failed',
+  progress: { phase: 'validating' },
+  error: 'Sensitive content detected',
+  sensitiveContent: [
+    {
+      location: 'session.json',
+      offset: 0,
+      rule: 'url',
+      matchLength: 31,
+      leftBoundary: 'start',
+      rightBoundary: 'end',
+      context: 'https://[redacted]@host/...',
+      valueHash: 'a'.repeat(64)
+    }
+  ]
+}
+
+it('requires fresh acknowledgement, sends the bound action once, and resets after failure', async () => {
+  let reject!: (error: Error) => void
+  const packageOperation = vi.fn((request: { action: string }) =>
+    request.action === 'snapshot'
+      ? Promise.resolve(sensitiveFailure)
+      : new Promise((_, rejectPromise) => {
+          reject = rejectPromise
+        })
+  )
+  vi.stubGlobal('api', {
+    sessions: { packageOperation, onPackageOperation: () => () => undefined }
+  })
+  usePackageOperationStore.setState({ operation: sensitiveFailure, open: true })
+  await act(async () => root.render(<SessionPackageOperation />))
+  const checkbox = document.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+  expect(checkbox).not.toBeNull()
+  expect(checkbox.checked).toBe(false)
+  expect(button('Export anyway').disabled).toBe(true)
+  expect(document.body.textContent).toContain('without redaction')
+  await act(async () => checkbox.click())
+  expect(button('Export anyway').disabled).toBe(false)
+  await act(async () => {
+    button('Export anyway').click()
+    button('Export anyway').click()
+  })
+  expect(
+    packageOperation.mock.calls.filter(
+      ([request]) => request.action === 'export-with-sensitive-content'
+    )
+  ).toEqual([[{ action: 'export-with-sensitive-content', operationId: sensitiveFailure.id }]])
+  expect(drainWorkspaceRuntimeEventsForPersistence).toHaveBeenCalledWith('s')
+  expect(flushSessionPersistence).toHaveBeenCalled()
+  expect(button('Export anyway').disabled).toBe(true)
+  expect(checkbox.disabled).toBe(true)
+  await act(async () => reject(new Error('Export failed again')))
+  expect(checkbox.checked).toBe(false)
+  expect(button('Export anyway').disabled).toBe(true)
+  await act(async () => checkbox.click())
+  await act(async () => usePackageOperationStore.getState().setOpen(false))
+  await act(async () => usePackageOperationStore.getState().setOpen(true))
+  expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(false)
+  await act(async () => document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
+  await act(async () =>
+    usePackageOperationStore.getState().receive({ ...sensitiveFailure, id: 'replacement' })
+  )
+  expect(button('Export anyway').disabled).toBe(true)
+})
+
+it.each([
+  { ...sensitiveFailure, kind: 'fork' as const },
+  { ...sensitiveFailure, kind: 'import' as const },
+  { ...sensitiveFailure, sensitiveContent: undefined },
+  { ...sensitiveFailure, cleanupPending: true }
+])('hides sensitive export acknowledgement for ineligible operation %#', async (operation) => {
+  vi.stubGlobal('api', {
+    sessions: { packageOperation: async () => operation, onPackageOperation: () => () => undefined }
+  })
+  usePackageOperationStore.setState({ operation, open: true })
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(document.querySelector('input[type="checkbox"]')).toBeNull()
+  expect(
+    [...document.querySelectorAll('button')].some((item) => item.textContent === 'Export anyway')
+  ).toBe(false)
 })

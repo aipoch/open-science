@@ -130,7 +130,34 @@ const findPackageTextMatch = (
   for (const match of text.matchAll(/\b[a-z][a-z0-9+.-]*:(?:\\?\/){2}[^\s"'<>]+/gi)) {
     try {
       const rawUrl = match[0]
-      new URL(rawUrl.replaceAll('\\/', '/'))
+      const normalizedUrl = rawUrl.replaceAll('\\/', '/')
+      const url = new URL(normalizedUrl)
+      // This exact documentation example is not a credential. Do not exempt other
+      // hosts or values, and still inspect query/fragment credentials below.
+      const decodePart = (value: string): string => {
+        try {
+          return decodeURIComponent(value)
+        } catch {
+          return value
+        }
+      }
+      const exampleAuthority =
+        /^https?:$/.test(url.protocol) &&
+        url.hostname === 'host' &&
+        url.port === '' &&
+        decodePart(url.username) === 'user' &&
+        decodePart(url.password) === 'password' &&
+        /^\/\.\.\.`?$/.test(decodePart(url.pathname))
+      // Delay only an unfinished prefix of the exact example, so split reads do
+      // not flag its username before the placeholder host/path arrives.
+      const decodedUrl = decodePart(normalizedUrl.replace(/%[0-9a-f]?$/i, ''))
+      if (
+        !finished(match.index + rawUrl.length) &&
+        ['http://user:password@host/...', 'https://user:password@host/...'].some((example) =>
+          example.startsWith(decodedUrl)
+        )
+      )
+        continue
       const privatePart = (value: string): boolean => {
         try {
           return privateValue(decodeURIComponent(value), match.index + rawUrl.length)
@@ -147,7 +174,7 @@ const findPackageTextMatch = (
         authorityEnd < 0 ? rawUrl.length : authorityStart + authorityEnd
       )
       const at = authority.lastIndexOf('@')
-      if (at >= 0) {
+      if (at >= 0 && !exampleAuthority) {
         const credentials = authority.slice(0, at)
         const separator = credentials.indexOf(':')
         const usernameLength = separator < 0 ? credentials.length : separator

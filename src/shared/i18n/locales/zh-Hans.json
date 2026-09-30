@@ -133,6 +133,9 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "Export anyway": "仍然导出",
+    "I understand the risk and want to export anyway": "我理解风险，仍要导出",
+    "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "此包可能包含凭据或私人信息。仍然导出会原样包含被标记的内容，不进行脱敏。分享前请检查导出包。",
     "Enter a valid number. This condition keeps its last applied setting.": "请输入有效数字。此条件仍使用上一次已应用的设置。",
     "Enter a valid number. This condition has not been applied.": "请输入有效数字。此条件尚未应用。",
     "Retrieve an Alliance gene summary and genomic location.": "获取 Alliance 基因摘要和基因组位置。",

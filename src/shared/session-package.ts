@@ -140,6 +140,7 @@ export const packageOperationRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('next-import'), operationId: identity }).strict(),
   z.object({ action: z.literal('dismiss-queue-warning'), operationId: identity }).strict(),
   z.object({ action: z.literal('retry-import'), operationId: identity }).strict(),
+  z.object({ action: z.literal('export-with-sensitive-content'), operationId: identity }).strict(),
   z.object({ action: z.literal('reveal'), operationId: identity }).strict(),
   z.object({ action: z.literal('retry-cleanup'), operationId: identity }).strict(),
   z

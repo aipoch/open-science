@@ -331,9 +331,13 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
 export const SessionPackageOperation = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const speedId = useId()
+  const riskId = useId()
   const { operation, open, receive, setOpen, dismiss } = usePackageOperationStore()
   const [operationError, setError] = useState<{ id: string; message: string }>()
   const [retrying, setRetrying] = useState(false)
+  const retryPending = useRef(false)
+  const [riskAcceptedFor, setRiskAcceptedFor] = useState<string>()
+  if (riskAcceptedFor && (!open || riskAcceptedFor !== operation?.id)) setRiskAcceptedFor(undefined)
   const titleRef = useRef<HTMLHeadingElement>(null)
   const navigationIntent = useRef<string | undefined>(undefined)
   const isWeb = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) === 'true'
@@ -386,6 +390,12 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
         ? t('Export Session package')
         : t('Import Session package')
   const { phase, status, waiting, busy, description } = operationStatus(operation, t)
+  const canOverride =
+    operation.kind === 'export' &&
+    operation.state === 'failed' &&
+    Boolean(operation.session && operation.sensitiveContent?.length) &&
+    !operation.cleanupPending &&
+    !operation.result?.recovery
   const selecting = operation.state === 'awaiting-selection'
   const OperationIcon =
     operation.state === 'succeeded' ? Check : waiting ? Clock3 : busy ? LoaderCircle : PackageOpen
@@ -402,7 +412,14 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       })
     }
   }
-  const retry = async (chooseAnotherPackage = false): Promise<void> => {
+  const retry = async (
+    chooseAnotherPackage = false,
+    allowSensitiveContent = false
+  ): Promise<void> => {
+    if (retryPending.current) return
+    if (allowSensitiveContent && (!canOverride || riskAcceptedFor !== operation.id)) return
+    retryPending.current = true
+    setRiskAcceptedFor(undefined)
     setRetrying(true)
     setError(undefined)
     try {
@@ -414,7 +431,12 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       } else if (operation.kind === 'export' && operation.session) {
         await drainWorkspaceRuntimeEventsForPersistence(operation.session.sessionId)
         await flushSessionPersistence()
-        await window.api.sessions.exportPackage(operation.session)
+        if (allowSensitiveContent)
+          await window.api.sessions.packageOperation({
+            action: 'export-with-sensitive-content',
+            operationId: operation.id
+          })
+        else await window.api.sessions.exportPackage(operation.session)
       } else if (operation.importRequestId && !chooseAnotherPackage)
         await respond({ action: 'retry-import', operationId: operation.id })
       else await window.api.sessions.importPackage(operation.importTarget)
@@ -424,6 +446,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
         message: caught instanceof Error ? caught.message : String(caught)
       })
     } finally {
+      retryPending.current = false
       setRetrying(false)
     }
   }
@@ -695,6 +718,31 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     </pre>
                   </details>
                 ) : null}
+                {canOverride ? (
+                  <div className="space-y-3 rounded-lg border border-border bg-status-warning-surface p-3 dark:bg-status-warning-dark-surface">
+                    <p id={`${riskId}-description`} className="text-sm leading-5 text-foreground">
+                      {t(
+                        'This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.'
+                      )}
+                    </p>
+                    <div className="flex items-start gap-2">
+                      <input
+                        id={riskId}
+                        type="checkbox"
+                        className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+                        aria-describedby={`${riskId}-description`}
+                        checked={riskAcceptedFor === operation.id}
+                        disabled={retrying}
+                        onChange={(event) =>
+                          setRiskAcceptedFor(event.target.checked ? operation.id : undefined)
+                        }
+                      />
+                      <Label htmlFor={riskId} className="min-w-0 text-sm leading-5">
+                        {t('I understand the risk and want to export anyway')}
+                      </Label>
+                    </div>
+                  </div>
+                ) : null}
                 {operation.cleanupPending && !active ? (
                   <ErrorNotice
                     inline
@@ -806,8 +854,27 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 {operation.state === 'failed' &&
                 !operation.cleanupPending &&
                 !operation.result?.recovery ? (
-                  <Button disabled={retrying} onClick={() => void retry()}>
+                  <Button
+                    variant={canOverride ? 'outline' : 'default'}
+                    disabled={retrying}
+                    onClick={() => void retry()}
+                  >
                     {t('Try again')}
+                  </Button>
+                ) : null}
+                {canOverride ? (
+                  <Button
+                    disabled={retrying || riskAcceptedFor !== operation.id}
+                    aria-busy={retrying}
+                    onClick={() => void retry(false, true)}
+                  >
+                    {retrying ? (
+                      <LoaderCircle
+                        className="size-4 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                    {t('Export anyway')}
                   </Button>
                 ) : null}
               </div>

@@ -48,3 +48,22 @@ it('transports Literature selection through the package operation contract', () 
   }
   expect(sessionPackageCommandContracts.operation.result.parse(snapshot)).toEqual(snapshot)
 })
+
+it('requires a bounded operation identity for an explicit sensitive-content export', () => {
+  expect(
+    packageOperationRequestSchema.parse({
+      action: 'export-with-sensitive-content',
+      operationId: 'failed-export'
+    })
+  ).toEqual({ action: 'export-with-sensitive-content', operationId: 'failed-export' })
+  for (const request of [
+    { action: 'export-with-sensitive-content' },
+    { action: 'export-with-sensitive-content', operationId: '../source' },
+    {
+      action: 'export-with-sensitive-content',
+      operationId: 'failed-export',
+      allowSensitiveContent: true
+    }
+  ])
+    expect(packageOperationRequestSchema.safeParse(request).success).toBe(false)
+})
