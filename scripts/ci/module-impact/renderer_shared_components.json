@@ -347,6 +347,7 @@
       "src/renderer/src/pages/workspace/ContextWindowDialog.render.test.tsx",
       "src/renderer/src/pages/workspace/ConversationExportDialog.interaction.test.tsx",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/EmptyConversationBanner.interaction.test.tsx",
       "src/renderer/src/pages/workspace/EmptyConversationBanner.render.test.tsx",
       "src/renderer/src/pages/workspace/EnvStatusBanner.render.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.escape.test.tsx",

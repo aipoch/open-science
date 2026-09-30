@@ -1433,15 +1433,14 @@ const WorkspacePage = ({
     activeProject?.archivedAt === undefined
   )
 
+  const canImportSessionPackage =
+    isSessionPersistenceReady && Boolean(activeProject) && activeProject?.archivedAt === undefined
+
   const content = (
     <ProjectPackageDropZone
       projectId={scopedProjectId}
       projectName={activeProject?.name ?? t('Project')}
-      canImport={
-        isSessionPersistenceReady &&
-        Boolean(activeProject) &&
-        activeProject?.archivedAt === undefined
-      }
+      canImport={canImportSessionPackage}
       ref={previewFocusFallbackRef}
       tabIndex={-1}
       className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]"
@@ -1682,7 +1681,8 @@ const WorkspacePage = ({
                   composerFocusKey: currentDraftKey,
                   canEditDraft,
                   actionError: visibleActionError,
-                  sideChatDisabledReason
+                  sideChatDisabledReason,
+                  sessionImport: { projectId: scopedProjectId, canImport: canImportSessionPackage }
                 }}
                 composer={composer}
                 conversation={conversation}

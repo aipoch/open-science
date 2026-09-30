@@ -181,6 +181,8 @@ type WorkspaceMessageScrollerProps = {
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: SendEditedMessage
   onStartResearch?: (prompt: string) => void
+  // Gates the .science import entry on the empty state.
+  sessionImport?: { projectId: string; canImport: boolean }
   onOpenLibraryMention?: (scope: LibraryMentionScopeRequest) => void
   optimisticMessage?: ChatMessage
   annotations?: readonly Annotation[]
@@ -586,6 +588,7 @@ const WorkspaceMessageScrollerImpl = ({
   onSendEditedMessage,
   onOpenLibraryMention,
   onStartResearch,
+  sessionImport,
   annotations = EMPTY_ANNOTATIONS,
   onAddAnnotation,
   onUpdateAnnotationNote,
@@ -1615,7 +1618,10 @@ const WorkspaceMessageScrollerImpl = ({
             className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-bg-10 to-bg-10/0"
           />
           {showEmptyConversationBanner ? (
-            <EmptyConversationBanner onStartResearch={onStartResearch} />
+            <EmptyConversationBanner
+              onStartResearch={onStartResearch}
+              sessionImport={sessionImport}
+            />
           ) : null}
           <MessageScrollerViewport
             ref={handleMessageScrollerViewportRef}
@@ -2272,6 +2278,8 @@ const areWorkspaceMessageScrollerPropsEqual = (
   (previous.scrollIntentActive ?? true) === (next.scrollIntentActive ?? true) &&
   previous.onSendEditedMessage === next.onSendEditedMessage &&
   previous.onStartResearch === next.onStartResearch &&
+  previous.sessionImport?.projectId === next.sessionImport?.projectId &&
+  (previous.sessionImport?.canImport ?? false) === (next.sessionImport?.canImport ?? false) &&
   previous.onOpenLibraryMention === next.onOpenLibraryMention &&
   (previous.credentialPending ?? false) === (next.credentialPending ?? false) &&
   (previous.visiblePermissionPending ?? false) === (next.visiblePermissionPending ?? false) &&
