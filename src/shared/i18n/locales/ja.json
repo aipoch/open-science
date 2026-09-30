@@ -6484,7 +6484,7 @@
     "Used for matching, not as attribute columns.": "照合に使用し、属性列にはしません。",
     "Save as attribute columns": "属性列として保存",
     "Show and filter these columns in the literature table.": "文献一覧で表示・絞り込みできます。",
-    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table, such as impact factor or quartile.": "識別用の列はジャーナルの照合に使用します。インパクトファクターや四分位など、文献一覧で表示・絞り込みする値には「ジャーナル属性」を選択してください。",
+    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "識別用の列はジャーナルの照合に使用します。文献一覧で表示・絞り込みする値には「雑誌属性」を選択してください。",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "「保存する名前」と「値の種類」はジャーナル属性にのみ適用されます。スキップした列は保存されません。",
     "Journal attribute": "雑誌属性",
     "External journal ID": "外部ジャーナル ID",

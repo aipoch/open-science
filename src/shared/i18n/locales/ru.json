@@ -6948,7 +6948,7 @@
     "Used for matching, not as attribute columns.": "Для сопоставления, а не для столбцов атрибутов.",
     "Save as attribute columns": "Сохранение как атрибуты",
     "Show and filter these columns in the literature table.": "Эти столбцы можно отображать и фильтровать в списке литературы.",
-    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table, such as impact factor or quartile.": "Столбцы идентификации используются для сопоставления журналов. Для значений, которые нужно отображать и фильтровать в списке литературы, например импакт-фактора или квартиля, выберите «Атрибут журнала».",
+    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "Столбцы идентификации используются для сопоставления журналов. Для значений, которые нужно отображать и фильтровать в списке литературы, выберите «Атрибут журнала».",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "Сохранённое имя и тип значения применяются только к атрибутам журнала. Пропущенные столбцы не сохраняются.",
     "Journal attribute": "Атрибут журнала",
     "External journal ID": "Внешний ID журнала",

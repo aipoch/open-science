@@ -2637,7 +2637,7 @@ export const JournalManager = memo(function JournalManager({
           <div className="space-y-1 text-xs text-muted-foreground">
             <p>
               {t(
-                'Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table, such as impact factor or quartile.'
+                'Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.'
               )}
             </p>
             <p>

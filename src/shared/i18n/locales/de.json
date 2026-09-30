@@ -6643,7 +6643,7 @@
     "Used for matching, not as attribute columns.": "Zum Abgleichen, nicht als Attributspalten.",
     "Save as attribute columns": "Als Attributspalten speichern",
     "Show and filter these columns in the literature table.": "Diese Spalten in der Literaturliste anzeigen und filtern.",
-    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table, such as impact factor or quartile.": "Identitätsspalten dienen zum Abgleichen von Zeitschriften. Wählen Sie Zeitschriftenattribut für Werte, die Sie in der Literaturliste anzeigen und filtern möchten, etwa Impact-Faktor oder Quartil.",
+    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "Identitätsspalten dienen zum Abgleichen von Zeitschriften. Wählen Sie Zeitschriftenattribut für Werte, die Sie in der Literaturliste anzeigen und filtern möchten.",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "Gespeicherter Name und Werttyp gelten nur für Zeitschriftenattribute. Übersprungene Spalten werden nicht gespeichert.",
     "Journal attribute": "Zeitschriftenattribut",
     "External journal ID": "Externe Journal-ID",

@@ -6484,7 +6484,7 @@
     "Used for matching, not as attribute columns.": "用于匹配期刊，不作为属性列。",
     "Save as attribute columns": "保存为属性列",
     "Show and filter these columns in the literature table.": "可在文献列表中显示和筛选。",
-    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table, such as impact factor or quartile.": "识别字段用于匹配期刊。影响因子、分区等需要在文献列表中显示和筛选的值，请选择“期刊属性”。",
+    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "识别字段用于匹配期刊。需要在文献列表中显示和筛选的值，请选择“期刊属性”。",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "“保存名称”和“值类型”仅适用于期刊属性。跳过的列不会保存。",
     "Journal attribute": "期刊属性",
     "External journal ID": "外部期刊 ID",

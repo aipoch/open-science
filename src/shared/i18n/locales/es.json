@@ -6810,7 +6810,7 @@
     "Used for matching, not as attribute columns.": "Para buscar coincidencias, no como columnas de atributos.",
     "Save as attribute columns": "Guardar como atributos",
     "Show and filter these columns in the literature table.": "Mostrar y filtrar estas columnas en la lista bibliográfica.",
-    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table, such as impact factor or quartile.": "Las columnas de identificación sirven para buscar coincidencias entre revistas. Seleccione Atributo de revista para los valores que desee mostrar y filtrar en la lista bibliográfica, como el factor de impacto o el cuartil.",
+    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "Las columnas de identificación sirven para buscar coincidencias entre revistas. Seleccione Atributo de revista para los valores que desee mostrar y filtrar en la lista bibliográfica.",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "Nombre guardado y tipo de valor se aplican solo a los atributos de revista. Las columnas omitidas no se guardan.",
     "Journal attribute": "Atributo de revista",
     "External journal ID": "ID externo de la revista",

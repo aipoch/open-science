@@ -98,7 +98,7 @@ it('keeps custom namespaces editable and rejects blank or invalid values before 
     await screen.findByText(file.name)
     expect(
       screen.getByText(
-        'Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table, such as impact factor or quartile.'
+        'Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.'
       )
     ).toBeTruthy()
     fireEvent.click(screen.getByRole('combobox', { name: 'Role for column 2' }))
