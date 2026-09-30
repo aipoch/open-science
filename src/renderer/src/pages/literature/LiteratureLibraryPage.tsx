@@ -1984,9 +1984,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [detailController] = useState(createLiteratureDetailController)
   const selectedItem = detailController.getSnapshot().item
   const selectedItemId = selectedItem?.id
-  const selectedItemExternalUrl = selectedItem
-    ? getExternalLiteratureUrl(selectedItem.item.url)
-    : undefined
   const [isCreatingItem, setIsCreatingItem] = useState(false)
   const [isSavingNewItem, setIsSavingNewItem] = useState(false)
   const [createItemError, setCreateItemError] = useState<string>()
@@ -7516,794 +7513,813 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         </Dialog.Root>
 
         <LiteratureDetailBoundary controller={detailController}>
-          {({ item: selectedItem, open, generation }) => (
-            <Dialog.Root open={open}>
-              {selectedItem ? (
-                <Dialog.Portal>
-                  {/* Keep the panel and scrim mounted while the portaled preview owns focus.
+          {({ item: selectedItem, open, generation }) => {
+            const selectedItemExternalUrl = selectedItem
+              ? getExternalLiteratureUrl(selectedItem.item.url)
+              : undefined
+            return (
+              <Dialog.Root open={open}>
+                {selectedItem ? (
+                  <Dialog.Portal>
+                    {/* Keep the panel and scrim mounted while the portaled preview owns focus.
                     Only release Radix's scroll lock: changing Root.modal remounts Content. */}
-                  {!previewItem ? <Dialog.Overlay className="hidden" /> : null}
-                  <div
-                    aria-hidden="true"
-                    data-state={open ? 'open' : 'closed'}
-                    className={cn(dialogOverlayClassName, 'pointer-events-auto')}
-                    onPointerDownCapture={(event) => {
-                      const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
-                      const pointInsideDialog = Boolean(
-                        dialogBounds &&
-                        event.clientX >= dialogBounds.left &&
-                        event.clientX <= dialogBounds.right &&
-                        event.clientY >= dialogBounds.top &&
-                        event.clientY <= dialogBounds.bottom
-                      )
+                    {!previewItem ? <Dialog.Overlay className="hidden" /> : null}
+                    <div
+                      aria-hidden="true"
+                      data-state={open ? 'open' : 'closed'}
+                      className={cn(dialogOverlayClassName, 'pointer-events-auto')}
+                      onPointerDownCapture={(event) => {
+                        const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
+                        const pointInsideDialog = Boolean(
+                          dialogBounds &&
+                          event.clientX >= dialogBounds.left &&
+                          event.clientX <= dialogBounds.right &&
+                          event.clientY >= dialogBounds.top &&
+                          event.clientY <= dialogBounds.bottom
+                        )
 
-                      if (pointInsideDialog) {
-                        event.preventDefault()
-                        event.stopPropagation()
-                      }
-                    }}
-                    onClick={(event) => {
-                      const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
-                      const pointInsideDialog = Boolean(
-                        dialogBounds &&
-                        event.clientX >= dialogBounds.left &&
-                        event.clientX <= dialogBounds.right &&
-                        event.clientY >= dialogBounds.top &&
-                        event.clientY <= dialogBounds.bottom
-                      )
+                        if (pointInsideDialog) {
+                          event.preventDefault()
+                          event.stopPropagation()
+                        }
+                      }}
+                      onClick={(event) => {
+                        const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
+                        const pointInsideDialog = Boolean(
+                          dialogBounds &&
+                          event.clientX >= dialogBounds.left &&
+                          event.clientX <= dialogBounds.right &&
+                          event.clientY >= dialogBounds.top &&
+                          event.clientY <= dialogBounds.bottom
+                        )
 
-                      if (
-                        pointInsideDialog ||
-                        detailTagMenuOpenRef.current ||
-                        detailSelectOpenRef.current ||
-                        Date.now() <= childLayerDismissGuardUntilRef.current ||
-                        hasLiteratureDetailChildLayer()
-                      ) {
-                        return
-                      }
-
-                      closeSelectedItemDetail()
-                    }}
-                  />
-                  <Dialog.Content
-                    ref={selectedItemDialogRef}
-                    onCloseAutoFocus={(event) => {
-                      event.preventDefault()
-                      if (detailController.getSnapshot().open || previewItem) return
-                      const initiator = detailInitiatorRef.current
-                      if (initiator?.isConnected && !initiator.closest('[inert], [hidden]')) {
-                        initiator.focus()
-                        if (document.activeElement === initiator && initiator !== document.body)
+                        if (
+                          pointInsideDialog ||
+                          detailTagMenuOpenRef.current ||
+                          detailSelectOpenRef.current ||
+                          Date.now() <= childLayerDismissGuardUntilRef.current ||
+                          hasLiteratureDetailChildLayer()
+                        ) {
                           return
-                      }
-                      libraryEntryRef.current?.focus()
-                    }}
-                    className={dialogPanelClassName(
-                      cn(
-                        'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0',
-                        metadata.mode === 'full-text'
-                          ? 'max-h-[calc(100vh-2rem)]'
-                          : 'h-[min(840px,calc(100vh-2rem))]'
-                      )
-                    )}
-                    onInteractOutside={(event) => {
-                      event.preventDefault()
-                    }}
-                    onEscapeKeyDown={(event) => {
-                      event.preventDefault()
-                      if (
-                        detailSelectOpenRef.current ||
-                        detailTagMenuOpenRef.current ||
-                        Date.now() <= childLayerDismissGuardUntilRef.current
-                      ) {
-                        return
-                      }
-                      closeSelectedItemDetail()
-                    }}
-                  >
-                    {discardMetadataDialog}
-                    <div className={cn(dialogHeaderClassName, 'shrink-0 items-start px-5 py-3')}>
-                      <div className="flex min-w-0 flex-1 items-start gap-2">
-                        {metadata.mode !== 'view' ? (
+                        }
+
+                        closeSelectedItemDetail()
+                      }}
+                    />
+                    <Dialog.Content
+                      ref={selectedItemDialogRef}
+                      onCloseAutoFocus={(event) => {
+                        event.preventDefault()
+                        if (detailController.getSnapshot().open || previewItem) return
+                        const initiator = detailInitiatorRef.current
+                        if (initiator?.isConnected && !initiator.closest('[inert], [hidden]')) {
+                          initiator.focus()
+                          if (document.activeElement === initiator && initiator !== document.body)
+                            return
+                        }
+                        libraryEntryRef.current?.focus()
+                      }}
+                      className={dialogPanelClassName(
+                        cn(
+                          'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0',
+                          metadata.mode === 'full-text'
+                            ? 'max-h-[calc(100vh-2rem)]'
+                            : 'h-[min(840px,calc(100vh-2rem))]'
+                        )
+                      )}
+                      onInteractOutside={(event) => {
+                        event.preventDefault()
+                      }}
+                      onEscapeKeyDown={(event) => {
+                        event.preventDefault()
+                        if (
+                          detailSelectOpenRef.current ||
+                          detailTagMenuOpenRef.current ||
+                          Date.now() <= childLayerDismissGuardUntilRef.current
+                        ) {
+                          return
+                        }
+                        closeSelectedItemDetail()
+                      }}
+                    >
+                      {discardMetadataDialog}
+                      <div className={cn(dialogHeaderClassName, 'shrink-0 items-start px-5 py-3')}>
+                        <div className="flex min-w-0 flex-1 items-start gap-2">
+                          {metadata.mode !== 'view' ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="shrink-0"
+                              aria-label={t('Back')}
+                              disabled={metadata.saving}
+                              onClick={leaveMetadataEditor}
+                            >
+                              <ArrowLeft className="size-4" aria-hidden="true" />
+                            </Button>
+                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            {metadata.mode !== 'view' ? (
+                              <>
+                                <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
+                                  {metadata.mode === 'edit'
+                                    ? t('Edit metadata')
+                                    : metadata.mode === 'complete'
+                                      ? t('Complete metadata')
+                                      : metadata.mode === 'full-text'
+                                        ? t('Find full-text PDF')
+                                        : t('Citation')}
+                                </Dialog.Title>
+                                <Dialog.Description
+                                  className={cn(
+                                    dialogDescriptionClassName,
+                                    'mt-0.5 truncate text-xs'
+                                  )}
+                                >
+                                  {selectedItem.item.title}
+                                </Dialog.Description>
+                              </>
+                            ) : (
+                              <>
+                                <div className="mb-1.5 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                                  <span className="rounded bg-bg-200 px-1.5 py-0.5 font-medium text-foreground">
+                                    {itemTypeLabels[selectedItem.item.itemType]}
+                                  </span>
+                                  {publicationSummary(selectedItem.item) ? (
+                                    <span className="min-w-0 break-words">
+                                      {publicationSummary(selectedItem.item)}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <Dialog.Title
+                                  className={cn(
+                                    dialogTitleClassName,
+                                    'line-clamp-3 break-words leading-snug'
+                                  )}
+                                >
+                                  {selectedItem.item.title}
+                                </Dialog.Title>
+                                <Dialog.Description className="sr-only">
+                                  {fullCreatorLabel(selectedItem.item) ||
+                                    itemTypeLabels[selectedItem.item.itemType]}
+                                </Dialog.Description>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {metadata.mode === 'view' ? (
+                            <DropdownMenu modal={false}>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  className="transition-none"
+                                  aria-label={t('More actions')}
+                                >
+                                  <MoreHorizontal className="size-4" aria-hidden="true" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    changeDetailMode('edit')
+                                  }}
+                                >
+                                  <Pencil className="mr-2 size-4" aria-hidden="true" />
+                                  {t('Edit metadata')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    metadata.resetCompletion()
+                                    changeDetailMode('complete')
+                                  }}
+                                >
+                                  <Search className="mr-2 size-4" aria-hidden="true" />
+                                  {t('Complete metadata')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => changeDetailMode('full-text')}>
+                                  <Download className="mr-2 size-4" aria-hidden="true" />
+                                  {t('Find full-text PDF')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    changeDetailMode('citation')
+                                  }}
+                                >
+                                  <Quote className="mr-2 size-4" aria-hidden="true" />
+                                  {t('Citation')}
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : null}
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon-sm"
-                            className="shrink-0"
-                            aria-label={t('Back')}
-                            disabled={metadata.saving}
-                            onClick={leaveMetadataEditor}
+                            className={dialogCloseButtonClassName}
+                            aria-label={t('Close')}
+                            disabled={isAddingPdf || metadata.saving}
+                            onClick={closeSelectedItemDetail}
                           >
-                            <ArrowLeft className="size-4" aria-hidden="true" />
+                            <X className="size-4" aria-hidden="true" />
                           </Button>
-                        ) : null}
-                        <div className="min-w-0 flex-1">
-                          {metadata.mode !== 'view' ? (
-                            <>
-                              <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
-                                {metadata.mode === 'edit'
-                                  ? t('Edit metadata')
-                                  : metadata.mode === 'complete'
-                                    ? t('Complete metadata')
-                                    : metadata.mode === 'full-text'
-                                      ? t('Find full-text PDF')
-                                      : t('Citation')}
-                              </Dialog.Title>
-                              <Dialog.Description
-                                className={cn(
-                                  dialogDescriptionClassName,
-                                  'mt-0.5 truncate text-xs'
-                                )}
-                              >
-                                {selectedItem.item.title}
-                              </Dialog.Description>
-                            </>
-                          ) : (
-                            <>
-                              <div className="mb-1.5 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                                <span className="rounded bg-bg-200 px-1.5 py-0.5 font-medium text-foreground">
-                                  {itemTypeLabels[selectedItem.item.itemType]}
-                                </span>
-                                {publicationSummary(selectedItem.item) ? (
-                                  <span className="min-w-0 break-words">
-                                    {publicationSummary(selectedItem.item)}
-                                  </span>
-                                ) : null}
-                              </div>
-                              <Dialog.Title
-                                className={cn(
-                                  dialogTitleClassName,
-                                  'line-clamp-3 break-words leading-snug'
-                                )}
-                              >
-                                {selectedItem.item.title}
-                              </Dialog.Title>
-                              <Dialog.Description className="sr-only">
-                                {fullCreatorLabel(selectedItem.item) ||
-                                  itemTypeLabels[selectedItem.item.itemType]}
-                              </Dialog.Description>
-                            </>
-                          )}
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        {metadata.mode === 'view' ? (
-                          <DropdownMenu modal={false}>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-sm"
-                                className="transition-none"
-                                aria-label={t('More actions')}
-                              >
-                                <MoreHorizontal className="size-4" aria-hidden="true" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                onSelect={() => {
-                                  changeDetailMode('edit')
-                                }}
-                              >
-                                <Pencil className="mr-2 size-4" aria-hidden="true" />
-                                {t('Edit metadata')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onSelect={() => {
-                                  metadata.resetCompletion()
-                                  changeDetailMode('complete')
-                                }}
-                              >
-                                <Search className="mr-2 size-4" aria-hidden="true" />
-                                {t('Complete metadata')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onSelect={() => changeDetailMode('full-text')}>
-                                <Download className="mr-2 size-4" aria-hidden="true" />
-                                {t('Find full-text PDF')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onSelect={() => {
-                                  changeDetailMode('citation')
-                                }}
-                              >
-                                <Quote className="mr-2 size-4" aria-hidden="true" />
-                                {t('Citation')}
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        ) : null}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          className={dialogCloseButtonClassName}
-                          aria-label={t('Close')}
-                          disabled={isAddingPdf || metadata.saving}
-                          onClick={closeSelectedItemDetail}
-                        >
-                          <X className="size-4" aria-hidden="true" />
-                        </Button>
-                      </div>
-                    </div>
-                    {isAddingPdf ? pdfUploadNotice : null}
-                    {metadata.mode === 'full-text' ? (
-                      <LiteratureFullTextLookup
-                        key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
-                        item={selectedItem}
-                        onCompleteMetadata={() => changeDetailMode('complete')}
-                        onUpload={() => {
-                          changeDetailMode('view')
-                          requestAnimationFrame(() => pdfInputRef.current?.click())
-                        }}
-                        onAdded={(updated) => {
-                          updateMetadataItem(updated)
-                          if (detailController.getSnapshot().generation === generation) {
-                            detailController.replace(updated)
-                            changeDetailMode('view')
-                          }
-                          void loadEntries(true)
-                        }}
-                      />
-                    ) : metadata.mode === 'edit' ? (
-                      <>
-                        {metadata.awaitingReload || metadata.externallyUpdated() ? (
-                          <ErrorNotice
-                            className="mx-5 mt-4 w-auto shrink-0"
-                            role="alert"
-                            tone="amber"
-                            description={
-                              metadata.awaitingReload
-                                ? t('The reference was saved, but could not be reloaded.')
-                                : t(
-                                    'This reference changed while you were editing. Your draft has been kept.'
-                                  )
-                            }
-                            primaryButton={
-                              metadata.awaitingReload
-                                ? {
-                                    label: t('Retry'),
-                                    loading: metadata.saving,
-                                    onClick: () => void metadata.reloadSaved()
-                                  }
-                                : {
-                                    label: t('Load latest version'),
-                                    disabled: metadata.saving,
-                                    description: t(
-                                      'Discard this draft and load the latest saved metadata.'
-                                    ),
-                                    onClick: metadata.loadLatest
-                                  }
-                            }
-                          />
-                        ) : null}
-                        <LiteratureMetadataEditor
-                          onDirtyChange={trackMetadataDirty}
-                          key={`${selectedItem.id}:${metadata.editBase?.metadataRevision}`}
-                          item={metadata.editBase?.item ?? selectedItem.item}
-                          saving={metadata.saving || metadata.awaitingReload}
-                          saveDisabled={
-                            metadata.externallyUpdated() || removedDetailItemId === selectedItem.id
-                          }
-                          error={
-                            removedDetailItemId === selectedItem.id
-                              ? t('This reference is no longer in your Library.')
-                              : metadata.awaitingReload || metadata.externallyUpdated()
-                                ? undefined
-                                : metadata.error
-                          }
-                          className="min-h-0 flex-1 max-h-none"
-                          onCancel={leaveMetadataEditor}
-                          onSave={(item) => void metadata.save(item)}
-                        />
-                      </>
-                    ) : metadata.mode === 'complete' ? (
-                      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 text-sm">
-                        <LiteratureMetadataLookup
-                          key={selectedItem.id}
-                          busy={metadata.completing}
-                          error={
-                            metadata.completionError?.itemId === selectedItem.id
-                              ? metadata.completionError.message
-                              : undefined
-                          }
-                          hasResult={Boolean(activeMetadataCompletion)}
+                      {isAddingPdf ? pdfUploadNotice : null}
+                      {metadata.mode === 'full-text' ? (
+                        <LiteratureFullTextLookup
+                          key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
                           item={selectedItem}
-                          onOpenChange={handleDetailSelectOpenChange}
-                          onReset={() => {
-                            metadata.resetCompletion()
+                          onCompleteMetadata={() => changeDetailMode('complete')}
+                          onUpload={() => {
+                            changeDetailMode('view')
+                            requestAnimationFrame(() => pdfInputRef.current?.click())
                           }}
-                          onSearch={(identifier) => void metadata.complete('preview', identifier)}
-                        >
-                          {activeMetadataCompletion ? (
-                            <div className="space-y-4">
-                              {activeMetadataCompletion.sources?.map((source, index) => (
-                                <p key={index} className="text-xs text-muted-foreground">
-                                  <ExternalTextLink
-                                    href={source.sourceUrl ?? activeMetadataCompletion.sourceUrl}
-                                  >
-                                    {literatureMetadataProviderLabel(source.provider)}
-                                  </ExternalTextLink>
-                                </p>
-                              ))}
-                              {activeMetadataCompletion.failures?.length ? (
-                                <p role="status" className="text-sm text-muted-foreground">
-                                  {t('Some sources were unavailable. Results may be incomplete.')}
-                                </p>
-                              ) : null}
-                              {activeMetadataCompletion.filled.length > 0 ? (
-                                <div>
-                                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                    {activeMetadataCompletion.mode === 'commit'
-                                      ? t('Fields completed: {{total}}', {
-                                          total: activeMetadataCompletion.filled.length
-                                        })
-                                      : t('Fields to add: {{total}}', {
-                                          total: activeMetadataCompletion.filled.length
-                                        })}
-                                  </p>
-                                  <dl className="mt-2 divide-y divide-border-300/70 rounded-lg border border-border-300/70 bg-bg-000">
-                                    {activeMetadataCompletion.filled.map(({ field, value }) => (
-                                      <div
-                                        key={`${field}:${value}`}
-                                        className="grid grid-cols-[7rem_1fr] gap-3 px-3 py-2"
-                                      >
-                                        <dt className="text-xs text-muted-foreground">
-                                          {metadataFieldLabel(field)}
-                                        </dt>
-                                        <dd className="min-w-0 break-words text-xs">{value}</dd>
-                                      </div>
-                                    ))}
-                                  </dl>
-                                </div>
-                              ) : (
-                                <p className="text-sm text-muted-foreground">
-                                  {t('No missing metadata was found.')}
-                                </p>
-                              )}
-                              {activeMetadataCompletion.conflicts.length > 0 ? (
-                                <div>
-                                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                    {t('Existing values kept')}
-                                  </p>
-                                  <div className="mt-2 space-y-2">
-                                    {activeMetadataCompletion.conflicts.map(
-                                      ({ currentValue, field, value }) => {
-                                        const valuesMatch = metadataValuesMatch(currentValue, value)
-                                        const providerLabel = [
-                                          ...new Set(
-                                            (
-                                              activeMetadataCompletion.sources ?? [
-                                                { provider: activeMetadataCompletion.provider }
-                                              ]
-                                            ).map((source) =>
-                                              literatureMetadataProviderLabel(source.provider)
-                                            )
-                                          )
-                                        ].join(' / ')
-                                        return (
-                                          <div
-                                            key={field}
-                                            className="rounded-lg border border-border-300/70 bg-bg-000 px-3 py-2 text-xs"
-                                          >
-                                            <p
-                                              id={`${accessibilityId}-${field}-label`}
-                                              className="font-medium"
-                                            >
-                                              {metadataFieldLabel(field)}
-                                            </p>
-                                            <div className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2">
-                                              <span className="py-1 text-muted-foreground">
-                                                {t('Kept')}
-                                              </span>
-                                              <p className="min-w-0 break-words py-1 leading-5 text-foreground">
-                                                {currentValue}
-                                              </p>
-                                              <span aria-hidden="true" />
-                                              <span className="py-1 text-muted-foreground">
-                                                {providerLabel}
-                                              </span>
-                                              <p
-                                                id={`${accessibilityId}-${field}-candidate`}
-                                                className="min-w-0 break-words py-1 leading-5 text-foreground"
-                                              >
-                                                {value}
-                                              </p>
-                                              {valuesMatch ? (
-                                                <span className="self-start rounded-full bg-bg-200 px-2 py-1 text-[11px] font-medium text-muted-foreground">
-                                                  {t('Unchanged')}
-                                                </span>
-                                              ) : (
-                                                <Button
-                                                  type="button"
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="h-8 self-start px-3 text-xs"
-                                                  aria-pressed={metadata.overwriteFields.has(field)}
-                                                  aria-describedby={`${accessibilityId}-${field}-label ${accessibilityId}-${field}-candidate`}
-                                                  onClick={() => metadata.toggleOverwrite(field)}
-                                                >
-                                                  {metadata.overwriteFields.has(field) ? (
-                                                    <Check className="size-3" aria-hidden="true" />
-                                                  ) : null}
-                                                  {providerLabel === 'PubMed'
-                                                    ? t('Use PubMed')
-                                                    : providerLabel === 'Crossref'
-                                                      ? t('Use Crossref')
-                                                      : t('Use {{source}}', {
-                                                          source: providerLabel
-                                                        })}
-                                                </Button>
-                                              )}
-                                            </div>
-                                          </div>
-                                        )
-                                      }
-                                    )}
-                                  </div>
-                                </div>
-                              ) : null}
-                              {activeMetadataCompletion.mode === 'preview' &&
-                              (activeMetadataCompletion.filled.length > 0 ||
-                                metadata.overwriteFields.size > 0) ? (
-                                <div className="flex justify-end gap-2 border-t border-border-300/80 pt-4">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={metadata.completing}
-                                    onClick={() => metadata.resetCompletion()}
-                                  >
-                                    {t('Cancel')}
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    disabled={metadata.completing}
-                                    onClick={() => void metadata.complete('commit')}
-                                  >
-                                    {metadata.completing ? (
-                                      <LoaderCircle
-                                        className="size-3.5 animate-spin motion-reduce:animate-none"
-                                        aria-hidden="true"
-                                      />
-                                    ) : (
-                                      <Check className="size-3.5" aria-hidden="true" />
-                                    )}
-                                    {t('Apply metadata')}
-                                  </Button>
-                                </div>
-                              ) : null}
-                            </div>
+                          onAdded={(updated) => {
+                            updateMetadataItem(updated)
+                            if (detailController.getSnapshot().generation === generation) {
+                              detailController.replace(updated)
+                              changeDetailMode('view')
+                            }
+                            void loadEntries(true)
+                          }}
+                        />
+                      ) : metadata.mode === 'edit' ? (
+                        <>
+                          {metadata.awaitingReload || metadata.externallyUpdated() ? (
+                            <ErrorNotice
+                              className="mx-5 mt-4 w-auto shrink-0"
+                              role="alert"
+                              tone="amber"
+                              description={
+                                metadata.awaitingReload
+                                  ? t('The reference was saved, but could not be reloaded.')
+                                  : t(
+                                      'This reference changed while you were editing. Your draft has been kept.'
+                                    )
+                              }
+                              primaryButton={
+                                metadata.awaitingReload
+                                  ? {
+                                      label: t('Retry'),
+                                      loading: metadata.saving,
+                                      onClick: () => void metadata.reloadSaved()
+                                    }
+                                  : {
+                                      label: t('Load latest version'),
+                                      disabled: metadata.saving,
+                                      description: t(
+                                        'Discard this draft and load the latest saved metadata.'
+                                      ),
+                                      onClick: metadata.loadLatest
+                                    }
+                              }
+                            />
                           ) : null}
-                        </LiteratureMetadataLookup>
-                      </div>
-                    ) : metadata.mode === 'citation' ? (
-                      <LiteratureCitationPanel
-                        key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
-                        initialStyle={citationStyleRef.current}
-                        itemId={selectedItem.id}
-                        locale={citationLocale}
-                        styles={citationStyles}
-                        onOpenChange={handleDetailSelectOpenChange}
-                        onStyleChange={(style) => {
-                          citationStyleRef.current = style
-                        }}
-                        onManageStyles={() => {
-                          closeSelectedItemDetail()
-                          setJournalsOpen(false)
-                          setCitationStylesOpen(true)
-                        }}
-                      />
-                    ) : (
-                      <div className="relative min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
-                        {selectedCollection?.smart && (
-                          <section className="space-y-3 py-4">
-                            <h3 className="font-medium">{t('Collection decision')}</h3>
-                            <SmartRuleSummary rule={selectedCollection.description} />
-                            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                              <div className="min-w-0 max-w-full">
-                                <SmartCollectionAssessment
-                                  inline
-                                  onUpdate={() => void updateSmartEvidence()}
-                                  updateDisabled={
-                                    isBatching ||
-                                    smartTableBlocked ||
-                                    !smartView?.configured ||
-                                    !smartView?.sourceAvailable
+                          <LiteratureMetadataEditor
+                            onDirtyChange={trackMetadataDirty}
+                            key={`${selectedItem.id}:${metadata.editBase?.metadataRevision}`}
+                            item={metadata.editBase?.item ?? selectedItem.item}
+                            saving={metadata.saving || metadata.awaitingReload}
+                            saveDisabled={
+                              metadata.externallyUpdated() ||
+                              removedDetailItemId === selectedItem.id
+                            }
+                            error={
+                              removedDetailItemId === selectedItem.id
+                                ? t('This reference is no longer in your Library.')
+                                : metadata.awaitingReload || metadata.externallyUpdated()
+                                  ? undefined
+                                  : metadata.error
+                            }
+                            className="min-h-0 flex-1 max-h-none"
+                            onCancel={leaveMetadataEditor}
+                            onSave={(item) => void metadata.save(item)}
+                          />
+                        </>
+                      ) : metadata.mode === 'complete' ? (
+                        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 text-sm">
+                          <LiteratureMetadataLookup
+                            key={selectedItem.id}
+                            busy={metadata.completing}
+                            error={
+                              metadata.completionError?.itemId === selectedItem.id
+                                ? metadata.completionError.message
+                                : undefined
+                            }
+                            hasResult={Boolean(activeMetadataCompletion)}
+                            item={selectedItem}
+                            onOpenChange={handleDetailSelectOpenChange}
+                            onReset={() => {
+                              metadata.resetCompletion()
+                            }}
+                            onSearch={(identifier) => void metadata.complete('preview', identifier)}
+                          >
+                            {activeMetadataCompletion ? (
+                              <div className="space-y-4">
+                                {activeMetadataCompletion.sources?.map((source, index) => (
+                                  <p key={index} className="text-xs text-muted-foreground">
+                                    <ExternalTextLink
+                                      href={source.sourceUrl ?? activeMetadataCompletion.sourceUrl}
+                                    >
+                                      {literatureMetadataProviderLabel(source.provider)}
+                                    </ExternalTextLink>
+                                  </p>
+                                ))}
+                                {activeMetadataCompletion.failures?.length ? (
+                                  <p role="status" className="text-sm text-muted-foreground">
+                                    {t('Some sources were unavailable. Results may be incomplete.')}
+                                  </p>
+                                ) : null}
+                                {activeMetadataCompletion.filled.length > 0 ? (
+                                  <div>
+                                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                      {activeMetadataCompletion.mode === 'commit'
+                                        ? t('Fields completed: {{total}}', {
+                                            total: activeMetadataCompletion.filled.length
+                                          })
+                                        : t('Fields to add: {{total}}', {
+                                            total: activeMetadataCompletion.filled.length
+                                          })}
+                                    </p>
+                                    <dl className="mt-2 divide-y divide-border-300/70 rounded-lg border border-border-300/70 bg-bg-000">
+                                      {activeMetadataCompletion.filled.map(({ field, value }) => (
+                                        <div
+                                          key={`${field}:${value}`}
+                                          className="grid grid-cols-[7rem_1fr] gap-3 px-3 py-2"
+                                        >
+                                          <dt className="text-xs text-muted-foreground">
+                                            {metadataFieldLabel(field)}
+                                          </dt>
+                                          <dd className="min-w-0 break-words text-xs">{value}</dd>
+                                        </div>
+                                      ))}
+                                    </dl>
+                                  </div>
+                                ) : (
+                                  <p className="text-sm text-muted-foreground">
+                                    {t('No missing metadata was found.')}
+                                  </p>
+                                )}
+                                {activeMetadataCompletion.conflicts.length > 0 ? (
+                                  <div>
+                                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                      {t('Existing values kept')}
+                                    </p>
+                                    <div className="mt-2 space-y-2">
+                                      {activeMetadataCompletion.conflicts.map(
+                                        ({ currentValue, field, value }) => {
+                                          const valuesMatch = metadataValuesMatch(
+                                            currentValue,
+                                            value
+                                          )
+                                          const providerLabel = [
+                                            ...new Set(
+                                              (
+                                                activeMetadataCompletion.sources ?? [
+                                                  { provider: activeMetadataCompletion.provider }
+                                                ]
+                                              ).map((source) =>
+                                                literatureMetadataProviderLabel(source.provider)
+                                              )
+                                            )
+                                          ].join(' / ')
+                                          return (
+                                            <div
+                                              key={field}
+                                              className="rounded-lg border border-border-300/70 bg-bg-000 px-3 py-2 text-xs"
+                                            >
+                                              <p
+                                                id={`${accessibilityId}-${field}-label`}
+                                                className="font-medium"
+                                              >
+                                                {metadataFieldLabel(field)}
+                                              </p>
+                                              <div className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2">
+                                                <span className="py-1 text-muted-foreground">
+                                                  {t('Kept')}
+                                                </span>
+                                                <p className="min-w-0 break-words py-1 leading-5 text-foreground">
+                                                  {currentValue}
+                                                </p>
+                                                <span aria-hidden="true" />
+                                                <span className="py-1 text-muted-foreground">
+                                                  {providerLabel}
+                                                </span>
+                                                <p
+                                                  id={`${accessibilityId}-${field}-candidate`}
+                                                  className="min-w-0 break-words py-1 leading-5 text-foreground"
+                                                >
+                                                  {value}
+                                                </p>
+                                                {valuesMatch ? (
+                                                  <span className="self-start rounded-full bg-bg-200 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+                                                    {t('Unchanged')}
+                                                  </span>
+                                                ) : (
+                                                  <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-8 self-start px-3 text-xs"
+                                                    aria-pressed={metadata.overwriteFields.has(
+                                                      field
+                                                    )}
+                                                    aria-describedby={`${accessibilityId}-${field}-label ${accessibilityId}-${field}-candidate`}
+                                                    onClick={() => metadata.toggleOverwrite(field)}
+                                                  >
+                                                    {metadata.overwriteFields.has(field) ? (
+                                                      <Check
+                                                        className="size-3"
+                                                        aria-hidden="true"
+                                                      />
+                                                    ) : null}
+                                                    {providerLabel === 'PubMed'
+                                                      ? t('Use PubMed')
+                                                      : providerLabel === 'Crossref'
+                                                        ? t('Use Crossref')
+                                                        : t('Use {{source}}', {
+                                                            source: providerLabel
+                                                          })}
+                                                  </Button>
+                                                )}
+                                              </div>
+                                            </div>
+                                          )
+                                        }
+                                      )}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {activeMetadataCompletion.mode === 'preview' &&
+                                (activeMetadataCompletion.filled.length > 0 ||
+                                  metadata.overwriteFields.size > 0) ? (
+                                  <div className="flex justify-end gap-2 border-t border-border-300/80 pt-4">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={metadata.completing}
+                                      onClick={() => metadata.resetCompletion()}
+                                    >
+                                      {t('Cancel')}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      disabled={metadata.completing}
+                                      onClick={() => void metadata.complete('commit')}
+                                    >
+                                      {metadata.completing ? (
+                                        <LoaderCircle
+                                          className="size-3.5 animate-spin motion-reduce:animate-none"
+                                          aria-hidden="true"
+                                        />
+                                      ) : (
+                                        <Check className="size-3.5" aria-hidden="true" />
+                                      )}
+                                      {t('Apply metadata')}
+                                    </Button>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </LiteratureMetadataLookup>
+                        </div>
+                      ) : metadata.mode === 'citation' ? (
+                        <LiteratureCitationPanel
+                          key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
+                          initialStyle={citationStyleRef.current}
+                          itemId={selectedItem.id}
+                          locale={citationLocale}
+                          styles={citationStyles}
+                          onOpenChange={handleDetailSelectOpenChange}
+                          onStyleChange={(style) => {
+                            citationStyleRef.current = style
+                          }}
+                          onManageStyles={() => {
+                            closeSelectedItemDetail()
+                            setJournalsOpen(false)
+                            setCitationStylesOpen(true)
+                          }}
+                        />
+                      ) : (
+                        <div className="relative min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+                          {selectedCollection?.smart && (
+                            <section className="space-y-3 py-4">
+                              <h3 className="font-medium">{t('Collection decision')}</h3>
+                              <SmartRuleSummary rule={selectedCollection.description} />
+                              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                                <div className="min-w-0 max-w-full">
+                                  <SmartCollectionAssessment
+                                    inline
+                                    onUpdate={() => void updateSmartEvidence()}
+                                    updateDisabled={
+                                      isBatching ||
+                                      smartTableBlocked ||
+                                      !smartView?.configured ||
+                                      !smartView?.sourceAvailable
+                                    }
+                                    row={
+                                      items.find((item) => item.id === selectedItem.id)
+                                        ?.smartDecision ?? selectedItem.smartDecision
+                                    }
+                                  />
+                                </div>
+                                <SmartCollectionDecisionActions
+                                  completed={
+                                    completedReevaluation?.collectionId === collectionId &&
+                                    completedReevaluation?.itemId === selectedItem.id
+                                  }
+                                  evaluating={
+                                    singleReevaluation?.collectionId === collectionId &&
+                                    singleReevaluation?.itemId === selectedItem.id
+                                  }
+                                  onReevaluate={() =>
+                                    void prepareSmartReevaluation([selectedItem.id])
                                   }
                                   row={
                                     items.find((item) => item.id === selectedItem.id)
                                       ?.smartDecision ?? selectedItem.smartDecision
                                   }
+                                  disabled={
+                                    isBatching ||
+                                    pendingDecisions.has(`${collectionId}:${selectedItem.id}`) ||
+                                    smartRunningCollection === collectionId
+                                  }
+                                  onDecision={(decision) =>
+                                    void confirmSmartDecision(decision, [selectedItem.id], true)
+                                  }
                                 />
                               </div>
-                              <SmartCollectionDecisionActions
-                                completed={
-                                  completedReevaluation?.collectionId === collectionId &&
-                                  completedReevaluation?.itemId === selectedItem.id
-                                }
-                                evaluating={
-                                  singleReevaluation?.collectionId === collectionId &&
-                                  singleReevaluation?.itemId === selectedItem.id
-                                }
-                                onReevaluate={() =>
-                                  void prepareSmartReevaluation([selectedItem.id])
-                                }
-                                row={
-                                  items.find((item) => item.id === selectedItem.id)
-                                    ?.smartDecision ?? selectedItem.smartDecision
-                                }
-                                disabled={
-                                  isBatching ||
-                                  pendingDecisions.has(`${collectionId}:${selectedItem.id}`) ||
-                                  smartRunningCollection === collectionId
-                                }
-                                onDecision={(decision) =>
-                                  void confirmSmartDecision(decision, [selectedItem.id], true)
-                                }
-                              />
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              {t(
-                                'Manual decisions are retained when the collection is updated. Use model decision restores automatic classification.'
-                              )}
-                            </p>
-                          </section>
-                        )}
-                        {fullCreatorLabel(selectedItem.item) ? (
+                              <p className="text-xs text-muted-foreground">
+                                {t(
+                                  'Manual decisions are retained when the collection is updated. Use model decision restores automatic classification.'
+                                )}
+                              </p>
+                            </section>
+                          )}
+                          {fullCreatorLabel(selectedItem.item) ? (
+                            <section className="py-4">
+                              <h3 className="font-medium">{t('Authors')}</h3>
+                              <CollapsibleAuthors text={fullCreatorLabel(selectedItem.item)} />
+                            </section>
+                          ) : null}
+                          {selectedItem.item.abstract ? (
+                            <section className="py-4">
+                              <h3 className="font-medium">{t('Abstract')}</h3>
+                              <CollapsibleAbstract text={selectedItem.item.abstract} />
+                            </section>
+                          ) : null}
+                          <JournalAttributes
+                            item={selectedItem.item}
+                            itemId={selectedItem.id}
+                            detail
+                          />
                           <section className="py-4">
-                            <h3 className="font-medium">{t('Authors')}</h3>
-                            <CollapsibleAuthors text={fullCreatorLabel(selectedItem.item)} />
-                          </section>
-                        ) : null}
-                        {selectedItem.item.abstract ? (
-                          <section className="py-4">
-                            <h3 className="font-medium">{t('Abstract')}</h3>
-                            <CollapsibleAbstract text={selectedItem.item.abstract} />
-                          </section>
-                        ) : null}
-                        <JournalAttributes
-                          item={selectedItem.item}
-                          itemId={selectedItem.id}
-                          detail
-                        />
-                        <section className="py-4">
-                          <h3 className="font-medium">{t('Publication metadata')}</h3>
-                          <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-                            {[
-                              [t('Reference type'), itemTypeLabels[selectedItem.item.itemType]],
-                              [t('Year'), selectedItem.item.issuedYear?.toString() ?? ''],
-                              [t('Publication'), selectedItem.item.containerTitle],
-                              [t('Publisher'), typeFieldText(selectedItem.item, 'publisher')],
-                              [t('Volume'), typeFieldText(selectedItem.item, 'volume')],
-                              [t('Issue'), typeFieldText(selectedItem.item, 'issue')],
-                              [t('Pages'), typeFieldText(selectedItem.item, 'pages')],
-                              [t('Language'), selectedItem.item.language]
-                            ]
-                              .filter((entry): entry is [string, string] => Boolean(entry[1]))
-                              .map(([label, value]) => (
-                                <div key={label} className="min-w-0">
-                                  <dt className="text-xs text-muted-foreground">{label}</dt>
-                                  <dd className="mt-0.5 truncate" title={value}>
-                                    {value}
-                                  </dd>
-                                </div>
-                              ))}
-                            {selectedItemExternalUrl ? (
-                              <div className="min-w-0">
-                                <dt className="text-xs text-muted-foreground">{t('URL')}</dt>
-                                <dd
-                                  className="mt-0.5 truncate"
-                                  title={selectedItemExternalUrl.href}
-                                >
-                                  <ExternalTextLink
-                                    href={selectedItemExternalUrl.href}
-                                    aria-label={`${t('URL')}: ${selectedItemExternalUrl.href}`}
-                                    className="max-w-full truncate"
-                                  >
-                                    {selectedItemExternalUrl.href}
-                                  </ExternalTextLink>
-                                </dd>
-                              </div>
-                            ) : null}
-                          </dl>
-                          {selectedItem.item.identifiers.length > 0 ? (
-                            <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 border-t border-border-300/70 pt-3">
-                              {selectedItem.item.identifiers.map((identifier) => {
-                                const value = normalizeLiteratureIdentifierValue(
-                                  identifier.scheme,
-                                  identifier.value
-                                )
-                                const href = createLiteratureIdentifierUrl(identifier.scheme, value)
-                                return (
-                                  <div
-                                    key={`${identifier.scheme}:${identifier.value}`}
-                                    className="flex min-w-0 items-baseline gap-2"
-                                  >
-                                    <dt className="text-xs uppercase text-muted-foreground">
-                                      {identifier.scheme}
-                                    </dt>
-                                    <dd className="min-w-0 break-all">
-                                      {href ? (
-                                        <ExternalTextLink
-                                          href={href}
-                                          aria-label={`${identifier.scheme.toUpperCase()}: ${value}`}
-                                        >
-                                          {value}
-                                        </ExternalTextLink>
-                                      ) : (
-                                        value
-                                      )}
+                            <h3 className="font-medium">{t('Publication metadata')}</h3>
+                            <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
+                              {[
+                                [t('Reference type'), itemTypeLabels[selectedItem.item.itemType]],
+                                [t('Year'), selectedItem.item.issuedYear?.toString() ?? ''],
+                                [t('Publication'), selectedItem.item.containerTitle],
+                                [t('Publisher'), typeFieldText(selectedItem.item, 'publisher')],
+                                [t('Volume'), typeFieldText(selectedItem.item, 'volume')],
+                                [t('Issue'), typeFieldText(selectedItem.item, 'issue')],
+                                [t('Pages'), typeFieldText(selectedItem.item, 'pages')],
+                                [t('Language'), selectedItem.item.language]
+                              ]
+                                .filter((entry): entry is [string, string] => Boolean(entry[1]))
+                                .map(([label, value]) => (
+                                  <div key={label} className="min-w-0">
+                                    <dt className="text-xs text-muted-foreground">{label}</dt>
+                                    <dd className="mt-0.5 truncate" title={value}>
+                                      {value}
                                     </dd>
                                   </div>
-                                )
-                              })}
+                                ))}
+                              {selectedItemExternalUrl ? (
+                                <div className="min-w-0">
+                                  <dt className="text-xs text-muted-foreground">{t('URL')}</dt>
+                                  <dd
+                                    className="mt-0.5 truncate"
+                                    title={selectedItemExternalUrl.href}
+                                  >
+                                    <ExternalTextLink
+                                      href={selectedItemExternalUrl.href}
+                                      aria-label={`${t('URL')}: ${selectedItemExternalUrl.href}`}
+                                      className="max-w-full truncate"
+                                    >
+                                      {selectedItemExternalUrl.href}
+                                    </ExternalTextLink>
+                                  </dd>
+                                </div>
+                              ) : null}
                             </dl>
-                          ) : null}
-                        </section>
-                        <LiteratureSources
-                          key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
-                          itemId={selectedItem.id}
-                        />
-                        <div className="py-4">
-                          <ResourceTagSummary
-                            reference={{
-                              resourceType: 'literature.item',
-                              resourceId: selectedItem.id
-                            }}
-                            onMenuOpenChange={handleDetailTagMenuOpenChange}
-                            keepMenuOpenOnSelect
-                          />
-                        </div>
-                        <div className="grid divide-y divide-border-300/80 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-                          <section className="min-w-0 py-4 sm:pr-4">
-                            <h3 className="font-medium">{t('Projects')}</h3>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {t('Use this reference in projects.')}
-                            </p>
-                            <LiteratureDetailLinkList
-                              key={`${selectedItem.id}:projects`}
-                              checkedIds={selectedItem.projectIds}
-                              entries={activeProjects}
-                              error={projectLinkError}
-                              kind="projects"
-                              loaded={projectsLoaded}
-                              onCheckedChange={setProjectLink}
-                            />
-                          </section>
-                          <section className="py-4 sm:pl-4">
-                            <h3 className="font-medium">{t('Collections')}</h3>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {t('Use this reference in collections.')}
-                            </p>
-                            <LiteratureDetailLinkList
-                              key={`${selectedItem.id}:collections`}
-                              checkedIds={selectedItem.collectionIds}
-                              entries={displayCollections.filter((collection) => !collection.smart)}
-                              error={collectionLinkError}
-                              kind="collections"
-                              onCheckedChange={setCollectionLink}
-                            />
-                          </section>
-                        </div>
-                        <section className="py-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <h3 className="font-medium">{t('Attachments')}</h3>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="ml-auto"
-                              onClick={() => changeDetailMode('full-text')}
-                            >
-                              <Download className="size-3.5" aria-hidden="true" />
-                              {t('Find full-text PDF')}
-                            </Button>
-                            {selectedItem.attachments.length > 0 ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={isAddingPdf}
-                                onClick={() => pdfInputRef.current?.click()}
-                              >
-                                {isAddingPdf ? (
-                                  <LoaderCircle
-                                    className="size-3.5 animate-spin motion-reduce:animate-none"
-                                    aria-hidden="true"
-                                  />
-                                ) : (
-                                  <FilePlus2 className="size-3.5" aria-hidden="true" />
-                                )}
-                                {t('Add PDF')}
-                              </Button>
+                            {selectedItem.item.identifiers.length > 0 ? (
+                              <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 border-t border-border-300/70 pt-3">
+                                {selectedItem.item.identifiers.map((identifier) => {
+                                  const value = normalizeLiteratureIdentifierValue(
+                                    identifier.scheme,
+                                    identifier.value
+                                  )
+                                  const href = createLiteratureIdentifierUrl(
+                                    identifier.scheme,
+                                    value
+                                  )
+                                  return (
+                                    <div
+                                      key={`${identifier.scheme}:${identifier.value}`}
+                                      className="flex min-w-0 items-baseline gap-2"
+                                    >
+                                      <dt className="text-xs uppercase text-muted-foreground">
+                                        {identifier.scheme}
+                                      </dt>
+                                      <dd className="min-w-0 break-all">
+                                        {href ? (
+                                          <ExternalTextLink
+                                            href={href}
+                                            aria-label={`${identifier.scheme.toUpperCase()}: ${value}`}
+                                          >
+                                            {value}
+                                          </ExternalTextLink>
+                                        ) : (
+                                          value
+                                        )}
+                                      </dd>
+                                    </div>
+                                  )
+                                })}
+                              </dl>
                             ) : null}
-                            <input
-                              ref={pdfInputRef}
-                              type="file"
-                              accept="application/pdf,.pdf"
-                              className="sr-only"
-                              aria-label={t('Add PDF')}
-                              onChange={(event) => {
-                                const file = event.currentTarget.files?.[0]
-                                event.currentTarget.value = ''
-                                if (file) void addPdf(file)
+                          </section>
+                          <LiteratureSources
+                            key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
+                            itemId={selectedItem.id}
+                          />
+                          <div className="py-4">
+                            <ResourceTagSummary
+                              reference={{
+                                resourceType: 'literature.item',
+                                resourceId: selectedItem.id
                               }}
+                              onMenuOpenChange={handleDetailTagMenuOpenChange}
+                              keepMenuOpenOnSelect
                             />
                           </div>
-                          {pdfError ? (
-                            <p role="alert" className="mt-2 text-sm text-danger-000">
-                              {pdfError}
-                            </p>
-                          ) : null}
-                          <LiteratureAttachments
-                            readItem={detailController.read}
-                            key={selectedItem.id}
-                            item={selectedItem}
-                            onPreview={(version) => {
-                              const attachment = selectedItem.attachments.find((candidate) =>
-                                candidate.versions.some(
-                                  (candidateVersion) => candidateVersion.id === version.id
-                                )
-                              )
-                              if (!attachment) return
-                              setPreviewItem({
-                                id: `literature:${version.id}`,
-                                sessionId: LITERATURE_PREVIEW_SESSION_ID,
-                                title: version.filename,
-                                type: 'file',
-                                source: 'literature',
-                                managedFileId: attachment.id,
-                                path: createLiteratureAttachmentVersionReference(version.id),
-                                format: 'pdf',
-                                name: version.filename,
-                                mimeType: version.contentType,
-                                size: version.sizeBytes,
-                                versionNumber: version.versionNumber
-                              })
-                            }}
-                          />
-                          {selectedItem.attachments.length === 0 ? (
-                            <button
-                              type="button"
-                              data-slot="literature-pdf-drop-zone"
-                              {...pdfDropZoneProps}
-                              disabled={isAddingPdf}
-                              className="relative mt-2 flex w-full cursor-pointer flex-col items-center gap-2 overflow-hidden rounded-lg border border-dashed border-border bg-muted/20 px-6 py-8 text-center transition-colors hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
-                              onClick={() => pdfInputRef.current?.click()}
-                            >
-                              {isDraggingPdf ? (
-                                <FileDropOverlay
-                                  label={t('Drop to upload')}
-                                  className="rounded-lg"
-                                />
-                              ) : null}
-                              <span className="inline-flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                                {isAddingPdf ? (
-                                  <LoaderCircle
-                                    className="size-4 animate-spin motion-reduce:animate-none"
-                                    aria-hidden="true"
-                                  />
-                                ) : (
-                                  <Upload className="size-4" aria-hidden="true" />
+                          <div className="grid divide-y divide-border-300/80 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+                            <section className="min-w-0 py-4 sm:pr-4">
+                              <h3 className="font-medium">{t('Projects')}</h3>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {t('Use this reference in projects.')}
+                              </p>
+                              <LiteratureDetailLinkList
+                                key={`${selectedItem.id}:projects`}
+                                checkedIds={selectedItem.projectIds}
+                                entries={activeProjects}
+                                error={projectLinkError}
+                                kind="projects"
+                                loaded={projectsLoaded}
+                                onCheckedChange={setProjectLink}
+                              />
+                            </section>
+                            <section className="py-4 sm:pl-4">
+                              <h3 className="font-medium">{t('Collections')}</h3>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {t('Use this reference in collections.')}
+                              </p>
+                              <LiteratureDetailLinkList
+                                key={`${selectedItem.id}:collections`}
+                                checkedIds={selectedItem.collectionIds}
+                                entries={displayCollections.filter(
+                                  (collection) => !collection.smart
                                 )}
-                              </span>
-                              <span className="text-sm font-medium text-foreground">
-                                {t('Add PDF')}
-                              </span>
-                              <span className="text-xs text-muted-foreground">
-                                {t('Drag and drop or click to upload')}
-                              </span>
-                            </button>
-                          ) : null}
-                        </section>
-                      </div>
-                    )}
-                  </Dialog.Content>
-                </Dialog.Portal>
-              ) : null}
-            </Dialog.Root>
-          )}
+                                error={collectionLinkError}
+                                kind="collections"
+                                onCheckedChange={setCollectionLink}
+                              />
+                            </section>
+                          </div>
+                          <section className="py-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <h3 className="font-medium">{t('Attachments')}</h3>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="ml-auto"
+                                onClick={() => changeDetailMode('full-text')}
+                              >
+                                <Download className="size-3.5" aria-hidden="true" />
+                                {t('Find full-text PDF')}
+                              </Button>
+                              {selectedItem.attachments.length > 0 ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={isAddingPdf}
+                                  onClick={() => pdfInputRef.current?.click()}
+                                >
+                                  {isAddingPdf ? (
+                                    <LoaderCircle
+                                      className="size-3.5 animate-spin motion-reduce:animate-none"
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <FilePlus2 className="size-3.5" aria-hidden="true" />
+                                  )}
+                                  {t('Add PDF')}
+                                </Button>
+                              ) : null}
+                              <input
+                                ref={pdfInputRef}
+                                type="file"
+                                accept="application/pdf,.pdf"
+                                className="sr-only"
+                                aria-label={t('Add PDF')}
+                                onChange={(event) => {
+                                  const file = event.currentTarget.files?.[0]
+                                  event.currentTarget.value = ''
+                                  if (file) void addPdf(file)
+                                }}
+                              />
+                            </div>
+                            {pdfError ? (
+                              <p role="alert" className="mt-2 text-sm text-danger-000">
+                                {pdfError}
+                              </p>
+                            ) : null}
+                            <LiteratureAttachments
+                              readItem={detailController.read}
+                              key={selectedItem.id}
+                              item={selectedItem}
+                              onPreview={(version) => {
+                                const attachment = selectedItem.attachments.find((candidate) =>
+                                  candidate.versions.some(
+                                    (candidateVersion) => candidateVersion.id === version.id
+                                  )
+                                )
+                                if (!attachment) return
+                                setPreviewItem({
+                                  id: `literature:${version.id}`,
+                                  sessionId: LITERATURE_PREVIEW_SESSION_ID,
+                                  title: version.filename,
+                                  type: 'file',
+                                  source: 'literature',
+                                  managedFileId: attachment.id,
+                                  path: createLiteratureAttachmentVersionReference(version.id),
+                                  format: 'pdf',
+                                  name: version.filename,
+                                  mimeType: version.contentType,
+                                  size: version.sizeBytes,
+                                  versionNumber: version.versionNumber
+                                })
+                              }}
+                            />
+                            {selectedItem.attachments.length === 0 ? (
+                              <button
+                                type="button"
+                                data-slot="literature-pdf-drop-zone"
+                                {...pdfDropZoneProps}
+                                disabled={isAddingPdf}
+                                className="relative mt-2 flex w-full cursor-pointer flex-col items-center gap-2 overflow-hidden rounded-lg border border-dashed border-border bg-muted/20 px-6 py-8 text-center transition-colors hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
+                                onClick={() => pdfInputRef.current?.click()}
+                              >
+                                {isDraggingPdf ? (
+                                  <FileDropOverlay
+                                    label={t('Drop to upload')}
+                                    className="rounded-lg"
+                                  />
+                                ) : null}
+                                <span className="inline-flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                                  {isAddingPdf ? (
+                                    <LoaderCircle
+                                      className="size-4 animate-spin motion-reduce:animate-none"
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <Upload className="size-4" aria-hidden="true" />
+                                  )}
+                                </span>
+                                <span className="text-sm font-medium text-foreground">
+                                  {t('Add PDF')}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {t('Drag and drop or click to upload')}
+                                </span>
+                              </button>
+                            ) : null}
+                          </section>
+                        </div>
+                      )}
+                    </Dialog.Content>
+                  </Dialog.Portal>
+                ) : null}
+              </Dialog.Root>
+            )
+          }}
         </LiteratureDetailBoundary>
         <CollectionEditorDialog
           ref={collectionEditorRef}
