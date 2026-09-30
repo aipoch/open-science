@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { access, mkdir, readFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { test } from '../fixtures/electron-app'
 import { createProject, openRecentSession, sendPrompt } from './helpers'
 
@@ -15,6 +15,86 @@ const captureLifecycleEvidence = async (
 
 const controlledWindowsFixtureAvailable =
   process.platform === 'win32' && Boolean(process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS)
+
+test('installs global npm tools through the app and reuses them across Sessions and restart', async ({
+  app
+}) => {
+  test.setTimeout(240_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  await createProject(page, 'Npm installation')
+  await sendPrompt(
+    page,
+    'Verify application npm global install.',
+    'Application npm install verified',
+    90_000
+  )
+  await page.getByRole('button', { name: 'All projects', exact: true }).click()
+  await createProject(page, 'Npm shared tools')
+  await sendPrompt(
+    page,
+    'Verify application npm shared tool and local install.',
+    'Application npm local verified',
+    90_000
+  )
+  await captureLifecycleEvidence(page, 'npm-across-sessions.png')
+  page = await app.restart()
+  await openRecentSession(page, 'Verify application npm shared tool and local install.')
+  await sendPrompt(
+    page,
+    'Verify application npm tool after restart.',
+    'Application npm restart verified',
+    90_000
+  )
+  await captureLifecycleEvidence(page, 'npm-after-app-restart.png')
+  const parent = await app.createTestDirectory('npm-migration')
+  const staged = await page.evaluate(async (parent) => {
+    const bridge = globalThis as unknown as {
+      api: {
+        storage: {
+          migrate: (parent: string) => Promise<{ ok: boolean; error?: string }>
+          inspectDataRoot: (
+            parent: string
+          ) => Promise<{ kind: string; dataRoot: string; recoveryStatus?: string }>
+        }
+      }
+    }
+    const moved = await bridge.api.storage.migrate(parent)
+    if (!moved.ok) throw new Error(moved.error)
+    return bridge.api.storage.inspectDataRoot(parent)
+  }, parent)
+  expect(staged).toMatchObject({ kind: 'recover', recoveryStatus: 'verified' })
+  const packageRoot = join(
+    staged.dataRoot,
+    'runtime',
+    'npm',
+    `${process.platform}-${process.arch}`,
+    ...(process.platform === 'win32' ? [] : ['lib']),
+    'node_modules',
+    'os-npm-app-fixture'
+  )
+  expect(JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')).name).toBe(
+    'os-npm-app-fixture'
+  )
+  const discarded = await page.evaluate(async (parent) => {
+    const bridge = globalThis as unknown as {
+      api: {
+        storage: {
+          discardMigratedCopy: (parent: string) => Promise<unknown>
+        }
+      }
+    }
+    return bridge.api.storage.discardMigratedCopy(parent)
+  }, parent)
+  expect(discarded).toEqual({ ok: true })
+  await expect(access(staged.dataRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  await sendPrompt(
+    page,
+    'Verify application npm tool after restart.',
+    'Application npm restart verified',
+    90_000
+  )
+})
 
 test('runs and shuts down a Notebook session through its packaged MCP boundary', async ({
   app
