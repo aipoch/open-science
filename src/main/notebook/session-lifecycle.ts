@@ -35,6 +35,7 @@ import { resolveProjectId } from '../../shared/project-scope'
 import { reconcileWorkingFileEvidence } from './working-file-observer'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
+import type { NotebookExecutionOwner } from './execution-owner'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
 
 type RuntimeSession = NotebookSessionAggregate
@@ -70,6 +71,7 @@ type NotebookSessionLifecycleOptions = {
   repository: NotebookRunRepository
   sessions: NotebookSessionRegistry<RuntimeSession>
   runtimeBindings: NotebookRuntimeBindingOwner
+  shellExecution: Pick<NotebookExecutionOwner, 'fenceShellRuns' | 'cancelShellRuns'>
   waitForRevocationDrains: () => Promise<void>
   ensureProcessRecovery: (laneKey: string) => Promise<void>
   processLifecycle: KernelProcessLifecycleOwner
@@ -434,47 +436,79 @@ class NotebookSessionLifecycleOwner {
   async shutdown(
     request: NotebookSessionRequest
   ): Promise<{ sessionId: string; status: 'shutdown' }> {
-    return this.shutdownLane(this.laneForRequest(request))
+    const laneKey = notebookLaneKey(this.laneForRequest(request))
+    return this.withShellTeardown(
+      { laneKey },
+      new Error('Notebook Session is shutting down.'),
+      () => this.shutdownLane(this.laneForRequest(request))
+    )
   }
 
   async shutdownSession(sessionId: string): Promise<{ sessionId: string; status: 'shutdown' }> {
-    this.deletingSessionIds.add(sessionId)
-    const reason = new Error('Session is being deleted.')
-    for (const controller of this.operationAbortControllersBySession.get(sessionId) ?? []) {
-      controller.abort(reason)
-    }
-    await Promise.allSettled([
-      ...(this.pendingEnsuresBySession.get(sessionId) ?? []),
-      ...(this.pendingOperationsBySession.get(sessionId) ?? [])
-    ])
-    const lanes = Array.from(this.options.sessions.values())
-      .filter((session) => session.sessionId === sessionId)
-      .map((session) => session.lane)
-    const results = await Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane)))
-    const failures = results.flatMap((result) =>
-      result.status === 'rejected' ? [result.reason] : []
+    return this.withShellTeardown(
+      { sessionId },
+      new Error('Notebook Session is shutting down.'),
+      async () => {
+        this.deletingSessionIds.add(sessionId)
+        const reason = new Error('Session is being deleted.')
+        for (const controller of this.operationAbortControllersBySession.get(sessionId) ?? []) {
+          controller.abort(reason)
+        }
+        await Promise.allSettled([
+          ...(this.pendingEnsuresBySession.get(sessionId) ?? []),
+          ...(this.pendingOperationsBySession.get(sessionId) ?? [])
+        ])
+        const lanes = Array.from(this.options.sessions.values())
+          .filter((session) => session.sessionId === sessionId)
+          .map((session) => session.lane)
+        const results = await Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane)))
+        const failures = results.flatMap((result) =>
+          result.status === 'rejected' ? [result.reason] : []
+        )
+        if (failures.length > 0) {
+          throw new AggregateError(failures, 'Notebook Session cleanup failed: ' + sessionId)
+        }
+        return { sessionId, status: 'shutdown' as const }
+      }
     )
-    if (failures.length > 0) {
-      throw new AggregateError(failures, 'Notebook Session cleanup failed: ' + sessionId)
-    }
-    return { sessionId, status: 'shutdown' }
   }
 
   async shutdownProject(projectId: string): Promise<void> {
     this.beginProjectDeletion(projectId)
-    await Promise.allSettled([
-      ...(this.pendingEnsuresByProject.get(projectId) ?? []),
-      ...(this.pendingOperationsByProject.get(projectId) ?? [])
-    ])
-    const lanes = Array.from(this.options.sessions.values())
-      .filter((session) => session.projectId === projectId)
-      .map((session) => session.lane)
-    const results = await Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane)))
-    const failures = results.flatMap((result) =>
-      result.status === 'rejected' ? [result.reason] : []
+    return this.withShellTeardown(
+      { projectId },
+      new Error('Notebook Project is shutting down.'),
+      async () => {
+        this.beginProjectDeletion(projectId)
+        await Promise.allSettled([
+          ...(this.pendingEnsuresByProject.get(projectId) ?? []),
+          ...(this.pendingOperationsByProject.get(projectId) ?? [])
+        ])
+        const lanes = Array.from(this.options.sessions.values())
+          .filter((session) => session.projectId === projectId)
+          .map((session) => session.lane)
+        const results = await Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane)))
+        const failures = results.flatMap((result) =>
+          result.status === 'rejected' ? [result.reason] : []
+        )
+        if (failures.length > 0) {
+          throw new AggregateError(failures, 'Notebook Project cleanup failed: ' + projectId)
+        }
+      }
     )
-    if (failures.length > 0) {
-      throw new AggregateError(failures, 'Notebook Project cleanup failed: ' + projectId)
+  }
+
+  private async withShellTeardown<T>(
+    scope: { projectId?: string; sessionId?: string; laneKey?: string },
+    reason: Error,
+    cleanup: () => Promise<T>
+  ): Promise<T> {
+    const releaseFence = this.options.shellExecution.fenceShellRuns(scope)
+    try {
+      await this.options.shellExecution.cancelShellRuns(scope, reason)
+      return await cleanup()
+    } finally {
+      releaseFence()
     }
   }
 
