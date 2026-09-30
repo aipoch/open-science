@@ -117,7 +117,7 @@ try {
     throw 'Notebook AppContainer setup did not produce owned ready resources.'
   }
   $gatewayPort = [int]$status.gatewayPort
-  if ($AfterSetup) { & $AfterSetup $gatewayPort }
+  if ($AfterSetup) { & $AfterSetup $gatewayPort $installationId $ownershipRoot }
   # The product gateway only needs TCP. This fixture also probes UDP at the same port, which
   # another host process or a Windows excluded range may own independently. Reserve that listener
   # before running assertions; Windows can allocate sequential ports through a reserved range.

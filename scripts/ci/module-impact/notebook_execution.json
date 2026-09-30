@@ -187,7 +187,9 @@
     "src/main/notebook/wsl2-scheduling.integration.test.ts",
     "src/main/notebook/r-save-guard.test.ts",
     "src/main/notebook/r-connection-guard.test.ts",
-    "src/main/notebook/fixtures/lineage/r-save-promises.R"
+    "src/main/notebook/fixtures/lineage/r-save-promises.R",
+    "src/main/notebook/windows-notebook-runtime.ts",
+    "src/main/notebook/windows-notebook-runtime.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/configured-shell-runtime.ts",
@@ -344,7 +346,8 @@
       "src/main/notebook/windows-micromamba-runner.test.ts",
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
       "src/main/notebook/r-save-guard.test.ts",
-      "src/main/notebook/r-connection-guard.test.ts"
+      "src/main/notebook/r-connection-guard.test.ts",
+      "src/main/notebook/windows-notebook-runtime.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -352,6 +355,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/notebook/powershell-search-parser.windows.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/literature/command-owner.test.ts",

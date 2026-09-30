@@ -39,6 +39,7 @@
     "packages/notebook-network-sandbox/src/runtime-config.test.ts",
     "packages/notebook-network-sandbox/src/windows-appcontainer.test.ts",
     "packages/notebook-network-sandbox/src/windows-r-startup.integration.test.ts",
+    "packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts",
     "packages/notebook-network-sandbox/src/windows-runtime-access.test.ts",
     "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
     "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
@@ -57,7 +58,16 @@
     "packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe",
     "packages/notebook-network-sandbox/vendor/wsl2/manifest.json",
     "packages/notebook-network-sandbox/src/config-root.ts",
-    "packages/notebook-network-sandbox/src/installed-package.test.ts"
+    "packages/notebook-network-sandbox/src/installed-package.test.ts",
+    "packages/notebook-network-sandbox/vendor/windows-runtime/.gitignore",
+    "packages/notebook-network-sandbox/vendor/windows-runtime/build.ps1",
+    "packages/notebook-network-sandbox/vendor/windows-runtime/node-appcontainer.patch",
+    "packages/notebook-network-sandbox/vendor/windows-runtime/node-package-scope.patch",
+    "packages/notebook-network-sandbox/vendor/windows-runtime/powershell-appcontainer.patch",
+    "packages/notebook-network-sandbox/vendor/windows-runtime/powershell-build-metadata.patch",
+    "packages/notebook-network-sandbox/vendor/windows-runtime/README.md",
+    "packages/notebook-network-sandbox/vendor/windows-runtime/sources.json",
+    "packages/notebook-network-sandbox/vendor/windows-runtime/npm/prepare.mjs"
   ],
   "interfacePaths": [
     "packages/notebook-network-sandbox/src/index.ts",
@@ -90,6 +100,7 @@
       "packages/notebook-network-sandbox/src/public-read-runtime.test.ts",
       "packages/notebook-network-sandbox/src/read-request.test.ts",
       "packages/notebook-network-sandbox/src/windows-r-startup.integration.test.ts",
+      "packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts",
       "packages/notebook-network-sandbox/src/windows-runtime-access.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
@@ -570,7 +581,9 @@
       "src/main/notebook/real-notebook-lineage.integration.test.ts",
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
       "src/main/notebook/r-connection-guard.test.ts",
-      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
+      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
+      "scripts/check-windows-notebook-runtime.test.ts",
+      "scripts/windows-release-workflows.test.ts"
     ]
   },
   "capabilityOverlays": [],

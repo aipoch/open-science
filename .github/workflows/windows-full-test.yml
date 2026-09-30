@@ -56,9 +56,14 @@ jobs:
         with:
           workflow-file: windows-full-test.yml
 
+  windows_notebook_runtime:
+    needs: plan
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes' || inputs.mode == 'notebook-mutation') }}
+    uses: ./.github/workflows/windows-notebook-runtime.yml
+
   windows_dependencies:
     name: Prepare Windows test dependencies
-    needs: plan
+    needs: [plan, windows_notebook_runtime]
     if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes' || inputs.mode == 'notebook-mutation') }}
     runs-on: windows-latest
     timeout-minutes: 20
@@ -78,6 +83,12 @@ jobs:
           package-manager-cache: false
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Download Windows Notebook runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          merge-multiple: true
       - name: Pack dependencies
         # Windows defaults to pwsh, which does not expand $RUNNER_TEMP. Pack into the same
         # runner.temp directory that upload-artifact reads, matching PR Gate's Windows E2E setup.
@@ -310,7 +321,15 @@ jobs:
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:
     name: Report scheduled outcome
-    needs: [plan, windows_dependencies, windows_full_test, notebook_sandbox, notebook_mutation]
+    needs:
+      [
+        plan,
+        windows_notebook_runtime,
+        windows_dependencies,
+        windows_full_test,
+        notebook_sandbox,
+        notebook_mutation
+      ]
     if: ${{ always() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

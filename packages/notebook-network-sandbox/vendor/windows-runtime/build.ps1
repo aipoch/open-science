@@ -16,6 +16,21 @@ $stage = Join-Path $PSScriptRoot 'x64'
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 # An interrupted build must not be mistaken for a completed runtime.
 $marker = Join-Path $stage 'build.json'
+if ($SkipNode -or $SkipPowerShell) {
+    if (!(Test-Path -LiteralPath $marker)) { throw 'Skipping a component requires its existing verified build marker.' }
+    $existing = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+    if ($SkipNode -and ($existing.node -ne $sources.node.version -or
+        $existing.patches -notcontains 'libuv-f46e4246b5277fe1c5888b88b24d8b78020dd4f8' -or
+        $existing.patches -notcontains 'node-appcontainer-package-scope-v1')) {
+        throw 'The existing Node runtime is missing a required repair; rebuild Node without -SkipNode.'
+    }
+    if ($SkipPowerShell -and ($existing.powershell -ne $sources.powershell.version -or
+        $existing.powershellSourceCommit -ne $sources.powershell.commit -or
+        $existing.patches -notcontains 'powershell-appcontainer-v1' -or
+        $existing.patches -notcontains 'powershell-source-archive-metadata-v1')) {
+        throw 'The existing PowerShell runtime does not match the required source and repairs.'
+    }
+}
 if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker }
 
 function Get-Source($source, [string]$name) {
@@ -103,6 +118,7 @@ if (!$SkipNode) {
     Expand-Source $archive $source
     Write-Host 'Applying Node patch'
     Apply-Patch $source (Join-Path $PSScriptRoot 'node-appcontainer.patch')
+    Apply-Patch $source (Join-Path $PSScriptRoot 'node-package-scope.patch')
     Push-Location $source
     try {
         Write-Host "Building Node $($sources.node.version) with VS 2022 / ClangCL"
@@ -161,5 +177,5 @@ foreach ($file in @('node/node.exe', 'node/node_modules/npm/bin/npm-cli.js', 'po
 }
 @{ node = $sources.node.version; powershell = $sources.powershell.version;
     powershellSourceCommit = $sources.powershell.commit;
-    patches = @('libuv-f46e4246b5277fe1c5888b88b24d8b78020dd4f8', 'powershell-appcontainer-v1', 'powershell-source-archive-metadata-v1')
+    patches = @('libuv-f46e4246b5277fe1c5888b88b24d8b78020dd4f8', 'node-appcontainer-package-scope-v1', 'powershell-appcontainer-v1', 'powershell-source-archive-metadata-v1')
 } | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding utf8

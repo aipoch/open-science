@@ -64,7 +64,12 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
     }
   })
   const preparation = workflow.jobs.windows_e2e_setup
-  expect(preparation.needs).toBe('plan')
+  expect(preparation.needs).toEqual(['plan', 'windows_notebook_runtime'])
+  expect(workflow.jobs.windows_notebook_runtime).toMatchObject({
+    needs: 'plan',
+    if: "${{ needs.plan.outputs.should_test == 'true' }}",
+    uses: './.github/workflows/windows-notebook-runtime.yml'
+  })
   expect(preparation.if).toContain("needs.plan.outputs.should_test == 'true'")
   expect(preparation.steps).toEqual(pr.jobs.windows_e2e_setup.steps)
   const execution = workflow.jobs.windows_e2e
@@ -189,7 +194,7 @@ it('reports scheduled failures with the shared issue lifecycle and never closes 
   }
   expect(evaluate(report.if!, 'schedule', { ...successful, plan: 'failure' }, '')).toBe(true)
   for (const job of Object.values(workflow.jobs)) {
-    for (const candidate of job.steps) {
+    for (const candidate of job.steps ?? []) {
       if (candidate.uses && !candidate.uses.startsWith('./')) {
         expect(candidate.uses).toMatch(/^[^@]+@[0-9a-f]{40}$/)
       }

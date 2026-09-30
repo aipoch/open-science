@@ -1,0 +1,36 @@
+name: Prepare Windows Notebook runtime
+
+on:
+  workflow_call:
+    outputs:
+      artifact_id:
+        description: Pinned Windows runtime built for this revision
+        value: ${{ jobs.runtime.outputs.artifact_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    name: Build Windows Notebook runtime
+    # Keep the Node 24 recipe on VS 2022 with its installed ClangCL compiler/toolset.
+    runs-on: windows-2022
+    # Only source compilation gets this budget; consumers retain their existing test deadlines.
+    timeout-minutes: 90
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Prepare Windows Notebook runtime
+        uses: ./.github/actions/windows-notebook-runtime
+      - name: Upload Windows Notebook runtime
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-notebook-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64/
+          retention-days: 1
+          if-no-files-found: error

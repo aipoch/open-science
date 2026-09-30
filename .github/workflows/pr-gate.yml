@@ -22,6 +22,7 @@ on:
           - windows-e2e
           - windows-e2e-mainline
           - windows-process
+          - windows-notebook-runtime
           - e2e
           - source-regressions
           - macos-smoke
@@ -267,6 +268,12 @@ jobs:
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:e2e"],"lanes":["policy","build","e2e_functional_macos","e2e_workspace_macos","e2e_accessibility_macos","e2e_visual_macos","e2e_functional_windows","e2e_workspace_windows","e2e_browser_windows"],"bundles":["policy","macos_e2e","windows_e2e"],"macosGroups":["journeys","presentation"],"reasonChains":["workflow_dispatch e2e -> real desktop jobs and renderer pilot"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
             echo "lanes=$(node -e 'console.log(JSON.stringify(JSON.parse(process.argv[1]).lanes))' "$plan")" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "windows-notebook-runtime" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:windows-notebook-runtime"],"lanes":["policy","windows_runtime"],"bundles":["policy","windows_core"],"reasonChains":["workflow_dispatch windows-notebook-runtime -> pinned runtime build and Windows core checks"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","windows_runtime"]' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "windows-process" ]]; then
@@ -843,10 +850,15 @@ jobs:
           src/main/session-plan/plan-context-file.shell.integration.test.ts
           src/main/notebook/shell-cell-session.integration.test.ts
 
+  windows_notebook_runtime:
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && ((contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process') || contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e')) }}
+    uses: ./.github/workflows/windows-notebook-runtime.yml
+
   windows_core:
     name: Windows core
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_core') }}
+    needs: [preflight, windows_notebook_runtime]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_core') && (needs.windows_notebook_runtime.result == 'success' || needs.windows_notebook_runtime.result == 'skipped') }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -864,6 +876,13 @@ jobs:
       - name: Typecheck sandbox on Windows
         if: ${{ inputs.dry_run != 'windows-process' }}
         run: npm run typecheck:sandbox
+      - name: Download Windows Notebook runtime
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          merge-multiple: true
       - name: Test delegated Windows process ownership
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
         run: >-
@@ -959,9 +978,15 @@ jobs:
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && steps.windows_sandbox_source.outcome == 'success' && steps.windows_sandbox_build.outcome == 'success' }}
         continue-on-error: true
         shell: powershell
-        run: >-
-          packages/notebook-network-sandbox/vendor/windows-src/ci/smoke.ps1
-          -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
+        run: |
+          & packages/notebook-network-sandbox/vendor/windows-src/ci/smoke.ps1 -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe -AfterSetup {
+            param($port, $installationId, $ownershipRoot)
+            $env:RUN_WINDOWS_NOTEBOOK_RUNTIME = '1'
+            $env:OPEN_SCIENCE_TEST_SANDBOX_INSTALLATION_ID = $installationId
+            $env:OPEN_SCIENCE_TEST_SANDBOX_OWNERSHIP_ROOT = $ownershipRoot
+            npx vitest run packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts
+            if ($LASTEXITCODE -ne 0) { throw 'Protected Windows Notebook runtime regression failed.' }
+          }
       - name: Test Windows path portability
         id: windows_path
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_path') }}
@@ -1057,7 +1082,7 @@ jobs:
 
   windows_e2e_setup:
     name: Prepare Windows E2E
-    needs: preflight
+    needs: [preflight, windows_notebook_runtime]
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
     runs-on: windows-latest
     timeout-minutes: 15
@@ -1079,6 +1104,12 @@ jobs:
         run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
       - name: Build Electron application
         run: npm run build:e2e
+      - name: Download Windows Notebook runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          merge-multiple: true
       - name: Test snapshot transport
         run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
       - name: Pack E2E setup

@@ -295,12 +295,17 @@ jobs:
           fi
           echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
 
+  windows_notebook_runtime:
+    needs: setup
+    if: ${{ needs.setup.result == 'success' && !inputs.mac_only && !inputs.verify_only && (inputs.platform_name == '' || inputs.platform_name == 'windows-x64') }}
+    uses: ./.github/workflows/windows-notebook-runtime.yml
+
   build:
     name: Build ${{ matrix.name }}
-    needs: setup
+    needs: [setup, windows_notebook_runtime]
     # Start as soon as the matrix is resolved. The sibling verify job remains part of this reusable
     # workflow's result, so release/nightly callers cannot reach publish if verification fails.
-    if: ${{ needs.setup.result == 'success' }}
+    if: ${{ !cancelled() && needs.setup.result == 'success' && (needs.windows_notebook_runtime.result == 'success' || needs.windows_notebook_runtime.result == 'skipped') }}
     runs-on: ${{ matrix.os }}
     environment: ${{ inputs.sign_windows && matrix.platform == 'win' && 'windows-signing' || '' }}
     permissions:
@@ -423,6 +428,14 @@ jobs:
       - name: Build Windows sandbox native host
         if: ${{ matrix.platform == 'win' }}
         run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
+
+      - name: Download Windows Notebook runtime
+        if: ${{ matrix.platform == 'win' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          merge-multiple: true
 
       # electron-builder 26.15.3 creates its temporary keychain with a random password but invokes
       # `security set-key-partition-list -k` with the P12 password. macOS 26 Intel rejects that

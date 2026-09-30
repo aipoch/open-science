@@ -386,6 +386,18 @@ gate('NotebookKernelExecutor failed-cell output capture', () => {
       const executor = new NotebookKernelExecutor({
         pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py')
       })
+      const arm = TimeoutController.prototype.arm
+      let expireExecution: (() => void) | undefined
+      // This case tests evidence after interruption. Trigger the real timeout only once the
+      // partial file exists, so a busy CI worker cannot interrupt Python before it writes.
+      const deadline =
+        status === 'timeout'
+          ? vi.spyOn(TimeoutController.prototype, 'arm').mockImplementation(function (
+              this: TimeoutController
+            ) {
+              expireExecution = () => arm.call(this, 0)
+            })
+          : undefined
       try {
         // This case covers interrupted output, not cold Python startup within a two-second deadline.
         await expect(
@@ -411,6 +423,11 @@ gate('NotebookKernelExecutor failed-cell output capture', () => {
           { timeout: 10_000 }
         )
         if (status === 'cancelled') cancellation.abort()
+        else {
+          expect(deadline).toHaveBeenCalledWith(2_000)
+          expect(expireExecution).toBeDefined()
+          expireExecution!()
+        }
         const result = await execution
         expect(result.status).toBe(status)
         expect(result.workingFiles).toMatchObject([{ relativePath: 'data/result.txt' }])
@@ -420,6 +437,7 @@ gate('NotebookKernelExecutor failed-cell output capture', () => {
       } finally {
         cancellation.abort()
         await executor.shutdown()
+        deadline?.mockRestore()
       }
     },
     30_000

@@ -1,6 +1,9 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
@@ -60,6 +63,170 @@ const findStep = (job: WorkflowJob, name: string): WorkflowStep => {
 }
 
 describe('post-merge Windows validation', () => {
+  it.skipIf(process.platform !== 'win32')(
+    'extracts compressed runtime sources and never promotes failed or timed-out extraction',
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), 'runtime-extraction-'))
+      const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
+      const buildScript = join(
+        process.cwd(),
+        'packages/notebook-network-sandbox/vendor/windows-runtime/build.ps1'
+      )
+      try {
+        const result = spawnSync(
+          'pwsh.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `
+          $ErrorActionPreference = 'Stop'
+          $BuildRoot = ${quote(directory)}
+          $ast = [Management.Automation.Language.Parser]::ParseFile(${quote(buildScript)}, [ref]$null, [ref]$null)
+          $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Expand-Source' }, $true)
+          if (!$function) { throw 'Missing bounded source extraction' }
+          . ([scriptblock]::Create($function.Extent.Text))
+          foreach ($format in @('xz', 'gz')) {
+            $archive = Join-Path $BuildRoot "fixture.$format"
+            & python -c 'import io, sys, tarfile; t = tarfile.open(sys.argv[1], "w:" + sys.argv[2]); m = tarfile.TarInfo("fixture/space and \\u4e2d\\u6587.txt"); m.size = 7; t.addfile(m, io.BytesIO(b"fixture")); t.close()' $archive $format
+            if ($LASTEXITCODE -ne 0) { throw 'Fixture creation failed' }
+            $source = Join-Path $BuildRoot 'fixture'
+            Expand-Source $archive $source
+            if ((Get-Content -Raw (Join-Path $source 'space and 中文.txt')) -ne 'fixture') { throw 'Extraction changed content' }
+            Move-Item -LiteralPath $source -Destination (Join-Path $BuildRoot "complete-$format")
+          }
+          $invalid = Join-Path $BuildRoot 'invalid.tar'
+          Set-Content -LiteralPath $invalid -Value 'invalid archive'
+          $source = Join-Path $BuildRoot 'invalid'
+          try { Expand-Source $invalid $source; throw 'Accepted invalid archive' }
+          catch { if ($_.Exception.Message -notlike 'Source extraction failed:*') { throw } }
+          if (Test-Path $source) { throw 'Promoted failed extraction' }
+          try { Expand-Source $invalid $source; throw 'Reused partial extraction' }
+          catch { if ($_.Exception.Message -notlike 'Incomplete source extraction:*') { throw } }
+          $source = Join-Path $BuildRoot 'timeout'
+          try { Expand-Source $archive $source -TimeoutSeconds 0; throw 'Accepted expired deadline' }
+          catch { if ($_.Exception.Message -notlike 'Source extraction timed out:*') { throw } }
+          if (Test-Path $source) { throw 'Promoted timed-out extraction' }
+          exit 0
+        `
+          ],
+          { encoding: 'utf8', windowsHide: true, timeout: 20_000 }
+        )
+        expect(result.error, result.stderr).toBeUndefined()
+        expect(result.status, result.stderr).toBe(0)
+        expect(result.stdout).toContain('Extracted')
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+    25_000
+  )
+
+  it.skipIf(process.platform !== 'win32')(
+    'promotes only verified runtime source downloads and rejects failed transfers',
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), 'runtime-source-'))
+      const fixture = join(directory, 'fixture.txt')
+      const content = 'offline runtime source fixture'
+      writeFileSync(fixture, content)
+      const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
+      const buildScript = join(
+        process.cwd(),
+        'packages/notebook-network-sandbox/vendor/windows-runtime/build.ps1'
+      )
+      try {
+        const result = spawnSync(
+          'pwsh.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `$ErrorActionPreference = 'Stop'
+             $BuildRoot = ${quote(directory)}
+             $ast = [Management.Automation.Language.Parser]::ParseFile(${quote(buildScript)}, [ref]$null, [ref]$null)
+             $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-Source' }, $true)
+             . ([scriptblock]::Create($function.Extent.Text))
+             $source = @{ url = ${quote(pathToFileURL(fixture).href)}; sha256 = '${createHash('sha256').update(content).digest('hex')}' }
+             $archive = Get-Source $source 'valid.txt'
+             if ((Get-Content -Raw $archive) -ne ${quote(content)}) { throw 'Verified content differs' }
+             if (Test-Path "$archive.download") { throw 'Verified download was not promoted' }
+             $source.sha256 = 'invalid'
+             try { Get-Source $source 'corrupt.txt'; throw 'Accepted corrupt source' }
+             catch { if ($_.Exception.Message -notlike 'Source checksum mismatch:*') { throw } }
+             if (Test-Path (Join-Path $BuildRoot 'corrupt.txt')) { throw 'Corrupt source was promoted' }
+             $source.url = ${quote(pathToFileURL(join(directory, 'missing.txt')).href)}
+             try { Get-Source $source 'failed.txt'; throw 'Accepted failed transfer' }
+             catch { if ($_.Exception.Message -notlike 'Source download failed:*') { throw } }
+             if (Test-Path (Join-Path $BuildRoot 'failed.txt')) { throw 'Failed transfer was promoted' }
+             exit 0`
+          ],
+          { encoding: 'utf8', windowsHide: true, timeout: 15_000 }
+        )
+        expect(result.error, result.stderr).toBeUndefined()
+        expect(result.status, result.stderr).toBe(0)
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+    20_000
+  )
+
+  it('prepares the bundled runtime before Windows consumers and snapshot publication', () => {
+    const consumers = [
+      ['build.yml', 'build', 'Build & package'],
+      ['pr-gate.yml', 'windows_core', 'Test Windows notebook shell behavior'],
+      ['pr-gate.yml', 'windows_e2e_setup', 'Pack E2E setup'],
+      ['windows-e2e-regression.yml', 'windows_e2e_setup', 'Pack E2E setup'],
+      ['windows-full-test.yml', 'windows_dependencies', 'Pack dependencies'],
+      ['runtime-resource-soak.yml', 'runtime_resource_soak', 'Record runtime resource profile']
+    ]
+    for (const [file, jobId, consumer] of consumers) {
+      const job = readWorkflow(file).jobs[jobId]
+      const setup = findStep(job, 'Download Windows Notebook runtime')
+      expect(setup.uses).toMatch(/^actions\/download-artifact@[0-9a-f]{40}$/)
+      expect(setup.with?.['artifact-ids']).toBe(
+        '${{ needs.windows_notebook_runtime.outputs.artifact_id }}'
+      )
+      expect(job.needs).toContain('windows_notebook_runtime')
+      expect(readWorkflow(file).jobs.windows_notebook_runtime.uses).toBe(
+        './.github/workflows/windows-notebook-runtime.yml'
+      )
+      expect(setup['continue-on-error']).toBeUndefined()
+      expect(job.steps!.indexOf(setup)).toBeLessThan(job.steps!.indexOf(findStep(job, consumer)))
+    }
+    const compiler = readWorkflow('windows-notebook-runtime.yml').jobs.runtime
+    expect(compiler['runs-on']).toBe('windows-2022')
+    expect(compiler['timeout-minutes']).toBe(90)
+    expect(findStep(compiler, 'Prepare Windows Notebook runtime').uses).toBe(
+      './.github/actions/windows-notebook-runtime'
+    )
+    expect(findStep(compiler, 'Upload Windows Notebook runtime').with?.['if-no-files-found']).toBe(
+      'error'
+    )
+    const action = load(
+      readFileSync('.github/actions/windows-notebook-runtime/action.yml', 'utf8')
+    ) as { runs: { steps: WorkflowStep[] } }
+    const cache = action.runs.steps.find(({ id }) => id === 'runtime')!
+    expect(cache.uses).toMatch(/^actions\/cache@[0-9a-f]{40}$/)
+    for (const input of ['sources.json', '*.patch', 'build.ps1']) {
+      expect(cache.with?.key).toContain(input)
+    }
+    const build = action.runs.steps.find(({ name }) => name === 'Build Windows Notebook runtime')!
+    expect(build.if).toContain("cache-hit != 'true'")
+    expect(build.run).toContain('vendor/windows-runtime/build.ps1')
+    const verify = action.runs.steps.find(({ name }) => name === 'Verify Windows Notebook runtime')!
+    const npm = action.runs.steps.find(
+      ({ name }) => name === 'Prepare bundled npm for shared Notebook tools'
+    )!
+    expect(npm.if).toBeUndefined()
+    expect(npm.run).toContain('vendor/windows-runtime/npm/prepare.mjs')
+    expect(action.runs.steps.indexOf(npm)).toBeGreaterThan(action.runs.steps.indexOf(build))
+    expect(action.runs.steps.indexOf(npm)).toBeLessThan(action.runs.steps.indexOf(verify))
+    expect(verify.if).toBeUndefined()
+    for (const executable of ['node.exe', 'pwsh.exe', 'npm-cli.js'])
+      expect(verify.run).toContain(executable)
+  })
+
   it('blocks packaging on native data-location upgrade checks for every target OS', () => {
     const job = readWorkflow('build.yml').jobs.build
     const steps = job.steps ?? []
@@ -142,7 +309,7 @@ describe('post-merge Windows validation', () => {
       'timeout-minutes': 60
     })
     expect(dependencies).toMatchObject({
-      needs: 'plan',
+      needs: ['plan', 'windows_notebook_runtime'],
       'runs-on': 'windows-latest',
       outputs: {
         artifact_id: '${{ steps.upload.outputs.artifact-id }}',

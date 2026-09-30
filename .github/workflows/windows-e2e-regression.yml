@@ -42,9 +42,14 @@ jobs:
         with:
           workflow-file: windows-e2e-regression.yml
 
+  windows_notebook_runtime:
+    needs: plan
+    if: ${{ needs.plan.outputs.should_test == 'true' }}
+    uses: ./.github/workflows/windows-notebook-runtime.yml
+
   windows_e2e_setup:
     name: Prepare Windows E2E
-    needs: plan
+    needs: [plan, windows_notebook_runtime]
     if: ${{ needs.plan.outputs.should_test == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 15
@@ -66,6 +71,12 @@ jobs:
         run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
       - name: Build Electron application
         run: npm run build:e2e
+      - name: Download Windows Notebook runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          merge-multiple: true
       - name: Test snapshot transport
         run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
       - name: Pack E2E setup
@@ -240,7 +251,7 @@ jobs:
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:
     name: Report scheduled outcome
-    needs: [plan, windows_e2e_setup, windows_e2e, e2e_reports]
+    needs: [plan, windows_notebook_runtime, windows_e2e_setup, windows_e2e, e2e_reports]
     if: ${{ always() && github.event_name == 'schedule' && (needs.plan.result != 'success' || needs.plan.outputs.should_test == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -257,7 +268,7 @@ jobs:
       - name: Open, refresh, or close the tracking issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
-          CONCLUSION: ${{ needs.plan.result == 'success' && needs.windows_e2e_setup.result == 'success' && needs.windows_e2e.result == 'success' && needs.e2e_reports.result == 'success' && 'success' || 'failure' }}
+          CONCLUSION: ${{ needs.plan.result == 'success' && needs.windows_notebook_runtime.result == 'success' && needs.windows_e2e_setup.result == 'success' && needs.windows_e2e.result == 'success' && needs.e2e_reports.result == 'success' && 'success' || 'failure' }}
         with:
           script: |
             const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)
