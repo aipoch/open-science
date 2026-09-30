@@ -1843,6 +1843,7 @@ const WorkspacePage = ({
           />
           {diagnosticSession && (
             <SessionDiagnosticsDialog
+              key={JSON.stringify([diagnosticSession.projectId, diagnosticSession.sessionId])}
               identity={diagnosticSession}
               onClose={() => setDiagnosticSession(undefined)}
             />

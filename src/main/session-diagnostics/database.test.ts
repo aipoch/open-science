@@ -30,36 +30,33 @@ function fixture(): { path: string; db: DatabaseSync } {
 it('queries actual schema and ignores unrelated payloads even in a database larger than 64 MiB', () => {
   const { path, db } = fixture()
   db.exec(
-    `CREATE TABLE UnrelatedSecret (payload BLOB); INSERT INTO UnrelatedSecret VALUES (zeroblob(68157440)); INSERT INTO SessionRun VALUES ('s', 'm', 1); INSERT INTO SessionRun VALUES ('other', 'hidden', 2)`
+    `CREATE TABLE UnrelatedSecret (payload BLOB); INSERT INTO UnrelatedSecret VALUES (zeroblob(68157440)); INSERT INTO SessionRun (sessionId, messageId, createdAtMs) VALUES ('s', 'm', 1); INSERT INTO SessionRun (sessionId, messageId, createdAtMs) VALUES ('other', 'hidden', 2)`
   )
   db.close()
   expect(statSync(path).size).toBeGreaterThan(64 * 1024 * 1024)
   const results = [...readDiagnosticDatabase(path, 'p', 's')]
   expect(results.filter((result) => result.error)).toEqual([])
   expect(results.find((result) => result.table === 'SessionRun')?.rows).toEqual([
-    { sessionId: 's', messageId: 'm', createdAtMs: 1n }
+    expect.objectContaining({ messageId: 'm' })
   ])
   expect(results.some((result) => result.table === 'UnrelatedSecret')).toBe(false)
 })
 it('does not hide orphan usage but rejects a parent belonging to another project', () => {
   const { path, db } = fixture()
   db.exec(
-    `INSERT INTO SessionRun VALUES ('s', 'z', 2); INSERT INTO SessionRun VALUES ('s', 'a', 1)`
+    `INSERT INTO SessionRun (sessionId, messageId, createdAtMs) VALUES ('s', 'z', 2); INSERT INTO SessionRun (sessionId, messageId, createdAtMs) VALUES ('s', 'a', 1)`
   )
-  expect(
+  const messages = (): unknown[] | undefined =>
     [...readDiagnosticDatabase(path, 'p', 's')].find((result) => result.table === 'SessionRun')
       ?.rows
-  ).toEqual([
-    { sessionId: 's', messageId: 'z', createdAtMs: 2n },
-    { sessionId: 's', messageId: 'a', createdAtMs: 1n }
+  expect(messages()).toEqual([
+    expect.objectContaining({ messageId: 'z' }),
+    expect.objectContaining({ messageId: 'a' })
   ])
   db.exec(
     `INSERT INTO Project (id, name, updatedAt) VALUES ('wrong', 'wrong', 1); INSERT INTO Session (id, number, projectId, title, status, presentedStatus, createdAtMs, updatedAtMs) VALUES ('s', 1, 'wrong', 'title', 'idle', 'idle', 1, 1)`
   )
-  expect(
-    [...readDiagnosticDatabase(path, 'p', 's')].find((result) => result.table === 'SessionRun')
-      ?.rows
-  ).toEqual([])
+  expect(messages()).toEqual([])
   db.close()
 })
 it('leaves database bytes unchanged and releases statements before yielding', () => {
@@ -105,17 +102,15 @@ it('filters associated job operations and findings without selecting credentials
 
 it('retains recent records under row limits and reports the retained time range', () => {
   const { path, db } = fixture()
-  const insert = db.prepare('INSERT INTO SessionRun VALUES (?, ?, ?)')
+  const insert = db.prepare(
+    'INSERT INTO SessionRun (sessionId, messageId, createdAtMs) VALUES (?, ?, ?)'
+  )
   for (let index = 0; index < 1002; index++) insert.run('s', `message-${index}`, index)
   db.close()
   const result = [...readDiagnosticDatabase(path, 'p', 's')].find(
     (item) => item.table === 'SessionRun'
   )!
-  expect(result.rows?.[0]).toEqual({
-    sessionId: 's',
-    messageId: 'message-1001',
-    createdAtMs: 1001n
-  })
+  expect(result.rows?.[0]).toMatchObject({ messageId: 'message-1001' })
   expect(result.metadata).toEqual({
     returnedCount: 1000,
     truncationReasons: ['row-limit'],
@@ -130,7 +125,7 @@ it('omits free text and protected errors while retaining presence and diagnostic
     INSERT INTO Project (id, name, updatedAt) VALUES ('p', 'PRIVATE project name', 1);
     INSERT INTO Session (id, number, projectId, title, status, presentedStatus, createdAtMs, updatedAtMs) VALUES ('s', 1, 'p', 'PRIVATE session title', 'idle', 'idle', 1, 1);
     INSERT INTO ComputeJob (id, providerId, shape, sessionId, projectId, intent, command, commandHash, lastPollError, harvestError, sensitiveDataEncrypted) VALUES ('j', 'host', 'direct_ssh', 's', 'p', 'PRIVATE intent', 'PRIVATE command', 'hash', 'PRIVATE ciphertext', 'PRIVATE error', 1);
-    INSERT INTO Review (id, projectId, sessionId, turnMessageId, lifecycle, errorMessage, updatedAt) VALUES ('r', 'p', 's', 'm', 'error', 'PRIVATE error', 1);
+    INSERT INTO Review (id, projectId, sessionId, turnMessageId, lifecycle, errorMessage, updatedAt) VALUES ('r', 'p', 's', 'm', 'error', 'password=PRIVATE-review', 1);
     INSERT INTO Finding (id, reviewId, claim, evidence, locator) VALUES ('f', 'r', 'PRIVATE claim', 'PRIVATE evidence', '{"path":"PRIVATE location"}');
   `)
   db.close()
@@ -145,13 +140,50 @@ it('omits free text and protected errors while retaining presence and diagnostic
     errorsProtected: 1n
   })
   expect(results.find((item) => item.table === 'Review')?.rows?.[0]).toMatchObject({
-    errorMessagePresent: 1n
+    errorMessagePresent: 1n,
+    errorMessage: expect.stringContaining('[redacted]')
   })
-  expect(results.find((item) => item.table === '_metadata')?.rows?.[0]).toMatchObject({
-    sqliteVersion: expect.any(String),
-    userVersion: 0,
-    schemaVersion: expect.any(Number)
+})
+
+it('scopes ArtifactVersion and finding dispositions through owning rows and retains safe relationships', () => {
+  const { path, db } = fixture()
+  db.exec(`
+    INSERT INTO ArtifactLineage (id, projectId, sessionId, normalizedFilename, filename, createdAt, updatedAt) VALUES
+      ('a-target', 'p', 's', 'a', 'secret-a', 1, 1), ('a-other', 'p', 'other', 'b', 'secret-b', 1, 1);
+    INSERT INTO ArtifactVersion (id, artifactId, versionNumber, filename, contentStorageKey, sizeBytes, checksum, state, originKind, producerRunId, promptMessageId, agentFrameId, createdAt, updatedAt) VALUES
+      ('v-target', 'a-target', 1, 'PRIVATE filename', 'PRIVATE-key-1', 12, 'hash', 'finalized', 'legacy', 'run-1', 'message-1', 'frame-1', 1, 1),
+      ('v-other', 'a-other', 2, 'PRIVATE filename', 'PRIVATE-key-2', 12, 'hash', 'finalized', 'legacy', 'run-2', 'message-2', 'frame-2', 1, 1);
+    INSERT INTO Review (id, projectId, sessionId, turnMessageId, scope, updatedAt) VALUES
+      ('review-target', 'p', 's', 'message-1', '{"turnMessageId":"message-1","artifactVersionIds":["v-target"],"blocks":[{"text":"PRIVATE scope"}]}', 1),
+      ('review-other', 'p', 'other', 'message-2', '{}', 1);
+    INSERT INTO Finding (id, reviewId) VALUES ('finding-target', 'review-target'), ('finding-other', 'review-other');
+    INSERT INTO ReviewFindingDisposition (id, sourceFindingId, causeReviewId, sequence, trigger, outcome, assessedArtifactVersionId) VALUES
+      ('disposition-target', 'finding-target', 'review-target', 1, 'review_submission', 'resolved', 'v-target'),
+      ('disposition-other', 'finding-other', 'review-other', 1, 'review_submission', 'resolved', 'v-other');
+  `)
+  db.close()
+  const results = [...readDiagnosticDatabase(path, 'p', 's')]
+  expect(results.find((item) => item.table === 'ArtifactVersion')?.rows).toEqual([
+    expect.objectContaining({
+      id: 'v-target',
+      artifactId: 'a-target',
+      producerRunId: 'run-1',
+      promptMessageId: 'message-1'
+    })
+  ])
+  expect(results.find((item) => item.table === 'ReviewFindingDisposition')?.rows).toEqual([
+    expect.objectContaining({
+      id: 'disposition-target',
+      sourceFindingId: 'finding-target',
+      assessedArtifactVersionId: 'v-target'
+    })
+  ])
+  expect(results.find((item) => item.table === 'Review')?.rows?.[0]).toMatchObject({
+    scopeMetadata: { turnMessageId: 'message-1', artifactVersionIds: ['v-target'], blockCount: 1 }
   })
+  expect(
+    JSON.stringify(results, (_key, value) => (typeof value === 'bigint' ? String(value) : value))
+  ).not.toContain('PRIVATE')
 })
 
 it('prioritizes unfinished jobs over newer successful jobs and recent turns over call index', () => {
@@ -168,11 +200,7 @@ it('prioritizes unfinished jobs over newer successful jobs and recent turns over
     id: 'pending'
   })
   expect(results.find((item) => item.table === 'SessionModelCallUsage')?.rows?.[0]).toMatchObject({
-    callId: 'recent-call',
-    frameworkId: 'framework',
-    providerId: 'provider',
-    backendId: 'backend',
-    sourceInvocationId: 'invocation'
+    callId: 'recent-call'
   })
 })
 

@@ -26,7 +26,15 @@ export type SensitiveContentSource = {
 }
 export type SessionDiagnosticItem = {
   id: string
-  kind: 'session' | 'invalid-session' | 'log' | 'database' | 'sensitive-evidence' | 'sensitive-file'
+  kind:
+    | 'session'
+    | 'invalid-session'
+    | 'log'
+    | 'database'
+    | 'notebook'
+    | 'environment'
+    | 'sensitive-evidence'
+    | 'sensitive-file'
   name: string
   available: boolean
   sizeBytes?: number
@@ -36,13 +44,15 @@ export type SessionDiagnosticInspection = {
   items: SessionDiagnosticItem[]
   error?: string
 }
-export type SessionDiagnosticExportRequest = SessionDiagnosticRequest & { selectedItems: string[] }
+export type SessionDiagnosticExportRequest = SessionDiagnosticRequest & {
+  selectedItems: string[]
+  includeExecutionCode?: boolean
+}
 export type SessionDiagnosticExportResult = {
   status: 'exported' | 'partial' | 'cancelled' | 'failed'
   path?: string
   error?: string
   report?: string
-  reportPath?: string
 }
 
 /** Main-owned worker inputs; these paths never come from the renderer. */
@@ -53,6 +63,7 @@ export type SessionDiagnosticWorkerInput = SessionDiagnosticIdentity & {
   logPath?: string
   appVersion: string
   selectedItems?: string[]
+  includeExecutionCode?: boolean
   directory?: string
   sensitiveContent?: SensitiveContentFailure
   sensitiveContentSources?: SensitiveContentSource[]

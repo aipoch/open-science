@@ -1157,7 +1157,14 @@
       "src/main/wsl/wsl-setup-owner.integration.test.ts",
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
       "src/main/literature/journal-attributes.scale.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/session-diagnostics/collector.test.ts",
+      "src/main/session-diagnostics/database.test.ts",
+      "src/main/session-diagnostics/detail.test.ts",
+      "src/main/session-diagnostics/environment.test.ts",
+      "src/main/session-diagnostics/export-evidence.integration.test.ts",
+      "src/main/session-diagnostics/notebook.test.ts",
+      "src/main/session-diagnostics/projection.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

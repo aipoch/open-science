@@ -1,15 +1,17 @@
-/** Diagnostic projections deliberately omit content; they never attempt text redaction. */
+import { diagnosticText, projectDiagnosticError, type DiagnosticTextOptions } from './detail'
+
+/** Diagnostic projections keep only known evidence fields and bounded redacted error text. */
 type ObjectValue = Record<string, unknown>
 const object = (value: unknown): ObjectValue =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as ObjectValue) : {}
 const identifier = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,199}$/.test(value)
 const numbers =
-  'queuedAt callIndex version schemaVersion number revision createdAt updatedAt completedAt failedAt startedAt archivedAt sortIndex index inputTokens cacheTokens cachedReadTokens cachedWriteTokens outputTokens turnCount contextUsedTokens contextWindowSize terminalExitCode computeConcurrencyLimit'.split(
+  'endedAt askedAt acceptedAt uncertainAt dispatchStartedAt sequence laneSequence queuedAt callIndex version schemaVersion number revision createdAt updatedAt completedAt failedAt startedAt archivedAt sortIndex index inputTokens cacheTokens cachedReadTokens cachedWriteTokens outputTokens turnCount contextUsedTokens contextWindowSize terminalExitCode computeConcurrencyLimit round maxRounds respondedAt'.split(
     ' '
   )
 const identities =
-  'executionId promptRuntimeSegmentId sourceMessageId requestId callId backendId agentBackendId providerId providerSessionId id projectId agentFrameId parentFrameId originMessageId activeBranchId linkedReviewId parentBranchId forkMessageId forkActivityId supersededMessageId headMessageId introducedOnBranchId parentMessageId revisionRootMessageId supersedesMessageId runtimeSegmentId activityGroupId promptMessageId executionInvocationId messageBranchId streamId responseToMessageId sourceInvocationId rootFrameId activeFrameId taskRunCommitId'.split(
+  'initiatingTurnMessageId terminalMessageId profileId targetFrameId targetAttemptId rootPromptMessageId rootOriginMessageId callerRootMessageId rootBranchId replyToMessageId retryOfMessageId dispatchEpoch executionId promptRuntimeSegmentId sourceMessageId requestId callId backendId agentBackendId providerId providerSessionId id projectId agentFrameId parentFrameId originMessageId activeBranchId linkedReviewId parentBranchId forkMessageId forkActivityId supersededMessageId headMessageId introducedOnBranchId parentMessageId revisionRootMessageId supersedesMessageId runtimeSegmentId activityGroupId promptMessageId executionInvocationId messageBranchId streamId responseToMessageId sourceInvocationId rootFrameId activeFrameId taskRunCommitId causeReviewId deliveryKey sessionId messageId toolInvocationId rootMessageId originSessionId originFrameId sourceFrameId sourceAttemptId sourceRuntimeSegmentId sourceMessageBranchId continuationAttemptId specialistId'.split(
     ' '
   )
 const states: Record<string, readonly string[]> = {
@@ -33,10 +35,17 @@ const states: Record<string, readonly string[]> = {
     'queued',
     'succeeded',
     'disabled',
-    'superseded'
+    'superseded',
+    'accepted',
+    'uncertain',
+    'confirmed'
   ],
   role: ['user', 'agent', 'assistant', 'system', 'tool'],
   kind: [
+    'main',
+    'specialist',
+    'info',
+    'question',
     'tool',
     'root',
     'reviewer',
@@ -44,7 +53,11 @@ const states: Record<string, readonly string[]> = {
     'compatibility',
     'resume-required',
     'all',
-    'before-message'
+    'before-message',
+    'application',
+    'side-chat',
+    'compute-job-completion',
+    'agent-user-choice'
   ],
   cause: ['app-restart', 'cancelled', 'connection-lost'],
   originBindingState: ['root', 'validated', 'legacy-unavailable'],
@@ -54,14 +67,26 @@ const states: Record<string, readonly string[]> = {
   reasoningEffort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   runtimeTranscriptOwner: ['main'],
   delegationPolicy: ['allow', 'deny'],
-  turnIntent: ['plan-first', 'save-as-skill']
+  turnIntent: ['plan-first', 'save-as-skill'],
+  feature: ['reviewer', 'compute', 'background-results'],
+  purpose: ['correction', 'job-completion-analysis', 'agent-result-delivery'],
+  direction: ['to-main', 'to_child', 'to_parent'],
+  disposition: ['message', 'continued'],
+  cancellationReason: ['main_agent_stop', 'session_stop', 'runtime_interrupted'],
+  evidence: ['provider_prompt_accepted', 'provider_prompt_completed'],
+  resolution: ['pending', 'acknowledged'],
+  state: ['pending', 'answered', 'declined', 'cancelled'],
+  sessionDetailsSource: ['fallback', 'generated', 'manual'],
+  permissionProfile: ['ask', 'auto', 'full'],
+  owner: ['task', 'renderer']
 }
-function fields(value: unknown): ObjectValue {
+function fields(value: unknown, options: DiagnosticTextOptions): ObjectValue {
   const source = object(value)
   const result: ObjectValue = {}
   for (const key of numbers)
     if (typeof source[key] === 'number' && Number.isFinite(source[key])) result[key] = source[key]
-  for (const key of identities) if (identifier(source[key])) result[key] = source[key]
+  for (const key of identities)
+    if (identifier(source[key])) result[key] = diagnosticText(source[key], options, 200)
   for (const [key, allowed] of Object.entries(states))
     if (allowed.includes(source[key] as string)) result[key] = source[key]
   for (const key of [
@@ -71,11 +96,38 @@ function fields(value: unknown): ObjectValue {
     'usageUnavailable',
     'autoReviewEnabled',
     'memoryEnabled',
-    'specialistBindingPending'
+    'specialistBindingPending',
+    'errorReportable',
+    'branchContextResetRequired',
+    'continuationPending'
   ])
     if (typeof source[key] === 'boolean') result[key] = source[key]
-  for (const key of ['eventIds', 'artifactIds', 'activityIds'])
-    if (Array.isArray(source[key])) result[key] = source[key].filter(identifier).slice(-1000)
+  for (const key of [
+    'runtimeSegmentIds',
+    'eventIds',
+    'artifactIds',
+    'activityIds',
+    'findingIds',
+    'jobIds',
+    'deliveryIds',
+    'runtimeConversationCommandIds',
+    'artifactErrorEventIds',
+    'messageBranchAncestry',
+    'messageAncestry'
+  ])
+    if (Array.isArray(source[key]))
+      result[key] = source[key]
+        .filter(identifier)
+        .slice(-1000)
+        .map((value) => diagnosticText(value, options, 200))
+  for (const key of ['providerToolName', 'toolKind'])
+    if (identifier(source[key])) result[key] = diagnosticText(source[key], options, 200)
+  for (const key of ['error', 'failure']) {
+    if (source[key] !== undefined) {
+      const error = projectDiagnosticError(source[key], options)
+      if (error) result[key] = error
+    }
+  }
   // Model routing identifiers are protocol metadata, never arbitrary configuration objects.
   for (const key of ['model', 'agentModel'])
     if (
@@ -84,10 +136,13 @@ function fields(value: unknown): ObjectValue {
       !source[key].includes('://') &&
       !source[key].includes('..')
     )
-      result[key] = source[key]
+      result[key] = diagnosticText(source[key] as string, options, 200)
   return result
 }
-export function projectDiagnosticSession(value: unknown): ObjectValue {
+export function projectDiagnosticSession(
+  value: unknown,
+  options: DiagnosticTextOptions = {}
+): ObjectValue {
   const envelope = object(value)
   const session = object(envelope.session ?? value)
   const arrayCounts: Record<string, { source: number; retained: number; omitted: number }> = {}
@@ -99,13 +154,47 @@ export function projectDiagnosticSession(value: unknown): ObjectValue {
       omitted: previous.omitted + source - retained
     }
   }
-  const projectFields = (value: unknown): ObjectValue => {
-    const projected = fields(value)
+  const projectFields = (value: unknown, depth = 0): ObjectValue => {
+    const projected = fields(value, options)
     const source = object(value)
-    for (const key of ['eventIds', 'artifactIds', 'activityIds']) {
+    for (const key of [
+      'runtimeSegmentIds',
+      'eventIds',
+      'artifactIds',
+      'activityIds',
+      'findingIds',
+      'jobIds',
+      'deliveryIds',
+      'runtimeConversationCommandIds',
+      'artifactErrorEventIds',
+      'messageBranchAncestry',
+      'messageAncestry'
+    ]) {
       if (Array.isArray(source[key]))
         count(`identifierArrays.${key}`, source[key].length, (projected[key] as unknown[]).length)
     }
+    if (depth < 4)
+      for (const key of [
+        'receipt',
+        'resolvedAgent',
+        'executionModel',
+        'attribution',
+        'continuation',
+        'agentTarget',
+        'usageOrigin',
+        'presentation',
+        'relayedFrom',
+        'delegatedCallerSource',
+        'elicitation',
+        'durable',
+        'provenanceContext',
+        'runtimeTranscriptReviewOwner'
+      ]) {
+        if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+          const nested = projectFields(source[key], depth + 1)
+          if (Object.keys(nested).length) projected[key] = nested
+        }
+      }
     return projected
   }
   const list = (value: unknown, path: string, messages = false): ObjectValue[] => {
@@ -115,6 +204,8 @@ export function projectDiagnosticSession(value: unknown): ObjectValue {
     return retained.map((entry) => {
       const source = object(entry)
       const projected = projectFields(source)
+      if (path === 'runtimeContext.delegatedWork.records' && Array.isArray(source.attempts))
+        projected.attempts = list(source.attempts, `${path}.attempts`)
       if (messages) {
         if (source.turnUsage) projected.turnUsage = projectFields(source.turnUsage)
         if (Array.isArray(source.modelCallUsage))
@@ -131,7 +222,9 @@ export function projectDiagnosticSession(value: unknown): ObjectValue {
     'pendingHistoryReplay',
     'branchSource',
     'sessionDetailsGeneration',
-    'agentConfiguration'
+    'agentConfiguration',
+    'runtimeTranscriptReviewOwner',
+    'contextUsage'
   ])
     if (session[key]) result[key] = projectFields(session[key])
   for (const key of ['messages', 'activities', 'activityGroups', 'runtimeSessionAdmissions'])
@@ -155,6 +248,18 @@ export function projectDiagnosticSession(value: unknown): ObjectValue {
         projected[key] = list(graph[key], `conversationGraph.${key}`, key === 'messages')
     result.conversationGraph = projected
   }
+  const runtimeContext = object(session.runtimeContext)
+  if (runtimeContext.delegatedWork) {
+    const delegated = object(runtimeContext.delegatedWork)
+    const projected: ObjectValue = {}
+    for (const key of ['records', 'messageCommands', 'questionRequests'])
+      if (Array.isArray(delegated[key]))
+        projected[key] = list(delegated[key], `runtimeContext.delegatedWork.${key}`)
+    result.runtimeContext = {
+      ...projectFields(runtimeContext),
+      delegatedWork: projected
+    }
+  }
   return {
     format: 'diagnostic-session-projection',
     ...(typeof envelope.version === 'number' ? { version: envelope.version } : {}),
@@ -162,153 +267,46 @@ export function projectDiagnosticSession(value: unknown): ObjectValue {
     arrayCounts,
     truncated: Object.values(arrayCounts).some((count) => count.omitted > 0),
     omissionPolicy:
-      'Content, paths, credentials, arbitrary text and unknown fields omitted; arrays retain at most the latest 1000 entries.'
+      'Conversation content, titles, tool inputs/outputs, paths, credentials and unknown fields omitted. Known error text is bounded and redacted; arrays retain at most the latest 1000 entries.'
   }
 }
-const diagnosticScopes = new Set([
-  'session',
-  'session-persistence',
-  'session-package',
-  'session-deletion',
-  'session-details',
-  'acp',
-  'main',
-  'bootstrap',
-  'renderer',
-  'ipc',
-  'window',
-  'renderer-broadcast',
-  'compute:agent',
-  'compute-cancellation',
-  'compute',
-  'database',
-  'background-results',
-  'project-files'
-])
-const diagnosticEvents = new Set([
-  'app starting',
-  'operation started',
-  'operation phase',
-  'operation completed',
-  'operation cancelled',
-  'operation failed',
-  'database startup blocked',
-  'renderer process gone',
-  'child process gone',
-  'renderer became unresponsive',
-  'renderer became responsive',
-  'renderer preload failed',
-  'Session deletion project identity conflict',
-  'Session runtime deletion failed',
-  'Session persistence deletion failed',
-  'Session runtime remained attached after deletion',
-  'Runtime Session authority unavailable',
-  'Runtime Session mutation failed',
-  'Session result delivery fence failed',
-  'Session details generation completed',
-  'set session effort failed',
-  'set session model failed',
-  'session model applied',
-  'session effort applied',
-  'permission profile applied',
-  'native follow-up refused',
-  'native follow-up resource cleanup failed',
-  'native follow-up notebook materialization failed'
-])
-// Finite app-owned vocabulary from diagnostics/operation and session hydration owners.
-const operationPhases = [
-  'operation-start',
-  'load-authority',
-  'begin-turn',
-  'prepare-permission',
-  'flush-events',
-  'stage-artifacts',
-  'attach-artifacts',
-  'authority-loaded',
-  'recover-delegation',
-  'recover-session',
-  'reconcile-unread-sessions',
-  'reconcile-permission-grants',
-  'reconcile-derived-state',
-  'reconcile-provisional-managed-workspaces',
-  'load-bootstrap-modules',
-  'crash-reporting',
-  'electron-ready',
-  'load-startup-shell-modules',
-  'prepare-shell',
-  'database-and-application-modules',
-  'load-application-modules',
-  'application-modules-loaded',
-  'compose-runtime',
-  'register-application-ipc',
-  'compose-desktop-surfaces',
-  'compose-remote-access',
-  'startup-shell-timeout',
-  'single-instance-lock',
-  'prepare-runtime',
-  'install-lifecycle'
-]
-const operationFields: Record<string, readonly string[]> = {
-  operation: [
-    'application-startup',
-    'session-hydration',
-    'delegation-recovery',
-    'runtime-session-mutation'
-  ],
-  authorityStatus: ['missing', 'unreadable'],
-  phase: operationPhases,
-  cpuIntervalPhase: operationPhases,
-  outcome: ['started', 'completed', 'cancelled', 'failed'],
-  mode: ['read-only', 'reconcile'],
-  status: ['ready', 'degraded', 'failed'],
-  delayKind: ['cpu', 'io-or-wait', 'mixed'],
-  operationDelayKind: ['cpu', 'io-or-wait', 'mixed'],
-  errorCategory: [
-    'null',
-    'undefined',
-    'string',
-    'number',
-    'boolean',
-    'bigint',
-    'symbol',
-    'request',
-    'not-found',
-    'permission',
-    'timeout',
-    'network',
-    'system',
-    'aborted',
-    'aggregate',
-    'error',
-    'range',
-    'reference',
-    'syntax',
-    'type',
-    'uri',
-    'object',
-    'unknown'
-  ]
-}
-export function projectDiagnosticLog(value: unknown): ObjectValue {
+const diagnosticStringFields = [
+  'operation',
+  'phase',
+  'cpuIntervalPhase',
+  'outcome',
+  'mode',
+  'status',
+  'delayKind',
+  'operationDelayKind',
+  'errorCategory',
+  'reason'
+] as const
+
+export function projectDiagnosticLog(
+  value: unknown,
+  options: DiagnosticTextOptions = {}
+): ObjectValue {
   const source = object(value)
   const result: ObjectValue = {}
   if (typeof source.t === 'string' && /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(source.t))
     result.t = source.t
   if (['debug', 'info', 'warn', 'error'].includes(source.level as string))
     result.level = source.level
-  if (typeof source.scope === 'string' && diagnosticScopes.has(source.scope))
-    result.scope = source.scope
+  if (typeof source.scope === 'string') result.scope = diagnosticText(source.scope, options, 160)
   for (const key of ['runId', 'correlationId'])
-    if (identifier(source[key])) result[key] = source[key]
-  if (typeof source.msg === 'string' && diagnosticEvents.has(source.msg)) result.event = source.msg
+    if (identifier(source[key])) result[key] = diagnosticText(source[key], options, 200)
+  if (typeof source.msg === 'string') result.event = diagnosticText(source.msg, options, 2_000)
   const data = object(source.data)
-  const diagnostic = fields(data)
-  for (const [key, allowed] of Object.entries(operationFields))
-    if (allowed.includes(data[key] as string)) diagnostic[key] = data[key]
+  const diagnostic = fields(data, options)
+  for (const key of diagnosticStringFields)
+    if (typeof data[key] === 'string') diagnostic[key] = diagnosticText(data[key], options, 1_000)
+  if (data.authorityStatus === 'missing' || data.authorityStatus === 'unreadable')
+    diagnostic.authorityStatus = data.authorityStatus
   for (const key of ['hydrationAvailable', 'startupCleanupEligible', 'metadataComplete'])
     if (typeof data[key] === 'boolean') diagnostic[key] = data[key]
   for (const key of ['sessionId', 'messageId', 'operationId', 'requestId', 'cachedProjectId'])
-    if (identifier(data[key])) diagnostic[key] = data[key]
+    if (identifier(data[key])) diagnostic[key] = diagnosticText(data[key], options, 200)
   for (const key of [
     'unresponsiveDurationMs',
     'durationMs',
@@ -329,34 +327,45 @@ export function projectDiagnosticLog(value: unknown): ObjectValue {
     'waitMs',
     'sessionCount',
     'warningCount',
+    'droppedRecords',
+    'repairedTailBytes',
     'projectDirectoryCount',
     'sessionFileCount',
     'sessionBytes'
   ])
     if (typeof data[key] === 'number' && Number.isFinite(data[key])) diagnostic[key] = data[key]
   if (typeof data.wasUnresponsive === 'boolean') diagnostic.wasUnresponsive = data.wasUnresponsive
-  if (
-    [
-      'clean-exit',
-      'abnormal-exit',
-      'killed',
-      'crashed',
-      'oom',
-      'launch-failed',
-      'integrity-failure'
-    ].includes(data.reason as string)
-  )
-    diagnostic.reason = data.reason
   const error = object(data.error)
   for (const [key, candidate] of [
     ['code', data.code ?? error.code],
     ['errorCode', data.errorCode]
   ] as const)
-    if (
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) diagnostic[key] = candidate
+    else if (
       typeof candidate === 'string' &&
       /^(?:E[A-Z0-9_]{1,40}|SQLITE_[A-Z_]+|[A-Z][A-Z0-9_]{1,60})$/.test(candidate)
     )
-      diagnostic[key] = candidate
+      diagnostic[key] = diagnosticText(candidate, options, 64)
+  // Existing operation owners use `details: errorLogFields(error)` rather than
+  // `error`. This is a known container, not a recursive search through payloads.
+  if (data.details !== undefined) {
+    const details = projectDiagnosticError(data.details, options)
+    if (details) diagnostic.details = details
+  }
+  if (
+    data.error !== undefined ||
+    data.message !== undefined ||
+    data.stack !== undefined ||
+    data.cause !== undefined ||
+    data.errno !== undefined ||
+    data.code !== undefined
+  ) {
+    const projectedError = projectDiagnosticError(
+      data.error && typeof data.error === 'object' ? data.error : data,
+      options
+    )
+    if (projectedError) diagnostic.error = projectedError
+  }
   if (Object.keys(diagnostic).length) result.diagnostics = diagnostic
   return result
 }

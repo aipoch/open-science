@@ -9,6 +9,7 @@ import type {
   SessionDiagnosticWorkerResult
 } from '../../shared/session-diagnostics'
 import { createSessionDiagnosticsDesktop } from './desktop'
+import { sessionDiagnosticCommandContracts } from '../../shared/session-diagnostics-contracts'
 import * as fsPromises from 'node:fs/promises'
 
 vi.mock('node:fs/promises', async (original) => ({
@@ -179,7 +180,25 @@ describe('isolated diagnostic desktop lifecycle', () => {
       /^project-1-session-1-\d{8}T\d{9}Z\.tar\.gz$/
     )
     expect(inputs[0].selectedItems).toEqual(['session'])
+    expect(inputs[0].includeExecutionCode).toBe(false)
     expect(workers[0].terminate).toHaveBeenCalledOnce()
+  })
+
+  it('forwards an explicit code opt-in and rejects non-boolean export flags', async () => {
+    const { owner, inputs, createWorker } = setup()
+    const valid = { ...request, selectedItems: ['notebook'], includeExecutionCode: true }
+    expect(sessionDiagnosticCommandContracts.export.args.parse([valid])).toEqual([valid])
+    expect(await owner.export(valid)).toMatchObject({ status: 'exported' })
+    expect(inputs[0].includeExecutionCode).toBe(true)
+    const invalid = {
+      ...request,
+      operationId: 'wrong-flag',
+      selectedItems: ['notebook'],
+      includeExecutionCode: 'true'
+    }
+    expect(() => sessionDiagnosticCommandContracts.export.args.parse([invalid])).toThrow()
+    expect(await owner.export(invalid as never)).toMatchObject({ status: 'failed' })
+    expect(createWorker).toHaveBeenCalledOnce()
   })
 
   it('adds the archive suffix when a renamed export omits it', async () => {
@@ -256,19 +275,19 @@ describe('isolated diagnostic desktop lifecycle', () => {
     const result = await owner.export({ ...request, selectedItems: [] })
     expect(result.status).toBe('failed')
     expect(JSON.stringify(result)).not.toContain('do-not-leak')
-    expect(await readFile(result.reportPath!, 'utf8')).not.toContain('do-not-leak')
+    expect(result.report).toContain('collection failed: source unavailable')
     await expect(readFile(target)).rejects.toThrow()
     const remaining = await readdir(join(root, 'temp'))
-    expect(remaining).toHaveLength(1)
-    expect(remaining[0]).toMatch(/^open-science-diagnostic-report-/)
+    expect(remaining).toEqual([])
   })
 
-  it('publication failure leaves no output and preserves the independent export report', async () => {
-    const { owner } = setup({ noArchive: true })
+  it('returns partial collection failures even when the archive has no report files', async () => {
+    const report = 'Diagnostic output manifest.json failed\nDiagnostic output export.log failed'
+    const { owner, target } = setup({ response: { kind: 'archive', partial: true, report } })
     const result = await owner.export({ ...request, selectedItems: [] })
-    expect(result.status).toBe('failed')
-    expect(result.report).toContain('collection finished')
-    expect(await readdir(join(root, 'output'))).toEqual([])
+    expect(result).toEqual({ status: 'partial', path: target, report })
+    expect(await readFile(target, 'utf8')).toBe('completed archive')
+    expect(await readdir(join(root, 'temp'))).toEqual([])
   })
 
   it.each(['exported', 'cancelled'] as const)(
@@ -291,24 +310,32 @@ describe('isolated diagnostic desktop lifecycle', () => {
       expect(result.report).toContain('collection staging cleanup failed')
       expect(result.report).toContain('EACCES')
       expect(result.report).not.toContain('secret credential')
-      expect(await readFile(result.reportPath!, 'utf8')).toBe(result.report)
+      expect(
+        (await readdir(join(root, 'temp'))).some((name) =>
+          name.startsWith('open-science-diagnostic-report-')
+        )
+      ).toBe(false)
     }
   )
 
-  it('keeps a copyable report and removes its empty directory when report writing fails', async () => {
-    const original = fsPromises.writeFile
-    vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (...args) => {
-      if (String(args[0]).includes('open-science-diagnostic-report-'))
-        throw Object.assign(new Error('private destination'), { code: 'ENOSPC' })
-      return original(...args)
-    })
+  it('keeps repeated failure reports in memory without creating leftover report directories', async () => {
+    const write = vi.spyOn(fsPromises, 'writeFile')
     const { owner } = setup({ noArchive: true })
-    const result = await owner.export({ ...request, selectedItems: [] })
-    expect(result.status).toBe('failed')
-    expect(result.report).toContain('publication failed')
-    expect(result.reportPath).toBeUndefined()
-    expect(await readdir(join(root, 'temp'))).toEqual([])
-    expect(await readdir(join(root, 'output'))).toEqual([])
+    for (let index = 0; index < 3; index++) {
+      const result = await owner.export({
+        ...request,
+        operationId: `failure-${index}`,
+        selectedItems: []
+      })
+      expect(result.status).toBe('failed')
+      expect(result.report).toContain('collection finished')
+      expect(result.report).toContain('publication failed')
+      expect(await readdir(join(root, 'temp'))).toEqual([])
+      expect(await readdir(join(root, 'output'))).toEqual([])
+    }
+    expect(
+      write.mock.calls.some(([path]) => String(path).includes('open-science-diagnostic-report-'))
+    ).toBe(false)
   })
 
   it('close terminates active work without invoking a save or restore path', async () => {
