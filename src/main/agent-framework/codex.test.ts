@@ -537,7 +537,11 @@ describe('codexFramework', () => {
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_catalog_json')
   })
 
-  it('adds local metadata when the active official model is not bundled by Codex', () => {
+  it.each([
+    ['gpt-6-astra', '0.144.6'],
+    ['gpt-6.1-sol', '0.144.6'],
+    ['gpt-6.1-sol', CODEX_VERSION]
+  ])('adds local metadata for unbundled official model %s on Codex %s', (model, nativeVersion) => {
     const framework = createCodexFramework()
     const config = framework.prepareModelConfig(
       {
@@ -545,14 +549,15 @@ describe('codexFramework', () => {
         vendorId: 'openai',
         apiEndpoints: ['responses'],
         baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-6-astra',
+        model,
         contextWindow: 1_050_000,
+        supportsImageInput: true,
         key: 'sk-plaintext-secret'
       },
       {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
-        nativeVersion: '0.144.6',
+        nativeVersion,
         reasoningEffort: 'max',
         reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max']
       }
@@ -564,9 +569,13 @@ describe('codexFramework', () => {
     )
     expect(JSON.parse(modelCatalogFile?.content ?? '').models).toEqual([
       expect.objectContaining({
-        slug: 'gpt-6-astra',
+        slug: model,
         context_window: 1_050_000,
-        default_reasoning_level: 'max'
+        default_reasoning_level: 'max',
+        input_modalities: ['text', 'image'],
+        supported_reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max'].map((effort) =>
+          expect.objectContaining({ effort })
+        )
       })
     ])
   })

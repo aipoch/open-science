@@ -147,6 +147,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         reasoningEffort: 'low-medium-high-xhigh-ultra'
       },
       { id: 'gpt-6-astra', contextWindow: 1_050_000, reasoningEffort: 'standard-5' },
+      // https://developers.openai.com/api/docs/models/gpt-6.1-sol
+      { id: 'gpt-6.1-sol', contextWindow: 1_050_000, reasoningEffort: 'standard-5' },
       {
         id: 'gpt-6-sol',
         contextWindow: 1_050_000,
