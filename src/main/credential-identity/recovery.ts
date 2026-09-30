@@ -11,7 +11,7 @@ export const credentialRecoveryMessage = (
   const title = translate('Credential storage needs recovery')
   const description = error.reason.startsWith('linux-')
     ? translate(
-        'Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.'
+        'Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.'
       )
     : error.reason.includes('unsupported')
       ? translate(

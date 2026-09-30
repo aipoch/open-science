@@ -19,6 +19,7 @@ beforeEach(() => {
   vi.stubEnv('DESKTOP_SESSION', '')
   vi.stubEnv('KDE_FULL_SESSION', undefined)
   vi.stubEnv('GNOME_DESKTOP_SESSION_ID', undefined)
+  vi.stubEnv('KDE_SESSION_VERSION', undefined)
   native.run.mockReset()
   respond(true)
 })
@@ -30,6 +31,12 @@ afterEach(() => {
 
 const respond = (exists: boolean, locked = false): void => {
   native.run.mockImplementation((_command: string, args: string[]) => {
+    if (args.some((arg) => arg.startsWith('org.kde.kwalletd'))) {
+      const value = args.includes('networkWallet')
+        ? { type: 's', data: ['kdewallet'] }
+        : { type: 'b', data: [args.includes('keyDoesNotExist') ? !exists : !locked] }
+      return { status: 0, signal: null, stdout: JSON.stringify(value) }
+    }
     const value = args.includes('SearchItems')
       ? {
           type: 'aoao',
@@ -71,6 +78,220 @@ const cipher = (): {
 })
 
 describe('Linux OS credentials through production bootstrap and access', () => {
+  it.each(['kwallet', 'kwallet5', 'kwallet6'] as const)(
+    'reuses an explicitly selected %s key without consulting another service',
+    async (linuxPasswordStore) => {
+      const { selectStartupCredentialIdentity, prepareCredentialValidation } =
+        await import('./bootstrap')
+      const nativeCipher = cipher()
+      nativeCipher.getSelectedStorageBackend.mockReturnValue(linuxPasswordStore)
+      const identity = selectStartupCredentialIdentity({
+        platform: 'linux',
+        packaged: true,
+        linuxPasswordStore
+      })
+      expect(identity).toMatchObject({
+        backend: 'linux-kwallet',
+        passwordStore: linuxPasswordStore,
+        wallet: 'kdewallet'
+      })
+      prepareCredentialValidation(identity, paths(true))(nativeCipher, vi.fn())
+      expect(nativeCipher.decryptString).toHaveBeenCalledWith(Buffer.from('v11original'))
+      for (const [command, args] of native.run.mock.calls) {
+        const daemon =
+          linuxPasswordStore === 'kwallet' ? 'kwalletd' : `kwalletd${linuxPasswordStore.slice(-1)}`
+        expect(command).toBe('/usr/bin/busctl')
+        expect(args).toContain(`org.kde.${daemon}`)
+        expect(args).toContain(`/modules/${daemon}`)
+        expect(args.join(' ')).not.toMatch(
+          /org.freedesktop.secrets|readPassword|writePassword|\bopen\b|Unlock|Create/
+        )
+        if (args.includes('keyDoesNotExist'))
+          expect(args.slice(-3)).toEqual(['kdewallet', 'Chromium Keys', 'Chromium Safe Storage'])
+      }
+    }
+  )
+
+  it.each([
+    ['4', 'kwallet'],
+    ['5', 'kwallet5'],
+    ['6', 'kwallet6'],
+    [undefined, 'kwallet']
+  ] as const)('matches Chromium KDE_SESSION_VERSION=%s to %s', async (version, backend) => {
+    vi.stubEnv('XDG_CURRENT_DESKTOP', ' KDE : GNOME ')
+    vi.stubEnv('KDE_SESSION_VERSION', version)
+    const { selectStartupCredentialIdentity } = await import('./bootstrap')
+    expect(selectStartupCredentialIdentity({ platform: 'linux', packaged: true })).toMatchObject({
+      passwordStore: backend
+    })
+  })
+
+  it.each([
+    'locked',
+    'disabled',
+    'unavailable',
+    'wrong type',
+    'malformed',
+    'wallet changed during probe'
+  ])('blocks KWallet startup without cipher access when metadata is %s', async (state) => {
+    const respondNormally = native.run.getMockImplementation()!
+    let walletCalls = 0
+    native.run.mockImplementation((command, args) => {
+      if (state === 'unavailable') return { status: 1, stdout: '' }
+      if (state === 'wrong type') return { status: 0, stdout: '{"type":"s","data":["true"]}' }
+      if (state === 'malformed') return { status: 0, stdout: '{bad' }
+      if (
+        (state === 'locked' && args.includes('isOpen')) ||
+        (state === 'disabled' && args.includes('isEnabled'))
+      )
+        return { status: 0, stdout: '{"type":"b","data":[false]}' }
+      if (
+        state === 'wallet changed during probe' &&
+        args.includes('networkWallet') &&
+        walletCalls++ > 0
+      )
+        return { status: 0, stdout: '{"type":"s","data":["otherwallet"]}' }
+      return respondNormally(command, args)
+    })
+    const { selectStartupCredentialIdentity } = await import('./bootstrap')
+    expect(() =>
+      selectStartupCredentialIdentity({
+        platform: 'linux',
+        packaged: true,
+        linuxPasswordStore: 'kwallet6'
+      })
+    ).toThrow(/recovery/i)
+  })
+
+  it('rejects a missing original KWallet key before ready and preserves ciphertext', async () => {
+    respond(false)
+    const { selectStartupCredentialIdentity, prepareCredentialValidation } =
+      await import('./bootstrap')
+    const location = paths(true)
+    const original = readFileSync(join(location.configRoot, 'settings.json'))
+    const identity = selectStartupCredentialIdentity({
+      platform: 'linux',
+      packaged: true,
+      linuxPasswordStore: 'kwallet6'
+    })
+    expect(() => prepareCredentialValidation(identity, location)).toThrow(/recovery/i)
+    expect(readFileSync(join(location.configRoot, 'settings.json'))).toEqual(original)
+  })
+
+  it.each(['wallet changed', 'key removed', 'backend changed', 'decrypt failed'])(
+    'latches recovery before replacement writes when KWallet %s after selection',
+    async (state) => {
+      const { selectStartupCredentialIdentity, prepareCredentialValidation } =
+        await import('./bootstrap')
+      const identity = selectStartupCredentialIdentity({
+        platform: 'linux',
+        packaged: true,
+        linuxPasswordStore: 'kwallet6'
+      })
+      const location = paths(true)
+      const original = readFileSync(join(location.configRoot, 'settings.json'))
+      const validate = prepareCredentialValidation(identity, location)
+      const nativeCipher = cipher()
+      nativeCipher.getSelectedStorageBackend.mockReturnValue(
+        state === 'backend changed' ? 'kwallet5' : 'kwallet6'
+      )
+      if (state === 'key removed') respond(false)
+      if (state === 'wallet changed') {
+        const normal = native.run.getMockImplementation()!
+        native.run.mockImplementation((command, args) =>
+          args.includes('networkWallet')
+            ? { status: 0, stdout: '{"type":"s","data":["otherwallet"]}' }
+            : normal(command, args)
+        )
+      }
+      if (state === 'decrypt failed')
+        nativeCipher.decryptString.mockImplementation(() => {
+          throw Error('invalid original key')
+        })
+      const recover = vi.fn()
+      expect(() => validate(nativeCipher, recover)).toThrow(/recovery/i)
+      const { credentialCipher, assertCredentialAccessAllowed } = await import('./runtime')
+      expect(() => credentialCipher(nativeCipher).encryptString('replacement')).toThrow(/recovery/i)
+      expect(() => assertCredentialAccessAllowed()).toThrow(/recovery/i)
+      expect(nativeCipher.encryptString).not.toHaveBeenCalled()
+      if (state !== 'decrypt failed')
+        expect(nativeCipher.isEncryptionAvailable).not.toHaveBeenCalled()
+      expect(recover).toHaveBeenCalledOnce()
+      expect(readFileSync(join(location.configRoot, 'settings.json'))).toEqual(original)
+    }
+  )
+
+  it.each([false, true])(
+    'issue 3161: starts on KDE with the original available KWallet backend (ciphertexts=%s)',
+    async (encrypted) => {
+      vi.stubEnv('XDG_CURRENT_DESKTOP', 'KDE')
+      vi.stubEnv('DESKTOP_SESSION', 'plasma')
+      vi.stubEnv('KDE_SESSION_VERSION', '6')
+      const { selectStartupCredentialIdentity, prepareCredentialValidation } =
+        await import('./bootstrap')
+      const { CredentialIdentityError } = await import('./selection')
+      const location = paths(encrypted)
+      const settingsPath = join(location.configRoot, 'settings.json')
+      const original = encrypted ? readFileSync(settingsPath) : undefined
+      const nativeCipher = cipher()
+      nativeCipher.getSelectedStorageBackend.mockReturnValue('kwallet6')
+      const recover = vi.fn()
+
+      // Control only external OS replies. Selection, inventory, validation and access are real.
+      // The baseline refuses KDE before it probes either available service or touches the cipher.
+      let failure: unknown
+      try {
+        const identity = selectStartupCredentialIdentity({ platform: 'linux', packaged: true })
+        expect(identity.appName).toBe('Open Science')
+        prepareCredentialValidation(identity, location)(nativeCipher, recover)
+      } catch (error) {
+        failure =
+          error instanceof CredentialIdentityError
+            ? { name: error.name, reason: error.reason }
+            : error
+      }
+      expect(failure, JSON.stringify(failure)).toBeUndefined()
+
+      if (encrypted) {
+        expect(nativeCipher.decryptString).toHaveBeenCalledWith(Buffer.from('v11original'))
+        expect(readFileSync(settingsPath)).toEqual(original)
+      }
+      expect(nativeCipher.encryptString).not.toHaveBeenCalled()
+      expect(recover).not.toHaveBeenCalled()
+    }
+  )
+
+  it('issue 3161: forcing libsecret without the original key preserves existing ciphertext', async () => {
+    vi.stubEnv('XDG_CURRENT_DESKTOP', 'KDE')
+    vi.stubEnv('DESKTOP_SESSION', 'plasma')
+    respond(false)
+    const { selectStartupCredentialIdentity, prepareCredentialValidation } =
+      await import('./bootstrap')
+    const { CredentialIdentityError } = await import('./selection')
+    const location = paths(true)
+    const settingsPath = join(location.configRoot, 'settings.json')
+    const original = readFileSync(settingsPath)
+    const nativeCipher = cipher()
+
+    const identity = selectStartupCredentialIdentity({
+      platform: 'linux',
+      packaged: true,
+      linuxPasswordStore: 'gnome-libsecret'
+    })
+    let failure: unknown
+    try {
+      prepareCredentialValidation(identity, location)(nativeCipher, vi.fn())
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(CredentialIdentityError)
+    expect(failure).toMatchObject({ reason: 'key-missing-for-existing-ciphertext' })
+    expect(nativeCipher.isEncryptionAvailable).not.toHaveBeenCalled()
+    expect(nativeCipher.decryptString).not.toHaveBeenCalled()
+    expect(nativeCipher.encryptString).not.toHaveBeenCalled()
+    expect(readFileSync(settingsPath)).toEqual(original)
+  })
+
   it.each([true, false])(
     'preserves the main technical identity (packaged=%s) without macOS name probing',
     async (packaged) => {
@@ -219,7 +440,7 @@ describe('Linux OS credentials through production bootstrap and access', () => {
     expect(recover).toHaveBeenCalledOnce()
   })
 
-  it.each(['kwallet', 'kwallet5', 'kwallet6', 'basic', 'unknown-store'])(
+  it.each(['basic', 'unknown-store'])(
     'does not substitute Secret Service for explicitly selected %s',
     async (linuxPasswordStore) => {
       const { selectStartupCredentialIdentity } = await import('./bootstrap')
@@ -231,7 +452,7 @@ describe('Linux OS credentials through production bootstrap and access', () => {
   )
 
   it('allows an explicit supported backend without changing desktop selection', async () => {
-    vi.stubEnv('XDG_CURRENT_DESKTOP', 'KDE')
+    vi.stubEnv('XDG_CURRENT_DESKTOP', 'LXQt')
     const { selectStartupCredentialIdentity } = await import('./bootstrap')
     expect(() => selectStartupCredentialIdentity({ platform: 'linux', packaged: true })).toThrow(
       /recovery/i
@@ -267,7 +488,7 @@ describe('Linux OS credentials through production bootstrap and access', () => {
   )
 
   it.each([
-    ['Cinnamon:KDE', '', undefined, false],
+    ['Cinnamon:KDE', '', undefined, true],
     [' GNOME : KDE ', '', undefined, true],
     ['', 'gnome', 'true', true],
     ['', 'deepin', undefined, true],
@@ -284,7 +505,10 @@ describe('Linux OS credentials through production bootstrap and access', () => {
       const { selectStartupCredentialIdentity } = await import('./bootstrap')
       const select = (): CredentialIdentity =>
         selectStartupCredentialIdentity({ platform: 'linux', packaged: true })
-      if (supported) expect(select().backend).toBe('linux-secret-service')
+      if (supported)
+        expect(select().backend).toBe(
+          desktop === 'Cinnamon:KDE' ? 'linux-kwallet' : 'linux-secret-service'
+        )
       else {
         expect(select).toThrow(/recovery/i)
         expect(native.run).not.toHaveBeenCalled()

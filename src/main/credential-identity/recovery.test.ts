@@ -7,7 +7,8 @@ it.each(['linux-backend-unsupported:KWallet', 'linux-secret-service-metadata-una
   (reason) => {
     const english = credentialRecoveryMessage(new CredentialIdentityError(reason), ['en'])
     expect(english).toContain('/usr/bin/busctl')
-    expect(english).toContain('without changing the backend or profile')
+    expect(english).toContain('KWallet')
+    expect(english).toContain('Do not change the password-store backend or profile')
     const chinese = credentialRecoveryMessage(new CredentialIdentityError(reason), ['zh-CN'])
     expect(chinese).toContain('原有的默认密钥环')
     expect(chinese).toContain(reason)
