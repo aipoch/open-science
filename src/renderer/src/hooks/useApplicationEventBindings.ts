@@ -68,6 +68,7 @@ type ApplicationEventProjection = Readonly<{
   globalSearch: Readonly<{
     open: () => void
     setOpen: (open: boolean) => void
+    openRecovery: () => void
   }>
   closeConfirmation: Readonly<{
     setOpen: (open: boolean) => void
@@ -224,6 +225,10 @@ const useApplicationEventBindings = ({
     if (presentation.allowsShortcut('globalSearch')) setIsGlobalSearchOpen(true)
   }, [presentation])
   const setGlobalSearchOpen = useCallback((open: boolean): void => setIsGlobalSearchOpen(open), [])
+  const openSearchRecovery = useCallback((): void => {
+    setIsGlobalSearchOpen(false)
+    openSettingsToPanel('archived')
+  }, [openSettingsToPanel])
   const setCloseConfirmationOpen = useCallback(
     (open: boolean): void => setIsCloseConfirmOpen(open),
     []
@@ -499,7 +504,11 @@ const useApplicationEventBindings = ({
     },
     allowsArchiveUndoShortcut,
     navigation: { view },
-    globalSearch: { open: openGlobalSearch, setOpen: setGlobalSearchOpen },
+    globalSearch: {
+      open: openGlobalSearch,
+      setOpen: setGlobalSearchOpen,
+      openRecovery: openSearchRecovery
+    },
     closeConfirmation: { setOpen: setCloseConfirmationOpen },
     settings: {
       close: closeSettings,

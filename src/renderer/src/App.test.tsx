@@ -464,6 +464,10 @@ vi.mock('@/pages/workspace/use-side-chat-controller', () => ({
 }))
 
 import { useStorageInfoStore } from '@/stores/storage-info-store'
+import {
+  useApplicationEventBindings,
+  type ApplicationEventProjection
+} from '@/hooks/useApplicationEventBindings'
 import App from './App'
 
 describe('App startup routing', () => {
@@ -792,6 +796,32 @@ describe('App startup routing', () => {
     await act(async () => mocks.globalSearch.props?.onOpenRecovery?.())
     expect(mocks.settings.openSettingsToPanel).toHaveBeenCalledWith('archived')
     expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
+  })
+
+  it('projects search recovery as an owner command that transfers presentation to Settings', async () => {
+    let events!: ApplicationEventProjection
+    const BindingsHarness = (): null => {
+      events = useApplicationEventBindings({
+        startupView: 'app',
+        sessionPersistence: mocks.sessionPersistence,
+        hasDataRootRecovery: false,
+        hasLegacyDataMove: false,
+        closeActiveSettingsPane: vi.fn(),
+        requestSettingsLeave: mocks.requestSettingsLeave
+      })
+      return null
+    }
+    mocks.settings.openSettingsToPanel.mockImplementationOnce(() => {
+      mocks.settings.isSettingsOpen = true
+    })
+    root = createRoot(container)
+    await act(async () => root.render(<BindingsHarness />))
+    await act(async () => events.globalSearch.open())
+    expect(events.presentation.active).toBe('globalSearch')
+    await act(async () => events.globalSearch.openRecovery())
+    expect(mocks.settings.openSettingsToPanel).toHaveBeenCalledExactlyOnceWith('archived')
+    expect(events.presentation.active).toBe('settings')
+    expect(mocks.requestSettingsLeave).not.toHaveBeenCalled()
   })
 
   it('does not offer catalog recovery for temporary search unavailability', async () => {

@@ -22,7 +22,6 @@ import { StorageCleanupToast } from '@/components/StorageCleanupToast'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { useApplicationEventBindings } from '@/hooks/useApplicationEventBindings'
 import { useApplicationStartup } from '@/hooks/useApplicationStartup'
-import { useSettingsStore } from '@/stores/settings-store'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRecoveryBridge'
 import { HomePage } from '@/pages/home/HomePage'
@@ -104,7 +103,6 @@ const ApplicationPresentationContent = ({
   startup: ReturnType<typeof useApplicationStartup>
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const settingsPageRef = useRef<SettingsPageHandle>(null)
   const closeActiveSettingsPane = useCallback(() => settingsPageRef.current?.closeActivePane(), [])
   const requestSettingsLeave = useCallback((leave: () => void) => {
@@ -426,10 +424,7 @@ const ApplicationPresentationContent = ({
             isSessionPersistenceReady={sessions.isReady}
             onOpenRecovery={
               sessions.catalogRecovery.kind !== 'ready'
-                ? () => {
-                    events.globalSearch.setOpen(false)
-                    openSettingsToPanel('archived')
-                  }
+                ? events.globalSearch.openRecovery
                 : undefined
             }
           />
