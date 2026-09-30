@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync
@@ -24,6 +25,142 @@ const appBuilderLibPath = builderRequire.resolve('app-builder-lib/package.json')
 const appBuilderLibRoot = dirname(appBuilderLibPath)
 const appBuilderRequire = createRequire(appBuilderLibPath)
 const { createPackageWithOptions, listPackage } = appBuilderRequire('@electron/asar')
+
+// Use an existing electron-builder NSIS cache; tests must not download a compiler.
+function findNsisCompiler(): string | undefined {
+  if (process.platform !== 'win32') return undefined
+  if (process.env.NSIS_TEST_COMPILER) return process.env.NSIS_TEST_COMPILER
+  const cache =
+    process.env.ELECTRON_BUILDER_CACHE ??
+    join(process.env.LOCALAPPDATA ?? '', 'electron-builder', 'Cache')
+  if (!existsSync(cache)) return undefined
+  for (const entry of readdirSync(cache, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith('nsis')) continue
+    const directory = join(cache, entry.name)
+    const direct = join(directory, 'makensis.exe')
+    if (existsSync(direct)) return direct
+    for (const child of readdirSync(directory, { withFileTypes: true })) {
+      const compiler = join(directory, child.name, 'makensis.exe')
+      if (child.isDirectory() && existsSync(compiler)) return compiler
+    }
+  }
+  return undefined
+}
+
+const nsisCompiler = findNsisCompiler()
+
+describe.skipIf(!nsisCompiler).each(['OpenScience', 'Open-Science'])(
+  'NSIS data preservation native behavior (%s)',
+  (folder) => {
+    it.each([
+      'missing-parent',
+      'missing-install',
+      'existing-data',
+      'interrupted-backup',
+      'backup-conflict',
+      'backup-file',
+      'invalid-parent'
+    ])('protects data during reinstall with %s', (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'nsis-preservation-'))
+      const parent = join(
+        root,
+        scenario === 'invalid-parent' ? 'invalid?parent' : 'Open Science 科学'
+      )
+      try {
+        const install = join(parent, 'open-science')
+        const data = join(install, folder)
+        const slot = folder === 'OpenScience' ? 'per-user' : 'per-user-branded'
+        const backup = join(parent, `.open-science-update-data-${slot}`)
+        const conflict = scenario === 'backup-conflict' || scenario === 'backup-file'
+        if (scenario !== 'missing-parent' && scenario !== 'invalid-parent') mkdirSync(parent)
+        if (scenario === 'existing-data' || conflict) {
+          mkdirSync(data, { recursive: true })
+          writeFileSync(join(data, 'sentinel.txt'), 'existing user data')
+        }
+        if (scenario === 'interrupted-backup' || scenario === 'backup-conflict') {
+          mkdirSync(backup)
+          writeFileSync(join(backup, 'sentinel.txt'), 'preserved user data')
+        }
+        if (scenario === 'backup-file') writeFileSync(backup, 'unrelated file')
+        const include = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8')
+        const macro = include.match(
+          /!macro preserveNamedDataRoot DIR BACKUP SLOT FOLDER[\s\S]*?!macroend/
+        )?.[0]
+        expect(macro).toBeDefined()
+        const restore = include.match(
+          /!macro restoreNamedDataRoot DIR BACKUP FOLDER[\s\S]*?!macroend/
+        )?.[0]
+        expect(restore).toBeDefined()
+        // Execute the production macro with real NSIS filesystem operations. Redirect only
+        // UI output to a file so an error dialog cannot block unattended regression runs.
+        const observed = `${macro}\n${restore}`
+          .replace(/^\s*DetailPrint (.+)$/gm, 'FileWriteUTF16LE $9 $1')
+          .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+)$/gm, 'FileWriteUTF16LE $9 $1')
+        const output = join(root, 'result.txt')
+        const executable = join(root, 'probe.exe')
+        const source = join(root, 'probe.nsi')
+        writeFileSync(
+          source,
+          `\uFEFFUnicode true
+!include "LogicLib.nsh"
+Name "Isolated data preservation regression"
+OutFile "${executable}"
+RequestExecutionLevel user
+SilentInstall silent
+Var backup
+Var dataProtectionFailed
+Var dataRestoreFailed
+${observed}
+Section
+FileOpen $9 "${output}" w
+StrCpy $dataProtectionFailed "0"
+StrCpy $dataRestoreFailed "0"
+!insertmacro preserveNamedDataRoot "${install}" $backup ${slot} ${folder}
+FileWriteUTF16LE $9 "|failed=$dataProtectionFailed|backup=$backup"
+!insertmacro restoreNamedDataRoot "${install}" $backup ${folder}
+FileWriteUTF16LE $9 "|restoreFailed=$dataRestoreFailed"
+FileClose $9
+SetErrorLevel 0
+SectionEnd
+`
+        )
+        const compile = spawnSync(nsisCompiler!, ['/V2', source], {
+          encoding: 'utf8',
+          timeout: 15_000
+        })
+        expect(compile.error).toBeUndefined()
+        expect(compile.status, compile.stderr || compile.stdout).toBe(0)
+        const run = spawnSync(executable, [], { encoding: 'utf8', timeout: 15_000 })
+        expect(run.error).toBeUndefined()
+        expect(run.status, run.stderr).toBe(0)
+        const result = readFileSync(output, 'utf16le')
+        expect(result, result).toContain(
+          `|failed=${conflict || scenario === 'invalid-parent' ? '1' : '0'}`
+        )
+        expect(result, result).toContain('|restoreFailed=0')
+        if (scenario === 'existing-data' || scenario === 'interrupted-backup') {
+          expect(result).toContain(`|backup=${backup}`)
+          expect(readFileSync(join(data, 'sentinel.txt'), 'utf8')).toBe(
+            scenario === 'existing-data' ? 'existing user data' : 'preserved user data'
+          )
+          expect(existsSync(backup)).toBe(false)
+        } else if (scenario === 'invalid-parent') {
+          expect(result).toContain('code=parent-path-unresolved')
+        } else if (conflict) {
+          expect(readFileSync(join(data, 'sentinel.txt'), 'utf8')).toBe('existing user data')
+          expect(
+            readFileSync(scenario === 'backup-file' ? backup : join(backup, 'sentinel.txt'), 'utf8')
+          ).toBe(scenario === 'backup-file' ? 'unrelated file' : 'preserved user data')
+        } else {
+          expect(existsSync(parent)).toBe(scenario !== 'missing-parent')
+          expect(existsSync(data)).toBe(false)
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  }
+)
 
 describe('packaging config', () => {
   it('loads both tiktoken WASM encodings from a packed ASAR in Electron', async () => {
