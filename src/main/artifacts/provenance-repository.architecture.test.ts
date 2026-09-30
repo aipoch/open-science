@@ -613,6 +613,7 @@ describe('Artifact Provenance repository architecture', () => {
       'src/shared/renderer-surface-matrix.test.ts'
     ])
     expect(module.testFiles.consumer).toEqual([
+      'src/main/storage/wsl-npm-migration.integration.test.ts',
       'src/main/composition/notebook-environment.test.ts',
       'src/main/literature/command-owner.test.ts',
       'src/main/composition/reviewer.test.ts',

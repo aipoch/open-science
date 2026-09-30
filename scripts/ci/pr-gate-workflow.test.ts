@@ -1621,6 +1621,12 @@ describe('PR Gate workflow', () => {
         ({ name }) => name === 'Test real Linux filesystem and network isolation'
       )?.run
     ).toContain('filesystem-enforcement.integration.test.ts')
+    expect(
+      workflow.jobs.linux_runtime.steps?.find(
+        ({ name }) => name === 'Test real Linux filesystem and network isolation'
+      )?.run
+    ).toContain('src/main/notebook/shell-cell-session.integration.test.ts')
+    expect(workflow.jobs.linux_runtime.env?.VITEST_PORTABLE_CI).not.toBe('1')
 
     expect(workflow.jobs.windows_core).toMatchObject({
       'runs-on': 'windows-latest',

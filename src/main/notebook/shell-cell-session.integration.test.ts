@@ -38,9 +38,15 @@ describe('persistent platform shell cells', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it.each([false, true])(
+  it.for([false, true])(
     'shares global npm tools without globalizing local installs (sandbox=%s)',
-    async (sandboxed) => {
+    { timeout: 60_000 },
+    async (sandboxed, context) => {
+      // Portable CI does not provision bubblewrap/AppArmor. The Linux isolation job runs this
+      // same case with its native prerequisites; retain ordinary Shell coverage in portable CI.
+      if (sandboxed && process.platform === 'linux' && process.env.VITEST_PORTABLE_CI === '1') {
+        context.skip('Real sandbox execution runs in the Linux Notebook isolation job.')
+      }
       if (sandboxed) {
         vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
         sandbox = new NotebookNetworkSandboxOwner({
@@ -67,7 +73,8 @@ describe('persistent platform shell cells', () => {
         handoffDir: secondWorkspace
       })
       // A session that was already running must see tools installed later by a different session.
-      expect(await adapter.execute(second(command('true', '$null = 1')))).toMatchObject({
+      const started = await adapter.execute(second(command('true', '$null = 1')))
+      expect(started, JSON.stringify(started)).toMatchObject({
         exitCode: 0
       })
       const fixture = join(workspace, 'fixture')
@@ -134,8 +141,7 @@ describe('persistent platform shell cells', () => {
         exitCode: 0,
         stdout: 'shared-tool'
       })
-    },
-    60_000
+    }
   )
 
   it('retains variables, exports, functions and cwd through ordered cells', async () => {

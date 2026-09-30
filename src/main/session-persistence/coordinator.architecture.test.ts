@@ -1267,6 +1267,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/shared/renderer-contract-catalog.test.ts'
     ])
     expect(sessionPersistence.testFiles.consumer).toEqual([
+      'src/main/storage/wsl-npm-migration.integration.test.ts',
       'src/main/composition/notebook-environment.test.ts',
       'src/main/literature/command-owner.test.ts',
       'src/main/composition/reviewer.test.ts',
@@ -1685,7 +1686,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts',
       'src/main/acp/library-auto-policy.test.ts',
       'src/main/notebook/wsl2-scheduling.integration.test.ts',
-      'src/main/literature/journal-attributes.test.ts'
+      'src/main/literature/journal-attributes.test.ts',
+      'src/main/notebook/shell-cell-session.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

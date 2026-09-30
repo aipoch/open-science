@@ -389,6 +389,7 @@ describe('User Skill repository architecture', () => {
           'src/shared/renderer-contract-catalog.test.ts'
         ],
         consumer: [
+          'src/main/storage/wsl-npm-migration.integration.test.ts',
           'src/main/composition/notebook-environment.test.ts',
           'src/main/literature/command-owner.test.ts',
           'src/main/composition/reviewer.test.ts',
@@ -922,7 +923,8 @@ describe('User Skill repository architecture', () => {
           'src/main/literature/smart-collections.test.ts',
           'src/main/acp/library-auto-policy.test.ts',
           'src/main/notebook/wsl2-scheduling.integration.test.ts',
-          'src/main/literature/journal-attributes.test.ts'
+          'src/main/literature/journal-attributes.test.ts',
+          'src/main/notebook/shell-cell-session.integration.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

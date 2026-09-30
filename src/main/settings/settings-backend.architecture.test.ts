@@ -1104,6 +1104,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/literature/smart-collections.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
+      'src/main/storage/wsl-npm-migration.integration.test.ts',
       'src/main/composition/notebook-environment.test.ts',
       'src/main/literature/command-owner.test.ts',
       'src/main/composition/reviewer.test.ts',
