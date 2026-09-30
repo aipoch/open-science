@@ -270,6 +270,43 @@ describe('worker result boundary', () => {
     })
     await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow('caption page')
   })
+  it('normalizes a continued caption across different page sizes and preserves it through cache', async () => {
+    const value = raw() as ReturnType<typeof JSON.parse>
+    value.pageCount = 2
+    value.auxiliaryPages = [2]
+    value.pages.push({ page: 2, width: 300, height: 400, rotation: 0 })
+    value.figures[0].caption.regions = [
+      { page: 1, rect: [60, 400, 300, 480] },
+      { page: 2, rect: [30, 40, 270, 80] }
+    ]
+    await save(value)
+    const images = new Map<string, Uint8Array>()
+    const result = await readWorkerResult(root, identity, images)
+    expect(result.elements[0].caption?.regions).toEqual(
+      [
+        { page: 1, x: 0.1, y: 0.5, width: 0.4, height: 0.1 },
+        { page: 2, x: 0.1, y: 0.1, width: 0.8, height: 0.1 }
+      ].map((r) => ({ ...r, height: expect.closeTo(r.height) }))
+    )
+    const cache = new PdfStructureCache({ dataRoot: () => join(root, 'cache') })
+    await mkdir(join(root, 'cache'))
+    await cache.publish(result, images, new AbortController().signal)
+    await expect(cache.read(identity)).resolves.toEqual(result)
+  })
+  it.each(['missing-page', 'empty-region', 'empty-fragments', 'too-many-fragments'])(
+    'rejects invalid continued-caption evidence: %s',
+    async (mode) => {
+      const value = raw() as ReturnType<typeof JSON.parse>
+      const part = { page: 1, rect: [60, 400, 300, 480] }
+      value.figures[0].caption.regions = [part]
+      if (mode === 'missing-page') part.page = 2
+      if (mode === 'empty-region') part.rect[2] = part.rect[0]
+      if (mode === 'empty-fragments') value.figures[0].caption.regions = []
+      if (mode === 'too-many-fragments') value.figures[0].caption.regions = [part, part, part]
+      await save(value)
+      await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
+    }
+  )
   it('publishes and reopens high-resolution crops without changing image bytes or source regions', async () => {
     const image = await sharp({
       create: { width: 2400, height: 1800, channels: 3, background: '#fff' }

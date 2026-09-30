@@ -124,6 +124,12 @@ const PYTHON_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = ne
       ] as const
   ),
   ['dump', { kind: 'write', position: 1, keywords: ['file', 'filename', 'fp'] }],
+  // Atomic publication moves a temporary file into its final destination. The
+  // source path is intentionally not recorded as a read because mkstemp or a
+  // tempfile helper commonly makes it dynamic; the destination is the durable
+  // notebook output that downstream cells consume.
+  ['os.replace', { kind: 'write', position: 1, keywords: ['dst'] }],
+  ['shutil.move', { kind: 'write', position: 1, keywords: ['dst'] }],
   ['dcmwrite', { kind: 'write', position: 0, keywords: ['filename'] }],
   ['imwrite', { kind: 'write', position: 0, keywords: ['filename'] }],
   ['imsave', { kind: 'write', position: 0, keywords: ['fname'] }],
@@ -182,7 +188,6 @@ const PYTHON_UNSUPPORTED_EXTERNAL_STATE_NAMESPACES = [
   's3fs',
   'secrets',
   'socket',
-  'sqlite3',
   'sqlalchemy',
   'subprocess',
   'tempfile',

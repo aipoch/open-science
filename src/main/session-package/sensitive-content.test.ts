@@ -403,3 +403,42 @@ process.stdout.write(JSON.stringify(inputs.map(value => Boolean(module.exports.f
     execFileSync(process.execPath, [], { input: probe, encoding: 'utf8', timeout: 5000 }).trim()
   ).toBe('[false,false,true]')
 }, 15000)
+
+it.each([
+  'https://user:password@host/...',
+  'http://user:password@host/...',
+  '`https://user:password@host/...`',
+  String.raw`https:\/\/user:password@host/...`,
+  'https://%75ser:pass%77ord@host/%2E%2E%2E'
+])('accepts only the canonical explanatory URL across split reads: %s', (text) => {
+  expect(findSensitivePackageText(text)).toBeUndefined()
+  for (let split = 1; split < text.length; split++) {
+    const scanner = new PackageTextScanner()
+    scanner.write(text.slice(0, split))
+    scanner.write(text.slice(split))
+    expect(scanner.finish(), `split ${split}`).toBeUndefined()
+  }
+})
+
+it.each([
+  'https://user:password@host/...extra',
+  'https://user:password@host/real',
+  'https://user:password@real.example/...',
+  'https://user:actual-secret@host/...',
+  'https://actual-user:password@host/...',
+  'https://user:password@host:8443/...',
+  'https://user:password@host/... ?token=actual-secret',
+  'https://user:password@host/...?token=actual-secret',
+  'https://user:password@host/...#token=actual-secret',
+  'https://user:password@host/... Authorization: Bearer actual-secret',
+  'https://user:password@host/',
+  'https://user:password@h'
+])('still detects credentials alongside or instead of the example: %s', (text) => {
+  expect(findSensitivePackageText(text)).toBeDefined()
+  for (let split = 1; split < text.length; split++) {
+    const scanner = new PackageTextScanner()
+    scanner.write(text.slice(0, split))
+    scanner.write(text.slice(split))
+    expect(scanner.finish(), `split ${split}`).toBeDefined()
+  }
+})

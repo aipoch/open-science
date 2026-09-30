@@ -261,7 +261,10 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       await service.dispose().catch(() => undefined)
       await owner.dispose().catch(() => undefined)
       vi.unstubAllEnvs()
-      if (cleanupVerified || shutdown.reaped) await rm(root, { recursive: true, force: true })
+      // Termination is verified before removal; Windows may still hold a transient directory lock.
+      if (cleanupVerified || shutdown.reaped) {
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      }
     }
   }, 60_000)
 

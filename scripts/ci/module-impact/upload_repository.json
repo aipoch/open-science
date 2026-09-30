@@ -487,7 +487,12 @@
       "src/main/literature/journal-attributes.test.ts",
       "src/main/research-submissions/service.test.ts",
       "src/main/research-drafts/attachment-cleanup.test.ts",
-      "src/main/notebook/shell-cell-session.integration.test.ts"
+      "src/main/notebook/shell-cell-session.integration.test.ts",
+      "src/main/notebook/scientific-replay.test.ts",
+      "src/main/notebook/real-notebook-lineage.integration.test.ts",
+      "src/main/notebook/real-parquet-lineage.integration.test.ts",
+      "src/main/notebook/r-connection-guard.test.ts",
+      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

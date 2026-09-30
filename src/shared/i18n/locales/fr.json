@@ -46,7 +46,7 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "Attendez la fin de toutes les activités de la session et des approbations en attente avant de dupliquer."
   },
   "native": {
-    "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Les identifiants système Linux nécessitent un backend Secret Service disponible et /usr/bin/busctl. Déverrouillez le trousseau par défaut d’origine, puis redémarrez. Si le backend n’est pas pris en charge, utilisez une version compatible de l’application sans changer de backend ni de profil.",
+    "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Les identifiants système Linux nécessitent le backend Secret Service ou KWallet sélectionné à l’origine et /usr/bin/busctl. Déverrouillez le trousseau ou le portefeuille par défaut d’origine et redémarrez. Ne changez pas le backend password-store ni le profil pour contourner cette vérification.",
     "Credential storage needs recovery": "Le stockage des identifiants doit être restauré",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Ce système de stockage des identifiants ne prend pas en charge la vérification silencieuse de leur identité. Le démarrage a été interrompu pour préserver les données chiffrées existantes.",
     "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science n’a pas pu accéder en toute sécurité aux données chiffrées existantes. Déverrouillez le stockage des identifiants du système ou restaurez la clé et le profil d’origine, puis redémarrez. Les identifiants existants n’ont pas été remplacés.",
@@ -135,6 +135,9 @@
     "More items": "Plus de sessions"
   },
   "renderer": {
+    "Export anyway": "Exporter quand même",
+    "I understand the risk and want to export anyway": "Je comprends le risque et souhaite exporter quand même",
+    "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "Ce paquet peut contenir des identifiants ou des informations privées. Exporter quand même inclut le contenu signalé sans le masquer. Vérifiez le paquet avant de le partager.",
     "Enter a valid number. This condition keeps its last applied setting.": "Saisissez un nombre valide. Cette condition conserve le dernier réglage appliqué.",
     "Enter a valid number. This condition has not been applied.": "Saisissez un nombre valide. Cette condition n’a pas encore été appliquée.",
     "Retrieve an Alliance gene summary and genomic location.": "Obtenir un résumé et la localisation génomique d’un gène Alliance.",
@@ -6806,7 +6809,12 @@
     "Export journal bundle": "Exporter le paquet de revues",
     "Sort ascending": "Trier par ordre croissant",
     "Match status": "État de correspondance",
-    "Original column and Example value come from your file. Import as controls matching or storing. Saved name and Value type apply to journal attributes. Skipped columns are not saved.": "La colonne d’origine et la valeur d’exemple proviennent de votre fichier. Importer comme définit la correspondance ou l’enregistrement. Le nom enregistré et le type de valeur s’appliquent aux attributs de revue. Les colonnes ignorées ne sont pas enregistrées.",
+    "Identify journals": "Identifier les revues",
+    "Used for matching, not as attribute columns.": "Pour la correspondance, pas comme colonnes d’attributs.",
+    "Save as attribute columns": "Enregistrer comme attributs",
+    "Show and filter these columns in the literature table.": "Afficher et filtrer ces colonnes dans la liste bibliographique.",
+    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "Les colonnes d’identification servent à faire correspondre les revues. Choisissez Attribut de revue pour les valeurs à afficher et à filtrer dans la liste bibliographique.",
+    "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "Le nom enregistré et le type de valeur s’appliquent uniquement aux attributs de revue. Les colonnes ignorées ne sont pas enregistrées.",
     "Journal attribute": "Attribut de revue",
     "External journal ID": "Identifiant externe du journal",
     "Matched by external journal ID": "Associé par identifiant externe du journal",

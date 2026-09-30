@@ -4,9 +4,68 @@ import { resolve } from 'node:path'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { readPdfFixture } from './read-fixture'
 
-const { readingRotation, isUprightText, originalRect, rotatedTextRect } = await import(
-  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-orientation.mjs')).href
-)
+const { readingRotation, isUprightText, originalRect, rotatedTextRect, restoreCaptionCoordinates } =
+  await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-orientation.mjs')).href
+  )
+
+it.each([
+  [0, 0],
+  [90, 270],
+  [270, 90],
+  [180, 0],
+  [0, 180]
+])('restores each continued caption part with its own page rotation (%s, %s)', (first, second) => {
+  const rotations = [first, second],
+    pages = rotations.map((rotation, n) => ({
+      pageNumber: n + 1,
+      width: 600,
+      height: 800,
+      rotation: n ? 90 : 270,
+      renderRotation: ((n ? 90 : 270) + rotation) % 360
+    }))
+  const rects = [
+      [110, 680, 470, 710],
+      [90, 45, 460, 75]
+    ],
+    expected = (rotation: number, [x0, y0, x1, y1]: number[]): number[] =>
+      rotation === 90
+        ? [y0, 600 - x1, y1, 600 - x0]
+        : rotation === 270
+          ? [800 - y1, x0, 800 - y0, x1]
+          : rotation === 180
+            ? [600 - x1, 800 - y1, 600 - x0, 800 - y0]
+            : [x0, y0, x1, y1]
+  const parts = rects.map((rect, n) => ({ page: n + 1, rect })),
+    caption = { page: 1, rect: rects[0], regions: parts },
+    otherOwner = structuredClone(caption)
+  otherOwner.regions = parts
+  restoreCaptionCoordinates(caption, pages)
+  restoreCaptionCoordinates(otherOwner, pages)
+  expect(caption.rect).toEqual(expected(first, rects[0]))
+  expect(caption.regions.map((r: { rect: number[] }) => r.rect)).toEqual(
+    rects.map((r, n) => expected(rotations[n], r))
+  )
+  expect(otherOwner.regions).toEqual(caption.regions)
+  expect(parts).toEqual(rects.map((rect, n) => ({ page: n + 1, rect })))
+})
+
+it('preserves single-page captions and unavailable page geometry without inventing a source', () => {
+  const caption = { page: 1, rect: [10, 20, 100, 40] },
+    pages = [{ pageNumber: 1, width: 600, height: 800, rotation: 0, renderRotation: 90 }]
+  restoreCaptionCoordinates(undefined, pages)
+  restoreCaptionCoordinates(caption, pages)
+  expect(caption.rect).toEqual([20, 500, 40, 590])
+  expect(caption).not.toHaveProperty('regions')
+  const unknown = {
+      page: 2,
+      rect: [10, 20, 100, 40],
+      regions: [{ page: 3, rect: [50, 60, 70, 80] }]
+    },
+    before = structuredClone(unknown)
+  restoreCaptionCoordinates(unknown, pages)
+  expect(unknown).toEqual(before)
+})
 const { refineTable } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
 )

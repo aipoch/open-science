@@ -6,6 +6,19 @@ import type { NotebookRunRecord } from '../../shared/notebook'
 import type { NotebookDependencyProjection } from './dependency-analysis-types'
 import { NotebookDependencyAnalyzer } from './dependency-analysis'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzePythonNotebookSource } from './dependency-analysis-python'
+
+it.each([
+  ['counts[label(row)] += increment', ['counts', 'label', 'row', 'increment']],
+  ['counts[start:stop:step] += increment', ['counts', 'start', 'stop', 'step', 'increment']],
+  ['groups[label(row)].count += increment', ['groups', 'label', 'row', 'increment']]
+] as const)(
+  'retains dependencies evaluated inside an augmented target: %s',
+  async (code, names) => {
+    const { facts } = await analyzePythonNotebookSource(code)
+    expect(facts.priorUsedNames).toEqual(expect.arrayContaining([...names]))
+  }
+)
 
 const project = async (
   language: 'python' | 'r',

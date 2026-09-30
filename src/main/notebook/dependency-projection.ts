@@ -394,12 +394,16 @@ class NotebookDependencyProjector {
     )
     const unresolvedConstructor = (facts.typeBindings ?? []).some(
       (binding) =>
-        !typeSummaries.has(binding.typeName) && !resolvedCallableResultNames.has(binding.target)
+        binding.typeName !== 'python.object' &&
+        !typeSummaries.has(binding.typeName) &&
+        !resolvedCallableResultNames.has(binding.target)
     )
     const unresolvedConstructorArguments = (facts.typeBindings ?? [])
       .filter(
         (binding) =>
-          !typeSummaries.has(binding.typeName) && !resolvedCallableResultNames.has(binding.target)
+          binding.typeName !== 'python.object' &&
+          !typeSummaries.has(binding.typeName) &&
+          !resolvedCallableResultNames.has(binding.target)
       )
       .flatMap((binding) => binding.argumentNames ?? [])
     const typeAwareMutatedNames: string[] = []

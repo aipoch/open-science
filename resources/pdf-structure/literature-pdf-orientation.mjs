@@ -168,3 +168,25 @@ export const originalRect = ([x0, y0, x1, y1], width, height, rotation) => {
   if (rotation === 270) return [height - y1, x0, height - y0, x1]
   return [x0, y0, x1, y1]
 }
+
+// Caption parts can live on pages with different analysis rotations. Restore
+// each source rectangle independently without mutating shared part objects.
+export const restoreCaptionCoordinates = (caption, pages) => {
+  if (!caption) return
+  const restore = (part) => {
+    const page = pages.find((p) => p.pageNumber === part.page)
+    return page
+      ? {
+          ...part,
+          rect: originalRect(
+            part.rect,
+            page.width,
+            page.height,
+            (page.renderRotation - page.rotation + 360) % 360
+          )
+        }
+      : part
+  }
+  caption.rect = restore(caption).rect
+  if (caption.regions) caption.regions = caption.regions.map(restore)
+}

@@ -1,6 +1,36 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { inside } from './literature-pdf-table-geometry.mjs'
 
+// Risk strips belong to their survival plot. A detector can cross the plot
+// boundary into prose, so test the assigned numeric cells rather than padding.
+export function isFigureRiskTable(table, figures, page, scale = 1.5) {
+  const numeric = table.cells.filter((c) => /\d/.test(c.text) && !/\p{L}/u.test(c.text))
+  if (numeric.length < 6 || new Set(numeric.map((c) => c.row)).size < 2) return false
+  const contains = (outer, inner) =>
+    inner.every((v, n) => (n < 2 ? v >= outer[n] - 2 : v <= outer[n] + 2))
+  return figures.some(
+    (f) =>
+      f.rect &&
+      /Kaplan[–-]Meier|cumulative (?:risk|incidence)|survival/i.test(f.caption.lines.join(' ')) &&
+      page.lines.some(
+        (l) =>
+          /^(?:Number|No\.?) (?:at risk|of (?:patients|participants) at risk)/i.test(
+            l.text.trim()
+          ) && contains(f.rect, [l.x, l.y, l.x + l.width, l.y + l.height])
+      ) &&
+      numeric.every(
+        (c) =>
+          c.sourceRects?.length &&
+          c.sourceRects.every((r) =>
+            contains(
+              f.rect,
+              r.map((v) => v / scale)
+            )
+          )
+      )
+  )
+}
+
 // Detection confidence alone also accepts affiliations and prose. Like the upstream
 // content-supported row/column refinement, require evidence from source text.
 // ponytail: uncaptioned single-column or single-row tables remain ambiguous with lists;
@@ -33,6 +63,29 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   )
     return true
   const sourceText = pageItems.map((item) => item.text).join(' ')
+  // Preserve an explicitly labelled, completely assigned native glossary.
+  // A distant mention of abbreviations is not enough to admit an arbitrary list.
+  if (
+    table.cropRect &&
+    table.grid.length >= 4 &&
+    !table.unassigned?.length &&
+    table.grid.every(
+      (row) =>
+        row.length === 2 &&
+        /^[A-Z][A-Za-z\d/&–-]{0,15}$/.test(row[0].trim()) &&
+        /\p{L}/u.test(row[1])
+    ) &&
+    pageItems.some(
+      (i) =>
+        i.horizontal &&
+        /^(?:List of )?Abbreviations\s*:?$/i.test(i.text.trim()) &&
+        i.rect[3] <= table.cropRect[1] + i.height * 0.2 &&
+        table.cropRect[1] - i.rect[3] < i.height * 2 &&
+        i.rect[0] >= table.cropRect[0] - i.height &&
+        i.rect[0] < table.cropRect[2]
+    )
+  )
+    return true
   const cropText = [...table.grid.flat(), ...(table.unassigned ?? [])].join(' ')
   const compactText = cropText.replace(/\s/g, '')
   const words = (text) => (text.trim() ? text.trim().split(/\s+/).length : 0)
@@ -45,6 +98,92 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     return false
   const measurement = (text) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(text.trim())
   const hasMeasurement = table.grid.some((row) => row.some(measurement))
+  // Article metadata can form a false stub beside the abstract. Receipt and
+  // acceptance dates plus a DOI identify that publication block independently.
+  if (
+    !hasMeasurement &&
+    table.grid.every((row) => row.length <= 2) &&
+    /\bReceived\s+\d/i.test(cropText) &&
+    /\bAccepted\s+\d/i.test(cropText) &&
+    /\bDOI\s*:\s*10\./i.test(cropText)
+  )
+    return false
+  // Abstract headings and clipped paragraph tails do not become a table
+  // merely because the detector aligns the headings into a stub column.
+  if (
+    table.grid.length >= 3 &&
+    table.grid.every((row) => row.length === 2) &&
+    table.grid.filter((row) =>
+      /^(?:Background|Methods?|Results?|Conclusions?|Objectives?)[:.]?$/i.test(row[0].trim())
+    ).length >= 3 &&
+    table.grid.every((row) => !measurement(row[1])) &&
+    (table.clipped?.length >= 3 || table.issues?.includes('text-crosses-crop-boundary'))
+  )
+    return false
+  // Numbered affiliation blocks can have an extra model column containing
+  // only affiliation ordinals. Require institutional prose on both sides.
+  if (
+    table.grid.length >= 2 &&
+    table.grid.every((row) => row.length <= 3 && row.filter(measurement).length <= 1) &&
+    table.grid.filter(
+      (row) =>
+        row.filter((text) =>
+          /\b(?:Department|University|Institute|Hospital|College|Unit)\b/i.test(text)
+        ).length >= 2
+    ).length >= 2 &&
+    table.grid.filter((row) => /^\d+\s+\p{L}/u.test(row[0])).length >= 2
+  )
+    return false
+  // A lone citation plus a page number may be entirely inside its crop.
+  // Publication year/volume/page syntax and an author list are independent
+  // evidence; the page number must not masquerade as a measured data row.
+  if (
+    table.grid.length <= 4 &&
+    table.grid.every((row) => row.length <= 2) &&
+    /^\d+\.\s+\p{Lu}[\p{L} '-]+\s+[A-Z][, .]/u.test(cropText.trim()) &&
+    /\bet al\./i.test(cropText) &&
+    /\b(?:19|20)\d{2};\d+(?::|\()[A-Z]*\d+[–-]\d+/.test(cropText) &&
+    table.grid.filter((row) => row.some(measurement)).length <= 1
+  )
+    return false
+  // Author-year bibliographies may fill the crop without clipping a single
+  // line. Repeated parenthesized years and journal volume/page ranges together
+  // identify the prose columns; measured or captioned tables remain eligible.
+  if (
+    !hasMeasurement &&
+    table.grid.every((row) => row.length <= 2) &&
+    (cropText.match(/\((?:19|20)\d{2}[a-z]?\)/g) ?? []).length >= 3 &&
+    (cropText.match(/\b\d{1,4}\s*,\s*\d+[–-]\d+[.]/g) ?? []).length >= 3
+  )
+    return false
+  // Author blocks repeat personal names followed by affiliations in both page
+  // columns. Neither particular institutions nor country names prove ownership.
+  // Preserve captioned tables above and measured comparisons below.
+  const populatedCells = table.grid.flat().filter((text) => text.trim())
+  const authorAffiliations = populatedCells.filter((text) =>
+    /^(?:(?:\p{Lu}[\p{L}’'-]+|\p{Lu}\.)\s+){2,6}(?:University|College|School|Institute|Hospital|Center)\b/u.test(
+      text.trim()
+    )
+  )
+  if (
+    !hasMeasurement &&
+    table.grid.every((row) => row.length <= 2) &&
+    authorAffiliations.length >= 4 &&
+    authorAffiliations.length >= populatedCells.length * 0.6
+  )
+    return false
+  // Publication sidebars can cross into an abstract. A DOI split across native
+  // lines leaves an apparently numeric last cell, so require publication and
+  // licensing anchors together instead of treating that fragment as a value.
+  if (
+    table.grid.every((row) => row.length <= 2 && row.filter(measurement).length < 2) &&
+    /Acceptedon/i.test(compactText) &&
+    /published(?:at|on|online)/i.test(compactText) &&
+    /\bDOI\b/i.test(cropText) &&
+    /(?:org\/|DOI:)10\./i.test(compactText) &&
+    /(?:CreativeCommons|©)/i.test(compactText)
+  )
+    return false
   // Section outlines contain numbered prose headings, sometimes with a
   // completely empty detector column. Those ordinals are not measurements.
   if (

@@ -588,6 +588,48 @@ saveRDS(sample, "outputs/spatial-object.rds")`
     })
   })
 
+  it('captures the local Scanpy Visium root while retaining companion uncertainty', async () => {
+    const source = `import scanpy as sc
+from pathlib import Path
+import matplotlib.pyplot as plt
+
+sample_dir = Path("inputs") / "visium_sample"
+adata = sc.read_visium(
+    path=sample_dir,
+    load_images=True,
+    source_image_path=Path("inputs") / "visium_sample" / "spatial" / "tissue_hires_image.png",
+)
+sc.pp.normalize_total(adata)
+sc.pp.log1p(adata)
+sc.tl.pca(adata, n_comps=15)
+sc.pl.spatial(adata, color="gene_a", show=False)
+plt.savefig("outputs/visium-qc.png", dpi=150)
+adata.write_h5ad("outputs/visium.h5ad")`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [
+        join('inputs', 'visium_sample'),
+        join('inputs', 'visium_sample', 'spatial', 'tissue_hires_image.png')
+      ].sort(),
+      writes: ['outputs/visium-qc.png', 'outputs/visium.h5ad'],
+      readState: 'partial',
+      writeState: 'complete',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not claim a Visium source image when image loading is disabled', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import scanpy as sc\nsc.read_visium("inputs/visium_sample", load_images=False, source_image_path="inputs/visium_sample/spatial/tissue_hires_image.png")'
+      )
+    ).toMatchObject({
+      reads: ['inputs/visium_sample'],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
   it.each([
     {
       name: 'methylation beta matrix',
@@ -746,7 +788,7 @@ adata.write_h5ad("outputs/visium-spatial.h5ad")`
     reads: [],
     writes: ['outputs/visium-spatial.h5ad'],
     readState: 'partial',
-    writeState: 'complete',
+    writeState: 'partial',
     externalState: 'partial'
   })
 })
@@ -1175,8 +1217,8 @@ Path("outputs/metrics.json").write_text(str({"oof_auc": roc_auc_score(train[targ
       join('outputs', 'metrics.json'),
       'outputs/oof-predictions.csv'
     ].sort(),
-    readState: 'partial',
-    writeState: 'partial'
+    readState: 'complete',
+    writeState: 'complete'
   })
 })
 
@@ -1276,8 +1318,8 @@ pd.DataFrame({"metric": [float(embedding.mean())]}).to_csv(results / "evaluation
       join('results', 'spatial-model.pt'),
       join('results', 'test-embedding.csv')
     ],
-    readState: 'partial',
-    writeState: 'partial'
+    readState: 'complete',
+    writeState: 'complete'
   })
 })
 

@@ -6,6 +6,85 @@ import {
   readSourceRow,
   hasUniqueRecordTokens
 } from './literature-pdf-source-records.mjs'
+import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+
+// A single value heading and repeated complete mean ± deviation expressions
+// contradict a model split through that value. Source records also keep the
+// indented continuation of a long stub with its preceding numeric value.
+export function recoverSingleValueGrid(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const crop = table.cropRect,
+    predicted = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length !== 3) return
+  const borders = joinHorizontalTableRules(rules, 1)
+    .filter(
+      (r) =>
+        Math.abs(r[0] - crop[0]) < 12 &&
+        Math.abs(r[2] - crop[2]) < 12 &&
+        r[1] >= crop[1] &&
+        r[1] <= crop[3]
+    )
+    .filter((r, n, all) => !n || r[1] - all[n - 1][1] > 1.5)
+  if (borders.length !== 3) return
+  const frame = [crop[0], borders[0][1], crop[2], borders[2][1]],
+    source = tableSourceItems(items, frame)
+  const header = source.filter((i) => i.rect[3] < borders[1][1])
+  if (header.length !== 2 || !/^Values?$/i.test(header[1].text)) return
+  const cut = crop[0] + (predicted[0].rect[2] + predicted[1].rect[0]) / 2
+  if (header[0].rect[2] >= cut || header[1].rect[0] <= cut) return
+  const body = source.filter((i) => i.rect[1] > borders[1][1]),
+    groups = []
+  for (const item of [...body].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const group = groups.find((g) => Math.abs(g[0].baseline - item.baseline) < item.height * 0.3)
+    if (group) group.push(item)
+    else groups.push([item])
+  }
+  const records = [],
+    spans = []
+  let deviations = 0
+  for (const group of groups) {
+    const cells = readSourceRow(group, [frame[0], cut, frame[2]])
+    if (!cells || !cells[0]) return
+    const value = cells[1].replace(/\s/g, '')
+    if (
+      value &&
+      !/^\d+(?:\.\d+)?(?:\(\d+(?:\.\d+)?\)|±\d+(?:\.\d+)?(?:\([\d.–-]+\))?)?$/.test(value)
+    )
+      return
+    if (value.includes('±')) deviations++
+    const previous = records.at(-1)
+    if (
+      !value &&
+      /^[a-z]/.test(cells[0]) &&
+      previous &&
+      group[0].rect[1] - union(previous)[3] < group[0].height &&
+      group.every((i) => i.rect[0] > previous[0].rect[0] + i.height * 0.5)
+    )
+      previous.push(...group)
+    else {
+      records.push(group)
+      if (!value) spans.push({ row: records.length, column: 0, rowSpan: 1, colSpan: 2 })
+    }
+  }
+  if (deviations < 3 || !hasUniqueRecordTokens(source, [header, ...records])) return
+  return {
+    cropRect: frame,
+    rows: [header, ...records].map((g) => {
+      const r = union(g)
+      return [frame[0], r[1], frame[2], r[3]]
+    }),
+    columns: [
+      [frame[0], frame[1], cut, frame[3]],
+      [cut, frame[1], frame[2], frame[3]]
+    ],
+    headerRows: [0],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
 
 // Separate standard-deviation columns are established by repeated headings and
 // complete mean/(±SD) records. Every source token must fit a recovered row.

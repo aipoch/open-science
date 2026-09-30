@@ -564,3 +564,91 @@ it('preserves serialized redactions through native export and imported-package f
     initDataRoot(undefined)
   }
 })
+
+it.each(['message', 'file'] as const)(
+  'preserves acknowledged sensitive %s content through native and forwarded export',
+  async (source) => {
+    const fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
+    const sessions = new SessionRepository(fixture.storageRoot)
+    const service = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+    try {
+      await fixture.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+      const secret = 'Authorization: Bearer synthetic-private-value'
+      await sessions.saveSession({
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Private evidence',
+        cwd: '',
+        status: 'idle',
+        createdAt: 1,
+        updatedAt: 2,
+        messages:
+          source === 'message'
+            ? [
+                {
+                  id: 'message-1',
+                  role: 'agent',
+                  content: secret,
+                  status: 'complete',
+                  eventIds: [],
+                  createdAt: 1,
+                  updatedAt: 2
+                }
+              ]
+            : []
+      })
+      if (source === 'file') {
+        const directory = join(fixture.storageRoot, 'notebooks', 'project-1', 'session-1', 'data')
+        await mkdir(directory, { recursive: true })
+        await writeFile(join(directory, 'private.txt'), secret)
+      }
+      const request = { projectId: 'project-1', sessionId: 'session-1' }
+      const before = await sessions.loadSession(request.projectId, request.sessionId)
+      const native = join(fixture.storageRoot, 'native.science')
+      await expect(service.exportTo(request, native)).rejects.toThrow('Sensitive content detected')
+      await service.exportTo(request, native, { allowSensitiveContent: true })
+      const imported = await service.importFrom(native)
+      const forwarded = join(fixture.storageRoot, 'forwarded.science')
+      await expect(service.exportTo(imported, forwarded)).rejects.toThrow(
+        'Sensitive content detected'
+      )
+      await service.exportTo(imported, forwarded, { allowSensitiveContent: true })
+      for (const [index, archive] of [native, forwarded].entries()) {
+        const directory = join(fixture.storageRoot, `expanded-private-${index}`)
+        await mkdir(directory)
+        await extractTar({ file: archive, cwd: directory })
+        if (source === 'message') {
+          const document = JSON.parse(await readFile(join(directory, 'session.json'), 'utf8'))
+          expect(document.session.messages[0].content).toBe(secret)
+        } else {
+          const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'))
+          const entry = manifest.inventory.find((item: { storageKey?: string }) =>
+            item.storageKey?.endsWith('private.txt')
+          )
+          expect(entry).toBeDefined()
+          expect(await readFile(join(directory, entry.path), 'utf8')).toBe(secret)
+        }
+      }
+      await expect(
+        service.exportTo(request, join(fixture.storageRoot, 'next.science'))
+      ).rejects.toThrow('Sensitive content detected')
+      expect(await sessions.loadSession(request.projectId, request.sessionId)).toEqual(before)
+      const controller = new AbortController()
+      controller.abort(new Error('Cancelled acknowledged export'))
+      await expect(
+        service.exportTo(request, native, {
+          allowSensitiveContent: true,
+          signal: controller.signal
+        })
+      ).rejects.toThrow('Cancelled acknowledged export')
+    } finally {
+      await service.close()
+      await fixture.dispose()
+      initDataRoot(undefined)
+    }
+  }
+)

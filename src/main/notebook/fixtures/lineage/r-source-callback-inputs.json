@@ -1,0 +1,19 @@
+{
+  "cells": [
+    {
+      "code": "helper_path <- 'inputs/helper.R'\noutput_path <- 'outputs/summary.csv'\nvalues <- 1:3",
+      "reads": [],
+      "writes": []
+    },
+    {
+      "code": "source(helper_path)",
+      "reads": ["inputs/helper.R"],
+      "writes": []
+    },
+    {
+      "code": "FUN <- get('transform')\ntransformed <- lapply(values, FUN)\nwrite.csv(data.frame(value = transformed), 'outputs/summary.csv', row.names = FALSE)",
+      "reads": [],
+      "writes": ["outputs/summary.csv"]
+    }
+  ]
+}

@@ -18,7 +18,16 @@ const rect = z.tuple([
   z.number().finite()
 ])
 const caption = z
-  .object({ text: z.string(), rect, page: z.number().int().positive().optional() })
+  .object({
+    text: z.string(),
+    rect,
+    page: z.number().int().positive().optional(),
+    regions: z
+      .array(z.object({ page: z.number().int().positive(), rect }))
+      .min(1)
+      .max(2)
+      .optional()
+  })
   .optional()
 const candidate = z.object({
   id: z.string().regex(/^[a-z0-9-]{1,80}$/),
@@ -164,9 +173,17 @@ export const readWorkerResult = async (
       const page = raw.pages.find((p) => p.page === item.page)
       if (!page || item.thumbnail !== `thumbnails/${item.id}.png`)
         throw new Error('PDF worker thumbnail identity mismatch.')
-      const captionPage =
-        item.caption && raw.pages.find((p) => p.page === (item.caption?.page ?? item.page))
-      if (item.caption && !captionPage) throw new Error('PDF worker caption page is missing.')
+      const captionRegions = item.caption
+        ? (
+            item.caption.regions ?? [
+              { page: item.caption.page ?? item.page, rect: item.caption.rect }
+            ]
+          ).map((part) => {
+            const source = raw.pages.find((p) => p.page === part.page)
+            if (!source) throw new Error('PDF worker caption page is missing.')
+            return region(part.page, part.rect, source.width, source.height)
+          })
+        : []
       const path = join(root, 'thumbnails', `${item.id}.png`)
       const stat = await lstat(path)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 ** 2)
@@ -199,14 +216,7 @@ export const readWorkerResult = async (
           ? {
               caption: {
                 text: item.caption.text,
-                regions: [
-                  region(
-                    captionPage!.page,
-                    item.caption.rect,
-                    captionPage!.width,
-                    captionPage!.height
-                  )
-                ]
+                regions: captionRegions
               }
             }
           : {}),

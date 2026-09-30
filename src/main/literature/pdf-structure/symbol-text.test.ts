@@ -73,9 +73,26 @@ it.each([
 })
 
 it.each([
+  ['MathematicalPi-One', 35, '#', '≤', 833],
+  ['MathematicalPi-One', 36, '$', '≥', 833],
+  ['MathematicalPi-One', 49, '1', '+', 833],
+  ['MathematicalPi-One', 50, '2', '−', 833],
+  ['MathematicalPi-One', 53, '5', '=', 833],
+  ['MathematicalPi-One', 54, '6', '±', 833],
+  ['AdvP80675', 49, '1', '+', 833],
+  ['AdvP80675', 50, '2', '−', 833],
+  ['AdvOT9d186844', 53, '5', '=', 833],
+  ['AdvPSMP13', 68, 'D', 'Δ', 666],
   ['AdvTir_symb', 66, 'B', '≤', 750],
   ['AdvTir_symb', 67, 'C', '≥', 750],
   ['AdvOT463cc31e', 53, '5', '=', 822],
+  ['AdvOT463cc31e', 49, '1', '+', 822],
+  ['AdvOT463cc31e', 50, '2', '−', 822],
+  ['AdvOT463cc31e', 51, '3', '×', 822],
+  ['AdvOT463cc31e', 54, '6', '±', 822],
+  ['AdvOT9d186844', 53, '5', '=', 822],
+  ['AdvOT8817665d', 36, '$', '≥', 822],
+  ['AdvPS7DED', 50, '2', '−', 833],
   ['AdvPS586B', 54, '6', '±', 833],
   ['AdvPS586B', 49, '1', '+', 833],
   ['AdvPS586B', 50, '2', '−', 833],
@@ -91,6 +108,10 @@ it.each([
   ['AdvT041', 162, '¢', 'fi', 500],
   ['AdvT041', 163, '£', 'fl', 500],
   ['AdvPSSym', 135, '⁄', '/', 166],
+  ['AdvPSSym', 133, '–', '±', 552],
+  ['AdvPSSym', 163, '£', '≤', 552],
+  ['AdvPSSym', 130, '‡', '≥', 552],
+  ['AdvP586B', 54, '6', '±', 833],
   ['AdvT678', 162, '¢', 'fi', 500],
   ['AdvMT_SY', 188, '¼', '=', 770],
   ['MinionMathSymbols', 136, '�', '=', 583],
@@ -153,6 +174,28 @@ it.each([
           source.replace(String(unicode), String(replacement))
         )
       }
+    }
+  }
+)
+
+it.each(['native', 'wrong-font', 'wrong-width', 'conflicting-name'])(
+  'repairs source statistical glyph encodings with %s evidence',
+  async (variant) => {
+    const cases = readPdfFixture(
+      resolve(
+        'src/main/literature/pdf-structure/fixtures/native-statistical-symbol-encodings.jsonl'
+      )
+    )
+    for (const { font, glyph, expected } of cases) {
+      if (variant === 'wrong-font') font.name = 'Times-Roman'
+      if (variant === 'wrong-width') glyph.width++
+      if (variant === 'conflicting-name') font.differences[glyph.originalCharCode] = 'unknown'
+      const content = { items: [{ str: glyph.unicode, fontName: 'source' }] }
+      const result = await repairPdfSymbolText({ commonObjs: { get: () => font } }, content, {
+        fnArray: [OPS.setFont, OPS.showText],
+        argsArray: [['source', 10], [[glyph]]]
+      })
+      expect(result.items[0].str).toBe(variant === 'native' ? expected : glyph.unicode)
     }
   }
 )
@@ -1719,5 +1762,24 @@ it.each([100, 115])(
       argsArray: [['math', 10], [[{ originalCharCode: code, unicode, width: 334 }]]]
     }
     expect((await repairPdfSymbolText(page, content, operators)).items[0].str).toBe(unicode)
+  }
+)
+it.each([
+  ['AdvP4C4E74', 'C15', 500, '•'],
+  ['AdvP4C4E74', 'C15', 501, '\u000f'],
+  ['AdvP4C4E74', 'C21', 500, '\u000f'],
+  ['Arial', 'C15', 500, '\u000f']
+])(
+  'repairs a verified bullet subset only with matching font, slot and width: %s/%s/%s',
+  async (name, glyphName, width, expected) => {
+    const content = { items: [{ str: '\u000f', fontName: 'symbol' }] }
+    const page = {
+      commonObjs: { get: () => ({ name: 'ABCDEF+' + name, differences: ['', '', '' + glyphName] }) }
+    }
+    const operators = {
+      fnArray: [OPS.setFont, OPS.showText],
+      argsArray: [['symbol', 10], [[{ originalCharCode: 2, unicode: '\u000f', width }]]]
+    }
+    expect((await repairPdfSymbolText(page, content, operators)).items[0].str).toBe(expected)
   }
 )

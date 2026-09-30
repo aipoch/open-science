@@ -1291,6 +1291,8 @@ const checksumFor = (run: NotebookRunRecord): string =>
         run.kernelEpochId,
         run.runtimeId,
         run.replPersistentBindings,
+        run.cwdBefore,
+        run.cwdAfter,
         run.script,
         run.fileEvidence?.checksum,
         run.helperEvidenceStatus,
@@ -1404,7 +1406,14 @@ const projectSourceFileAccessContext = (
         : undefined
     )
   }
-  return projectNotebookFileContext(request.language, entries)
+  const context = projectNotebookFileContext(request.language, entries)
+  const current = runs.find((run) => run.runId === request.currentRunId)
+  return current?.cwdBefore
+    ? {
+        ...(context ?? { staticStrings: [], staticCollections: [], localFileWrappers: [] }),
+        workingDirectory: current.cwdBefore
+      }
+    : context
 }
 
 const externalInterpreterKey = (run: NotebookRunRecord): string =>

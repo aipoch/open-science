@@ -101,6 +101,10 @@ type NotebookPythonHelperModule = {
 
 type NotebookSourceFileAccessContext = {
   // Live analysis only; these fields are deliberately omitted from the sidecar.
+  // The runtime working directory is known from the run envelope. It lets the
+  // source analyzer represent Path.cwd() as the notebook execution root while
+  // keeping the lineage paths relative and portable.
+  workingDirectory?: string
   managedEnvironment?: Readonly<Record<string, string>>
   managedEnvironmentSafe?: boolean
   replContainerNames?: string[]

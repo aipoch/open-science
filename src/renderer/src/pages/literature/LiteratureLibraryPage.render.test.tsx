@@ -6661,7 +6661,7 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('button', { name: 'Manage Tags' }).className).toContain('w-full')
     expect(screen.getByRole('columnheader', { name: 'Attachment' }).className).toContain('right-12')
     expect(screen.getByRole('columnheader', { name: 'Attachment' }).className).toContain(
-      'shadow-card-opaque'
+      'group-data-[overflow-right=true]/journal-scroll:before:opacity-100'
     )
     expect(screen.getByRole('columnheader', { name: 'Attachment' }).className).toContain(
       'bg-bg-200'
@@ -6670,6 +6670,26 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('columnheader', { name: 'Actions' }).className).toContain('bg-bg-200')
     expect(screen.getByRole('columnheader', { name: 'Attachment' }).className).toContain('w-28')
     const tableScroll = document.querySelector<HTMLElement>('[data-slot="literature-table-scroll"]')
+    expect(tableScroll?.className).toContain('group/journal-scroll')
+    for (const cell of [
+      stickyRowCells[0],
+      screen.getByRole('columnheader', { name: 'Attachment' })
+    ]) {
+      expect(cell.className).toContain('before:pointer-events-none')
+      expect(cell.className).toContain('before:right-full')
+      expect(cell.className).toContain('before:from-foreground/5')
+      expect(cell.className).not.toContain('shadow-card-opaque')
+      expect(cell.className).not.toContain('overflow-hidden')
+    }
+    Object.defineProperties(tableScroll!, {
+      clientWidth: { value: 600, configurable: true },
+      scrollWidth: { value: 1000, configurable: true }
+    })
+    fireEvent.scroll(tableScroll!)
+    expect(tableScroll?.dataset.overflowRight).toBe('true')
+    tableScroll!.scrollLeft = 400
+    fireEvent.scroll(tableScroll!)
+    expect(tableScroll?.dataset.overflowRight).toBe('false')
     expect(tableScroll?.className).toContain('pb-3')
     expect(tableScroll?.className).toContain('h-full')
     expect(tableScroll?.className).not.toContain('100vh')

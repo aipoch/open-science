@@ -46,7 +46,7 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "Дождитесь завершения всех действий сессии и ожидающих подтверждений перед созданием ответвления."
   },
   "native": {
-    "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Для системных учётных данных Linux необходимы доступный бэкенд Secret Service и /usr/bin/busctl. Разблокируйте исходную связку ключей по умолчанию и перезапустите приложение. Если бэкенд не поддерживается, используйте совместимую версию приложения, не меняя бэкенд или профиль.",
+    "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Для системных учётных данных Linux необходимы исходно выбранный бэкенд Secret Service или KWallet и /usr/bin/busctl. Разблокируйте исходную связку ключей или кошелёк по умолчанию и перезапустите приложение. Не меняйте бэкенд password-store или профиль для обхода этой проверки.",
     "Credential storage needs recovery": "Необходимо восстановить хранилище учётных данных",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Этот механизм хранения системных учётных данных не поддерживает проверку идентификатора без взаимодействия с пользователем. Запуск остановлен для сохранения существующих зашифрованных данных.",
     "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science не удалось безопасно получить доступ к существующим зашифрованным данным. Разблокируйте системное хранилище учётных данных или восстановите исходный ключ и профиль, затем перезапустите приложение. Существующие учётные данные не были заменены.",
@@ -136,6 +136,9 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Export anyway": "Всё равно экспортировать",
+    "I understand the risk and want to export anyway": "Я понимаю риск и хочу продолжить экспорт",
+    "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "Этот пакет может содержать учётные данные или личную информацию. При продолжении экспорта отмеченное содержимое будет включено без скрытия. Проверьте пакет перед передачей другим.",
     "Enter a valid number. This condition keeps its last applied setting.": "Введите допустимое число. Для этого условия сохраняется последняя применённая настройка.",
     "Enter a valid number. This condition has not been applied.": "Введите допустимое число. Это условие ещё не применено.",
     "Retrieve an Alliance gene summary and genomic location.": "Получить сводку о гене Alliance и его положение в геноме.",
@@ -6944,7 +6947,12 @@
     "Export journal bundle": "Экспортировать пакет журналов",
     "Sort ascending": "Сортировать по возрастанию",
     "Match status": "Статус сопоставления",
-    "Original column and Example value come from your file. Import as controls matching or storing. Saved name and Value type apply to journal attributes. Skipped columns are not saved.": "Исходный столбец и пример значения взяты из файла. Поле «Импортировать как» задаёт сопоставление или сохранение. Сохранённое имя и тип значения относятся к атрибутам журнала. Пропущенные столбцы не сохраняются.",
+    "Identify journals": "Идентификация журналов",
+    "Used for matching, not as attribute columns.": "Для сопоставления, а не для столбцов атрибутов.",
+    "Save as attribute columns": "Сохранение как атрибуты",
+    "Show and filter these columns in the literature table.": "Эти столбцы можно отображать и фильтровать в списке литературы.",
+    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "Столбцы идентификации используются для сопоставления журналов. Для значений, которые нужно отображать и фильтровать в списке литературы, выберите «Атрибут журнала».",
+    "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "Сохранённое имя и тип значения применяются только к атрибутам журнала. Пропущенные столбцы не сохраняются.",
     "Journal attribute": "Атрибут журнала",
     "External journal ID": "Внешний ID журнала",
     "Matched by external journal ID": "Сопоставлено по внешнему ID журнала",

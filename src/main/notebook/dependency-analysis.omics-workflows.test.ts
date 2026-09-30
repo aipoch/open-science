@@ -244,7 +244,7 @@ mdata.write("outputs/multiome.h5mu")`
 it.each([
   ['muon.read_10x_h5("inputs/multiome.h5")', ['inputs/multiome.h5']],
   ['muon.read_10x_h5("inputs/multiome.h5", extended=enabled)', ['inputs/multiome.h5']],
-  ['muon.read_10x_mtx("inputs/matrix")', []]
+  ['muon.read_10x_mtx("inputs/matrix")', ['inputs/matrix']]
 ])('keeps unresolved multiomics companions visible: %s', async (expression, reads) => {
   expect(
     await analyzeNotebookSourceFileAccess('python', `import muon\nvalue = ${expression}`)

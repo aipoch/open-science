@@ -141,7 +141,15 @@ export function classifyChanges(changes, manifest = defaultManifest) {
       const ownerRules = rules.filter((rule) => rule.role === 'owner')
       const specificOwners = ownerRules.filter((rule) => !rule.fallbackOwner)
       const fallbackOwners = ownerRules.filter((rule) => rule.fallbackOwner)
-      const candidateOwners = specificOwners.length > 0 ? specificOwners : fallbackOwners
+      // Packaged documentation retains its domain checks as well as documentation checks.
+      // The generic documentation rule is not a competing domain owner.
+      const domainOwners = specificOwners.filter((rule) => rule !== documentationRule)
+      const candidateOwners =
+        domainOwners.length > 0
+          ? domainOwners
+          : specificOwners.length > 0
+            ? specificOwners
+            : fallbackOwners
 
       if (candidateOwners.length === 0) {
         selectFullPlan('missing_owner', `${path} -> missing owner -> full`)
@@ -157,6 +165,9 @@ export function classifyChanges(changes, manifest = defaultManifest) {
       }
 
       visitRule(candidateOwners[0], path)
+      if (rules.includes(documentationRule) && candidateOwners[0] !== documentationRule) {
+        visitRule(documentationRule, path)
+      }
       for (const overlay of rules.filter((rule) => rule.role === 'overlay')) {
         visitRule(overlay, path)
       }

@@ -46,7 +46,7 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "Warten Sie, bis alle Sitzungsaktivitäten und ausstehenden Freigaben abgeschlossen sind, bevor Sie eine Kopie erstellen."
   },
   "native": {
-    "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Linux-Systemanmeldedaten erfordern ein verfügbares Secret Service-Backend und /usr/bin/busctl. Entsperren Sie den ursprünglichen Standardschlüsselbund und starten Sie die Anwendung neu. Verwenden Sie bei einem nicht unterstützten Backend eine kompatible Anwendungsversion, ohne das Backend oder Profil zu ändern.",
+    "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux-Systemzugangsdaten benötigen das ursprünglich ausgewählte Secret-Service- oder KWallet-Backend und /usr/bin/busctl. Entsperren Sie den ursprünglichen Standardschlüsselbund oder die ursprüngliche Wallet und starten Sie neu. Ändern Sie weder das password-store-Backend noch das Profil, um diese Prüfung zu umgehen.",
     "Credential storage needs recovery": "Der Anmeldedatenspeicher muss wiederhergestellt werden",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Dieses System-Backend für Anmeldedaten unterstützt keine stille Identitätsprüfung. Zum Schutz vorhandener verschlüsselter Daten wurde der Start angehalten.",
     "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science konnte nicht sicher auf vorhandene verschlüsselte Daten zugreifen. Entsperren Sie den Anmeldedatenspeicher des Systems oder stellen Sie den ursprünglichen Schlüssel und das Profil wieder her. Starten Sie dann neu. Vorhandene Anmeldedaten wurden nicht ersetzt.",
@@ -134,6 +134,9 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
+    "Export anyway": "Trotzdem exportieren",
+    "I understand the risk and want to export anyway": "Ich verstehe das Risiko und möchte trotzdem exportieren",
+    "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "Dieses Paket kann Zugangsdaten oder private Informationen enthalten. Beim Exportieren werden die markierten Inhalte ohne Schwärzung eingeschlossen. Prüfen Sie das Paket, bevor Sie es teilen.",
     "Enter a valid number. This condition keeps its last applied setting.": "Geben Sie eine gültige Zahl ein. Für diese Bedingung bleibt die zuletzt angewendete Einstellung erhalten.",
     "Enter a valid number. This condition has not been applied.": "Geben Sie eine gültige Zahl ein. Diese Bedingung wurde noch nicht angewendet.",
     "Retrieve an Alliance gene summary and genomic location.": "Eine Zusammenfassung und die genomische Position eines Alliance-Gens abrufen.",
@@ -6639,7 +6642,12 @@
     "Export journal bundle": "Zeitschriftenpaket exportieren",
     "Sort ascending": "Aufsteigend sortieren",
     "Match status": "Abgleichstatus",
-    "Original column and Example value come from your file. Import as controls matching or storing. Saved name and Value type apply to journal attributes. Skipped columns are not saved.": "Ursprüngliche Spalte und Beispielwert stammen aus Ihrer Datei. Importieren als steuert das Abgleichen oder Speichern. Gespeicherter Name und Werttyp gelten für Zeitschriftenattribute. Übersprungene Spalten werden nicht gespeichert.",
+    "Identify journals": "Zeitschriften identifizieren",
+    "Used for matching, not as attribute columns.": "Zum Abgleichen, nicht als Attributspalten.",
+    "Save as attribute columns": "Als Attributspalten speichern",
+    "Show and filter these columns in the literature table.": "Diese Spalten in der Literaturliste anzeigen und filtern.",
+    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "Identitätsspalten dienen zum Abgleichen von Zeitschriften. Wählen Sie Zeitschriftenattribut für Werte, die Sie in der Literaturliste anzeigen und filtern möchten.",
+    "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "Gespeicherter Name und Werttyp gelten nur für Zeitschriftenattribute. Übersprungene Spalten werden nicht gespeichert.",
     "Journal attribute": "Zeitschriftenattribut",
     "External journal ID": "Externe Journal-ID",
     "Matched by external journal ID": "Über externe Journal-ID zugeordnet",

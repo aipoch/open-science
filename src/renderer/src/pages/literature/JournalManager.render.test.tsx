@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { StrictMode } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { read } from 'styled-exceljs'
 import { JournalManager } from './JournalManager'
@@ -96,7 +96,32 @@ it('keeps custom namespaces editable and rejects blank or invalid values before 
     Object.defineProperty(file, 'arrayBuffer', { value: async () => new ArrayBuffer(0) })
     fireEvent.change(screen.getByLabelText('Import journal file'), { target: { files: [file] } })
     await screen.findByText(file.name)
-    await choose('Role for column 2', 'External journal ID')
+    expect(
+      screen.getByText(
+        'Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.'
+      )
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('combobox', { name: 'Role for column 2' }))
+    const identityGroup = await screen.findByRole('group', { name: 'Identify journals' })
+    expect(
+      within(identityGroup)
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(['Journal name', 'Abbreviation', 'ISSN', 'External journal ID'])
+    expect(
+      within(identityGroup).getByText('Used for matching, not as attribute columns.')
+    ).toBeTruthy()
+    const attributeGroup = screen.getByRole('group', { name: 'Save as attribute columns' })
+    expect(within(attributeGroup).getAllByRole('option')).toHaveLength(1)
+    expect(within(attributeGroup).getByRole('option', { name: 'Journal attribute' })).toBeTruthy()
+    expect(
+      within(attributeGroup).getByText('Show and filter these columns in the literature table.')
+    ).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'Skip' }).closest('[role="group"]')).toBeNull()
+    fireEvent.click(within(identityGroup).getByRole('option', { name: 'External journal ID' }))
+    expect(screen.getByRole('combobox', { name: 'Role for column 2' }).textContent).toBe(
+      'External journal ID'
+    )
     await choose('Role for column 3', 'Journal attribute')
     await choose('External identifier namespace', 'Custom namespace')
     const input = screen.getByRole('textbox', { name: 'Custom namespace' }) as HTMLInputElement

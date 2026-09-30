@@ -46,7 +46,7 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "請等待所有工作階段活動和待處理核准結束後再建立副本。"
   },
   "native": {
-    "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Linux 系統憑證需要可用的 Secret Service 後端和 /usr/bin/busctl。請解鎖原有的預設金鑰環並重新啟動。如果後端不受支援，請使用相容的應用程式版本，不要變更後端或 profile。",
+    "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 系統認證資訊需要原先選定的 Secret Service 或 KWallet 後端以及 /usr/bin/busctl。請解鎖原有的預設金鑰圈或錢包後重新啟動。請勿變更 password-store 後端或設定檔來略過此檢查。",
     "Credential storage needs recovery": "認證資料儲存空間需要復原",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "此系統認證資料後端不支援靜默身分檢查。為保留現有加密資料，啟動已停止。",
     "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science 無法安全存取現有加密資料。請解鎖系統認證資料儲存空間，或復原原始金鑰和設定檔，然後重新啟動。現有認證資料未被取代。",
@@ -133,6 +133,9 @@
     "More items": "更多會話"
   },
   "renderer": {
+    "Export anyway": "仍然匯出",
+    "I understand the risk and want to export anyway": "我理解風險，仍要匯出",
+    "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "此套件可能包含憑證或私人資訊。仍然匯出會原樣包含被標記的內容，不進行遮蔽。分享前請檢查匯出套件。",
     "Enter a valid number. This condition keeps its last applied setting.": "請輸入有效數字。此條件仍使用上一次已套用的設定。",
     "Enter a valid number. This condition has not been applied.": "請輸入有效數字。此條件尚未套用。",
     "Retrieve an Alliance gene summary and genomic location.": "取得 Alliance 基因摘要與基因組位置。",
@@ -6480,7 +6483,12 @@
     "Export journal bundle": "匯出期刊資料套件",
     "Sort ascending": "升冪排序",
     "Match status": "匹配狀態",
-    "Original column and Example value come from your file. Import as controls matching or storing. Saved name and Value type apply to journal attributes. Skipped columns are not saved.": "原始欄和範例值來自檔案。「匯入為」決定匹配或儲存方式。「儲存名稱」和「值類型」僅適用於期刊屬性。略過的欄不會儲存。",
+    "Identify journals": "用於識別期刊",
+    "Used for matching, not as attribute columns.": "用於匹配期刊，不作為屬性欄。",
+    "Save as attribute columns": "儲存為屬性欄",
+    "Show and filter these columns in the literature table.": "可在文獻清單中顯示和篩選。",
+    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "識別欄位用於匹配期刊。需要在文獻清單中顯示和篩選的值，請選擇「期刊屬性」。",
+    "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "「儲存名稱」和「值類型」僅適用於期刊屬性。略過的欄不會儲存。",
     "Journal attribute": "期刊屬性",
     "External journal ID": "外部期刊 ID",
     "Matched by external journal ID": "透過外部期刊 ID 配對",

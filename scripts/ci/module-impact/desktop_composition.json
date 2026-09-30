@@ -178,6 +178,9 @@
     "src/main/credential-identity/bootstrap.ts",
     "src/main/credential-identity/ciphertext-inventory.test.ts",
     "src/main/credential-identity/ciphertext-inventory.ts",
+    "src/main/credential-identity/linux-backend.ts",
+    "src/main/credential-identity/linux-dbus.ts",
+    "src/main/credential-identity/linux-kwallet.ts",
     "src/main/credential-identity/linux-secret-service.ts",
     "src/main/credential-identity/linux.test.ts",
     "src/main/credential-identity/persistence.test.ts",
@@ -1168,7 +1171,13 @@
       "src/main/session-diagnostics/environment.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
       "src/main/session-diagnostics/notebook.test.ts",
-      "src/main/session-diagnostics/projection.test.ts"
+      "src/main/session-diagnostics/projection.test.ts",
+      "src/main/notebook/scientific-replay.test.ts",
+      "src/main/notebook/real-notebook-lineage.integration.test.ts",
+      "src/main/notebook/real-parquet-lineage.integration.test.ts",
+      "src/main/notebook/dependency-analysis.cwd-lineage.test.ts",
+      "src/main/notebook/r-connection-guard.test.ts",
+      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

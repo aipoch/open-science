@@ -675,8 +675,18 @@ class NotebookKernelExecutor implements NotebookExecutor {
         },
         replBindings
       )
+      const status = cancelled
+        ? 'cancelled'
+        : timedOut
+          ? 'timeout'
+          : response.error !== null
+            ? 'failed'
+            : 'completed'
       const fileObservation = await workingFileObservation.finish(
-        timedOut || cancelled ? AbortSignal.abort() : request.signal
+        // A reported cell error still leaves observable outputs. Preserve their bytes while
+        // retaining incomplete evidence; only interruption cancels the capture itself.
+        timedOut || cancelled ? AbortSignal.abort() : request.signal,
+        status === 'completed' ? 'completed' : 'incomplete'
       )
       workingFileObservation = undefined
 
@@ -694,14 +704,6 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       // A soft-timeout interrupt was sent for this run; whatever answered is reported as a timeout,
       // not trusted as a genuine completion (an interrupt ack does not prove the loop stopped).
-      const status = cancelled
-        ? 'cancelled'
-        : timedOut
-          ? 'timeout'
-          : response.error !== null
-            ? 'failed'
-            : 'completed'
-
       return {
         status,
         kernelDispatched,
@@ -723,7 +725,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
         environmentOverlay: response.environmentOverlay
       }
     } catch (error) {
-      const fileObservation = await workingFileObservation?.finish(AbortSignal.abort())
+      const fileObservation = await workingFileObservation?.finish(
+        AbortSignal.abort(),
+        'incomplete'
+      )
       if (error instanceof NotebookExecutionStopError) throw error
       return {
         ...errorToExecutionResult(error, request, kernelDispatched, helperModulesInitialized),

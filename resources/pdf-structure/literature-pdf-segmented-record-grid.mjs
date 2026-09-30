@@ -4,7 +4,8 @@ import { union } from './literature-pdf-table-geometry.mjs'
 import {
   tableSourceItems,
   readSourceRow,
-  hasUniqueRecordTokens
+  hasUniqueRecordTokens,
+  recoverRuledHeaderBands
 } from './literature-pdf-source-records.mjs'
 
 // Word tables preserve a small gap between adjacent cell border strokes. The
@@ -20,6 +21,9 @@ export function recoverSegmentedRecordGrid(table, items, rules) {
     if (!band) bands.push((band = { y: r[1], parts: [] }))
     band.parts.push(r)
   }
+  for (const band of bands) band.parts.sort((a, b) => a[0] - b[0])
+  const overlapping = recoverOverlappingRecordBands(table, items, rules, bands)
+  if (overlapping) return overlapping
   const valid = bands.filter(
     (b) =>
       b.parts.length >= 3 &&
@@ -165,6 +169,160 @@ export function recoverSegmentedRecordGrid(table, items, rules) {
     rows,
     columns: cuts.slice(1).map((x, n) => [cuts[n], first.y, x, valid.at(-1).y]),
     spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Cell-width strokes can overlap by a constant amount. Their repeated endpoints
+// establish leaf columns; wider strokes sharing those endpoints prove grouped
+// statistics. Use the actual row borders, including multiline numeric cells.
+function recoverOverlappingRecordBands(table, items, rules, bands) {
+  const [left, top, right, bottom] = table.cropRect
+  const count = Math.max(0, ...bands.map((b) => b.parts.length))
+  if (count < 4 || count > 12 || count % 2) return
+  const leaves = bands.filter((b) => b.parts.length === count)
+  if (leaves.length < 3) return
+  const first = leaves[0].parts,
+    overlap = first[0][2] - first[1][0]
+  if (
+    overlap < 1 ||
+    overlap > (right - left) * 0.05 ||
+    first[0][0] <= left + overlap ||
+    Math.abs(first.at(-1)[2] - right) > 16 ||
+    first.slice(1).some((r, n) => Math.abs(first[n][2] - r[0] - overlap) > 0.1) ||
+    leaves.some((b) =>
+      b.parts.some(
+        (r, c) => Math.abs(r[0] - first[c][0]) > 0.1 || Math.abs(r[2] - first[c][2]) > 0.1
+      )
+    )
+  )
+    return
+  const cuts = [
+    left,
+    first[0][0] + overlap / 2,
+    ...first.slice(1).map((r, n) => (first[n][2] + r[0]) / 2),
+    right
+  ]
+  const parentCuts = [left, ...cuts.slice(1, -1).filter((_, n) => n % 2 === 0), right]
+  const full = (b) =>
+    b.parts.length === 1 &&
+    Math.abs(b.parts[0][0] - left) < 16 &&
+    Math.abs(b.parts[0][2] - right) < 16
+  const outer = bands.find(full)
+  if (!outer || Math.abs(outer.y - top) > 16) return
+  const parent = bands.filter(
+    (b) =>
+      b.y > outer.y &&
+      b.y < leaves[0].y &&
+      b.parts.length === count / 2 &&
+      b.parts.every((r, c) => r[0] >= parentCuts[c + 1] && r[2] <= parentCuts[c + 2])
+  )
+  if (parent.length !== 1) return
+  const divider = bands.find((b) => b.y > parent[0].y && full(b))
+  if (!divider || divider.y >= leaves[0].y) return
+  const source = tableSourceItems(items, [left, outer.y, right, bottom])
+  if (!source.length) return
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)]
+  const header = source.filter((i) => i.rect[3] < divider.y)
+  const headings = recoverRuledHeaderBands(header, cuts, rules, outer.y, divider.y)
+  const children = readSourceRow(
+    header.filter((i) => i.rect[1] > parent[0].y),
+    cuts,
+    { multiline: true }
+  )
+  if (
+    !headings ||
+    headings.rows.length !== 2 ||
+    !children ||
+    !/\p{L}/u.test(children[0]) ||
+    !children.slice(1).every((s) => /\p{L}/u.test(s) && /\(n=\d+\)/i.test(s)) ||
+    headings.spans.filter((s) => s.colSpan > 1).length !== count / 2 ||
+    headings.spans
+      .filter((s) => s.colSpan > 1)
+      .some((s, n) => s.column !== 1 + n * 2 || s.colSpan !== 2)
+  )
+    return
+  const bodyBands = bands.filter((b) => b.y > divider.y)
+  const paired = (b) =>
+    b.parts.length === count / 2 &&
+    b.parts.every(
+      (r, c) => Math.abs(r[0] - first[c * 2][0]) < 0.1 && Math.abs(r[2] - first[c * 2 + 1][2]) < 0.1
+    )
+  if (
+    bodyBands.filter(paired).length < 2 ||
+    bodyBands.some((b) => !full(b) && !leaves.includes(b) && !paired(b))
+  )
+    return
+  const rows = [...headings.rows],
+    spans = [...headings.spans],
+    owned = [header]
+  const numeric = (s) =>
+    /^(?:n=\d+|NS|(?:NR|[<>≤≥−+-]?(?:\d+(?:\.\d+)?|\.\d+))(?:%|\((?:[\d.% −–+-]|to|NR)+\))*)$/i.test(
+      s
+    )
+  let previous = divider.y,
+    records = 0,
+    sections = 0
+  for (const band of bodyBands) {
+    const g = source.filter((i) => i.rect[1] >= previous && i.rect[3] <= band.y)
+    if (!g.length) return
+    if (full(band)) {
+      if (
+        !g.every((i) => i.rect[2] <= cuts[1]) ||
+        !g.some((i) => /\p{L}/u.test(i.text)) ||
+        union(g)[0] - left > height * 1.5
+      )
+        return
+      spans.push({ row: rows.length, column: 0, rowSpan: 1, colSpan: count + 1 })
+      sections++
+    } else {
+      const shared = paired(band),
+        bounds = shared ? parentCuts : cuts
+      const v = readSourceRow(g, bounds, { multiline: true })
+      if (!v || !/\p{L}/u.test(v[0]) || !v.slice(1).every(numeric)) return
+      if (shared) {
+        for (let c = 1; c < bounds.length - 1; c++) {
+          const ink = union(g.filter((i) => i.rect[0] >= bounds[c] && i.rect[2] <= bounds[c + 1]))
+          if (
+            Math.abs((ink[0] + ink[2] - bounds[c] - bounds[c + 1]) / 2) >
+            (bounds[c + 1] - bounds[c]) * 0.1
+          )
+            return
+          spans.push({ row: rows.length, column: c * 2 - 1, rowSpan: 1, colSpan: 2 })
+        }
+      }
+      records++
+    }
+    rows.push([left, previous, right, band.y])
+    owned.push(g)
+    previous = band.y
+  }
+  // A colored footer need not contribute a thin rule. Admit one complete final
+  // leaf record only when it remains close to the last border and crop bottom.
+  const tail = source.filter((i) => i.rect[1] >= previous)
+  if (tail.length) {
+    const v = readSourceRow(tail, cuts, { multiline: true }),
+      ink = union(tail)
+    if (
+      !v ||
+      !/\p{L}/u.test(v[0]) ||
+      !v.slice(1).every(numeric) ||
+      ink[1] - previous > height ||
+      ink[3] - ink[1] > height * 1.6 ||
+      bottom - ink[3] > height * 2
+    )
+      return
+    rows.push([left, previous, right, bottom])
+    owned.push(tail)
+    records++
+  }
+  if (records < 5 || sections < 2 || !hasUniqueRecordTokens(source, owned)) return
+  return {
+    rows,
+    columns: cuts.slice(1).map((x, c) => [cuts[c], outer.y, x, bottom]),
+    spans,
+    headerRows: [0, 1],
     completeSpans: true,
     ownedTokens: new Set(source)
   }

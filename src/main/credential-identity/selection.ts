@@ -1,5 +1,7 @@
 import { createLogger } from '../logger'
 import { safeCredentialProbeResult } from './probe'
+import type { LinuxCredentialBackend, LinuxKWalletBackend } from './linux-backend'
+import type { KWalletProbeResult } from './linux-kwallet'
 
 const log = createLogger('credential-identity')
 
@@ -11,6 +13,13 @@ export type IdentityProbeResult = Readonly<{
 
 export type CredentialIdentity = Readonly<
   | { backend: 'mac-keychain' | 'linux-secret-service'; appName: string; exists: boolean }
+  | {
+      backend: 'linux-kwallet'
+      appName: string
+      exists: boolean
+      passwordStore: LinuxKWalletBackend
+      wallet: string
+    }
   | { backend: 'windows-dpapi' | 'file'; appName: string }
 >
 
@@ -34,7 +43,8 @@ export const selectCredentialIdentity = (options: {
   packaged: boolean
   credentialStore?: 'os' | 'file'
   probe: (appName: string) => IdentityProbeResult
-  linuxProbe?: (appName: string) => IdentityProbeResult
+  linuxProbe?: (appName: string) => KWalletProbeResult
+  linuxBackend?: LinuxCredentialBackend
   linuxPasswordStore?: string
 }): CredentialIdentity => {
   const suffix = options.packaged ? '' : ' (DEV)'
@@ -51,8 +61,23 @@ export const selectCredentialIdentity = (options: {
     const result = options.linuxProbe?.(legacy)
     if (!result || !['exists', 'not-found'].includes(result.status))
       throw new CredentialIdentityError(
-        result?.reason ?? `linux-secret-service-probe-${result?.status ?? 'unsupported'}`
+        result?.reason ??
+          `linux-${
+            options.linuxBackend && options.linuxBackend !== 'gnome_libsecret'
+              ? 'kwallet'
+              : 'secret-service'
+          }-probe-${result?.status ?? 'unsupported'}`
       )
+    if (options.linuxBackend && options.linuxBackend !== 'gnome_libsecret') {
+      if (!result.wallet) throw new CredentialIdentityError('linux-kwallet-wallet-unconfirmed')
+      return Object.freeze({
+        backend: 'linux-kwallet',
+        appName: legacy,
+        exists: result.status === 'exists',
+        passwordStore: options.linuxBackend,
+        wallet: result.wallet
+      })
+    }
     return Object.freeze({
       backend: 'linux-secret-service',
       appName: legacy,

@@ -46,7 +46,7 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "모든 세션 활동과 대기 중인 승인이 완료된 후 복제하세요."
   },
   "native": {
-    "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Linux 시스템 자격 증명에는 사용 가능한 Secret Service 백엔드와 /usr/bin/busctl이 필요합니다. 기존 기본 키링의 잠금을 해제하고 다시 시작하세요. 지원되지 않는 백엔드인 경우 백엔드나 프로필을 변경하지 말고 호환되는 앱 버전을 사용하세요.",
+    "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 시스템 자격 증명에는 원래 선택한 Secret Service 또는 KWallet 백엔드와 /usr/bin/busctl이 필요합니다. 원래 기본 키링 또는 지갑의 잠금을 해제하고 다시 시작하세요. 이 검사를 우회하기 위해 password-store 백엔드나 프로필을 변경하지 마세요.",
     "Credential storage needs recovery": "자격 증명 저장소를 복구해야 합니다",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "이 시스템 자격 증명 백엔드는 사용자 상호 작용 없는 식별 정보 확인을 지원하지 않습니다. 기존 암호화 데이터를 보존하기 위해 시작을 중단했습니다.",
     "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science가 기존 암호화 데이터에 안전하게 접근할 수 없습니다. 시스템 자격 증명 저장소의 잠금을 해제하거나 원래 키와 프로필을 복원한 후 다시 시작하세요. 기존 자격 증명은 교체되지 않았습니다.",
@@ -133,6 +133,9 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Export anyway": "위험을 감수하고 내보내기",
+    "I understand the risk and want to export anyway": "위험을 이해했으며 내보내기를 계속합니다",
+    "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "이 패키지에는 자격 증명이나 개인 정보가 포함될 수 있습니다. 계속 내보내면 표시된 내용이 가려지지 않은 채 포함됩니다. 공유하기 전에 패키지를 검토하세요.",
     "Enter a valid number. This condition keeps its last applied setting.": "유효한 숫자를 입력하세요. 이 조건에는 마지막으로 적용된 설정이 유지됩니다.",
     "Enter a valid number. This condition has not been applied.": "유효한 숫자를 입력하세요. 이 조건은 아직 적용되지 않았습니다.",
     "Retrieve an Alliance gene summary and genomic location.": "Alliance 유전자 요약과 유전체 위치를 가져옵니다.",
@@ -6478,7 +6481,12 @@
     "Export journal bundle": "학술지 번들 내보내기",
     "Sort ascending": "오름차순 정렬",
     "Match status": "매칭 상태",
-    "Original column and Example value come from your file. Import as controls matching or storing. Saved name and Value type apply to journal attributes. Skipped columns are not saved.": "원본 열과 예시 값은 파일에서 가져옵니다. 가져오기 형식에서 일치 또는 저장 방식을 지정합니다. 저장할 이름과 값 유형은 저널 속성에 적용됩니다. 건너뛴 열은 저장되지 않습니다.",
+    "Identify journals": "저널 식별",
+    "Used for matching, not as attribute columns.": "일치 확인에 사용하며 속성 열로 만들지 않습니다.",
+    "Save as attribute columns": "속성 열로 저장",
+    "Show and filter these columns in the literature table.": "문헌 목록에서 표시하고 필터링할 수 있습니다.",
+    "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "식별 열은 저널 일치 확인에 사용합니다. 문헌 목록에서 표시하고 필터링할 값은 학술지 속성을 선택하세요.",
+    "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "저장할 이름과 값 유형은 저널 속성에만 적용됩니다. 건너뛴 열은 저장되지 않습니다.",
     "Journal attribute": "학술지 속성",
     "External journal ID": "외부 저널 ID",
     "Matched by external journal ID": "외부 저널 ID로 일치",

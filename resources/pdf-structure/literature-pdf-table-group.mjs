@@ -46,6 +46,7 @@ export function groupTableParts(tables, page) {
       caption: next.caption,
       captionIssue: next.captionIssue,
       cropRect: union([first.cropRect, next.cropRect]),
+      cropRects: [...(first.cropRects ?? [first.cropRect]), ...(next.cropRects ?? [next.cropRect])],
       grid: [...first.grid, ...next.grid.slice(2)],
       cells: [
         ...first.cells,
@@ -110,6 +111,12 @@ export function groupTableParts(tables, page) {
       : first.clipped
     continued.splice(continued.indexOf(first), 1, {
       ...first,
+      cropRects: [
+        ...(first.cropRects ?? [first.cropRect]).map((r) =>
+          footer ? [r[0], r[1], r[2], Math.min(r[3], footer.y * 1.5 - 1)] : r
+        ),
+        ...(next.cropRects ?? [next.cropRect])
+      ],
       cropRect: union([
         footer
           ? [

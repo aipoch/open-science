@@ -903,6 +903,10 @@ it.each([
   'locked',
   'decrypt failure',
   'backend unavailable',
+  'KWallet existing',
+  'KWallet missing key',
+  'KWallet locked',
+  'KWallet changed backend',
   'second instance'
 ])('runs the real Linux credential bootstrap at the startup boundary: %s', async (scenario) => {
   const { mkdtemp, mkdir, writeFile, readFile, rm } = await import('node:fs/promises')
@@ -923,7 +927,24 @@ it.each([
       'process',
       Object.defineProperty(Object.create(process), 'platform', { value: 'linux' })
     )
-    vi.stubEnv('XDG_CURRENT_DESKTOP', 'GNOME')
+    const kwallet = scenario.startsWith('KWallet')
+    vi.stubEnv('XDG_CURRENT_DESKTOP', kwallet ? 'KDE' : 'GNOME')
+    vi.stubEnv('KDE_SESSION_VERSION', kwallet ? '6' : undefined)
+    if (kwallet)
+      fixture.nativeProbe.mockImplementation((_command, args) => {
+        const command = args as string[]
+        const value = command.includes('networkWallet')
+          ? { type: 's', data: ['kdewallet'] }
+          : {
+              type: 'b',
+              data: [
+                command.includes('keyDoesNotExist')
+                  ? scenario === 'KWallet missing key'
+                  : !(command.includes('isOpen') && scenario === 'KWallet locked')
+              ]
+            }
+        return { status: 0, signal: null, stdout: JSON.stringify(value) }
+      })
     const metadata = await import('./credential-identity/linux-secret-service')
     vi.spyOn(metadata, 'probeLinuxCredentialIdentity').mockReturnValue({
       status:
@@ -936,19 +957,29 @@ it.each([
     const real = await vi.importActual<typeof import('./credential-identity/bootstrap')>(
       './credential-identity/bootstrap'
     )
-    fixture.selectCredentialIdentity.mockImplementationOnce((options) =>
-      real.selectStartupCredentialIdentity(
-        options as Parameters<typeof real.selectStartupCredentialIdentity>[0]
+    fixture.selectCredentialIdentity
+      .mockReset()
+      .mockImplementationOnce((options) =>
+        real.selectStartupCredentialIdentity(
+          options as Parameters<typeof real.selectStartupCredentialIdentity>[0]
+        )
       )
-    )
-    fixture.prepareCredentialValidation.mockImplementationOnce((identity) =>
-      real.prepareCredentialValidation(
-        identity as Parameters<typeof real.prepareCredentialValidation>[0],
-        paths
+    fixture.prepareCredentialValidation
+      .mockReset()
+      .mockImplementationOnce((identity) =>
+        real.prepareCredentialValidation(
+          identity as Parameters<typeof real.prepareCredentialValidation>[0],
+          paths
+        )
       )
-    )
     const cipher = {
-      getSelectedStorageBackend: vi.fn(() => 'gnome_libsecret'),
+      getSelectedStorageBackend: vi.fn(() =>
+        scenario === 'KWallet changed backend'
+          ? 'gnome_libsecret'
+          : kwallet
+            ? 'kwallet6'
+            : 'gnome_libsecret'
+      ),
       isEncryptionAvailable: vi.fn(() => scenario !== 'backend unavailable'),
       encryptString: vi.fn(),
       decryptString: vi.fn(() => {
@@ -968,12 +999,12 @@ it.each([
       expect(cipher.isEncryptionAvailable).not.toHaveBeenCalled()
     } else {
       await Promise.race([fixture.ready, fixture.exited])
-      if (['fresh', 'existing'].includes(scenario)) {
+      if (['fresh', 'existing', 'KWallet existing'].includes(scenario)) {
         expect(fixture.configureDesktop).toHaveBeenCalledOnce()
         expect(fixture.electron.app.setName).toHaveBeenNthCalledWith(1, 'Open Science')
         expect(fixture.electron.app.setName).toHaveBeenLastCalledWith('Open-Science')
         expect(fixture.electron.dialog.showErrorBox).not.toHaveBeenCalled()
-        if (scenario === 'existing')
+        if (scenario === 'existing' || scenario === 'KWallet existing')
           expect(cipher.decryptString).toHaveBeenCalledWith(Buffer.from('v11original'))
       } else {
         expect(fixture.electron.dialog.showErrorBox).toHaveBeenCalledWith(
@@ -982,7 +1013,15 @@ it.each([
         )
         expect(fixture.prepareLocations).not.toHaveBeenCalled()
         expect(fixture.configureDesktop).not.toHaveBeenCalled()
-        if (['missing key', 'locked'].includes(scenario)) {
+        if (
+          [
+            'missing key',
+            'locked',
+            'KWallet missing key',
+            'KWallet locked',
+            'KWallet changed backend'
+          ].includes(scenario)
+        ) {
           expect(cipher.isEncryptionAvailable).not.toHaveBeenCalled()
         }
       }
@@ -991,6 +1030,9 @@ it.each([
     if (scenario !== 'fresh') expect(await readFile(settingsPath, 'utf8')).toBe(settings)
   } finally {
     Reflect.deleteProperty(fixture.electron, 'safeStorage')
+    fixture.nativeProbe.mockReset().mockImplementation(() => {
+      throw new Error('Unexpected native process in startup fixture')
+    })
     await rm(root, { recursive: true, force: true })
   }
 })

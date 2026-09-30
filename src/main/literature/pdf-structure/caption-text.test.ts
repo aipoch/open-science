@@ -13,6 +13,43 @@ const {
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-caption-group.mjs')).href
 )
 
+it('recognizes manuscript legend headings without treating past-tense references as captions', () => {
+  expect(captionKind('Legend to Figure 1. Participant flow.')).toBe('figure')
+  expect(captionKind('Legend to Fig. 2. Response over time.')).toBe('figure')
+  expect(captionKind('Figure 4 illustrated the distribution of values.')).toBeUndefined()
+  expect(captionKind('Figure 4 depicted the change over time.')).toBeUndefined()
+})
+
+it('rejects supplementary panel references closed inside a prose parenthesis', () => {
+  for (const reference of [
+    'Supplementary Figure S5 A + B',
+    'Figure 3 A–C',
+    'Fig. S4',
+    'Table A2'
+  ]) {
+    expect(
+      captionKind(`${reference}). The measurements decreased after treatment.`)
+    ).toBeUndefined()
+  }
+  expect(captionKind('Supplementary Figure S5. A + B: Measurements after treatment.')).toBe(
+    'figure'
+  )
+  expect(captionKind('Figure 3. (A) First panel; (B) second panel.')).toBe('figure')
+})
+
+it('recognizes dash-delimited titles with alphabetic table suffixes', () => {
+  expect(captionKind('FIGURE 1—Enrolment and study flow.')).toBe('figure')
+  expect(captionKind('TABLE 2A—Comparison of activity outcomes.')).toBe('table')
+  expect(captionKind('FIGURE 1—2')).toBeUndefined()
+  expect(captionKind('Figure 1—CONSORT flow diagram.')).toBe('figure')
+  expect(captionKind('Table 2A—Comparison of activity outcomes.')).toBe('table')
+  expect(captionKind('Table 3B—Adjusted sleep outcomes.')).toBe('table')
+  expect(captionKind('Table 2A–Comparison of activity outcomes.')).toBe('table')
+  expect(captionKind('Table 2A-Comparison of activity outcomes.')).toBe('table')
+  expect(captionKind('Table 2A—3B')).toBeUndefined()
+  expect(captionKind('Table 2A—')).toBeUndefined()
+})
+
 it('removes synthetic near-zero spaces between a full capital and small caps', () => {
   const items = [
     { str: 'T', height: 8, width: 4.888, fontName: 'Times', transform: [8, 0, 0, 8, 10, 100] },

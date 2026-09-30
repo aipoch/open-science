@@ -1641,3 +1641,134 @@ it('reports a localized location and rule without exposing the matched value', a
     await service.close()
   }
 })
+
+it('binds sensitive-content acknowledgement to one failed export and retains normal admission', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  initDataRoot(fixture.storageRoot)
+  await fixture.client.project.create({ data: { id: 'project', name: 'Private research' } })
+  const sessions = new SessionRepository(fixture.storageRoot)
+  await sessions.saveSession({
+    id: 'session',
+    projectId: 'project',
+    title: 'Private research',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: [
+      {
+        id: 'message',
+        role: 'agent',
+        content: 'Authorization: Bearer synthetic-private-value',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ]
+  })
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const exportTo = vi.spyOn(service, 'exportTo')
+  const release = vi.fn()
+  const reserveExport = vi.fn(async () => release)
+  const destination = join(fixture.storageRoot, 'private.science')
+  vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: destination })
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: (work) => work(),
+    afterImport: async () => undefined,
+    reserveExport,
+    onOperationChanged: (snapshot) => {
+      if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection')
+        queueMicrotask(() =>
+          desktop.respond({ action: 'select', operationId: snapshot.id, excludedStorageKeys: [] })
+        )
+    }
+  })
+  const request = { projectId: 'project', sessionId: 'session' }
+  try {
+    expect(() =>
+      desktop.respond({ action: 'export-with-sensitive-content', operationId: 'missing' })
+    ).toThrow()
+    await expect(desktop.export(request)).rejects.toThrow('Sensitive content detected')
+    const failed = desktop.operations.snapshot!
+    expect(failed.sensitiveContent).toHaveLength(1)
+    expect(() =>
+      desktop.respond({ action: 'export-with-sensitive-content', operationId: 'stale' })
+    ).toThrow()
+    await expect(
+      desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
+    ).resolves.toMatchObject({ state: 'succeeded' })
+    expect(exportTo.mock.calls[1][2]).toMatchObject({ allowSensitiveContent: true })
+    expect(reserveExport).toHaveBeenCalledTimes(2)
+    expect(release).toHaveBeenCalledTimes(2)
+    const expanded = join(fixture.storageRoot, 'expanded')
+    await mkdir(expanded)
+    await extractTar({ file: destination, cwd: expanded })
+    const document = JSON.parse(await readFile(join(expanded, 'session.json'), 'utf8'))
+    expect(document.session.messages[0].content).toBe(
+      'Authorization: Bearer synthetic-private-value'
+    )
+    expect(() =>
+      desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
+    ).toThrow()
+    await expect(desktop.export(request)).rejects.toThrow('Sensitive content detected')
+    expect(exportTo.mock.calls[2][2]).not.toHaveProperty('allowSensitiveContent')
+  } finally {
+    await desktop.close()
+    await service.close()
+  }
+})
+
+it.each(['import', 'fork', 'unrelated-failure', 'cleanup-pending', 'running'] as const)(
+  'rejects acknowledgement for %s operations',
+  async (scenario) => {
+    const exportTo = vi.fn()
+    const desktop = createDesktop({
+      service: { exportTo } as unknown as SessionPackageService,
+      translate: englishNativeTranslator,
+      withDataRootWrite: (work) => work(),
+      afterImport: async () => undefined
+    })
+    const { buildSensitiveContentEvidence } = await import('./sensitive-content')
+    const pending = desktop.operations.run(
+      scenario === 'import' || scenario === 'fork' ? scenario : 'export',
+      { projectId: 'project', sessionId: 'session' },
+      async () => {
+        if (scenario !== 'unrelated-failure')
+          desktop.operations.setSensitiveContent([
+            buildSensitiveContentEvidence(
+              'secret',
+              { offset: 0, length: 6, rule: 'token' },
+              'session.json'
+            )
+          ])
+        if (scenario === 'cleanup-pending') desktop.operations.setCleanupPending(true)
+        if (scenario === 'running') {
+          expect(() =>
+            desktop.respond({
+              action: 'export-with-sensitive-content',
+              operationId: desktop.operations.snapshot!.id
+            })
+          ).toThrow()
+        }
+        throw new Error('Test failure')
+      }
+    )
+    await expect(pending).rejects.toThrow('Test failure')
+    if (scenario !== 'running')
+      expect(() =>
+        desktop.respond({
+          action: 'export-with-sensitive-content',
+          operationId: desktop.operations.snapshot!.id
+        })
+      ).toThrow()
+    expect(exportTo).not.toHaveBeenCalled()
+    await desktop.close()
+  }
+)

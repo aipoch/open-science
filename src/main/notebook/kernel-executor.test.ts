@@ -42,6 +42,7 @@ import { NotebookHelperModuleHost } from './helper-module-host'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
+import { verifyReplayCapture } from './scientific-replay.test-support'
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 
@@ -370,6 +371,93 @@ const baseRequest = (
   inputRoot: join(cwd, 'inputs'),
   dataRoot: join(cwd, 'nb', 'data'),
   runtimeRoot: join(cwd, 'runtime')
+})
+
+gate('NotebookKernelExecutor failed-cell output capture', () => {
+  it.each(['timeout', 'cancelled'] as const)(
+    'still cancels generation freezing when an execution is %s',
+    async (status) => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-interrupted-cell-capture-'))
+      const request = baseRequest(cwdDir)
+      await mkdir(request.dataRoot, { recursive: true })
+      const cancellation = new AbortController()
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py')
+      })
+      try {
+        const execution = executor.execute({
+          ...request,
+          cwd: request.dataRoot,
+          fileEvidenceStorageRoot: cwdDir,
+          resolvedInterpreter: { command: python3! },
+          runId: 'interrupted-write',
+          signal: cancellation.signal,
+          timeoutMs: status === 'timeout' ? 2_000 : undefined,
+          code: "from pathlib import Path\nimport time\nPath('result.txt').write_text('partial')\ntime.sleep(60)"
+        })
+        await vi.waitFor(
+          () => expect(existsSync(join(request.dataRoot, 'result.txt'))).toBe(true),
+          { timeout: 10_000 }
+        )
+        if (status === 'cancelled') cancellation.abort()
+        const result = await execution
+        expect(result.status).toBe(status)
+        expect(result.workingFiles).toMatchObject([{ relativePath: 'data/result.txt' }])
+        expect(result.workingFiles![0].generationId).toBeUndefined()
+        expect(result.workingFiles![0].checksum).toBeUndefined()
+        expect(result.fileEvidence?.reasonCodes).toContain('execution-incomplete')
+      } finally {
+        cancellation.abort()
+        await executor.shutdown()
+      }
+    },
+    30_000
+  )
+
+  it.each(['ValueError', 'SystemExit'])(
+    'freezes bytes written before %s and preserves them after a repair',
+    async (exception) => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-failed-cell-capture-'))
+      const request = {
+        ...baseRequest(cwdDir),
+        fileEvidenceStorageRoot: cwdDir,
+        resolvedInterpreter: { command: python3! }
+      }
+      await mkdir(request.dataRoot, { recursive: true })
+      request.cwd = request.dataRoot
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py')
+      })
+      try {
+        const failed = await executor.execute({
+          ...request,
+          runId: 'failed-write',
+          code: `from pathlib import Path\nPath('result.txt').write_text('partial')\nraise ${exception}('validation failed')`
+        })
+        expect(failed.status).toBe('failed')
+        expect(failed.fileEvidence).toMatchObject({
+          state: 'partial',
+          writerAttribution: 'partial',
+          reasonCodes: expect.arrayContaining(['execution-incomplete'])
+        })
+        expect(await readFile(join(request.dataRoot, 'result.txt'), 'utf8')).toBe('partial')
+        const captured = await verifyReplayCapture(cwdDir, failed, ['data/result.txt'])
+        const generation = captured.relations.find((r) => r.relation === 'created')!.generation!
+        const repaired = await executor.execute({
+          ...request,
+          runId: 'repaired-write',
+          code: "Path('result.txt').write_text('repaired')"
+        })
+        expect(repaired.status).toBe('completed')
+        await verifyReplayCapture(cwdDir, repaired, ['data/result.txt'])
+        expect(await readFile(join(cwdDir, generation.contentStorageKey!), 'utf8')).toBe('partial')
+        expect(repaired.workingFiles![0].checksum).not.toBe(generation.checksum)
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    30_000
+  )
 })
 
 afterEach(async () => {

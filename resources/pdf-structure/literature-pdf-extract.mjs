@@ -12,13 +12,15 @@ import {
   captionKind,
   excludePdfLineNumbers,
   findCaptionCandidates,
-  joinCaptionLines
+  joinCaptionLines,
+  sourceWordSpellings
 } from './literature-pdf-caption-group.mjs'
 import {
   associateFigures,
   deduplicateFigureCaptions,
   associateUnnumberedFigure,
   associateGraphicalTables,
+  associateRasterTables,
   resolveFigureCaption,
   findAlgorithmCandidates,
   associateAdjacentFigure,
@@ -34,7 +36,12 @@ import {
   recoverCaptionedRuledTables
 } from './literature-pdf-table-refine.mjs'
 import { deduplicateTableRegions } from './literature-pdf-table-regions.mjs'
-import { tableCaptionCropTop, tableMarginCropTop } from './literature-pdf-table-geometry.mjs'
+import { isFigureRiskTable } from './literature-pdf-table-evidence.mjs'
+import {
+  recoverOwnedTableCrop,
+  trimTableCaptionCrop,
+  tableMarginCropTop
+} from './literature-pdf-table-geometry.mjs'
 import { recoverWrappedCountTable } from './literature-pdf-wrapped-count-grid.mjs'
 import { groupTableParts } from './literature-pdf-table-group.mjs'
 import { renderPdfCrop, recoverScannedFigures } from './literature-pdf-crop.mjs'
@@ -44,7 +51,12 @@ import {
   excludeRemovedMarginTokens
 } from './literature-pdf-graphics.mjs'
 import { repairPdfSymbolText, splitPdfNumericRuns } from './literature-pdf-symbol-text.mjs'
-import { isUprightText, originalRect, rotatedTextRect } from './literature-pdf-orientation.mjs'
+import {
+  isUprightText,
+  originalRect,
+  rotatedTextRect,
+  restoreCaptionCoordinates
+} from './literature-pdf-orientation.mjs'
 import { readFigureSequence } from './literature-pdf-figure-sequence.mjs'
 
 const [pdfArgument, assetArgument, runtimeArgument, pageArgument, outputArgument] =
@@ -130,24 +142,37 @@ const normalize = (rect, width, height) => rect.map((v, i) => v / (i % 2 ? heigh
 const pageWords = new Map(
   geometry.pages.map((page) => [
     page.pageNumber,
-    new Set(
-      page.lines.flatMap((line) =>
-        (line.text.toLowerCase().match(/\p{L}+(?:[-\u2010\u2011]\p{L}+)*/gu) ?? []).map((word) =>
-          word.replace(/[\u2010\u2011]/g, '-')
-        )
-      )
-    )
+    sourceWordSpellings(page.lines.map((line) => line.text))
   ])
 )
 const captionValue = (c) =>
   c
     ? {
-        text: joinCaptionLines(c.lines, pageWords.get(c.page)),
+        text: joinCaptionLines(
+          c.lines,
+          c.regions
+            ? new Set(c.regions.flatMap(({ page }) => [...(pageWords.get(page) ?? [])]))
+            : pageWords.get(c.page)
+        ),
         lines: c.lines,
         page: c.page,
-        rect: c.rect
+        rect: c.rect,
+        ...(c.regions ? { regions: c.regions } : {})
       }
     : undefined
+// Neighbor geometry may own the first half of a caption outside this job.
+// Prove its graphic locally before suppressing a caption-only tail; never
+// publish the auxiliary figure as a newly processed page.
+const auxiliaryCaptionOwners = captions.flatMap((caption) => {
+  if (requestedPages.includes(caption.page)) return []
+  const combined = resolveFigureCaption(caption, captions)
+  if (!combined.regions) return []
+  const page = geometry.pages.find((p) => p.pageNumber === caption.page)
+  if (!page) return []
+  return associateFigures(page, captions)
+    .filter((figure) => figure.rect && figure.caption === caption)
+    .map((figure) => ({ region: figure.rect, caption: captionValue(combined) }))
+})
 try {
   const document = await task.promise
   const separatedFigures =
@@ -199,11 +224,11 @@ try {
     const scale = Math.ceil(pageGeometry.width * 1.5) / pageGeometry.width
     const page = await document.getPage(pageNumber)
     try {
-      const crop = async (rect, id) => {
+      const crop = async (rect, id, regions) => {
         const relativePath = `thumbnails/${id}.png`
         await writeFile(
           join(output, relativePath),
-          await renderPdfCrop(page, rect, pageGeometry.renderRotation)
+          await renderPdfCrop(page, rect, pageGeometry.renderRotation, regions)
         )
         return relativePath
       }
@@ -358,7 +383,8 @@ try {
         pageGeometry,
         contentRects.map((rect) => ({ rect })),
         captions,
-        rules.map((rect) => rect.map((v) => v / 1.5))
+        rules.map((rect) => rect.map((v) => v / 1.5)),
+        geometry.pages
       )
       const notes = associateTableNotes(
         pageGeometry,
@@ -394,6 +420,8 @@ try {
       const acceptedTables = refined.map(
         (table, index) =>
           (!legendPage || Boolean(associations[index].caption)) &&
+          (Boolean(associations[index].caption) ||
+            !isFigureRiskTable(table, captionedFigureRegions, pageGeometry)) &&
           (Boolean(associations[index].caption) ||
             !captionedFigureRegions.some((f) => {
               const r = table.cropRect.map((v) => v / 1.5)
@@ -437,14 +465,28 @@ try {
       const recognizedTableRects = refined
         .filter((_, index) => acceptedTables[index])
         .map((table) => table.cropRect.map((v) => v / 1.5))
-      for (const [index, table] of associateGraphicalTables(
+      const graphicalTables = associateGraphicalTables(
         pageGeometry,
         captions,
         recognizedTableRects,
         refined
           .filter((t) => !t.grid.flat().some((s) => s.trim()))
           .map((t) => t.cropRect.map((v) => v / 1.5))
-      ).entries()) {
+      )
+      graphicalTables.push(
+        ...associateRasterTables(
+          pageGeometry,
+          pageInference.tables.filter(
+            (_, index) => !refined[index].grid.flat().some((text) => text.trim())
+          ),
+          [
+            ...recognizedTableRects,
+            ...captionedFigureRegions.map((f) => f.rect),
+            ...graphicalTables.map((t) => t.rect)
+          ]
+        )
+      )
+      for (const [index, table] of graphicalTables.entries()) {
         const id = `p${pageNumber}-graphical-table-${index + 1}`
         recognizedTableRects.push(table.rect)
         tables.push({
@@ -538,7 +580,7 @@ try {
               !/^(?:Figure|Fig\.)\s*\d+[A-Z]?\.?$/i.test(l.text.trim()) &&
               !(/^\d+$/.test(l.text.trim()) && l.y > pageGeometry.height * 0.9) &&
               l.y + l.height > 0 &&
-              l.y + l.height < Math.min(footerTop, pageGeometry.height * 0.99)
+              l.y + l.height <= Math.min(footerTop, pageGeometry.height)
           )
           .map((l) => [l.x, l.y, l.x + l.width, l.y + l.height])
         const parts = [
@@ -639,7 +681,11 @@ try {
         })
       }
       const pageTables = []
-      for (const [index, table] of refined.entries()) {
+      for (const [index, refinedTable] of refined.entries()) {
+        const table = {
+          ...refinedTable,
+          cropRect: recoverOwnedTableCrop(refinedTable, rules, [viewport.width, viewport.height])
+        }
         const association = associations[index]
         const cropRect = [...table.cropRect]
         const caption = association.caption
@@ -651,15 +697,15 @@ try {
           rules,
           1.5
         )
-        // Glyph outlines can extend beyond their font-metric boxes. Cut inside
-        // the measured caption/content gap instead of hugging the caption.
-        if (caption && caption.rect[3] <= contentRects[index][1])
-          cropRect[1] = Math.max(
-            cropRect[1],
-            tableCaptionCropTop(table, caption.rect[3] * 1.5, rules)
-          )
-        if (caption && caption.rect[1] >= contentRects[index][3])
-          cropRect[3] = Math.min(cropRect[3], (caption.rect[1] - 1) * 1.5)
+        trimTableCaptionCrop({
+          cropRect,
+          table,
+          caption,
+          contentRect: contentRects[index],
+          rules,
+          pageNumber,
+          scale: 1.5
+        })
         for (const note of notes[index]) {
           if (note.rect[1] >= contentRects[index][3])
             cropRect[3] = Math.min(cropRect[3], note.rect[1] * 1.5 - 1)
@@ -675,6 +721,8 @@ try {
         })
       }
       for (const table of groupTableParts(pageTables, pageGeometry)) {
+        // Rendering-only regions must not enter the persisted worker transport.
+        const { cropRects, ...result } = table
         table.notes = [
           ...(table.notes ?? []),
           ...associateContinuedTableNotes(
@@ -684,11 +732,13 @@ try {
           )
         ]
         tables.push({
-          ...table,
+          ...result,
+          notes: table.notes,
           region: normalize(table.cropRect, viewport.width, viewport.height),
           thumbnail: await crop(
             table.cropRect.map((v) => v / 1.5),
-            table.id
+            table.id,
+            cropRects?.map((r) => r.map((v) => v / 1.5))
           )
         })
       }
@@ -697,21 +747,11 @@ try {
     }
     console.log(JSON.stringify({ phase: 'assembled', page: pageNumber }))
   }
-  figures.splice(0, figures.length, ...deduplicateFigureCaptions(figures))
+  figures.splice(0, figures.length, ...deduplicateFigureCaptions(figures, auxiliaryCaptionOwners))
   geometry.pages.sort((a, b) => a.pageNumber - b.pageNumber)
   // Keep the original PDF's coordinate system at the worker boundary. Analysis
   // and thumbnails are upright, while source jumps still point into the original.
-  const restoreCaption = (caption) => {
-    if (!caption) return
-    const p = geometry.pages.find((p) => p.pageNumber === caption.page)
-    if (p)
-      caption.rect = originalRect(
-        caption.rect,
-        p.width,
-        p.height,
-        (p.renderRotation - p.rotation + 360) % 360
-      )
-  }
+  const restoreCaption = (caption) => restoreCaptionCoordinates(caption, geometry.pages)
   for (const item of [...figures, ...algorithms, ...tables]) {
     restoreCaption(item.caption)
     for (const data of [item, ...(item.parts ?? [])])

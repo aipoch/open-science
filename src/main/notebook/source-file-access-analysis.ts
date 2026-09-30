@@ -25,10 +25,23 @@ const analyzeNotebookSourceFileAccess = async (
           ...(dependencyFacts?.definedNames ?? []),
           ...(dependencyFacts?.conditionallyDefinedNames ?? [])
         ])
+        const globalsGetNames = new Set(
+          [...source.matchAll(/globals\s*\(\s*\)\s*\.\s*get\s*\(\s*["']([^"']+)["']/gu)].map(
+            ([, name]) => name
+          )
+        )
+        const preservedStaticNames = new Set(
+          context?.staticStrings
+            .filter(({ name }) => globalsGetNames.has(name))
+            .map(({ name }) => name) ?? []
+        )
         activeContext = context
           ? {
+              ...(context.workingDirectory ? { workingDirectory: context.workingDirectory } : {}),
               managedEnvironment: context.managedEnvironment,
-              staticStrings: context.staticStrings.filter(({ name }) => !shadowedNames.has(name)),
+              staticStrings: context.staticStrings.filter(
+                ({ name }) => !shadowedNames.has(name) || preservedStaticNames.has(name)
+              ),
               staticCollections: context.staticCollections.filter(
                 ({ name }) => !shadowedNames.has(name)
               ),

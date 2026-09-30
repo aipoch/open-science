@@ -5,8 +5,10 @@ import {
   tableSourceItems,
   readSourceRow,
   groupSourceRowsWithScripts,
-  hasUniqueRecordTokens
+  hasUniqueRecordTokens,
+  recoverRuledHeaderBands
 } from './literature-pdf-source-records.mjs'
+import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 
 // Paired univariable/multivariable summaries share coefficient, interval, R²
 // and P-value headings. Recover native records, retaining intentionally blank
@@ -309,6 +311,8 @@ function recoverIdentifierCoefficientGrid(table, items, rules) {
 // of the detector. Higher headings must partition those same blocks evenly;
 // every native token, including reference rows and wrapped CIs, keeps one owner.
 export function recoverRepeatedRegressionGrid(table, items, captions, rules) {
+  const intervals = recoverLabeledIntervalRows(table, items, captions, rules)
+  if (intervals) return intervals
   const effects = recoverRepeatedEffectRecords(table, items, captions, rules)
   if (effects) return effects
   const coefficients = recoverPairedCoefficientRows(table, items, captions, rules)
@@ -509,6 +513,303 @@ export function recoverRepeatedRegressionGrid(table, items, captions, rules) {
     headerRows: headerGroups.map((_, n) => n),
     ownedTokens: new Set(source),
     repair: 'repeated-regression-blocks-recovered'
+  }
+}
+
+// Explicit interval/P headings and complete native baselines establish records
+// independently of model rows. A repeated adjustment sequence can additionally
+// own a shared outcome label; detached signs remain in their original records.
+function recoverLabeledIntervalRows(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const crop = table.cropRect
+  const predicted = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (![3, 4, 5, 6].includes(predicted.length)) return
+  const tolerance = Math.min(40, (crop[2] - crop[0]) * 0.06)
+  const borders = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        Math.abs(r[0] - crop[0]) < tolerance &&
+        Math.abs(r[2] - crop[2]) < tolerance &&
+        r[1] >= crop[1] - 16 &&
+        r[1] <= crop[3] + 16
+    )
+    .filter((r, n, all) => !n || r[1] - all[n - 1][1] > 2)
+  if (borders.length !== 3) return
+  const frame = [
+    Math.min(crop[0], borders[0][0]),
+    borders[0][1],
+    Math.max(crop[2], borders[0][2]),
+    borders[2][1]
+  ]
+  const source = tableSourceItems(items, frame)
+  const header = source.filter((i) => i.rect[3] < borders[1][1])
+  const body = source.filter((i) => i.rect[1] > borders[1][1])
+  if (
+    !header.some((i) => /Estimates?|\d{2}%\s*CI/i.test(i.text)) ||
+    (predicted.length !== 3 && !/p[- ]?value/i.test(header.map((i) => i.text).join('')))
+  )
+    return
+  const heights = body.map((i) => i.height).sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  const cuts = [
+    frame[0],
+    ...predicted.slice(1).map((c, n) => crop[0] + (predicted[n].rect[2] + c.rect[0]) / 2),
+    frame[2]
+  ]
+  if (predicted.length === 3)
+    return (
+      recoverNestedIntervalRows(source, header, body, cuts, frame, borders[1][1], height) ??
+      recoverTrailingRiskRows(source, header, body, cuts, frame, borders[1][1], height)
+    )
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const stub = predicted.length === 4 ? 1 : 0
+  const anchorGroups = groupSourceRowsWithScripts(
+    body.filter((i) => col(i) === stub && i.height >= height * 0.8 && /\p{L}/u.test(i.text)),
+    height,
+    0.3
+  )
+  if (!anchorGroups) return
+  const anchors = anchorGroups.map((g) => ({
+    ...g[0],
+    rect: union(g),
+    text: g.map((i) => i.text).join(' ')
+  }))
+  if (
+    anchors.length < 3 ||
+    anchors.some((a, n) => n && a.baseline - anchors[n - 1].baseline < height)
+  )
+    return
+  const groups = anchors.map((a) =>
+    body.filter(
+      (i) =>
+        (stub === 0 || col(i) > 0) &&
+        (Math.abs(i.baseline - a.baseline) < height * 0.35 ||
+          (i.height < height * 0.8 &&
+            i.rect[0] >= a.rect[0] &&
+            i.rect[0] < a.rect[2] + height * 0.4 &&
+            Math.abs(i.baseline - a.baseline) < height * 0.6))
+    )
+  )
+  const parts = cuts.slice(1).map((_, c) => groups.flat().filter((i) => col(i) === c))
+  for (let c = stub + 1; c < cuts.length - 1; c++) {
+    const end = Math.max(...parts[c - 1].map((i) => i.rect[2])),
+      start = Math.min(...parts[c].map((i) => i.rect[0]))
+    if (!(end < start)) return
+    cuts[c] = (end + start) / 2
+  }
+  const values = groups.map((g) => readSourceRow(g, cuts))
+  const interval = /^[−–+-]?\d+(?:\.\d+)?[[(][−–+-]?\d+(?:\.\d+)?;[−–+-]?\d+(?:\.\d+)?[\])][*]*$/
+  const probability = /^[<>≤≥]?(?:0?\.\d+|1(?:\.0+)?)[*]*$/
+  const summary = predicted.length === 6
+  if (summary && !header.some((i) => /Mean/.test(i.text))) return
+  if (
+    values.some(
+      (v) =>
+        !v ||
+        !v[stub] ||
+        (summary && !/^[−–+-]?\d+(?:\.\d+)?±\d+(?:\.\d+)?$/.test(v[1])) ||
+        v
+          .slice(summary ? 2 : stub + 1)
+          .some(
+            (s, n) =>
+              !(
+                (summary && s === '-' && v[n % 2 ? n + 1 : n + 3] === '-') ||
+                (n % 2 ? probability : interval).test(s)
+              )
+          )
+    )
+  )
+    return
+  const hierarchy = recoverRuledHeaderBands(header, cuts, rules, frame[1], borders[1][1])
+  if (!hierarchy && !readSourceRow(header, cuts, { multiline: true })) return
+  const heads = hierarchy?.rows ?? [[frame[0], frame[1], frame[2], borders[1][1]]]
+  const spans = [...(hierarchy?.spans ?? [])]
+  const labels = []
+  if (stub) {
+    const starts = anchors.flatMap((a, n) => (/^unadjusted$/i.test(a.text) ? [n] : []))
+    if (starts.length < 2 || starts[0] !== 0) return
+    const length = starts[1]
+    if (
+      length < 2 ||
+      length > 8 ||
+      anchors.length % length ||
+      starts.some((n, i) => n !== i * length)
+    )
+      return
+    for (let n = 0; n < anchors.length; n++) {
+      if (
+        anchors[n].text !== anchors[n % length].text ||
+        (n % length && !/^adjusted\s+for\b/i.test(anchors[n].text))
+      )
+        return
+    }
+    for (const n of starts) {
+      const last = anchors[n + length - 1]
+      const label = body.filter(
+        (i) =>
+          col(i) === 0 &&
+          i.rect[1] >= anchors[n].rect[1] - height * 0.3 &&
+          i.rect[3] <= last.rect[3] + height * 0.1
+      )
+      if (
+        !label.length ||
+        !/\p{L}/u.test(readSourceRow(label, cuts, { multiline: true })?.[0] ?? '')
+      )
+        return
+      labels.push(label)
+      spans.push({ row: heads.length + n, column: 0, rowSpan: length, colSpan: 1 })
+    }
+  }
+  if (!hasUniqueRecordTokens(source, [header, ...groups, ...labels])) return
+  const rows = groups.map((g) => union(g))
+  if (rows.some((r, n) => n && r[1] <= rows[n - 1][3])) return
+  return {
+    cropRect: frame,
+    rows: [...heads, ...rows.map((r) => [frame[0], r[1], frame[2], r[3]])],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], frame[1], x, frame[3]]),
+    headerRows: heads.map((_, n) => n),
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Adjusted/unadjusted interval columns can share one detector band across a
+// dash-only parent and its indented categories. All native intervals must be
+// complete; the shared header/rules and empty gutter establish their ownership.
+function recoverNestedIntervalRows(source, header, body, cuts, frame, headerBottom, height) {
+  const heading = readSourceRow(header, cuts, { multiline: true })
+  if (
+    !heading ||
+    !/^(?:Unadjusted|Univariate)(?:OR|HR|RR)\[95%CI\]$/i.test(heading[1]) ||
+    !/^(?:Adjusted|Multivariate)(?:OR|HR|RR)\[95%CI\]$/i.test(heading[2])
+  )
+    return
+  const lines = groupSourceRowsWithScripts(body, height, 0.35)
+  if (!lines || lines.length < 6) return
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const stub = body.filter((i) => col(i) === 0),
+    first = body.filter((i) => col(i) === 1)
+  const end = Math.max(...stub.map((i) => i.rect[2])),
+    start = Math.min(...first.map((i) => i.rect[0]))
+  if (!(end < start) || end - cuts[1] > height * 2) return
+  if (end > cuts[1]) cuts[1] = (end + start) / 2
+  const values = lines.map((g) => readSourceRow(g, cuts))
+  const interval = (s) =>
+    /^[−+-]?\d+(?:\.\d+)?\[[−+-]?\d+(?:\.\d+)?[,;][−+-]?\d+(?:\.\d+)?\][*†‡]*$/.test(s)
+  const dash = (s) => /^[–—−-]$/.test(s)
+  if (
+    values.some(
+      (v) => !v || !/\p{L}/u.test(v[0]) || !v.slice(1).every((s) => interval(s) || dash(s))
+    )
+  )
+    return
+  const parents = values.flatMap((v, n) => (v.slice(1).every(dash) ? [n] : []))
+  if (!parents.length || values.filter((v) => interval(v[1])).length < 6) return
+  for (const n of parents) {
+    const x = Math.min(...lines[n].filter((i) => col(i) === 0).map((i) => i.rect[0]))
+    const children = lines.slice(n + 1, parents.find((p) => p > n) ?? lines.length)
+    if (
+      children.length < 2 ||
+      children.some(
+        (g) => Math.min(...g.filter((i) => col(i) === 0).map((i) => i.rect[0])) - x < height * 0.4
+      )
+    )
+      return
+  }
+  const bounds = lines.map(union)
+  if (
+    bounds.some((r, n) => n && r[1] <= bounds[n - 1][3]) ||
+    !hasUniqueRecordTokens(source, [header, ...lines])
+  )
+    return
+  return {
+    cropRect: frame,
+    rows: [
+      [frame[0], frame[1], frame[2], headerBottom],
+      ...bounds.map((r) => [frame[0], r[1], frame[2], r[3]])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], frame[1], x, frame[3]]),
+    headerRows: [0],
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// In compact risk tables, each estimate/CI pair is aligned with the final
+// line of its wrapped label. Native rules close the table; complete pairs and
+// outdented reference-category sections partition all source lines uniquely.
+function recoverTrailingRiskRows(source, header, body, cuts, frame, headerBottom, height) {
+  const headings = readSourceRow(header, cuts)
+  if (!headings || !/^(?:RH|HR|RR|OR)$/.test(headings[1]) || !/^95%CI\*?$/.test(headings[2])) return
+  const lines = groupSourceRowsWithScripts(body, height, 0.3)
+  if (!lines || lines.length < 8) return
+  const values = lines.map((g) => readSourceRow(g, cuts))
+  if (values.some((v) => !v || !v[0])) return
+  const risk = /^\d+(?:\.\d+)?$/
+  const interval = /^(?:Ref\.?|\d+(?:\.\d+)?[−–-]\d+(?:\.\d+)?[*†‡§]*)$/i
+  const complete = (v) => v && risk.test(v[1]) && interval.test(v[2])
+  const stubLeft = (g) => Math.min(...g.filter((i) => i.rect[2] <= cuts[1]).map((i) => i.rect[0]))
+  const left = Math.min(...lines.map(stubLeft))
+  const groups = [],
+    spans = []
+  let pending = [],
+    wrapped = 0,
+    references = 0,
+    records = 0
+  for (let n = 0; n < lines.length; n++) {
+    const line = lines[n],
+      v = values[n],
+      next = values[n + 1]
+    if (pending.length && line[0].baseline - pending.at(-1)[0].baseline > height * 1.65) return
+    if (complete(v)) {
+      if (pending.length > 3) return
+      if (pending.length) wrapped++
+      references += /^Ref\.?$/i.test(v[2]) ? 1 : 0
+      records++
+      groups.push([...pending.flat(), ...line])
+      pending = []
+    } else if (!v[1] && !v[2]) {
+      const indent = lines[n + 1] ? stubLeft(lines[n + 1]) - stubLeft(line) : 0
+      if (
+        !pending.length &&
+        complete(next) &&
+        /^Ref\.?$/i.test(next[2]) &&
+        Number(next[1]) === 1 &&
+        /^[\p{L}\s/-]+$/u.test(line.map((i) => i.text).join(' ')) &&
+        Math.abs(stubLeft(line) - left) < height * 0.3 &&
+        indent > height * 0.6 &&
+        indent < height * 1.4
+      ) {
+        spans.push({ row: groups.length + 1, column: 0, rowSpan: 1, colSpan: 3 })
+        groups.push(line)
+      } else pending.push(line)
+    } else return
+  }
+  if (
+    pending.length ||
+    wrapped < 3 ||
+    records < 6 ||
+    !references ||
+    !hasUniqueRecordTokens(source, [header, ...groups])
+  )
+    return
+  const rows = groups.map((g) => union(g))
+  if (rows.some((r, n) => n && r[1] <= rows[n - 1][3])) return
+  return {
+    cropRect: frame,
+    rows: [
+      [frame[0], frame[1], frame[2], headerBottom],
+      ...rows.map((r) => [frame[0], r[1], frame[2], r[3]])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], frame[1], x, frame[3]]),
+    headerRows: [0],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }
 

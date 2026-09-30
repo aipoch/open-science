@@ -1,0 +1,19 @@
+{
+  "cells": [
+    {
+      "code": "import os\nfrom pathlib import Path\nROOT = Path.cwd()\nINPUT, OUTPUT = ROOT / 'inputs' / 'measurements.csv', ROOT / 'outputs' / 'summary.csv'",
+      "reads": [],
+      "writes": []
+    },
+    {
+      "code": "with INPUT.open('r', encoding='utf-8') as source:\n    content = source.read()\nOUTPUT.write_text(content, encoding='utf-8')",
+      "reads": ["inputs/measurements.csv"],
+      "writes": ["outputs/summary.csv"]
+    },
+    {
+      "code": "TEMP = ROOT / 'outputs' / 'summary.tmp'\nTEMP.write_text(OUTPUT.read_text(encoding='utf-8'), encoding='utf-8')\nos.replace(TEMP, ROOT / 'outputs' / 'published.csv')",
+      "reads": ["outputs/summary.csv"],
+      "writes": ["outputs/summary.tmp", "outputs/published.csv"]
+    }
+  ]
+}

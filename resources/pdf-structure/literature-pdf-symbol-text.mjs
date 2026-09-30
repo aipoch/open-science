@@ -7,10 +7,17 @@ import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 export function splitPdfNumericRuns(content, operators) {
   const pattern = /^\d+(?:\.\d+)?\s*\(\d+\/\d+\)(?:\s+\d+(?:\.\d+)?\s*\(\d+\/\d+\))+$/
   const joinedHeader = /^(\d+\))\s+([A-Za-z][A-Za-z -]+\s*\(n)$/
+  const closingCategory = /^([)\]])\s+(\p{L}[\p{L}\s/-]+)$/u
   const joinedRange = /^(.+\((?:range|IQR)\))\s+(\d+(?:\.\d+)?\s*\(\d+(?:\.\d+)?)$/i
   const spacedStatistics =
     /^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?(?:\s*\([−–+-]?\d+(?:\.\d+)?[−–-][−–+-]?\d+(?:\.\d+)?\))?|\*{1,3})$/
-  const pairedSummary = /^(\d+\.\d+\s*\(\d+\.\d+\))\s+(\d+\.\d+\s*\(\d+\.\d+\))$/
+  const pairedSummary =
+    /^(\d+(?:\.\d+)?\s*\(\d+(?:\.\d+)?(?:[–-]\d+(?:\.\d+)?)?\))\s+(\d+(?:\.\d+)?\s*\(\d+(?:\.\d+)?(?:[–-]\d+(?:\.\d+)?)?\))$/
+  // A font change at the range separator can leave one item containing the
+  // previous interval's end and the next interval's start. Require the same
+  // measured gutter as complete paired summaries before separating them.
+  const adjoiningIntervals =
+    /^([−+-]?\d+(?:\.\d+)?\))\s+([−+-]?\d+(?:\.\d+)?\s*\([−+-]?\d+(?:\.\d+)?)$/
   const countStatistics =
     /^[<>≤≥−+-]?\d+(?:\.\d+)?(?:\s*\(\d+(?:\.\d+)?%?\))?(?:\s+[<>≤≥−+-]?\d+(?:\.\d+)?(?:\s*\(\d+(?:\.\d+)?%?\))?)+$/u
   const countParts = (text) =>
@@ -21,13 +28,24 @@ export function splitPdfNumericRuns(content, operators) {
           (match) => match[0]
         )
       : undefined
+  const deviationParts = (text) =>
+    /^[−+-]?\d+(?:\.\d+)?\s*±\s*\d+(?:\.\d+)?(?:\s+[−+-]?\d+(?:\.\d+)?\s*±\s*\d+(?:\.\d+)?)+(?:\s+[<>≤≥]?\d+(?:\.\d+)?)?$/u.test(
+      text.trim()
+    )
+      ? [...text.matchAll(/[−+-]?\d+(?:\.\d+)?\s*±\s*\d+(?:\.\d+)?|[<>≤≥]?\d+(?:\.\d+)?/gu)].map(
+          (m) => m[0]
+        )
+      : undefined
   const eligible = (text) =>
     pattern.test(text.trim()) ||
     joinedHeader.test(text.trim()) ||
+    closingCategory.test(text.trim()) ||
     joinedRange.test(text.trim()) ||
     spacedStatistics.test(text.trim()) ||
     pairedSummary.test(text.trim()) ||
-    !!countParts(text)
+    adjoiningIntervals.test(text.trim()) ||
+    !!countParts(text) ||
+    !!deviationParts(text)
   if (!content.items.some((i) => 'str' in i && eligible(i.str))) return content
   const streams = new Map(),
     stack = []
@@ -96,7 +114,9 @@ export function splitPdfNumericRuns(content, operators) {
       const axis = Math.hypot(item.transform[0], item.transform[1])
       const scale = axis / first.size
       const statistics =
-        item.str.trim().match(spacedStatistics) ?? item.str.trim().match(pairedSummary)
+        item.str.trim().match(spacedStatistics) ??
+        item.str.trim().match(pairedSummary) ??
+        item.str.trim().match(adjoiningIntervals)
       let separateRuns = false
       if (glyphs.some((g) => g.run !== first.run)) {
         if (!statistics) return [item]
@@ -130,17 +150,30 @@ export function splitPdfNumericRuns(content, operators) {
         return [item]
       let cursor = 0
       const joined =
-        item.str.trim().match(joinedHeader) ?? item.str.trim().match(joinedRange) ?? statistics
+        item.str.trim().match(joinedHeader) ??
+        item.str.trim().match(joinedRange) ??
+        item.str.trim().match(closingCategory) ??
+        statistics
+      // A closing delimiter may share one TJ run with the next column's
+      // category. Require a measured half-em gutter, preserving normal prose.
+      if (
+        closingCategory.test(item.str.trim()) &&
+        (glyphs[1].start - glyphs[0].end) * scale < item.height * 0.5
+      )
+        return [item]
       if (statistics && !separateRuns) {
         const split = statistics[1].replace(/\s/g, '').length
         // A normal space or thousands separator is not a column boundary.
         if (
           (glyphs[split].start - glyphs[split - 1].end) * scale <
-          item.height * (pairedSummary.test(item.str.trim()) ? 0.5 : 0.75)
+          item.height *
+            (pairedSummary.test(item.str.trim()) || adjoiningIntervals.test(item.str.trim())
+              ? 0.5
+              : 0.75)
         )
           return [item]
       }
-      const counted = !joined && countParts(item.str)
+      const counted = !joined && (countParts(item.str) ?? deviationParts(item.str))
       // Mixed count/percentage and P-value runs must have a measured column
       // gutter at every split. Ordinary inline statistics remain one token.
       if (counted) {
@@ -214,13 +247,15 @@ const footnoteSubset = new Map([
   [122, ['z', '‡', 437]]
 ])
 const universalGlyphs = new Map([
-  ['H11001', '+'],
-  ['H11002', '−'],
-  ['H11003', '×'],
-  ['H11005', '='],
-  ['H11006', '±'],
-  ['H11021', '<'],
-  ['H11022', '>']
+  ['H11001', ['+', 833]],
+  ['H11002', ['−', 833]],
+  ['H11003', ['×', 833]],
+  ['H11005', ['=', 833]],
+  ['H11006', ['±', 833]],
+  ['H11021', ['<', 833]],
+  ['H11022', ['>', 833]],
+  ['H9257', ['η', 611]],
+  ['H9273', ['χ', 556]]
 ])
 const latinPiSymbols = new Map([
   [
@@ -254,7 +289,15 @@ const publisherSymbols = new Map([
     ])
   ],
   // AdvPSSym uses a narrow fraction-slash code for ordinary inline separators.
-  ['AdvPSSym', new Map([[135, ['⁄', '/', 166]]])],
+  [
+    'AdvPSSym',
+    new Map([
+      [135, ['⁄', '/', 166]],
+      [133, ['–', '±', 552]],
+      [163, ['£', '≤', 552]],
+      [130, ['‡', '≥', 552]]
+    ])
+  ],
   ['AdvT678', new Map([[162, ['¢', 'fi', 500]]])],
   // AdvMPi-One uses its legacy `five` slot for an equals sign in compact
   // sample-size headers (PDF.js otherwise exposes the painted glyph as `5`).
@@ -264,7 +307,38 @@ const publisherSymbols = new Map([
   // `)` because the embedded ToUnicode entry points at parenright; the
   // subset name, slot, and advance width together identify the painted dash.
   ['AdvPSSPS-AS', new Map([[41, [')', '−', 635]]])],
-  ['AdvOT463cc31e', new Map([[53, ['5', '=', 822]]])],
+  [
+    'AdvOT463cc31e',
+    new Map([
+      [44, [',', '<', 822]],
+      [46, ['.', '>', 822]],
+      [49, ['1', '+', 822]],
+      [50, ['2', '−', 822]],
+      [51, ['3', '×', 822]],
+      [53, ['5', '=', 822]],
+      [54, ['6', '±', 822]]
+    ])
+  ],
+  ['AdvOT9d186844', new Map([[53, ['5', '=', [822, 833]]]])],
+  [
+    'AdvOT8817665d',
+    new Map([
+      [35, ['#', '≤', 822]],
+      [36, ['$', '≥', 822]]
+    ])
+  ],
+  ['AdvPS_SSYB', new Map([[135, ['‡', '≥', 604]]])],
+  ['AdvP3EAA99', new Map([[120, ['x', 'χ', 552]]])],
+  [
+    'AdvP7DA6',
+    new Map([
+      [1, [',', '<', 833, 'comma']],
+      [2, ['>', '≥', 833, 'greater']],
+      [98, ['b', 'β', 614, 'b']],
+      [114, ['r', 'ρ', 500, 'r']],
+      [109, ['m', 'µ', 666]]
+    ])
+  ],
   [
     'AdvPS586B',
     new Map([
@@ -275,12 +349,35 @@ const publisherSymbols = new Map([
       [53, ['5', '=', 833]]
     ])
   ],
-  ['AdvP80675', new Map([[54, ['6', '±', 833]]])],
-  ['AdvPS7DED', new Map([[53, ['5', '=', 833]]])],
+  [
+    'AdvP80675',
+    new Map([
+      [44, [',', '<', 833, 'comma']],
+      [49, ['1', '+', 833]],
+      [50, ['2', '−', 833]],
+      [54, ['6', '±', 833]]
+    ])
+  ],
+  ['AdvP586B', new Map([[54, ['6', '±', 833]]])],
+  [
+    'AdvPS7DED',
+    new Map([
+      [50, ['2', '−', 833]],
+      [53, ['5', '=', 833]]
+    ])
+  ],
   ['AdvMT_SY', new Map([[188, ['¼', '=', 770]]])],
+  ['AdvPSMSAM10', new Map([[88, ['X', '✓', 833, 'X']]])],
   ['MinionMathSymbols', new Map([[136, ['�', '=', 583]]])],
   ['TeX_CM_Bold_Maths_Symbols', new Map([[136, ['¼', '=', 885]]])],
-  ['AdvTT454a7a89', new Map([[98, ['b', '<', 562]]])],
+  [
+    'AdvTT454a7a89',
+    new Map([
+      [98, ['b', '<', 562]],
+      [78, ['N', '>', 562]]
+    ])
+  ],
+  ['AdvPS_TINR', new Map([[2, ['\u0091', '½', 822, 'C145']]])],
   [
     'AdvPS4731B1',
     new Map([
@@ -332,14 +429,18 @@ const publisherSymbols = new Map([
     'AdvPSMP10',
     new Map([
       [98, ['b', 'β', 552]],
+      [100, ['d', 'δ', 500, 'd']],
       [118, ['v', 'χ', 500]]
     ])
   ],
+  // This dedicated subset paints the Taurus-shaped statistical note marker.
+  ['AdvOTddb58f6f', new Map([[98, ['b', '♉', 1000, 'b']]])],
   ['AdvP697C', new Map([[97, ['a', 'α', 635, 'a']]])],
   [
     'AdvP7DED',
     new Map([
       [97, ['a', 'α', 666]],
+      [49, ['1', '+', 833, 'one']],
       [53, ['5', '=', 833, 'five']]
     ])
   ],
@@ -371,8 +472,11 @@ const publisherSymbols = new Map([
   [
     'AdvPSMP13',
     new Map([
+      [68, ['D', 'Δ', 666]],
       [97, ['a', 'α', 552]],
       [98, ['b', 'β', 552]],
+      [99, ['c', 'γ', 500]],
+      [108, ['l', 'μ', 552]],
       [118, ['v', 'χ', 552]]
     ])
   ],
@@ -405,6 +509,7 @@ const publisherSymbols = new Map([
   [
     'AdvP4C4E74',
     new Map([
+      [112, ['p', '✓', 822, 'p']],
       // Verified footnote bars in this math subset, distinct from Latin k/j.
       [107, ['k', '‖', 500, 'k']],
       [106, ['j', '|', 270, 'j']],
@@ -419,7 +524,6 @@ const publisherSymbols = new Map([
       [1, ['\u0001', '−', 770]]
     ])
   ],
-  ['AdvP7DA6', new Map([[109, ['m', 'µ', 666]]])],
   [
     'AdvPS7DA6',
     new Map([
@@ -450,14 +554,23 @@ const publisherSymbols = new Map([
     'MathematicalPi-Four',
     new Map([
       [1, ['\u0001', '=', 833]],
-      [2, ['\u0002', '±', 833]]
+      [2, ['\u0002', '±', 833]],
+      [53, ['5', '=', 833, 'five']]
     ])
   ],
   [
     'MathematicalPi-One',
     new Map([
       [1, ['\u0001', 'µ', 667]],
-      [5, ['\u0005', 'χ', 556, 'H9273']]
+      [5, ['\u0005', 'χ', 556, 'H9273']],
+      // Verified legacy slots with their native 833-unit math advances.
+      [35, ['#', '≤', 833]],
+      [36, ['$', '≥', 833]],
+      [44, [',', '<', 833, 'comma']],
+      [49, ['1', '+', 833]],
+      [50, ['2', '−', 833]],
+      [53, ['5', '=', 833]],
+      [54, ['6', '±', 833]]
     ])
   ],
   [
@@ -477,6 +590,15 @@ const publisherSymbols = new Map([
     ])
   ]
 ])
+
+// Re-subsetting can prepend a second six-letter tag without a plus sign.
+// Strip it only when the remaining family already has verified slot mappings;
+// the glyph's original code, Unicode and advance width are still checked below.
+const symbolFontName = (name) => {
+  const family = name?.replace(/^[A-Z]{6}\+/, '')
+  const untagged = family?.replace(/^[A-Z][a-z]{5}(?=Adv)/, '')
+  return publisherSymbols.has(untagged) ? untagged : family
+}
 
 export async function repairPdfSymbolText(page, content, operators) {
   if (content.items.some((item) => item.transform)) operators ??= await page.getOperatorList()
@@ -508,7 +630,7 @@ export async function repairPdfSymbolText(page, content, operators) {
       items: content.items.map((item) => {
         if (!('str' in item) || !/[\uf130-\uf139\uf639-\uf641\uf6dc]/u.test(item.str)) return item
         const font = page.commonObjs.get(item.fontName)
-        const name = font.name?.replace(/^[A-Z]{6}\+/, '')
+        const name = symbolFontName(font.name)
         const privateDigits = ['AdvOTfc06a83e+f1', 'AdvOT58b04b30.B+f1'].includes(name)
         if (!privateDigits && !/^MyriadPro-(?:Semibold)?SemiCn$/.test(name)) return item
         return {
@@ -547,7 +669,7 @@ export async function repairPdfSymbolText(page, content, operators) {
   const hasMappedPublisherGlyph = content.items.some((item) => {
     if (!('str' in item)) return false
     try {
-      const name = page.commonObjs?.get?.(item.fontName)?.name?.replace(/^[A-Z]{6}\+/, '')
+      const name = symbolFontName(page.commonObjs?.get?.(item.fontName)?.name)
       const mappings = name ? publisherSymbols.get(name) : undefined
       return mappings
         ? [...mappings.values()].some(([unicode]) => item.str.includes(unicode))
@@ -579,6 +701,9 @@ export async function repairPdfSymbolText(page, content, operators) {
             '\u0005',
             '\u0006',
             '\u0007',
+            '\u0008',
+            '\u0009',
+            '\u000f',
             '?',
             'à',
             '\\',
@@ -596,6 +721,7 @@ export async function repairPdfSymbolText(page, content, operators) {
             /^[jGQ9](?:$|[\d.])|(?:^|\d)Y(?:$|\d)/.test(item.str) ||
             ['+', 'w', '!', 'O', '#'].includes(item.str) ||
             item.str === 'e' ||
+            item.str === 'd' ||
             item.str === 'm' ||
             item.str === 'u' ||
             item.str === 'Z' ||
@@ -634,7 +760,7 @@ export async function repairPdfSymbolText(page, content, operators) {
     else if (op === OPS.setFont) font = args[0]
     else if (op === OPS.showText && font) {
       const fontInfo = page.commonObjs?.get(font) ?? {}
-      const name = fontInfo.name?.replace(/^[A-Z]{6}\+/, '')
+      const name = symbolFontName(fontInfo.name)
       // These legacy Pi subsets label mathematical outlines with Latin glyph
       // names. Require the complete observed encoding as well as each glyph's
       // original code, Unicode and width; other subsets remain untouched.
@@ -707,62 +833,66 @@ export async function repairPdfSymbolText(page, content, operators) {
           fontInfo.differences?.[254] === 'thorn'
         const publisher =
           name === 'AdvP4C4E74' &&
-          Array.isArray(fontInfo.differences) &&
-          fontInfo.differences.length === 0 &&
-          glyph.originalCharCode === 254
-            ? ['þ', '+', 770]
-            : treatmentComparison && [3, 4, 254].includes(glyph.originalCharCode)
-              ? new Map([
-                  [3, ['\u0015', '≥', 770]],
-                  [4, ['\u0014', '≤', 770]],
-                  [254, ['þ', '+', 770]]
-                ]).get(glyph.originalCharCode)
-              : alternateComparison
-                ? (new Map([
-                    [2, ['\u0015', '≥', 770]],
+          fontInfo.differences?.[2] === 'C15' &&
+          glyph.originalCharCode === 2
+            ? ['\u000f', '•', 500]
+            : name === 'AdvP4C4E74' &&
+                Array.isArray(fontInfo.differences) &&
+                fontInfo.differences.length === 0 &&
+                glyph.originalCharCode === 254
+              ? ['þ', '+', 770]
+              : treatmentComparison && [3, 4, 254].includes(glyph.originalCharCode)
+                ? new Map([
+                    [3, ['\u0015', '≥', 770]],
                     [4, ['\u0014', '≤', 770]],
                     [254, ['þ', '+', 770]]
-                  ]).get(glyph.originalCharCode) ??
-                  publisherSymbols.get(name)?.get(glyph.originalCharCode))
-                : alternateGalliard
-                  ? galliardComparisonSubset.get(glyph.originalCharCode)
-                  : name === 'AdvP4C4E74' &&
-                      fontInfo.differences?.[1] === 'C0' &&
-                      fontInfo.differences?.[3] === 'C6' &&
-                      fontInfo.differences?.[121] === 'y' &&
-                      fontInfo.differences?.[122] === 'z' &&
-                      footnoteSubset.has(glyph.originalCharCode)
-                    ? footnoteSubset.get(glyph.originalCharCode)
-                    : // The range/comparison subset reuses slots that mean ± in other subsets.
-                      isComparisonSubset && comparisonSubset.has(glyph.originalCharCode)
-                      ? comparisonSubset.get(glyph.originalCharCode)
-                      : name === 'Universal-GreekwithMathPi' &&
-                          fontInfo.differences?.[3] === 'H11001' &&
-                          glyph.originalCharCode === 3
-                        ? ['\u0003', '+', 833]
+                  ]).get(glyph.originalCharCode)
+                : alternateComparison
+                  ? (new Map([
+                      [2, ['\u0015', '≥', 770]],
+                      [4, ['\u0014', '≤', 770]],
+                      [254, ['þ', '+', 770]]
+                    ]).get(glyph.originalCharCode) ??
+                    publisherSymbols.get(name)?.get(glyph.originalCharCode))
+                  : alternateGalliard
+                    ? galliardComparisonSubset.get(glyph.originalCharCode)
+                    : name === 'AdvP4C4E74' &&
+                        ['C0', 'C20'].includes(fontInfo.differences?.[1]) &&
+                        fontInfo.differences?.[3] === 'C6' &&
+                        fontInfo.differences?.[121] === 'y' &&
+                        (glyph.originalCharCode !== 122 || fontInfo.differences?.[122] === 'z') &&
+                        footnoteSubset.has(glyph.originalCharCode)
+                      ? footnoteSubset.get(glyph.originalCharCode)
+                      : // The range/comparison subset reuses slots that mean ± in other subsets.
+                        isComparisonSubset && comparisonSubset.has(glyph.originalCharCode)
+                        ? comparisonSubset.get(glyph.originalCharCode)
                         : name === 'Universal-GreekwithMathPi' &&
-                            fontInfo.differences?.[1] === 'H11005' &&
-                            fontInfo.differences?.[2] === 'H11021' &&
-                            glyph.originalCharCode === 2
-                          ? ['\u0002', '<', 833]
-                          : name === 'AdvP4C4E74' &&
-                              fontInfo.differences?.[1] === 'C21' &&
-                              glyph.originalCharCode === 1
-                            ? ['\u0015', '≥', 770]
+                            fontInfo.differences?.[3] === 'H11001' &&
+                            glyph.originalCharCode === 3
+                          ? ['\u0003', '+', 833]
+                          : name === 'Universal-GreekwithMathPi' &&
+                              fontInfo.differences?.[1] === 'H11005' &&
+                              fontInfo.differences?.[2] === 'H11021' &&
+                              glyph.originalCharCode === 2
+                            ? ['\u0002', '<', 833]
                             : name === 'AdvP4C4E74' &&
-                                (fontInfo.differences?.[1] === 'C21' ||
-                                  (fontInfo.differences?.[2] === 'C21' &&
-                                    fontInfo.differences?.[3] === 'C14' &&
-                                    fontInfo.differences?.[188] === 'onequarter') ||
-                                  (fontInfo.differences?.[2] === 'C0' &&
-                                    fontInfo.differences?.[188] === 'onequarter')) &&
-                                fontInfo.differences?.[254] === 'thorn' &&
-                                glyph.originalCharCode === 254
-                              ? ['þ', '+', 770]
-                              : publisherSymbols.get(name)?.get(glyph.originalCharCode)
+                                fontInfo.differences?.[1] === 'C21' &&
+                                glyph.originalCharCode === 1
+                              ? ['\u0015', '≥', 770]
+                              : name === 'AdvP4C4E74' &&
+                                  (fontInfo.differences?.[1] === 'C21' ||
+                                    (fontInfo.differences?.[2] === 'C21' &&
+                                      fontInfo.differences?.[3] === 'C14' &&
+                                      fontInfo.differences?.[188] === 'onequarter') ||
+                                    (fontInfo.differences?.[2] === 'C0' &&
+                                      fontInfo.differences?.[188] === 'onequarter')) &&
+                                  fontInfo.differences?.[254] === 'thorn' &&
+                                  glyph.originalCharCode === 254
+                                ? ['þ', '+', 770]
+                                : publisherSymbols.get(name)?.get(glyph.originalCharCode)
         // Subset slots vary; the embedded glyph name is authoritative when present.
         const namedUniversal =
-          name === 'Universal-GreekwithMathPi' && glyph.width === 833
+          name === 'Universal-GreekwithMathPi'
             ? universalGlyphs.get(fontInfo.differences?.[glyph.originalCharCode])
             : undefined
         const namedAdv =
@@ -775,9 +905,14 @@ export async function repairPdfSymbolText(page, content, operators) {
                   'thorn',
                   glyph.unicode === 'þ' &&
                   glyph.originalCharCode === 254 &&
-                  ['C21', 'C3'].includes(fontInfo.differences?.[2]) &&
-                  fontInfo.differences?.[3] === undefined &&
-                  fontInfo.differences?.[188] === 'onequarter'
+                  ((['C21', 'C3'].includes(fontInfo.differences?.[2]) &&
+                    fontInfo.differences?.[3] === undefined &&
+                    fontInfo.differences?.[188] === 'onequarter') ||
+                    (fontInfo.differences?.[1] === 'C0' && fontInfo.differences?.[3] === 'C6') ||
+                    (fontInfo.differences?.[2] === 'C6' &&
+                      fontInfo.differences?.[3] === 'C21' &&
+                      fontInfo.differences?.[4] === 'C3' &&
+                      fontInfo.differences?.[5] === 'C0'))
                     ? '+'
                     : undefined
                 ],
@@ -800,7 +935,9 @@ export async function repairPdfSymbolText(page, content, operators) {
             ? new Map([
                 ['H11021', [glyph.unicode, '<', 833]],
                 ['H11022', [glyph.unicode, '>', 833]],
-                ['H11350', [glyph.unicode, '≥', 833]]
+                ['H11350', [glyph.unicode, '≥', 833]],
+                ['H11349', [glyph.unicode, '≤', 833]],
+                ['H9273', [glyph.unicode, 'χ', 556]]
               ]).get(fontInfo.differences?.[glyph.originalCharCode])
             : undefined) ??
           latinPi?.get(glyph.originalCharCode) ??
@@ -815,19 +952,24 @@ export async function repairPdfSymbolText(page, content, operators) {
             ? pi
             : namedAdv
               ? [glyph.unicode, namedAdv]
-              : namedUniversal
-                ? [glyph.unicode, namedUniversal]
+              : namedUniversal && namedUniversal[1] === glyph.width
+                ? [glyph.unicode, namedUniversal[0]]
                 : publisher &&
-                    publisher[2] === glyph.width &&
+                    (Array.isArray(publisher[2])
+                      ? publisher[2].includes(glyph.width)
+                      : publisher[2] === glyph.width) &&
                     (!publisher[3] ||
-                      fontInfo.differences?.[glyph.originalCharCode] === publisher[3])
+                      (fontInfo.differences?.[glyph.originalCharCode] ??
+                        fontInfo.defaultEncoding?.[glyph.originalCharCode]) === publisher[3])
                   ? publisher
                   : name === 'AdvPS44A44B'
                     ? glyph.originalCharCode === 101 && glyph.width === 750
                       ? ['e', '–']
-                      : [67, 68].includes(glyph.originalCharCode) && glyph.width === 1000
-                        ? [String.fromCharCode(glyph.originalCharCode), '+']
-                        : undefined
+                      : glyph.originalCharCode === 100 && glyph.width === 1000
+                        ? ['d', '—']
+                        : [67, 68].includes(glyph.originalCharCode) && glyph.width === 1000
+                          ? [String.fromCharCode(glyph.originalCharCode), '+']
+                          : undefined
                     : name === 'TeX_CM_Maths_Symbols'
                       ? tex?.[2] === undefined || tex[2] === glyph.width
                         ? tex

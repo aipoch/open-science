@@ -1,7 +1,481 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { area, intersection as intersect } from './literature-pdf-page-geometry.mjs'
-import { classifyTableRuleEdge } from './literature-pdf-table-rules.mjs'
+import { classifyTableRuleEdge, joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { inside, union, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
+
+// Repeated probability columns can compare a complete indented categorical
+// section. Require identical complete measurement lanes and native centering
+// over the whole section; a probability centered over a subset stays separate.
+export function reconcileCategoricalComparisons({
+  cells,
+  items,
+  rules,
+  headerRows,
+  unassigned,
+  repairs
+}) {
+  if (unassigned.length || !headerRows.length || items.some((i) => i.horizontal === false)) return
+  const width = Math.max(...cells.map((c) => c.column + c.colSpan))
+  const headers = cells.filter((c) => headerRows.includes(c.row))
+  const probabilities = headers
+    .filter((c) => c.colSpan === 1 && /^P-?value$/i.test(c.text.replace(/\s/g, '')))
+    .map((c) => c.column)
+  const probabilityColumns = [...new Set(probabilities)].sort((a, b) => a - b)
+  if (probabilityColumns.length < 2 || probabilityColumns[0] < 2) return
+  const parents = probabilityColumns.map((column) =>
+    headers.filter((c) => c.colSpan >= 2 && c.column <= column && c.column + c.colSpan > column)
+  )
+  if (
+    parents.some((p) => p.length !== 1) ||
+    new Set(parents.map((p) => p[0])).size !== probabilityColumns.length
+  )
+    return
+  const roles = parents.map(([p]) =>
+    headers
+      .filter(
+        (c) =>
+          c.row > p.row &&
+          c.column >= p.column &&
+          c.column < p.column + p.colSpan &&
+          c.rowSpan === 1 &&
+          c.colSpan === 1
+      )
+      .sort((a, b) => a.column - b.column)
+      .map((c) => c.text.replace(/\s/g, ''))
+  )
+  if (
+    roles.some(
+      (r, n) =>
+        r.length !== parents[n][0].colSpan ||
+        r.some((s) => !s) ||
+        JSON.stringify(r) !== JSON.stringify(roles[0])
+    )
+  )
+    return
+  const key = (i) => JSON.stringify([i.text, i.rect]),
+    owned = cells.flatMap((c) => c.sourceTokens).map(key),
+    ownership = new Set(owned)
+  if (
+    owned.length !== items.length ||
+    ownership.size !== owned.length ||
+    new Set(items.map(key)).size !== items.length ||
+    items.some((i) => !ownership.has(key(i)))
+  )
+    return
+  const atRow = (r) => cells.filter((c) => c.row === r)
+  const sections = [...new Set(cells.map((c) => c.row))]
+    .sort((a, b) => a - b)
+    .flatMap((row) => {
+      if (headerRows.includes(row)) return []
+      const content = atRow(row).filter((c) => c.sourceTokens.length)
+      if (
+        content.length !== 1 ||
+        content[0].column !== 0 ||
+        content[0].rowSpan !== 1 ||
+        !/\p{L}/u.test(content[0].text) ||
+        /\d/u.test(content[0].text)
+      )
+        return []
+      return [{ row, label: content[0] }]
+    })
+  const lastRow = Math.max(...cells.map((c) => c.row + c.rowSpan - 1)),
+    candidates = []
+  const measurements = Array.from({ length: width - 1 }, (_, n) => n + 1).filter(
+    (c) => !probabilityColumns.includes(c)
+  )
+  if (measurements.length < 3) return
+  for (const [n, section] of sections.entries()) {
+    const start = section.row + 1,
+      end = sections[n + 1]?.row ?? lastRow + 1
+    if (end - start < 2 || end - start > 8) continue
+    const records = Array.from({ length: end - start }, (_, i) =>
+      atRow(start + i).sort((a, b) => a.column - b.column)
+    )
+    const labelTokens = section.label.sourceTokens,
+      height = Math.max(...labelTokens.map((i) => i.height))
+    if (
+      !height ||
+      records.some(
+        (row) =>
+          row.length !== width ||
+          row.some((c, i) => c.column !== i || c.rowSpan !== 1 || c.colSpan !== 1) ||
+          !/\p{L}/u.test(row[0].text) ||
+          !row[0].sourceTokens.length ||
+          Math.min(...row[0].sourceTokens.map((i) => i.rect[0])) -
+            Math.min(...labelTokens.map((i) => i.rect[0])) <
+            height * 0.5 ||
+          measurements.some(
+            (c) =>
+              !/^\d+(?:\(\d+(?:\.\d+)?%\))?$/.test(row[c].text.replace(/\s/g, '')) ||
+              !row[c].sourceTokens.length
+          )
+      )
+    )
+      continue
+    const source = records.map((row) =>
+      row.filter((c) => !probabilityColumns.includes(c.column)).flatMap((c) => c.sourceTokens)
+    )
+    if (
+      source.some((g) =>
+        g.some(
+          (i) =>
+            Math.abs(i.height - height) > height * 0.1 ||
+            Math.abs(i.baseline - g[0].baseline) > height * 0.1
+        )
+      )
+    )
+      continue
+    const centers = source.map((g) => g[0].baseline - g[0].height / 2)
+    if (
+      centers.some(
+        (y, i) => i && (y - centers[i - 1] < height || y - centers[i - 1] > height * 1.6)
+      )
+    )
+      continue
+    const targets = probabilityColumns.map((column) => {
+      const slots = records.map((r) => r[column]),
+        values = slots.filter((c) => c.sourceTokens.length)
+      if (
+        values.length !== 1 ||
+        !/^[<>≤≥]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(values[0].text.replace(/\s/g, ''))
+      )
+        return
+      const value = values[0],
+        ink = union(value.sourceTokens),
+        rect = union(slots)
+      if (
+        value.sourceTokens.some(
+          (i) =>
+            Math.abs(i.height - height) > height * 0.1 ||
+            Math.abs(i.baseline - value.sourceTokens[0].baseline) > height * 0.05
+        ) ||
+        Math.abs((ink[1] + ink[3] - centers[0] - centers.at(-1)) / 2) > height * 0.1 ||
+        ink[0] < rect[0] ||
+        ink[2] > rect[2] ||
+        ink[1] < rect[1] ||
+        ink[3] > rect[3] ||
+        rules.some(
+          (r) =>
+            (r[1] === r[3] &&
+              r[1] > rect[1] &&
+              r[1] < rect[3] &&
+              r[0] < rect[2] &&
+              r[2] > rect[0]) ||
+            (r[0] === r[2] && r[0] > rect[0] && r[0] < rect[2] && r[1] < rect[3] && r[3] > rect[1])
+        )
+      )
+        return
+      return { slots, value, rect }
+    })
+    if (targets.some((t) => !t)) continue
+    candidates.push({ start, end, height, targets })
+  }
+  if (candidates.length < 3) return
+  const headerInk = union(headers.flatMap((c) => c.sourceTokens)),
+    bodyInk = union(
+      cells.filter((c) => !headerRows.includes(c.row)).flatMap((c) => c.sourceTokens)
+    ),
+    frame = union(cells),
+    height = candidates[0].height
+  const edges = joinHorizontalTableRules(rules, height * 0.1).filter(
+    (r) => Math.abs(r[0] - frame[0]) < height && Math.abs(r[2] - frame[2]) < height
+  )
+  if (
+    !edges.some((r) => r[1] <= headerInk[1] + height * 0.1 && headerInk[1] - r[1] < height) ||
+    !edges.some((r) => r[1] >= bodyInk[3] && r[1] - bodyInk[3] < height)
+  )
+    return
+  for (const { start, end, targets } of candidates) {
+    for (const { slots, value, rect } of targets) {
+      const first = slots[0]
+      Object.assign(first, {
+        ...value,
+        row: start,
+        rowSpan: end - start,
+        rect,
+        origin: 'source-category-group'
+      })
+      for (const slot of slots.slice(1)) cells.splice(cells.indexOf(slot), 1)
+    }
+    repairs.push('categorical-group-spans-recovered')
+  }
+}
+
+// Separate cited records can share centered study fields. An accepted model
+// span in the neighboring study column, complete references and independent
+// result columns prove the common record extent; empty slots alone do not.
+export function reconcileSharedReferenceFields({
+  cells,
+  items,
+  rules,
+  headerRows,
+  unassigned,
+  repairs
+}) {
+  if (unassigned.length) return
+  const width = Math.max(...cells.map((c) => c.column + c.colSpan))
+  if (width < 6) return
+  const references = cells.filter(
+    (c) =>
+      c.column === 0 &&
+      c.rowSpan === 1 &&
+      c.colSpan === 1 &&
+      /^\p{Lu}[\p{L}’'.-]+ et al\. \((?:19|20)\d{2}(?:,\s*(?:19|20)\d{2})*\) \[\d+(?:[,–-]\s*\d+)*\]$/u.test(
+        c.text
+      )
+  )
+  if (references.length < 3) return
+  const header = cells.filter((c) => headerRows.includes(c.row)).flatMap((c) => c.sourceTokens)
+  const body = cells.filter((c) => !headerRows.includes(c.row)).flatMap((c) => c.sourceTokens)
+  if (!header.length || !body.length) return
+  const height = Math.max(...header.map((i) => i.height)),
+    frame = union(cells)
+  const borders = joinHorizontalTableRules(rules, height * 0.1).filter(
+    (r) => Math.abs(r[0] - frame[0]) < height && Math.abs(r[2] - frame[2]) < height
+  )
+  const head = union(header),
+    data = union(body)
+  if (
+    !borders.some((r) => r[1] <= head[1] + height * 0.1 && head[1] - r[1] < height) ||
+    !borders.some((r) => r[1] >= head[3] && r[1] <= data[1]) ||
+    !borders.some((r) => r[1] >= data[3] && r[1] - data[3] < height)
+  )
+    return
+  const key = (i) => JSON.stringify([i.text, i.rect])
+  const owned = cells.flatMap((c) => c.sourceTokens).map(key)
+  const ownership = new Set(owned)
+  if (
+    owned.length !== ownership.size ||
+    items.length !== ownership.size ||
+    new Set(items.map(key)).size !== items.length ||
+    items.some((i) => !ownership.has(key(i)))
+  )
+    return
+  const contained = (rect, i, rounding = 0) =>
+    i.rect[0] >= rect[0] &&
+    i.rect[2] <= rect[2] &&
+    i.rect[1] >= rect[1] - rounding &&
+    i.rect[3] <= rect[3] + rounding
+  for (const witness of cells.filter(
+    (c) =>
+      c.origin === 'model-span' &&
+      c.rowSpan === 2 &&
+      c.colSpan === 1 &&
+      c.column > 0 &&
+      c.column < width - 4 &&
+      c.sourceTokens.length === 1
+  )) {
+    const anchor = witness.sourceTokens[0],
+      h = anchor.height
+    const rows = [witness.row, witness.row + 1]
+    if (
+      !/\p{L}/u.test(anchor.text) ||
+      Math.abs(anchor.rect[1] + anchor.rect[3] - witness.rect[1] - witness.rect[3]) > h * 0.4 ||
+      rows.some((row) => !references.some((c) => c.row === row))
+    )
+      continue
+    const results = cells.filter((c) => rows.includes(c.row) && c.column >= width - 2)
+    if (
+      results.length !== 4 ||
+      results.some(
+        (c) =>
+          c.rowSpan !== 1 ||
+          c.colSpan !== 1 ||
+          c.sourceTokens.length < 2 ||
+          !/^[-–—]\s+\p{L}.*\d/u.test(c.text) ||
+          // Native glyph bounds can overshoot a model edge by subpixel rounding.
+          // Keep horizontal containment strict so neighboring columns stay separate.
+          c.sourceTokens.some((i) => !contained(c.rect, i, i.height * 0.01))
+      )
+    )
+      continue
+    const changes = []
+    for (let column = witness.column + 1; column < width - 2; column++) {
+      const slots = cells.filter((c) => rows.includes(c.row) && c.column === column)
+      if (slots.length !== 2 || slots.some((c) => c.rowSpan !== 1 || c.colSpan !== 1)) break
+      const values = slots.filter((c) => c.sourceTokens.length)
+      const rect = union(slots)
+      if (
+        values.length !== 1 ||
+        !values[0].text ||
+        values[0].sourceTokens.some(
+          (i) =>
+            !contained(rect, i) ||
+            Math.abs(i.baseline - anchor.baseline) > h * 0.1 ||
+            Math.abs(i.height - h) > h * 0.1
+        ) ||
+        items.filter((i) => inside(rect, i)).length !== values[0].sourceTokens.length ||
+        rules.some(
+          (r) =>
+            (r[1] === r[3] &&
+              r[2] > rect[0] &&
+              r[0] < rect[2] &&
+              r[1] > rect[1] + h * 0.2 &&
+              r[1] < rect[3] - h * 0.2) ||
+            (r[0] === r[2] &&
+              r[0] > rect[0] + h * 0.1 &&
+              r[0] < rect[2] - h * 0.1 &&
+              r[1] < rect[3] &&
+              r[3] > rect[1])
+        )
+      )
+        break
+      changes.push({ slots, value: values[0], rect })
+    }
+    if (changes.length < 3 || changes.length !== width - 3 - witness.column) continue
+    for (const { slots, value, rect } of changes) {
+      cells.splice(cells.indexOf(slots.find((c) => c !== value)), 1)
+      value.row = witness.row
+      value.rowSpan = 2
+      value.rect = rect
+      value.origin = 'source-ruled-stub'
+    }
+    repairs.push('source-record-boundary-restored')
+  }
+}
+
+// Standalone leaves beside repeated three-level cohorts own the whole native
+// header band. Prove the neighboring hierarchy before joining empty model slots.
+export function reconcileRuledLeafHeaderSpans({ cells, rows, items, rules, repairs }) {
+  if (rows.length < 5) return
+  const at = (row) => cells.filter((c) => c.row === row).sort((a, b) => a.column - b.column)
+  const roots = at(0).filter(
+    (c) => c.rowSpan === 1 && c.colSpan >= 4 && /\(n\s*=\s*\d+\)$/i.test(c.text)
+  )
+  if (roots.length < 2) return
+  const header = cells.filter((c) => c.row < 3)
+  const height = Math.max(...header.flatMap((c) => c.sourceTokens.map((i) => i.height)))
+  if (!Number.isFinite(height) || height <= 0) return
+  const horizontal = joinHorizontalTableRules(rules)
+  const underline = (cell, lower) => {
+    const source = union(cell.sourceTokens),
+      below = union(lower.flatMap((c) => c.sourceTokens))
+    return horizontal.some(
+      (r) =>
+        r[1] >= source[3] &&
+        r[1] <= below[1] &&
+        Math.abs(r[0] - cell.rect[0]) <= height &&
+        Math.abs(r[2] - cell.rect[2]) <= height
+    )
+  }
+  const signatures = []
+  for (const root of roots) {
+    const end = root.column + root.colSpan
+    const children = at(1).filter((c) => c.column >= root.column && c.column < end)
+    if (
+      children.length < 2 ||
+      children.some(
+        (c, n) =>
+          c.rowSpan !== 1 ||
+          c.colSpan < 2 ||
+          !c.text ||
+          !c.sourceTokens.length ||
+          c.column !== (n ? children[n - 1].column + children[n - 1].colSpan : root.column)
+      ) ||
+      children.at(-1).column + children.at(-1).colSpan !== end ||
+      !underline(root, children)
+    )
+      return
+    let ruledChildren = 0
+    const signature = []
+    for (const child of children) {
+      const leaves = at(2).filter(
+        (c) => c.column >= child.column && c.column < child.column + child.colSpan
+      )
+      if (
+        leaves.length !== child.colSpan ||
+        leaves.some(
+          (c, n) =>
+            c.column !== child.column + n ||
+            c.rowSpan !== 1 ||
+            c.colSpan !== 1 ||
+            !/^\p{L}/u.test(c.text) ||
+            !c.sourceTokens.length
+        )
+      )
+        return
+      if (underline(child, leaves)) ruledChildren++
+      signature.push([child.text, leaves.map((c) => c.text)])
+    }
+    if (!ruledChildren) return
+    signatures.push(JSON.stringify(signature))
+  }
+  if (!signatures.every((s) => s === signatures[0])) return
+  const bounds = union(header),
+    topSource = Math.min(...header.flatMap((c) => c.sourceRects.map((r) => r[1])))
+  const bottomSource = Math.max(...header.flatMap((c) => c.sourceRects.map((r) => r[3])))
+  const top = horizontal.find(
+    (r) =>
+      r[1] <= topSource &&
+      topSource - r[1] <= height &&
+      Math.abs(r[0] - bounds[0]) <= height &&
+      Math.abs(r[2] - bounds[2]) <= height
+  )
+  const bottom = horizontal.find(
+    (r) =>
+      r[1] >= bottomSource &&
+      r[1] - bottomSource <= height &&
+      Math.abs(r[0] - bounds[0]) <= height &&
+      Math.abs(r[2] - bounds[2]) <= height
+  )
+  if (!top || !bottom) return
+  const candidates = at(0).filter(
+    (c) =>
+      c.column > 0 &&
+      c.rowSpan === 1 &&
+      c.colSpan === 1 &&
+      /^\p{L}+$/u.test(c.text) &&
+      c.sourceTokens.length
+  )
+  if (candidates.length < 2) return
+  for (const leaf of candidates) {
+    const slots = header.filter((c) => c.column === leaf.column).sort((a, b) => a.row - b.row)
+    let next = 0
+    if (
+      slots.some((c) => {
+        const bad =
+          c.row !== next ||
+          c.colSpan !== 1 ||
+          c.row + c.rowSpan > 3 ||
+          (c !== leaf && (c.text || c.sourceRects.length || c.sourceTokens.length))
+        next = c.row + c.rowSpan
+        return bad
+      }) ||
+      next !== 3
+    )
+      continue
+    const rect = union(slots)
+    if (
+      rules.some(
+        (r) =>
+          (r[1] === r[3] &&
+            r[1] > top[1] + height * 0.1 &&
+            r[1] < bottom[1] - height * 0.1 &&
+            r[0] < rect[2] &&
+            r[2] > rect[0]) ||
+          (r[0] === r[2] && r[0] > rect[0] && r[0] < rect[2] && r[1] < bottom[1] && r[3] > top[1])
+      )
+    )
+      continue
+    const owned = (i) => leaf.sourceRects.some((r) => r.every((v, n) => v === i.rect[n]))
+    if (items.some((i) => intersect(rect, i.rect) > 0 && !owned(i))) continue
+    if (
+      cells.filter(
+        (c) =>
+          c.row >= 3 &&
+          c.column === leaf.column &&
+          c.rowSpan === 1 &&
+          c.colSpan === 1 &&
+          /^[<>≤≥]?\s*(?:\d+(?:\.\d+)?|\.\d+)$/.test(c.text)
+      ).length < 2
+    )
+      continue
+    leaf.rowSpan = 3
+    leaf.rect = rect
+    for (const cell of slots) if (cell !== leaf) cells.splice(cells.indexOf(cell), 1)
+    repairs.push('header-span-inferred')
+  }
+}
 
 // Validate all proposals against source text before resolving overlaps. Slot identity
 // is preserved; issues and repairs are appended to the caller's existing diagnostics.
@@ -18,7 +492,19 @@ export function resolveTableCellMerges({
   issues,
   repairs
 }) {
+  recoverSampleQualifiedHeaders({
+    proposals,
+    baseCells,
+    items,
+    headerRows,
+    rules,
+    repairs,
+    wrappedOnly: Boolean(recordGrid?.completeSpans)
+  })
+  recoverOrdinalGroupStatistics({ proposals, baseCells, items, rows, headerRows, rules, repairs })
+  recoverLocalPercentageColumns({ proposals, baseCells, items, rows, rules })
   if (!recordGrid?.completeSpans) {
+    recoverEnclosedSectionSpans({ proposals, baseCells, items, rows, rules, repairs })
     // A predicted first stub may include both the column heading and the
     // first body group. A complete native header rule separates their scopes.
     for (const proposal of proposals) {
@@ -53,19 +539,24 @@ export function resolveTableCellMerges({
       proposal.origin = 'source-ruled-stub'
       repairs.push('source-record-boundary-restored')
     }
-    recoverSampleQualifiedHeaders({ proposals, baseCells, items, headerRows, rules, repairs })
     recoverCategoricalGroupSpans({ proposals, baseCells, items, rows, headerRows, repairs })
     recoverSubtotalStubSpans({ proposals, baseCells, items, rows, rules, repairs })
     recoverSummaryStatisticStubs({ proposals, baseCells, items, rows, headerRows, repairs })
+    recoverPairedComparisonStubs({ proposals, baseCells, items, rows, rules, repairs })
     recoverThresholdSectionSpans({ proposals, baseCells, items, rows, headerRows, repairs })
+    recoverProbabilitySectionStubs({ proposals, baseCells, items, rows, headerRows, repairs })
     recoverClinicalSectionSpans({ proposals, baseCells, items, rows, headerRows, repairs })
-    recoverCountPairSummaries({ proposals, baseCells, items, rows, rules, repairs })
+    recoverRuledSectionHeadings({ proposals, baseCells, items, rows, headerRows, rules, repairs })
+    recoverRepeatedRecordSections({ proposals, baseCells, items, rows, headerRows, rules, repairs })
+    recoverGroupedSummaries({ proposals, baseCells, items, rows, headerRows, rules, repairs })
     recoverRepeatedArmHeaders({ proposals, baseCells, items, rows, rules, repairs })
     recoverFollowupStubSpans({ proposals, baseCells, items, rows, rules, repairs })
     recoverClosedStatisticSpans({ proposals, baseCells, items, rows, rules, repairs })
     recoverRuledSectionStub({ proposals, baseCells, items, headerRows, rules, repairs })
+    recoverRepeatedRuledStubs({ proposals, baseCells, items, headerRows, rules, repairs })
     recoverCenteredColumnStub({ proposals, baseCells, items, rows, headerRows, rules })
   }
+  recoverRepeatedLeafParents({ proposals, baseCells, items, rows, headerRows, rules, repairs })
   const resourceColumns = baseCells
     .filter((cell) => cell.row === 0)
     .map((cell) =>
@@ -96,7 +587,12 @@ export function resolveTableCellMerges({
     const words = slots.map((slot) =>
       source.filter((i) => inside(slot.rect, i)).sort((a, b) => a.rect[0] - b.rect[0])
     )
-    if (words.some((g) => !g.length) || !/\p{L}/u.test(words[0].map((i) => i.text).join('')))
+    const populated = words.filter((g) => g.length)
+    if (
+      populated.length < 2 ||
+      (words.some((g) => !g.length) && populated.length < 3) ||
+      !/\p{L}/u.test(populated[0].map((i) => i.text).join(''))
+    )
       return false
     if (
       source.some(
@@ -109,12 +605,13 @@ export function resolveTableCellMerges({
     )
     if (baseline.some((i) => Math.abs(i.baseline - baseline[0].baseline) > i.height * 0.35))
       return false
-    return words.slice(1).every((g) =>
+    return populated.slice(1).every((g) =>
       /^(?:(?:RR|HR|MedianD)=)?[<>≤≥−+-]?\d[\d.,()%±–−+-]*(?:\(N=\d+\))?$/.test(
         g
           .map((i) => i.text)
           .join('')
           .replace(/\s/g, '')
+          .replace(/to/g, '–')
       )
     )
   }
@@ -141,6 +638,15 @@ export function resolveTableCellMerges({
       colSpan = Math.max(...cs) - column + 1
     if (
       p.origin === 'model-span' &&
+      p.sectionHeader &&
+      colSpan > 1 &&
+      sourceNumericRecord(p.slots)
+    ) {
+      repairs.push('source-record-boundary-restored')
+      return false
+    }
+    if (
+      p.origin === 'model-span' &&
       unique.some(
         (q) =>
           q.origin === 'source-section' &&
@@ -157,6 +663,76 @@ export function resolveTableCellMerges({
       .filter((item) => item.horizontal && intersect(spanRect, item.rect) / area(item.rect) > 0.8)
       .sort((a, b) => a.baseline - b.baseline)
     const textRect = spanText.length ? union(spanText) : undefined
+    // A cohort heading must not absorb a separately populated time column.
+    // Unlike an ordinary empty header, repeated explicit time units provide
+    // evidence for that independent dimension beneath a single header tier.
+    if (
+      p.origin === 'model-span' &&
+      rowSpan === 1 &&
+      colSpan === 2 &&
+      headerRows.length === 1 &&
+      headerRows[0] === row &&
+      textRect &&
+      /\(N\s*=\s*\d+\)/i.test(spanText.map((i) => i.text).join(''))
+    ) {
+      const owner = p.slots.find((s) => spanText.every((i) => inside(s.rect, i)))
+      const time = p.slots.find((s) => s !== owner)
+      if (
+        owner &&
+        time &&
+        time.column < owner.column &&
+        spanText.every((i) => i.rect[0] >= owner.rect[0] && i.rect[2] <= owner.rect[2])
+      ) {
+        const labels = baseCells
+          .filter((s) => s.column === time.column && !headerRows.includes(s.row))
+          .map((s) =>
+            items
+              .filter((i) => i.horizontal && inside(s.rect, i))
+              .map((i) => i.text)
+              .join('')
+              .replace(/\s/g, '')
+          )
+        if (
+          labels.length >= 6 &&
+          new Set(labels).size >= 2 &&
+          labels.every((s) => /^\d+(?:W|M|Y|Weeks?|Months?|Years?)$/i.test(s))
+        ) {
+          repairs.push('source-header-span-discarded')
+          return false
+        }
+      }
+    }
+    // A short native underline can prove a single-column parent even when
+    // the detector merges it with an empty neighboring stub.
+    if (
+      ['model-span', 'text-supported-header-span'].includes(p.origin) &&
+      rowSpan === 1 &&
+      colSpan > 1 &&
+      headerRows.includes(row) &&
+      textRect
+    ) {
+      const owner = p.slots.find((s) => spanText.every((i) => inside(s.rect, i)))
+      const h = Math.max(...spanText.map((i) => i.height))
+      if (
+        owner &&
+        rules.some(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] >= textRect[3] &&
+            r[1] - textRect[3] < h * 1.5 &&
+            r[0] >= owner.rect[0] - h * 0.3 &&
+            r[2] <= owner.rect[2] + h * 0.3 &&
+            r[0] <= textRect[0] &&
+            r[2] >= textRect[2] &&
+            rules.filter(
+              (q) => q[1] === q[3] && Math.abs(q[1] - r[1]) < 1 && (q[2] < r[0] || q[0] > r[2])
+            ).length >= 2
+        )
+      ) {
+        repairs.push('source-header-span-discarded')
+        return false
+      }
+    }
     const sectionSpanText = p.sectionHeader
       ? spanText.filter(
           (item) =>
@@ -198,6 +774,105 @@ export function resolveTableCellMerges({
         })
         .filter((sourceRow) => sourceRow !== undefined)
     )
+    // A cohort's mean/deviation record does not own the following hypothesis
+    // tests. Require an aligned label, several measured columns, and an
+    // explicit factor/test label in a different column below it.
+    if (
+      p.origin === 'model-span' &&
+      column === 0 &&
+      colSpan === 1 &&
+      rowSpan > 1 &&
+      sourceRows.size === 1 &&
+      spanText.length &&
+      !headerRows.includes(row)
+    ) {
+      const rowTokens = (r) => items.filter((i) => i.horizontal && inside(rows[r].rect, i))
+      const first = rowTokens(row)
+      const means = baseCells
+        .filter((c) => c.row === row && c.column > 0)
+        .filter((c) =>
+          /\d\s*±\s*\d/.test(
+            first
+              .filter((i) => inside(c.rect, i))
+              .map((i) => i.text)
+              .join('')
+          )
+        )
+      if (
+        means.length >= 2 &&
+        spanText.every((i) => first.includes(i)) &&
+        rs.slice(1).some((r) => {
+          const tokens = rowTokens(r)
+          return (
+            tokens.some(
+              (i) =>
+                /^(?:Group|Time|Group\s*[×x]\s*Time|[tFp](?:[ab])?)$/.test(i.text.trim()) &&
+                !inside(p.slots[0].rect, i)
+            ) &&
+            tokens.filter((i) => /^[.\d]+$/.test(i.text)).length >= 2 &&
+            !tokens.some((i) => i.text.includes('±'))
+          )
+        })
+      ) {
+        repairs.push('source-numeric-span-discarded')
+        return false
+      }
+    }
+    // A probability for one complete regression estimate cannot extend into
+    // records where that entire estimate/probability pair is absent. Require
+    // another complete pair on every row and equally aligned independent stubs.
+    if (
+      p.origin === 'model-span' &&
+      rowSpan > 1 &&
+      colSpan === 1 &&
+      column >= 4 &&
+      spanText.length &&
+      /^[<>≤≥]?\d+(?:\.\d+)?$/.test(
+        spanText
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+      ) &&
+      sourceRows.size === 1
+    ) {
+      const own = (r, c) => {
+        const cell = baseCells.find((s) => s.row === r && s.column === c)
+        return cell ? items.filter((i) => i.horizontal && inside(cell.rect, i)) : []
+      }
+      const label = (c) =>
+        headerRows
+          .flatMap((r) => own(r, c))
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+      const stubs = rs.map((r) => own(r, 0))
+      const reference = stubs[0]
+      const paired = (r, c) =>
+        own(r, c).some((i) => /\d/.test(i.text)) && own(r, c + 1).some((i) => /\d/.test(i.text))
+      if (
+        /p-?value$/i.test(label(column)) &&
+        /CI\)/.test(label(column - 1)) &&
+        reference.length &&
+        stubs.every(
+          (s) =>
+            s.length &&
+            s.some((i) => /\p{L}/u.test(i.text)) &&
+            Math.abs(
+              Math.min(...s.map((i) => i.rect[0])) - Math.min(...reference.map((i) => i.rect[0]))
+            ) <
+              spanText[0].height * 0.2
+        ) &&
+        paired(row, column - 1) &&
+        rs.every((r) => paired(r, 1)) &&
+        rs
+          .filter((r) => r !== row)
+          .every((r) => !own(r, column - 1).length && !own(r, column).length) &&
+        spanText.every((i) => Math.abs(i.baseline - reference[0].baseline) < i.height * 0.35)
+      ) {
+        repairs.push('source-numeric-span-discarded')
+        return false
+      }
+    }
     if (
       p.origin === 'model-span' &&
       !headerRows.includes(row) &&
@@ -692,6 +1367,90 @@ export function resolveTableCellMerges({
   return cells
 }
 
+// A repeated percent header changes the meaning of an existing mean/SD pair.
+// Require a ruled unit band and complete single percentages in every following
+// record before spanning that pair; a blank SD alone is not merge evidence.
+function recoverLocalPercentageColumns({ proposals, baseCells, items, rows, rules }) {
+  const at = (r) => baseCells.filter((c) => c.row === r).sort((a, b) => a.column - b.column)
+  if (at(0).length !== 5) return
+  const tokens = (c) => items.filter((i) => inside(c.rect, i))
+  const text = (c) =>
+    tokens(c)
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '')
+  // Count/percentage leaves can also contain explicitly labelled mean or
+  // median summaries. Those rows own one value across each cohort pair.
+  const countLeaves = rows.slice(0, 3).some((_, r) => {
+    const v = at(r).map(text)
+    return v.length === 5 && /^No\.?$/i.test(v[1]) && v[2] === '%' && v[3] === v[1] && v[4] === '%'
+  })
+  if (countLeaves) {
+    for (let r = 2; r < rows.length; r++) {
+      const band = at(r)
+      if (band.length !== 5) continue
+      const label = text(band[0])
+      const mean = /^Mean.*±SD/i.test(label),
+        median = /^Median\p{L}/iu.test(label)
+      if (!mean && !median) continue
+      const pairs = [band.slice(1, 3), band.slice(3, 5)]
+      const values = pairs.map((slots) => text({ rect: union(slots) }))
+      if (
+        !values.every((v) =>
+          (mean ? /^[−+-]?\d+(?:\.\d+)?±\d+(?:\.\d+)?$/ : /^\d+(?:\.\d+)?$/).test(v)
+        )
+      )
+        continue
+      for (const slots of pairs) proposals.push({ slots, origin: 'source-ruled-stub' })
+    }
+  }
+  for (let r = 2; r < rows.length - 4; r++) {
+    const band = at(r),
+      v = band.map(text)
+    if (band.length !== 5 || !/\p{L}/u.test(v[0]) || v[1] || v[3] || v[2] !== '%' || v[4] !== '%')
+      continue
+    const before = baseCells.filter((c) => c.row < r)
+    if (![2, 4].every((column) => before.some((c) => c.column === column && /^SD$/i.test(text(c)))))
+      continue
+    const ink = union(band.flatMap(tokens))
+    if (
+      !rules.some(
+        (line) =>
+          line[1] === line[3] &&
+          line[0] <= band[0].rect[0] + 12 &&
+          line[2] >= band[4].rect[2] - 12 &&
+          line[1] > ink[3] &&
+          line[1] - ink[3] < 16
+      )
+    )
+      continue
+    const pairs = [band.slice(1, 3), band.slice(3, 5)]
+    let records = 0,
+      valid = true
+    for (let n = r + 1; n < rows.length; n++) {
+      const slots = at(n),
+        values = slots.map(text)
+      if (slots.length !== 5 || !values[0]) {
+        valid = false
+        break
+      }
+      if (values.slice(1).every((s) => !s)) continue
+      if (
+        values[1] ||
+        values[3] ||
+        ![2, 4].every((c) => /^\d+(?:\.\d+)?$/.test(values[c]) && Number(values[c]) <= 100)
+      ) {
+        valid = false
+        break
+      }
+      pairs.push(slots.slice(1, 3), slots.slice(3, 5))
+      records++
+    }
+    if (!valid || records < 6) continue
+    for (const slots of pairs) proposals.push({ slots, origin: 'source-centered-summary' })
+  }
+}
+
 // Repeated sample qualifiers and native enclosing rules identify complete
 // column headings even when the model merges only their last two lines.
 function recoverSampleQualifiedHeaders({
@@ -700,7 +1459,8 @@ function recoverSampleQualifiedHeaders({
   items,
   headerRows,
   rules,
-  repairs
+  repairs,
+  wrappedOnly
 }) {
   const rs = Array.from({ length: Math.max(...headerRows) + 1 }, (_, r) => r)
   if (rs.length < 2 || rs.length > 4 || rs.some((r, n) => r !== n)) return
@@ -712,18 +1472,35 @@ function recoverSampleQualifiedHeaders({
     const text = items
       .filter((i) => i.horizontal && inside(rect, i))
       .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+    // A sentence-case continuation ending in an inline sample count can be
+    // centered across two header tiers. It is one label only when its native
+    // face has enclosing rules and no separator through either text line.
+    const tail = text.slice(1)
+    const wrappedQualifier =
+      rs.length === 2 &&
+      text.length >= 2 &&
+      text.length <= 5 &&
+      /^[\p{L} -]+$/u.test(text[0].text) &&
+      /^[a-z][\p{L} -]*,\s*n\s*=\s*\d+$/u.test(tail.map((i) => i.text).join(' ')) &&
+      tail.every((i) => Math.abs(i.baseline - tail[0].baseline) < i.height * 0.2) &&
+      tail[0].baseline > text[0].baseline + text[0].height * 0.8 &&
+      tail[0].baseline < text[0].baseline + text[0].height * 1.5 &&
+      Math.abs(union(tail)[0] + union(tail)[2] - text[0].rect[0] - text[0].rect[2]) <
+        text[0].height * 0.5
     if (
-      text.length < 2 ||
-      text.length > 5 ||
-      !/^\(n\s*=\s*\d+\)$/i.test(text.at(-1).text.trim()) ||
-      !text.slice(0, -1).every((i) => /\p{L}/u.test(i.text) && /^[\p{L}\d -]+$/u.test(i.text)) ||
-      !text.every(
-        (i, n) =>
-          Math.abs(i.rect[0] - text[0].rect[0]) < i.height * 0.25 &&
-          (!n ||
-            (i.baseline > text[n - 1].baseline &&
-              i.baseline - text[n - 1].baseline < i.height * 2.5))
-      )
+      !wrappedQualifier &&
+      (wrappedOnly ||
+        text.length < 2 ||
+        text.length > 5 ||
+        !/^\(n\s*=\s*\d+\)$/i.test(text.at(-1).text.trim()) ||
+        !text.slice(0, -1).every((i) => /\p{L}/u.test(i.text) && /^[\p{L}\d -]+$/u.test(i.text)) ||
+        !text.every(
+          (i, n) =>
+            Math.abs(i.rect[0] - text[0].rect[0]) < i.height * 0.25 &&
+            (!n ||
+              (i.baseline > text[n - 1].baseline &&
+                i.baseline - text[n - 1].baseline < i.height * 2.5))
+        ))
     )
       continue
     const ink = union(text),
@@ -738,7 +1515,11 @@ function recoverSampleQualifiedHeaders({
       )
     )
       continue
-    groups.push({ slots, last: text.at(-1) })
+    if (wrappedQualifier) {
+      removeOverlappingMergeProposals(proposals, slots, rs)
+      proposals.push({ slots, origin: 'source-ruled-stub' })
+      repairs.push('repeated-arm-parent-headers-recovered')
+    } else groups.push({ slots, last: text.at(-1) })
   }
   if (
     groups.length < 2 ||
@@ -755,6 +1536,92 @@ function recoverSampleQualifiedHeaders({
 // A partial model stub may omit the first record of a ruled section. Native
 // full-width separators, one centered label and complete category/value rows
 // establish the extent; whitespace or the model proposal alone cannot do so.
+function recoverRepeatedRuledStubs({ proposals, baseCells, items, headerRows, rules, repairs }) {
+  const width = baseCells.filter((c) => c.row === 0).length
+  if (width < 4) return
+  const owned = (slots) => items.filter((i) => i.horizontal && inside(union(slots), i))
+  const horizontal = rules.filter((r) => r[1] === r[3])
+  const candidates = []
+  for (const cell of baseCells.filter((c) => c.column === 0 && !headerRows.includes(c.row))) {
+    const label = owned([cell])
+    if (!label.length || !label.every((i) => /\p{L}/u.test(i.text))) continue
+    const ink = union(label),
+      height = Math.max(...label.map((i) => i.height))
+    if (ink[3] - ink[1] > height * 1.3) continue
+    const edges = horizontal.filter((r) => r[0] <= ink[0] + 1 && r[2] >= ink[2] - 1)
+    const top = Math.max(...edges.filter((r) => r[1] < ink[1]).map((r) => r[1]))
+    const bottom = Math.min(...edges.filter((r) => r[1] > ink[3]).map((r) => r[1]))
+    const slots = baseCells.filter(
+      (c) =>
+        c.column === 0 &&
+        !headerRows.includes(c.row) &&
+        (c.rect[1] + c.rect[3]) / 2 > top &&
+        (c.rect[1] + c.rect[3]) / 2 < bottom
+    )
+    if (
+      !Number.isFinite(top) ||
+      !Number.isFinite(bottom) ||
+      slots.length < 2 ||
+      slots.length > 6 ||
+      slots.some((s, n) => n && s.row !== slots[n - 1].row + 1) ||
+      owned(slots).some((i) => !label.includes(i))
+    )
+      continue
+    const records = slots.map((s) => baseCells.filter((c) => c.row === s.row && c.column > 0))
+    const primary = (c) =>
+      owned([c]).filter((i, _, all) => !all.some((a) => a !== i && isAdjacentTableScript(i, a)))
+    const values = records.map((cs) =>
+      cs.map((c) =>
+        primary(c)
+          .map((i) => i.text)
+          .join('')
+      )
+    )
+    const signature = values.map((v) => v[0]).join('|')
+    if (
+      records.some((cs) => cs.length !== width - 1) ||
+      values.some(
+        (v) =>
+          !/\p{L}/u.test(v[0]) ||
+          v.slice(1).filter(Boolean).length < 2 ||
+          v.slice(1).some((s) => s && !/^[−+-]?(?:\d+(?:\.\d+)?|\.\d+)[*#†‡]*$/.test(s))
+      ) ||
+      values.some((v) => v.map(Boolean).join() !== values[0].map(Boolean).join()) ||
+      new Set(values.map((v) => v[0])).size !== slots.length
+    )
+      continue
+    const text = records.flatMap((cs) => cs.flatMap(primary))
+    const right = Math.max(...text.map((i) => i.rect[2]))
+    if (
+      text.some((i) => i.rect[1] <= top || i.rect[3] >= bottom) ||
+      [top, bottom].some((y) => classifyTableRuleEdge(horizontal, 1, y, ink[0], right) !== 1) ||
+      horizontal.some(
+        (r) => r[1] > top + 1 && r[1] < bottom - 1 && r[0] < right && r[2] > ink[0]
+      ) ||
+      records.some((cs) => {
+        const ts = cs.flatMap(primary)
+        return ts.some((i) => Math.abs(i.baseline - ts[0].baseline) > height * 0.4)
+      }) ||
+      (Math.abs(ink[1] + ink[3] - top - bottom) > height * 1.5 &&
+        Math.abs(label[0].baseline - primary(records[0][0])[0]?.baseline) > height * 0.4)
+    )
+      continue
+    candidates.push({ slots, signature })
+  }
+  for (const c of candidates) {
+    if (!candidates.some((p) => p !== c && p.signature === c.signature)) continue
+    if (
+      proposals.some(
+        (p) => p.slots.some((s) => c.slots.includes(s)) && p.slots.some((s) => !c.slots.includes(s))
+      )
+    )
+      continue
+    removeOverlappingMergeProposals(proposals, c.slots)
+    proposals.push({ slots: c.slots, origin: 'source-ruled-stub' })
+    repairs.push('ruled-section-stub-recovered')
+  }
+}
+
 function recoverRuledSectionStub({ proposals, baseCells, items, headerRows, rules, repairs }) {
   const width = baseCells.filter((c) => c.row === 0).length
   if (width < 5) return
@@ -901,38 +1768,81 @@ function recoverCenteredColumnStub({ proposals, baseCells, items, rows, headerRo
   headerRows.splice(0, headerRows.length, 0)
 }
 
-// Count/percent pairs sometimes share a centered mean. Require the complete
-// repeated header pattern and one source value per pair on the summary line.
-function recoverCountPairSummaries({ proposals, baseCells, items, rows, rules, repairs }) {
+// Repeated count/percent pairs or explicit group headers can share a centered
+// summary. Require one native value centered under every proven parent group.
+function recoverGroupedSummaries({
+  proposals,
+  baseCells,
+  items,
+  rows,
+  headerRows,
+  rules,
+  repairs
+}) {
   const width = Math.max(...baseCells.map((c) => c.column)) + 1
-  if (width < 7 || width % 2 !== 1) return
+  if (width < 5) return
   const text = (slot) =>
     items
       .filter((i) => inside(slot.rect, i))
       .map((i) => i.text)
       .join('')
       .replace(/\s/g, '')
-  const header = rows.findIndex((_, r) => {
+  let header = rows.findIndex((_, r) => {
     const slots = baseCells.filter((s) => s.row === r)
     return (
+      width >= 7 &&
+      width % 2 === 1 &&
       slots.length === width &&
       slots.slice(1).every((s, n) => (n % 2 ? text(s) === '%' : /^(?:No\.?|n)$/.test(text(s))))
     )
   })
+  let groups =
+    header < 0 ? [] : Array.from({ length: (width - 1) / 2 }, (_, n) => [1 + n * 2, 2 + n * 2])
+  const countPairs = header >= 0
+  if (!countPairs) {
+    for (let r = 0; r < Math.min(3, rows.length); r++) {
+      if (!headerRows.includes(r)) continue
+      const parents = proposals
+        .filter(
+          (p) =>
+            ['text-supported-header-span', 'ruled-header-span', 'source-ruled-stub'].includes(
+              p.origin
+            ) &&
+            p.slots.length >= 2 &&
+            p.slots.every((s) => s.row === r && s.column > 0) &&
+            items.some((i) => inside(union(p.slots), i) && /\p{L}/u.test(i.text))
+        )
+        .map((p) => p.slots.map((s) => s.column).sort((a, b) => a - b))
+        .sort((a, b) => a[0] - b[0])
+      if (
+        parents.length < 2 ||
+        parents.flat().length !== width - 1 ||
+        !parents.flat().every((c, n) => c === n + 1)
+      )
+        continue
+      header = r
+      groups = parents
+      break
+    }
+  }
   if (header < 0) return
   for (let r = header + 1; r < rows.length; r++) {
     const slots = baseCells.filter((s) => s.row === r)
-    if (slots.length !== width || !/^(?:Mean|Median)$/.test(text(slots[0]))) continue
+    if (
+      slots.length !== width ||
+      !/^(?:Mean|Median)(?:\((?:range|IQR|SD)\))?$/i.test(text(slots[0]))
+    )
+      continue
     const values = items
       .filter((i) => inside(rows[r].rect, i) && !inside(slots[0].rect, i))
       .sort((a, b) => a.rect[0] - b.rect[0])
-    if (values.length !== (width - 1) / 2) continue
-    const pairs = values.map((_, n) => slots.slice(1 + n * 2, 3 + n * 2))
+    if (values.length !== groups.length) continue
+    const pairs = groups.map((columns) => slots.filter((s) => columns.includes(s.column)))
     if (
       !values.every((v, n) => {
         const b = union(pairs[n])
         return (
-          /^\d+(?:\.\d+)?$/.test(v.text) &&
+          /^[−+-]?\d+(?:\.\d+)?(?:\s*\([−–+\d., -]+\))?$/.test(v.text) &&
           v.rect[0] >= b[0] &&
           v.rect[2] <= b[2] &&
           Math.abs((v.rect[0] + v.rect[2] - b[0] - b[2]) / 2) < (b[2] - b[0]) * 0.1
@@ -942,12 +1852,13 @@ function recoverCountPairSummaries({ proposals, baseCells, items, rows, rules, r
       continue
     removeOverlappingMergeProposals(proposals, slots.slice(1))
     for (const pair of pairs) proposals.push({ slots: pair, origin: 'source-centered-summary' })
-    repairs.push('count-pair-summary-recovered')
+    repairs.push(countPairs ? 'count-pair-summary-recovered' : 'grouped-summary-span-recovered')
   }
   const first = baseCells.filter((s) => s.row === 0)
   const owned = items.filter((i) => inside(rows[0].rect, i))
   const bounds = union(first)
   if (
+    countPairs &&
     header >= 2 &&
     owned.length === 1 &&
     /\p{L}/u.test(owned[0].text) &&
@@ -1365,6 +2276,62 @@ function recoverClosedStatisticSpans({ proposals, baseCells, items, rows, rules,
   }
 }
 
+// Explicit comparison records share one heading across two measured cohorts.
+function recoverPairedComparisonStubs({ proposals, baseCells, items, rows, rules, repairs }) {
+  if (!items.some((i) => /^Paired\b/i.test(i.text))) return
+  const width = Math.max(...baseCells.map((c) => c.column)) + 1
+  if (width < 5) return
+  const owned = baseCells.map((cell) => items.filter((i) => i.horizontal && inside(cell.rect, i)))
+  const text = (r, c) =>
+    owned[baseCells.findIndex((s) => s.row === r && s.column === c)]
+      ?.map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '') ?? ''
+  const values = rows.map((_, r) => Array.from({ length: width }, (_, c) => text(r, c)))
+  const comparison = (s) => /^(?:[—–-]|\d+[<>]\d+(?:;\d+[<>]\d+)*)$/.test(s)
+  for (let r = 0; r + 1 < rows.length; r++) {
+    const a = values[r],
+      b = values[r + 1]
+    if (!/^Pairedcomparisons?$/i.test(a[0]) || b[0]) continue
+    const c = a.findIndex((s, n) => n > 0 && /^\p{L}+$/u.test(s))
+    if (
+      c < 1 ||
+      c + 1 >= width ||
+      !/^\p{L}+$/u.test(b[c]) ||
+      a[c] === b[c] ||
+      !comparison(a[c + 1]) ||
+      !comparison(b[c + 1]) ||
+      a.some((s, n) => s && ![0, c, c + 1].includes(n)) ||
+      b.some((s, n) => s && ![c, c + 1].includes(n))
+    )
+      continue
+    if (
+      ![a[c], b[c]].every((label) =>
+        values.some(
+          (v) =>
+            v[0] === label && v.filter((s) => /^\d+(?:\.\d+)?±\d+(?:\.\d+)?$/.test(s)).length >= 3
+        )
+      )
+    )
+      continue
+    if (
+      rules.some(
+        (line) =>
+          line[1] === line[3] &&
+          line[1] >= rows[r].rect[3] &&
+          line[1] <= rows[r + 1].rect[1] &&
+          line[0] <= baseCells[0].rect[0] &&
+          line[2] >= baseCells[0].rect[2]
+      )
+    )
+      continue
+    const slots = baseCells.filter((s) => s.column === 0 && (s.row === r || s.row === r + 1))
+    removeOverlappingMergeProposals(proposals, slots)
+    proposals.push({ slots, origin: 'text-supported-study-span' })
+    repairs.push('source-cell-span-reconciled')
+  }
+}
+
 // Repeated Mean/Median/IQR/Range blocks share one centered, possibly wrapped
 // variable label. Require every statistic and paired value before merging stubs.
 function recoverSummaryStatisticStubs({ proposals, baseCells, items, rows, headerRows, repairs }) {
@@ -1419,6 +2386,91 @@ function recoverSummaryStatisticStubs({ proposals, baseCells, items, rows, heade
   repairs.push('source-cell-span-reconciled')
 }
 
+// Consecutive ordinal labels and sample-count totals establish a complete
+// distribution. A single centered P value then belongs to that whole block,
+// provided no native separator or competing value contradicts the span.
+function recoverOrdinalGroupStatistics({
+  proposals,
+  baseCells,
+  items,
+  rows,
+  headerRows,
+  rules,
+  repairs
+}) {
+  const width = baseCells.filter((c) => c.row === 0).length
+  if (width < 4 || width > 8) return
+  const owned = (r, c) => {
+    const slot = baseCells.find((s) => s.row === r && s.column === c)
+    return slot ? items.filter((i) => i.horizontal && inside(slot.rect, i)) : []
+  }
+  const text = (r, c) =>
+    owned(r, c)
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '')
+  const heading = (c) => headerRows.map((r) => text(r, c)).join('')
+  if (!/^P(?:-?value)?[a-z]?$/i.test(heading(width - 1))) return
+  const samples = Array.from({ length: width - 2 }, (_, n) =>
+    Number(/n=(\d+)/i.exec(heading(n + 1))?.[1])
+  )
+  if (samples.some((n) => !Number.isInteger(n) || n <= 0)) return
+  const ordinal = (r) => {
+    const label = owned(r, 0)
+      .map((i) => i.text)
+      .join(' ')
+      .trim()
+    const m = /^([\p{L} -]+?)\s+(I|II|III|IV|V|VI|[1-6])(?:\s*\([^)]*\))?$/u.exec(label)
+    if (!m) return undefined
+    return {
+      label: m[1],
+      index: /^\d$/.test(m[2])
+        ? Number(m[2])
+        : ['I', 'II', 'III', 'IV', 'V', 'VI'].indexOf(m[2]) + 1
+    }
+  }
+  for (let first = 0; first < rows.length; first++) {
+    const start = ordinal(first)
+    if (!start || start.index !== 1 || headerRows.includes(first)) continue
+    let end = first + 1
+    while (end < rows.length && !headerRows.includes(end)) {
+      const next = ordinal(end)
+      if (next?.label !== start.label || next.index !== end - first + 1) break
+      end++
+    }
+    if (end - first < 3 || end - first > 6) continue
+    const records = Array.from({ length: end - first }, (_, n) => n + first)
+    const complete = samples.every((sample, n) => {
+      const values = records.map((r) => /^(\d+)\((\d+(?:\.\d+)?)%\)$/.exec(text(r, n + 1)))
+      return (
+        values.every((v) => v && Math.abs(Number(v[2]) - (Number(v[1]) * 100) / sample) <= 1) &&
+        values.reduce((sum, v) => sum + Number(v[1]), 0) === sample
+      )
+    })
+    if (!complete) continue
+    const slots = baseCells.filter((s) => s.column === width - 1 && records.includes(s.row))
+    const rect = union(slots)
+    const source = items.filter((i) => i.horizontal && inside(rect, i))
+    const values = source.filter((i) => !source.some((a) => a !== i && isAdjacentTableScript(i, a)))
+    if (values.length !== 1 || !/^(?:0?\.\d+|1(?:\.0+)?)$/.test(values[0].text.trim())) continue
+    const value = values[0]
+    const firstText = owned(first, 1),
+      lastText = owned(end - 1, 1)
+    if (!firstText.length || !lastText.length) continue
+    if (
+      Math.abs(value.baseline - (firstText[0].baseline + lastText[0].baseline) / 2) >
+        value.height * 0.4 ||
+      rules.some(
+        (r) => r[1] === r[3] && r[1] > rect[1] && r[1] < rect[3] && r[0] < rect[2] && r[2] > rect[0]
+      ) ||
+      proposals.some((p) => p.slots.some((s) => slots.includes(s)))
+    )
+      continue
+    proposals.push({ slots, origin: 'source-category-group' })
+    repairs.push('grouped-summary-span-recovered')
+  }
+}
+
 // A categorical block repeats complete count/percentage records under one
 // top-aligned label. Blank value cells are not sufficient evidence for a span.
 function recoverCategoricalGroupSpans({ proposals, baseCells, items, rows, headerRows, repairs }) {
@@ -1449,7 +2501,16 @@ function recoverCategoricalGroupSpans({ proposals, baseCells, items, rows, heade
       [2, 3].every((c) => /\(n\s*=\s*\d+\)/i.test(text(r, c))) &&
       /^p-?value$/i.test(text(r, 4).replace(/\s/g, ''))
   )
-  const header = Math.max(categoryHeader, pairedHeader, cohortHeader)
+  const measureHeader = rows.findIndex(
+    (_, r) =>
+      r < 2 &&
+      /^(?:Cutoffvalue|Measure|Parameter)$/i.test(text(r, 1).replace(/\s/g, '')) &&
+      rows
+        .slice(r + 1)
+        .filter((_, n) => /^(?:[A-Za-z]+)(?:max|mean|min)\s*\d/.test(text(r + n + 1, 1))).length >=
+        4
+  )
+  const header = Math.max(categoryHeader, pairedHeader, cohortHeader, measureHeader)
   if (header < 0) return
   const recordColumns = (r) =>
     Array.from({ length: width - 2 }, (_, n) => n + 2).filter((c) =>
@@ -1513,6 +2574,107 @@ function recoverCategoricalGroupSpans({ proposals, baseCells, items, rows, heade
   }
 }
 
+// Outdented sections can occupy empty cohort columns while their statistics
+// stay in explicitly headed P-value columns. Require repeated indented count
+// records and matching section layouts before replacing the model's ownership.
+function recoverProbabilitySectionStubs({
+  proposals,
+  baseCells,
+  items,
+  rows,
+  headerRows,
+  repairs
+}) {
+  const slotsAt = (r) => baseCells.filter((c) => c.row === r).sort((a, b) => a.column - b.column)
+  const owned = (s) => items.filter((i) => i.horizontal && inside(s.rect, i))
+  const text = (s) =>
+    owned(s)
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '')
+  const heading = slotsAt(headerRows.at(-1))
+  const probabilities = heading
+    .filter((s) => /^P-?value[a-z]?$/i.test(text(s)))
+    .map((s) => s.column)
+  const first = probabilities[0]
+  if (probabilities.length < 2 || first < 2) return
+  const candidates = []
+  for (let r = 0; r < rows.length - 2; r++) {
+    if ([r, r + 1, r + 2].some((n) => headerRows.includes(n))) continue
+    const slots = slotsAt(r)
+    if (slots.length !== heading.length) continue
+    const labelSlots = slots.slice(0, first)
+    const label = items
+      .filter((i) => i.horizontal && inside(union(labelSlots), i))
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    const anchor = label[0]
+    if (
+      !anchor ||
+      !/\p{L}/u.test(anchor.text) ||
+      anchor.rect[0] - slots[0].rect[0] > anchor.height ||
+      label.some((i) => i.rect[2] >= slots[first].rect[0]) ||
+      label.slice(1).some((i, n) => {
+        const previous = label[n]
+        return (
+          !(
+            Math.abs(i.baseline - previous.baseline) < anchor.height * 0.3 &&
+            /\p{L}/u.test(i.text) &&
+            i.rect[0] - previous.rect[2] < anchor.height * 0.4
+          ) &&
+          !(
+            isAdjacentTableScript(i, previous) ||
+            (/^[a-z]$/.test(i.text) &&
+              i.height <= previous.height * 1.1 &&
+              previous.baseline - i.baseline > previous.height * 0.5 &&
+              previous.baseline - i.baseline < previous.height * 0.7 &&
+              i.rect[0] - previous.rect[2] >= 0 &&
+              i.rect[0] - previous.rect[2] < previous.height * 0.25)
+          )
+        )
+      }) ||
+      slots
+        .slice(first)
+        .some((s) =>
+          probabilities.includes(s.column)
+            ? !/^(?:[<>≤≥]?0?\.\d+|1(?:\.0+)?|N\/A)$/.test(text(s))
+            : owned(s).length
+        )
+    )
+      continue
+    if (
+      ![r + 1, r + 2].every((n) => {
+        const next = slotsAt(n),
+          stub = owned(next[0])
+        return (
+          next.length === slots.length &&
+          stub.length &&
+          /\p{L}/u.test(text(next[0])) &&
+          Math.min(...stub.map((i) => i.rect[0])) - anchor.rect[0] >= anchor.height * 0.5 &&
+          next
+            .slice(1)
+            .every((s) =>
+              probabilities.includes(s.column)
+                ? !owned(s).length
+                : /^\d+\(\d+(?:\.\d+)?%?\)$/.test(text(s))
+            )
+        )
+      })
+    )
+      continue
+    candidates.push({ slots: labelSlots, left: anchor.rect[0], height: anchor.height })
+  }
+  if (
+    candidates.length < 3 ||
+    candidates.some((c) => Math.abs(c.left - candidates[0].left) > c.height * 0.3)
+  )
+    return
+  for (const { slots } of candidates) {
+    removeOverlappingMergeProposals(proposals, slots)
+    proposals.push({ slots, origin: 'source-ruled-stub' })
+  }
+  repairs.push('source-cell-span-reconciled')
+}
+
 // Paired cohort summaries and effect intervals independently establish the
 // scope of indented clinical sections, including attached footnote markers.
 function recoverClinicalSectionSpans({ proposals, baseCells, items, rows, headerRows, repairs }) {
@@ -1566,10 +2728,274 @@ function recoverClinicalSectionSpans({ proposals, baseCells, items, rows, header
   repairs.push('source-cell-span-reconciled')
 }
 
+// Native full-width borders and repeated outdented headings can establish a
+// missing section span. Existing peer spans alone are insufficient: every
+// candidate must precede a complete, indented numeric record with no divider.
+function recoverRuledSectionHeadings({
+  proposals,
+  baseCells,
+  items,
+  rows,
+  headerRows,
+  rules,
+  repairs
+}) {
+  const slotsAt = (r) => baseCells.filter((cell) => cell.row === r)
+  const candidates = []
+  for (let r = 0; r < rows.length - 1; r++) {
+    if (headerRows.includes(r) || headerRows.includes(r + 1)) continue
+    const slots = slotsAt(r),
+      nextSlots = slotsAt(r + 1)
+    if (slots.length < 3 || nextSlots.length !== slots.length) continue
+    const label = items.filter((i) => inside(rows[r].rect, i)),
+      next = items.filter((i) => inside(rows[r + 1].rect, i)),
+      stub = next.filter((i) => inside(nextSlots[0].rect, i))
+    if (
+      !label.length ||
+      !stub.length ||
+      !label.every((i) => i.horizontal && inside(slots[0].rect, i)) ||
+      !/^\p{L}[\p{L}\s,()/–-]*$/u.test(label.map((i) => i.text).join(' ')) ||
+      !stub.some((i) => /\p{L}/u.test(i.text)) ||
+      next.some((i) => !i.horizontal || !nextSlots.some((s) => inside(s.rect, i))) ||
+      !nextSlots.slice(1).every((s) =>
+        /^\d[\d.,()%±–−+\s/-]*$/.test(
+          next
+            .filter((i) => inside(s.rect, i))
+            .map((i) => i.text)
+            .join('')
+        )
+      )
+    )
+      continue
+    const ink = union(label),
+      child = union(stub),
+      height = Math.max(...label.map((i) => i.height)),
+      indent = child[0] - ink[0],
+      left = slots[0].rect[0],
+      right = slots.at(-1).rect[2]
+    const ruled = rules.some(
+      (rule) =>
+        rule[1] === rule[3] &&
+        rule[1] >= ink[3] &&
+        rule[1] <= union(next)[1] &&
+        Math.abs(rule[0] - left) < height &&
+        Math.abs(rule[2] - right) < height
+    )
+    if (
+      indent < height * 0.5 ||
+      indent > height * 2 ||
+      ink[3] - union(next)[1] > height * 0.05 ||
+      union(next)[1] - ink[3] > height * 1.5 ||
+      label.some((i) => Math.abs(i.baseline - label[0].baseline) > height * 0.2) ||
+      rules.some(
+        (rule) =>
+          rule[0] === rule[2] &&
+          rule[0] > ink[2] &&
+          rule[0] < right &&
+          rule[1] < ink[3] &&
+          rule[3] > ink[1]
+      )
+    )
+      continue
+    const existing = proposals.some(
+      (p) => p.slots.length === slots.length && slots.every((s) => p.slots.includes(s))
+    )
+    const partial = proposals.some(
+      (p) => p.slots.length >= slots.length - 1 && p.slots.every((s) => slots.includes(s))
+    )
+    candidates.push({ slots, ink, height, indent, existing, partial, ruled })
+  }
+  for (const candidate of candidates) {
+    if (candidate.existing) continue
+    const peers = candidates.filter(
+      (c) =>
+        Math.abs(c.ink[0] - candidate.ink[0]) < candidate.height * 0.2 &&
+        Math.abs(c.height - candidate.height) < candidate.height * 0.1 &&
+        Math.abs(c.indent - candidate.indent) < candidate.height * 0.2
+    )
+    const left = candidate.slots[0].rect[0],
+      right = candidate.slots.at(-1).rect[2]
+    const frame = joinHorizontalTableRules(rules).filter(
+      (r) => Math.abs(r[0] - left) < candidate.height && Math.abs(r[2] - right) < candidate.height
+    )
+    const enclosed =
+      frame.some((r) => r[1] < candidate.ink[1]) && frame.some((r) => r[1] > candidate.ink[3])
+    if (
+      peers.length < 3 ||
+      peers.filter((c) => c.existing || (enclosed && c.partial)).length < 2 ||
+      (!candidate.ruled &&
+        (!enclosed || peers.length < 5 || peers.filter((c) => c.partial).length < 3))
+    )
+      continue
+    removeOverlappingMergeProposals(proposals, candidate.slots)
+    proposals.push({ slots: candidate.slots, origin: 'source-section' })
+    repairs.push('source-cell-span-reconciled')
+  }
+}
+
+// An oversized model header can swallow the first group of a repeated body.
+// Matching indented record labels and populated statistic columns identify its
+// scope independently; a native header border is required for header overrides.
+function recoverRepeatedRecordSections({
+  proposals,
+  baseCells,
+  items,
+  rows,
+  headerRows,
+  rules,
+  repairs
+}) {
+  const slotsAt = (r) => baseCells.filter((s) => s.row === r)
+  const tokensAt = (r) => items.filter((i) => inside(rows[r].rect, i))
+  const compact = (tokens) =>
+    tokens
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '')
+  const candidates = []
+  for (let r = 0; r < rows.length - 3; r++) {
+    const slots = slotsAt(r),
+      label = tokensAt(r)
+    if (
+      slots.length < 3 ||
+      !label.length ||
+      !label.every((i) => i.horizontal && inside(slots[0].rect, i)) ||
+      !/^\p{L}[\p{L}\s,()/–-]*$/u.test(compact(label))
+    )
+      continue
+    const ink = union(label),
+      height = Math.max(...label.map((i) => i.height))
+    if (label.some((i) => Math.abs(i.baseline - label[0].baseline) > height * 0.2)) continue
+    if (
+      rules.some(
+        (rule) =>
+          rule[0] === rule[2] &&
+          rule[0] > ink[2] &&
+          rule[0] < slots.at(-1).rect[2] &&
+          rule[1] < ink[3] &&
+          rule[3] > ink[1]
+      )
+    )
+      continue
+    const records = []
+    for (let n = r + 1; n < rows.length; n++) {
+      const cells = slotsAt(n),
+        tokens = tokensAt(n)
+      if (
+        cells.length !== slots.length ||
+        !tokens.length ||
+        tokens.some((i) => !i.horizontal || cells.filter((c) => inside(c.rect, i)).length !== 1)
+      )
+        break
+      const fields = cells.map((c) => tokens.filter((i) => inside(c.rect, i))),
+        values = fields.map(compact)
+      if (
+        !/^\p{L}/u.test(values[0]) ||
+        !values
+          .slice(1)
+          .every((v) =>
+            /^(?:[<>≤≥−+-]?\d[\d.,·()%±–−+\s/=<>≤≥-]*(?:ref|p[=<>≤≥][\d.·]+)?\)?|[.·]{2,3})$/i.test(
+              v
+            )
+          )
+      )
+        break
+      const stub = union(fields[0]),
+        indent = stub[0] - ink[0]
+      if (
+        indent < height * 0.5 ||
+        indent > height * 2 ||
+        tokens.some((i) => Math.abs(i.baseline - fields[0][0].baseline) > height * 0.2)
+      )
+        break
+      records.push(values[0])
+    }
+    if (records.length < 3 || new Set(records).size !== records.length) continue
+    const existing = proposals.some(
+      (p) => p.slots.length === slots.length && slots.every((s) => p.slots.includes(s))
+    )
+    candidates.push({ slots, ink, height, signature: records.join('|'), existing })
+  }
+  for (const c of candidates) {
+    if (c.existing) continue
+    const peers = candidates.filter(
+      (p) =>
+        p.signature === c.signature &&
+        Math.abs(p.ink[0] - c.ink[0]) < c.height * 0.2 &&
+        Math.abs(p.height - c.height) < c.height * 0.1
+    )
+    if (peers.length < 3 || peers.filter((p) => p.existing).length < 2) continue
+    if (headerRows.includes(c.slots[0].row)) {
+      const border = joinHorizontalTableRules(rules).find(
+        (rule) =>
+          rule[1] < c.ink[1] &&
+          c.ink[1] - rule[1] < c.height * 3 &&
+          Math.abs(rule[0] - c.slots[0].rect[0]) < c.height &&
+          Math.abs(rule[2] - c.slots.at(-1).rect[2]) < c.height
+      )
+      if (
+        !border ||
+        items.some(
+          (i) =>
+            i.rect[1] < border[1] &&
+            i.rect[3] > border[1] &&
+            inside([border[0], i.rect[1], border[2], i.rect[3]], i)
+        )
+      )
+        continue
+    }
+    removeOverlappingMergeProposals(proposals, c.slots)
+    proposals.push({ slots: c.slots, origin: 'source-section' })
+    repairs.push('source-cell-span-reconciled')
+  }
+}
+
+// A title enclosed by two complete native rules owns the whole band. All
+// remaining cells must be empty and no internal vertical divider may cross
+// the text. This includes opening titles as well as body section headings.
+function recoverEnclosedSectionSpans({ proposals, baseCells, items, rows, rules, repairs }) {
+  const horizontal = joinHorizontalTableRules(rules)
+  for (let row = 0; row < rows.length; row++) {
+    const slots = baseCells.filter((c) => c.row === row)
+    if (slots.length < 3) continue
+    const members = items.filter((i) => inside(rows[row].rect, i))
+    if (!members.length || members.some((i) => !i.horizontal || !/\p{L}/u.test(i.text))) continue
+    const ink = union(members),
+      height = Math.max(...members.map((i) => i.height))
+    if (members.some((i) => Math.abs(i.baseline - members[0].baseline) > height * 0.2)) continue
+    if (!members.every((i) => inside(slots[0].rect, i))) continue
+    const left = slots[0].rect[0],
+      right = slots.at(-1).rect[2]
+    const edges = horizontal.filter(
+      (r) => Math.abs(r[0] - left) < height && Math.abs(r[2] - right) < height
+    )
+    const top = Math.max(...edges.filter((r) => r[1] <= ink[1]).map((r) => r[1]))
+    const bottom = Math.min(...edges.filter((r) => r[1] >= ink[3]).map((r) => r[1]))
+    if (
+      !Number.isFinite(top) ||
+      !Number.isFinite(bottom) ||
+      ink[1] - top > height ||
+      bottom - ink[3] > height ||
+      items.some((i) => inside([left, top, right, bottom], i) && !members.includes(i)) ||
+      rules.some(
+        (r) => r[0] === r[2] && r[0] > left && r[0] < right && r[1] < ink[3] && r[3] > ink[1]
+      ) ||
+      proposals.some(
+        (p) => p.slots.length === slots.length && slots.every((s) => p.slots.includes(s))
+      )
+    )
+      continue
+    removeOverlappingMergeProposals(proposals, slots)
+    proposals.push({ slots, origin: 'source-section' })
+    repairs.push('source-cell-span-reconciled')
+  }
+}
+
 // Repeated indented threshold records identify otherwise identical section
 // headings, even when the detector only proposed a subset of their colspans.
 function recoverThresholdSectionSpans({ proposals, baseCells, items, rows, headerRows, repairs }) {
   const candidates = []
+  const repeated = []
   for (let r = 0; r < rows.length - 1; r++) {
     if (headerRows.includes(r)) continue
     const slots = baseCells.filter((cell) => cell.row === r)
@@ -1588,6 +3014,33 @@ function recoverThresholdSectionSpans({ proposals, baseCells, items, rows, heade
         inside(nextSlots[0].rect, item) &&
         !text.some((anchor) => isAdjacentTableScript(item, anchor))
     )
+    const numericSequence = []
+    for (let n = r + 1; n < rows.length; n++) {
+      const cells = baseCells.filter((c) => c.row === n)
+      const values = cells.map((c) =>
+        items
+          .filter((i) => i.horizontal && inside(c.rect, i))
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+      )
+      if (cells.length !== slots.length || !values.every((v) => /^\d+(?:\.\d+)?%?$/.test(v))) break
+      numericSequence.push(values[0])
+    }
+    if (
+      numericSequence.length >= 3 &&
+      new Set(numericSequence).size === numericSequence.length &&
+      Math.min(...stub.map((i) => i.rect[0])) - Math.min(...text.map((i) => i.rect[0])) >
+        text[0].height * 0.5
+    ) {
+      repeated.push({
+        slots,
+        signature: numericSequence.join('|'),
+        existing: proposals.some(
+          (p) => p.slots.length === slots.length && p.slots.every((s) => slots.includes(s))
+        )
+      })
+    }
     if (
       !/^[<>≤≥]/.test(stub.map((item) => item.text).join('')) ||
       Math.min(...stub.map((item) => item.rect[0])) -
@@ -1601,8 +3054,12 @@ function recoverThresholdSectionSpans({ proposals, baseCells, items, rows, heade
       continue
     candidates.push(slots)
   }
-  if (candidates.length < 3) return
-  for (const slots of candidates) {
+  const supported = repeated.filter((c) =>
+    repeated.some((p) => p !== c && p.existing && p.signature === c.signature)
+  )
+  const selected = [...(candidates.length >= 3 ? candidates : []), ...supported.map((c) => c.slots)]
+  if (!selected.length) return
+  for (const slots of selected) {
     removeOverlappingMergeProposals(proposals, slots)
     proposals.push({ slots, origin: 'source-section' })
   }
@@ -1816,5 +3273,150 @@ export function reconcileUnresolvedTableSpans({
       continue
     }
     issues.add('unresolved-spanning-cells')
+  }
+}
+
+// Repeated native leaf labels establish equal parent groups even when the model
+// omits a short last leaf or merges a parent vertically into one of its children.
+function recoverRepeatedLeafParents({
+  proposals,
+  baseCells,
+  items,
+  rows,
+  headerRows,
+  rules,
+  repairs
+}) {
+  const width = baseCells.filter((c) => c.row === 0).length
+  const slots = (row, start, end) =>
+    baseCells.filter((c) => c.row === row && c.column >= start && c.column < end)
+  const owned = (cells) =>
+    cells.length ? items.filter((i) => i.horizontal && inside(union(cells), i)) : []
+  const text = (values) =>
+    values
+      .slice()
+      .sort((a, b) =>
+        Math.abs(a.rect[1] - b.rect[1]) < Math.min(a.height, b.height) * 0.4
+          ? a.rect[0] - b.rect[0]
+          : a.rect[1] - b.rect[1]
+      )
+      .map((i) => i.text)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  const replace = (cells) => {
+    removeOverlappingMergeProposals(proposals, cells)
+    proposals.push({ slots: cells, origin: 'source-ruled-stub' })
+  }
+  for (let row = 0; row < Math.min(3, rows.length - 1); row++) {
+    if (row > 0 && (!headerRows.includes(row) || !headerRows.includes(row + 1))) continue
+    const leaves = Array.from({ length: width - 1 }, (_, n) =>
+      text(owned(slots(row + 1, n + 1, n + 2)))
+    )
+    if (!leaves.every((t) => /\p{L}/u.test(t) || t === '%')) continue
+    for (let size = 2; size <= Math.min(6, leaves.length / 2); size++) {
+      if (leaves.length % size || !leaves.every((t, n) => t === leaves[n % size])) continue
+      const groups = []
+      for (let start = 1; start < width; start += size) {
+        const parentSlots = slots(row, start, start + size),
+          parent = owned(parentSlots)
+        if (!parent.length || !/\p{L}/u.test(text(parent))) break
+        const rect = union(parent),
+          leaf = union(owned(slots(row + 1, start, start + size)))
+        const h = Math.max(...parent.map((i) => i.height))
+        const band = union(parentSlots)
+        const sampleQualified = /\(n\s*=\s*\d+\)$/i.test(text(parent))
+        if (
+          rules.some(
+            (r) =>
+              r[0] === r[2] &&
+              r[0] > band[0] + 1 &&
+              r[0] < band[2] - 1 &&
+              r[1] < band[3] &&
+              r[3] > band[1]
+          )
+        )
+          break
+        if (
+          rect[3] - rect[1] > h * (sampleQualified ? 2.8 : 1.6) ||
+          rect[0] < parentSlots[0].rect[0] - h ||
+          rect[2] > parentSlots.at(-1).rect[2] + h
+        )
+          break
+        if (
+          Math.abs((rect[0] + rect[2] - leaf[0] - leaf[2]) / 2) > h * 2.5 &&
+          Math.abs(rect[0] - leaf[0]) > h
+        )
+          break
+        if (
+          !rules.some(
+            (r) =>
+              r[1] === r[3] &&
+              r[1] >= rect[3] &&
+              r[1] <= leaf[1] &&
+              r[0] <= rect[0] + h &&
+              r[2] >= rect[2] - h
+          )
+        )
+          break
+        groups.push({ start, parentSlots })
+      }
+      if (groups.length !== leaves.length / size) continue
+      for (const group of groups) replace(group.parentSlots)
+      for (const r of [row, row + 1]) if (!headerRows.includes(r)) headerRows.push(r)
+      // Centered sample-size subheaders belong to those same paired/grouped
+      // columns, rather than becoming unrelated fragments in each leaf column.
+      if (headerRows.includes(row + 2)) {
+        const samples = groups.map((g) => slots(row + 2, g.start, g.start + size))
+        if (samples.every((cells) => /^n\s*=\s*\d+$/i.test(text(owned(cells))))) {
+          for (const cells of samples) replace(cells)
+        }
+      }
+      repairs.push('header-span-inferred')
+      break
+    }
+  }
+  // A ruled empty intermediate group with populated leaves is an unbranched
+  // parent, provided exactly one source heading occupies the same upper group.
+  for (const proposal of proposals.slice()) {
+    const group = proposal.slots,
+      row = group[0]?.row
+    if (
+      !row ||
+      !group.every((c) => c.row === row) ||
+      group.length < 2 ||
+      owned(group).length ||
+      ![row - 1, row, row + 1].every((r) => headerRows.includes(r))
+    )
+      continue
+    const start = Math.min(...group.map((c) => c.column)),
+      end = Math.max(...group.map((c) => c.column)) + 1
+    if (start === 0 || group.length !== end - start) continue
+    const parent = slots(row - 1, start, end),
+      labels = owned(parent)
+    const leaves = slots(row + 1, start, end)
+    if (
+      labels.length !== 1 ||
+      !/\p{L}/u.test(labels[0].text) ||
+      !leaves.every((c) => /\p{L}/u.test(text(owned([c]))))
+    )
+      continue
+    const label = labels[0],
+      leaf = union(owned(leaves))
+    if (
+      label.rect[0] < parent[0].rect[0] ||
+      label.rect[2] > parent.at(-1).rect[2] ||
+      !rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] >= group[0].rect[1] &&
+          r[1] <= leaf[1] &&
+          r[0] <= leaf[0] + label.height &&
+          r[2] >= leaf[2] - label.height
+      )
+    )
+      continue
+    replace([...parent, ...group])
+    repairs.push('header-span-inferred')
   }
 }

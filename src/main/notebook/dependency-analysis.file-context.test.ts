@@ -13,6 +13,8 @@ import { projectNotebookFileContext, type FileContextEntry } from './dependency-
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
 const roots: string[] = []
+const analyzedPythonPath = (value: string): string =>
+  process.platform === 'win32' ? value.replaceAll('/', '\\') : value
 
 it('restores writer paths from sliced collections after cache reload', async () => {
   const context = await fileContext('r', [
@@ -91,6 +93,58 @@ const fileContext = async (
 }
 
 describe('file context after mutable path collections', () => {
+  it('captures parameterized I/O from multi-statement local file helpers', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'def summarize(input_path, output_path):',
+        '    frame = pd.read_csv(input_path)',
+        '    frame.groupby("group")["value"].mean().to_csv(output_path, index=False)',
+        'summarize("input.csv", "output.csv")'
+      ].join('\n'),
+      {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonBindings: [{ name: 'pd', qualifiedName: 'pandas', kind: 'import' }]
+      }
+    )
+    expect(result).toMatchObject({
+      reads: ['input.csv'],
+      writes: ['output.csv'],
+      readState: 'complete',
+      writeState: 'complete'
+    })
+    expect(result.externalState).toBe('complete')
+  })
+
+  it('captures a single-cell MEX helper while retaining companion uncertainty', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'from pathlib import Path',
+        'import scanpy as sc',
+        'matrix_dir = Path("inputs/pbmc3k/filtered_feature_bc_matrix")',
+        'output_dir = Path("outputs/pbmc3k")',
+        'def preprocess(matrix_dir, output_dir):',
+        '    data = sc.read_10x_mtx(matrix_dir, var_names="gene_symbols")',
+        '    sc.pp.normalize_total(data)',
+        '    sc.pp.log1p(data)',
+        '    data.write_h5ad(output_dir / "processed.h5ad")',
+        '    return data',
+        'preprocess(matrix_dir, output_dir)'
+      ].join('\n')
+    )
+
+    expect(result).toMatchObject({
+      reads: [analyzedPythonPath('inputs/pbmc3k/filtered_feature_bc_matrix')],
+      writes: [analyzedPythonPath('outputs/pbmc3k/processed.h5ad')],
+      readState: 'partial',
+      writeState: 'complete',
+      externalState: 'partial'
+    })
+  })
+
   it.each([
     'reader = lambda: None',
     'for reader in [None]:\n        pass',
@@ -952,6 +1006,32 @@ describe('file context after mutable path collections', () => {
       reads: ['left.csv', 'right.csv'],
       readState: 'complete',
       externalState: 'complete'
+    })
+  })
+
+  it('keeps pandas groupby input/output complete inside a recorded helper', async () => {
+    const helperSource = `import pandas as pd
+def summarize(input_path, output_path):
+    frame = pd.read_csv(input_path)
+    frame.groupby("group", as_index=False)["value"].mean().to_csv(output_path, index=False)`
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'summarize("inputs/patients.csv", "outputs/summary.csv")',
+        {
+          staticStrings: [],
+          staticCollections: [],
+          localFileWrappers: [],
+          pythonHelperModules: [{ source: helperSource, exports: ['summarize'] }]
+        }
+      )
+    ).toMatchObject({
+      reads: ['inputs/patients.csv'],
+      writes: ['outputs/summary.csv'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reasonCodes: []
     })
   })
 

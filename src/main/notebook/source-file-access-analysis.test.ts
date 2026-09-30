@@ -8,6 +8,110 @@ const analyzedPythonPath = (value: string): string =>
 
 describe('analyzeNotebookSourceFileAccess', () => {
   it.each([
+    'source("outputs/helper.R")',
+    'sys.source(file="outputs/helper.R", envir=new.env())',
+    'base::source(local=TRUE, file="outputs/helper.R")',
+    'base::sys.source(envir=new.env(), "outputs/helper.R")',
+    'base::sys.source(fil="outputs/helper.R", envir=new.env())',
+    'p <- "outputs/helper.R"\nsource(p)',
+    'con <- file("outputs/helper.R")\nsource(con)'
+  ])('retains the explicit R script input without claiming complete effects: %s', async (code) => {
+    const access = await analyzeNotebookSourceFileAccess('r', code)
+    expect(access.reads).toContain('outputs/helper.R')
+    expect([access.readState, access.writeState, access.externalState]).toEqual([
+      'partial',
+      'partial',
+      'partial'
+    ])
+  })
+
+  it.each([
+    'source <- function(file) NULL\nsource("not-a-script.R")',
+    'sys.source <- function(file,envir) NULL\nsys.source("not-a-script.R",new.env())',
+    'other::source("not-a-script.R")',
+    'other::sys.source("not-a-script.R")',
+    'source(readLines("not-a-script.R"),exprs=expression(1))'
+  ])('does not attribute a shadowed or unused R script argument: %s', async (code) => {
+    const access = await analyzeNotebookSourceFileAccess('r', code)
+    expect(access.reads).not.toContain('not-a-script.R')
+  })
+
+  it('keeps dynamic R source paths and nested effects unresolved', async () => {
+    const access = await analyzeNotebookSourceFileAccess(
+      'r',
+      'sys.source(choose_script(), envir=new.env())'
+    )
+    expect(access.reads).toEqual([])
+    expect([access.readState, access.writeState, access.externalState]).toEqual([
+      'partial',
+      'partial',
+      'partial'
+    ])
+  })
+
+  it('treats a script written earlier in the same cell as an intermediate', async () => {
+    const access = await analyzeNotebookSourceFileAccess(
+      'r',
+      'writeLines("x <- 1", "helper.R")\nsys.source("helper.R", new.env())'
+    )
+    expect(access.reads).not.toContain('helper.R')
+    expect(access.writes).toContain('helper.R')
+    expect(access.writeState).toBe('partial')
+  })
+
+  it('resolves unpacked directory constants from a real structure-analysis cell', async () => {
+    const access = await analyzeNotebookSourceFileAccess(
+      'python',
+      `import os
+OUT_DIR, IN_DIR = 'outputs', 'inputs'
+with open(os.path.join(IN_DIR, 'coordinates.json')) as handle:
+    data = handle.read()
+with open(os.path.join(OUT_DIR, 'validation.json'), 'w') as handle:
+    handle.write(data)
+`
+    )
+    expect(access.reads).toContain(analyzedPythonPath('inputs/coordinates.json'))
+    expect(access.writes).toContain(analyzedPythonPath('outputs/validation.json'))
+  })
+
+  it.each([
+    ["left, right = 'a.csv', 'b.csv'\nleft, right = right, left", 'b.csv'],
+    ["[left, right] = ['a.csv', 'b.csv']", 'a.csv'],
+    ["left, (right, other) = 'a.csv', ('b.csv', 'c.csv')", 'a.csv'],
+    ["left, left = 'a.csv', 'b.csv'", 'b.csv']
+  ])('evaluates unpacked path values before binding targets: %s', async (source, expected) => {
+    const access = await analyzeNotebookSourceFileAccess('python', `${source}\nopen(left).read()`)
+    expect(access.reads).toEqual([expected])
+  })
+
+  it.each([
+    'left, right = get_paths()',
+    'left, *right = get_paths()',
+    "left, right = ('new.csv',)",
+    "if flag:\n    left, right = 'new.csv', 'other.csv'"
+  ])('invalidates stale paths after uncertain unpacking: %s', async (source) => {
+    const access = await analyzeNotebookSourceFileAccess(
+      'python',
+      `left = 'stale.csv'\n${source}\nopen(left).read()`
+    )
+    expect(access.reads).not.toContain('stale.csv')
+    expect(access.readState).toBe('partial')
+  })
+
+  it('preserves shared collection identity for chained assignments while unpacking paths', async () => {
+    const access = await analyzeNotebookSourceFileAccess(
+      'python',
+      `left = right = ['stale.csv']
+right[0] = 'changed.csv'
+for path in left:
+    open(path).read()
+`
+    )
+    expect(access.reads).not.toContain('stale.csv')
+    expect(access.readState).toBe('partial')
+  })
+
+  it.each([
     ['python', "frame.to_csv('result.csv', mode='w')"],
     ['python', "frame.to_hdf('result.csv', key='new', mode='w')"],
     ['python', "frame.to_csv('result.csv', mode='w')\nframe.to_csv('result.csv', mode='a')"],
@@ -1398,9 +1502,9 @@ describe('analyzeNotebookSourceFileAccess', () => {
       "import tempfile\nwith tempfile.NamedTemporaryFile() as stream:\n    stream.write(b'data')"
     ],
     [
-      'SQLite connection',
+      'dynamic SQLite connection',
       'python' as const,
-      "import sqlite3\nconnection = sqlite3.connect('results.sqlite')\nconnection.execute('select 1')"
+      "import sqlite3\nconnection = sqlite3.connect(database_path)\nconnection.execute('select 1')"
     ],
     [
       'DuckDB connection',
@@ -2607,6 +2711,33 @@ describe('analyzeNotebookSourceFileAccess', () => {
       writeState: 'partial',
       writes: [],
       reasonCodes: expect.arrayContaining(['dynamic-path-unresolved'])
+    })
+  })
+
+  it.each([
+    'Path = custom\nPath("ignored")',
+    'from pathlib import Path\nPath = custom\nPath("ignored")',
+    'import pathlib\npathlib = custom\npathlib.Path("ignored")',
+    'import pathlib\npathlib.Path = custom\npathlib.Path("ignored")',
+    'def Path(value):\n    custom(value)\nPath("ignored")'
+  ])('keeps shadowed pathlib constructors conservative: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'from pathlib import Path as LocalPath\nLocalPath("work")',
+    'import pathlib as paths\npaths.Path("work")'
+  ])('retains trusted pathlib constructor aliases: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: [],
+      writes: []
     })
   })
 

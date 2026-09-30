@@ -156,6 +156,7 @@ it('joins explicitly labelled column continuations in source reading order', () 
   expect(result[0].cells.at(-1)).toMatchObject({ text: 'Statin', row: 2 })
   expect(result[0].notes).toEqual(next.notes)
   expect(result[0].caption).toEqual(first.caption)
+  expect(result[0].cropRects).toEqual([first.cropRect, next.cropRect])
   const marker = { text: '(Continued )', x: 180, y: 606, width: 28, height: 10 }
   const withFooter = {
     ...first,
@@ -169,6 +170,7 @@ it('joins explicitly labelled column continuations in source reading order', () 
   expect(joined.clipped).toEqual([])
   expect(joined.issues).toEqual([])
   expect(joined.cropRect[3]).toBeLessThan(909)
+  expect(joined.cropRects[0][3]).toBeLessThan(909)
   expect(joined.grid).toEqual(result[0].grid)
   for (const lines of [[], [{ ...marker, y: 300 }]]) {
     expect(groupTableParts([withFooter, next], { lines })[0].unassigned).toEqual(

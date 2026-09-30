@@ -40,27 +40,25 @@ export const createCredentialAccess = (options: {
   }
   const check = (reading: boolean): void => {
     if (failure) throw failure
-    if (
-      reading &&
-      (options.identity.backend === 'mac-keychain' ||
-        options.identity.backend === 'linux-secret-service') &&
-      !options.identity.exists &&
-      !written
-    )
+    if (reading && 'exists' in options.identity && !options.identity.exists && !written)
       return fail('read-before-key-created')
-    if (options.identity.backend === 'linux-secret-service') {
+    if (
+      options.identity.backend === 'linux-secret-service' ||
+      options.identity.backend === 'linux-kwallet'
+    ) {
+      const expectedBackend =
+        options.identity.backend === 'linux-kwallet'
+          ? options.identity.passwordStore
+          : 'gnome_libsecret'
       try {
-        if (options.cipher.getSelectedStorageBackend?.() !== 'gnome_libsecret')
+        if (options.cipher.getSelectedStorageBackend?.() !== expectedBackend)
           return fail('linux-backend-unavailable-or-changed')
       } catch {
         return fail('linux-backend-unavailable-or-changed')
       }
     }
     if (checked) return
-    if (
-      options.identity.backend === 'mac-keychain' ||
-      options.identity.backend === 'linux-secret-service'
-    ) {
+    if ('exists' in options.identity) {
       let result: IdentityProbeResult
       try {
         result = options.probe(options.identity.appName)
@@ -86,7 +84,9 @@ export const createCredentialAccess = (options: {
       check(false)
       try {
         if (!options.cipher.isEncryptionAvailable()) return fail('credential-access-unavailable')
-        checked = options.identity.backend !== 'linux-secret-service'
+        checked =
+          options.identity.backend !== 'linux-secret-service' &&
+          options.identity.backend !== 'linux-kwallet'
         return true
       } catch {
         return fail('credential-access-unavailable')

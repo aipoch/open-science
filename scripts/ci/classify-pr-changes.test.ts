@@ -241,6 +241,51 @@ describe('pull request change classification', () => {
     )
   })
 
+  it.each([
+    ['packages/open-science/CLI.md', 'cli_sdk'],
+    ['packages/open-science/README.md', 'cli_sdk'],
+    ['packages/notebook-network-sandbox/README.md', 'notebook_network_sandbox']
+  ])('keeps documentation and package checks without full fallback for %s', (path, owner) => {
+    const changes = [{ path, status: 'modified' }]
+    const plan = classifyChanges(changes)
+    const manifest = readManifest()
+    manifest.rules = manifest.rules.filter(({ id }: { id: string }) => id !== 'documentation')
+    const packagePlan = classifyChanges(changes, manifest)
+
+    expect(plan.mode).toBe('selective')
+    expect(plan.roots).toEqual(expect.arrayContaining(['documentation', owner]))
+    expect(plan.lanes).toEqual(expect.arrayContaining(['docs', ...packagePlan.lanes]))
+    expect(plan.roots).not.toContain('owner_ambiguity')
+    const tests = createAffectedTestPlan(changes, {
+      status: 'unavailable-manifest-only',
+      testFiles: []
+    })
+    expect(tests.mode).toBe('selective')
+    if (owner === 'cli_sdk') {
+      // CLI tests execute in their dedicated static lane, not the portable module bundle.
+      expect(plan.lanes).toContain('cli_sdk')
+      expect(tests.testFiles).toEqual([])
+    } else {
+      expect(tests.modules).toContain(owner)
+      expect(tests.testFiles.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('retains real package-owner ambiguity when documentation also matches', () => {
+    const manifest = readManifest()
+    const path = 'packages/open-science/README.md'
+    manifest.rules.push({
+      id: 'another_package_owner',
+      role: 'owner',
+      paths: [path],
+      capabilities: ['cli_sdk']
+    })
+
+    const plan = classifyChanges([{ path, status: 'modified' }], manifest)
+    expect(plan.mode).toBe('full')
+    expect(plan.roots).toContain('owner_ambiguity')
+  })
+
   it.each(['yml', 'yaml'])('keeps issue-template .%s changes on static checks', (extension) => {
     const changes = [
       { path: `.github/ISSUE_TEMPLATE/reproducibility_case.${extension}`, status: 'added' },

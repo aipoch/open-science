@@ -1,7 +1,6 @@
-import {
-  assertLinuxSecretServiceConfiguration,
-  probeLinuxCredentialIdentity
-} from './linux-secret-service'
+import { probeLinuxCredentialIdentity } from './linux-secret-service'
+import { selectLinuxCredentialBackend } from './linux-backend'
+import { probeLinuxKWalletIdentity } from './linux-kwallet'
 import { validateWindowsProfileKey } from './windows-profile-key'
 import type { SecureStorageCipher } from '../secure-storage'
 import { readCredentialCiphertexts, verifyCredentialCiphertexts } from './ciphertext-inventory'
@@ -14,14 +13,23 @@ import {
 } from './selection'
 
 export const selectStartupCredentialIdentity = (
-  options: Omit<Parameters<typeof selectCredentialIdentity>[0], 'probe' | 'linuxProbe'>
+  options: Omit<
+    Parameters<typeof selectCredentialIdentity>[0],
+    'probe' | 'linuxProbe' | 'linuxBackend'
+  >
 ): CredentialIdentity => {
-  if (options.platform === 'linux' && options.credentialStore !== 'file')
-    assertLinuxSecretServiceConfiguration(options.linuxPasswordStore)
+  const linuxBackend =
+    options.platform === 'linux' && options.credentialStore !== 'file'
+      ? selectLinuxCredentialBackend(options.linuxPasswordStore)
+      : undefined
   return selectCredentialIdentity({
     ...options,
     probe: probeCredentialIdentity,
-    linuxProbe: probeLinuxCredentialIdentity
+    linuxBackend,
+    linuxProbe:
+      linuxBackend && linuxBackend !== 'gnome_libsecret'
+        ? () => probeLinuxKWalletIdentity(linuxBackend)
+        : probeLinuxCredentialIdentity
   })
 }
 
@@ -36,11 +44,7 @@ export const prepareCredentialValidation = (
       profilePath: paths.profilePath,
       hasCiphertexts: ciphertexts.length > 0
     })
-  if (
-    (identity.backend === 'mac-keychain' || identity.backend === 'linux-secret-service') &&
-    !identity.exists &&
-    ciphertexts.length
-  )
+  if ('exists' in identity && !identity.exists && ciphertexts.length)
     throw new CredentialIdentityError('key-missing-for-existing-ciphertext')
   if (identity.backend === 'mac-keychain' && !identity.exists) {
     // Electron's native network service can use OSCrypt without going through the JS cipher.
@@ -58,12 +62,14 @@ export const prepareCredentialValidation = (
       identity,
       cipher,
       probe:
-        identity.backend === 'linux-secret-service'
-          ? probeLinuxCredentialIdentity
-          : probeCredentialIdentity,
+        identity.backend === 'linux-kwallet'
+          ? () => probeLinuxKWalletIdentity(identity.passwordStore, identity.wallet)
+          : identity.backend === 'linux-secret-service'
+            ? probeLinuxCredentialIdentity
+            : probeCredentialIdentity,
       recover
     })
-    if (identity.backend === 'linux-secret-service')
+    if (identity.backend === 'linux-secret-service' || identity.backend === 'linux-kwallet')
       credentialCipher(cipher).isEncryptionAvailable()
     verifyCredentialCiphertexts(ciphertexts, (value) =>
       credentialCipher(cipher).decryptString(value)

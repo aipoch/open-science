@@ -180,3 +180,27 @@ it('recovers two scanned plot frames with a split OCR caption and rejects prose-
   expect(await recoverScannedFigures(page, geometry)).toEqual([])
   expect(await recoverScannedFigures(page, { ...geometry, graphicsBounds: [] })).toEqual([])
 })
+it('keeps only disjoint source regions without moving their coordinates', async () => {
+  const task = getDocument({ data: vectorPdf(), isEvalSupported: false, verbosity: 0 })
+  try {
+    const page = await (await task.promise).getPage(1)
+    const png = await renderPdfCrop(page, [100, 500, 120, 550], 0, [
+      [100, 500, 105, 550],
+      [115, 500, 120, 520]
+    ])
+    const { data, info } = await sharp(png)
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true })
+    const pixel = (x: number, y: number): number => data[(y * info.width + x) * 3]
+    expect(pixel(0, 100)).toBeLessThan(30)
+    expect(pixel(60, 40)).toBeLessThan(30)
+    expect(pixel(40, 40)).toBe(255)
+    expect(pixel(60, 100)).toBe(255)
+    await expect(
+      renderPdfCrop(page, [100, 500, 120, 550], 0, [[99, 500, 105, 550]])
+    ).rejects.toThrow('Invalid PDF crop parts')
+  } finally {
+    await task.destroy()
+  }
+})

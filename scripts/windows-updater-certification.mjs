@@ -305,6 +305,8 @@ if ($handle -eq [IntPtr]::Zero) {
   [Console]::Error.Write("Could not observe updater installer process $($candidate.ProcessId) after retrying.")
   exit 126
 }
+[Console]::Out.WriteLine('OPEN_SCIENCE_INSTALLER_OBSERVER_ACQUIRED')
+[Console]::Out.Flush()
 $wait = [OpenScienceProcessObserver]::WaitForSingleObject($handle, 300000)
 if ($wait -eq 0x00000102) {
   [OpenScienceProcessObserver]::CloseHandle($handle) | Out-Null

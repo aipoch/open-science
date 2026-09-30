@@ -214,7 +214,7 @@ it('includes the first treatment week under the native underline in a wide sched
     0, 4, 1, 2
   ])
   expect(t.grid[1].slice(3, 7)).toEqual([
-    'Post- randomisation',
+    'Post-randomisation',
     'wk 1',
     'wk 2 wk 3',
     'Weekly for 4 weeks post-RT'
