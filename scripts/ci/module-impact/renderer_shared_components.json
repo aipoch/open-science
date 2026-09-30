@@ -472,7 +472,8 @@
       "src/renderer/src/pages/literature/JournalAlignment.render.test.tsx",
       "src/renderer/src/pages/literature/JournalDatasetActions.render.test.tsx",
       "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
-      "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx"
+      "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

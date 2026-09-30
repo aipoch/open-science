@@ -431,7 +431,8 @@
       "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactSourcesPanel.test.tsx",
-      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],
