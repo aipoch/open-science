@@ -13,6 +13,7 @@ import type { NotebookRunStatus } from '../../../../shared/notebook'
 import {
   getNotebookMemoryToolDisplayName,
   isNotebookManagePackagesToolName,
+  matchNotebookRunTool,
   matchNotebookMemoryTool,
   resolveNotebookLanguage,
   resolveNotebookRunToolName
@@ -744,17 +745,36 @@ const getNotebookLanguage = (
 
 // Reads the notebook run summary the execute tool returns as JSON content (or raw output).
 const parseNotebookRunSummary = (activity: ToolActivity): Record<string, unknown> | undefined => {
-  for (const text of collectToolTexts(activity)) {
-    try {
-      const parsed: unknown = JSON.parse(text)
-
-      if (isRecord(parsed)) return parsed
-    } catch {
-      // Not a JSON payload; keep scanning the remaining content blocks.
+  const unwrap = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
+    if (depth > 5) return undefined
+    if (typeof value === 'string') {
+      if (value.length > 128_000) return undefined
+      try {
+        return unwrap(JSON.parse(value) as unknown, depth + 1)
+      } catch {
+        return undefined
+      }
     }
+    if (!isRecord(value)) return undefined
+    for (const field of ['structuredContent', 'result'] as const) {
+      const nested = unwrap(value[field], depth + 1)
+      if (nested && typeof nested.status === 'string') return nested
+    }
+    if (Array.isArray(value.content)) {
+      for (const block of value.content) {
+        if (!isRecord(block) || block.type !== 'text') continue
+        const nested = unwrap(block.text, depth + 1)
+        if (nested && typeof nested.status === 'string') return nested
+      }
+    }
+    return value
+  }
+  for (const text of collectToolTexts(activity)) {
+    const summary = unwrap(text)
+    if (summary) return summary
   }
 
-  return isRecord(activity.rawOutput) ? activity.rawOutput : undefined
+  return unwrap(activity.rawOutput)
 }
 
 // Prefers the executed code from tool input, falling back to the script echoed in the run summary.
@@ -874,6 +894,53 @@ const getNotebookRunStatusFromActivity = (
   return NOTEBOOK_RUN_STATUSES.has(summary.status as NotebookRunStatus)
     ? (summary.status as NotebookRunStatus)
     : undefined
+}
+
+// Shell results do not carry the persistent-kernel invocation join. Accept only the
+// exact app Shell tool and a structurally consistent result; ACP observer status and
+// stderr text alone cannot establish that a command ran or failed.
+const getShellResultStatusFromActivity = (
+  activity: ToolActivity
+): NotebookRunStatus | undefined => {
+  // A present provider identity is authoritative; a title must not override a different tool.
+  const toolName = activity.providerToolName ?? activity.title
+  if (matchNotebookRunTool(toolName) !== 'bash_execute') return undefined
+  const summary = parseNotebookRunSummary(activity)
+  if (!summary) return undefined
+  const { status, exitCode, errorCode } = summary
+  if ((status === 'queued' || status === 'running') && typeof summary.runId === 'string') {
+    return status
+  }
+  if (
+    (status === 'timeout' || status === 'cancelled' || status === 'interrupted') &&
+    exitCode === null
+  ) {
+    return status
+  }
+  if (status === 'failed' && summary.execution === 'unknown' && typeof summary.error === 'string') {
+    return 'failed'
+  }
+  if (status === 'completed' && exitCode === 0 && errorCode === undefined) return 'completed'
+  if (status !== 'failed') return undefined
+  if (errorCode === undefined) {
+    return typeof exitCode === 'number' && exitCode !== 0 ? 'failed' : undefined
+  }
+  if (errorCode === 'shell-nonzero-exit') {
+    return typeof exitCode === 'number' && exitCode !== 0 ? 'failed' : undefined
+  }
+  if (
+    [
+      'shell-start-failed',
+      'shell-runtime-unavailable',
+      'shell-network-transport-unsupported',
+      'shell-command-blocked',
+      'shell-process-error',
+      'shell-cleanup-incomplete'
+    ].includes(String(errorCode))
+  ) {
+    return 'failed'
+  }
+  return undefined
 }
 
 // Renders a notebook run as its code plus execution output, not the raw summary JSON. Handles every
@@ -1301,6 +1368,7 @@ export {
   buildToolActivityDetails,
   getNotebookRunIdFromActivity,
   getNotebookRunStatusFromActivity,
+  getShellResultStatusFromActivity,
   getSkillLoadDocument,
   getToolDisplayName,
   isEditActivity,

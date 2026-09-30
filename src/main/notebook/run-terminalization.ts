@@ -39,6 +39,8 @@ type NotebookRunTerminalResult = {
   truncated?: boolean
   exitCode?: number | null
   runtimeStatus?: NotebookRunRecord['shellRuntimeStatus']
+  systemErrorCode?: NotebookRunRecord['shellSystemErrorCode']
+  executionNotice?: string
   errorCode?: NotebookRunRecord['shellErrorCode']
   recovery?: NotebookRunRecord['recovery']
   workingFiles?: NotebookWorkingFile[]
@@ -480,7 +482,13 @@ class NotebookRunTerminalizationOwner {
       ...(limitedResult.truncated ? { truncated: true } : {}),
       ...(limitedResult.exitCode !== undefined ? { exitCode: limitedResult.exitCode } : {}),
       ...(limitedResult.runtimeStatus ? { shellRuntimeStatus: limitedResult.runtimeStatus } : {}),
+      ...(limitedResult.systemErrorCode
+        ? { shellSystemErrorCode: limitedResult.systemErrorCode }
+        : {}),
       ...(limitedResult.errorCode ? { shellErrorCode: limitedResult.errorCode } : {}),
+      ...(limitedResult.executionNotice
+        ? { shellExecutionNotice: limitedResult.executionNotice }
+        : {}),
       ...(limitedResult.recovery ? { recovery: limitedResult.recovery } : {}),
       environmentCapture,
       ...(limitedResult.environmentLock ? { environmentLock: limitedResult.environmentLock } : {}),

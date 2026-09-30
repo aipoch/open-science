@@ -41,10 +41,12 @@ import {
   NOTEBOOK_MCP_STATE_RESULT_LIMIT,
   REPL_EXECUTE_DOC,
   NOTEBOOK_RPC_TOOLS,
+  NotebookRpcError,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
   buildNotebookToolContent,
   compactNotebookExecutionResult,
+  compactShellExecutionResult,
   compactBackgroundRunReceipt,
   compactBackgroundRunResult,
   compactNotebookStateResult,
@@ -1215,19 +1217,15 @@ describe('background_run tool', () => {
     })
 
     expect(result).toMatchObject({
-      shellConcurrency: { limit: 2, slot: 1 },
-      kernelKind: 'bash',
       status: 'failed',
       exitCode: 7,
+      error: 'Shell command exited with code 7.',
       stdout: 'partial',
       stderr: 'failed',
-      workingFiles: [{ relativePath: 'data/output.csv' }],
-      fileEvidence: {
-        activityId: 'shell-run-1',
-        state: 'available',
-        evidenceId: 'evidence-1'
-      }
+      workingFiles: [{ relativePath: 'data/output.csv' }]
     })
+    expect(result).not.toHaveProperty('shellConcurrency')
+    expect(result).not.toHaveProperty('fileEvidence')
   })
 
   it.each(['pending', 'suppressed', 'committed'])(
@@ -1305,7 +1303,12 @@ describe('background_run tool', () => {
         { submissionIdentity: 'submission-1' },
         async () => ({ ok: false, status: 500, json: async () => ({ error: detail }) }) as Response
       )
-    ).rejects.toThrow(JSON.stringify(detail))
+    ).rejects.toMatchObject({
+      name: 'NotebookRpcError',
+      statusCode: 500,
+      message: JSON.stringify(detail),
+      detail
+    } satisfies Partial<NotebookRpcError>)
   })
 })
 
@@ -1793,7 +1796,8 @@ describe('bash_execute tool', () => {
       submissionIdentity: 'shell-submission-1'
     }
     expect(tool?.mapResult?.(receipt, { background: true })).toEqual({
-      ...receipt,
+      status: 'queued',
+      runId: 'shell-run-1',
       nextAction: expect.stringMatching(
         /Save runId.*exact runId.*non-blocking snapshot.*never scan Run history.*followUpDelivery.*suppressed.*follow-up Turn/
       )
@@ -1805,6 +1809,91 @@ describe('bash_execute tool', () => {
     expect(tool?.description).toContain('retain variables, exports, functions, and cwd')
     expect(tool?.description).toContain('earlier commands are never replayed')
     expect(tool?.description).toContain('resets its state')
+  })
+
+  it('projects startup and ambiguous process failures without host diagnostics or false replay claims', () => {
+    const startup = compactShellExecutionResult({
+      exitCode: null,
+      errorCode: 'shell-start-failed',
+      systemErrorCode: 'ENOENT',
+      stderr: 'spawn /private/internal/shell ENOENT',
+      failureDiagnostic: { stack: 'internal stack', path: '/private/internal/shell' }
+    })
+    expect(startup).toEqual({
+      status: 'failed',
+      exitCode: null,
+      errorCode: 'shell-start-failed',
+      systemErrorCode: 'ENOENT',
+      error: 'Shell command did not start.'
+    })
+
+    const ambiguous = compactShellExecutionResult({
+      exitCode: null,
+      errorCode: 'shell-process-error',
+      systemErrorCode: 'EIO',
+      stderr: 'partial diagnostic'
+    })
+    expect(ambiguous).toMatchObject({
+      status: 'failed',
+      errorCode: 'shell-process-error',
+      systemErrorCode: 'EIO',
+      error: 'Shell process failed before a verified result; the command may have started.',
+      nextStep: expect.stringContaining('Check the Run and partial file or external effects')
+    })
+    expect(ambiguous.stderr).toBe('partial diagnostic')
+  })
+
+  it('preserves interrupted background status and changed interpreter cwd', () => {
+    expect(
+      compactBackgroundRunResult({
+        run: {
+          kernelKind: 'bash',
+          runId: 'interrupted-shell',
+          status: 'interrupted',
+          text: { stdout: 'partial', stderr: '' }
+        }
+      })
+    ).toMatchObject({ status: 'interrupted', stdout: 'partial' })
+    expect(
+      compactBackgroundRunResult({
+        run: {
+          kernelKind: 'bash',
+          status: 'completed',
+          exitCode: 0,
+          cwdBefore: '/workspace',
+          cwdAfter: '/workspace/child',
+          text: { stdout: '', stderr: '' }
+        }
+      })
+    ).toMatchObject({ status: 'completed', cwdAfter: '/workspace/child' })
+    expect(
+      compactShellExecutionResult({
+        status: 'completed',
+        exitCode: 0,
+        cwdBefore: '/workspace',
+        cwdAfter: '/workspace'
+      })
+    ).not.toHaveProperty('cwdAfter')
+  })
+
+  it('preserves a user-written cleanup marker, with recovery only from trusted facts', () => {
+    const output = 'SHELL_CLEANUP_INCOMPLETE: user text\n'
+    expect(compactShellExecutionResult({ exitCode: 7, stderr: output })).not.toHaveProperty(
+      'nextStep'
+    )
+    expect(
+      compactShellExecutionResult({
+        exitCode: null,
+        errorCode: 'shell-cleanup-incomplete',
+        stderr: output,
+        recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+      })
+    ).toMatchObject({
+      status: 'failed',
+      exitCode: null,
+      stderr: output,
+      nextStep: expect.stringContaining('Do not rerun until cleanup is verified')
+    })
   })
 
   it('documents the actual Windows PowerShell dialect and keeps generated notebook files out of shell copies', () => {
@@ -2707,16 +2796,49 @@ describe('compactNotebookExecutionResult', () => {
       stderr: 'cleanup failed',
       exitCode: null
     }
-    const foreground = compactNotebookExecutionResult(run) as Record<string, unknown>
+    const foreground = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'bash_execute')!.mapResult!(
+      run,
+      {}
+    ) as Record<string, unknown>
     const background = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'background_run')!
       .mapResult!({ run }, { action: 'result' }) as Record<string, unknown>
-    expect(foreground.recovery).toMatchObject(recovery)
-    expect(background.recovery).toEqual(foreground.recovery)
+    expect(foreground.nextStep).toMatch(
+      /Do not rerun until cleanup is verified.*check partial effects first/u
+    )
+    expect(background.nextStep).toEqual(foreground.nextStep)
     for (const result of [foreground, background]) {
       const serialized = serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
-      expect(JSON.parse(serialized).recovery).toEqual(foreground.recovery)
+      expect(JSON.parse(serialized).nextStep).toEqual(foreground.nextStep)
+      expect(JSON.parse(serialized)).not.toHaveProperty('recovery')
     }
     expect(foreground.truncated).toBe(true)
+  })
+
+  it('preserves recovery and lifecycle facts through the final response budget fallback', () => {
+    const result = compactShellExecutionResult({
+      status: 'failed',
+      exitCode: null,
+      errorCode: 'shell-cleanup-incomplete',
+      recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' },
+      executionNotice: 'Shell interpreter exited.',
+      workingFiles: Array.from({ length: 8 }, (_, index) => ({
+        relativePath: `${index}-${'x'.repeat(5_000)}`,
+        kind: 'file'
+      }))
+    })
+    const serialized = serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    const received = JSON.parse(serialized)
+    expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    expect(received).toMatchObject({
+      status: 'failed',
+      errorCode: 'shell-cleanup-incomplete',
+      nextStep: result.nextStep,
+      hint: 'Shell interpreter exited.',
+      truncated: true,
+      note: expect.stringContaining('exceeded'),
+      preview: expect.any(String)
+    })
+    expect(received.nextStep).toContain('Files or external state may have changed')
   })
 
   it('does not treat command output or historical error codes as current recovery facts', () => {
@@ -2749,17 +2871,8 @@ describe('compactNotebookExecutionResult', () => {
     expect(notebookTool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
     const bashTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'bash_execute')
     expect(
-      bashTool?.mapResult?.(
-        { runId: 'run-1', status: 'completed', text: { stdout: 'ok', stderr: '' } },
-        { command: 'echo ok' }
-      )
-    ).toEqual(
-      compactNotebookExecutionResult({
-        runId: 'run-1',
-        status: 'completed',
-        text: { stdout: 'ok', stderr: '' }
-      })
-    )
+      bashTool?.mapResult?.({ exitCode: 0, stdout: 'ok', stderr: '' }, { command: 'echo ok' })
+    ).toEqual({ status: 'completed', exitCode: 0, stdout: 'ok' })
     expect(bashTool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
     const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
     expect(replTool?.mapResult).not.toBe(compactNotebookExecutionResult)
@@ -3139,6 +3252,39 @@ describe('compactNotebookExecutionResult', () => {
 })
 
 describe('compactNotebookStateResult', () => {
+  it('retains latest Shell startup and cleanup facts without repeating historical guidance', () => {
+    const cleanup = {
+      kernelKind: 'bash',
+      status: 'failed',
+      exitCode: null,
+      shellErrorCode: 'shell-cleanup-incomplete',
+      recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+    }
+    const startup = {
+      kernelKind: 'bash',
+      status: 'failed',
+      exitCode: null,
+      shellErrorCode: 'shell-start-failed',
+      shellSystemErrorCode: 'ENOENT',
+      text: { stderr: '', stdout: '', traceback: '' }
+    }
+    for (const latest of [startup, cleanup]) {
+      const result = compactNotebookStateResult({ recentRuns: [cleanup, latest] }) as {
+        recentRuns: Array<Record<string, unknown>>
+      }
+      expect(result.recentRuns[0]).not.toHaveProperty('nextStep')
+      expect(result.recentRuns[1]).toMatchObject({
+        status: 'failed',
+        errorCode: latest.shellErrorCode,
+        error: compactShellExecutionResult(latest).error
+      })
+      if (latest === cleanup) {
+        expect(result.recentRuns[1].nextStep).toContain('Do not rerun until cleanup is verified')
+        expect(result.recentRuns[1]).not.toHaveProperty('recovery')
+      } else expect(result.recentRuns[1].systemErrorCode).toBe('ENOENT')
+    }
+  })
+
   it('keeps recovery on the latest attempt without repeating historical guidance', () => {
     const recovery = { execution: 'not-started', retryAfter: 'cleanup-verified' }
     const state = {

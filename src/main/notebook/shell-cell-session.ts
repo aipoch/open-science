@@ -1,3 +1,4 @@
+import { runtimeChildProcessErrorFields } from './runtime-diagnostics'
 import { randomUUID } from 'node:crypto'
 import { createServer, type Server, type Socket } from 'node:net'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -8,6 +9,22 @@ import {
   limitUtf8
 } from './content-limits'
 import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
+
+// Shared Shell failure facts for process launch and persistent interpreter control.
+export const shellFailureResult = (error: unknown, processStarted = false): NotebookShellResult => {
+  const failureDiagnostic = runtimeChildProcessErrorFields(error)
+  const code = failureDiagnostic.code
+  return {
+    stdout: '',
+    stderr: '',
+    exitCode: null,
+    errorCode: processStarted ? 'shell-process-error' : 'shell-start-failed',
+    ...(typeof code === 'string' && /^E[A-Z0-9]{1,31}$/u.test(code)
+      ? { systemErrorCode: code }
+      : {}),
+    failureDiagnostic
+  }
+}
 
 type Launch = (
   request: NotebookShellProcessRequest,
@@ -63,7 +80,9 @@ export class ShellCellSession {
   constructor(
     readonly identity: NotebookShellProcessRequest,
     private readonly launch: Launch,
-    private readonly validate: (request: NotebookShellProcessRequest) => Promise<void>,
+    private readonly validate: (
+      request: NotebookShellProcessRequest
+    ) => Promise<NotebookShellResult | void>,
     private readonly nativeControl = false
   ) {}
 
@@ -207,9 +226,35 @@ export class ShellCellSession {
         stdout: cell.stdout,
         stderr: cell.stderr,
         exitCode: cell.exitCode ?? null,
+        ...(cell.exitCode !== undefined && cell.exitCode !== 0
+          ? { errorCode: 'shell-nonzero-exit' as const }
+          : {}),
         cwd: cell.cwd,
         ...(cell.truncated ? { truncated: true } : {})
       })
+  }
+
+  private async controlFailure(error: unknown): Promise<NotebookShellResult> {
+    const processStarted = this.launchedProcess
+    this.lifetime.abort()
+    await this.completion
+    this.closeControl()
+    const cell = this.cell
+    const cleanupFailed =
+      this.processResult?.ownedTreeReaped === false ||
+      this.processResult?.errorCode === 'shell-cleanup-incomplete'
+    const failure = cleanupFailed ? this.processResult! : shellFailureResult(error, processStarted)
+    const stderr = limitUtf8(
+      (cell?.stderr ?? '') + (cell?.buffers.stderr ?? '') + (cleanupFailed ? failure.stderr : ''),
+      NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES - 512
+    )
+    return {
+      ...failure,
+      ...(cleanupFailed ? { ownedTreeReaped: false } : {}),
+      stdout: (cell?.stdout ?? '') + (cell?.buffers.stdout ?? ''),
+      stderr: stderr.text,
+      ...(cell?.truncated || stderr.truncated ? { truncated: true } : {})
+    }
   }
 
   private async run(request: NotebookShellProcessRequest): Promise<NotebookShellResult> {
@@ -233,14 +278,12 @@ export class ShellCellSession {
     }
     request = { ...request, cwd: this.cwd ?? request.cwd }
     try {
-      await this.validate(request)
+      const rejected = await this.validate(request)
+      if (request.signal?.aborted) return cancelledResult()
+      if (rejected) return rejected
     } catch (error) {
       if (request.signal?.aborted) return cancelledResult()
-      return {
-        stdout: '',
-        stderr: error instanceof Error ? error.message : String(error),
-        exitCode: 1
-      }
+      return shellFailureResult(error)
     }
     if (this.closed || request.signal?.aborted) return cancelledResult()
     const powershell = request.runtimeBinding?.kind === 'powershell'
@@ -248,7 +291,10 @@ export class ShellCellSession {
     let timer: ReturnType<typeof setTimeout> | undefined
     let connectionTimer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
-    if (!this.child) this.lifetime = new AbortController()
+    if (!this.child) {
+      this.lifetime = new AbortController()
+      this.launchedProcess = false
+    }
     const abort = (): void => {
       this.lifetime.abort()
     }
@@ -304,10 +350,13 @@ export class ShellCellSession {
               stderr:
                 cell.stderr +
                 cell.buffers.stderr +
-                (timedOut && exit.cancelled && !exit.errorCode ? '' : exit.stderr) +
-                (this.launchedProcess
-                  ? '\nShell interpreter exited; interpreter state was reset.'
-                  : ''),
+                (exit.cancelled && !exit.errorCode ? '' : exit.stderr),
+              ...(this.launchedProcess &&
+              !timedOut &&
+              !exit.cancelled &&
+              exit.errorCode !== 'shell-start-failed'
+                ? { executionNotice: 'Shell interpreter exited.' }
+                : {}),
               ...(cell.truncated ? { truncated: true } : {})
             })
           ready.resolve()
@@ -335,32 +384,22 @@ export class ShellCellSession {
       const completed = await result
       if (completed.cwd) this.cwd = completed.cwd
       if (reset)
-        completed.stderr =
-          'Shell launch context changed; interpreter state was reset.\n' + completed.stderr
+        completed.executionNotice = [
+          'Shell launch context changed before this command.',
+          completed.executionNotice
+        ]
+          .filter(Boolean)
+          .join(' ')
       return timedOut
         ? {
             ...completed,
             cancelled: undefined,
             exitCode: null,
-            stderr:
-              completed.stderr +
-              `\nShell command timed out after ${request.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS}ms; interpreter state was reset.`
+            status: 'timeout'
           }
         : { ...completed, cwdBefore: request.cwd }
     } catch (error) {
-      this.lifetime.abort()
-      await this.completion
-      this.closeControl()
-      if (
-        this.processResult?.ownedTreeReaped === false ||
-        this.processResult?.errorCode === 'shell-cleanup-incomplete'
-      )
-        return this.processResult
-      return {
-        stdout: '',
-        stderr: error instanceof Error ? error.message : String(error),
-        exitCode: null
-      }
+      return await this.controlFailure(error)
     } finally {
       clearTimeout(timer)
       clearTimeout(connectionTimer)

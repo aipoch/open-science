@@ -77,7 +77,7 @@ import {
   writeReadyMarker,
   writeRReadyMarker
 } from './runtime-paths'
-import type { NotebookShellProcess } from './shell-process'
+import { NotebookShellProcessAdapter, type NotebookShellProcess } from './shell-process'
 import { NOTEBOOK_CODE_LIMIT_BYTES } from './content-limits'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { projectNotebookDependencies, type AnalyzedNotebookRun } from './dependency-analysis'
@@ -1236,6 +1236,7 @@ describe('notebook runtime service', () => {
 
     await expect(control).resolves.toMatchObject({ status: 'cancelled' })
     await expect(shell).resolves.toEqual({
+      status: 'cancelled',
       stdout: '',
       stderr: 'Shell command was cancelled.',
       exitCode: null
@@ -4014,6 +4015,95 @@ describe('notebook runtime service', () => {
       expect(state.runs[0].text.stdout).toContain('hi')
     })
 
+    it.runIf(process.platform !== 'win32')(
+      'persists a real missing executable as a start failure and replays its OS code',
+      async () => {
+        const root = await createStorageRoot()
+        const missingExecutable = join(root, 'missing-shell-executable')
+        const logInfo = vi.fn(() => {
+          throw new Error('diagnostic sink unavailable')
+        })
+        const logError = vi.fn(() => {
+          throw new Error('diagnostic sink unavailable')
+        })
+        const shellProcess = new NotebookShellProcessAdapter('linux', {
+          wrap: async (invocation) => ({
+            executable: missingExecutable,
+            args: invocation.args,
+            env: invocation.env,
+            annotateStderr: (stderr) => stderr,
+            cleanup: async () => ({
+              processesTerminated: true,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
+            })
+          })
+        })
+        const service = new NotebookRuntimeService({
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'default-project',
+          repository: new NotebookRunRepository(root),
+          shellProcess,
+          platform: 'linux',
+          logger: { info: logInfo, warn: vi.fn(), error: logError }
+        })
+        const request = {
+          sessionId: 'missing-shell',
+          workspaceCwd: root,
+          command: 'printf never-ran',
+          executionInvocationId: 'missing-shell-invocation'
+        }
+
+        const result = await service.executeShell(request)
+        expect(result).toMatchObject({
+          stdout: '',
+          exitCode: null,
+          errorCode: 'shell-start-failed',
+          systemErrorCode: 'ENOENT'
+        })
+        const state = await service.state(request)
+        expect(state.runs[0]).toMatchObject({
+          status: 'failed',
+          shellErrorCode: 'shell-start-failed',
+          shellSystemErrorCode: 'ENOENT',
+          exitCode: null
+        })
+        expect(
+          (await new NotebookRunRepository(root).findExisting('default-project', request.sessionId))
+            ?.runs[0]
+        ).toMatchObject({
+          shellErrorCode: 'shell-start-failed',
+          shellSystemErrorCode: 'ENOENT',
+          exitCode: null
+        })
+        expect(logError).toHaveBeenCalledWith(
+          'shell process failure',
+          expect.objectContaining({
+            originalError: expect.objectContaining({
+              name: 'Error',
+              code: 'ENOENT',
+              error: expect.stringContaining('ENOENT'),
+              stack: expect.stringContaining('ENOENT')
+            })
+          })
+        )
+        expect(logInfo).toHaveBeenCalledWith(
+          'shell execution completed',
+          expect.objectContaining({
+            stage: 'launch',
+            status: 'failed',
+            terminationReason: 'start-failed',
+            exitCode: null
+          })
+        )
+        expect(await service.executeShell(request)).toMatchObject({
+          errorCode: 'shell-start-failed',
+          systemErrorCode: 'ENOENT'
+        })
+      }
+    )
+
     it('returns a durable background Shell receipt before execution completes and exposes its result', async () => {
       const root = await createStorageRoot()
       const executionStarted = createDeferred<void>()
@@ -4377,6 +4467,7 @@ describe('notebook runtime service', () => {
         grantedRoots: []
       })
       expect(result).toEqual({
+        status: 'failed',
         stdout: 'partial output',
         stderr: 'command failed',
         exitCode: 9,
@@ -4476,8 +4567,8 @@ describe('notebook runtime service', () => {
         command: 'echo hello',
         executionInvocationId: 'same-invocation'
       }
-      expect(await service.executeShell(request)).toEqual(unavailable)
-      expect(await service.executeShell(request)).toEqual(unavailable)
+      expect(await service.executeShell(request)).toEqual({ ...unavailable, status: 'failed' })
+      expect(await service.executeShell(request)).toEqual({ ...unavailable, status: 'failed' })
       expect(execute).toHaveBeenCalledOnce()
     })
 
@@ -4646,8 +4737,8 @@ describe('notebook runtime service', () => {
         releases.get('second')?.()
 
         await expect(Promise.all([first, second])).resolves.toEqual([
-          { stdout: 'first', stderr: '', exitCode: 0 },
-          { stdout: 'second', stderr: '', exitCode: 0 }
+          { status: 'completed', stdout: 'first', stderr: '', exitCode: 0 },
+          { status: 'completed', stdout: 'second', stderr: '', exitCode: 0 }
         ])
       } finally {
         execute.mockImplementation(async ({ command }) => ({
@@ -4789,6 +4880,7 @@ describe('notebook runtime service', () => {
         expect(entered).toEqual(['first'])
         cancellation.abort()
         await expect(queued).resolves.toEqual({
+          status: 'cancelled',
           stdout: '',
           stderr: 'Shell command was cancelled.',
           exitCode: null
@@ -4796,7 +4888,12 @@ describe('notebook runtime service', () => {
         expect(entered).toEqual(['first'])
 
         releases.get('first')?.()
-        await expect(first).resolves.toEqual({ stdout: 'first', stderr: '', exitCode: 0 })
+        await expect(first).resolves.toEqual({
+          status: 'completed',
+          stdout: 'first',
+          stderr: '',
+          exitCode: 0
+        })
         const finalState = await service.state({ sessionId: 'session-1', workspaceCwd: root })
         expect(
           finalState.runs.find((run) => run.script === 'cancelled-before-start')
@@ -5005,8 +5102,8 @@ describe('notebook runtime service', () => {
       const shutdown = service.shutdown(scope)
 
       await expect(Promise.all([running, queued])).resolves.toEqual([
-        { stdout: '', stderr: 'Shell command was cancelled.', exitCode: null },
-        expect.objectContaining({ exitCode: null })
+        { status: 'cancelled', stdout: '', stderr: 'Shell command was cancelled.', exitCode: null },
+        expect.objectContaining({ status: 'cancelled', exitCode: null })
       ])
       await expect(shutdown).resolves.toEqual({ sessionId: 'session-1', status: 'shutdown' })
       expect(execute).toHaveBeenCalledOnce()
@@ -5053,6 +5150,7 @@ describe('notebook runtime service', () => {
 
       const disposal = service.dispose()
       await expect(execution).resolves.toEqual({
+        status: 'cancelled',
         stdout: '',
         stderr: 'Shell command was cancelled.',
         exitCode: null
@@ -5085,10 +5183,11 @@ describe('notebook runtime service', () => {
       await expect(
         Promise.all([service.executeShell(request), service.executeShell(request)])
       ).resolves.toEqual([
-        { stdout: 'once', stderr: 'non-zero', exitCode: 7 },
-        { stdout: 'once', stderr: 'non-zero', exitCode: 7 }
+        { status: 'failed', stdout: 'once', stderr: 'non-zero', exitCode: 7 },
+        { status: 'failed', stdout: 'once', stderr: 'non-zero', exitCode: 7 }
       ])
       await expect(service.executeShell(request)).resolves.toEqual({
+        status: 'failed',
         stdout: 'once',
         stderr: 'non-zero',
         exitCode: 7

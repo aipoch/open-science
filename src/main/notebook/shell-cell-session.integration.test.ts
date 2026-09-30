@@ -1,9 +1,12 @@
+import { PassThrough } from 'node:stream'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { ShellCellSession } from './shell-cell-session'
 import { access, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { NotebookShellProcessAdapter } from './shell-process'
-import type { NotebookShellProcessRequest } from './shell-process'
+import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process'
 import { NOTEBOOK_TEXT_LIMIT_BYTES, NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES } from './content-limits'
 
 // Exercise the native platform interpreter through the actual adapter and cleanup owner.
@@ -208,7 +211,9 @@ describe('persistent platform shell cells', () => {
       timeoutMs: 100
     })
     expect(result.exitCode).toBeNull()
-    expect(result.stderr).toContain('timed out')
+    expect(result.status).toBe('timeout')
+    expect(result.stderr).toBe('')
+    expect(result.executionNotice).toBeUndefined()
     expect(
       await adapter.execute(
         request(
@@ -239,7 +244,7 @@ describe('persistent platform shell cells', () => {
       protectedDirs: [join(root, 'private')]
     })
     expect(result).toMatchObject({ exitCode: 0, stdout: 'unset' })
-    expect(result.stderr).toContain('interpreter state was reset')
+    expect(result.executionNotice).toBe('Shell launch context changed before this command.')
     expect(
       await adapter.execute(request(command('value=other', '$value="other"'), 'two'))
     ).toMatchObject({ exitCode: 0 })
@@ -250,4 +255,109 @@ describe('persistent platform shell cells', () => {
       )
     ).toMatchObject({ exitCode: 0, stdout: 'other' })
   })
+})
+
+// Inject control failures at the persistent adapter boundary without requiring a broken OS.
+describe('persistent Shell control failures', () => {
+  const request: NotebookShellProcessRequest = {
+    projectId: 'project',
+    sessionId: 'control-failure',
+    command: 'command',
+    cwd: '/workspace',
+    runtimeRoot: '/runtime',
+    handoffDir: '/workspace'
+  }
+
+  it('does not classify an admission infrastructure exception as a command-policy denial', async () => {
+    const failure = Object.assign(new Error('scope lookup unavailable'), { code: 'EACCES' })
+    const session = new ShellCellSession(
+      request,
+      async () => {
+        throw new Error('must not launch')
+      },
+      async () => {
+        throw failure
+      }
+    )
+    expect(await session.execute(request)).toMatchObject({
+      exitCode: null,
+      errorCode: 'shell-start-failed',
+      systemErrorCode: 'EACCES',
+      stderr: '',
+      failureDiagnostic: { error: failure.message }
+    })
+    expect(await session.shutdown()).toEqual({ reaped: true })
+  })
+
+  it('classifies a launch exception as not started and keeps its diagnostic private', async () => {
+    const failure = Object.assign(new Error('private launch path unavailable'), { code: 'EMFILE' })
+    const session = new ShellCellSession(
+      request,
+      async () => {
+        throw failure
+      },
+      async () => {}
+    )
+    expect(await session.execute(request)).toMatchObject({
+      stdout: '',
+      stderr: '',
+      exitCode: null,
+      errorCode: 'shell-start-failed',
+      systemErrorCode: 'EMFILE',
+      failureDiagnostic: { error: failure.message }
+    })
+    expect(await session.shutdown()).toEqual({ reaped: true })
+  })
+
+  it.each(['begin', 'write'] as const)(
+    'retains command output and classifies a %s control failure',
+    async (stage) => {
+      const failure = Object.assign(new Error('private control failure'), { code: 'EIO' })
+      const session = new ShellCellSession(
+        request,
+        async (_request, _startup, signal, onProcess) => {
+          const child = {
+            stdin: new PassThrough(),
+            stdout: new PassThrough(),
+            stderr: new PassThrough()
+          }
+          const completion = new Promise<NotebookShellResult>((resolve) => {
+            signal.addEventListener(
+              'abort',
+              () => resolve({ stdout: '', stderr: '', exitCode: null, cancelled: true }),
+              { once: true }
+            )
+          })
+          onProcess(child as unknown as ChildProcessWithoutNullStreams)
+          child.stdin.write = ((frame: string) => {
+            child.stdout.emit('data', 'partial-output')
+            child.stderr.emit('data', 'command-diagnostic')
+            if (stage === 'write') throw failure
+            const marker = frame.match(/\\000([a-f0-9-]{36}):/)![1]
+            child.stdout.emit('data', `\0${marker}:0:/workspace\0`)
+            child.stderr.emit('data', `\0${marker}\0`)
+            return true
+          }) as typeof child.stdin.write
+          return {
+            completion,
+            beginExecution: () => {
+              if (stage === 'begin') throw failure
+              return () => undefined
+            }
+          }
+        },
+        async () => {}
+      )
+      const result = await session.execute(request)
+      expect(result).toMatchObject({
+        exitCode: null,
+        errorCode: 'shell-process-error',
+        systemErrorCode: 'EIO'
+      })
+      expect(result.stdout).toBe(stage === 'begin' ? '' : 'partial-output')
+      expect(result.stderr).toBe(stage === 'begin' ? '' : 'command-diagnostic')
+      expect(result.failureDiagnostic).toMatchObject({ error: failure.message })
+      expect(await session.shutdown()).toEqual({ reaped: true })
+    }
+  )
 })

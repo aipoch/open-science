@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { parsePowerShellSearchCommands } from './powershell-search-parser'
+import { parsePowerShellSearchCommands, PowerShellSyntaxError } from './powershell-search-parser'
 import { assertShellSearchScope } from './shell-search-scope'
 
 describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflight', () => {
+  it('returns typed syntax diagnostics without running invalid input', async () => {
+    await expect(parsePowerShellSearchCommands('Write-Output "isolated" `')).rejects.toBeInstanceOf(
+      PowerShellSyntaxError
+    )
+  })
+
   it('parses literals, arrays, aliases, and unresolved variables without executing substitutions', async () => {
     expect(
       await parsePowerShellSearchCommands(

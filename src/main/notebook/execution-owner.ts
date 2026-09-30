@@ -304,14 +304,25 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
 const publicShellResult = (
   run: Pick<
     NotebookRunRecord,
-    'text' | 'exitCode' | 'truncated' | 'shellRuntimeStatus' | 'shellErrorCode' | 'recovery'
+    | 'text'
+    | 'status'
+    | 'exitCode'
+    | 'truncated'
+    | 'shellRuntimeStatus'
+    | 'shellSystemErrorCode'
+    | 'shellExecutionNotice'
+    | 'shellErrorCode'
+    | 'recovery'
   >
 ): NotebookShellResult => ({
+  status: run.status,
   stdout: run.text.stdout,
   stderr: run.text.stderr,
   exitCode: run.exitCode ?? null,
   ...(run.shellRuntimeStatus ? { runtimeStatus: run.shellRuntimeStatus } : {}),
+  ...(run.shellSystemErrorCode ? { systemErrorCode: run.shellSystemErrorCode } : {}),
   ...(run.shellErrorCode ? { errorCode: run.shellErrorCode } : {}),
+  ...(run.shellExecutionNotice ? { executionNotice: run.shellExecutionNotice } : {}),
   ...(run.recovery ? { recovery: run.recovery } : {}),
   ...(run.truncated ? { truncated: true } : {})
 })
@@ -1625,7 +1636,8 @@ class NotebookExecutionOwner {
             durableAdmission.run,
             new Error(SHELL_CANCELLED_MESSAGE)
           )
-          const result = {
+          const result: NotebookShellResult = {
+            status: cancelled.status,
             stdout: cancelled.text.stdout,
             stderr: cancelled.text.stderr,
             exitCode: null,
@@ -1664,7 +1676,8 @@ class NotebookExecutionOwner {
                   ? Promise.resolve<NotebookShellResult>({
                       stdout: '',
                       stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
-                      exitCode: 1
+                      exitCode: 1,
+                      errorCode: 'shell-command-blocked'
                     })
                   : preparedShell
                     ? preparedShell.execute(lifecycleSignal)
@@ -1697,34 +1710,73 @@ class NotebookExecutionOwner {
                     ? 'failed'
                     : shellResult.exitCode === 0
                       ? 'completed'
-                      : shellResult.exitCode === null
+                      : shellResult.exitCode === null && !shellResult.errorCode
                         ? 'timeout'
                         : 'failed'
-              this.options.logger.info?.('shell execution completed', {
-                executionId: runId,
-                runtime: runtimeBinding.kind,
-                ...(runtimeBinding.kind === 'wsl2-bash'
-                  ? { profileReference: runtimeBinding.profileId }
-                  : {}),
-                stage:
-                  shellResult.runtimeStatus === 'unavailable' ? 'sandbox-prepare' : 'execution',
-                status,
-                terminationReason:
-                  shellResult.errorCode === 'shell-cleanup-incomplete'
-                    ? 'cleanup-incomplete'
-                    : shellResult.cancelled
-                      ? 'cancel'
-                      : shellResult.exitCode === null
-                        ? 'timeout'
-                        : 'exit',
-                cleanupState:
-                  shellResult.errorCode === 'shell-cleanup-incomplete' ? 'incomplete' : 'complete',
-                exitCode: shellResult.exitCode,
-                stdoutByteCount: Buffer.byteLength(shellResult.stdout, 'utf8'),
-                stderrByteCount: Buffer.byteLength(shellResult.stderr, 'utf8'),
-                outputByteCount: Buffer.byteLength(shellResult.stdout + shellResult.stderr, 'utf8'),
-                truncated: shellResult.truncated === true
-              })
+              if (shellResult.failureDiagnostic) {
+                try {
+                  this.options.logger.error('shell process failure', {
+                    executionId: runId,
+                    runtime: runtimeBinding.kind,
+                    errorCode: shellResult.errorCode ?? 'shell-process-error',
+                    originalError: shellResult.failureDiagnostic
+                  })
+                } catch {
+                  // Losing diagnostic logging must not change the command's durable result.
+                }
+              }
+              const logStage =
+                shellResult.runtimeStatus === 'unavailable'
+                  ? 'sandbox-prepare'
+                  : shellResult.errorCode === 'shell-start-failed'
+                    ? 'launch'
+                    : shellResult.errorCode === 'shell-command-blocked'
+                      ? 'policy'
+                      : 'execution'
+              const terminationReason = (() => {
+                switch (shellResult.errorCode) {
+                  case 'shell-cleanup-incomplete':
+                    return 'cleanup-incomplete'
+                  case 'shell-runtime-unavailable':
+                    return 'runtime-unavailable'
+                  case 'shell-network-transport-unsupported':
+                    return 'transport-unsupported'
+                  case 'shell-start-failed':
+                    return 'start-failed'
+                  case 'shell-process-error':
+                    return 'process-error'
+                  case 'shell-command-blocked':
+                    return 'blocked'
+                }
+                if (shellResult.cancelled) return 'cancel'
+                return shellResult.exitCode === null ? 'timeout' : 'exit'
+              })()
+              try {
+                this.options.logger.info?.('shell execution completed', {
+                  executionId: runId,
+                  runtime: runtimeBinding.kind,
+                  ...(runtimeBinding.kind === 'wsl2-bash'
+                    ? { profileReference: runtimeBinding.profileId }
+                    : {}),
+                  stage: logStage,
+                  status,
+                  terminationReason,
+                  cleanupState:
+                    shellResult.errorCode === 'shell-cleanup-incomplete'
+                      ? 'incomplete'
+                      : 'complete',
+                  exitCode: shellResult.exitCode,
+                  stdoutByteCount: Buffer.byteLength(shellResult.stdout, 'utf8'),
+                  stderrByteCount: Buffer.byteLength(shellResult.stderr, 'utf8'),
+                  outputByteCount: Buffer.byteLength(
+                    shellResult.stdout + shellResult.stderr,
+                    'utf8'
+                  ),
+                  truncated: shellResult.truncated === true
+                })
+              } catch {
+                // A diagnostic sink failure cannot replace a completed process result.
+              }
               const outputs: NotebookOutput[] = [
                 ...(shellResult.stdout
                   ? [{ type: 'stream' as const, name: 'stdout' as const, text: shellResult.stdout }]
@@ -1747,6 +1799,8 @@ class NotebookExecutionOwner {
                 fileEvidence,
                 exitCode: shellResult.exitCode,
                 runtimeStatus: shellResult.runtimeStatus,
+                systemErrorCode: shellResult.systemErrorCode,
+                executionNotice: shellResult.executionNotice,
                 errorCode: shellResult.errorCode,
                 recovery: shellResult.recovery
               }
@@ -1754,16 +1808,26 @@ class NotebookExecutionOwner {
           })
           // Cancellation must report an unconfirmed stop to its owning turn. Ordinary launch/exit
           // cleanup failures retain the existing result and recovery instructions for their caller.
-          if (!ownedTreeReaped && lifecycleSignal.aborted) throw new NotebookExecutionStopError()
+          if (!ownedTreeReaped && lifecycleSignal.aborted) {
+            throw new NotebookExecutionStopError(undefined, {
+              recovery: terminalized.run.recovery ?? {
+                execution: 'may-have-run',
+                retryAfter: 'cleanup-verified'
+              }
+            })
+          }
           const result = terminalized.result
           if (!result) {
             return publicShellResult(terminalized.run)
           }
           return {
+            status: terminalized.run.status,
             stdout: result.stdout,
             stderr: result.stderr,
             exitCode: result.exitCode,
             ...(result.runtimeStatus ? { runtimeStatus: result.runtimeStatus } : {}),
+            ...(result.systemErrorCode ? { systemErrorCode: result.systemErrorCode } : {}),
+            ...(result.executionNotice ? { executionNotice: result.executionNotice } : {}),
             ...(result.errorCode ? { errorCode: result.errorCode } : {}),
             ...(result.recovery ? { recovery: result.recovery } : {}),
             ...(result.truncated ? { truncated: true } : {})

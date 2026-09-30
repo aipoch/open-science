@@ -385,13 +385,16 @@ describe('notebook shell process behavior', () => {
         previewAvailable
       })
 
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         stdout: '',
         stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
         exitCode: null,
         runtimeStatus: 'unavailable',
         errorCode: 'shell-runtime-unavailable',
         recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+      })
+      expect(result.failureDiagnostic).toMatchObject({
+        error: expect.stringContaining('prepared:')
       })
       expect(processSandbox.wrap).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -476,7 +479,7 @@ describe('notebook shell process behavior', () => {
           processSandbox,
           previewAvailable
         })
-      ).resolves.toEqual({
+      ).resolves.toMatchObject({
         stdout: '',
         stderr:
           'WSL2_NETWORK_TRANSPORT_UNSUPPORTED: WSL2 Bash Preview network access requires mirrored networking.',
@@ -806,8 +809,9 @@ describe('notebook shell process behavior', () => {
 
     const result = await completion
     expect(result).toMatchObject({ exitCode: null })
-    expect(result.stderr).toContain('null bytes')
-    expect(result.errorCode).toBeUndefined()
+    expect(result.stderr).toBe('')
+    expect(result.errorCode).toBe('shell-start-failed')
+    expect(result.failureDiagnostic).toMatchObject({ error: expect.stringContaining('null bytes') })
     const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
     expect(sandboxInvocation.filesystem.deniedWriteRoots).toEqual([])
     expect(cleanup).toHaveBeenCalledOnce()
@@ -1036,6 +1040,34 @@ describe('notebook shell process behavior', () => {
       await rm(runtimeRoot, { recursive: true, force: true })
     })
 
+    it('preserves captured command stderr when the running process reports an error', async () => {
+      const result = await runShellCommand({
+        command: 'sleep 30',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'linux',
+        claimProcess(child) {
+          setImmediate(() => {
+            child.stderr!.emit('data', 'command diagnostic\n')
+            child.emit(
+              'error',
+              Object.assign(new Error('internal process failure'), { code: 'EIO' })
+            )
+          })
+          return () => undefined
+        }
+      })
+      expect(result).toMatchObject({
+        errorCode: 'shell-process-error',
+        systemErrorCode: 'EIO',
+        stderr: 'command diagnostic\n',
+        failureDiagnostic: { code: 'EIO', error: 'internal process failure' }
+      })
+    })
+
     it('settles a missing executable without an unhandled asynchronous spawn error', async () => {
       const registry = new ShellProcessOwnershipRegistry(runtimeRoot)
       const cleanup = vi.fn()
@@ -1062,7 +1094,13 @@ describe('notebook shell process behavior', () => {
           })
         }
       })
-      expect(result.stderr).toContain('valid process identity')
+      expect(result).toMatchObject({
+        errorCode: 'shell-start-failed',
+        systemErrorCode: 'ENOENT',
+        exitCode: null
+      })
+      expect(result.stderr).toBe('')
+      expect(result.failureDiagnostic).toMatchObject({ code: 'ENOENT' })
       expect(registry.hasReceipts()).toBe(false)
       expect(cleanup).toHaveBeenCalledOnce()
     })
@@ -1112,7 +1150,10 @@ describe('notebook shell process behavior', () => {
               })
             }
           })
-          expect(result.stderr).toContain('identity could not be confirmed')
+          expect(result.stderr).not.toContain('identity could not be confirmed')
+          expect(result.failureDiagnostic).toMatchObject({
+            error: expect.stringContaining('identity could not be confirmed')
+          })
           expect(abort).toHaveBeenCalledTimes(outcome === 'reaped' ? 1 : 0)
           expect(registry.hasReceipts()).toBe(outcome !== 'reaped')
           expect(cleanup).toHaveBeenCalledTimes(outcome === 'reaped' ? 1 : 0)
@@ -1183,11 +1224,20 @@ describe('notebook shell process behavior', () => {
       expect(result).toMatchObject({ stdout: 'unset', exitCode: 0 })
     })
 
-    it('preserves stdout, stderr, and a non-zero exit code as one ordinary result', async () => {
+    it('preserves stdout and stderr while identifying a real non-zero exit', async () => {
       await expect(execute("printf 'visible'; printf 'warning' >&2; exit 7")).resolves.toEqual({
         stdout: 'visible',
         stderr: 'warning',
-        exitCode: 7
+        exitCode: 7,
+        errorCode: 'shell-nonzero-exit'
+      })
+    })
+
+    it('keeps stderr warnings on a successful process separate from failure facts', async () => {
+      await expect(execute("printf 'warning' >&2; exit 0")).resolves.toEqual({
+        stdout: '',
+        stderr: 'warning',
+        exitCode: 0
       })
     })
 
@@ -1464,7 +1514,11 @@ describe('notebook shell process behavior', () => {
           platform: 'linux',
           processSandbox
         })
-      ).resolves.toMatchObject({ exitCode: null })
+      ).resolves.toMatchObject({
+        exitCode: null,
+        errorCode: 'shell-start-failed',
+        systemErrorCode: 'ENOENT'
+      })
 
       expect(cleanup).toHaveBeenCalledOnce()
       expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: true })

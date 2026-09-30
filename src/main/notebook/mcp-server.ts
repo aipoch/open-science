@@ -259,7 +259,10 @@ const REPL_EXECUTE_DOC = [
   'Declarations and globals persist until restart/process loss; top-level return/await and later redeclaration work. No replay. Expressions return results. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
 ].join('\n')
 
-// Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
+const SHELL_FAILURE_GUIDANCE =
+  'For a denied path or unavailable runtime, stop dependent work; do not retry through another runtime or request unsupported escalation. Load Skill documents with the current framework Skill loader. For other command errors, correct the cause before retrying once.'
+
+// Persistent shell contract, embedded as the bash_execute description so the agent always sees it.
 // The tool name is retained for backward compatibility, but Windows deliberately runs PowerShell.
 const buildShellExecuteDoc = (
   runtime: NodeJS.Platform | ShellRuntimeBinding = process.platform
@@ -274,14 +277,16 @@ const buildShellExecuteDoc = (
       : undefined
   const exitCodeContract =
     binding.kind === 'powershell'
-      ? 'Returns { stdout, stderr, exitCode }. PowerShell host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 themselves or their output may be garbled. A failed native program preserves its exit code, while an unhandled cmdlet failure returns exitCode 1; inspect exitCode instead of assuming success.'
-      : 'Returns { stdout, stderr, exitCode } and does not throw on a non-zero exit; inspect exitCode instead of assuming success.'
+      ? 'Returns a completed or failed command result with stdout, stderr, and exitCode. PowerShell host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 themselves or their output may be garbled. A failed native program preserves its exit code, while an unhandled cmdlet failure returns exitCode 1.'
+      : 'Returns a completed or failed command result with stdout, stderr, and exitCode. A non-zero exit is a tool execution error; use its exitCode and output to correct the command.'
 
   return [
     agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
-    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, or launch-context change resets its state; earlier commands are never replayed. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
+    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancelling an active command, timeout, exit, restart, or launch-context change resets its state; cancelling a queued command does not; earlier commands are never replayed. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
     exitCodeContract,
+    SHELL_FAILURE_GUIDANCE,
+    'A new Shell request checks pending cleanup before running; passing that check does not make replay of earlier side effects safe.',
     'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
     'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
     'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
@@ -318,6 +323,22 @@ type RpcResponse = {
   error?: unknown
 }
 
+class NotebookRpcError extends Error {
+  constructor(
+    readonly statusCode: number,
+    readonly detail: unknown
+  ) {
+    const message =
+      typeof detail === 'string'
+        ? detail
+        : detail !== undefined
+          ? JSON.stringify(detail)
+          : `Notebook RPC failed with status ${statusCode}`
+    super(message)
+    this.name = 'NotebookRpcError'
+  }
+}
+
 type NotebookToolSchema = Record<string, z.ZodTypeAny>
 
 type NotebookRpcToolDefinition = {
@@ -335,6 +356,32 @@ type NotebookRpcToolDefinition = {
   includeViewImages?: boolean
   progressMessage?: string
 }
+
+const shellToolOutputSchema = z
+  .object({
+    status: z.string(),
+    execution: z.enum(['unknown']).optional(),
+    exitCode: z.number().int().nullable().optional(),
+    stdout: z.string().optional(),
+    stderr: z.string().optional(),
+    workingFiles: z
+      .array(
+        z.object({
+          relativePath: z.string().optional(),
+          kind: z.string().optional(),
+          size: z.number().optional()
+        })
+      )
+      .optional(),
+    error: z.string().optional(),
+    errorCode: z.string().optional(),
+    systemErrorCode: z.string().optional(),
+    nextStep: z.string().optional(),
+    runId: z.string().optional(),
+    truncated: z.boolean().optional(),
+    nextAction: z.string().optional()
+  })
+  .passthrough()
 
 type NotebookToolContent =
   { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
@@ -468,13 +515,7 @@ const callNotebookRpc = async (
   const payload = (await response.json()) as RpcResponse
 
   if (!response.ok || payload.error) {
-    throw new Error(
-      payload.error === undefined
-        ? `Notebook RPC failed with status ${response.status}`
-        : typeof payload.error === 'string'
-          ? payload.error
-          : JSON.stringify(payload.error)
-    )
+    throw new NotebookRpcError(response.status, payload.error)
   }
 
   return payload.result
@@ -520,6 +561,33 @@ const clipAgentText = (text: string, limit: number): { text: string; clipped: bo
     text: `${text.slice(0, limit)}\n…[${text.length - limit} chars omitted; full output in notebook preview]`,
     clipped: true
   }
+}
+
+// Shell output is serialized as JSON. Budget escaped text rather than raw code units so
+// control characters cannot displace diagnostics in the final response. stderr keeps both ends.
+const clipShellText = (
+  value: string,
+  limit: number,
+  preserveTail = false
+): { text: string; clipped: boolean } => {
+  if (JSON.stringify(value).length <= limit) return { text: value, clipped: false }
+  const candidate = (keep: number): string => {
+    const head = preserveTail ? Math.ceil(keep / 2) : keep
+    const tail = preserveTail ? Math.floor(keep / 2) : 0
+    return `${value.slice(0, head)}\n…[${value.length - keep} chars omitted; full output in notebook preview]${tail ? '\n' + value.slice(-tail) : ''}`
+  }
+  let low = 0
+  let high = Math.min(value.length, limit)
+  let text = candidate(0)
+  while (low <= high) {
+    const keep = Math.floor((low + high) / 2)
+    const next = candidate(keep)
+    if (JSON.stringify(next).length <= limit) {
+      text = next
+      low = keep + 1
+    } else high = keep - 1
+  }
+  return { text, clipped: true }
 }
 
 const clipToolDiagnostic = (text: string, limit: number): string =>
@@ -812,9 +880,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
   const hint =
     importedKernelSkillId && requestedKernelSkillIds.includes(importedKernelSkillId)
       ? `Kernel Skill "${importedKernelSkillId}" is injected by kernelSkillIds and is not a Python package. Remove the "${missingModule}" import, keep kernelSkillIds: ${JSON.stringify(requestedKernelSkillIds)}, call its exported functions directly, and retry. Do not install ${missingModule}.`
-      : record.kernelKind === 'bash' && record.status === 'failed'
-        ? 'For a denied path or unavailable runtime, stop dependent work; do not retry through another runtime or request unsupported escalation. Load Skill documents with the current framework Skill loader. For other command errors, correct the cause before retrying once.'
-        : undefined
+      : undefined
   const invalidatedRuns = Array.isArray(record.invalidatedRuns)
     ? record.invalidatedRuns.slice(0, 50).flatMap((value) => {
         const invalidated = asRecord(value)
@@ -874,6 +940,121 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
   }
 }
 
+// The shell process result is also the RPC result. Keep only facts useful for the next command;
+// launch diagnostics and the complete Run remain in the app, not in the Agent's tool context.
+const compactShellExecutionResult = (raw: unknown): Record<string, unknown> => {
+  const record = asRecord(raw) ?? {}
+  const text = asRecord(record.text)
+  const exitCode = typeof record.exitCode === 'number' ? record.exitCode : null
+  const errorCode =
+    typeof record.errorCode === 'string'
+      ? record.errorCode
+      : typeof record.shellErrorCode === 'string'
+        ? record.shellErrorCode
+        : undefined
+  const rawSystemErrorCode = record.systemErrorCode ?? record.shellSystemErrorCode
+  const systemErrorCode =
+    typeof rawSystemErrorCode === 'string' && /^E[A-Z0-9]{1,31}$/u.test(rawSystemErrorCode)
+      ? rawSystemErrorCode
+      : undefined
+  const cancelled = record.cancelled === true || record.status === 'cancelled'
+  const runStatus = [
+    'completed',
+    'failed',
+    'timeout',
+    'cancelled',
+    'interrupted',
+    'running',
+    'queued'
+  ].includes(String(record.status))
+    ? String(record.status)
+    : undefined
+  const status =
+    runStatus ??
+    (errorCode === 'shell-cleanup-incomplete'
+      ? 'failed'
+      : cancelled
+        ? 'cancelled'
+        : exitCode === 0 && !errorCode
+          ? 'completed'
+          : 'failed')
+  const recovery = executionRecoveryContext(record.recovery)
+  const sourceStdout = record.stdout ?? text?.stdout
+  const sourceStderr = record.stderr ?? text?.stderr
+  const stdout = clipShellText(typeof sourceStdout === 'string' ? sourceStdout : '', 6_000)
+  const stderr = clipShellText(typeof sourceStderr === 'string' ? sourceStderr : '', 6_000, true)
+  const workingFiles = Array.isArray(record.workingFiles)
+    ? record.workingFiles.slice(0, MAX_EXECUTION_FILES).flatMap((value) => {
+        const file = asRecord(value)
+        return file ? [pickDefined(file, ['relativePath', 'kind', 'size'])] : []
+      })
+    : []
+  const exposeStderr = ![
+    'shell-start-failed',
+    'shell-runtime-unavailable',
+    'shell-network-transport-unsupported'
+  ].includes(errorCode ?? '')
+  const diagnosticStderr = exposeStderr ? stderr.text : ''
+  const error =
+    status !== 'failed' && status !== 'timeout'
+      ? undefined
+      : status === 'timeout'
+        ? 'Shell command timed out before a verified result was returned.'
+        : errorCode === 'shell-start-failed'
+          ? 'Shell command did not start.'
+          : errorCode === 'shell-runtime-unavailable'
+            ? 'The selected Shell runtime is unavailable; the command did not start.'
+            : errorCode === 'shell-network-transport-unsupported'
+              ? 'Shell network transport is unavailable; the command did not start.'
+              : errorCode === 'shell-command-blocked'
+                ? 'Shell command was blocked before execution.'
+                : errorCode === 'shell-cleanup-incomplete'
+                  ? 'Shell process cleanup is unverified; the command result is not trusted.'
+                  : errorCode === 'shell-process-error'
+                    ? 'Shell process failed before a verified result; the command may have started.'
+                    : exitCode !== null
+                      ? `Shell command exited with code ${exitCode}.`
+                      : 'Shell command did not return a verified result.'
+  const nextStep =
+    recovery?.retryAfter === 'cleanup-verified'
+      ? recovery.execution === 'may-have-run'
+        ? 'Do not rerun until cleanup is verified. Files or external state may have changed; check partial effects first.'
+        : 'Do not rerun until cleanup is verified.'
+      : recovery?.retryAfter === 'runtime-ready'
+        ? 'Check that the selected Shell runtime is available before retrying.'
+        : errorCode === 'shell-process-error'
+          ? 'Check the Run and partial file or external effects before deciding whether to rerun.'
+          : errorCode === 'shell-command-blocked'
+            ? 'Use supported runtime tools; do not bypass this restriction through another Shell binding.'
+            : undefined
+  return {
+    status,
+    ...(typeof record.runId === 'string' ? { runId: record.runId } : {}),
+    ...(!['running', 'queued'].includes(status) ? { exitCode } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(['shell-start-failed', 'shell-process-error'].includes(errorCode ?? '') && systemErrorCode
+      ? { systemErrorCode }
+      : {}),
+    ...(error ? { error } : {}),
+    ...(nextStep ? { nextStep } : {}),
+    ...(typeof (record.executionNotice ?? record.shellExecutionNotice) === 'string'
+      ? { hint: record.executionNotice ?? record.shellExecutionNotice }
+      : {}),
+    ...(stdout.text ? { stdout: stdout.text } : {}),
+    ...(diagnosticStderr ? { stderr: diagnosticStderr } : {}),
+    ...(workingFiles.length ? { workingFiles } : {}),
+    ...(record.cwdBefore !== record.cwdAfter && typeof record.cwdAfter === 'string'
+      ? { cwdAfter: record.cwdAfter }
+      : {}),
+    ...(record.truncated === true ||
+    stdout.clipped ||
+    (exposeStderr && stderr.clipped) ||
+    (Array.isArray(record.workingFiles) && record.workingFiles.length > workingFiles.length)
+      ? { truncated: true }
+      : {})
+  }
+}
+
 const compactBackgroundRunReceipt = (raw: unknown): unknown => {
   const receipt = asRecord(raw)
   return receipt
@@ -899,6 +1080,19 @@ const compactBackgroundRunSubmissionReceipt = (raw: unknown): unknown => {
     : receipt
 }
 
+const compactShellBackgroundRunReceipt = (raw: unknown): Record<string, unknown> => {
+  const receipt = asRecord(raw) ?? {}
+  const hasRunId = typeof receipt.runId === 'string'
+  return {
+    status: typeof receipt.status === 'string' ? receipt.status : 'accepted',
+    ...pickDefined(receipt, ['runId']),
+    ...(!hasRunId ? pickDefined(receipt, ['submissionIdentity']) : {}),
+    nextAction: hasRunId
+      ? LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE
+      : 'The Run receipt has no runId. Query background_run with the exact submissionIdentity before deciding whether to resubmit.'
+  }
+}
+
 const compactBackgroundRunResult = (raw: unknown): unknown => {
   const result = asRecord(raw)
   if (!result) return raw
@@ -907,11 +1101,13 @@ const compactBackgroundRunResult = (raw: unknown): unknown => {
   const compactRun =
     run?.kernelKind === 'repl'
       ? compactReplExecutionResult(result.run)
-      : compactNotebookExecutionResult(result.run)
+      : run?.kernelKind === 'bash'
+        ? compactShellExecutionResult(result.run)
+        : compactNotebookExecutionResult(result.run)
   // Keep the durable receipt internal; queries already carry the Run identity and scope.
   return {
     ...asRecord(compactRun),
-    ...(receipt ? pickDefined(receipt, ['shellConcurrency']) : {}),
+    ...(receipt && run?.kernelKind !== 'bash' ? pickDefined(receipt, ['shellConcurrency']) : {}),
     ...(typeof result.followUpDelivery === 'string'
       ? { followUpDelivery: result.followUpDelivery }
       : {})
@@ -988,11 +1184,19 @@ const compactStateRun = (
   const output = diagnosticOutput ?? displayOutput
   const outputPreview =
     includeOutputPreview && typeof output === 'string'
-      ? clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT).text
+      ? (record.kernelKind === 'bash'
+          ? clipShellText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT, true)
+          : clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT)
+        ).text
+      : undefined
+  const shellResult =
+    includeOutputPreview && record.kernelKind === 'bash'
+      ? compactShellExecutionResult(record)
       : undefined
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const compactedStaleness = compactStaleness(staleness, STATE_STALENESS_LIMITS)
-  const recovery = includeOutputPreview ? executionRecoveryContext(record.recovery) : undefined
+  const recovery =
+    includeOutputPreview && !shellResult ? executionRecoveryContext(record.recovery) : undefined
 
   return {
     ...pickDefined(record, [
@@ -1011,7 +1215,17 @@ const compactStateRun = (
     ...(workingFiles.length ? { workingFiles } : {}),
     ...(compactedStaleness.value ? { staleness: compactedStaleness.value } : {}),
     ...(recovery ? { recovery } : {}),
-    ...(outputPreview ? { outputPreview } : {})
+    ...(outputPreview ? { outputPreview } : {}),
+    ...(shellResult
+      ? pickDefined(shellResult, [
+          'exitCode',
+          'error',
+          'errorCode',
+          'systemErrorCode',
+          'nextStep',
+          'hint'
+        ])
+      : {})
   }
 }
 
@@ -1084,6 +1298,11 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
   const record = asRecord(value) ?? {}
   const identity = pickDefined(record, [
     'status',
+    'error',
+    'errorCode',
+    'systemErrorCode',
+    'nextStep',
+    'hint',
     'runId',
     'executionInvocationId',
     'sessionId',
@@ -1161,6 +1380,59 @@ const buildNotebookToolContent = (
   return content
 }
 
+const shellToolResult = (
+  value: Record<string, unknown>,
+  isError: boolean
+): {
+  content: Array<{ type: 'text'; text: string }>
+  structuredContent: Record<string, unknown>
+  isError?: true
+} => {
+  const text = serializeNotebookToolResult(value, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+  return {
+    content: [{ type: 'text' as const, text }],
+    structuredContent: JSON.parse(text) as Record<string, unknown>,
+    ...(isError ? { isError: true } : {})
+  }
+}
+
+const shellRpcFailureResult = (error: unknown): Record<string, unknown> => {
+  const rejected =
+    error instanceof NotebookRpcError && error.statusCode >= 400 && error.statusCode < 500
+  const detail = error instanceof NotebookRpcError ? asRecord(error.detail) : undefined
+  const recovery = executionRecoveryContext(detail?.recovery)
+  if (recovery?.retryAfter === 'cleanup-verified') {
+    return compactShellExecutionResult({
+      status: 'failed',
+      exitCode: null,
+      errorCode: 'shell-cleanup-incomplete',
+      recovery
+    })
+  }
+  const message =
+    error instanceof NotebookRpcError
+      ? typeof error.detail === 'string'
+        ? error.detail
+        : typeof detail?.message === 'string'
+          ? detail.message
+          : ''
+      : ''
+  const reason =
+    rejected && message ? clipAgentText(message.split(/\r?\n/u)[0], 300).text : undefined
+  return {
+    status: 'failed',
+    execution: 'unknown',
+    error: reason
+      ? `Shell request was rejected: ${reason}`
+      : 'Shell request failed before a command result was returned.',
+    ...(rejected && typeof detail?.code === 'string'
+      ? { errorCode: clipAgentText(detail.code, 100).text }
+      : {}),
+    nextStep:
+      'Check the Session Run before rerunning; the command may have changed files or external state.'
+  }
+}
+
 // Registers one MCP tool that forwards its validated input to a matching notebook RPC method.
 const registerNotebookRpcTool = (
   server: ModelContextProtocolServer,
@@ -1211,11 +1483,27 @@ const registerNotebookRpcTool = (
         )
         const rejected =
           definition.method === 'memoryRemember' && asRecord(raw)?.status === 'rejected'
+        if (definition.method === 'executeShell') {
+          const background = asRecord(input)?.background === true
+          const value = background
+            ? compactShellBackgroundRunReceipt(raw)
+            : compactShellExecutionResult(raw)
+          const result = asRecord(value) ?? { status: 'failed', error: 'Shell result unavailable.' }
+          return shellToolResult(
+            result,
+            !background && (result.status === 'failed' || result.status === 'timeout')
+          )
+        }
         return {
           content: buildNotebookToolContent(raw, definition, input),
           ...(definition.outputSchema && asRecord(raw) ? { structuredContent: asRecord(raw) } : {}),
           ...(rejected ? { isError: true } : {})
         }
+      } catch (error) {
+        if (definition.method === 'executeShell') {
+          return shellToolResult(shellRpcFailureResult(error), true)
+        }
+        throw error
       } finally {
         if (heartbeat) clearInterval(heartbeat)
       }
@@ -1593,11 +1881,12 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: BASH_EXECUTE_DOC,
     method: 'executeShell',
     inputSchema: bashExecuteToolSchema,
+    outputSchema: shellToolOutputSchema,
     progressMessage: 'Shell command is still running.',
     mapResult: (raw, input) =>
       asRecord(input)?.background === true
-        ? compactBackgroundRunSubmissionReceipt(raw)
-        : compactNotebookExecutionResult(raw),
+        ? compactShellBackgroundRunReceipt(raw)
+        : compactShellExecutionResult(raw),
     resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
   },
   {
@@ -1854,11 +2143,13 @@ export {
   NOTEBOOK_MCP_STATE_RESULT_LIMIT,
   NOTEBOOK_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_NAME,
+  NotebookRpcError,
   NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
   resolveNotebookRpcFetch,
   compactNotebookExecutionResult,
+  compactShellExecutionResult,
   compactBackgroundRunReceipt,
   compactBackgroundRunResult,
   compactNotebookStateResult,

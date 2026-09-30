@@ -2,12 +2,15 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { parsePowerShellSearchCommands } from './powershell-search-parser'
+import { parsePowerShellSearchCommands, PowerShellSyntaxError } from './powershell-search-parser'
 import { NotebookShellProcessAdapter } from './shell-process'
 import { assertShellSearchScope } from './shell-search-scope'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 
-vi.mock('./powershell-search-parser', () => ({ parsePowerShellSearchCommands: vi.fn() }))
+vi.mock('./powershell-search-parser', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./powershell-search-parser')>()),
+  parsePowerShellSearchCommands: vi.fn()
+}))
 
 // Portable contract fixtures for host admission; the Windows suite separately runs the OS parser.
 describe('PowerShell search admission contract', () => {
@@ -73,7 +76,44 @@ describe('PowerShell search admission contract', () => {
           projectId: 'p'
         })
         .then((prepared) => prepared.execute())
-    ).resolves.toMatchObject({ exitCode: 1, stderr: expect.stringMatching(/search scope denied/i) })
+    ).resolves.toMatchObject({
+      exitCode: null,
+      errorCode: 'shell-command-blocked',
+      stderr: expect.stringMatching(/search scope denied/i)
+    })
+    expect(wrap).not.toHaveBeenCalled()
+    expect(await adapter.shutdown()).toEqual({ reaped: true })
+  })
+
+  it('retains input syntax diagnostics without treating a parser launch failure as policy denial', async () => {
+    const wrap = vi.fn()
+    const adapter = new NotebookShellProcessAdapter('win32', { wrap })
+    const request = {
+      command: 'invalid source',
+      cwd,
+      handoffDir: cwd,
+      runtimeRoot: root,
+      environment: {},
+      sessionId: 'syntax',
+      projectId: 'p'
+    }
+    vi.mocked(parsePowerShellSearchCommands).mockRejectedValueOnce(
+      new PowerShellSyntaxError('line 1: unexpected token')
+    )
+    expect(await adapter.execute(request)).toMatchObject({
+      errorCode: 'shell-command-blocked',
+      exitCode: null,
+      stderr: expect.stringContaining('line 1: unexpected token')
+    })
+    vi.mocked(parsePowerShellSearchCommands).mockRejectedValueOnce(
+      Object.assign(new Error('parser unavailable'), { code: 'ENOENT' })
+    )
+    expect(await adapter.execute(request)).toMatchObject({
+      errorCode: 'shell-start-failed',
+      systemErrorCode: 'ENOENT',
+      exitCode: null,
+      stderr: ''
+    })
     expect(wrap).not.toHaveBeenCalled()
     expect(await adapter.shutdown()).toEqual({ reaped: true })
   })
@@ -104,7 +144,12 @@ describe('PowerShell search admission contract', () => {
           projectId: 'p'
         })
         .then((prepared) => prepared.execute())
-    ).resolves.toMatchObject({ exitCode: null, stderr: sentinel.message })
+    ).resolves.toMatchObject({
+      exitCode: null,
+      errorCode: 'shell-start-failed',
+      stderr: '',
+      failureDiagnostic: { error: sentinel.message }
+    })
     expect(wrap).toHaveBeenCalledOnce()
     expect(await adapter.shutdown()).toEqual({ reaped: true })
   })

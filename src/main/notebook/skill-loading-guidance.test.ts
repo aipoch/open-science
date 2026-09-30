@@ -49,7 +49,7 @@ describe('reported Connector Skill loading dead end', () => {
     expect(failure).toMatch(/load|rout|current.*tool/i)
   })
 
-  it('gives a stopping rule with the captured Windows shell failure', () => {
+  it('keeps the stopping rule in the tool contract and captures Windows shell output', () => {
     // Replay the supplied failure at the existing model-facing tool-result boundary. This is
     // deliberately not a claim to have reproduced Windows AppContainer initialization itself.
     const stderr =
@@ -68,7 +68,8 @@ describe('reported Connector Skill loading dead end', () => {
     })
     const visible = JSON.stringify(result)
     expect(visible).toContain('InitializeDefaultDrives')
-    expect(visible).toMatch(/stop|do not retry|do not repeat/i)
+    expect(tool.description).toMatch(/stop|do not retry|do not repeat/i)
+    expect(visible).not.toContain('Load Skill documents')
     expect(raw.stderr).toBe(stderr)
   })
 
