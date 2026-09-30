@@ -51,7 +51,12 @@ import {
   excludeRemovedMarginTokens
 } from './literature-pdf-graphics.mjs'
 import { repairPdfSymbolText, splitPdfNumericRuns } from './literature-pdf-symbol-text.mjs'
-import { isUprightText, originalRect, rotatedTextRect } from './literature-pdf-orientation.mjs'
+import {
+  isUprightText,
+  originalRect,
+  rotatedTextRect,
+  restoreCaptionCoordinates
+} from './literature-pdf-orientation.mjs'
 import { readFigureSequence } from './literature-pdf-figure-sequence.mjs'
 
 const [pdfArgument, assetArgument, runtimeArgument, pageArgument, outputArgument] =
@@ -746,17 +751,7 @@ try {
   geometry.pages.sort((a, b) => a.pageNumber - b.pageNumber)
   // Keep the original PDF's coordinate system at the worker boundary. Analysis
   // and thumbnails are upright, while source jumps still point into the original.
-  const restoreCaption = (caption) => {
-    if (!caption) return
-    const p = geometry.pages.find((p) => p.pageNumber === caption.page)
-    if (p)
-      caption.rect = originalRect(
-        caption.rect,
-        p.width,
-        p.height,
-        (p.renderRotation - p.rotation + 360) % 360
-      )
-  }
+  const restoreCaption = (caption) => restoreCaptionCoordinates(caption, geometry.pages)
   for (const item of [...figures, ...algorithms, ...tables]) {
     restoreCaption(item.caption)
     for (const data of [item, ...(item.parts ?? [])])

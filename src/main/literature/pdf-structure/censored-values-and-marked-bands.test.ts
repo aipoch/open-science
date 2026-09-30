@@ -50,8 +50,8 @@ it.each(['<', '≤', '≥'])(
   (symbol) => {
     const x = fixture('duplicate-band-between-censored-percentage-records')
     for (const c of x.cells) {
-      c.text = c.text.replace('>', symbol)
-      for (const t of c.sourceTokens) t.text = t.text.replace('>', symbol)
+      c.text = c.text.replaceAll('>', symbol)
+      for (const t of c.sourceTokens) t.text = t.text.replaceAll('>', symbol)
     }
     removeEmptyOverlappingRows(x)
     expect(x.rows).toHaveLength(2)
