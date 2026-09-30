@@ -4,8 +4,449 @@ import { captionKind } from './literature-pdf-caption-group.mjs'
 import {
   tableSourceItems,
   readSourceRow,
+  groupSourceRowsWithScripts,
   hasUniqueRecordTokens
 } from './literature-pdf-source-records.mjs'
+import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+
+// Adjacent description/count lists can advance independently. Native column
+// segments and each lane's complete count anchors delimit its paragraphs; use
+// vertical spans instead of forcing different lists into paired model records.
+export function recoverParallelCountLists(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const crop = table.cropRect
+  if (table.structure.objects.filter((o) => o.label === 'table column').length !== 4) return
+  const leading = tableSourceItems(items, crop).filter(
+    (i) => i.rect[1] - crop[1] < (crop[3] - crop[1]) * 0.08
+  )
+  if (!leading.length) return
+  const height = Math.max(...leading.map((i) => i.height))
+  const borders = joinHorizontalTableRules(rules, height * 0.1).filter(
+    (r) =>
+      Math.abs(r[0] - crop[0]) < height &&
+      Math.abs(r[2] - crop[2]) < height &&
+      r[1] >= crop[1] - height &&
+      r[1] <= crop[3] + height
+  )
+  if (borders.length !== 3 || borders[1][1] - borders[0][1] > height * 3) return
+  const segments = borders.map((b) =>
+    rules
+      .filter((r) => r[1] === r[3] && Math.abs(r[1] - b[1]) < height * 0.01)
+      .sort((a, b) => a[0] - b[0])
+  )
+  if (segments.some((s) => s.length !== 4)) return
+  const cuts = [
+    segments[0][0][0],
+    ...segments[0].slice(1).map((r, n) => (segments[0][n][2] + r[0]) / 2),
+    segments[0].at(-1)[2]
+  ]
+  if (
+    segments.some((s) =>
+      s.some(
+        (r, n) =>
+          Math.abs(r[0] - segments[0][n][0]) > height * 0.15 ||
+          Math.abs(r[2] - segments[0][n][2]) > height * 0.15 ||
+          (n && Math.abs(r[0] - s[n - 1][2]) > height * 0.1)
+      )
+    )
+  )
+    return
+  const frame = [cuts[0], borders[0][1] - height * 0.1, cuts.at(-1), borders[2][1]]
+  const source = tableSourceItems(items, frame)
+  const column = (i) => cuts.slice(1).findIndex((x, c) => i.rect[0] >= cuts[c] && i.rect[2] <= x)
+  if (!source.length || source.some((i) => column(i) < 0)) return
+  const header = source.filter((i) => i.rect[3] <= borders[1][1])
+  const labels = readSourceRow(header, cuts)
+  if (
+    !labels ||
+    !/\p{L}{3}/u.test(labels[0]) ||
+    !/\p{L}{3}/u.test(labels[2]) ||
+    labels[0] === labels[2] ||
+    !/^n$/i.test(labels[1]) ||
+    labels[1] !== labels[3]
+  )
+    return
+  const labelsStart = [0, 1, 2, 3].map((c) =>
+    Math.min(...header.filter((i) => column(i) === c).map((i) => i.rect[0]))
+  )
+  if (
+    rules.some(
+      (r) => r[1] > borders[1][1] && r[1] < borders[2][1] && r[2] > cuts[0] && r[0] < cuts.at(-1)
+    )
+  )
+    return
+  const body = source.filter((i) => !header.includes(i))
+  const lanes = []
+  for (const c of [0, 2]) {
+    const counts = body.filter((i) => column(i) === c + 1).sort((a, b) => a.baseline - b.baseline)
+    if (
+      counts.length < 4 ||
+      counts.some(
+        (i, n) =>
+          !/^\d{1,6}$/.test(i.text) ||
+          Math.abs(i.height - height) > height * 0.15 ||
+          (n && i.baseline - counts[n - 1].baseline < height)
+      )
+    )
+      return
+    const descriptive = body.filter((i) => column(i) === c)
+    const records = counts.map((count, n) => {
+      const parts = descriptive.filter(
+        (i) =>
+          i.baseline >= count.baseline - height * 0.5 &&
+          (!counts[n + 1] || i.baseline < counts[n + 1].baseline - height * 0.5)
+      )
+      const lines = groupSourceRowsWithScripts(parts, height, 0.25)
+      if (
+        !lines?.length ||
+        !parts.some((i) => /\p{L}/u.test(i.text)) ||
+        Math.abs(Math.max(...lines[0].map((i) => i.baseline)) - count.baseline) > height * 0.2 ||
+        lines.some(
+          (g, k) =>
+            Math.abs(Math.min(...g.map((i) => i.rect[0])) - labelsStart[c]) > height * 0.3 ||
+            // A new capitalized label without its own count is not proved to be
+            // a continuation. Keep the model fallback for that incomplete list.
+            (k && /^\p{Lu}/u.test([...g].sort((a, b) => a.rect[0] - b.rect[0])[0].text)) ||
+            (k &&
+              Math.max(...g.map((i) => i.baseline)) -
+                Math.max(...lines[k - 1].map((i) => i.baseline)) >
+                height * 1.6)
+        )
+      )
+        return
+      return { count, parts, column: c, start: count.rect[1] - height * 0.1 }
+    })
+    if (
+      records.some((r) => !r) ||
+      !hasUniqueRecordTokens(
+        descriptive,
+        records.map((r) => r.parts)
+      ) ||
+      records.filter((r) => r.parts.some((i) => i.baseline > r.count.baseline + height * 0.5))
+        .length < 2
+    )
+      return
+    lanes.push(records)
+  }
+  const independent =
+    lanes[0].length !== lanes[1].length ||
+    lanes[0].some((r, n) => Math.abs(r.count.baseline - lanes[1][n].count.baseline) > height * 0.5)
+  if (!independent) return
+  const starts = [...lanes.flat().map((r) => r.start)].sort((a, b) => a - b)
+  const ys = [frame[1]]
+  for (const y of starts) if (y - ys.at(-1) > height * 0.2) ys.push(y)
+  ys.push(frame[3])
+  const spans = []
+  for (const records of lanes)
+    for (const [n, record] of records.entries()) {
+      const row = ys.findIndex((y) => Math.abs(y - record.start) <= height * 0.2)
+      const end =
+        n + 1 < records.length
+          ? ys.findIndex((y) => Math.abs(y - records[n + 1].start) <= height * 0.2)
+          : ys.length - 1
+      if (
+        row < 1 ||
+        end <= row ||
+        [record.count, ...record.parts].some((i) => i.rect[1] < ys[row] || i.rect[3] > ys[end])
+      )
+        return
+      for (const c of [record.column, record.column + 1])
+        spans.push({ row, column: c, rowSpan: end - row })
+    }
+  return {
+    cropRect: frame,
+    rows: ys.slice(1).map((y, n) => [cuts[0], ys[n], cuts.at(-1), y]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], frame[1], x, frame[3]]),
+    headerRows: [0],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Literature comparisons wrap long paragraphs within each cited study.
+// Matching native cell-width strokes delimit columns; complete author/year
+// stubs delimit records, including a labelled continuation on the next page.
+export function recoverStudyParagraphGrid(table, items, captions, rules) {
+  const identifiers = recoverIdentifierParagraphGrid(table, items, captions, rules)
+  if (identifiers) return identifiers
+  const crop = table.cropRect
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const borders = joinHorizontalTableRules(rules, 1).filter(
+    (r) =>
+      Math.abs(r[0] - crop[0]) < 16 &&
+      Math.abs(r[2] - crop[2]) < 16 &&
+      r[1] >= crop[1] - 12 &&
+      r[1] <= crop[3] + 12
+  )
+  if (borders.length !== 2) return
+  const segments = rules
+    .filter((r) => r[1] === r[3] && Math.abs(r[1] - borders[0][1]) < 0.1)
+    .sort((a, b) => a[0] - b[0])
+  if (
+    segments.length < 4 ||
+    segments.length > 10 ||
+    segments.some((r, n) => n && Math.abs(r[0] - segments[n - 1][2]) > 0.1) ||
+    !segments.every((r) =>
+      rules.some(
+        (s) =>
+          s[1] === s[3] &&
+          Math.abs(s[1] - borders[1][1]) < 0.1 &&
+          Math.abs(s[0] - r[0]) < 0.1 &&
+          Math.abs(s[2] - r[2]) < 0.1
+      )
+    )
+  )
+    return
+  const cuts = [segments[0][0], ...segments.map((r) => r[2])],
+    frame = [cuts[0], borders[0][1], cuts.at(-1), borders[1][1]],
+    source = tableSourceItems(items, frame)
+  const stub = source
+      .filter((i) => i.rect[0] >= cuts[0] && i.rect[2] <= cuts[1])
+      .sort((a, b) => a.baseline - b.baseline),
+    labels = []
+  for (const i of stub) {
+    const last = labels.at(-1)
+    if (last && i.rect[1] - last.at(-1).rect[3] < i.height * 0.7) last.push(i)
+    else labels.push([i])
+  }
+  const text = (g) =>
+    g
+      .map((i) => i.text)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  if (
+    labels.length < 2 ||
+    !/^(?:Initial |First )?author \(year\)$/i.test(text(labels[0])) ||
+    labels
+      .slice(1)
+      .some((g) => !/^\p{Lu}[\p{L} .’'-]+\s*\((?:19|20)\d{2}(?:;\s*cont\.)?\)$/u.test(text(g)))
+  )
+    return
+  const anchors = labels.slice(1),
+    height = Math.max(...stub.map((i) => i.height))
+  const ys = [frame[1], ...anchors.map((g) => g[0].rect[1] - height * 0.2), frame[3]]
+  const groups = ys
+    .slice(1)
+    .map((y, n) => source.filter((i) => i.rect[1] >= ys[n] && i.rect[3] <= y))
+  if (
+    !hasUniqueRecordTokens(source, groups) ||
+    groups.some((g) => !readSourceRow(g, cuts, { multiline: true }))
+  )
+    return
+  for (const [n, g] of groups.slice(1).entries()) {
+    const cells = cuts
+      .slice(1)
+      .map((x, c) => g.filter((i) => i.rect[0] >= cuts[c] && i.rect[2] <= x))
+    const present = cells.slice(1).filter((p) => p.length)
+    if (
+      present.length < (text(anchors[n]).includes('cont.') ? 2 : cuts.length - 2) ||
+      present.some(
+        (p) =>
+          !p.some((i) => /\p{L}/u.test(i.text)) ||
+          Math.abs(p[0].rect[1] - anchors[n][0].rect[1]) > height
+      ) ||
+      text(g).length < 100
+    )
+      return
+  }
+  return {
+    cropRect: frame,
+    rows: ys.slice(1).map((y, n) => [frame[0], ys[n], frame[2], y]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], frame[1], x, frame[3]]),
+    headerRows: [0],
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// A rotated study overview can extend well past the model crop. Its explicit
+// continuation marker or native closing rule bounds the source paragraphs;
+// numbered study stubs and six independently aligned headers establish scope.
+function recoverIdentifierParagraphGrid(table, items, captions, rules) {
+  const crop = table.cropRect,
+    model = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+  if (model.length !== 6 || !captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const borders = joinHorizontalTableRules(rules, 1)
+    .filter(
+      (r) => Math.abs(r[0] - crop[0]) < 36 && Math.abs(r[2] - crop[2]) < 24 && r[1] >= crop[1] - 12
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (borders.length < 2 || borders.length > 3 || borders[1][1] - borders[0][1] > 70) return
+  const left = borders[0][0] - 1,
+    right = borders[0][2] + 1,
+    top = borders[0][1],
+    divider = borders[1][1]
+  const header = tableSourceItems(items, [left, top, right, divider])
+  const cuts = [
+    left,
+    ...model.slice(1).map((c, n) => crop[0] + (model[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const labels = readSourceRow(header, cuts, { multiline: true })
+  if (
+    !labels ||
+    !/^Study(?:no\.?|number)$/i.test(labels[0]) ||
+    !/^Studydesign$/i.test(labels[1]) ||
+    labels.some((s) => !s)
+  )
+    return
+  const height = Math.max(...header.map((i) => i.height))
+  const continued = items.filter(
+    (i) =>
+      i.horizontal &&
+      (/^\(continued\)$/i.test(i.text) ||
+        (/^continued$/i.test(i.text) &&
+          ['(', ')'].every((text) =>
+            items.some(
+              (s) =>
+                s.text === text &&
+                Math.abs(s.baseline - i.baseline) < 0.1 &&
+                Math.abs(text === '(' ? s.rect[2] - i.rect[0] : s.rect[0] - i.rect[2]) <
+                  height * 0.1
+            )
+          ))) &&
+      i.rect[0] > right - height * 8 &&
+      i.rect[2] <= right + 1 &&
+      i.rect[1] > crop[3] &&
+      i.rect[1] < crop[3] + height * 12
+  )
+  const bottom =
+    borders[2]?.[1] ?? (continued.length === 1 ? continued[0].rect[1] - height * 0.2 : undefined)
+  if (!bottom || bottom <= divider) return
+  const frame = [left, top, right, bottom],
+    source = tableSourceItems(items, frame),
+    body = source.filter((i) => i.rect[1] > divider)
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const stub = body
+      .filter((i) => col(i) === 0)
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+    anchors = []
+  for (const i of stub) {
+    const last = anchors.at(-1)
+    if (last && i.rect[1] - union(last)[3] < height * 0.8) last.push(i)
+    else anchors.push([i])
+  }
+  if (anchors.length < 2 || anchors.some((g) => !g.some((i) => /^\d{2}[−-]?\d{3,}/.test(i.text))))
+    return
+  const ys = [divider, ...anchors.slice(1).map((g) => union(g)[1] - height * 0.2), bottom]
+  const groups = ys
+    .slice(1)
+    .map((y, n) =>
+      body.filter((i) => (i.rect[1] + i.rect[3]) / 2 >= ys[n] && (i.rect[1] + i.rect[3]) / 2 < y)
+    )
+  if (
+    !hasUniqueRecordTokens(source, [header, ...groups]) ||
+    groups.some((g) => !readSourceRow(g, cuts, { multiline: true }))
+  )
+    return
+  if (
+    groups.some(
+      (g, n) =>
+        cuts
+          .slice(2)
+          .filter((_, c) =>
+            g.some(
+              (i) =>
+                col(i) === c + 1 &&
+                /\p{L}/u.test(i.text) &&
+                Math.abs(i.baseline - Math.max(...anchors[n].map((i) => i.baseline))) < height * 2
+            )
+          ).length < 4
+    )
+  )
+    return
+  return {
+    cropRect: frame,
+    rows: [[left, top, right, divider], ...ys.slice(1).map((y, n) => [left, ys[n], right, y])],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    headerRows: [0],
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Explicitly captioned questionnaires keep their printed single-column
+// structure. Questions and options stay native text; no answers are inferred.
+export function recoverQuestionnaireGrid(table, items, captions, rules) {
+  const crop = table.cropRect
+  if (
+    !captions.some(
+      (c) =>
+        captionKind(c.lines[0]) === 'table' &&
+        /\b(?:survey|questionnaire)\b/i.test(c.lines.join(' ')) &&
+        c.rect[3] <= crop[1] + 12
+    )
+  )
+    return
+  if (table.structure.objects.filter((o) => o.label === 'table column').length !== 1) return
+  const borders = joinHorizontalTableRules(rules, 1).filter(
+    (r) =>
+      Math.abs(r[0] - crop[0]) < 12 &&
+      Math.abs(r[2] - crop[2]) < 12 &&
+      r[1] >= crop[1] - 12 &&
+      r[1] <= crop[3] + 12
+  )
+  if (borders.length !== 2) return
+  const frame = [borders[0][0], borders[0][1], borders[0][2], borders[1][1]],
+    source = tableSourceItems(items, frame)
+  const questions = source.filter((i) => /^\d+\.\s+\p{L}/u.test(i.text))
+  if (
+    questions.length < 3 ||
+    questions.some(
+      (i, n) =>
+        Number(/^\d+/.exec(i.text)[0]) !== n + 1 || Math.abs(i.rect[0] - questions[0].rect[0]) > 1
+    )
+  )
+    return
+  const physical = []
+  for (const i of [...source].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const line = physical.find((g) => Math.abs(g[0].baseline - i.baseline) < i.height * 0.3)
+    if (line) line.push(i)
+    else physical.push([i])
+  }
+  const groups = []
+  for (const line of physical) {
+    line.sort((a, b) => a.rect[0] - b.rect[0])
+    const i = line[0]
+    const previous = groups.at(-1)
+    if (
+      previous &&
+      /^\d+\./.test(previous[0].text) &&
+      !/\?$/.test(previous.at(-1).text) &&
+      i.baseline - previous.at(-1).baseline < i.height * 1.5 &&
+      !/^\d+\./.test(i.text)
+    )
+      previous.push(...line)
+    else groups.push(line)
+  }
+  if (
+    groups.some((g) =>
+      /^\d+\./.test(g[0].text)
+        ? !/\?$/.test(g.at(-1).text)
+        : g[0].rect[0] <= questions[0].rect[0] + g[0].height * 0.5
+    )
+  )
+    return
+  if (!hasUniqueRecordTokens(source, groups)) return
+  return {
+    cropRect: frame,
+    rows: groups.map((g) => {
+      const r = union(g)
+      return [frame[0], r[1], frame[2], r[3]]
+    }),
+    columns: [frame],
+    headerRows: [],
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
 
 // Dense two-column narrative tables print a separator below each paragraph.
 // Use those native bands instead of model rows that split a long instruction.
@@ -31,6 +472,8 @@ export function recoverRuledNarrativeGrid(table, items, captions, rules, sourceR
     )
   const segmented = recoverSegmentedNarrativeColumns(table, items, predicted, sourceRules)
   if (segmented) return segmented
+  const eligibility = recoverEligibilityColumns(table, items, predicted, rules)
+  if (eligibility) return eligibility
   const paragraphs = recoverParagraphColumns(table, items, predicted, sourceRules)
   if (paragraphs) return paragraphs
   const durationParagraphs = recoverDurationParagraphs(table, items, predicted, sourceRules)
@@ -661,6 +1104,98 @@ function recoverBulletedPairs(table, items, rules, columns) {
 
 // A ruled narrative table has independent paragraph records, not one model row
 // per printed line. Native column borders and aligned stub starts own each record.
+function recoverEligibilityColumns(table, items, predicted, rules) {
+  if (predicted.length !== 2) return
+  const [left, top, right, bottom] = table.cropRect,
+    cut = left + (predicted[0].rect[2] + predicted[1].rect[0]) / 2
+  const source = tableSourceItems(items, table.cropRect)
+  const heads = source.filter((i) => /^(?:Inclusion|Exclusion) criteria$/i.test(i.text.trim()))
+  if (
+    heads.length !== 2 ||
+    !/^Inclusion/i.test(heads[0].text) ||
+    !/^Exclusion/i.test(heads[1].text) ||
+    Math.abs(heads[0].baseline - heads[1].baseline) > 1 ||
+    heads[0].rect[2] >= cut ||
+    heads[1].rect[0] <= cut
+  )
+    return
+  const height = heads[0].height
+  const edges = joinHorizontalTableRules(rules).filter(
+    (r) => r[0] <= left + 16 && r[2] >= right - 16 && r[1] >= top && r[1] <= bottom
+  )
+  if (
+    edges.length !== 3 ||
+    edges[0][1] >= heads[0].rect[1] ||
+    edges[1][1] <= heads[0].baseline ||
+    edges[1][1] - heads[0].baseline > height * 1.5 ||
+    bottom - edges[2][1] > height
+  )
+    return
+  const body = source.filter((i) => i.rect[1] > edges[1][1] && i.rect[3] < edges[2][1])
+  const physical = []
+  for (const i of body) {
+    const prev = physical.at(-1)
+    if (prev && Math.abs(prev[0].baseline - i.baseline) < height * 0.3) prev.push(i)
+    else physical.push([i])
+  }
+  const col = (i) => (i.rect[0] >= cut ? 1 : i.rect[2] < cut ? 0 : -1)
+  if (body.some((i) => col(i) < 0)) return
+  const lists = []
+  let wrapped = 0
+  for (const c of [0, 1]) {
+    const start = Math.min(...body.filter((i) => col(i) === c).map((i) => i.rect[0])),
+      entries = []
+    for (let n = 0; n < physical.length; n++) {
+      const line = physical[n].filter((i) => col(i) === c)
+      if (!line.length) continue
+      if (!line.some((i) => /\p{L}/u.test(i.text))) return
+      const indent = Math.min(...line.map((i) => i.rect[0])) - start,
+        prev = entries.at(-1)
+      if (indent < height * 0.2) entries.push({ members: [...line], first: n, last: n })
+      else if (
+        prev &&
+        indent < height * 2 &&
+        line[0].baseline - Math.max(...prev.members.map((i) => i.baseline)) < height * 1.6
+      ) {
+        prev.members.push(...line)
+        prev.last = n
+        wrapped++
+      } else return
+    }
+    if (entries.length < 4) return
+    lists.push(entries)
+  }
+  if (
+    wrapped < 2 ||
+    lists[0].length === lists[1].length ||
+    !hasUniqueRecordTokens(source, [heads, ...lists.flat().map((e) => e.members)])
+  )
+    return
+  const centers = physical.map(
+    (g) => g.reduce((sum, i) => sum + (i.rect[1] + i.rect[3]) / 2, 0) / g.length
+  )
+  if (centers.some((y, n) => n && y <= centers[n - 1])) return
+  const ys = [edges[1][1], ...centers.slice(1).map((y, n) => (centers[n] + y) / 2), edges[2][1]]
+  return {
+    rows: [
+      [left, edges[0][1], right, edges[1][1]],
+      ...physical.map((_, n) => [left, ys[n], right, ys[n + 1]])
+    ],
+    columns: [
+      [left, top, cut, bottom],
+      [cut, top, right, bottom]
+    ],
+    headerRows: [0],
+    spans: lists.flatMap((entries, c) =>
+      entries
+        .filter((e) => e.last > e.first)
+        .map((e) => ({ row: e.first + 1, column: c, rowSpan: e.last - e.first + 1, colSpan: 1 }))
+    ),
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
 function recoverParagraphColumns(table, items, predicted, rules) {
   if (predicted.length !== 3) return
   const [left, top, right, bottom] = table.cropRect

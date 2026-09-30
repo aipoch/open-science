@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { area, intersection as intersect, union } from './literature-pdf-page-geometry.mjs'
 import { inside, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
+import { hasWitnessedLineEndHyphen, sourceWordSpellings } from './literature-pdf-caption-group.mjs'
 
 const BACKSPACE = String.fromCharCode(8)
 
@@ -600,16 +601,49 @@ export function populateTableCellText({
   // Small raised/lowered fragments may straddle a predicted row boundary. Attach only to an
   // adjacent larger source token with an assigned cell in the same column, never by text content.
   const anchors = new Map()
+  // A predicted boundary may cut through a header or a footnoted body label.
+  // Tight native adjacency can override that boundary, never a source rule.
+  const crossesScriptBoundary = (item, anchor, cell) =>
+    (headerRows.includes(cell.row) ||
+      (/\p{L}/u.test(anchor.text) &&
+        pageItems.some(
+          (note) => note !== item && note.text === item.text && note.rect[1] > bottom
+        ))) &&
+    /^[a-zA-Z*†‡]$/.test(item.text) &&
+    item.height < anchor.height * 0.8 &&
+    item.baseline < anchor.baseline &&
+    isAdjacentTableScript(item, anchor) &&
+    Math.abs(item.rect[0] - anchor.rect[2]) < anchor.height * 0.1 &&
+    item.rect[2] <= cell.rect[2] + anchor.height &&
+    !rules.some(
+      (r) =>
+        r[0] === r[2] &&
+        r[0] >= Math.min(cell.rect[2], anchor.rect[2]) &&
+        r[0] <= item.rect[2] &&
+        r[1] < anchor.baseline &&
+        r[3] > item.rect[1]
+    )
   // Some manuscript fonts report a full em for a raised footnote glyph.
   // Require an adjoining label and its independent note marker below the table.
   const raisedNoteMarkers = new Set()
+  const letterNotes = new Set(
+    items
+      .filter(
+        (item) =>
+          /^[a-z]$/.test(item.text) &&
+          pageItems.some(
+            (note) => note !== item && note.text === item.text && note.rect[1] > bottom
+          )
+      )
+      .map((item) => item.text)
+  )
   const isRaisedNoteMarker = (item, anchor, cell) =>
     ((/^[a-z]$/.test(item.text) &&
       headerRows.includes(cell.row) &&
       /^(?:P|N\s*=\s*\d+)$/i.test(anchor.text.trim()) &&
       Math.abs(item.height - anchor.height) <= anchor.height * 0.02 &&
       Math.abs(item.rect[0] - anchor.rect[2]) <= anchor.height * 0.02) ||
-      (/^[†‡]$/.test(item.text) &&
+      ((/^[†‡]$/.test(item.text) || (/^[a-z]$/.test(item.text) && letterNotes.size >= 2)) &&
         /\p{L}/u.test(anchor.text) &&
         item.height >= anchor.height * 0.8 &&
         item.height <= anchor.height * 1.1 &&
@@ -659,7 +693,8 @@ export function populateTableCellText({
             isRepeatedRaisedSymbol(item, anchor, cell) ||
             isAdjacentTableScript(item, anchor)) &&
           (item.rect[0] + item.rect[2]) / 2 >= cell.rect[0] &&
-          (item.rect[0] + item.rect[2]) / 2 <= cell.rect[2]
+          ((item.rect[0] + item.rect[2]) / 2 <= cell.rect[2] ||
+            crossesScriptBoundary(item, anchor, cell))
         )
       })
       .sort((a, b) => Math.abs(item.rect[0] - a.rect[2]) - Math.abs(item.rect[0] - b.rect[2]))
@@ -845,9 +880,60 @@ export function populateTableCellText({
       }
     }
   }
+
+  // A repaired comparison glyph can straddle the predicted cut before a narrow
+  // numeric column. Its close right operand and a larger left gap establish
+  // prefix ownership; native vertical borders still take precedence.
+  for (const operator of items.filter(
+    (i) => i.inlineSymbol && /^[<>≤≥]$/.test(i.text) && !anchors.has(i)
+  )) {
+    const owner = assignments.get(operator)
+    if (!owner || owner.rowSpan !== 1 || headerRows.includes(owner.row)) continue
+    const candidates = items.filter(
+      (i) =>
+        i !== operator &&
+        !i.inlineSymbol &&
+        /^\d*(?:\.\d+)?$/.test(i.text.trim()) &&
+        /\d/.test(i.text) &&
+        Math.abs(i.baseline - operator.baseline) < operator.height * 0.2 &&
+        i.rect[0] >= operator.rect[2] &&
+        i.rect[0] - operator.rect[2] <= operator.height * 0.4 &&
+        assignments.get(i)?.row === owner.row &&
+        assignments.get(i)?.column === owner.column + owner.colSpan
+    )
+    if (candidates.length !== 1) continue
+    const operand = candidates[0],
+      target = assignments.get(operand),
+      gap = operand.rect[0] - operator.rect[2]
+    const left = items.filter(
+      (i) =>
+        i !== operator &&
+        assignments.get(i) === owner &&
+        Math.abs(i.baseline - operator.baseline) < operator.height * 0.2 &&
+        i.rect[2] <= operator.rect[0]
+    )
+    if (
+      !left.length ||
+      operator.rect[0] - Math.max(...left.map((i) => i.rect[2])) <= gap + operator.height * 0.25 ||
+      rules.some(
+        (r) =>
+          r[0] === r[2] &&
+          r[0] >= operator.rect[2] &&
+          r[0] <= operand.rect[0] &&
+          r[1] < operator.baseline &&
+          r[3] > operator.rect[1]
+      )
+    )
+      continue
+    assignments.set(operator, target)
+    repairs.push('inline-fragment-reassigned')
+  }
   const unassignedItems = items.filter((item) => !assignments.has(item))
   for (const [item, cell] of assignments) cell.items.push(item)
   if (unassignedItems.length) issues.add('unassigned-source-text')
+  const pageWords = sourceWordSpellings(
+    pageItems.filter((item) => item.horizontal).map((item) => item.text)
+  )
   for (const cell of cells) {
     const lines = []
     const lineOf = new Map()
@@ -908,22 +994,42 @@ export function populateTableCellText({
     for (const [lineIndex, line] of lines.entries()) {
       line.sort((a, b) => a.rect[0] - b.rect[0] || a.baseline - b.baseline)
       const previous = lines[lineIndex - 1]
-      // Suppress only the space introduced by a tightly wrapped stub word.
-      // Keep the source hyphen; numeric ranges and separate entries stay apart.
-      const wrappedStub =
+      // Reflow only tightly aligned lines owned by this cell, including a
+      // separate terminal hyphen glyph. A source spelling is required to remove
+      // the hyphen itself; otherwise preserve it without an inserted space.
+      const wrappedWord =
         previous &&
-        cell.column === 0 &&
-        cell.colSpan === 1 &&
-        /[a-zA-Z][-\u2010\u2011]$/.test(previous.at(-1).text) &&
-        /^[a-z]/.test(line[0].text) &&
+        /\p{L}[-\u2010\u2011]$/u.test(previous.map((item) => item.text).join('')) &&
+        /^\p{Ll}/u.test(line[0].text) &&
+        (previous.length < 2 ||
+          previous.at(-1).rect[0] - previous.at(-2).rect[2] <= previous[0].height * 0.25) &&
+        !anchors.has(previous.at(-1)) &&
+        !anchors.has(line[0]) &&
+        Math.abs(previous.at(-1).height - previous[0].height) <= previous[0].height * 0.2 &&
         Math.abs(line[0].height - previous[0].height) <= previous[0].height * 0.2 &&
         line[0].baseline - previous[0].baseline <= previous[0].height * 1.6 &&
-        Math.abs(line[0].rect[0] - previous[0].rect[0]) <= previous[0].height
+        Math.abs(line[0].rect[0] - previous[0].rect[0]) <= previous[0].height &&
+        !rules.some(
+          (rule) =>
+            rule[1] === rule[3] &&
+            rule[1] > previous[0].baseline &&
+            rule[1] < line[0].baseline &&
+            rule[0] < cell.rect[2] &&
+            rule[2] > cell.rect[0]
+        )
+      if (
+        wrappedWord &&
+        !joinedUrl &&
+        runs.at(-1)?.position === 'normal' &&
+        hasWitnessedLineEndHyphen(runs.at(-1).text, line[0].text, pageWords)
+      )
+        runs.at(-1).text = runs.at(-1).text.slice(0, -1)
       if (
         lineIndex &&
         !joinedUrl &&
         !recordGrid?.joinedTokens?.has(line[0]) &&
-        (!(recordGrid || rows[cell.row].hyphenatedStub || wrappedStub) ||
+        !wrappedWord &&
+        (!(recordGrid || rows[cell.row].hyphenatedStub) ||
           !/[-\u2010\u2011]$/.test(runs.at(-1)?.text ?? ''))
       )
         if (/^[•⋄]$/.test(line[0].text) && lines.some((l) => /^[•⋄]$/.test(l[0].text))) {

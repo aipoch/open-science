@@ -10,6 +10,15 @@ import { isUprightText } from './literature-pdf-orientation.mjs'
 const isLegendHeading = (text) =>
   /^(?:figure\s+(?:legends|captions)|List of Figures)\s*:?\s*$/i.test(text.trim())
 
+const hasNumberedLegends = (page) => {
+  const labels = page.lines.filter((l) => /^(?:Figure|Fig\.)\s*\d+\s*[.:]\s+/.test(l.text))
+  return (
+    labels.length >= 2 &&
+    labels.length <= 6 &&
+    labels.every((l, n) => Number(/\d+/.exec(l.text)[0]) === n + 1 && l.text.length > 40)
+  )
+}
+
 const citedPanelLetters = (text) => {
   const cited = new Set()
   for (const [, contents] of text.matchAll(/\(([^()]*)\)/g)) {
@@ -35,8 +44,16 @@ const citedPanelLetters = (text) => {
 // Match only an explicit legend section, ordered 1..N, followed by exactly N
 // text-free or explicitly numbered pages. Cropping still requires native graphic evidence.
 export function matchFigureSequence(pages) {
-  const heading = pages.findIndex((page) => page.lines.some((line) => isLegendHeading(line.text)))
+  const heading = pages.findIndex(
+    (page) =>
+      page.lines.some((line) => isLegendHeading(line.text)) ||
+      (Number.isFinite(page.width) &&
+        page.graphicCount === 0 &&
+        hasNumberedLegends(page) &&
+        /^(?:Figure|Fig\.)\s*1\s*[.:]\s+/.test(page.lines[0]?.text))
+  )
   if (heading < 0) return new Map()
+  const implicit = !pages[heading].lines.some((line) => isLegendHeading(line.text))
   // Appended drawing exports can use a different page size and contain native
   // axis/node labels. Require the explicit legend section, a changed page box,
   // several graphics and no prose-length lines; the final sequence must be exact.
@@ -133,6 +150,24 @@ export function matchFigureSequence(pages) {
     plates.push({ page: pages[i], caption: number - 1 })
   }
   if (captions.length < 2 || groups.length !== captions.length) return new Map()
+  // Without a section title, require independently exported page boxes and at
+  // least two matching native plate numbers. At most one image-only plate may
+  // take the sole remaining position in that exact sequence.
+  if (
+    implicit &&
+    (plates.length !== captions.length ||
+      plates.some(
+        ({ page }) =>
+          !Number.isFinite(page.width) ||
+          page.graphicCount < 1 ||
+          (Math.abs(page.width - pages[heading].width) <= 12 &&
+            Math.abs(page.height - pages[heading].height) <= 12)
+      ) ||
+      plates.filter(({ page, caption }) =>
+        page.lines.some((l) => Number(labelPattern.exec(l.text.trim())?.[1]) === caption + 1)
+      ).length < Math.max(2, plates.length - 1))
+  )
+    return new Map()
   for (const [index, panels] of groups.entries()) {
     if (!panels.length) continue
     // Panel pages must exactly cover the explicit panel references in their
@@ -160,11 +195,12 @@ export async function readFigureSequence(document) {
           return []
         // Isolated line/page numbers occupy margins, not the legend sentence.
         if (
-          /^\d+$/.test(item.str.trim()) &&
+          /^(?:\d+|\[\d+\])$/.test(item.str.trim()) &&
           (x < viewport.width * 0.1 ||
             x > viewport.width * 0.88 ||
             y < 45 ||
-            y > viewport.height * 0.92)
+            y > viewport.height * 0.92 ||
+            (/^\[\d+\]$/.test(item.str.trim()) && y > viewport.height * 0.9))
         )
           return []
         return [
@@ -179,7 +215,9 @@ export async function readFigureSequence(document) {
         ]
       })
       const grouped = groupPageLines({ lines })
-      const afterLegends = pages.some((p) => p.lines.some((l) => isLegendHeading(l.text)))
+      const afterLegends = pages.some(
+        (p) => p.lines.some((l) => isLegendHeading(l.text)) || hasNumberedLegends(p)
+      )
       const graphicCount =
         afterLegends && page.getOperatorList
           ? (await page.getOperatorList()).fnArray.filter(
@@ -204,12 +242,15 @@ export async function readFigureSequence(document) {
     ...page,
     lines: page.lines.filter(
       (line) =>
-        !isFooter(line, page) ||
+        !(
+          isFooter(line, page) ||
+          (line.y < page.height * 0.08 && line.text.length > 30 && !captionKind(line.text))
+        ) ||
         pages.filter((other) =>
           other.lines.some(
             (candidate) =>
               candidate.text === line.text &&
-              isFooter(candidate, other) &&
+              (isFooter(candidate, other) || candidate.y < other.height * 0.08) &&
               Math.abs(candidate.bottom / other.height - line.bottom / page.height) <= 1 / 256
           )
         ).length < 3

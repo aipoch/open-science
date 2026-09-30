@@ -292,6 +292,10 @@ export function recoverRepeatedIntervalGrid(table, items, captions, rules) {
 // header and group/count column provide stronger boundaries than individual model
 // row predictions. Keep this recovery limited to that explicit source structure.
 export function recoverRecordGrid(table, items, captions, rules) {
+  const aligned = recoverAlignedComparisonRecords(table, items, captions, rules)
+  if (aligned) return aligned
+  const definitions = recoverAbbreviationGrid(table, items)
+  if (definitions) return definitions
   const cohorts = recoverRepeatedCohortColumns(table, items, captions, rules)
   if (cohorts) return cohorts
   if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return undefined
@@ -447,6 +451,235 @@ export function recoverRecordGrid(table, items, captions, rules) {
     if (stop - row > 1) spans.push({ column: columns.length - 1, row, rowSpan: stop - row })
   }
   return { rows, columns, spans }
+}
+
+// Two independently populated value columns anchor a compact comparison. A
+// hanging stub or a value-only continuation belongs to the preceding record;
+// an outdented label starts a section. Require complete native ownership before
+// replacing model rows, including scripts and wrapped textual values.
+function recoverAlignedComparisonRecords(table, items, captions, rules) {
+  if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 3) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const source = tableSourceItems(items, table.cropRect)
+  if (!source.length) return
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)]
+  const lines = groupSourceRowsWithScripts(source, height, 0.35)
+  if (!lines) return
+  const full = joinHorizontalTableRules(rules).filter(
+    (r) => r[0] <= left + 16 && r[2] >= right - 16
+  )
+  const divider = full.find(
+    (r) =>
+      r[1] > top + height &&
+      r[1] < top + height * 7 &&
+      source.some((i) => i.rect[3] < r[1]) &&
+      source.some((i) => i.rect[1] > r[1])
+  )
+  if (!divider) return
+  const header = source.filter((i) => i.rect[3] < divider[1])
+  if (header.some((i) => !/[\p{L}\d=()]/u.test(i.text)) || header.length < 2) return
+  const physical = lines.filter((g) => g.every((i) => i.rect[1] > divider[1]))
+  // Repeated paired summaries can expose a missing stub boundary: each
+  // measurement has two independently aligned numeric runs, while section
+  // titles legitimately extend across their columns.
+  const paired = physical.flatMap((g) => {
+    const values = g
+      .filter((i) => /^\d[\d\s.,();–−+-]*;[\d\s.,();–−+-]+$/.test(i.text))
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    const stub = g.filter((i) => !values.includes(i))
+    return values.length === 2 &&
+      stub.length &&
+      stub.every((i) => /\p{L}/u.test(i.text)) &&
+      union(stub)[2] < values[0].rect[0]
+      ? [{ g, values, stub }]
+      : []
+  })
+  let pairedColumns = false
+  if (
+    paired.length >= 6 &&
+    header.length === 2 &&
+    full.some((r) => r[1] <= top + height && r[1] < Math.min(...header.map((i) => i.rect[1]))) &&
+    full.some((r) => r[1] > union(physical.flat())[3] && r[1] <= bottom + height)
+  ) {
+    const ordered = [...header].sort((a, b) => a.rect[0] - b.rect[0])
+    const gaps = [
+      [
+        Math.max(...paired.map((r) => union(r.stub)[2])),
+        Math.min(...paired.map((r) => r.values[0].rect[0]))
+      ],
+      [
+        Math.max(...paired.map((r) => r.values[0].rect[2])),
+        Math.min(...paired.map((r) => r.values[1].rect[0]))
+      ]
+    ]
+    if (
+      gaps.every(([a, b]) => b - a > height) &&
+      ordered.every((h, c) =>
+        paired.every(
+          (r) =>
+            Math.abs((r.values[c].rect[0] + r.values[c].rect[2] - h.rect[0] - h.rect[2]) / 2) <
+            height
+        )
+      )
+    ) {
+      cuts[1] = (gaps[0][0] + gaps[0][1]) / 2
+      cuts[2] = (gaps[1][0] + gaps[1][1]) / 2
+      pairedColumns = true
+    }
+  }
+  const groups = [],
+    sections = []
+  let complete = 0,
+    wrapped = 0
+  for (const g of physical) {
+    if (pairedColumns && !paired.some((r) => r.g === g) && g.every((i) => /\p{L}/u.test(i.text))) {
+      sections.push(groups.length)
+      groups.push([...g])
+      continue
+    }
+    const v = readSourceRow(g, cuts),
+      prev = groups.at(-1)
+    if (!v) return
+    if (v.every(Boolean) && /\p{L}/u.test(v[0])) {
+      groups.push([...g])
+      complete++
+      continue
+    }
+    const stub = g.filter((i) => i.rect[2] <= cuts[1]),
+      bounds = union(g)
+    const priorStub = prev?.filter((i) => i.rect[2] <= cuts[1]) ?? []
+    const close =
+      prev &&
+      g[0].baseline - Math.max(...prev.map((i) => i.baseline)) < height * 1.7 &&
+      !full.some((r) => r[1] > union(prev)[3] && r[1] < bounds[1])
+    if (v[0] && !v[1] && !v[2]) {
+      const hanging =
+        priorStub.length && bounds[0] - Math.min(...priorStub.map((i) => i.rect[0])) > height * 0.25
+      if (
+        close &&
+        !sections.includes(groups.length - 1) &&
+        (hanging || /^[a-z(]/.test(v[0]) || /[–-]$/.test(priorStub.at(-1)?.text ?? ''))
+      ) {
+        prev.push(...g)
+        wrapped++
+      } else {
+        sections.push(groups.length)
+        groups.push([...g])
+      }
+    } else if (
+      !stub.length &&
+      v.slice(1).every((s) => /^[a-z]/.test(s)) &&
+      close &&
+      !sections.includes(groups.length - 1)
+    ) {
+      prev.push(...g)
+      wrapped++
+    } else return
+  }
+  const modelRows = table.structure.objects.filter((o) => o.label === 'table row').length
+  if (
+    complete < 4 ||
+    (complete < 6 && sections.length < 2) ||
+    (wrapped < 2 && !(sections.length >= 2 && (complete <= 5 || pairedColumns))) ||
+    (wrapped < 2 && !pairedColumns && complete + sections.length + 1 <= modelRows) ||
+    !hasUniqueRecordTokens(source, [header, ...groups])
+  )
+    return
+  const centers = groups.map((g) => [
+    Math.min(...g.map((i) => (i.rect[1] + i.rect[3]) / 2)),
+    Math.max(...g.map((i) => (i.rect[1] + i.rect[3]) / 2))
+  ])
+  if (centers.some((r, n) => n && r[0] <= centers[n - 1][1])) return
+  const ys = [
+    divider[1],
+    ...centers.slice(1).map((r, n) => (centers[n][1] + r[0]) / 2),
+    Math.max(...source.map((i) => i.rect[3]))
+  ]
+  return {
+    rows: [
+      [left, Math.min(...header.map((i) => i.rect[1])), right, divider[1]],
+      ...groups.map((_, n) => [left, ys[n], right, ys[n + 1]])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    headerRows: [0],
+    spans: sections.map((n) => ({ row: n + 1, column: 0, rowSpan: 1, colSpan: 3 })),
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// An explicit nearby heading and repeated aligned acronym/definition pairs
+// distinguish a glossary from prose. The next key bounds a wrapped definition.
+function recoverAbbreviationGrid(table, items) {
+  const [left, top, right, bottom] = table.cropRect
+  const heading = items.find(
+    (i) =>
+      i.horizontal &&
+      /^(?:List of )?Abbreviations\s*:?$/i.test(i.text.trim()) &&
+      i.rect[3] <= top + i.height * 0.2 &&
+      top - i.rect[3] < i.height * 2 &&
+      i.rect[0] >= left - i.height &&
+      i.rect[0] < right
+  )
+  if (!heading) return
+  const source = tableSourceItems(items, table.cropRect)
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 2 || !source.length) return
+  const cut = left + (columns[0].rect[2] + columns[1].rect[0]) / 2
+  const keys = source.filter((i) => i.rect[2] < cut)
+  if (
+    keys.length < 4 ||
+    keys.some(
+      (i) =>
+        !/^[A-Z][A-Za-z\d/&–-]{0,15}$/.test(i.text.trim()) ||
+        Math.abs(i.rect[0] - keys[0].rect[0]) > 2
+    )
+  )
+    return
+  const height = Math.max(...source.map((i) => i.height))
+  if (keys.some((i, n) => n && i.rect[1] <= keys[n - 1].rect[3])) return
+  const groups = keys.map((key, n) =>
+    source.filter(
+      (i) =>
+        i.rect[1] >= key.rect[1] - height * 0.15 && i.rect[3] <= (keys[n + 1]?.rect[1] ?? bottom)
+    )
+  )
+  if (
+    !hasUniqueRecordTokens(source, groups) ||
+    groups.some((g, n) => {
+      const definitions = g.filter((i) => i !== keys[n])
+      return (
+        !definitions.length ||
+        definitions.some((i) => i.rect[0] <= cut || !/\p{L}/u.test(i.text)) ||
+        Math.abs(definitions[0].baseline - keys[n].baseline) > height * 0.3 ||
+        definitions.some((i, j) => j && i.baseline - definitions[j - 1].baseline > height * 1.8)
+      )
+    })
+  )
+    return
+  const bounds = groups.map(union)
+  return {
+    rows: bounds.map((r) => [left, r[1], right, r[3]]),
+    columns: [
+      [left, top, cut, bottom],
+      [cut, top, right, bottom]
+    ],
+    headerRows: [],
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
 }
 
 // Centered value columns can be duplicated by the model. Repeated complete
@@ -1142,6 +1375,8 @@ export function recoverLongitudinalSummaryGrid(table, items, captions, rules) {
 // Questionnaire tables separate verbal scale endpoints from the counts below.
 // Ruled question groups own both lines; the five numeric columns stay distinct.
 export function recoverResponseScaleGrid(table, items, captions, rules) {
+  const vertical = recoverRepeatedResponseRecords(table, items, captions, rules)
+  if (vertical) return vertical
   if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return undefined
   const [left, top, right, bottom] = table.cropRect
   const predicted = table.structure.objects
@@ -1206,6 +1441,112 @@ export function recoverResponseScaleGrid(table, items, captions, rules) {
     rows,
     columns: bounds.slice(1).map((x, c) => [bounds[c], frame[0][1], x, frame.at(-1)[1]]),
     spans,
+    completeSpans: true
+  }
+}
+
+// A repeated verbal category cycle anchors individual count records even when
+// the model predicts one row per question. Require complete native columns and
+// the same cycle in every block; missing-arm markers remain source text.
+function recoverRepeatedResponseRecords(table, items, captions, rules) {
+  if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return
+  const [left, , right, bottom] = table.cropRect
+  const predicted = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length < 5 || predicted.length > 8) return
+  const cuts = [
+    left,
+    ...predicted.slice(1).map((c, n) => left + (predicted[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const source = tableSourceItems(items, table.cropRect)
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)]
+  const groups = groupSourceRowsWithScripts(source, height, 0.3)
+  if (!groups) return
+  const cells = groups.map((g) => readSourceRow(g, cuts))
+  if (cells.some((c) => !c)) return
+  const count = (s) => /^\d+\([\d.]+%?\)$/.test(s)
+  const missing = (s) => /^[-‐–—−]$/.test(s)
+  const response = (c) =>
+    /\p{L}/u.test(c[1]) &&
+    c.slice(2, -1).every((s) => count(s) || missing(s)) &&
+    c.slice(2, -1).some(count)
+  const first = cells.findIndex(response)
+  if (first < 1 || !cells.slice(0, first).some((c) => /^P(?:value)?$/i.test(c.at(-1)))) return
+  const body = cells.slice(first)
+  if (body.some((c) => !response(c))) return
+  const period = body.findIndex((c, n) => n > 0 && c[1] === body[0][1])
+  if (period < 3 || period > 7 || body.length % period || body.length < period * 3) return
+  if (
+    new Set(body.slice(0, period).map((c) => c[1])).size !== period ||
+    body.some((c, n) => c[1] !== body[n % period][1])
+  )
+    return
+  const bodyGroups = groups.slice(first)
+  const spans = []
+  for (let start = 0; start < body.length; start += period) {
+    const block = body.slice(start, start + period)
+    const native = bodyGroups.slice(start, start + period)
+    if (!block[0][0] || !/\p{L}/u.test(block[0][0])) return
+    // A wrapped prompt is contiguous at the start, never another independent
+    // stub after a blank line. Each response has the same compact line spacing.
+    const end = block.findIndex((c) => !c[0])
+    if (end < 1 || block.slice(end).some((c) => c[0])) return
+    const gaps = native.slice(1).map((g, n) => g[0].baseline - native[n][0].baseline)
+    if (
+      gaps.some((gap) => gap < height * 0.9 || gap > height * 1.6) ||
+      Math.max(...gaps) - Math.min(...gaps) > height * 0.2
+    )
+      return
+    for (let c = 2; c < cuts.length - 2; c++) {
+      if (!block.every((r) => count(r[c])) && !block.every((r) => missing(r[c]))) return
+    }
+    const stats = block.map((c) => c.at(-1)).filter(Boolean)
+    if (stats.length > 1 || stats.some((s) => !/^[<>≤≥]?0?\.\d+$/.test(s))) return
+    spans.push({ row: start, column: 0, rowSpan: period, colSpan: 1 })
+    if (stats.length)
+      spans.push({ row: start, column: cuts.length - 2, rowSpan: period, colSpan: 1 })
+  }
+  const closing = rules.find(
+    (r) =>
+      r[1] === r[3] &&
+      r[0] <= left + height &&
+      r[2] >= right - height &&
+      r[1] >= union(bodyGroups.at(-1))[3] &&
+      r[1] <= bottom
+  )
+  if (!closing) return
+  const headerGroups = groups.slice(0, first)
+  const headerCells = cells.slice(0, first)
+  const summary = headerCells.findIndex(
+    (c) => c.slice(2, -1).every((s) => /^\d+$/.test(s)) && /^(?:NA|[-–—])$/.test(c.at(-1))
+  )
+  let split = first
+  if (summary >= 0) {
+    if (summary !== first - 1 || headerCells[summary][0] || !headerCells[summary][1]) return
+    split = summary
+    while (
+      split > 0 &&
+      headerCells[split - 1][1] &&
+      headerCells[split - 1].every((c, n) => n === 1 || !c)
+    )
+      split--
+  }
+  if (!split) return
+  const header = headerGroups.slice(0, split).flat()
+  const prefix = [header]
+  if (split < first) prefix.push(headerGroups.slice(split).flat())
+  const owned = [...prefix, ...bodyGroups]
+  if (!hasUniqueRecordTokens(source, owned)) return
+  const rects = owned.map(union)
+  if (rects.some((r, n) => n && r[1] < rects[n - 1][3])) return
+  const edges = [rects[0][1], ...rects.slice(1).map((r, n) => (rects[n][3] + r[1]) / 2), closing[1]]
+  return {
+    rows: owned.map((_, n) => [left, edges[n], right, edges[n + 1]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], edges[0], x, edges.at(-1)]),
+    spans: spans.map((s) => ({ ...s, row: s.row + prefix.length })),
+    headerRows: [0],
     completeSpans: true
   }
 }

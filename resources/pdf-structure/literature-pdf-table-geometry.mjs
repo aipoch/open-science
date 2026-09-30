@@ -12,6 +12,47 @@ export const union = (items) => [
   Math.max(...items.map((i) => i.rect[3]))
 ]
 
+// Recovered header glyphs can outlive an undersized detector crop. Require a
+// nearby native full-width border and complete source ownership before growing
+// the thumbnail; a paragraph or a short group underline is not that evidence.
+export function recoverOwnedTableCrop(table, rules, pageSize = [Infinity, Infinity]) {
+  const crop = [...table.cropRect]
+  const source = table.cells.flatMap((cell) => cell.sourceRects)
+  if (table.unassigned.length || !source.length) return crop
+  const left = Math.min(...source.map((r) => r[0])),
+    top = Math.min(...source.map((r) => r[1])),
+    right = Math.max(...source.map((r) => r[2]))
+  if (left >= crop[0] - 0.5 && top >= crop[1] - 0.5 && right <= crop[2] + 0.5) return crop
+  const first = source.filter((r) => r[1] === top)
+  const height = Math.max(...first.map((r) => r[3] - r[1]))
+  const width = crop[2] - crop[0]
+  if (
+    height <= 0 ||
+    crop[1] - top > height * 2 ||
+    crop[0] - left > width * 0.15 ||
+    right - crop[2] > width * 0.15
+  )
+    return crop
+  const borders = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      Math.abs(r[1] - top) <= height * 2 &&
+      r[0] <= left + 1.5 &&
+      r[2] >= right - 1.5 &&
+      r[2] - r[0] >= width * 0.85 &&
+      r[0] >= crop[0] - width * 0.15 &&
+      r[2] <= crop[2] + width * 0.15
+  )
+  if (!borders.length) return crop
+  const border = borders.sort((a, b) => Math.abs(a[1] - top) - Math.abs(b[1] - top))[0]
+  return [
+    Math.min(crop[0], border[0], left - 1.5),
+    Math.min(crop[1], border[1], top - 1.5),
+    Math.max(crop[2], border[2], right + 1.5),
+    crop[3]
+  ].map((value, index) => Math.max(0, Math.min(value, pageSize[index % 2])))
+}
+
 // Place the caption cut in native whitespace, preserving any top border.
 // Model row padding can start inside caption glyphs, so use owned source text.
 export function tableCaptionCropTop(table, captionBottom, rules) {
@@ -62,7 +103,14 @@ export function tableMarginCropTop(table, originalPage, contentPage, rules, scal
 // Geometry shared by script assignment and row recovery. A baseline offset
 // alone is insufficient: the glyph must tightly adjoin a larger source token.
 export function isAdjacentTableScript(item, anchor) {
-  const gap = item.rect[0] - anchor.rect[2]
+  // Isotope mass numbers precede their chemical symbol. Keep the same
+  // script-size and baseline evidence used for trailing superscripts.
+  const isotope =
+    /^\d{2,3}$/.test(item.text) &&
+    /^(?:[A-Z][a-z]?)[–-]/.test(anchor.text) &&
+    item.baseline < anchor.baseline &&
+    item.rect[2] <= anchor.rect[0]
+  const gap = isotope ? anchor.rect[0] - item.rect[2] : item.rect[0] - anchor.rect[2]
   const shift = Math.abs(item.baseline - anchor.baseline)
   // Italic font matrices can report a full em for a visibly raised marker.
   // Its baseline and near-touching advance still establish script placement.
@@ -72,6 +120,16 @@ export function isAdjacentTableScript(item, anchor) {
     item.height <= anchor.height * 1.1 &&
     anchor.baseline - item.baseline > anchor.height * 0.5 &&
     anchor.baseline - item.baseline < anchor.height * 0.7 &&
+    Math.abs(gap) <= anchor.height * 0.05
+  const tightlyRaised =
+    /^[a-z0-9]{1,3}$/i.test(item.text) &&
+    item.height < anchor.height * 0.8 &&
+    item.baseline < anchor.baseline &&
+    Math.abs(gap) <= anchor.height * 0.05
+  const parenthesizedMarker =
+    /^[a-z]\)$/.test(item.text) &&
+    item.height < anchor.height * 0.8 &&
+    item.baseline < anchor.baseline &&
     Math.abs(gap) <= anchor.height * 0.05
   return (
     item.horizontal &&
@@ -83,7 +141,9 @@ export function isAdjacentTableScript(item, anchor) {
         !anchor.inlineSymbol &&
         item.height <= anchor.height * 1.1)) &&
     shift > anchor.height * 0.08 &&
-    shift <= anchor.height * (raisedFullEm ? 0.7 : 0.5) &&
+    shift <=
+      anchor.height *
+        (raisedFullEm ? 0.7 : parenthesizedMarker ? 0.65 : tightlyRaised ? 0.6 : 0.5) &&
     gap >=
       -Math.max(
         anchor.height * 0.1,

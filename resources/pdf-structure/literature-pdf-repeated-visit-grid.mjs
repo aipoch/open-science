@@ -14,6 +14,8 @@ import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 // unused leading columns while time/interaction statistics stay in their own
 // columns. A new section or an incomplete cycle cannot be silently swallowed.
 export function recoverRepeatedVisitGrid(table, items, captions, rules) {
+  const summaries = recoverSummaryCycles(table, items, captions, rules)
+  if (summaries) return summaries
   const wrapped = recoverWrappedVisitCycles(table, items, captions, rules)
   if (wrapped) return wrapped
   const captioned = captions.some((c) => captionKind(c.lines[0]) === 'table')
@@ -280,6 +282,144 @@ export function recoverRepeatedVisitGrid(table, items, captions, rules) {
   return {
     rows,
     columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    headerRows: headings.rows.map((_, n) => n),
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Repeated baseline/visit/change/test cycles independently establish row
+// boundaries when the detector merges or drops whole statistical records.
+// Require complete cycles, complete paired measurements, a native header rule
+// and unique ownership of every source token; an incomplete cycle stays on
+// the ordinary path rather than inventing a missing visit or value.
+function recoverSummaryCycles(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length < 5 || columns.length > 6) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const source = tableSourceItems(items, table.cropRect)
+  const heights = source.map((i) => i.height).sort((a, b) => a - b),
+    height = heights[Math.floor(heights.length / 2)]
+  if (!height) return
+  const stubLines = []
+  for (const i of source.filter(
+    (i) => i.rect[0] >= cuts[1] && i.rect[2] <= cuts[2] && i.height >= height * 0.85
+  )) {
+    const line = stubLines.find((g) => Math.abs(g[0].baseline - i.baseline) < height * 0.1)
+    if (line) line.push(i)
+    else stubLines.push([i])
+  }
+  const anchors = stubLines
+    .map((g) => ({
+      ...g[0],
+      rect: union(g),
+      text: g
+        .sort((a, b) => a.rect[0] - b.rect[0])
+        .map((i) => i.text)
+        .join(' ')
+        .replace(/\s*[–-]\s*/g, ' ')
+    }))
+    .filter((i) =>
+      /^(?:Baseline|\d+\s*(?:wk|weeks?|mo|months?)|Changes?|P(?:\s*value)?)$/i.test(i.text.trim())
+    )
+  if (anchors.length < 12 || anchors.length % 4) return
+  const canonical = (s) => s.toLowerCase().replace(/\s/g, '')
+  const cycle = anchors.slice(0, 4).map((i) => canonical(i.text))
+  if (
+    cycle[0] !== 'baseline' ||
+    !/^\d/.test(cycle[1]) ||
+    !/^changes?$/.test(cycle[2]) ||
+    !/^p(?:value)?$/.test(cycle[3]) ||
+    anchors.some(
+      (a, n) =>
+        canonical(a.text) !== cycle[n % 4] &&
+        !(n % 4 === 3 && /^p(?:value)?$/.test(canonical(a.text)))
+    )
+  )
+    return
+  const borders = joinHorizontalTableRules(rules).filter(
+    (r) => Math.abs(r[0] - left) < height * 2 && Math.abs(r[2] - right) < height * 2
+  )
+  const divider = borders
+    .filter((r) => r[1] < anchors[0].rect[1] && anchors[0].rect[1] - r[1] < height)
+    .at(-1)
+  const closing = borders.find((r) => r[1] > anchors.at(-1).baseline && r[1] <= bottom)
+  if (!divider || !closing) return
+  const header = source.filter((i) => i.rect[3] < divider[1]),
+    body = source.filter((i) => !header.includes(i))
+  if (body.some((i) => (i.rect[1] + i.rect[3]) / 2 < divider[1] || i.rect[3] > closing[1])) return
+  const headings = recoverRuledHeaderBands(header, cuts, rules, top, divider[1])
+  if (!headings) return
+  const records = anchors.map(() => []),
+    labels = anchors.filter((_, n) => n % 4 === 0).map(() => [])
+  for (const item of body) {
+    if (item.rect[2] <= cuts[1]) {
+      const owners = labels
+        .map((_, n) => n)
+        .filter(
+          (n) =>
+            item.baseline >=
+              anchors[n * 4].baseline - height * (item.height < height * 0.8 ? 0.7 : 0.4) &&
+            item.baseline <= anchors[n * 4 + 3].baseline + height * 0.3
+        )
+      if (owners.length !== 1) return
+      labels[owners[0]].push(item)
+      continue
+    }
+    const closest = anchors
+      .map((a, n) => ({ n, d: Math.abs(a.baseline - item.baseline) }))
+      .sort((a, b) => a.d - b.d)
+    if (closest[0].d > height * 0.55 || closest[1].d - closest[0].d < height * 0.1) return
+    records[closest[0].n].push(item)
+  }
+  const number = (s) => /^[<>≤≥−–+-]?(?:\d|\.\d)[\d.,;()%±−–+*/#†‡[\]-]*$/.test(s)
+  for (const [n, g] of records.entries()) {
+    const v = readSourceRow(g, cuts)
+    if (
+      !v ||
+      !number(v[2]) ||
+      !number(v[3]) ||
+      (n % 4 !== 3 && !number(v[4])) ||
+      (n % 4 === 3 && v[4]) ||
+      (v[5] && !number(v[5]))
+    )
+      return
+  }
+  if (
+    labels.some((g) => !g.length || !g.some((i) => /\p{L}/u.test(i.text))) ||
+    !hasUniqueRecordTokens(source, [header, ...records, ...labels])
+  )
+    return
+  const ys = [
+    divider[1],
+    ...anchors.slice(1).map((a, n) => (a.baseline + anchors[n].baseline - height) / 2),
+    closing[1]
+  ]
+  const spans = [...headings.spans]
+  for (let n = 0; n < labels.length; n++) {
+    spans.push({ row: headings.rows.length + n * 4, column: 0, rowSpan: 4, colSpan: 1 })
+    // An adjusted statistic printed once per outcome spans the whole cycle.
+    if (columns.length === 6) {
+      const adjusted = records
+        .slice(n * 4, n * 4 + 4)
+        .flat()
+        .filter((i) => i.rect[0] >= cuts[5])
+      if (adjusted.length !== 1) return
+      spans.push({ row: headings.rows.length + n * 4, column: 5, rowSpan: 4, colSpan: 1 })
+    }
+  }
+  return {
+    rows: [...headings.rows, ...records.map((_, n) => [left, ys[n], right, ys[n + 1]])],
+    columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
     headerRows: headings.rows.map((_, n) => n),
     spans,
     completeSpans: true,

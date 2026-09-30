@@ -6,8 +6,24 @@ import { createCanvas } from '@napi-rs/canvas'
 const MAX_EDGE = 2400
 const MAX_BYTES = 4 * 1024 ** 2
 
-export const renderPdfCrop = async (page, rect, rotation = page.rotate) => {
+export const renderPdfCrop = async (page, rect, rotation = page.rotate, regions) => {
   assert(rect.length === 4 && rect.every(Number.isFinite), 'Invalid PDF crop region.')
+  if (regions)
+    assert(
+      regions.length > 0 &&
+        regions.every(
+          (r) =>
+            r.length === 4 &&
+            r.every(Number.isFinite) &&
+            r[2] > r[0] &&
+            r[3] > r[1] &&
+            r[0] >= rect[0] &&
+            r[1] >= rect[1] &&
+            r[2] <= rect[2] &&
+            r[3] <= rect[3]
+        ),
+      'Invalid PDF crop parts.'
+    )
   const bounds = page.getViewport({ scale: 1, rotation })
   const left = Math.max(0, rect[0]),
     top = Math.max(0, rect[1]),
@@ -21,10 +37,26 @@ export const renderPdfCrop = async (page, rect, rotation = page.rotate) => {
       Math.min(MAX_EDGE, Math.max(1, Math.ceil(height * scale)))
     )
     try {
+      const context = canvas.getContext('2d')
+      if (regions) {
+        // Preserve page coordinates between disjoint table continuations while
+        // excluding unrelated prose inside their enclosing rectangle.
+        context.fillStyle = 'white'
+        context.fillRect(0, 0, canvas.width, canvas.height)
+        context.beginPath()
+        for (const r of regions)
+          context.rect(
+            (r[0] - left) * scale,
+            (r[1] - top) * scale,
+            (r[2] - r[0]) * scale,
+            (r[3] - r[1]) * scale
+          )
+        context.clip()
+      }
       // Render vectors/text from the source PDF into only the crop-sized canvas. Enlarging the
       // inference page bitmap cannot recover its lost detail, especially on Retina displays.
       await page.render({
-        canvasContext: canvas.getContext('2d'),
+        canvasContext: context,
         viewport: page.getViewport({
           scale,
           rotation,

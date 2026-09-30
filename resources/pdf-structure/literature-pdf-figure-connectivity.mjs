@@ -12,9 +12,61 @@ export function enclosedFigureFrame(page, caption, captions, tables) {
     ...(page.marginRuleBounds ?? [])
   ].map((r) => r.map((v, n) => v * (n % 2 ? page.height : page.width)))
   const horizontal = paths.filter((r) => r[2] - r[0] > page.width * 0.25 && r[3] - r[1] <= dy * 2)
+  // A shaded chart column can enclose several thin-axis panels and its own
+  // bottom legend. The background alone is insufficient: require three
+  // separated pairs of intersecting axes and native numeric labels.
+  const shaded = paths.filter((frame) => {
+    if (
+      frame[3] - frame[1] < page.height * 0.3 ||
+      frame[2] - frame[0] > page.width * 0.7 ||
+      caption.rect[1] < frame[1] + (frame[3] - frame[1]) * 0.8 ||
+      caption.rect[3] > frame[3] ||
+      caption.rect[0] < frame[0] ||
+      caption.rect[2] > frame[2]
+    )
+      return false
+    const axes = horizontal
+      .filter(
+        (h) =>
+          h !== frame &&
+          h[0] >= frame[0] &&
+          h[2] <= frame[2] &&
+          h[1] > frame[1] &&
+          h[3] < caption.rect[1] &&
+          paths.some(
+            (v) =>
+              v[2] - v[0] <= dx * 2 &&
+              v[3] - v[1] > 40 &&
+              v[1] >= frame[1] &&
+              Math.abs(v[3] - h[3]) < dy &&
+              Math.abs(v[0] - h[0]) < dx * 2
+          )
+      )
+      .sort((a, b) => a[1] - b[1])
+    const separated = axes.filter(
+      (a, n) => !axes.slice(0, n).some((b) => Math.abs(a[1] - b[1]) < 24)
+    )
+    return (
+      separated.length >= 3 &&
+      page.lines.filter(
+        (l) => /\d/.test(l.text) && intersection(lineRect(l), frame) / area(lineRect(l)) > 0.95
+      ).length >= 8 &&
+      !captions.some((c) => c !== caption && intersection(c.rect, frame) > 0) &&
+      !tables.some((t) => intersection(t, frame) > 0)
+    )
+  })
+  if (shaded.length === 1)
+    return {
+      caption,
+      rect: [shaded[0][0], shaded[0][1], shaded[0][2], caption.rect[1] - 2],
+      graphicsCount: paths.length
+    }
+  const flowDiagram = /\b(?:CONSORT|flow\s*chart|flow diagram)\b/i.test(caption.lines.join(' '))
   const candidates = []
   for (const bottom of horizontal.filter(
-    (r) => r[1] < caption.rect[1] && r[3] - caption.rect[1] < dy && caption.rect[1] - r[3] < 24
+    (r) =>
+      (r[1] < caption.rect[1] && r[3] - caption.rect[1] < dy && caption.rect[1] - r[3] < 24) ||
+      (flowDiagram && r[1] >= caption.rect[3] && r[1] - caption.rect[3] < 24)
   )) {
     for (const top of horizontal.filter(
       (r) => r[3] < bottom[1] - page.height * 0.12 && Math.abs(r[2] - bottom[2]) <= dx
@@ -63,7 +115,8 @@ export function enclosedFigureFrame(page, caption, captions, tables) {
         )
       )
         continue
-      const rect = [left, upper, right, Math.min(lower, caption.rect[1] - 2)]
+      const insetCaption = bottom[1] >= caption.rect[3]
+      const rect = [left, upper, right, insetCaption ? lower : Math.min(lower, caption.rect[1] - 2)]
       if (caption.rect[0] < left - 24 || caption.rect[2] > right + 24) continue
       const labels = page.lines.filter(
         (l) => intersection(lineRect(l), rect) / area(lineRect(l)) > 0.95
@@ -80,7 +133,31 @@ export function enclosedFigureFrame(page, caption, captions, tables) {
             area(g.normalizedRect) >
             0.95
       )
-      if (labels.filter((l) => /\d/.test(l.text)).length < 8 && !images.length) continue
+      // Outlined diagrams have no native label strings. Separate populated
+      // node boxes inside the closed frame provide equivalent drawing evidence.
+      const nodes = paths
+        .filter(
+          (r) =>
+            flowDiagram &&
+            r[2] - r[0] > page.width * 0.1 &&
+            r[3] - r[1] > dy * 3 &&
+            area(r) < area(rect) * 0.12 &&
+            intersection(r, rect) / area(r) > 0.99 &&
+            r[3] < caption.rect[1] + dy &&
+            paths.filter(
+              (p) =>
+                area(p) < area(r) * 0.25 &&
+                p[2] - p[0] > dx &&
+                p[3] - p[1] > dy &&
+                intersection(p, r) / area(p) > 0.99
+            ).length >= 2
+        )
+        .filter(
+          (r, n, all) =>
+            !all.slice(0, n).some((p) => intersection(p, r) / Math.min(area(p), area(r)) > 0.8)
+        )
+      if (labels.filter((l) => /\d/.test(l.text)).length < 8 && !images.length && nodes.length < 4)
+        continue
       candidates.push(rect)
     }
   }

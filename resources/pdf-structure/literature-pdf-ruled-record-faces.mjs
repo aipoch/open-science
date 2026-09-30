@@ -1,12 +1,17 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+import {
+  joinHorizontalTableRules,
+  classifyTableRuleEdge,
+  clusterTableRulePositions
+} from './literature-pdf-table-rules.mjs'
 import { inside, union, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import {
   groupSourceRowsWithScripts,
   readSourceRow,
   hasUniqueRecordTokens,
-  recoverRuledHeaderBands
+  recoverRuledHeaderBands,
+  tableSourceItems
 } from './literature-pdf-source-records.mjs'
 
 // These placeholders explicitly state a missing statistic; preserve their
@@ -19,6 +24,8 @@ const numeric = (value) =>
 // Complete horizontal faces carry stronger row evidence than overlapping
 // model bands. Recover only when every source record validates the columns.
 export function recoverRuledRecordFaces(table, items, captions, rules) {
+  const inset = recoverInsetRecordFaces(table, items, captions, rules)
+  if (inset) return inset
   const captioned = captions.some((c) => captionKind(c.lines[0]) === 'table')
   const crop = table.cropRect
   const joined = joinHorizontalTableRules(rules, 1)
@@ -388,6 +395,186 @@ export function recoverRuledRecordFaces(table, items, captions, rules) {
     rows,
     columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
     headerRows: (headings?.rows ?? [0]).map((_, n) => n),
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Repeated inset rules bound measurement records while deliberately bypassing
+// shared stubs and sample counts. Require complete native faces in every column;
+// a missing separator alone must never merge unrelated measurements.
+export function recoverInsetRecordFaces(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const crop = table.cropRect
+  const predicted = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length < 6 || predicted.length > 16) return
+  const horizontal = joinHorizontalTableRules(rules, 1).filter(
+    (r) =>
+      r[1] >= crop[1] - 16 && r[1] <= crop[3] + 16 && r[0] >= crop[0] - 16 && r[2] <= crop[2] + 16
+  )
+  const full = horizontal.filter(
+    (r) => Math.abs(r[0] - crop[0]) < 16 && Math.abs(r[2] - crop[2]) < 16
+  )
+  if (
+    full.length < 3 ||
+    Math.abs(full[0][1] - crop[1]) > 16 ||
+    Math.abs(full.at(-1)[1] - crop[3]) > 16
+  )
+    return
+  const [left, top, right] = full[0],
+    bottom = full.at(-1)[1],
+    divider = full[1][1]
+  const cuts = [
+    left,
+    ...predicted.slice(1).map((c, n) => crop[0] + (predicted[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const source = tableSourceItems(items, [left, top, right, bottom]),
+    header = source.filter((i) => i.rect[3] <= divider)
+  const headings = recoverRuledHeaderBands(header, cuts, rules, top, divider)
+  if (!headings || headings.rows.length !== 2) return
+  const height = Math.max(...header.map((i) => i.height)),
+    split = headings.rows[0][3]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const leaf = header.filter((i) => i.rect[1] >= split),
+    values = readSourceRow(leaf, cuts, { multiline: true })
+  if (!values || values.filter((v) => /^n$/i.test(v)).length < 2) return
+  // One continuous underline can cover independent parents. Repeated complete
+  // leaf sequences and a distinct title inside each sequence prove the split.
+  const spans = [],
+    owned = [],
+    signatures = []
+  for (const parent of headings.spans.filter((s) => s.colSpan > 1)) {
+    const sequence = values.slice(parent.column, parent.column + parent.colSpan)
+    const repeat = sequence.findIndex((v, n) => n > 0 && v === sequence[0]),
+      period = repeat < 0 ? sequence.length : repeat
+    if (
+      period < 2 ||
+      sequence.length % period ||
+      sequence.some((v, n) => !v || v !== sequence[n % period])
+    )
+      return
+    for (let c = parent.column; c < parent.column + parent.colSpan; c += period) {
+      const tokens = header.filter(
+        (i) => i.rect[3] <= split && i.rect[0] >= cuts[c] && i.rect[2] <= cuts[c + period]
+      )
+      if (
+        !tokens.length ||
+        !tokens.some((i) => /\p{L}/u.test(i.text)) ||
+        Math.max(...tokens.map((i) => i.baseline)) - Math.min(...tokens.map((i) => i.baseline)) >
+          height * 0.35
+      )
+        return
+      spans.push({ row: 0, column: c, rowSpan: 1, colSpan: period })
+      signatures.push(sequence.slice(0, period).join('|'))
+      owned.push(tokens)
+    }
+  }
+  if (spans.length < 2 || new Set(signatures).size !== 1) return
+  for (let c = 0; c < predicted.length; c++) {
+    const tokens = header.filter((i) => col(i) === c && !owned.some((g) => g.includes(i)))
+    if (!tokens.length) continue
+    if (tokens.some((i) => i.rect[0] < cuts[c] || i.rect[2] > cuts[c + 1])) return
+    if (spans.some((s) => c >= s.column && c < s.column + s.colSpan)) {
+      if (tokens.some((i) => i.rect[1] < split)) return
+    } else spans.push({ row: 0, column: c, rowSpan: 2, colSpan: 1 })
+    owned.push(tokens)
+  }
+  if (!hasUniqueRecordTokens(header, owned)) return
+  const body = source.filter((i) => i.rect[1] >= divider)
+  if (!hasUniqueRecordTokens(source, [header, body])) return
+  const ys = clusterTableRulePositions(
+    horizontal.filter((r) => r[1] >= divider && r[1] <= bottom).map((r) => r[1])
+  )
+  if (ys.length < 6 || ys.length > 60) return
+  const rows = [...headings.rows, ...ys.slice(1).map((y, n) => [left, ys[n], right, y])]
+  const sections = new Set()
+  for (let n = 0; n < ys.length - 1; n++) {
+    const g = body.filter((i) => i.rect[1] >= ys[n] && i.rect[3] <= ys[n + 1])
+    if (!g.length || readSourceRow(g, cuts, { multiline: true })) continue
+    const rect = union(g)
+    if (
+      g.some((i) => /\d/.test(i.text)) ||
+      !g.some((i) => /\p{L}/u.test(i.text)) ||
+      Math.max(...g.map((i) => i.baseline)) - Math.min(...g.map((i) => i.baseline)) >
+        height * 0.35 ||
+      Math.abs(rect[0] + rect[2] - left - right) > height * 2 ||
+      ![ys[n], ys[n + 1]].every((y) => full.some((r) => Math.abs(r[1] - y) < 0.1))
+    )
+      return
+    sections.add(n)
+    spans.push({ row: n + 2, column: 0, rowSpan: 1, colSpan: predicted.length })
+    owned.push(g)
+  }
+  const records = body.filter((i) => !owned.some((g) => g.includes(i)))
+  if (!readSourceRow(records, cuts, { multiline: true })) return
+  let shared = 0,
+    insetBands = 0
+  const edges = cuts.slice(1).map((_, c) => {
+    const tokens = records.filter((i) => col(i) === c)
+    if (!tokens.length) return
+    const bounds = union(tokens)
+    return ys.map((y) => classifyTableRuleEdge(horizontal, 1, y, bounds[0], bounds[2]))
+  })
+  if (edges.some((e) => !e || e.some((v) => v < 0))) return
+  for (let n = 1; n < ys.length - 1; n++) {
+    const count = edges.filter((e) => e[n] === 1).length
+    if (count >= 3 && count < predicted.length) insetBands++
+  }
+  if (insetBands < 3) return
+  for (let c = 0; c < predicted.length; c++) {
+    for (let start = 0; start < ys.length - 1;) {
+      if (sections.has(start)) {
+        start++
+        continue
+      }
+      let end = start + 1
+      while (end < ys.length - 1 && !edges[c][end] && !sections.has(end)) end++
+      if (!edges[c][start] || !edges[c][end]) return
+      const g = records.filter(
+        (i) => col(i) === c && i.rect[1] >= ys[start] && i.rect[3] <= ys[end]
+      )
+      if (!g.length) return
+      const text = readSourceRow(g, cuts, { multiline: true })?.[c]
+      if (end - start > 1) {
+        const count = header
+          .filter((i) => col(i) === c)
+          .map((i) => i.text)
+          .join('')
+          .trim()
+        if (c === 0) {
+          if (!/\p{L}/u.test(text)) return
+          const lines = groupSourceRowsWithScripts(g, height, 0.35)
+          if (
+            !lines ||
+            lines.some((line, n) => n && line[0].baseline - lines[n - 1][0].baseline > height * 1.5)
+          )
+            return
+        } else {
+          if (
+            !/^n$/i.test(count) ||
+            !/^\d+$/.test(text) ||
+            g.length !== 1 ||
+            Math.abs(g[0].rect[1] + g[0].rect[3] - ys[start] - ys[end]) > height * 2
+          )
+            return
+          shared++
+        }
+        spans.push({ row: start + 2, column: c, rowSpan: end - start, colSpan: 1 })
+      }
+      owned.push(g)
+      start = end
+    }
+  }
+  if (shared < 2 || !hasUniqueRecordTokens(source, owned)) return
+  return {
+    cropRect: [left, top, right, bottom],
+    rows,
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    headerRows: [0, 1],
     spans,
     completeSpans: true,
     ownedTokens: new Set(source)
