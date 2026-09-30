@@ -719,7 +719,13 @@
       "src/main/notebook/mcp-wsl-diagnostics.test.ts",
       "src/main/wsl/wsl-setup-owner.integration.test.ts",
       "src/main/literature/journal-attributes.test.ts",
-      "src/main/notebook/shell-cell-session.integration.test.ts"
+      "src/main/notebook/shell-cell-session.integration.test.ts",
+      "src/main/notebook/scientific-replay.test.ts",
+      "src/main/notebook/real-notebook-lineage.integration.test.ts",
+      "src/main/notebook/real-parquet-lineage.integration.test.ts",
+      "src/main/notebook/dependency-analysis.cwd-lineage.test.ts",
+      "src/main/notebook/r-connection-guard.test.ts",
+      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

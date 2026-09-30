@@ -1,0 +1,28 @@
+{
+  "cells": [
+    {
+      "language": "python",
+      "code": "from pathlib import Path\nimport os\nPath('outputs').mkdir(exist_ok=True)\nPath('outputs/checkpoint.csv').write_text('label,value\\na,2\\nb,3\\n', encoding='utf-8')\nraise ValueError('after checkpoint publication')",
+      "status": "failed",
+      "writes": ["outputs/checkpoint.csv"]
+    },
+    {
+      "language": "r",
+      "code": "rows <- read.csv('outputs/checkpoint.csv')\nstopifnot(sum(rows$value) == 5)\nwrite.table(rows, 'outputs/transferred.tsv', sep='\\t', row.names=FALSE, quote=FALSE)",
+      "status": "completed",
+      "writes": ["outputs/transferred.tsv"]
+    },
+    {
+      "language": "python",
+      "code": "content = Path('outputs/transferred.tsv').read_text(encoding='utf-8')\nassert 'a\\t2' in content and 'b\\t3' in content\nPath('outputs/final.tmp').write_text(content, encoding='utf-8')\nos.replace('outputs/final.tmp', 'outputs/final.tsv')",
+      "status": "completed",
+      "writes": ["outputs/final.tsv"]
+    },
+    {
+      "language": "r",
+      "code": "final <- read.delim('outputs/final.tsv')\nstopifnot(identical(rows, final))\ncat('HANDOFF_OK')",
+      "status": "completed",
+      "writes": []
+    }
+  ]
+}
