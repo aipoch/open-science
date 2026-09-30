@@ -122,7 +122,29 @@ test('imports external notes, preserves provenance through undo, and persists an
     .first()
     .click()
   await expect(originalView.locator('[data-pdf-bookmark-revealed="true"]')).toBeVisible()
+  const selectedMark = originalView
+    .locator('[data-pdf-bookmark-highlight][aria-pressed="true"]')
+    .first()
+  await expect(selectedMark).toBeVisible()
+  const selectedCard = notesSidebar
+    .locator('[data-annotation-id]')
+    .filter({ hasText: 'External highlight' })
+  const cardBounds = (await selectedCard.boundingBox())!
+  const quoteBounds = (await selectedCard.locator('blockquote').boundingBox())!
+  expect(quoteBounds.x - cardBounds.x).toBeGreaterThanOrEqual(8)
+  expect(
+    cardBounds.x + cardBounds.width - quoteBounds.x - quoteBounds.width
+  ).toBeGreaterThanOrEqual(8)
   await page.screenshot({ path: testInfo.outputPath('notes-sidebar-wide.png') })
+  await page.keyboard.press('Escape')
+  await expect(
+    originalView.locator('[data-pdf-bookmark-highlight][aria-pressed="true"]')
+  ).toHaveCount(0)
+  await expect(page.locator('[data-slot="file-preview-dialog"]')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-slot="file-preview-dialog"]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Preview native-notes.pdf', exact: true }).click()
+  await page.getByRole('button', { name: 'Show notes sidebar', exact: true }).click()
   await page.getByRole('button', { name: 'Show navigation', exact: true }).click()
   await expect(notesSidebar).toBeVisible()
   const toolbar = page.getByRole('tablist', { name: 'PDF reading mode' })

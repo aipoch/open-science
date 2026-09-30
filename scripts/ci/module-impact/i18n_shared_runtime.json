@@ -6,6 +6,7 @@
     "owner": [],
     "contract": [],
     "consumer": [
+      "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/literature/command-owner.test.ts",
@@ -666,7 +667,8 @@
       "src/renderer/src/pages/workspace/research-replay-context.test.ts",
       "src/renderer/src/pages/workspace/workspace-research-context.test.tsx",
       "src/main/research-drafts/attachment-cleanup.test.ts",
-      "src/main/uploads/research-preview.test.ts"
+      "src/main/uploads/research-preview.test.ts",
+      "src/main/notebook/shell-cell-session.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

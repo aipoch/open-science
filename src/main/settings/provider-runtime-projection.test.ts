@@ -82,6 +82,48 @@ describe('ProviderRuntimeProjectionOwner', () => {
     )
   })
 
+  it.each(['official', 'codex-isolated', 'codex-shared'] as const)(
+    'offers GPT-6.1 Sol only as an explicit selection for %s',
+    (type) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: type,
+        type,
+        ...(type === 'official' ? { vendorId: 'openai' as const } : {}),
+        name: 'OpenAI',
+        apiEndpoints: ['responses']
+      }
+      const model = 'gpt-6.1-sol'
+
+      expect(owner.toProviderView(provider).models).toContain(model)
+      expect(owner.resolveActiveModel(provider)).toBe(
+        type === 'official' ? 'gpt-5.6-sol' : undefined
+      )
+      expect(owner.resolveActiveModel(provider, 'gpt-6-sol')).toBe('gpt-6-sol')
+
+      for (const frameworkId of ['codex', 'opencode', 'claude-code'] as const) {
+        const target = owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model },
+          getAgentFramework(frameworkId)
+        )
+        expect(target).toMatchObject({
+          effectiveModel: model,
+          apiEndpoints: ['responses'],
+          frameworkCompatible: frameworkId === 'codex',
+          needsChatResponsesBridge: false,
+          needsNativeResponsesCompatibility: false,
+          reasoningEffortProfile: {
+            supported: true,
+            slots: ['low', 'medium', 'high', 'xhigh', 'max']
+          },
+          provider: { model, supportsImageInput: true }
+        })
+        if (type === 'official') expect(target.provider.contextWindow).toBe(1_050_000)
+      }
+    }
+  )
+
   it.each(['claude-opus-5-5', 'claude-sonnet-5-5'])(
     'resolves %s for API and pinned subscription targets',
     (model) => {

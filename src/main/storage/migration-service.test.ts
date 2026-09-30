@@ -35,6 +35,7 @@ import {
   RUNTIME_ENVIRONMENT_LOCKS_DIR,
   RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
   RUNTIME_REPAIR_REGISTRY_FILE,
+  RUNTIME_NPM_DIR,
   runDataRootMigration,
   validateNewDataRoot
 } from './migration-service'
@@ -94,6 +95,56 @@ afterEach(async () => {
 })
 
 describe('migration reference safety', () => {
+  it('preserves global npm packages and command shims through a verified data-root move', async () => {
+    const relativePackage = join(RUNTIME_NPM_DIR, 'win32-x64', 'node_modules', 'fixture', 'cli.js')
+    const relativeCommand = join(RUNTIME_NPM_DIR, 'win32-x64', 'fixture.cmd')
+    await mkdir(dirname(join(currentDataRoot, relativePackage)), { recursive: true })
+    await writeFile(join(currentDataRoot, relativePackage), 'console.log("retained")')
+    await writeFile(
+      join(currentDataRoot, relativeCommand),
+      '@node "%~dp0node_modules/fixture/cli.js"'
+    )
+    const deps = { ...fakeDeps(), validateProvenanceState: async () => {} }
+    expect(await runDataRootMigration(deps, emptyParent, runOpts())).toEqual({ ok: true })
+    const target = dataRootFor(emptyParent)
+    const marker = await readMigrationMarker(target)
+    expect(marker?.migratedDirs).toContain(RUNTIME_NPM_DIR)
+    expect(
+      await commitDataRootSwitch({ ...deps, expectedToken: marker!.token }, emptyParent)
+    ).toMatchObject({ ok: true })
+    expect(await readFile(join(target, relativePackage), 'utf8')).toBe('console.log("retained")')
+    expect(await readFile(join(target, relativeCommand), 'utf8')).toBe(
+      '@node "%~dp0node_modules/fixture/cli.js"'
+    )
+    expect(existsSync(join(currentDataRoot, RUNTIME_NPM_DIR))).toBe(false)
+  })
+
+  it('preserves newly installed npm tools when an older staged move did not copy them', async () => {
+    await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const installed = join(
+      currentDataRoot,
+      RUNTIME_NPM_DIR,
+      'linux-x64',
+      'lib',
+      'node_modules',
+      'fixture',
+      'cli.js'
+    )
+    await mkdir(dirname(installed), { recursive: true })
+    await writeFile(installed, 'retained')
+    const deps = {
+      ...fakeDeps(),
+      expectedToken: 'tok-test',
+      validateProvenanceState: async () => {}
+    }
+    expect(await commitDataRootSwitch(deps, emptyParent)).toMatchObject({
+      ok: false,
+      error: 'The staged copy does not include all current data. Run the move again.'
+    })
+    expect(deps.setDataRoot).not.toHaveBeenCalled()
+    expect(await readFile(installed, 'utf8')).toBe('retained')
+  })
+
   it('preserves the source and reports an uncommitted pointer when settings persistence returns EIO', async () => {
     const file = join(currentDataRoot, 'workspaces', 'session', 'data.csv')
     await mkdir(dirname(file), { recursive: true })
@@ -930,6 +981,7 @@ describe('runDataRootMigration (copy phase)', () => {
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
+          RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')
         ]
       })
@@ -2477,6 +2529,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
+          RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')
         ]
       })
@@ -2511,6 +2564,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
+          RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')
         ]
       })
@@ -2549,6 +2603,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
+          RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')
         ]
       })

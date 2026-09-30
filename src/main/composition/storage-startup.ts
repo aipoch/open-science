@@ -20,6 +20,7 @@ import {
   samePath
 } from '../storage-root'
 import { DataRootCleanupJournal, createDataRootSourceCleanup } from '../storage/data-root-cleanup'
+import { createWslNpmMigration } from '../storage/wsl-npm-migration'
 import {
   initializeDataRootWriteAvailability,
   runDataRootStartupRecovery
@@ -76,9 +77,13 @@ export async function composeStorageStartup({
     (Boolean(storedSettings.dataRoot) || storedSettings.onboardingCompletedAt !== undefined) &&
     (await isDataRootMissing(resolveDataRoot()))
   initializeDataRootWriteAvailability(configuredDataRootMissing)
-  const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot())
-  const cleanupDataRootSources = createDataRootSourceCleanup((runtimeRoot) =>
-    notebookNetworkSandbox.revokeManagedRAccess(runtimeRoot)
+  const npmMigration = createWslNpmMigration(
+    async () => (await settingsService.getStoredSettings()).activatedWslSelection
+  )
+  const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot(), npmMigration)
+  const cleanupDataRootSources = createDataRootSourceCleanup(
+    (runtimeRoot) => notebookNetworkSandbox.revokeManagedRAccess(runtimeRoot),
+    npmMigration
   )
   await runDataRootStartupRecovery(
     async () => {

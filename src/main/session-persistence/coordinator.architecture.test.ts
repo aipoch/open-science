@@ -1267,6 +1267,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/shared/renderer-contract-catalog.test.ts'
     ])
     expect(sessionPersistence.testFiles.consumer).toEqual([
+      'src/main/storage/wsl-npm-migration.integration.test.ts',
       'src/main/composition/notebook-environment.test.ts',
       'src/main/literature/command-owner.test.ts',
       'src/main/composition/reviewer.test.ts',
@@ -1688,7 +1689,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/literature/journal-attributes.test.ts',
       'src/main/research-submissions/service.test.ts',
       'src/main/research-drafts/attachment-cleanup.test.ts',
-      'src/main/uploads/research-preview.test.ts'
+      'src/main/uploads/research-preview.test.ts',
+      'src/main/notebook/shell-cell-session.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

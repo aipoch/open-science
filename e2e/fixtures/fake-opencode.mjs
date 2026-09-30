@@ -642,6 +642,51 @@ const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
     return `Notebook lifecycle verified for ${initial.sessionId}.`
   })
 
+const verifyGlobalNpmTools = async (sessionId, mode) =>
+  withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    const execute = async (command) => {
+      const result = toolResult(
+        'bash_execute',
+        await client.callTool({
+          name: 'bash_execute',
+          arguments: { command }
+        })
+      )
+      if (result.exitCode !== 0)
+        throw new Error(`npm application check failed: ${JSON.stringify(result)}`)
+      return result.stdout ?? ''
+    }
+    const node = (code) =>
+      `node -e "eval(Buffer.from('${Buffer.from(code).toString('base64')}','base64').toString())"`
+    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+    const invoke = process.platform === 'win32' ? 'os-npm-app-fixture.cmd' : 'os-npm-app-fixture'
+    if (mode !== 'restart') {
+      await execute(
+        node(`
+        const fs = require('node:fs');
+        fs.mkdirSync('npm-fixture', { recursive: true });
+        fs.writeFileSync('npm-fixture/package.json', JSON.stringify({ name: 'os-npm-app-fixture', version: '1.0.0', bin: { 'os-npm-app-fixture': 'cli.js' } }));
+        fs.writeFileSync('npm-fixture/cli.js', '#!/usr/bin/env node\\nprocess.stdout.write("npm-application-tool");\\n');
+      `)
+      )
+      await execute(`${npm} pack ./npm-fixture --offline --ignore-scripts`)
+      await execute(
+        `${npm} install ${mode === 'install' ? '-g ' : ''}./os-npm-app-fixture-1.0.0.tgz --offline --ignore-scripts --no-audit --no-fund`
+      )
+      if (mode === 'local') {
+        await execute(
+          node(
+            `if (!require('node:fs').existsSync('node_modules/os-npm-app-fixture/package.json')) throw new Error('Local npm package escaped the project');`
+          )
+        )
+      }
+    }
+    if (!(await execute(invoke)).includes('npm-application-tool')) {
+      throw new Error('The global npm command was not available in this Session.')
+    }
+    return `Application npm ${mode} verified through sandboxed Shell.`
+  })
+
 const readMicromambaEvents = async (path) =>
   readFile(path, 'utf8')
     .catch(() => '')
@@ -1625,6 +1670,12 @@ if (process.argv.includes('--version')) {
             '  A[begin] --> B[a node with a fairly long label] --> C[another node with an even longer label here] --> D[end]',
             '```'
           ].join('\n')
+        } else if (prompt.includes('Verify application npm global install.')) {
+          reply = await verifyGlobalNpmTools(context.params.sessionId, 'install')
+        } else if (prompt.includes('Verify application npm shared tool and local install.')) {
+          reply = await verifyGlobalNpmTools(context.params.sessionId, 'local')
+        } else if (prompt.includes('Verify application npm tool after restart.')) {
+          reply = await verifyGlobalNpmTools(context.params.sessionId, 'restart')
         } else if (prompt.includes('Verify WSL background cancellation.')) {
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
             // Compute lists persistent kernels, not stateless Shell Runs. Keep a real REPL

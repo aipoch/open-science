@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/main/storage/wsl-npm-migration.ts",
+    "src/main/storage/wsl-npm-migration.integration.test.ts",
     "src/main/storage/command-owner.atomicity.test.ts",
     "src/main/storage/command-owner.ts",
     "src/main/storage/content-blob-registry.test.ts",
@@ -58,6 +60,7 @@
     "src/main/storage/migration-target-race.test.ts"
   ],
   "interfacePaths": [
+    "src/main/storage/wsl-npm-migration.ts",
     "src/main/storage/data-location-identity.ts",
     "src/main/storage/command-owner.ts",
     "src/main/storage/content-blob-registry.ts",
@@ -88,6 +91,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/storage/data-location-identity.test.ts",
       "src/main/storage/command-owner.atomicity.test.ts",
       "src/main/storage/content-blob-registry.test.ts",
@@ -719,7 +723,8 @@
       "src/main/research-drafts/attachment-cleanup.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
-      "src/main/uploads/research-preview.test.ts"
+      "src/main/uploads/research-preview.test.ts",
+      "src/main/notebook/shell-cell-session.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

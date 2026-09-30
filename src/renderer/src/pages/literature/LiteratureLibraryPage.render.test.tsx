@@ -2560,15 +2560,92 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('shows the current reference URL when opening a table row', async () => {
+    const urlOnlyItem: LiteratureItemView = {
+      ...libraryItem,
+      item: { ...libraryItem.item, url: 'https://example.test/A', identifiers: [] }
+    }
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [urlOnlyItem] } : { entries: [] })
+    )
+    get.mockResolvedValue(urlOnlyItem)
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+
+    const detail = await openReferenceDetail(await screen.findByText(urlOnlyItem.item.title))
+    expect(
+      within(detail)
+        .getByRole('link', { name: `URL: ${urlOnlyItem.item.url}` })
+        .getAttribute('href')
+    ).toBe(urlOnlyItem.item.url)
+  })
+
+  it('shows the current reference URL after cancelling metadata edits and switching references', async () => {
+    const first: LiteratureItemView = {
+      ...libraryItem,
+      item: { ...libraryItem.item, url: 'https://example.test/A', identifiers: [] }
+    }
+    const second: LiteratureItemView = {
+      ...libraryItem,
+      id: 'item-2',
+      item: {
+        ...libraryItem.item,
+        title: 'Second reference',
+        url: 'https://example.test/B',
+        identifiers: []
+      }
+    }
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [first, second] } : { entries: [] })
+    )
+    get.mockImplementation((id: string) => Promise.resolve(id === first.id ? first : second))
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const firstDetail = await openReferenceDetail(await screen.findByText(first.item.title))
+    await openMenu(within(firstDetail).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit metadata' }))
+    fireEvent.click(within(firstDetail).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByLabelText('Title')).toBeNull())
+    expect(
+      within(firstDetail)
+        .getByRole('link', { name: `URL: ${first.item.url}` })
+        .getAttribute('href')
+    ).toBe(first.item.url)
+    fireEvent.click(within(firstDetail).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    const secondDetail = await openReferenceDetail(await screen.findByText(second.item.title))
+    expect(
+      within(secondDetail)
+        .getByRole('link', { name: `URL: ${second.item.url}` })
+        .getAttribute('href')
+    ).toBe(second.item.url)
+    expect(within(secondDetail).queryByRole('link', { name: `URL: ${first.item.url}` })).toBeNull()
+  })
+
   it('opens the Literature detail selected by a one-shot navigation intent', async () => {
-    get.mockResolvedValue(libraryItem)
-    useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user')
+    const urlOnlyItem: LiteratureItemView = {
+      ...libraryItem,
+      item: {
+        ...libraryItem.item,
+        url: 'https://example.test/reference',
+        identifiers: []
+      }
+    }
+    get.mockResolvedValue(urlOnlyItem)
+    useNavigationStore.getState().openLiteratureItem(urlOnlyItem.id, 'user')
 
     render(<LiteratureLibraryPage />)
 
-    await waitFor(() => expect(get).toHaveBeenCalledWith(libraryItem.id))
-    expect(await screen.findByRole('dialog')).not.toBeNull()
-    expect(await screen.findByRole('heading', { name: libraryItem.item.title })).not.toBeNull()
+    await waitFor(() => expect(get).toHaveBeenCalledWith(urlOnlyItem.id))
+    const dialog = await screen.findByRole('dialog')
+    expect(await screen.findByRole('heading', { name: urlOnlyItem.item.title })).not.toBeNull()
+    const urlLink = within(dialog).getByRole('link', {
+      name: `URL: ${urlOnlyItem.item.url}`
+    })
+    expect(urlLink.getAttribute('href')).toBe(urlOnlyItem.item.url)
+    expect(urlLink.getAttribute('target')).toBe('_blank')
+    expect(urlLink.getAttribute('rel')).toBe('noreferrer')
     expect(useNavigationStore.getState().pendingLiteratureItemId).toBeUndefined()
   })
 

@@ -5478,6 +5478,8 @@ describe('notebook runtime service', () => {
     it('persists running Shell cancellation intent before Stop reaches the process', async () => {
       const root = await createStorageRoot()
       const repository = new NotebookRunRepository(root)
+      const started = createDeferred<void>()
+      const cancellation = new AbortController()
       let observedAbort = false
       let finishCancellation!: () => void
       const cancellationGate = new Promise<void>((resolve) => {
@@ -5503,32 +5505,47 @@ describe('notebook runtime service', () => {
               }
               if (request.signal?.aborted) void cancel()
               else request.signal?.addEventListener('abort', () => void cancel(), { once: true })
+              started.resolve()
             })
         }
       })
       const scope = { sessionId: 'session-1', workspaceCwd: root }
       const cancellationWrite = vi.spyOn(repository, 'requestRunCancellation')
-      const execution = service.executeShell({ ...scope, command: 'long-running' })
-      await vi.waitFor(async () => {
+      const execution = service.executeShell(
+        { ...scope, command: 'long-running' },
+        cancellation.signal
+      )
+      const settled = execution.catch(() => undefined)
+      let shutdown: ReturnType<typeof service.shutdown> | undefined
+      try {
+        // The process starts only after durable admission; avoid a one-second polling budget
+        // for filesystem work on a contended CI runner.
+        await Promise.race([started.promise, execution])
         expect((await service.state(scope)).runs[0]?.status).toBe('running')
-      })
-      const shutdown = service.shutdown(scope)
-      await vi.waitFor(() => expect(cancellationWrite).toHaveBeenCalledOnce())
-      await vi.waitFor(() => expect(observedAbort).toBe(true), { timeout: 5_000 })
-      const durable = await repository.loadOrCreate({
-        projectId: 'default-project',
-        sessionId: scope.sessionId,
-        workspaceCwd: root,
-        lane: createRootNotebookLane('default-project', scope.sessionId, 'root-frame-session-1')
-      })
-      expect(durable.runs[0]).toMatchObject({
-        status: 'running',
-        cancellationRequestedAt: expect.any(Number),
-        cancellationReason: 'Notebook Session is shutting down.'
-      })
-      finishCancellation()
-      await execution
-      await shutdown
+        shutdown = service.shutdown(scope)
+        await vi.waitFor(() => expect(observedAbort).toBe(true), { timeout: 5_000 })
+        expect(cancellationWrite).toHaveBeenCalledOnce()
+        const durable = await repository.loadOrCreate({
+          projectId: 'default-project',
+          sessionId: scope.sessionId,
+          workspaceCwd: root,
+          lane: createRootNotebookLane('default-project', scope.sessionId, 'root-frame-session-1')
+        })
+        expect(durable.runs[0]).toMatchObject({
+          status: 'running',
+          cancellationRequestedAt: expect.any(Number),
+          cancellationReason: 'Notebook Session is shutting down.'
+        })
+        finishCancellation()
+        await execution
+        await shutdown
+      } finally {
+        cancellation.abort()
+        finishCancellation()
+        await settled
+        await shutdown
+        await service.dispose()
+      }
     })
 
     it('rejects a direct micromamba install before spawning the shell command', async () => {

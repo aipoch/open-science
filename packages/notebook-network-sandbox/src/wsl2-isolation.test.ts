@@ -66,6 +66,7 @@ describe('WSL2 sandbox adapter', () => {
     const runtimeRoot = 'C:\\Open-Science\\runtime 路径'
     const cacheEnvironment = notebookWorkloadCacheEnv(runtimeRoot)
     const cacheRoot = cacheEnvironment.OPEN_SCIENCE_NOTEBOOK_CACHE_DIR!
+    const npmPrefix = 'C:\\Open-Science\\runtime 路径\\npm\\linux-x64'
     const mapPath = vi.fn(async (path: string) => {
       const known = mapped.get(path)
       if (known) return known
@@ -100,6 +101,8 @@ describe('WSL2 sandbox adapter', () => {
       pathEnvironment: {
         OPEN_SCIENCE_HANDOFF_DIR: 'C:\\Open-Science\\handoff',
         OPEN_SCIENCE_INPUT_DIR: 'C:\\Open-Science\\inputs',
+        NPM_CONFIG_PREFIX: npmPrefix,
+        NPM_CONFIG_CACHE: `${cacheRoot}\\npm\\linux-x64`,
         ...cacheEnvironment
       },
       filesystem: {
@@ -108,7 +111,8 @@ describe('WSL2 sandbox adapter', () => {
         readWriteRoots: [
           'C:\\Open-Science\\Workspace 路径',
           'C:\\Open-Science\\handoff',
-          cacheRoot
+          cacheRoot,
+          npmPrefix
         ],
         deniedReadRoots: ['C:\\private'],
         deniedWriteRoots: []
@@ -162,7 +166,7 @@ describe('WSL2 sandbox adapter', () => {
       expect.arrayContaining([
         '--setenv',
         'PATH',
-        '/usr/bin:/bin',
+        '/mnt/c/Open-Science/runtime 路径/npm/linux-x64/bin:/usr/bin:/bin',
         '--setenv',
         'OPEN_SCIENCE_HANDOFF_DIR',
         '/mnt/c/Open-Science/handoff',

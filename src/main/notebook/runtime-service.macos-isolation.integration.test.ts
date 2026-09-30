@@ -65,15 +65,18 @@ it
       ]
     })
     const originalTerminate = processTree.terminateProcessTree
+    let crashVictim: Parameters<typeof originalTerminate>[0] | undefined
     let retainProof = unknownProof
     let transientProofPending = scenario === 'transient-proof'
     const terminate =
       unknownProof || transientProofPending
         ? vi.spyOn(processTree, 'terminateProcessTree').mockImplementation(async (...args) => {
+            // Capture the self-signalled victim before teardown can escalate a healthy process.
+            if (!crashVictim && args[0].signalCode === 'SIGKILL') crashVictim = args[0]
             const result = await originalTerminate(...args)
             // Only suppress the proof for the actual SIGKILL victim, after performing real OS teardown.
             // This makes the production incident's unknown ownership repeatable without host-wide races.
-            if (args[0].signalCode === 'SIGKILL' && (retainProof || transientProofPending)) {
+            if (args[0] === crashVictim && (retainProof || transientProofPending)) {
               transientProofPending = false
               return { reaped: false }
             }
@@ -356,7 +359,12 @@ it
       await mcp.close()
       connection.release?.()
       await rpc.close()
-      await service.shutdownAll()
+      // A settled stop attempt can still report unverified cleanup. Retry through the original
+      // process owner before releasing the sandbox; never discard its retained ownership proof.
+      await vi.waitFor(
+        async () => expect(await service.shutdownAll()).toMatchObject({ reaped: true }),
+        { timeout: 10_000, interval: 100 }
+      )
       terminate?.mockRestore()
       if (escapedPid) {
         try {

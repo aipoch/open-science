@@ -15,6 +15,7 @@ import {
   scanInventory
 } from './migration-marker'
 import { defaultFileDurability } from './file-durability'
+import type { NpmMigration } from './wsl-npm-migration'
 
 const DATA_ROOT_CLEANUP_FILENAME = 'data-root-cleanup.json'
 const CLEANUP_JOURNAL_VERSION = 1 as const
@@ -22,6 +23,7 @@ const ALLOWED_CLEANUP_DIRS = new Set([
   ...MIGRATABLE_DATA_DIRS,
   'runtime',
   join('runtime', 'pkgs'),
+  join('runtime', 'npm'),
   join('runtime', '.repair-required.json'),
   join('runtime', 'provenance', 'environment-manifests'),
   join('runtime', 'provenance', 'environment-locks')
@@ -70,10 +72,13 @@ type CleanupRecoveryResult = Readonly<{ pending: boolean; failureCount: number }
 // One deletion adapter is shared by committed migration and durable cleanup replay. Copying,
 // discarding a staged copy, and switching to an existing root never remove the source runtime.
 export const createDataRootSourceCleanup =
-  (revokeRuntimeAccess: (runtimeRoot: string) => Promise<void>): typeof deleteSources =>
+  (
+    revokeRuntimeAccess: (runtimeRoot: string) => Promise<void>,
+    npmMigration?: NpmMigration
+  ): typeof deleteSources =>
   async (source, dirs, onProgress) => {
     if (dirs.includes('runtime')) await revokeRuntimeAccess(join(source, 'runtime'))
-    return deleteSources(source, dirs, onProgress)
+    return deleteSources(source, dirs, onProgress, npmMigration)
   }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -206,7 +211,11 @@ const migrationMarkerIsMissing = async (target: string): Promise<boolean> => {
   }
 }
 
-const captureEntrySnapshot = async (source: string, dir: string): Promise<CleanupEntrySnapshot> => {
+const captureEntrySnapshot = async (
+  source: string,
+  dir: string,
+  npmMigration?: NpmMigration
+): Promise<CleanupEntrySnapshot> => {
   let stats
   try {
     stats = await lstat(join(source, dir), { bigint: true })
@@ -220,7 +229,7 @@ const captureEntrySnapshot = async (source: string, dir: string): Promise<Cleanu
     dev: stats.dev.toString(),
     ino: stats.ino.toString(),
     birthtimeNs: stats.birthtimeNs.toString(),
-    inventory: await scanInventory(source, [dir])
+    inventory: await scanInventory(source, [dir], npmMigration)
   }
 }
 
@@ -284,7 +293,10 @@ const canonicalizeCleanupSource = async (
 class DataRootCleanupJournal {
   private readonly filePath: string
 
-  constructor(configRoot: string) {
+  constructor(
+    configRoot: string,
+    private readonly npmMigration?: NpmMigration
+  ) {
     this.filePath = join(configRoot, DATA_ROOT_CLEANUP_FILENAME)
   }
 
@@ -328,14 +340,18 @@ class DataRootCleanupJournal {
     }
     let entries: CleanupEntrySnapshot[]
     if (source.present) {
-      const sourceMetadata = await capturePortableMetadata(canonicalSource, input.dirs)
+      const sourceMetadata = await capturePortableMetadata(
+        canonicalSource,
+        input.dirs,
+        this.npmMigration
+      )
       const entriesBeforeRestore = await (async () => {
         try {
           return await Promise.all(
-            input.dirs.map((dir) => captureEntrySnapshot(canonicalSource, dir))
+            input.dirs.map((dir) => captureEntrySnapshot(canonicalSource, dir, this.npmMigration))
           )
         } finally {
-          await restorePortableMetadata(canonicalSource, sourceMetadata)
+          await restorePortableMetadata(canonicalSource, sourceMetadata, this.npmMigration)
         }
       })()
       // Restoring source timestamps can update birthtime on macOS. Bind the durable cleanup
@@ -469,7 +485,11 @@ class DataRootCleanupJournal {
 
     let targetInventory: CleanupInventory
     try {
-      targetInventory = await scanInventory(target, marker.migratedDirs ?? marker.inventory.dirs)
+      targetInventory = await scanInventory(
+        target,
+        marker.migratedDirs ?? marker.inventory.dirs,
+        this.npmMigration
+      )
     } catch {
       return undefined
     }
@@ -542,7 +562,7 @@ class DataRootCleanupJournal {
     for (const expected of committedIntent.entries) {
       let actual: CleanupEntrySnapshot
       try {
-        actual = await captureEntrySnapshot(source, expected.dir)
+        actual = await captureEntrySnapshot(source, expected.dir, this.npmMigration)
       } catch {
         return 0
       }

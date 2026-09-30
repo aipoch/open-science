@@ -1254,7 +1254,7 @@ const PdfNotebookView = ({
                     className={cn(
                       '@container/annotation-card group bg-bg-000',
                       sidebar
-                        ? 'border-b border-border/70 py-3'
+                        ? '-mx-2 rounded-md border-b border-border/70 px-2 py-3'
                         : 'rounded-xl border border-border/80 p-3 shadow-sm transition-shadow hover:shadow-md',
                       sidebar &&
                         selectedId === bookmark.id &&

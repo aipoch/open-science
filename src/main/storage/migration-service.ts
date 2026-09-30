@@ -55,6 +55,12 @@ import {
 } from './data-root-selection'
 import { DATA_ROOT_SELECTION_CHANGED } from '../../shared/storage'
 import type { DataRootCleanupJournal } from './data-root-cleanup'
+import {
+  needsWslNpmMigration,
+  requireNpmMigration,
+  WslNpmMigrationError,
+  type NpmMigration
+} from './wsl-npm-migration'
 
 export { DATA_ROOT_DIRS } from './data-directories'
 
@@ -484,6 +490,8 @@ export const validateNewDataRoot = async (
 // reactivate a runtime quarantined after an interrupted or identity-changing operation. Nested paths
 // are intentional: copyAndVerify mirrors `from/<path>` → `to/<path>` and accepts regular files as roots.
 const RUNTIME_PKGS_DIR = join('runtime', 'pkgs')
+// npm's relative command links and package tree survive relocation; its download cache does not.
+export const RUNTIME_NPM_DIR = join('runtime', 'npm')
 const RUNTIME_ENVS_LOCK_DIR = join('runtime', 'envs.lock')
 export const RUNTIME_REPAIR_REGISTRY_FILE = join('runtime', '.repair-required.json')
 export const RUNTIME_ENVIRONMENT_MANIFESTS_DIR = join(
@@ -499,7 +507,8 @@ const BASE_MIGRATION_DIRS = [
   ...MIGRATED_DIRS,
   RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
   RUNTIME_ENVIRONMENT_LOCKS_DIR,
-  RUNTIME_REPAIR_REGISTRY_FILE
+  RUNTIME_REPAIR_REGISTRY_FILE,
+  RUNTIME_NPM_DIR
 ]
 
 const defaultValidateProvenanceState = (dataRoot: string): Promise<void> =>
@@ -582,6 +591,7 @@ export const pauseDataRootWriters = async (deps: DataRootWriterPauseDeps): Promi
 }
 
 type MigrationCopyDeps = DataRootWriterPauseDeps & {
+  npmMigration?: NpmMigration
   currentDataRoot: string
   diagnosticCorrelationId?: string
   // The composition root supplies Notebook-owned cache cleanup. A runtime-only target may contain
@@ -593,6 +603,7 @@ type MigrationCopyDeps = DataRootWriterPauseDeps & {
   exportRuntimeLocks?: (fromDataRoot: string, toDataRoot: string) => Promise<string[]>
   // Injectable for tests; defaults to the real ./data-migration engine function.
   copyAndVerify?: (opts: {
+    npmMigration?: NpmMigration
     from: string
     to: string
     dirs: string[]
@@ -603,6 +614,7 @@ type MigrationCopyDeps = DataRootWriterPauseDeps & {
 }
 
 type MigrationCommitDeps = {
+  npmMigration?: NpmMigration
   currentDataRoot: string
   logger?: Logger
   diagnosticCorrelationId?: string
@@ -775,6 +787,9 @@ export const runDataRootMigration = async (
   }
   const removeOwnedStaging = async (): Promise<void> => {
     assertStagingIdentity()
+    if (await needsWslNpmMigration(target, [RUNTIME_NPM_DIR])) {
+      await requireNpmMigration(deps.npmMigration).remove(target)
+    }
     await rm(target, { recursive: true, force: true })
   }
 
@@ -819,14 +834,24 @@ export const runDataRootMigration = async (
   const migrateDirs = [...BASE_MIGRATION_DIRS, RUNTIME_PKGS_DIR]
   let sourceMetadata
   try {
-    sourceMetadata = await capturePortableMetadata(deps.currentDataRoot, migrateDirs)
+    sourceMetadata = await capturePortableMetadata(
+      deps.currentDataRoot,
+      migrateDirs,
+      deps.npmMigration
+    )
   } catch (error) {
     await removeOwnedStaging().catch(() => undefined)
     operation.fail(error)
-    return { ok: false, error: 'Could not inspect your data before copying it. Please try again.' }
+    return {
+      ok: false,
+      error:
+        error instanceof WslNpmMigrationError
+          ? error.message
+          : 'Could not inspect your data before copying it. Please try again.'
+    }
   }
   const restoreSourceMetadata = async (): Promise<void> => {
-    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata)
+    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata, deps.npmMigration)
   }
 
   const validateProvenanceState = deps.validateProvenanceState ?? defaultValidateProvenanceState
@@ -860,7 +885,11 @@ export const runDataRootMigration = async (
       )
     }
   }
-  const sourceLinks = await validateMigrationSourceLinks(deps.currentDataRoot, migrateDirs)
+  const sourceLinks = await validateMigrationSourceLinks(
+    deps.currentDataRoot,
+    migrateDirs,
+    deps.npmMigration
+  )
   if (!sourceLinks.ok) {
     await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
@@ -897,7 +926,8 @@ export const runDataRootMigration = async (
       to: target,
       dirs: migrateDirs,
       signal: runOpts.signal,
-      onProgress: reportProgress
+      onProgress: reportProgress,
+      npmMigration: deps.npmMigration
     })
   } catch (err) {
     await removeOwnedStaging().catch(() => undefined)
@@ -963,7 +993,7 @@ export const runDataRootMigration = async (
   // Record what was staged and promote the marker to 'verified' — the only state the commit gate accepts.
   let inventory
   try {
-    inventory = await scanInventory(target, migrateDirs)
+    inventory = await scanInventory(target, migrateDirs, deps.npmMigration)
   } catch (err) {
     await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
@@ -978,7 +1008,7 @@ export const runDataRootMigration = async (
   }
   try {
     await restoreSourceMetadata()
-    await restorePortableMetadata(target, sourceMetadata)
+    await restorePortableMetadata(target, sourceMetadata, deps.npmMigration)
   } catch (err) {
     await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
@@ -1062,7 +1092,7 @@ export const commitDataRootSwitch = async (
   }
 
   const migratedDirs = marker.migratedDirs ?? [...MIGRATED_DIRS]
-  const currentDataPaths = MIGRATED_DIRS.filter((path) =>
+  const currentDataPaths = [...MIGRATED_DIRS, RUNTIME_NPM_DIR].filter((path) =>
     existsSync(join(deps.currentDataRoot, path))
   )
   if (currentDataPaths.some((path) => !migratedDirs.includes(path))) {
@@ -1085,25 +1115,47 @@ export const commitDataRootSwitch = async (
   }
   let sourceMetadata
   try {
-    sourceMetadata = await capturePortableMetadata(deps.currentDataRoot, migratedDirs)
+    sourceMetadata = await capturePortableMetadata(
+      deps.currentDataRoot,
+      migratedDirs,
+      deps.npmMigration
+    )
   } catch (err) {
     operation.fail(err)
-    return { ok: false, error: 'Could not recheck the copied data. Run the move again.' }
+    return {
+      ok: false,
+      error:
+        err instanceof WslNpmMigrationError
+          ? err.message
+          : 'Could not recheck the copied data. Run the move again.'
+    }
   }
-  const sourceLinks = await validateMigrationSourceLinks(deps.currentDataRoot, migratedDirs)
+  const sourceLinks = await validateMigrationSourceLinks(
+    deps.currentDataRoot,
+    migratedDirs,
+    deps.npmMigration
+  )
   if (!sourceLinks.ok) {
-    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata).catch(() => undefined)
+    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata, deps.npmMigration).catch(
+      () => undefined
+    )
     return failResult(sourceLinks)
   }
   let inventories: [MigrationInventory, MigrationInventory]
   try {
     inventories = await Promise.all([
-      scanInventory(deps.currentDataRoot, migratedDirs),
-      scanInventory(target, migratedDirs)
+      scanInventory(deps.currentDataRoot, migratedDirs, deps.npmMigration),
+      scanInventory(target, migratedDirs, deps.npmMigration)
     ])
   } catch (err) {
     operation.fail(err)
-    return { ok: false, error: 'Could not recheck the copied data. Run the move again.' }
+    return {
+      ok: false,
+      error:
+        err instanceof WslNpmMigrationError
+          ? err.message
+          : 'Could not recheck the copied data. Run the move again.'
+    }
   }
   const [sourceInventory, targetInventory] = inventories
   if (
@@ -1159,8 +1211,8 @@ export const commitDataRootSwitch = async (
   try {
     // Staging snapshots the exact source entries that cleanup may later remove. Reapply portable
     // metadata afterward because that content scan necessarily reads the source tree.
-    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata)
-    await restorePortableMetadata(target, sourceMetadata)
+    await restorePortableMetadata(deps.currentDataRoot, sourceMetadata, deps.npmMigration)
+    await restorePortableMetadata(target, sourceMetadata, deps.npmMigration)
   } catch (error) {
     await deps.cleanupJournal?.clear(marker.token).catch(() => undefined)
     operation.fail(error)
@@ -1187,7 +1239,8 @@ export const commitDataRootSwitch = async (
   operation.phase('cleanup-source')
   let cleanupDegraded = false
   let cleanupDeferred = false
-  const doDeleteSources = deps.deleteSources ?? deleteSources
+  const doDeleteSources =
+    deps.deleteSources ?? ((root, dirs) => deleteSources(root, dirs, undefined, deps.npmMigration))
   let cleanupFailureCount = 0
   if (deps.cleanupJournal) {
     try {
@@ -1247,7 +1300,12 @@ export const commitDataRootSwitch = async (
 // a 'copying' marker: no writer from that dead process remains, and an incomplete copy is never
 // committable, so deletion is the only safe recovery.
 export const discardStagedCopy = async (
-  deps: { currentDataRoot: string; expectedToken: string; allowIncomplete?: boolean },
+  deps: {
+    currentDataRoot: string
+    expectedToken: string
+    allowIncomplete?: boolean
+    npmMigration?: NpmMigration
+  },
   parent: string
 ): Promise<{ ok: boolean; error?: string }> => {
   const target = dataRootForPicked(parent)
@@ -1281,6 +1339,9 @@ export const discardStagedCopy = async (
     return { ok: false, error: 'Refused: not a completed, matching staged copy.' }
   }
 
+  if (await needsWslNpmMigration(target, [RUNTIME_NPM_DIR])) {
+    await requireNpmMigration(deps.npmMigration).remove(target)
+  }
   await rm(target, { recursive: true, force: true })
   return { ok: true }
 }

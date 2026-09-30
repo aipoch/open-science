@@ -69,6 +69,8 @@ import { toErrorMessage } from '../error-message'
 import type { RendererSessionPersistenceTarget } from '../session-persistence/renderer-flush'
 import type { SessionPersistenceFlushResponse } from '../../shared/session-persistence-flush'
 import { DataRootCleanupJournal } from './data-root-cleanup'
+import { createWslNpmMigration } from './wsl-npm-migration'
+import type { WslSelection } from '../../shared/wsl-setup'
 import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 import { STAGING_UPLOAD_SESSION_ID, UPLOADS_DIR } from '../uploads/storage-helpers'
 
@@ -99,6 +101,7 @@ type StorageCommandOwnerDeps = {
     // Read to detect an explicitly-configured-but-now-gone data root (see dataRootMissing below)
     // and to gate the one-time legacy-data-move prompt (legacyDataMovePromptDismissedAt).
     getStoredSettings: () => Promise<{
+      activatedWslSelection?: WslSelection
       dataRoot?: string
       onboardingCompletedAt?: number
       dataRootIsInitialDefault?: boolean
@@ -215,7 +218,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const classifyDataRootImpl = deps.classifyDataRoot ?? classifyDataRoot
   const validateNewDataRootImpl = deps.validateNewDataRoot ?? validateNewDataRoot
   const availableBytesImpl = deps.availableBytes ?? availableBytes
-  const cleanupJournal = deps.cleanupJournal ?? new DataRootCleanupJournal(resolveConfigRoot())
+  const npmMigration = createWslNpmMigration(
+    async () => (await deps.settingsService.getStoredSettings()).activatedWslSelection
+  )
+  const cleanupJournal =
+    deps.cleanupJournal ?? new DataRootCleanupJournal(resolveConfigRoot(), npmMigration)
   const unsafeLogger = deps.logger ?? createLogger('storage:ipc')
   const emitSafely = (level: keyof Logger, message: string, data?: unknown): void => {
     try {
@@ -531,6 +538,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       const result = await runDataRootMigrationImpl(
         {
           currentDataRoot: resolveDataRoot(),
+          npmMigration,
           logger,
           diagnosticCorrelationId: correlationId,
           runtime: deps.runtime,
@@ -663,7 +671,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         {
           currentDataRoot: resolveDataRoot(),
           expectedToken: staged.token,
-          allowIncomplete: staged.recovered
+          allowIncomplete: staged.recovered,
+          npmMigration
         },
         request.parent
       )
@@ -886,6 +895,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         outcome = await commitDataRootSwitch(
           {
             currentDataRoot,
+            npmMigration,
             // Arrow-wrapped so setDataRoot is called as a method (it reads `this.repository`).
             setDataRoot: (path) =>
               deps.settingsService.setDataRoot(path, {
@@ -928,7 +938,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         // in every case. The old root is untouched and immediately usable.
         if ('switchoverFailed' in outcome) {
           await discardStagedCopy(
-            { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
+            { currentDataRoot: resolveDataRoot(), expectedToken: staged.token, npmMigration },
             request.parent
           ).catch(() => undefined)
         }

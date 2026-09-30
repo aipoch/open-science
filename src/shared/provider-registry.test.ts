@@ -24,6 +24,18 @@ import {
 } from './provider-registry'
 
 describe('provider registry', () => {
+  it('offers GPT-6.1 Sol with its published capabilities and preserves the default', () => {
+    expect(getOfficialVendorModelIds('openai')).toContain('gpt-6.1-sol')
+    expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
+    expect(resolveModelContextWindow('openai', 'gpt-6.1-sol')).toBe(1_050_000)
+    expect(isVendorModelMultimodal('openai', 'gpt-6.1-sol')).toBe(true)
+    expect(resolveVendorModelApiEndpoints('openai', 'gpt-6.1-sol')).toEqual(['responses'])
+    expect(resolveVendorModelReasoningEffort('openai', 'gpt-6.1-sol')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
+  })
+
   it('offers Claude Sonnet 5.5 with its published capabilities and preserves the default', () => {
     expect(getOfficialVendorModelIds('anthropic')).toContain('claude-sonnet-5-5')
     expect(defaultVendorModel('anthropic')).toBe('claude-opus-5')
