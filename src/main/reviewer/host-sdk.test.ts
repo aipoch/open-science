@@ -960,6 +960,11 @@ describe('host.read_artifact — tabular CSV', () => {
       pages: [{ pageNumber: 1, text: '' }],
       limitations: [{ kind: 'unsupported-model-capability', subjectId: versionId }]
     })
+
+    await expect(server.readArtifact(versionId, { pages: [2] })).rejects.toMatchObject({
+      message: 'Requested PDF page must be between 1 and 1.',
+      cause: { message: 'Requested PDF page must be between 1 and 1.' }
+    })
   })
 
   it('distinguishes target budget exhaustion and returns no whole-slide expansion', async () => {

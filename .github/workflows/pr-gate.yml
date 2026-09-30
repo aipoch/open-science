@@ -861,6 +861,9 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Typecheck sandbox on Windows
+        if: ${{ inputs.dry_run != 'windows-process' }}
+        run: npm run typecheck:sandbox
       - name: Test delegated Windows process ownership
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
         run: >-

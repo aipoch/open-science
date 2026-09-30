@@ -21,6 +21,12 @@ Node 24 is the development and CI toolchain. The published CLI continues to supp
 Node >=22.5.0; PR Gate checks CLI/SDK compatibility on Node 22 as well. Electron
 ships its own Node runtime, so changing the toolchain does not upgrade Electron.
 
+The typecheck scripts use the native TypeScript compiler pinned as `typescript-native`.
+The separate `typescript` dependency provides the JavaScript compiler API used by API-map
+generation and architecture tests. Keep both dependencies: changing the typecheck compiler
+does not migrate those API consumers. Scripts select the compiler by its explicit path,
+because both packages expose a `tsc` binary.
+
 ### Setup
 
 ```bash
