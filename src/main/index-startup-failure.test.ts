@@ -940,7 +940,7 @@ it.each([
               data: [
                 command.includes('keyDoesNotExist')
                   ? scenario === 'KWallet missing key'
-                  : scenario !== 'KWallet locked'
+                  : !(command.includes('isOpen') && scenario === 'KWallet locked')
               ]
             }
         return { status: 0, signal: null, stdout: JSON.stringify(value) }
