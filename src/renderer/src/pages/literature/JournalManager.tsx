@@ -44,7 +44,9 @@ import { useFileDropZone } from '@/hooks/useFileDropZone'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectSeparator,
   SelectTrigger,
   SelectValue
@@ -2632,11 +2634,18 @@ export const JournalManager = memo(function JournalManager({
               )}
             </p>
           ) : null}
-          <p className="text-xs text-muted-foreground">
-            {t(
-              'Original column and Example value come from your file. Import as controls matching or storing. Saved name and Value type apply to journal attributes. Skipped columns are not saved.'
-            )}
-          </p>
+          <div className="space-y-1 text-xs text-muted-foreground">
+            <p>
+              {t(
+                'Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table, such as impact factor or quartile.'
+              )}
+            </p>
+            <p>
+              {t(
+                'Saved name and Value type apply only to journal attributes. Skipped columns are not saved.'
+              )}
+            </p>
+          </div>
           {dataset ? (
             <label className="flex items-center gap-2 text-xs">
               {t('Existing values')}
@@ -2701,12 +2710,40 @@ export const JournalManager = memo(function JournalManager({
                           >
                             <SelectValue />
                           </SelectTrigger>
-                          <SelectContent>
-                            {Object.entries(roles).map(([value, label]) => (
-                              <SelectItem key={value} value={value}>
-                                {label}
+                          <SelectContent className="max-h-[min(28rem,var(--radix-select-content-available-height))] w-72 max-w-[calc(100vw-2rem)]">
+                            <SelectItem value="ignore" className="pl-4">
+                              {roles.ignore}
+                            </SelectItem>
+                            <SelectSeparator />
+                            <SelectGroup>
+                              <div className="mb-1 px-2 py-2">
+                                <SelectLabel className="p-0 text-xs font-semibold text-muted-foreground">
+                                  {t('Identify journals')}
+                                </SelectLabel>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {t('Used for matching, not as attribute columns.')}
+                                </p>
+                              </div>
+                              {(['name', 'alias', 'issn', 'externalId'] as const).map((value) => (
+                                <SelectItem key={value} value={value} className="pl-4">
+                                  {roles[value]}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                            <SelectSeparator />
+                            <SelectGroup>
+                              <div className="mb-1 px-2 py-2">
+                                <SelectLabel className="p-0 text-xs font-semibold text-muted-foreground">
+                                  {t('Save as attribute columns')}
+                                </SelectLabel>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {t('Show and filter these columns in the literature table.')}
+                                </p>
+                              </div>
+                              <SelectItem value="attribute" className="pl-4">
+                                {roles.attribute}
                               </SelectItem>
-                            ))}
+                            </SelectGroup>
                           </SelectContent>
                         </Select>
                       </td>
