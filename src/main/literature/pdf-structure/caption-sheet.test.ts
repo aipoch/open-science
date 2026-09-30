@@ -9,12 +9,49 @@ const { associateTableCaptions } = await import(
 const { findCaptionCandidates } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-caption-group.mjs')).href
 )
+const { trimTableCaptionCrop } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-geometry.mjs')).href
+)
 const load = (): ReturnType<typeof JSON.parse> =>
   readPdfFixture(
     'src/main/literature/pdf-structure/fixtures/source-grids/separate-caption-sheet-with-spaced-paragraph.jsonl'
   )
 const parse = (f: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
   associateTableCaptions(f.pages[0], f.tables, findCaptionCandidates(f.pages), f.rules, f.pages)[0]
+
+it.each(['above', 'below'])(
+  'does not use foreign caption-sheet coordinates to trim the %s table margin',
+  (position) => {
+    const f = load(),
+      caption = parse(f).caption,
+      source = structuredClone(caption)
+    const top = position === 'above' ? caption.rect[3] + 20 : caption.rect[1] - 40,
+      bottom = position === 'above' ? top + 100 : caption.rect[1] - 20,
+      table = {
+        cropRect: [60, Math.max(0, (top - 30) * 1.5), 740, (bottom + 30) * 1.5],
+        cells: [{ sourceRects: [[80, top * 1.5, 720, bottom * 1.5]] }],
+        unassigned: []
+      },
+      cropRect = [...table.cropRect],
+      original = structuredClone(table)
+    const args = {
+      cropRect,
+      table,
+      caption,
+      contentRect: [60, top, 740, bottom],
+      rules: [],
+      pageNumber: f.pages[0].pageNumber,
+      scale: 1.5
+    }
+    trimTableCaptionCrop(args)
+    expect(cropRect).toEqual(table.cropRect)
+    expect(caption).toEqual(source)
+    // The same coordinates remain meaningful for a caption on the table page.
+    trimTableCaptionCrop({ ...args, caption: { ...caption, page: args.pageNumber } })
+    expect(cropRect).not.toEqual(table.cropRect)
+    expect(table).toEqual(original)
+  }
+)
 
 it.each([0.7, 1, 1.8])(
   'retains the complete caption sheet and its actual page at scale %s',

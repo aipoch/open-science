@@ -39,7 +39,7 @@ import { deduplicateTableRegions } from './literature-pdf-table-regions.mjs'
 import { isFigureRiskTable } from './literature-pdf-table-evidence.mjs'
 import {
   recoverOwnedTableCrop,
-  tableCaptionCropTop,
+  trimTableCaptionCrop,
   tableMarginCropTop
 } from './literature-pdf-table-geometry.mjs'
 import { recoverWrappedCountTable } from './literature-pdf-wrapped-count-grid.mjs'
@@ -697,15 +697,15 @@ try {
           rules,
           1.5
         )
-        // Glyph outlines can extend beyond their font-metric boxes. Cut inside
-        // the measured caption/content gap instead of hugging the caption.
-        if (caption && caption.rect[3] <= contentRects[index][1])
-          cropRect[1] = Math.max(
-            cropRect[1],
-            tableCaptionCropTop(table, caption.rect[3] * 1.5, rules)
-          )
-        if (caption && caption.rect[1] >= contentRects[index][3])
-          cropRect[3] = Math.min(cropRect[3], (caption.rect[1] - 1) * 1.5)
+        trimTableCaptionCrop({
+          cropRect,
+          table,
+          caption,
+          contentRect: contentRects[index],
+          rules,
+          pageNumber,
+          scale: 1.5
+        })
         for (const note of notes[index]) {
           if (note.rect[1] >= contentRects[index][3])
             cropRect[3] = Math.min(cropRect[3], note.rect[1] * 1.5 - 1)

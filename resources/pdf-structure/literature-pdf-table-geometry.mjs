@@ -75,6 +75,27 @@ export function tableCaptionCropTop(table, captionBottom, rules) {
   return Math.max(table.cropRect[1], top)
 }
 
+// Caption/content bounds are in page space; thumbnail bounds and rules are scaled.
+export function trimTableCaptionCrop({
+  cropRect,
+  table,
+  caption,
+  contentRect,
+  rules,
+  pageNumber,
+  scale
+}) {
+  // A caption sheet can be associated from another page; its coordinates
+  // cannot delimit this table page's thumbnail.
+  if (!caption || caption.page !== pageNumber) return
+  // Glyph outlines can extend beyond their font-metric boxes. Cut inside
+  // the measured caption/content gap instead of hugging the caption.
+  if (caption.rect[3] <= contentRect[1])
+    cropRect[1] = Math.max(cropRect[1], tableCaptionCropTop(table, caption.rect[3] * scale, rules))
+  if (caption.rect[1] >= contentRect[3])
+    cropRect[3] = Math.min(cropRect[3], (caption.rect[1] - 1) * scale)
+}
+
 // Repeated page furniture has already been excluded from source tokens. Use
 // that same ownership evidence to trim detector padding above a continuation.
 export function tableMarginCropTop(table, originalPage, contentPage, rules, scale) {

@@ -1608,6 +1608,26 @@ it('requires punctuation and title text for an unnumbered table label', () => {
   }
 })
 
+it.each([
+  ['TABLE', 'table'],
+  ['table', 'table'],
+  ['tAbLe', 'table'],
+  ['FIGURE', 'figure'],
+  ['figure', 'figure'],
+  ['fIgUrE', 'figure']
+])('recognizes an explicit unnumbered %s label without loosening title evidence', (label, kind) => {
+  const text = `${label}: Baseline characteristics`,
+    page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      lines: [{ text, x: 50, y: 50, width: 180, height: 10, fontSize: 10 }]
+    }
+  expect(captionKind(text)).toBe(kind)
+  expect(findCaptionCandidates([page])[0]?.lines).toEqual([text])
+  expect(captionKind(`${label}. shows the patient characteristics.`)).toBeUndefined()
+})
+
 it('keeps stacked titles with their tables when a header rule precedes the predicted rows', () => {
   const page = { pageNumber: 173, height: 841.89, lines: [] }
   const tables = [

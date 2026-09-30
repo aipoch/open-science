@@ -200,8 +200,9 @@ export function captionKind(text) {
   if (/^Appendix\s+[A-Z][.:]\s+(?:CONSORT\s+)?(?:flow diagram|flowchart)\.?$/i.test(text ?? ''))
     return 'figure'
   // Single-table articles can use an explicit label without a sequence number.
-  if (/^(?:Table|Figure)[.:]\s+\p{Lu}\p{L}/u.test(text))
-    return /^Table/.test(text) ? 'table' : 'figure'
+  const unnumbered = /^(Table|Figure)[.:]\s+/i.exec(text)
+  if (unnumbered && /^\p{Lu}\p{L}/u.test(text.slice(unnumbered[0].length)))
+    return unnumbered[1].toLowerCase() === 'table' ? 'table' : 'figure'
   if (/^(?:Figure|Fig\.?)\s+[AS]?\d+\s*[—–-]\s*Continued\.?$/i.test(text)) return 'figure'
   if (/^Figure\s+(?:[n▪■]\s+)?(?:Flow diagram|Flowchart)\b/.test(text ?? '')) return 'figure'
   // Pathology journals use decorated Image labels; a closing marker followed
