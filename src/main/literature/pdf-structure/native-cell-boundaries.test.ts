@@ -5,6 +5,9 @@ import { readPdfFixture } from './read-fixture'
 const { refineTable } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
 )
+const { recoverClosedCellGrid } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-ruled-column-grid.mjs')).href
+)
 const run = (name: string): ReturnType<typeof JSON.parse> => {
   const x = readPdfFixture(
     resolve('src/main/literature/pdf-structure/fixtures/source-grids', name + '.jsonl')
@@ -63,6 +66,28 @@ it('preserves section labels and the final record of a single-column ruled table
   expect(t.grid.at(-1)).toEqual([
     'No radiation treatments actually received within 90 days of breast cancer surgery'
   ])
+})
+it('declines a horizontal-only grid without predicted columns while preserving its native input', () => {
+  const x = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/source-grids/ruled-single-column-milestones.jsonl'
+    )
+  )
+  x.table.structure.objects = x.table.structure.objects.filter(
+    (o: { label: string }) => o.label !== 'table column'
+  )
+  const before = structuredClone(x)
+  expect(recoverClosedCellGrid(x.table, x.tokens, x.captions, x.rules)).toBeUndefined()
+  const t = refineTable(x.table, x.tokens, x.captions, [], x.rules)
+  expect(t.cells).toEqual([])
+  expect(t.issues).toContain('missing-row-or-column')
+  expect(t.unassigned).toEqual(
+    expect.arrayContaining([
+      'Lung Cancer',
+      'No radiation treatments actually received within 90 days of breast cancer surgery'
+    ])
+  )
+  expect(x).toEqual(before)
 })
 it('keeps a long final record within its complete native cell band', () => {
   const t = run('segmented-shaded-cells-long-final-record')

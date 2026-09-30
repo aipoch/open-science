@@ -546,7 +546,7 @@ export function populateTableCellText({
   // lowercase continuations in the same column. A new record or a note below
   // the rule cannot extend this cell.
   const lastRow = rows.at(-1)
-  if (lastRow) {
+  if (lastRow && columnRects.length) {
     const closing = rules
       .filter(
         (r) =>

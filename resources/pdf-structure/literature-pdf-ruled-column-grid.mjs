@@ -921,6 +921,7 @@ export function recoverClosedCellGrid(table, items, captions, rules) {
   const singleColumn =
     !vertical.length &&
     captioned &&
+    predicted.length > 0 &&
     predicted.length <= 2 &&
     (predicted.length === 1 ||
       Math.min(predicted[0].rect[2], predicted[1].rect[2]) -
