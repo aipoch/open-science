@@ -133,6 +133,16 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "来自 CELLxGENE Discover 的公开集合、数据集、版本和文件下载链接。",
+    "Search public CELLxGENE Discover collections.": "搜索 CELLxGENE Discover 公开集合。",
+    "Retrieve collection metadata and a page of datasets.": "获取集合元数据和一页数据集。",
+    "Search public single-cell datasets by metadata.": "按元数据搜索公开单细胞数据集。",
+    "Retrieve dataset metadata and file links.": "获取数据集元数据和文件链接。",
+    "List published collection versions.": "列出已发布的集合版本。",
+    "Retrieve a specific collection version.": "获取指定集合版本。",
+    "List published dataset versions.": "列出已发布的数据集版本。",
+    "Retrieve a specific dataset version.": "获取指定数据集版本。",
+    "List dataset file formats, sizes and download URLs without downloading files.": "列出数据集文件的格式、大小和下载 URL，不下载文件。",
     "Export anyway": "仍然导出",
     "I understand the risk and want to export anyway": "我理解风险，仍要导出",
     "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "此包可能包含凭据或私人信息。仍然导出会原样包含被标记的内容，不进行脱敏。分享前请检查导出包。",

@@ -134,6 +134,16 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
+    "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Öffentliche Sammlungen, Datensätze, Versionen und Datei-Downloadlinks von CELLxGENE Discover.",
+    "Search public CELLxGENE Discover collections.": "Öffentliche Sammlungen in CELLxGENE Discover suchen.",
+    "Retrieve collection metadata and a page of datasets.": "Sammlungsmetadaten und eine Seite mit Datensätzen abrufen.",
+    "Search public single-cell datasets by metadata.": "Öffentliche Einzelzell-Datensätze anhand von Metadaten suchen.",
+    "Retrieve dataset metadata and file links.": "Datensatzmetadaten und Dateilinks abrufen.",
+    "List published collection versions.": "Veröffentlichte Sammlungsversionen auflisten.",
+    "Retrieve a specific collection version.": "Eine bestimmte Sammlungsversion abrufen.",
+    "List published dataset versions.": "Veröffentlichte Datensatzversionen auflisten.",
+    "Retrieve a specific dataset version.": "Eine bestimmte Datensatzversion abrufen.",
+    "List dataset file formats, sizes and download URLs without downloading files.": "Dateiformate, Größen und Download-URLs eines Datensatzes auflisten, ohne Dateien herunterzuladen.",
     "Export anyway": "Trotzdem exportieren",
     "I understand the risk and want to export anyway": "Ich verstehe das Risiko und möchte trotzdem exportieren",
     "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "Dieses Paket kann Zugangsdaten oder private Informationen enthalten. Beim Exportieren werden die markierten Inhalte ohne Schwärzung eingeschlossen. Prüfen Sie das Paket, bevor Sie es teilen.",

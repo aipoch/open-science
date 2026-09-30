@@ -136,6 +136,16 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Общедоступные коллекции, наборы данных, версии и ссылки на скачивание файлов из CELLxGENE Discover.",
+    "Search public CELLxGENE Discover collections.": "Поиск общедоступных коллекций CELLxGENE Discover.",
+    "Retrieve collection metadata and a page of datasets.": "Получение метаданных коллекции и одной страницы наборов данных.",
+    "Search public single-cell datasets by metadata.": "Поиск общедоступных данных отдельных клеток по метаданным.",
+    "Retrieve dataset metadata and file links.": "Получение метаданных набора данных и ссылок на файлы.",
+    "List published collection versions.": "Список опубликованных версий коллекции.",
+    "Retrieve a specific collection version.": "Получение определённой версии коллекции.",
+    "List published dataset versions.": "Список опубликованных версий набора данных.",
+    "Retrieve a specific dataset version.": "Получение определённой версии набора данных.",
+    "List dataset file formats, sizes and download URLs without downloading files.": "Список форматов, размеров и URL для скачивания файлов набора данных без загрузки файлов.",
     "Export anyway": "Всё равно экспортировать",
     "I understand the risk and want to export anyway": "Я понимаю риск и хочу продолжить экспорт",
     "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "Этот пакет может содержать учётные данные или личную информацию. При продолжении экспорта отмеченное содержимое будет включено без скрытия. Проверьте пакет перед передачей другим.",

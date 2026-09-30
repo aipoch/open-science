@@ -133,6 +133,16 @@
     "More items": "更多會話"
   },
   "renderer": {
+    "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "來自 CELLxGENE Discover 的公開集合、資料集、版本與檔案下載連結。",
+    "Search public CELLxGENE Discover collections.": "搜尋 CELLxGENE Discover 公開集合。",
+    "Retrieve collection metadata and a page of datasets.": "取得集合中繼資料與一頁資料集。",
+    "Search public single-cell datasets by metadata.": "依中繼資料搜尋公開單細胞資料集。",
+    "Retrieve dataset metadata and file links.": "取得資料集中繼資料與檔案連結。",
+    "List published collection versions.": "列出已發布的集合版本。",
+    "Retrieve a specific collection version.": "取得指定集合版本。",
+    "List published dataset versions.": "列出已發布的資料集版本。",
+    "Retrieve a specific dataset version.": "取得指定資料集版本。",
+    "List dataset file formats, sizes and download URLs without downloading files.": "列出資料集檔案的格式、大小與下載 URL，不下載檔案。",
     "Export anyway": "仍然匯出",
     "I understand the risk and want to export anyway": "我理解風險，仍要匯出",
     "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "此套件可能包含憑證或私人資訊。仍然匯出會原樣包含被標記的內容，不進行遮蔽。分享前請檢查匯出套件。",

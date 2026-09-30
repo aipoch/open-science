@@ -133,6 +133,16 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "CELLxGENE Discover の公開コレクション、データセット、バージョン、ファイルのダウンロードリンク。",
+    "Search public CELLxGENE Discover collections.": "CELLxGENE Discover の公開コレクションを検索します。",
+    "Retrieve collection metadata and a page of datasets.": "コレクションのメタデータとデータセットを1ページ取得します。",
+    "Search public single-cell datasets by metadata.": "メタデータで公開シングルセルデータセットを検索します。",
+    "Retrieve dataset metadata and file links.": "データセットのメタデータとファイルリンクを取得します。",
+    "List published collection versions.": "公開済みのコレクションバージョンを一覧表示します。",
+    "Retrieve a specific collection version.": "指定したコレクションバージョンを取得します。",
+    "List published dataset versions.": "公開済みのデータセットバージョンを一覧表示します。",
+    "Retrieve a specific dataset version.": "指定したデータセットバージョンを取得します。",
+    "List dataset file formats, sizes and download URLs without downloading files.": "ファイルをダウンロードせずに、データセットのファイル形式、サイズ、ダウンロード URL を一覧表示します。",
     "Export anyway": "リスクを承知でエクスポート",
     "I understand the risk and want to export anyway": "リスクを理解した上でエクスポートします",
     "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "このパッケージには認証情報や個人情報が含まれている可能性があります。続行すると、検出された内容がマスクされずに含まれます。共有する前にパッケージを確認してください。",

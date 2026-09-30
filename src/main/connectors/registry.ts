@@ -5,6 +5,7 @@ import { BIOMART_TOOLS } from './descriptors/biomart'
 import { BIORXIV_TOOLS } from './descriptors/biorxiv'
 import { CANCER_MODELS_TOOLS } from './descriptors/cancer-models'
 import { CELLGUIDE_TOOLS } from './descriptors/cellguide'
+import { CELLXGENE_DISCOVER_TOOLS } from './descriptors/cellxgene-discover'
 import { CHEMBL_TOOLS } from './descriptors/chembl'
 import { CHEMISTRY_TOOLS } from './descriptors/chemistry'
 import { CLINICAL_GENOMICS_TOOLS } from './descriptors/clinical-genomics'
@@ -39,6 +40,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...BIORXIV_TOOLS,
   ...CANCER_MODELS_TOOLS,
   ...CELLGUIDE_TOOLS,
+  ...CELLXGENE_DISCOVER_TOOLS,
   ...CHEMBL_TOOLS,
   ...CHEMISTRY_TOOLS,
   ...CLINICAL_GENOMICS_TOOLS,

@@ -5,6 +5,11 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'cellxgene-discover') {
+    return t(
+      'Public collections, datasets, versions and file download links from CELLxGENE Discover.'
+    )
+  }
   if (connector.id === 'interproscan') {
     return t('InterProScan job status and TSV result retrieval via EMBL-EBI.')
   }
@@ -48,6 +53,24 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'cellxgene-discover/list_collections':
+      return t('Search public CELLxGENE Discover collections.')
+    case 'cellxgene-discover/get_collection':
+      return t('Retrieve collection metadata and a page of datasets.')
+    case 'cellxgene-discover/list_datasets':
+      return t('Search public single-cell datasets by metadata.')
+    case 'cellxgene-discover/get_dataset':
+      return t('Retrieve dataset metadata and file links.')
+    case 'cellxgene-discover/list_collection_versions':
+      return t('List published collection versions.')
+    case 'cellxgene-discover/get_collection_version':
+      return t('Retrieve a specific collection version.')
+    case 'cellxgene-discover/list_dataset_versions':
+      return t('List published dataset versions.')
+    case 'cellxgene-discover/get_dataset_version':
+      return t('Retrieve a specific dataset version.')
+    case 'cellxgene-discover/list_dataset_files':
+      return t('List dataset file formats, sizes and download URLs without downloading files.')
     case 'variants/mavedb_search_score_sets':
       return t('Search public MaveDB functional score sets.')
     case 'variants/mavedb_get_score_set':

@@ -7,6 +7,8 @@ import {
   ALL_CONNECTOR_IDS
 } from './registry'
 import { CONNECTOR_CATALOG } from './catalog'
+import { ParserEngine } from './engine'
+import { CELLXGENE_DISCOVER_TOOLS } from './descriptors/cellxgene-discover'
 import { renderSkillDoc } from './skill-doc'
 import { WORKBENCH_OMICS_TOOLS } from './descriptors/omics-workbench'
 import { VARIANTS_MAVEDB_TOOLS } from './descriptors/variants-mavedb'
@@ -498,4 +500,73 @@ describe('MaveDB registration and input contracts', () => {
       validateToolArguments(tool('search_score_sets'), { text: 'BRCA1', published: false })
     ).toThrow(/invalid_arguments/)
   })
+})
+
+describe('CELLxGENE Discover registration and input contracts', () => {
+  const C = '9a71db9e-687f-41f0-b88e-544eb1314ef6'
+  const D = '0bbf93aa-2d3a-420f-95a1-26fe384024cb'
+  const DV = '8e0fcb64-735c-4fcb-a74b-12a3518683d1'
+
+  it('registers nine tools separately from CellGuide and documents the acquisition workflow', () => {
+    expect(getConnectorTools('cellxgene-discover')).toEqual(CELLXGENE_DISCOVER_TOOLS)
+    expect(CELLXGENE_DISCOVER_TOOLS).toHaveLength(9)
+    expect(getConnectorTools('cellguide')).toHaveLength(5)
+    expect(CONNECTOR_CATALOG.find((c) => c.id === 'cellxgene-discover')).toMatchObject({
+      requiresNcbi: false
+    })
+    const doc = renderSkillDoc('cellxgene-discover')
+    for (const t of CELLXGENE_DISCOVER_TOOLS) {
+      expect(doc).toContain(t.id)
+      expect(t.returns).toBeTruthy()
+      const args = JSON.parse(t.example!.slice(t.example!.lastIndexOf(', {') + 2, -1))
+      expect(() => validateToolArguments(t, args)).not.toThrow()
+    }
+    expect(doc).toContain('client-side')
+    expect(doc).toContain('Census')
+    expect(doc).toContain('dataset_version_id')
+    expect(doc).toContain('can return historical datasets')
+  })
+
+  it.each([{ dataset_version_id: DV }, { collection_id: C, dataset_id: D }])(
+    'accepts either file inventory identity: %j',
+    (args) => {
+      expect(() =>
+        validateToolArguments(getDescriptor('cellxgene-discover', 'list_dataset_files')!, args)
+      ).not.toThrow()
+    }
+  )
+
+  it.each([
+    ['list_collections', { page: 0 }],
+    ['list_collections', { page_size: 101 }],
+    ['list_datasets', { page_size: 1.5 }],
+    ['list_datasets', { query: '  ' }],
+    ['list_datasets', { schema_version: '7&visibility=PRIVATE' }],
+    ['list_datasets', { visibility: 'PRIVATE' }],
+    ['get_collection', { collection_id: '../private' }],
+    ['get_dataset', { dataset_id: D }],
+    ['get_dataset_version', { dataset_version_id: `${DV}?other=1` }],
+    ['list_dataset_files', { collection_id: C }],
+    ['list_dataset_files', { dataset_id: D, dataset_version_id: DV }],
+    ['list_dataset_files', { dataset_version_id: null }],
+    ['list_dataset_files', { dataset_version_id: DV, extra: true }],
+    ['list_dataset_files', {}],
+    ['list_dataset_files', { dataset_id: D }],
+    ['list_dataset_files', { collection_id: C, dataset_version_id: DV }],
+    ['list_dataset_files', { collection_id: C, dataset_id: D, dataset_version_id: DV }]
+  ])(
+    'rejects invalid or ambiguous %s arguments before making a request: %j',
+    async (method, args) => {
+      const fetchImpl = vi.fn()
+      const engine = new ParserEngine({ fetchImpl })
+      const tool = getDescriptor('cellxgene-discover', method)!
+      await expect(
+        Promise.resolve().then(() => {
+          validateToolArguments(tool, args)
+          return engine.call(tool, args, {})
+        })
+      ).rejects.toThrow('invalid_arguments')
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
 })
