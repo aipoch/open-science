@@ -1373,7 +1373,8 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/file-type-icon.test.ts',
           'src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts',
           'src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx',
-          'src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx'
+          'src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx',
+          'src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx'
         ]
       },
       capabilityOverlays: ['renderer_state'],
