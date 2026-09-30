@@ -347,6 +347,7 @@ const prepareShellLaunchOptions = async (
 
   let shellEnv: NodeJS.ProcessEnv
   let workloadCacheEnv: NodeJS.ProcessEnv
+  let npmReadRoots: string[] = []
   try {
     workloadCacheEnv = prepareNotebookWorkloadCache(options.runtimeRoot)
     shellEnv = options.environment
@@ -358,6 +359,10 @@ const prepareShellLaunchOptions = async (
           options.runtimeRoot,
           workloadCacheEnv
         )
+    // Resolve host npm before injecting the workload-writable global bin into PATH.
+    if (options.processSandbox && runtimeBinding.kind === 'native-posix') {
+      npmReadRoots = shellNpmReadRoots(shellEnv, runtimePlatform)
+    }
     shellEnv = prepareShellNpmEnvironment(options.runtimeRoot, runtimePlatform, shellEnv)
     if (options.inputRoot) shellEnv.OPEN_SCIENCE_INPUT_DIR = options.inputRoot
     else delete shellEnv.OPEN_SCIENCE_INPUT_DIR
@@ -415,10 +420,7 @@ const prepareShellLaunchOptions = async (
                     dirname(invocation.executable),
                     ...(runtimePlatform === 'win32'
                       ? []
-                      : [
-                          ...environmentPathRoots(baseEnv, runtimePlatform),
-                          ...shellNpmReadRoots(baseEnv, runtimePlatform)
-                        ])
+                      : [...environmentPathRoots(baseEnv, runtimePlatform), ...npmReadRoots])
                   ])
             ],
             ...(runtimePlatform === 'win32'

@@ -207,6 +207,21 @@ console.log(JSON.stringify(result))
         await expect(access(join(protectedRoot, 'pwn.txt'))).rejects.toMatchObject({
           code: 'ENOENT'
         })
+        // A workload-created launcher must not turn its private symlink target into a host grant.
+        await symlink(join(hostNpm, 'bin', 'npm-cli.js'), join(prefix, 'bin', 'npm'))
+        const redirected = await adapter.execute(request('npm', 'redirected-global-npm'))
+        expect(redirected.exitCode).toBeGreaterThan(0)
+        const probe = await adapter.execute(
+          request(
+            `${quote(process.execPath)} -e ${quote(
+              `try { require('node:fs').readFileSync(${JSON.stringify(join(hostNpm, 'package.json'))}); console.log('allowed') } catch (error) { console.log(error.code) }`
+            )}`,
+            'redirected-global-npm'
+          )
+        )
+        expect(probe, JSON.stringify(probe)).toMatchObject({ exitCode: 0 })
+        expect(probe.stdout.trim()).toMatch(/^(EPERM|EACCES)$/)
+        expect(redirected.stdout).not.toContain('"package":"npm"')
       }
     }
   )
