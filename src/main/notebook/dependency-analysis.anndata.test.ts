@@ -66,6 +66,89 @@ it('does not confuse a module text reader with a Path method', async () => {
   })
 })
 
+it('captures direct pyplot plotting as a known read', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'import matplotlib.pyplot as plt',
+        'plt.plot([0, 1, 2], [0, 1, 4])',
+        'plt.scatter([0, 1, 2], [0, 1, 4])',
+        'plt.bar([0, 1], [2, 3])',
+        'plt.hist([0, 1, 1, 2])',
+        'plt.errorbar([0, 1], [2, 3], yerr=[0.1, 0.2])',
+        'plt.xlabel("value")',
+        'plt.ylabel("count")',
+        'plt.legend()'
+      ].join('\n')
+    )
+  ).toMatchObject({
+    readState: 'complete',
+    writeState: 'complete',
+    externalState: 'complete',
+    reads: [],
+    writes: []
+  })
+})
+
+it('captures PIL image construction and output lineage', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'import numpy as np',
+        'from PIL import Image',
+        'import matplotlib.pyplot as plt',
+        'mask = Image.fromarray(np.zeros((2, 2), dtype=np.uint8))',
+        'mask.save("outputs/mask.png")',
+        'plt.imshow(mask, cmap="gray")',
+        'plt.axis("off")'
+      ].join('\n')
+    )
+  ).toMatchObject({
+    readState: 'complete',
+    writeState: 'complete',
+    externalState: 'complete',
+    reads: [],
+    writes: ['outputs/mask.png']
+  })
+})
+
+it('tracks conservative AnnData mutation evidence across Scanpy namespaces', async () => {
+  const scripts = [
+    'import anndata as ad\nimport scanpy as sc\nadata = ad.read_h5ad("inputs/cells.h5ad")',
+    'sc.pp.normalize_total(adata)\nsc.pp.log1p(adata)\nsc.tl.pca(adata)\nsc.pl.umap(adata)',
+    'print(adata.obs.head())'
+  ]
+  const facts = await analyzePythonSources(scripts)
+  expect(facts[1]).toMatchObject({
+    pythonPlottingState: { reads: true },
+    receiverCalls: expect.arrayContaining([
+      expect.objectContaining({ receiver: 'sc', member: 'normalize_total' })
+    ])
+  })
+})
+
+it('recognizes local Visium objects and spatial plotting across notebook cells', async () => {
+  const scripts = [
+    'import scanpy as sc\nadata = sc.read_visium("inputs/visium_sample")',
+    'sc.pp.normalize_total(adata)\nsc.pl.spatial(adata, color="gene_a")',
+    'adata.write_h5ad("outputs/visium.h5ad")'
+  ]
+  const facts = await analyzePythonSources(scripts)
+  expect(facts[0]?.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'adata', typeName: 'anndata.AnnData' })
+    ])
+  )
+  expect(facts[1]).toMatchObject({
+    pythonPlottingState: { reads: true },
+    receiverCalls: expect.arrayContaining([
+      expect.objectContaining({ receiver: 'sc', member: 'spatial' })
+    ])
+  })
+})
+
 it.each([
   ['write_h5ad', '', 'stale'],
   ['write', '', 'stale'],

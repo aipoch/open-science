@@ -1590,6 +1590,30 @@ describe('working-file evidence', () => {
     })
   })
 
+  it('downgrades evidence when execution stops before the notebook completes', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: 'from pathlib import Path\nPath("failed.csv").write_text("partial")',
+        language: 'python',
+        runId: 'run-incomplete-execution'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'failed.csv'), 'partial')
+
+    const result = await observation.finish(undefined, 'incomplete')
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'partial',
+      writerAttribution: 'partial',
+      reasonCodes: expect.arrayContaining(['execution-incomplete'])
+    })
+  })
+
   it.each([
     [
       'Python',
@@ -1640,7 +1664,7 @@ describe('working-file evidence', () => {
     }
   )
 
-  it('keeps a multi-step local file wrapper conservative', async () => {
+  it('captures a multi-step local file wrapper', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const observation = await startWorkingFileObservation(
       {
@@ -1664,9 +1688,11 @@ describe('working-file evidence', () => {
     const result = await observation.finish()
 
     expect(result.fileEvidence).toMatchObject({
-      state: 'partial',
-      writerAttribution: 'partial',
-      reasonCodes: expect.arrayContaining(['writer-not-isolated'])
+      state: 'available',
+      fileReads: 'complete',
+      externalPaths: 'complete',
+      writerAttribution: 'complete',
+      reasonCodes: []
     })
   })
 

@@ -219,3 +219,103 @@ describe('scientific storage modes', () => {
     }
   )
 })
+
+it('records a writable NumPy load as both input and possible output', async () => {
+  const result = await analyzeNotebookSourceFileAccess(
+    'python',
+    "import numpy as np\nmm = np.load('profiles.npy', mmap_mode='r+', allow_pickle=False)\nmm[:] = 2\nmm.flush()"
+  )
+  expect(result.reads).toContain('profiles.npy')
+  expect(result.writes).toContain('profiles.npy')
+})
+
+it.each([
+  ["np.load('profiles.npy')", false],
+  ["np.load(file='profiles.npy', mmap_mode=None)", false],
+  ["np.load('profiles.npy', 'r')", false],
+  ["np.load('profiles.npy', mmap_mode='c')", false],
+  ["np.load('profiles.npy', 'r+')", true],
+  ["np.load(file='profiles.npy', mmap_mode='w+')", true],
+  ["np.memmap('profiles.npy', mode='c')", false],
+  ["np.lib.format.open_memmap('profiles.npy', mode='c')", false],
+  ["np.lib.format.open_memmap('profiles.npy')", true]
+])('distinguishes persistent and private NumPy mappings: %s', async (call, writable) => {
+  const result = await analyzeNotebookSourceFileAccess('python', `import numpy as np\na = ${call}`)
+  expect(result.reads).toContain('profiles.npy')
+  expect(result.writes).toEqual(writable ? ['profiles.npy'] : [])
+})
+it('recognizes imported mapping aliases without claiming a write already happened', async () => {
+  const result = await analyzeNotebookSourceFileAccess(
+    'python',
+    "from numpy.lib.format import open_memmap as mapping\na = mapping(filename='profiles.npy', mode='r+')\nb = mapping(filename='profiles.npy', mode='r')"
+  )
+  expect(result.reads).toEqual(['profiles.npy'])
+  expect(result.writes).toEqual(['profiles.npy'])
+})
+it.each(['mmap_mode=unknown_mode', '**options'])(
+  'keeps dynamic NumPy mapping modes uncertain: %s',
+  async (option) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      `import numpy as np\na=np.load('profiles.npy',${option})`
+    )
+    expect(result.reads).toContain('profiles.npy')
+    expect(result.writeState).toBe('partial')
+  }
+)
+it('does not infer NumPy mapping effects after its loader is shadowed', async () => {
+  const result = await analyzeNotebookSourceFileAccess(
+    'python',
+    "from numpy import load\nload = custom_loader\na = load('profiles.npy', mmap_mode='r+')"
+  )
+  expect(result.writes).toEqual([])
+  expect(result.reads).toEqual([])
+})
+
+it.each([
+  "import sqlite3\ncon = sqlite3.connect('outputs/checkpoint.sqlite')",
+  "import sqlite3 as db\nfrom pathlib import Path\np=Path('outputs') / 'checkpoint.sqlite'\ncon=db.connect(database=p, uri=False)",
+  "from sqlite3 import connect as connect_db\ncon=connect_db('outputs/checkpoint.sqlite')"
+])(
+  'retains an ordinary SQLite checkpoint as potential input/output without claiming complete SQL capture: %s',
+  async (code) => {
+    const result = await analyzeNotebookSourceFileAccess('python', code)
+    expect({
+      ...result,
+      reads: result.reads.map((p) => p.replaceAll('\\', '/')),
+      writes: result.writes.map((p) => p.replaceAll('\\', '/'))
+    }).toMatchObject({
+      reads: ['outputs/checkpoint.sqlite'],
+      writes: ['outputs/checkpoint.sqlite'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  }
+)
+it.each([
+  "sqlite3.connect(':memory:')",
+  "sqlite3.connect('')",
+  "sqlite3.connect('file:cache?mode=memory', uri=True)",
+  'sqlite3.connect(path)',
+  "sqlite3.connect('checkpoint.sqlite', uri=unknown)",
+  "sqlite3.connect('checkpoint.sqlite', **options)",
+  "sqlite3.connect('checkpoint.sqlite', factory=custom)",
+  "sqlite3.connect('file:cache?mode=memory', 5, 0, None, True, custom, 128, True)"
+])(
+  'does not invent a disk path for unresolved, in-memory or custom SQLite connections: %s',
+  async (call) => {
+    const result = await analyzeNotebookSourceFileAccess('python', `import sqlite3\ncon=${call}`)
+    expect(result.reads).toEqual([])
+    expect(result.writes).toEqual([])
+    expect(result.externalState).toBe('partial')
+  }
+)
+it('does not apply SQLite effects after the imported constructor is rebound', async () => {
+  const result = await analyzeNotebookSourceFileAccess(
+    'python',
+    "from sqlite3 import connect\nconnect=custom\ncon=connect('checkpoint.sqlite')"
+  )
+  expect(result.reads).toEqual([])
+  expect(result.writes).toEqual([])
+})

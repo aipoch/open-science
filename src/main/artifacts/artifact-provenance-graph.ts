@@ -61,7 +61,8 @@ const EXECUTION_FILE_EVIDENCE_REASONS = new Set<
   'compute-activity-lineage-missing',
   'dynamic-path-unresolved',
   'absolute-path-not-frozen',
-  'source-analysis-unsupported-call'
+  'source-analysis-unsupported-call',
+  'execution-incomplete'
 ])
 const SCIENTIFIC_OUTPUT_RISKS = new Set<ScientificOutputRisk>([
   'format-validity-not-verified',

@@ -5605,7 +5605,12 @@ const analyzeRSource = (
         )
       ) {
         safeCallNames.push(dependencyName)
-      } else unknown.push('function-scope', 'opaque-call')
+      } else {
+        unknown.push('function-scope', 'opaque-call')
+        // An unresolved callback still reads its binding (or selector expression).
+        // Keep that dependency without claiming its body or effects are understood.
+        walk(expr.args[resolvedCallbackIndex], false)
+      }
       for (let index = 0; index < expr.args.length; index += 1) {
         if (op === 'aggregate' && index === aggregateFormulaIndex(expr)) {
           walkDataMask(expr.args[index], true)
@@ -7683,6 +7688,31 @@ const analyzeRFileAccessTree = (
     }
     const name = rCalledName(expr)
     const qualified = rQualifiedCall(expr)
+    if (
+      (name === 'source' || name === 'sys.source') &&
+      (qualified?.package === 'base' || (!qualified && !shadowedQuotationNames.has(name)))
+    ) {
+      // The script is an explicit input, but evaluating its contents can perform
+      // arbitrary I/O. Never promote the entry path to a complete read/write set.
+      const parameters =
+        name === 'source'
+          ? ['file', 'local', 'echo', 'print.eval', 'exprs']
+          : ['file', 'envir', 'chdir', 'keep.source', 'keep.parse.data', 'toplevel.env']
+      const file = connectionArgument(expr, parameters, 'file')
+      const expressions = name === 'source' && connectionArgument(expr, parameters, 'exprs')
+      if (!expressions) {
+        const path = fileConnectionPath(file) ?? rStaticString(file, bindings, collections)
+        if (path && !definitelyWritten.has(path)) reads.add(path)
+      }
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      // source(exprs=...) does not force the unused file promise.
+      expr.args.forEach((argument) => {
+        if (!expressions || argument !== file) visit(argument)
+      })
+      return
+    }
     if (name === 'pheatmap') {
       const filename = connectionArgument(expr, R_PHEATMAP_PARAMETERS, 'filename')
       const path = filename && rStaticString(filename, bindings, collections)

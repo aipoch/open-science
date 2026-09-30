@@ -94,6 +94,73 @@ const medicalSingleFileSuffixes = [
   '.tiff'
 ]
 
+// Scanpy exposes its analysis namespaces as module properties (``sc.pp`` and
+// ``sc.tl``).  These calls commonly update AnnData in place, but most of them
+// also offer ``copy``/``inplace`` switches.  Keep the effect conservative: a
+// possible mutation is useful dependency evidence without claiming that every
+// invocation rewrites the input object.
+const scanpyAnnDataAnalysisMethods = Object.fromEntries(
+  [
+    'calculate_qc_metrics',
+    'filter_cells',
+    'filter_genes',
+    'highly_variable_genes',
+    'log1p',
+    'normalize_total',
+    'neighbors',
+    'regress_out',
+    'scale'
+  ].map((name) => [
+    name,
+    { effect: 'read', possiblyMutatesPositionalArgument: 0 } satisfies PythonLibraryMethodEffect
+  ])
+)
+
+const scanpyToolsMethods = Object.fromEntries(
+  ['leiden', 'louvain', 'pca', 'rank_genes_groups', 'score_genes', 'tsne', 'umap'].map((name) => [
+    name,
+    { effect: 'read', possiblyMutatesPositionalArgument: 0 } satisfies PythonLibraryMethodEffect
+  ])
+)
+
+const scanpyPlotMethods = Object.fromEntries(
+  ['dotplot', 'embedding', 'heatmap', 'matrixplot', 'spatial', 'tracksplot', 'umap', 'violin'].map(
+    (name) => [name, { effect: 'read', plottingState: 'read' } satisfies PythonLibraryMethodEffect]
+  )
+)
+
+const matplotlibPyplotPlotMethods = Object.fromEntries(
+  [
+    'axhline',
+    'axvline',
+    'axis',
+    'bar',
+    'barh',
+    'boxplot',
+    'errorbar',
+    'fill_between',
+    'hist',
+    'imshow',
+    'legend',
+    'plot',
+    'scatter',
+    'stackplot',
+    'step',
+    'stem',
+    'text',
+    'violinplot',
+    'xlabel',
+    'xlim',
+    'xticks',
+    'ylabel',
+    'ylim',
+    'yticks'
+  ].map((name) => [
+    name,
+    { effect: 'read', plottingState: 'read' } satisfies PythonLibraryMethodEffect
+  ])
+)
+
 // Static effects are deliberately limited to stable, documented behavior used by ordinary
 // scientific Notebook code. Unknown methods continue through the conservative receiver-call path.
 const containerMethods: Record<string, PythonLibraryMethodEffect> = {
@@ -166,6 +233,37 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       )
     )
   },
+  gzip: {
+    kind: 'module',
+    methods: {
+      open: { effect: 'read', returnType: 'gzip.GzipFile' }
+    }
+  },
+  'gzip.GzipFile': {
+    kind: 'type',
+    iterationTypes: ['python.string'],
+    methods: {
+      read: { effect: 'read', returnType: 'python.string' },
+      close: { effect: 'read' }
+    }
+  },
+  sqlite3: {
+    kind: 'module',
+    methods: {
+      connect: { effect: 'read', returnType: 'sqlite3.Connection' }
+    }
+  },
+  shutil: {
+    kind: 'module',
+    methods: {
+      // File lineage is recorded by the source-access analyzer below; these
+      // calls are otherwise ordinary local library operations.
+      copy: { effect: 'read' },
+      copy2: { effect: 'read' },
+      copyfile: { effect: 'read' },
+      copytree: { effect: 'read' }
+    }
+  },
   'pathlib.PurePath': {
     kind: 'type',
     unknownMethodsHaveExternalState: true,
@@ -179,13 +277,40 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       as_posix: { effect: 'read' },
       is_absolute: { effect: 'read' },
       is_relative_to: { effect: 'read' },
+      // Notebook agents commonly create local output directories before writing
+      // their artifacts. Treat this setup call as scoped filesystem scaffolding;
+      // concrete files are still captured by the subsequent writer.
+      mkdir: { effect: 'read' },
       relative_to: { effect: 'read', returnType: 'pathlib.PurePath' },
+      // Glob expansion observes directory contents. The source-file analyzer
+      // records the pattern as an input while keeping the run partial because
+      // the concrete members depend on the runtime directory.
+      glob: { effect: 'read', externalState: true },
       open: { effect: 'read' },
       // These do not mutate the path object. The file parser captures their receiver path.
       read_text: { effect: 'read' },
       read_bytes: { effect: 'read' },
       write_text: { effect: 'read' },
       write_bytes: { effect: 'read' }
+    }
+  },
+  'sqlite3.Connection': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {
+      cursor: { effect: 'read', returnType: 'sqlite3.Cursor' },
+      execute: { effect: 'read', returnType: 'sqlite3.Cursor' },
+      close: { effect: 'read' }
+    }
+  },
+  'sqlite3.Cursor': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    iterationTypes: ['python.object'],
+    methods: {
+      execute: { effect: 'read', returnType: 'sqlite3.Cursor' },
+      fetchall: { effect: 'read', returnType: 'python.container' },
+      close: { effect: 'read' }
     }
   },
   importlib: {
@@ -362,19 +487,17 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       DictReader: {
         effect: 'read',
         returnType: 'csv.DictReader',
-        possiblyMutatesFirstArgument: true,
         firstArgumentKeyword: 'f'
       },
       reader: {
         effect: 'read',
         returnType: 'csv.reader',
-        possiblyMutatesFirstArgument: true,
         firstArgumentKeyword: 'csvfile'
       }
     }
   },
-  'csv.DictReader': { kind: 'type', methods: {} },
-  'csv.reader': { kind: 'type', methods: {} },
+  'csv.DictReader': { kind: 'type', methods: {}, iterationTypes: ['python.mapping'] },
+  'csv.reader': { kind: 'type', methods: {}, iterationTypes: ['python.object'] },
   io: {
     kind: 'module',
     methods: {
@@ -1022,9 +1145,13 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
           'strip',
           'lstrip',
           'rstrip',
+          'split',
           'replace',
           'format'
-        ].map((name) => [name, { effect: 'read', returnType: 'python.string' }])
+        ].map((name) => [
+          name,
+          { effect: 'read', returnType: name === 'split' ? 'python.strings' : 'python.string' }
+        ])
       )
     }
   },
@@ -1041,6 +1168,16 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     kind: 'type',
     methods: containerMethods,
     iterationTypes: ['python.object']
+  },
+  'python.mapping': {
+    kind: 'type',
+    methods: {
+      get: { effect: 'read', returnType: 'python.string' },
+      items: { effect: 'read', returnType: 'python.container' },
+      keys: { effect: 'read', returnType: 'python.container' },
+      values: { effect: 'read', returnType: 'python.container' },
+      __getitem__: { effect: 'read', returnType: 'python.string' }
+    }
   },
   'pandas.ExcelFile': {
     kind: 'type',
@@ -1298,6 +1435,13 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       sum: { effect: 'read', returnType: 'pandas.DataFrame' }
     }
   },
+  'pandas.core.groupby.SeriesGroupBy': {
+    kind: 'type',
+    methods: {
+      mean: { effect: 'read', returnType: 'pandas.Series' },
+      sum: { effect: 'read', returnType: 'pandas.Series' }
+    }
+  },
   'pandas.Series': {
     kind: 'type',
     methods: {
@@ -1470,6 +1614,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'PIL.Image': {
     kind: 'module',
     methods: {
+      fromarray: { effect: 'read', returnType: 'PIL.Image.Image' },
       open: {
         effect: 'read',
         returnType: 'PIL.Image.Image',
@@ -1504,10 +1649,17 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     kind: 'module',
     methods: {
       ...annDataFileReaders,
+      '@pp': { effect: 'read', returnType: 'scanpy.pp' },
+      '@pl': { effect: 'read', returnType: 'scanpy.pl' },
+      '@tl': { effect: 'read', returnType: 'scanpy.tl' },
       read_10x_h5: { effect: 'read', returnType: 'anndata.AnnData' },
-      read_10x_mtx: { effect: 'read', returnType: 'anndata.AnnData' }
+      read_10x_mtx: { effect: 'read', returnType: 'anndata.AnnData' },
+      read_visium: { effect: 'read', returnType: 'anndata.AnnData' }
     }
   },
+  'scanpy.pp': { kind: 'module', methods: scanpyAnnDataAnalysisMethods },
+  'scanpy.pl': { kind: 'module', methods: scanpyPlotMethods },
+  'scanpy.tl': { kind: 'module', methods: scanpyToolsMethods },
   'anndata.AnnData': {
     kind: 'type',
     methods: {
@@ -1869,6 +2021,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'matplotlib.pyplot': {
     kind: 'module',
     methods: {
+      ...matplotlibPyplotPlotMethods,
       close: { effect: 'read' },
       '@rcParams': { effect: 'read', returnType: 'matplotlib.RcParams' },
       '@style': { effect: 'read', returnType: 'matplotlib.style' },

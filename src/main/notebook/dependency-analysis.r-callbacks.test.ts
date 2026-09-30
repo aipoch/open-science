@@ -8,6 +8,21 @@ import type { NotebookDependencyProjection } from './dependency-analysis-types'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import { rCallbackPlot } from './reported-r-callback.fixture'
 import { R_GGPLOT_GEOMS } from './dependency-analysis-r-evaluation'
+import { analyzeRNotebookSource } from './dependency-analysis-r'
+
+it.each([
+  'lapply(groups, fit_bird)',
+  'sapply(X=groups, FUN=fit_bird)',
+  'vapply(groups, fit_bird, numeric(1))',
+  'purrr::map(groups, fit_bird)',
+  'lapply <- custom; lapply(groups, fit_bird)'
+])('retains unresolved callback bindings without granting safe effects: %s', async (code) => {
+  const { facts } = await analyzeRNotebookSource(code)
+  expect(facts.priorUsedNames).toContain('fit_bird')
+  expect(facts.state).toBe('unknown')
+  expect(facts.safeCallNames).not.toContain('fit_bird')
+  expect((await analyzeNotebookSourceFileAccess('r', code)).readState).toBe('partial')
+})
 
 const project = async (scripts: string[]): Promise<NotebookDependencyProjection> => {
   const root = await mkdtemp(join(tmpdir(), 'r-callback-analysis-'))
@@ -37,6 +52,12 @@ const project = async (scripts: string[]): Promise<NotebookDependencyProjection>
     await rm(root, { recursive: true, force: true })
   }
 }
+
+it('retains callback selector dependencies without resolving dynamic dispatch', async () => {
+  const { facts } = await analyzeRNotebookSource('lapply(groups, callbacks[[choice]])')
+  expect(facts.priorUsedNames).toEqual(expect.arrayContaining(['callbacks', 'choice']))
+  expect(facts.state).toBe('unknown')
+})
 
 it.each([
   rCallbackPlot,
