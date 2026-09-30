@@ -196,3 +196,83 @@ for (const dark of [false, true]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   })
 }
+
+for (const width of [320, 375, 414, 768]) {
+  for (const dark of [false, true]) {
+    test(`Inbox Preview fits ${width}px in ${dark ? 'dark' : 'light'} mode`, async ({
+      page
+    }, testInfo) => {
+      await page.setViewportSize({ width, height: 850 })
+      await page.goto(`/library-workbench.html?inbox&zh${dark ? '&dark' : ''}`)
+      await expect(page.getByRole('list', { name: '收件箱' })).toBeVisible()
+      await expect(page.getByRole('button', { name: '收件箱', exact: true })).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true
+      )
+      await page
+        .getByRole('button', { name: 'Dose and timing effects of caffeine on subsequent sleep' })
+        .focus()
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('link', { name: 'PMID: 39377163' })).toBeVisible()
+      await page.getByRole('button', { name: '批量操作', exact: true }).click()
+      await page.getByRole('checkbox').first().check()
+      await expect(page.getByText('已选：1', { exact: true })).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true
+      )
+      await page.screenshot({
+        path: testInfo.outputPath(`inbox-${width}-${dark ? 'dark' : 'light'}.png`)
+      })
+    })
+  }
+}
+
+test('save card opens Inbox in the same Preview and review actions update the queue', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.goto('/library-workbench.html?inbox&card')
+  await page.getByRole('button', { name: 'Open Inbox', exact: true }).click()
+  const inbox = page.getByRole('list', { name: 'Inbox', exact: true })
+  await expect(inbox.getByRole('listitem')).toHaveCount(4)
+  await page.getByRole('button', { name: 'Open Inbox', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Library preview' })).toHaveCount(1)
+  await inbox.getByRole('button', { name: 'Dismiss', exact: true }).first().click()
+  await expect(inbox.getByRole('listitem')).toHaveCount(3)
+  await page.getByRole('button', { name: 'Undo', exact: true }).click()
+  await expect(inbox.getByRole('listitem')).toHaveCount(4)
+  await inbox.getByRole('button', { name: 'Accept', exact: true }).first().click()
+  await expect(inbox.getByRole('listitem')).toHaveCount(3)
+  await page.getByRole('searchbox').fill('missing')
+  await expect(page.getByText('No matching references', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Open Inbox', exact: true }).click()
+  await expect(page.getByRole('searchbox')).toHaveValue('')
+  await expect(inbox.getByRole('listitem')).toHaveCount(3)
+})
+
+test('Inbox batch icon reveals checkboxes and accepts only selected candidates', async ({
+  page
+}) => {
+  await page.goto('/library-workbench.html?inbox')
+  const inbox = page.getByRole('list', { name: 'Inbox', exact: true })
+  await expect(inbox.getByRole('listitem')).toHaveCount(4)
+  await expect(page.getByText(/Accepting will link to/)).toHaveCount(0)
+  await expect(inbox.getByRole('checkbox')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Batch actions', exact: true }).click()
+  await inbox.getByRole('checkbox').nth(0).check()
+  await inbox.getByRole('checkbox').nth(2).check()
+  await expect(page.getByText('Selected: 2', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Accept', exact: true }).click()
+  await expect(inbox.getByRole('listitem')).toHaveCount(2)
+  await expect(
+    inbox.getByRole('button', {
+      name: 'Caffeine effects on sleep taken 0, 3, or 6 hours before going to bed'
+    })
+  ).toBeVisible()
+  await expect(page.getByText('Selected: 0', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(inbox.getByRole('checkbox')).toHaveCount(0)
+})

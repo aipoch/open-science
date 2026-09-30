@@ -3,6 +3,7 @@ import { cleanup, render, fireEvent } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { buildLiteratureLibraryToolSummary } from './literature-tool-presentation'
+import { LibraryPreviewNavigationContext } from './previews/library-reference-actions'
 import { useNavigationStore } from '../../stores/navigation-store'
 it('does not describe an existing library receipt as an Inbox save', () => {
   const summary = buildLiteratureLibraryToolSummary(
@@ -128,5 +129,31 @@ it('opens Inbox from a downloaded PDF receipt delivered through MCP text content
   } finally {
     cleanup()
     inbox.mockRestore()
+  }
+})
+
+it('opens the contextual Preview Inbox without navigating away or inferring a new destination', () => {
+  const openPreview = vi.fn()
+  const navigate = vi
+    .spyOn(useNavigationStore.getState(), 'openLibrary')
+    .mockImplementation(() => {})
+  const summary = buildLiteratureLibraryToolSummary(
+    'save',
+    {},
+    { results: [{ kind: 'candidate', id: 'pending', state: 'pending' }] }
+  )
+  try {
+    const view = render(
+      <LibraryPreviewNavigationContext.Provider value={openPreview}>
+        <WorkspaceLiteratureToolCard summary={summary} />
+      </LibraryPreviewNavigationContext.Provider>
+    )
+    fireEvent.click(view.getByRole('button', { name: 'Open Inbox' }))
+    fireEvent.click(view.getByRole('button', { name: 'Open Inbox' }))
+    expect(openPreview.mock.calls).toEqual([[{ section: 'inbox' }], [{ section: 'inbox' }]])
+    expect(navigate).not.toHaveBeenCalled()
+  } finally {
+    cleanup()
+    navigate.mockRestore()
   }
 })

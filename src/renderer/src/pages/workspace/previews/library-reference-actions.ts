@@ -15,3 +15,14 @@ export const LibraryReferenceActionsContext = createContext<LibraryReferenceActi
 
 export const useLibraryReferenceActions = (): LibraryReferenceActions | undefined =>
   useContext(LibraryReferenceActionsContext)
+
+export type LibraryPreviewScopeRequest = {
+  section?: 'inbox'
+  collectionId?: string
+  collectionName?: string
+}
+
+// Workspace owns project hydration and panel activation, including requests from nested chats.
+export const LibraryPreviewNavigationContext = createContext<
+  ((scope: LibraryPreviewScopeRequest) => void) | undefined
+>(undefined)

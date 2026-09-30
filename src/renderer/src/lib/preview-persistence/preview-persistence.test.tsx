@@ -162,7 +162,8 @@ describe('preview persistence projections', () => {
           updatedAt: 2,
           id: 'tool:project:library',
           toolKind: 'library',
-          title: 'Library'
+          title: 'Library',
+          libraryScopeRequest: { section: 'inbox' }
         }
       ]
     })

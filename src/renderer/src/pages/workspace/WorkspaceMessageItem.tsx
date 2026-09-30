@@ -105,7 +105,8 @@ type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
 type MessageImage = NonNullable<ChatMessage['images']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
 type LiteratureMentionPart = Extract<MessagePart, { type: 'literature' }>
-type LibraryMentionScopeRequest = { collectionId?: string; collectionName?: string }
+type LibraryMentionScopeRequest =
+  import('./previews/library-reference-actions').LibraryPreviewScopeRequest
 type MessageRuntimeIdentity = Partial<
   Pick<PersistedRuntimeSegment, 'frameworkId' | 'backendId' | 'model'>
 >

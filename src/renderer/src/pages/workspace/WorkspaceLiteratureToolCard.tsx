@@ -9,6 +9,8 @@ import {
   Search,
   TriangleAlert
 } from 'lucide-react'
+import { useContext } from 'react'
+import { LibraryPreviewNavigationContext } from './previews/library-reference-actions'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -26,6 +28,7 @@ const WorkspaceLiteratureToolCard = ({
   isApproval?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const openPreview = useContext(LibraryPreviewNavigationContext)
   const isLibrary = summary.libraryScope !== undefined
   const canOpenInbox = summary.action === 'save' && (summary.savedCount ?? 0) > 0
   const Icon =
@@ -116,7 +119,10 @@ const WorkspaceLiteratureToolCard = ({
                 size="default"
                 className="gap-2 px-3.5"
                 title={t('Review in Inbox to add to your library.')}
-                onClick={() => useNavigationStore.getState().openLibrary('user')}
+                onClick={() => {
+                  if (openPreview) openPreview({ section: 'inbox' })
+                  else useNavigationStore.getState().openLibrary('user')
+                }}
               >
                 {t('Open Inbox')}
                 <ArrowRight className="size-4" aria-hidden="true" />

@@ -1,4 +1,7 @@
-import { LibraryReferenceActionsContext } from './previews/library-reference-actions'
+import {
+  LibraryReferenceActionsContext,
+  LibraryPreviewNavigationContext
+} from './previews/library-reference-actions'
 import { requestComposerFocus } from './composer-focus-events'
 import type { LiteratureReference } from '../../../../shared/session-persistence'
 import { SessionDiagnosticsDialog } from './SessionDiagnosticsDialog'
@@ -1907,7 +1910,9 @@ const WorkspacePage = ({
           : undefined
       }
     >
-      {content}
+      <LibraryPreviewNavigationContext.Provider value={onOpenLibraryMention}>
+        {content}
+      </LibraryPreviewNavigationContext.Provider>
     </LibraryReferenceActionsContext.Provider>
   )
 }
