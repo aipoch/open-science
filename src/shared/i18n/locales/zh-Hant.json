@@ -6485,7 +6485,6 @@
     "Match status": "匹配狀態",
     "Identify journals": "用於識別期刊",
     "Used for matching, not as attribute columns.": "用於匹配期刊，不作為屬性欄。",
-    "Save as attribute columns": "儲存為屬性欄",
     "Show and filter these columns in the literature table.": "可在文獻清單中顯示和篩選。",
     "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "識別欄位用於匹配期刊。需要在文獻清單中顯示和篩選的值，請選擇「期刊屬性」。",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "「儲存名稱」和「值類型」僅適用於期刊屬性。略過的欄不會儲存。",

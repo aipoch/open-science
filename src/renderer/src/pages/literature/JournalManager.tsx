@@ -20,6 +20,7 @@ import {
   Eye,
   EyeOff,
   Hash,
+  Info,
   List,
   ListChecks,
   LoaderCircle,
@@ -2708,42 +2709,51 @@ export const JournalManager = memo(function JournalManager({
                             })}
                             className="w-full max-w-40 min-w-0"
                           >
-                            <SelectValue />
+                            <SelectValue>{roles[column.role]}</SelectValue>
                           </SelectTrigger>
-                          <SelectContent className="max-h-[min(28rem,var(--radix-select-content-available-height))] w-72 max-w-[calc(100vw-2rem)]">
-                            <SelectItem value="ignore" className="pl-4">
-                              {roles.ignore}
-                            </SelectItem>
+                          <SelectContent className="w-60 max-w-[calc(100vw-2rem)]">
+                            <SelectItem value="ignore">{roles.ignore}</SelectItem>
                             <SelectSeparator />
                             <SelectGroup>
-                              <div className="mb-1 px-2 py-2">
-                                <SelectLabel className="p-0 text-xs font-semibold text-muted-foreground">
-                                  {t('Identify journals')}
-                                </SelectLabel>
-                                <p className="mt-1 text-xs text-muted-foreground">
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <SelectLabel className="flex items-center gap-1.5 py-2 font-semibold">
+                                    {t('Identify journals')}
+                                    <Info className="size-3.5" aria-hidden="true" />
+                                  </SelectLabel>
+                                </TooltipTrigger>
+                                <TooltipContent side="right">
                                   {t('Used for matching, not as attribute columns.')}
-                                </p>
-                              </div>
+                                </TooltipContent>
+                              </Tooltip>
                               {(['name', 'alias', 'issn', 'externalId'] as const).map((value) => (
-                                <SelectItem key={value} value={value} className="pl-4">
-                                  {roles[value]}
-                                </SelectItem>
+                                <Tooltip key={value}>
+                                  <TooltipTrigger asChild>
+                                    <SelectItem value={value}>{roles[value]}</SelectItem>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right">
+                                    {t('Used for matching, not as attribute columns.')}
+                                  </TooltipContent>
+                                </Tooltip>
                               ))}
                             </SelectGroup>
                             <SelectSeparator />
-                            <SelectGroup>
-                              <div className="mb-1 px-2 py-2">
-                                <SelectLabel className="p-0 text-xs font-semibold text-muted-foreground">
-                                  {t('Save as attribute columns')}
-                                </SelectLabel>
-                                <p className="mt-1 text-xs text-muted-foreground">
-                                  {t('Show and filter these columns in the literature table.')}
-                                </p>
-                              </div>
-                              <SelectItem value="attribute" className="pl-4">
-                                {roles.attribute}
-                              </SelectItem>
-                            </SelectGroup>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <SelectItem value="attribute">
+                                  <span className="flex items-center gap-1.5">
+                                    {roles.attribute}
+                                    <Info
+                                      className="size-3.5 text-muted-foreground"
+                                      aria-hidden="true"
+                                    />
+                                  </span>
+                                </SelectItem>
+                              </TooltipTrigger>
+                              <TooltipContent side="right">
+                                {t('Show and filter these columns in the literature table.')}
+                              </TooltipContent>
+                            </Tooltip>
                           </SelectContent>
                         </Select>
                       </td>

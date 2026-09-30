@@ -6483,7 +6483,6 @@
     "Match status": "매칭 상태",
     "Identify journals": "저널 식별",
     "Used for matching, not as attribute columns.": "일치 확인에 사용하며 속성 열로 만들지 않습니다.",
-    "Save as attribute columns": "속성 열로 저장",
     "Show and filter these columns in the literature table.": "문헌 목록에서 표시하고 필터링할 수 있습니다.",
     "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "식별 열은 저널 일치 확인에 사용합니다. 문헌 목록에서 표시하고 필터링할 값은 학술지 속성을 선택하세요.",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "저장할 이름과 값 유형은 저널 속성에만 적용됩니다. 건너뛴 열은 저장되지 않습니다.",
