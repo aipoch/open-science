@@ -14,17 +14,37 @@ const { associateTableNotes } = await import(
 const fixture = <T>(name: string): T =>
   readPdfFixture(resolve(`src/main/literature/pdf-structure/fixtures/source-grids/${name}.jsonl`))
 
-it.each(['fragmented-three-column-prose', 'disclosure-directory'])(
-  'rejects source-supported non-table regions: %s',
-  (name) => {
-    const { table, tokens } = fixture<{ table: { grid: string[][] }; tokens: unknown[] }>(name)
-    expect(hasTableEvidence(table, undefined, tokens)).toBe(false)
-    expect(hasTableEvidence(table, { lines: ['Table 1. Reported outcomes.'] }, tokens)).toBe(true)
-    const measured = structuredClone(table)
-    measured.grid.push(measured.grid[0].map((_: string, index: number) => String(index + 1)))
-    expect(hasTableEvidence(measured, undefined, tokens)).toBe(true)
+it('rejects a received/accepted publication sidebar crossing the article abstract', () => {
+  const table = {
+    grid: [
+      ['Cite this: DOI: 10.1000/example', 'An article title'],
+      ['Received 12 April 2020 Accepted 17 June 2020', 'Several sentences of abstract text'],
+      ['DOI: 10.1000/example', 'Continuation of abstract text']
+    ],
+    unassigned: [],
+    repairs: [],
+    issues: [],
+    clipped: [],
+    cells: [],
+    cropRect: [0, 0, 600, 400]
   }
-)
+  expect(hasTableEvidence(table, undefined)).toBe(false)
+  expect(hasTableEvidence(table, { lines: ['Table 1. Manuscript history'] })).toBe(true)
+})
+
+it.each([
+  'fragmented-three-column-prose',
+  'disclosure-directory',
+  'two-column-author-affiliation-block',
+  'publication-sidebar-crossing-abstract'
+])('rejects source-supported non-table regions: %s', (name) => {
+  const { table, tokens } = fixture<{ table: { grid: string[][] }; tokens: unknown[] }>(name)
+  expect(hasTableEvidence(table, undefined, tokens)).toBe(false)
+  expect(hasTableEvidence(table, { lines: ['Table 1. Reported outcomes.'] }, tokens)).toBe(true)
+  const measured = structuredClone(table)
+  measured.grid.push(measured.grid[0].map((_: string, index: number) => String(index + 1)))
+  expect(hasTableEvidence(measured, undefined, tokens)).toBe(true)
+})
 
 it('associates a rotated flowchart despite a full-height publisher strip', () => {
   const { page, captions } = fixture<{ page: { width: number }; captions: { lines: string[] }[] }>(

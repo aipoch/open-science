@@ -13,6 +13,90 @@ const { associateFigures, associateTableCaptions } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-association.mjs')).href
 )
 
+const repeatedTableNumber = (): ReturnType<typeof JSON.parse> =>
+  readPdfFixture(
+    'src/main/literature/pdf-structure/fixtures/source-grids/repeated-number-above-described-table.jsonl'
+  )
+
+const spacedDefinitionCaption = (): ReturnType<typeof JSON.parse> =>
+  readPdfFixture(
+    'src/main/literature/pdf-structure/fixtures/source-grids/double-spaced-caption-definition-tail.jsonl'
+  )
+
+it('retains the closed double-spaced definition tail of an accepted unfinished table caption', () => {
+  const f = spacedDefinitionCaption()
+  const caption = associateTableCaptions(f.page, f.tables, f.candidates)[0].caption
+  expect(caption.lines).toEqual(f.page.lines.map((l: { text: string }) => l.text))
+  expect(caption.rect[3]).toBeCloseTo(365.74)
+})
+
+it.each([
+  'completed-title',
+  'single-definition',
+  'closed-definition',
+  'capitalized-tail',
+  'open-tail',
+  'different-font',
+  'shifted-tail',
+  'uneven-leading',
+  'intervening-text'
+])('keeps the original caption without closed native definition evidence: %s', (change) => {
+  const f = spacedDefinitionCaption()
+  if (change === 'completed-title') {
+    f.candidates[0].lines[0] += '.'
+    f.page.lines[0].text += '.'
+  }
+  if (change === 'single-definition') f.page.lines[1].text = 'treatment. CC ='
+  if (change === 'closed-definition') f.page.lines[1].text += ' last outcome.'
+  if (change === 'capitalized-tail') f.page.lines[2].text = 'Another paragraph.'
+  if (change === 'open-tail') f.page.lines[2].text = 'third outcome'
+  if (change === 'different-font') f.page.lines[2].fontSize = 13
+  if (change === 'shifted-tail') f.page.lines[2].x += 10
+  if (change === 'uneven-leading') f.page.lines[2].y += 6
+  if (change === 'intervening-text')
+    f.page.lines.push({ ...f.page.lines[2], text: 'Unrelated text.', y: 345 })
+  expect(associateTableCaptions(f.page, f.tables, f.candidates)[0].caption).toEqual(f.candidates[0])
+})
+
+it.each([0.7, 1.8])('retains native definition leading at scale %s', (scale) => {
+  const f = spacedDefinitionCaption()
+  for (const l of f.page.lines)
+    for (const k of ['x', 'y', 'width', 'height', 'fontSize']) l[k] *= scale
+  f.page.width *= scale
+  f.page.height *= scale
+  for (const t of f.tables) t.rect = t.rect.map((v: number) => v * scale)
+  for (const c of f.candidates) c.rect = c.rect.map((v: number) => v * scale)
+  expect(associateTableCaptions(f.page, f.tables, f.candidates)[0].caption.lines).toHaveLength(3)
+})
+
+it('uses the complete description when a nearby number is repeated above the same table', () => {
+  const f = repeatedTableNumber()
+  expect(associateTableCaptions(f.page, f.tables, f.candidates)[0].caption).toEqual(f.candidates[1])
+})
+
+it.each(['different-number', 'short-description', 'third-caption', 'misaligned-label'])(
+  'keeps repeated-number caption ambiguity without %s evidence',
+  (change) => {
+    const f = repeatedTableNumber()
+    if (change === 'different-number')
+      f.candidates[1].lines[0] = 'Table 4. Overview of study records and follow-up results.'
+    if (change === 'short-description') f.candidates[1].lines[0] = 'Table 3. Records'
+    if (change === 'third-caption')
+      f.candidates.push({
+        ...f.candidates[1],
+        lines: ['Table 4. Other records and follow-up results.']
+      })
+    if (change === 'misaligned-label') f.candidates[0].rect = [90, 70.26, 130, 81.24]
+    expect(associateTableCaptions(f.page, f.tables, f.candidates)[0].caption).toBeUndefined()
+  }
+)
+
+it('does not move a repeated description to a table that only owns the short label', () => {
+  const f = repeatedTableNumber()
+  f.tables.push({ rect: [68.6667, 282, 755.3333, 290] })
+  expect(associateTableCaptions(f.page, f.tables, f.candidates)[0].caption).toBeUndefined()
+})
+
 it('keeps consecutive above-table captions with their own compact tables', () => {
   const page = { pageNumber: 6, height: 783, lines: [] }
   const tables = [{ rect: [38, 74, 225, 109] }, { rect: [35, 144, 245, 193] }]

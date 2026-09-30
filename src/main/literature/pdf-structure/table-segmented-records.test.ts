@@ -23,7 +23,11 @@ it('separates demographic records inside tall native cells without changing perc
   const x = load('segmented-demographics'),
     before = structuredClone(x),
     t = refine(x)
-  expect(t.grid).toHaveLength(44)
+  expect(t.grid).toHaveLength(46)
+  expect(t.grid).toContainEqual(['Private Health Cover, n (%)', '', ''])
+  expect(t.grid).toContainEqual(['Yes', '22 (84.6%)', '18 (69.2%)'])
+  expect(t.grid).toContainEqual(['Surgery', '', ''])
+  expect(t.grid).toContainEqual(['Mastectomy/MRM', '17 (65.4%)', '17 (65.4%)'])
   expect(t.unassigned).toEqual([])
   expect(x).toEqual(before)
   expect(t.grid.flat().filter((s: string) => s.includes('%')).length).toBeGreaterThan(30)
