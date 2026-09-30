@@ -4063,12 +4063,7 @@ class Analyzer extends NodeVisitor {
         ? this.libraryCallEffect(receiverNode)?.returnType
         : ['BinOp', 'UnaryOp'].includes(receiverNode.type)
           ? this.arithmeticResultType(receiverNode)
-          : ((receiverNode.type === 'Attribute'
-              ? ({ pp: 'scanpy.pp', pl: 'scanpy.pl', tl: 'scanpy.tl' } as const)[
-                  receiverNode.attr ?? ''
-                ]
-              : undefined) ??
-            this.libraryTypeName(receiverNode) ??
+          : (this.libraryTypeName(receiverNode) ??
             (this.builtinContainers.has(rootName(receiverNode) ?? '')
               ? 'python.container'
               : undefined))
@@ -5882,6 +5877,14 @@ class Analyzer extends NodeVisitor {
       }
     }
     const libraryEffect = this.libraryCallEffect(node)
+    if (
+      !libraryEffect &&
+      node.func?.type === 'Attribute' &&
+      isPyNode(node.func.value) &&
+      node.func.value.type === 'Attribute' &&
+      ['pp', 'pl', 'tl'].includes(node.func.value.attr ?? '')
+    )
+      this.unknown.add('opaque-call')
     // Set operations iterate their inputs. A known container receiver alone
     // must not certify an arbitrary user-defined iterator's side effects.
     if (
@@ -8035,23 +8038,35 @@ const analyzePythonFileAccessTree = (
       return
     }
     const canonicalName = canonicalCallName(node) ?? rawName
+    const importedRoot = importedNames.get(rawName.split('.')[0]!)
+    const pathConstructor = [
+      'Path',
+      'PurePath',
+      'PosixPath',
+      'WindowsPath',
+      'pathlib.Path',
+      'pathlib.Path.__call__',
+      'pathlib.PurePath',
+      'pathlib.PurePath.__call__',
+      'pathlib.PosixPath',
+      'pathlib.PosixPath.__call__',
+      'pathlib.WindowsPath',
+      'pathlib.WindowsPath.__call__'
+    ].includes(canonicalName)
     if (
-      [
-        'Path',
-        'PurePath',
-        'PosixPath',
-        'WindowsPath',
-        'pathlib.Path',
-        'pathlib.Path.__call__',
-        'pathlib.PurePath',
-        'pathlib.PurePath.__call__',
-        'pathlib.PosixPath',
-        'pathlib.PosixPath.__call__',
-        'pathlib.WindowsPath',
-        'pathlib.WindowsPath.__call__'
-      ].includes(canonicalName)
+      pathConstructor &&
+      importedRoot?.split('.')[0] === 'pathlib' &&
+      !pythonTaintedNamespaces.has('*') &&
+      !pythonTaintedNamespaces.has('pathlib')
     ) {
       // Constructing a local pathlib value is setup, not an opaque external side effect.
+      return
+    }
+    if (pathConstructor) {
+      // A matching spelling alone does not establish the callable's identity.
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
       return
     }
     // Path.open() is also common on a composed pathlib expression, such as
@@ -8715,6 +8730,21 @@ const analyzePythonFileAccessTree = (
         (node.keywords ?? []).find((keyword) => keyword.arg === 'dst')?.value ?? args[1]
       recordFileAccess('read', sourceNode)
       recordFileAccess('write', targetNode)
+      // A directory identity does not enumerate the concrete descendant inputs.
+      // Keep the explicit paths, but never claim complete recursive read capture.
+      directoryStateRead = true
+      unresolvedReads = true
+      if (
+        args[3] ||
+        args[4] ||
+        (node.keywords ?? []).some((keyword) =>
+          [null, undefined, 'ignore', 'copy_function'].includes(keyword.arg)
+        )
+      ) {
+        // Callbacks and expanded kwargs can access files outside either tree.
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
       const target = resolveStaticString(targetNode, bindings)
       if (target) writeScopes.set(target, { kind: 'directory', path: target })
       return

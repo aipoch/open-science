@@ -788,7 +788,7 @@ adata.write_h5ad("outputs/visium-spatial.h5ad")`
     reads: [],
     writes: ['outputs/visium-spatial.h5ad'],
     readState: 'partial',
-    writeState: 'complete',
+    writeState: 'partial',
     externalState: 'partial'
   })
 })

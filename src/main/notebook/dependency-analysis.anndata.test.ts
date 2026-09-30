@@ -114,13 +114,30 @@ it('captures PIL image construction and output lineage', async () => {
   })
 })
 
+it.each([
+  'custom.pp.normalize_total(data)',
+  'custom.pl.umap(data)',
+  'custom.tl.pca(data)',
+  'import scanpy as sc\nsc = custom\nsc.pp.normalize_total(data)',
+  'import scanpy as sc\nsc.pp = custom\nsc.pp.normalize_total(data)'
+])('does not infer Scanpy effects from an untrusted receiver: %s', async (source) => {
+  const [facts] = await analyzePythonSources([`custom = object()\n${source}`])
+  expect(facts).toMatchObject({ state: 'unknown' })
+  expect(facts?.pythonPlottingState).toBeUndefined()
+})
+
 it('tracks conservative AnnData mutation evidence across Scanpy namespaces', async () => {
   const scripts = [
     'import anndata as ad\nimport scanpy as sc\nadata = ad.read_h5ad("inputs/cells.h5ad")',
     'sc.pp.normalize_total(adata)\nsc.pp.log1p(adata)\nsc.tl.pca(adata)\nsc.pl.umap(adata)',
     'print(adata.obs.head())'
   ]
-  const facts = await analyzePythonSources(scripts)
+  const facts = await analyzePythonSources(scripts, {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    pythonBindings: [{ name: 'sc', qualifiedName: 'scanpy', kind: 'import' }]
+  })
   expect(facts[1]).toMatchObject({
     pythonPlottingState: { reads: true },
     receiverCalls: expect.arrayContaining([
@@ -135,7 +152,12 @@ it('recognizes local Visium objects and spatial plotting across notebook cells',
     'sc.pp.normalize_total(adata)\nsc.pl.spatial(adata, color="gene_a")',
     'adata.write_h5ad("outputs/visium.h5ad")'
   ]
-  const facts = await analyzePythonSources(scripts)
+  const facts = await analyzePythonSources(scripts, {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    pythonBindings: [{ name: 'sc', qualifiedName: 'scanpy', kind: 'import' }]
+  })
   expect(facts[0]?.typeBindings).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ target: 'adata', typeName: 'anndata.AnnData' })

@@ -261,7 +261,11 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       copy: { effect: 'read' },
       copy2: { effect: 'read' },
       copyfile: { effect: 'read' },
-      copytree: { effect: 'read' }
+      copytree: {
+        effect: 'read',
+        callbackKeywords: ['ignore', 'copy_function'],
+        callbackPositionalKeywords: { 3: 'ignore', 4: 'copy_function' }
+      }
     }
   },
   'pathlib.PurePath': {
@@ -299,7 +303,8 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     unknownMethodsHaveExternalState: true,
     methods: {
       cursor: { effect: 'read', returnType: 'sqlite3.Cursor' },
-      execute: { effect: 'read', returnType: 'sqlite3.Cursor' },
+      // SQL can mutate the database even when its result is an iterable cursor.
+      execute: { effect: 'mutate', externalState: true, returnType: 'sqlite3.Cursor' },
       close: { effect: 'read' }
     }
   },
@@ -308,7 +313,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     unknownMethodsHaveExternalState: true,
     iterationTypes: ['python.object'],
     methods: {
-      execute: { effect: 'read', returnType: 'sqlite3.Cursor' },
+      execute: { effect: 'mutate', externalState: true, returnType: 'sqlite3.Cursor' },
       fetchall: { effect: 'read', returnType: 'python.container' },
       close: { effect: 'read' }
     }

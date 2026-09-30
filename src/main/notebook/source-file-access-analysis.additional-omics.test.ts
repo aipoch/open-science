@@ -88,7 +88,7 @@ it('captures local metadata copied into an analysis workspace', async () => {
   })
 })
 
-it('captures copied reference directories as directory lineage', async () => {
+it('keeps recursive input coverage partial while retaining copied directory lineage', async () => {
   const result = await analyzeNotebookSourceFileAccess(
     'python',
     [
@@ -103,10 +103,33 @@ it('captures copied reference directories as directory lineage', async () => {
     reads: expect.arrayContaining(['inputs/reference', 'work/reference/annotations.csv']),
     writes: expect.arrayContaining(['work/reference', 'outputs/annotated.csv']),
     writeScopes: [{ kind: 'directory', path: 'work/reference' }],
-    readState: 'complete',
+    readState: 'partial',
     writeState: 'complete',
-    externalState: 'complete',
-    reasonCodes: []
+    externalState: 'partial',
+    reasonCodes: expect.arrayContaining([
+      'dynamic-path-unresolved',
+      'source-analysis-unsupported-call'
+    ])
+  })
+})
+
+it.each([
+  'copy_function=custom_copy',
+  'ignore=custom_ignore',
+  '**options',
+  'False, None, custom_copy'
+])('keeps copytree effects partial with %s', async (extraArguments) => {
+  const result = await analyzeNotebookSourceFileAccess(
+    'python',
+    `import shutil\nshutil.copytree("inputs/reference", "work/reference", ${extraArguments})`
+  )
+  expect(result).toMatchObject({
+    reads: ['inputs/reference'],
+    writes: ['work/reference'],
+    writeScopes: [{ kind: 'directory', path: 'work/reference' }],
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial'
   })
 })
 
@@ -669,7 +692,7 @@ adata.obs.to_csv("results/velocity-cell-metadata.csv")`
     reads: ['inputs/cell-metadata.csv'],
     writes: ['results/velocity-cell-metadata.csv'],
     readState: 'partial',
-    writeState: 'complete',
+    writeState: 'partial',
     externalState: 'partial'
   })
 })

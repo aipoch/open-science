@@ -2714,6 +2714,33 @@ for path in left:
     })
   })
 
+  it.each([
+    'Path = custom\nPath("ignored")',
+    'from pathlib import Path\nPath = custom\nPath("ignored")',
+    'import pathlib\npathlib = custom\npathlib.Path("ignored")',
+    'import pathlib\npathlib.Path = custom\npathlib.Path("ignored")',
+    'def Path(value):\n    custom(value)\nPath("ignored")'
+  ])('keeps shadowed pathlib constructors conservative: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'from pathlib import Path as LocalPath\nLocalPath("work")',
+    'import pathlib as paths\npaths.Path("work")'
+  ])('retains trusted pathlib constructor aliases: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: [],
+      writes: []
+    })
+  })
+
   it('does not apply a library effect to a shadowing Python function', async () => {
     const source = [
       'def savez(path):',

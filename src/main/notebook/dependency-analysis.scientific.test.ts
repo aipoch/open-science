@@ -509,6 +509,51 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     })
   })
 
+  it.each(['connection', 'cursor'])('keeps SQLite %s execution conservative', async (receiver) => {
+    const statements = [
+      'SELECT value FROM measurements',
+      'UPDATE measurements SET value = 2',
+      'INSERT INTO measurements VALUES (3)',
+      'DELETE FROM measurements',
+      'CREATE TABLE measurements (value INTEGER)'
+    ]
+    for (const statement of statements) {
+      const [facts] = await analyzePythonSources([
+        [
+          'import sqlite3',
+          'connection = sqlite3.connect("file:inputs/data.sqlite?mode=ro", uri=True)',
+          'cursor = connection.cursor()',
+          `${receiver}.execute(${JSON.stringify(statement)})`
+        ].join('\n')
+      ])
+      expect(facts, statement).toMatchObject({
+        state: 'unknown',
+        reasons: expect.arrayContaining(['external-state'])
+      })
+      const [laterFacts] = await analyzePythonSources(
+        [`${receiver}.execute(${JSON.stringify(statement)})`],
+        {
+          staticStrings: [],
+          staticCollections: [],
+          localFileWrappers: [],
+          pythonBindings: [
+            { name: 'connection', qualifiedName: 'sqlite3.Connection', kind: 'object' },
+            { name: 'cursor', qualifiedName: 'sqlite3.Cursor', kind: 'object' }
+          ],
+          resolvedKernelNames: ['connection', 'cursor']
+        }
+      )
+      expect(laterFacts, `later cell: ${statement}`).toMatchObject({
+        state: 'unknown',
+        reasons: expect.arrayContaining(['external-state']),
+        usedNames: expect.arrayContaining([receiver]),
+        receiverCalls: expect.arrayContaining([
+          expect.objectContaining({ receiver, member: 'execute' })
+        ])
+      })
+    }
+  })
+
   it('keeps an R DBI connection conservative', async () => {
     const projection = await projectScripts(
       'r',

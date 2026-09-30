@@ -1687,7 +1687,12 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/acp/library-auto-policy.test.ts',
       'src/main/notebook/wsl2-scheduling.integration.test.ts',
       'src/main/literature/journal-attributes.test.ts',
-      'src/main/notebook/shell-cell-session.integration.test.ts'
+      'src/main/notebook/shell-cell-session.integration.test.ts',
+      'src/main/notebook/scientific-replay.test.ts',
+      'src/main/notebook/real-notebook-lineage.integration.test.ts',
+      'src/main/notebook/real-parquet-lineage.integration.test.ts',
+      'src/main/notebook/r-connection-guard.test.ts',
+      'src/main/notebook/dependency-analysis.lineage-regressions.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',
