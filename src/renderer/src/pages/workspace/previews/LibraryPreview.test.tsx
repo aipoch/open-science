@@ -349,6 +349,47 @@ describe('LibraryPreview', () => {
     expect(search).toHaveBeenCalledTimes(1)
   })
 
+  it('opens an older PDF version when the latest attachment version is not a PDF', async () => {
+    const entry = reference()
+    entry.attachments = [
+      {
+        id: 'attachment',
+        kind: 'fullText',
+        title: '',
+        sortOrder: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        versions: [
+          {
+            id: 'v2',
+            versionNumber: 2,
+            filename: 'paper.docx',
+            contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            sizeBytes: 20,
+            checksum: 'b'.repeat(64),
+            createdAt: 2
+          },
+          {
+            id: 'v1',
+            versionNumber: 1,
+            filename: 'paper.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: 10,
+            checksum: 'a'.repeat(64),
+            createdAt: 1
+          }
+        ]
+      }
+    ]
+    search.mockResolvedValueOnce({ entries: [entry] })
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: 'paper.pdf' }))
+    expect(openPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedVersionId: 'v1', versionNumber: 1, name: 'paper.pdf' })
+    )
+  })
+
   it('keeps the current empty-state action mounted during focus revalidation', async () => {
     render(<LibraryPreview projectId="project-a" isActive />)
     await settle()
