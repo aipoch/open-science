@@ -344,7 +344,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Dialog title: `text-lg font-semibold`.
 - Form label: `Label` + `text-sm font-medium`.
 - Helper copy: `text-xs text-muted-foreground` or `text-sm text-muted-foreground`.
-- Table small text: `text-[11px] leading-[1.625]`; table headers use `font-semibold`.
+- Table small text: `text-[11px] leading-[1.625]`; identified table headers use `font-semibold`. Parsed PDF table previews follow the source-preserving rules below because extracted cells do not identify headers.
 - Do not use negative letter spacing or viewport-driven font sizing.
 
 ### Radius
@@ -415,6 +415,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 ### PDF reading and annotations
 
 - Original PDF, Figures & Tables, and Notes & Annotations use distinct leading document, image, and notebook icons with visible labels.
+- Parsed PDF tables in Figures & Tables preserve source row/column spans, use a collapsed border on every cell, and share one neutral theme surface without inferring headers from the first row or merged cells. Text and numbers use the same start alignment, with tabular digits and numeric no-wrap retained. Only the hovered cell is tinted, including when it spans multiple rows; row-spanning content stays vertically centered. Minimum widths apply uniformly because the first DOM cell below a rowspan may belong to a later column. These rules also apply to cached tables and do not change source text or exports.
 - Empty Notes shows a short explanation and a return-to-PDF action; an unavailable source shows a status instead of an empty panel.
 - Literature annotations belong to the exact PDF attachment version and appear in both Library and project previews. Upload/artifact annotations remain conversation-scoped. Both use the shared tag catalog.
 - Active text marking uses the I-beam cursor across the document; area selection uses a crosshair, and comment buttons retain a pointer. Escape dismisses the inner popup or exits the active tool before closing a containing preview dialog.
@@ -1267,7 +1268,7 @@ alert region excludes the diagnostic payload so opening it does not announce the
 - Text hints remain hoverable, dismissible with Escape, and bounded by the viewport. Long content gets internal scrolling. Preserve primary reference, attachment, and run-jump clicks.
 - CSL examples use a focusable preview button and a non-modal Popover: hover/focus discovers, click/tap pins, Escape/outside interaction dismisses, and internal scrolling preserves the panel. Show the complete style title, lazy-load and deduplicate per style, retain cached examples, and offer Retry after failure. The formatter's plain-text contract and content-addressed style identities stay unchanged.
 - Root canvas, body, and application root share the current theme background so exposed scrolling regions remain continuous; document canvases retain their own surface.
-- Use tabular digits for comparable numeric columns and changing counts/durations. Right-align numeric columns and reserve a minimum duration width where appropriate; retain existing formats and units.
+- Use tabular digits for comparable numeric columns and changing counts/durations. Right-align numeric columns by default; parsed PDF table previews use the uniform start alignment specified above. Reserve a minimum duration width where appropriate; retain existing formats and units.
 
 ## File version comparisons
 
