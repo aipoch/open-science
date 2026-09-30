@@ -2795,6 +2795,9 @@ export const PdfPreviewContent = ({
           readingMode === 'original' &&
           ['area', 'area-annotation', 'text-annotation'].includes(cursorMode)
         }
+        data-preview-escape-boundary={
+          source === 'literature' && selectedBookmarkId ? '' : undefined
+        }
         onKeyDown={(event) => {
           // Portalled panels remain mounted during exit motion. Let their own
           // dismissal consume Escape before the surrounding PDF tool handles it.
@@ -2804,6 +2807,17 @@ export const PdfPreviewContent = ({
               ? event.target.closest('[role="dialog"], [role="menu"]')
               : null
           if (layer && !layer.contains(event.currentTarget)) return
+          if (
+            event.key === 'Escape' &&
+            !event.nativeEvent.isComposing &&
+            source === 'literature' &&
+            selectedBookmarkId
+          ) {
+            event.preventDefault()
+            event.stopPropagation()
+            setSelectedBookmarkId(undefined)
+            return
+          }
           if (
             event.key === 'Escape' &&
             !event.nativeEvent.isComposing &&

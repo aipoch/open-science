@@ -4436,4 +4436,126 @@ describe('PdfPreviewContent', () => {
       expect(deleteAnnotation).toHaveBeenCalledWith(expect.objectContaining({ id: 'bookmark-1' }))
     )
   })
+  it.each(['literature', 'upload'] as const)(
+    'handles selected annotation Escape only in the %s reader',
+    async (previewSource) => {
+      getPage.mockResolvedValue({
+        getViewport: vi.fn(() => ({ width: 600, height: 800, rotation: 0 })),
+        getTextContent: vi
+          .fn()
+          .mockResolvedValue({ items: [{ str: 'Selectable text' }], styles: {} }),
+        render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+        cleanup: vi.fn()
+      })
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+      const source = {
+        kind:
+          previewSource === 'literature'
+            ? ('literature-attachment-version' as const)
+            : ('upload-version' as const),
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        sourceFileId: 'file-1',
+        versionId: 'version-1',
+        name: 'paper.pdf',
+        path: `${previewSource === 'literature' ? 'literature-attachment-version' : 'upload-version'}:version-1`,
+        checksum: 'a'.repeat(64)
+      }
+      const annotation: SavedPdfAnnotation = {
+        id: 'bookmark-1',
+        projectId: source.projectId,
+        sessionId: source.sessionId,
+        version: 1,
+        origin: 'user',
+        target: {
+          source,
+          selector: {
+            kind: 'text',
+            pageNumber: 1,
+            exact: 'Selectable text',
+            position: { start: 0, end: 15 },
+            quads: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.03 }],
+            extractorVersion: 'pdfjs-test',
+            pageRotation: 0,
+            coordinateVersion: 1
+          }
+        },
+        kind: 'underline',
+        color: 'pink',
+        tagIds: [],
+        note: 'Saved note',
+        createdAt: '2026-09-19T00:00:00.000Z',
+        updatedAt: '2026-09-19T00:00:00.000Z'
+      }
+      window.api = {
+        ...window.api,
+        tags: { snapshot: vi.fn().mockResolvedValue({ revision: 1, tags: [], assignments: [] }) },
+        pdfAnnotations: {
+          list: vi.fn().mockResolvedValue({ source, items: [annotation], total: 1 })
+        }
+      } as unknown as Window['api']
+      await act(async () => {
+        root.render(
+          <PdfAnnotationsProvider projectId={source.projectId} sessionId={source.sessionId}>
+            <PdfPreviewContent
+              path={source.path}
+              name={source.name}
+              source={previewSource}
+              projectId={source.projectId}
+              sessionId={source.sessionId}
+              managedFileId={source.sourceFileId}
+              selectedVersionId={source.versionId}
+              pdfBookmarkSource={source}
+            />
+          </PdfAnnotationsProvider>
+        )
+        await flush()
+      })
+      const highlight = await waitFor(() => {
+        const element = container.querySelector<HTMLButtonElement>(
+          '[data-pdf-bookmark-highlight="bookmark-1"]'
+        )
+        expect(element).not.toBeNull()
+        return element!
+      })
+      await act(async () => highlight.click())
+      const pdfRoot = container.querySelector<HTMLElement>('[data-pdf-preview-root]')!
+      expect(highlight.getAttribute('aria-pressed')).toBe('true')
+      expect(pdfRoot.hasAttribute('data-preview-escape-boundary')).toBe(
+        previewSource === 'literature'
+      )
+      const composingEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+        isComposing: true
+      })
+      await act(async () => document.activeElement!.dispatchEvent(composingEscape))
+      expect(highlight.getAttribute('aria-pressed')).toBe('true')
+      // An inner panel owns its Escape, even when it is portalled outside the reader.
+      const marker = container.querySelector<HTMLButtonElement>('[data-pdf-annotation-marker]')!
+      await act(async () => marker.click())
+      const panel = await screen.findByRole('dialog')
+      await act(async () => fireEvent.keyDown(panel, { key: 'Escape' }))
+      expect(highlight.getAttribute('aria-pressed')).toBe('true')
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true
+      })
+      await act(async () => pdfRoot.dispatchEvent(escape))
+      expect(escape.defaultPrevented).toBe(previewSource === 'literature')
+      expect(highlight.getAttribute('aria-pressed')).toBe(
+        previewSource === 'literature' ? 'false' : 'true'
+      )
+      expect(pdfRoot.hasAttribute('data-preview-escape-boundary')).toBe(false)
+      const nextEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true
+      })
+      await act(async () => pdfRoot.dispatchEvent(nextEscape))
+      expect(nextEscape.defaultPrevented).toBe(false)
+    }
+  )
 })
