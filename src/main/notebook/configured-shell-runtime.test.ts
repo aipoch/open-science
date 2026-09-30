@@ -16,7 +16,7 @@ describe('resolveConfiguredShellRuntimeBinding', () => {
         },
         'win32'
       )
-    ).toEqual({ kind: 'powershell', version: '5.1' })
+    ).toEqual({ kind: 'powershell', version: '7.6' })
   })
 
   it('fails closed when WSL2 Bash is selected without a complete profile', () => {
@@ -65,7 +65,7 @@ describe('resolveAvailableShellRuntimeBinding', () => {
     }
     await expect(
       resolveAvailableShellRuntimeBinding(settings, async () => false, 'win32')
-    ).resolves.toEqual({ kind: 'powershell', version: '5.1' })
+    ).resolves.toEqual({ kind: 'powershell', version: '7.6' })
   })
 
   it.each(['darwin', 'linux'] as const)(
@@ -106,7 +106,7 @@ it.each([false, 'throw', 'missing'] as const)(
         probe,
         'win32'
       )
-    ).resolves.toEqual({ kind: 'powershell', version: '5.1' })
+    ).resolves.toEqual({ kind: 'powershell', version: '7.6' })
     if (failure === 'missing') expect(probe).not.toHaveBeenCalled()
   }
 )
@@ -129,6 +129,6 @@ it('does not probe WSL for the PowerShell preference', async () => {
   const probe = vi.fn()
   expect(
     await resolveAvailableShellRuntimeBinding({ localShellRuntime: 'powershell' }, probe, 'win32')
-  ).toEqual({ kind: 'powershell', version: '5.1' })
+  ).toEqual({ kind: 'powershell', version: '7.6' })
   expect(probe).not.toHaveBeenCalled()
 })

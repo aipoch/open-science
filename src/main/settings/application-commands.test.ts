@@ -353,7 +353,7 @@ describe('Settings core application commands', () => {
       )
     ).resolves.toBe(snapshot)
     const switched = {
-      runtimeBinding: { kind: 'powershell' as const, version: '5.1' as const },
+      runtimeBinding: { kind: 'powershell' as const, version: '7.6' as const },
       appliesTo: 'subsequent-executions' as const,
       wslProfilePreserved: true
     }

@@ -688,7 +688,7 @@ describe('SettingsService: Local Shell runtime', () => {
     const write = await service.switchLocalShellToPowerShell()
 
     expect(write.result).toEqual({
-      runtimeBinding: { kind: 'powershell', version: '5.1' },
+      runtimeBinding: { kind: 'powershell', version: '7.6' },
       appliesTo: 'subsequent-executions',
       wslProfilePreserved: true
     })

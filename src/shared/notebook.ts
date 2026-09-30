@@ -20,7 +20,7 @@ export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 120_000
 export type ShellRuntimeBinding =
   | Readonly<{
       kind: 'powershell'
-      version: '5.1'
+      version: '5.1' | '7.6'
     }>
   | Readonly<{
       kind: 'native-posix'

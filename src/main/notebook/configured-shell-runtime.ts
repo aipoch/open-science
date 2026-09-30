@@ -20,7 +20,7 @@ const resolveConfiguredShellRuntimeBinding = (
   platform: NodeJS.Platform = process.platform
 ): ShellRuntimeBinding => {
   if (settings.localShellRuntime === 'powershell') {
-    return captureShellRuntimeBinding({ kind: 'powershell', version: '5.1' })
+    return captureShellRuntimeBinding({ kind: 'powershell', version: '7.6' })
   }
   if (settings.localShellRuntime === 'wsl2-bash') {
     const selection = settings.activatedWslSelection

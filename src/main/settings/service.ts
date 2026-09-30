@@ -813,7 +813,7 @@ class SettingsService {
     const write = await this.repository.setLocalShellRuntime('powershell')
     return Object.freeze({
       result: Object.freeze({
-        runtimeBinding: Object.freeze({ kind: 'powershell', version: '5.1' }),
+        runtimeBinding: Object.freeze({ kind: 'powershell', version: '7.6' }),
         appliesTo: 'subsequent-executions',
         wslProfilePreserved:
           write.settings.wslSelection !== undefined ||

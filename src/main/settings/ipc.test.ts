@@ -238,7 +238,7 @@ const createFakeService = (): FakeSettingsService => ({
   markOnboardingComplete: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   switchLocalShellToPowerShell: vi.fn().mockResolvedValue({
     result: {
-      runtimeBinding: { kind: 'powershell', version: '5.1' },
+      runtimeBinding: { kind: 'powershell', version: '7.6' },
       appliesTo: 'subsequent-executions',
       wslProfilePreserved: true
     },

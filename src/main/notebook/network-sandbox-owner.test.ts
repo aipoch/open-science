@@ -1,5 +1,7 @@
 import { existsSync } from 'node:fs'
 import { execFile, spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { promisify } from 'node:util'
 import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -191,6 +193,85 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it
+    .runIf(process.platform === 'win32')
+    .each(['directory', 'receipt', 'persistent-directory'] as const)(
+    'keeps cleanup truthful when a Windows reader locks the command %s',
+    async (resource) => {
+      const fixture = await mkdtemp(join(tmpdir(), 'os-command-cleanup-lock-'))
+      fixtureDirectories.push(fixture)
+      const { logger, records } = createCapturingLogger()
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        temporaryRoot: join(fixture, 'commands'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn(),
+        platform: 'win32',
+        logger
+      })
+      const wrapped = await owner.wrap({
+        executable: process.execPath,
+        args: ['-e', ''],
+        env: {},
+        cwd: fixture,
+        commandText: '',
+        sessionId: 'session',
+        projectId: 'project',
+        runtime: 'bash',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [fixture],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const root = backend.wrap.mock.calls.at(-1)![0].env.TMPDIR as string
+      const path = resource === 'receipt' ? `${root}.receipt` : join(root, 'temporary-file')
+      if (resource !== 'receipt') await writeFile(path, 'temporary content')
+      const holder = spawn(
+        resolveWindowsPowerShellExecutable(),
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          '$file = [IO.File]::Open($env:TEST_LOCK_PATH, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite); try { [Console]::WriteLine("locked"); [Console]::In.ReadLine() | Out-Null } finally { $file.Dispose() }'
+        ],
+        { env: { ...process.env, TEST_LOCK_PATH: path }, windowsHide: true }
+      )
+      const closed = once(holder, 'close')
+      let release: ReturnType<typeof setTimeout> | undefined
+      try {
+        const [output] = await once(holder.stdout, 'data')
+        expect(output.toString()).toContain('locked')
+        const transient = resource !== 'persistent-directory'
+        if (transient) release = setTimeout(() => holder.stdin.end('\n'), 750)
+        await expect(wrapped.cleanup('exit', { processesTerminated: true })).resolves.toEqual({
+          processesTerminated: true,
+          networkClosed: true,
+          temporaryResourcesRemoved: transient
+        })
+        expect(existsSync(root)).toBe(!transient)
+        expect(existsSync(`${root}.receipt`)).toBe(!transient)
+        expect(backend.cleanup).toHaveBeenCalledOnce()
+        if (!transient) {
+          expect(records).toContainEqual({
+            message: 'sandbox cleanup completed',
+            data: expect.objectContaining({
+              result: 'incomplete',
+              temporaryCleanupErrorCode: expect.stringMatching(/^(EBUSY|EPERM|ENOTEMPTY)$/)
+            })
+          })
+        }
+      } finally {
+        clearTimeout(release)
+        holder.stdin.end('\n')
+        await closed
+        await owner.dispose()
+      }
+    },
+    15_000
+  )
   it('keeps inherited PATH access optional only on native Windows while preserving explicit roots', async () => {
     const pathRoot = await mkdtemp(join(tmpdir(), 'open-science-path-root-'))
     fixtureDirectories.push(pathRoot)

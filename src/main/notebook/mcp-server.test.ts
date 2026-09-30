@@ -1810,12 +1810,14 @@ describe('bash_execute tool', () => {
   it('documents the actual Windows PowerShell dialect and keeps generated notebook files out of shell copies', () => {
     const windowsDoc = buildShellExecuteDoc('win32')
 
-    expect(windowsDoc).toContain('Windows PowerShell')
+    expect(windowsDoc).toContain('PowerShell 7.6')
     expect(windowsDoc).not.toContain('`sh -c`')
     expect(windowsDoc).toContain('$env:OPEN_SCIENCE_HANDOFF_DIR')
     expect(windowsDoc).not.toContain('./handoff/')
-    expect(windowsDoc).toContain('Windows PowerShell 5.1')
-    expect(windowsDoc).toContain('`&&` is unavailable')
+    expect(windowsDoc).not.toContain('`&&` is unavailable')
+    expect(buildShellExecuteDoc({ kind: 'powershell', version: '5.1' })).toContain(
+      '`&&` is unavailable'
+    )
     expect(windowsDoc).toContain('cmdlet failure')
     expect(windowsDoc).toContain('unhandled cmdlet failure')
     expect(windowsDoc).toContain('native programs must emit UTF-8')

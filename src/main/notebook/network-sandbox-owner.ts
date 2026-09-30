@@ -17,6 +17,7 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { setTimeout as delay } from 'node:timers/promises'
 import { assertProcessTreeSupport } from '../process-tree'
 
 import {
@@ -649,7 +650,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           runtime: invocation.runtime,
           reason: cleanupReason,
           ...result,
-          incompleteStageCount: Object.values(result).filter((complete) => !complete).length
+          incompleteStageCount: Object.values(result).filter((complete) => !complete).length,
+          ...(backendComplete && temporaryCleanup.status === 'rejected'
+            ? {
+                temporaryCleanupErrorCode:
+                  (temporaryCleanup.reason as NodeJS.ErrnoException)?.code ?? 'unknown'
+              }
+            : {})
         })
         return result
       })()
@@ -1464,11 +1471,29 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     receipt: string,
     retained = this.retainedCommandRoots.get(root)
   ): Promise<void> {
-    if (retained) await this.validateRetainedCommandRoot(root, receipt, retained)
-    await rm(root, { recursive: true, force: true })
-    if (retained) await this.validateRetainedCommandRoot(root, receipt, retained)
-    await rm(receipt, { force: true })
-    this.retainedCommandRoots.delete(root)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        if (retained) await this.validateRetainedCommandRoot(root, receipt, retained)
+        await rm(root, { recursive: true, force: true })
+        if (retained) await this.validateRetainedCommandRoot(root, receipt, retained)
+        await rm(receipt, { force: true })
+        this.retainedCommandRoots.delete(root)
+        return
+      } catch (error) {
+        // Windows readers can briefly deny deletion even after the workload's Job is empty.
+        // Share one bounded retry budget across the directory and its receipt. Only retry
+        // fs.rm's transient error codes; process/network cleanup must already have succeeded.
+        if (
+          this.platform !== 'win32' ||
+          attempt >= 5 ||
+          !['EBUSY', 'EMFILE', 'ENFILE', 'ENOTEMPTY', 'EPERM'].includes(
+            (error as NodeJS.ErrnoException)?.code ?? ''
+          )
+        )
+          throw error
+        await delay(200 * (attempt + 1))
+      }
+    }
   }
 
   private async validateRetainedCommandRoot(

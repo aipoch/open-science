@@ -1,6 +1,11 @@
 import { createLogger } from '../logger'
 import { prepareReplCellBindings, type ReplCellBindings } from './repl-cell-bindings'
 import {
+  resolveWindowsNotebookRuntime,
+  windowsNotebookRuntimeEnvironment
+} from './windows-notebook-runtime'
+import { prepareShellNpmEnvironment } from './shell-npm-environment'
+import {
   NotebookExecutionStopError,
   markNotebookKernelExitCleanedUp,
   NotebookKernelExitError,
@@ -1079,7 +1084,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     let loopPath: string
     if (kind === 'repl') {
       // Run the control-plane loop as plain Node via the app binary (ELECTRON_RUN_AS_NODE set in env).
-      command = process.execPath
+      command = this.platform === 'win32' ? resolveWindowsNotebookRuntime().node : process.execPath
       loopPath = this.replLoopPath
       // Node otherwise realpaths the main module before loading it. A Windows AppContainer can read
       // the explicitly granted script but cannot enumerate its drive root or unrelated ancestors.
@@ -1104,11 +1109,17 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // The semantic guard rejects known installers before dispatch. This native layer makes the
     // app-owned runtime read-only to the complete persistent-kernel process tree as well, covering
     // dynamically constructed R/Python/REPL calls. Only the disposable workload-cache subtree remains
-    // writable; manage_packages remains the only package writer and wraps each installer separately.
+    // writable for data kernels. Windows REPL additionally shares the Shell owner's npm tool prefix;
+    // manage_packages remains the only managed Python/R package writer.
     const nativeInvocation = { executable: command, args }
     const invocation = this.processSandbox
       ? nativeInvocation
-      : protectManagedRuntimeWrites(nativeInvocation, request.runtimeRoot, this.platform)
+      : protectManagedRuntimeWrites(
+          nativeInvocation,
+          request.runtimeRoot,
+          this.platform,
+          kind === 'repl' && this.platform === 'win32' ? [spawnEnv.NPM_CONFIG_PREFIX!] : []
+        )
     const sessionId = request.sessionId
     const projectId = request.projectId
     if (this.processSandbox && (!sessionId || !projectId)) {
@@ -1166,6 +1177,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
               request.notebookSessionRoot,
               request.cwd,
               figuresDir,
+              ...(kind === 'repl' && this.platform === 'win32'
+                ? [spawnEnv.NPM_CONFIG_PREFIX!]
+                : []),
               ...(request.runtimeRoot ? [notebookWorkloadCacheRoot(request.runtimeRoot)] : [])
             ]),
             deniedReadRoots: request.protectedDirs ?? [],
@@ -1490,6 +1504,13 @@ class NotebookKernelExecutor implements NotebookExecutor {
           platform: this.platform,
           sourceEnv: env
         })
+      )
+    }
+    if (kind === 'repl' && this.platform === 'win32') {
+      return prepareShellNpmEnvironment(
+        request.runtimeRoot,
+        'win32',
+        windowsNotebookRuntimeEnvironment(env, resolveWindowsNotebookRuntime())
       )
     }
     return kind === 'r' ? normalizeRProcessLocale(env, this.platform) : env

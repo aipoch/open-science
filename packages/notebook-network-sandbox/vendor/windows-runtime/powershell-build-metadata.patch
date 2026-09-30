@@ -1,0 +1,10 @@
+--- a/PowerShell.Common.props
++++ b/PowerShell.Common.props
+@@ -15,6 +15,7 @@
+   >
+
+     <Exec Command='git describe --abbrev=60 --long'
++          Condition="'$(PowerShellVersion)' == ''"
+           WorkingDirectory="$(MSBuildProjectDirectory)"
+           ConsoleToMSBuild="true"
+           StandardOutputImportance="Low">

@@ -11,7 +11,7 @@ export type ShellRuntimeAgentContract = Readonly<{
 }>
 
 export const shellRuntimeBindingSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('powershell'), version: z.literal('5.1') }).strict(),
+  z.object({ kind: z.literal('powershell'), version: z.enum(['5.1', '7.6']) }).strict(),
   z.object({ kind: z.literal('native-posix'), shell: z.string().min(1) }).strict(),
   z
     .object({
@@ -43,7 +43,7 @@ export const defaultShellRuntimeBinding = (
   platform: NodeJS.Platform = process.platform
 ): ShellRuntimeBinding =>
   platform === 'win32'
-    ? Object.freeze({ kind: 'powershell', version: '5.1' })
+    ? Object.freeze({ kind: 'powershell', version: '7.6' })
     : Object.freeze({ kind: 'native-posix', shell: '/bin/sh' })
 
 export const shellRuntimeDialect = (binding: ShellRuntimeBinding): ShellRuntimeDialect =>
@@ -57,10 +57,9 @@ export const shellRuntimeAgentContract = (
   switch (binding.kind) {
     case 'powershell':
       return Object.freeze({
-        commandDescription: 'Windows PowerShell 5.1 command; do not use POSIX shell syntax.',
+        commandDescription: `${binding.version === '5.1' ? 'Windows ' : ''}PowerShell ${binding.version} command; do not use POSIX shell syntax.`,
         executionDescription: 'Run PowerShell in the shared session workspace.',
-        sessionInstruction:
-          'Notebook `bash_execute` is bound to Windows PowerShell 5.1 for this Session. Generate PowerShell commands, not POSIX shell syntax.'
+        sessionInstruction: `Notebook \`bash_execute\` is bound to ${binding.version === '5.1' ? 'Windows ' : ''}PowerShell ${binding.version} for this Session. Generate PowerShell commands, not POSIX shell syntax.`
       })
     case 'wsl2-bash':
       return Object.freeze({

@@ -2,8 +2,9 @@ import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import * as processTree from '../process-tree'
 import * as powerShellParser from './powershell-search-parser'
+import * as windowsRuntime from './windows-notebook-runtime'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -121,6 +122,66 @@ describe('notebook shell process behavior', () => {
         })
       } finally {
         expect(await adapter.shutdown()).toEqual({ reaped: true })
+      }
+    }
+  )
+
+  it.each(['7.6', '5.1'] as const)(
+    'requires the bundled Node read grant only for PowerShell %s when preparing the sandbox',
+    async (version) => {
+      const root = join(portableRuntimeRoot, 'bundled')
+      const nodeRoot = join(root, 'node')
+      const hostTools = join(portableRuntimeRoot, 'host-tools')
+      await mkdir(hostTools)
+      const resolver = vi.spyOn(windowsRuntime, 'resolveWindowsNotebookRuntime').mockReturnValue({
+        root,
+        node: join(nodeRoot, 'node.exe'),
+        powershell: join(root, 'powershell', 'pwsh.exe')
+      })
+      const parser = vi
+        .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
+        .mockResolvedValue([])
+      const admission = vi
+        .spyOn(processTree, 'assertProcessTreeSupport')
+        .mockImplementation(() => {})
+      const wrap = vi
+        .fn<NotebookProcessSandbox['wrap']>()
+        .mockRejectedValue(new Error('stop-before-spawn'))
+      try {
+        const result = await runShellCommand({
+          command: 'node --version',
+          cwd: portableRuntimeRoot,
+          handoffDir: portableRuntimeRoot,
+          runtimeRoot: join(portableRuntimeRoot, 'managed'),
+          environment: {
+            PATH: hostTools,
+            ...(version === '7.6'
+              ? { NPM_CONFIG_PREFIX: join(portableRuntimeRoot, '.notebook-tools', 'npm') }
+              : {})
+          },
+          sessionId: 'fixture-session',
+          projectId: 'fixture-project',
+          platform: 'win32',
+          runtimeBinding: { kind: 'powershell', version },
+          processSandbox: { wrap }
+        })
+        expect(result.stderr).toBe('stop-before-spawn')
+        expect(wrap).toHaveBeenCalledOnce()
+        const { filesystem, env } = wrap.mock.calls[0][0]
+        if (version === '7.6') {
+          expect(env.NPM_CONFIG_PREFIX).toBe(
+            shellNpmPaths(join(portableRuntimeRoot, 'managed'), 'win32').prefix
+          )
+          expect(filesystem.readWriteRoots).toContain(env.NPM_CONFIG_PREFIX)
+        }
+        if (version === '7.6') expect(filesystem.readOnlyRoots).toContain(nodeRoot)
+        else expect(filesystem.readOnlyRoots).not.toContain(nodeRoot)
+        expect(filesystem.readOnlyRoots).not.toContain(hostTools)
+        expect(filesystem.optionalReadOnlyRoots).toContain(hostTools)
+      } finally {
+        resolver.mockRestore()
+        parser.mockRestore()
+        admission.mockRestore()
       }
     }
   )
@@ -259,7 +320,10 @@ describe('notebook shell process behavior', () => {
 
     it('uses an absolute non-interactive PowerShell command on Windows without relying on PATH', () => {
       vi.stubEnv('SystemRoot', 'C:\\Windows')
-      const invocation = resolveShellInvocation('cp "source.png" "destination.png"', 'win32')
+      const invocation = resolveShellInvocation('cp "source.png" "destination.png"', {
+        kind: 'powershell',
+        version: '5.1'
+      })
 
       expect(invocation.executable).toBe(
         'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
@@ -306,7 +370,7 @@ describe('notebook shell process behavior', () => {
     it('isolates PowerShell command syntax from the exit-code wrapper', () => {
       vi.stubEnv('SystemRoot', 'C:\\Windows')
       const command = "Write-Output 'first'\n# keep this comment\nWrite-Output 'continued' `"
-      const invocation = resolveShellInvocation(command, 'win32')
+      const invocation = resolveShellInvocation(command, { kind: 'powershell', version: '5.1' })
       const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
       const encodedCommand = script.match(/\$openScienceCommandBase64 = '([A-Za-z0-9+/=]+)'/)?.[1]
 
@@ -669,7 +733,9 @@ describe('notebook shell process behavior', () => {
           OPEN_SCIENCE_PSMODULEPATH: 'C:\\host\\controlled-modules',
           OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
         },
-        runtimeRoot
+        runtimeRoot,
+        undefined,
+        { kind: 'powershell', version: '5.1' }
       )
       const cacheRoot = join(runtimeRoot, 'cache', 'notebook')
 

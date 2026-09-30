@@ -17,7 +17,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, win32 } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   kernelExecutableReadRoot,
@@ -43,6 +43,8 @@ import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { verifyReplayCapture } from './scientific-replay.test-support'
+import * as windowsNotebookRuntime from './windows-notebook-runtime'
+import { shellNpmPaths } from './shell-npm-environment'
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 
@@ -467,6 +469,16 @@ gate('NotebookKernelExecutor failed-cell output capture', () => {
     },
     30_000
   )
+})
+
+beforeEach(() => {
+  // OS-adapter tests simulate Windows on every host. Native runtime isolation is covered by
+  // windows-notebook-runtime.integration.test.ts; these protocol children use the test host Node.
+  vi.spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookRuntime').mockReturnValue({
+    root: dirname(process.execPath),
+    node: process.execPath,
+    powershell: 'C:\\runtime\\pwsh.exe'
+  })
 })
 
 afterEach(async () => {
@@ -5355,6 +5367,15 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
   })
 
   it('preserves the Windows repl main module without widening sandbox access', async () => {
+    // This portable adapter test substitutes an ordinary test Node; native isolation is exercised
+    // separately by windows-notebook-runtime.integration.test.ts with the patched binaries.
+    const runtime = vi
+      .spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookRuntime')
+      .mockReturnValue({
+        root: dirname(process.execPath),
+        node: process.execPath,
+        powershell: 'C:\\runtime\\pwsh.exe'
+      })
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-windows-main-'))
     const cleanup = vi.fn()
     const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
@@ -5382,10 +5403,22 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
 
       expect(result.status, result.stderr || result.traceback).toBe('completed')
       expect(wrap).toHaveBeenCalledWith(
-        expect.objectContaining({ args: ['--preserve-symlinks-main', REPL_LOOP] })
+        expect.objectContaining({
+          executable: process.execPath,
+          args: ['--preserve-symlinks-main', REPL_LOOP],
+          env: expect.objectContaining({
+            NPM_CONFIG_PREFIX: shellNpmPaths(baseRequest(cwdDir).runtimeRoot, 'win32').prefix
+          }),
+          filesystem: expect.objectContaining({
+            readWriteRoots: expect.arrayContaining([
+              shellNpmPaths(baseRequest(cwdDir).runtimeRoot, 'win32').prefix
+            ])
+          })
+        })
       )
     } finally {
       await executor.shutdown()
+      runtime.mockRestore()
     }
   })
 
