@@ -366,6 +366,81 @@ const executeControlCode = async (sessionId, code) =>
     )
   )
 
+// Keep only this deterministic provider task's progress across real process restarts. The calls
+// themselves still use the production app-owned MCP, durable permission, and Notebook paths.
+const permissionHandoffTask = async (context, prompt) => {
+  const sessionId = context.params.sessionId
+  const captureRoot = process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT
+  if (!captureRoot) return undefined
+  const progressPath = join(captureRoot, `permission-handoff-${sessionId}.json`)
+  let progress
+  try {
+    progress = JSON.parse(await readFile(progressPath, 'utf8'))
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+  if (!progress && !prompt.includes('Verify consecutive permissions after restart.'))
+    return undefined
+  if (!progress) {
+    progress = { firstCompleted: false, secondCompleted: false }
+    await mkdir(captureRoot, { recursive: true })
+    await writeFile(progressPath, JSON.stringify(progress))
+  }
+  if (prompt.includes('The user explicitly denied this operation.')) {
+    if (!progress.firstCompleted || progress.secondCompleted)
+      throw new Error('The denied handoff did not stop before the second operation.')
+    return 'Permission handoff: second call denied without execution.'
+  }
+  const executeApprovedCode = async (code) => {
+    const toolCall = {
+      toolCallId: `permission-handoff-${randomUUID()}`,
+      title: `${frameworkServerName('open-science-notebook')}_repl_execute`,
+      kind: 'other',
+      rawInput: { code, timeoutMs: 120_000 }
+    }
+    await context.client.notify(acp.methods.client.session.update, {
+      sessionId,
+      update: { sessionUpdate: 'tool_call', ...toolCall, status: 'pending' }
+    })
+    const permission = await context.client.request(acp.methods.client.session.requestPermission, {
+      sessionId,
+      // OpenCode sends the executable arguments on tool_call; its permission request is sparse.
+      // Exercise the production input-restoration path consistently before and after restart.
+      toolCall: { ...toolCall, rawInput: {} },
+      options: [
+        { kind: 'allow_once', name: 'Allow once', optionId: 'allow-once' },
+        { kind: 'reject_once', name: 'Deny', optionId: 'deny-once' }
+      ]
+    })
+    if (permission.outcome.outcome !== 'selected' || permission.outcome.optionId !== 'allow-once')
+      throw new Error('The fixture execution was not explicitly approved.')
+    const value = controlResultValue(await executeControlCode(sessionId, code))
+    await context.client.notify(acp.methods.client.session.update, {
+      sessionId,
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: toolCall.toolCallId,
+        status: 'completed'
+      }
+    })
+    return value
+  }
+  if (!progress.firstCompleted) {
+    const first = await executeApprovedCode('return { marker: "permission-handoff-first" }')
+    if (first.marker !== 'permission-handoff-first') throw new Error('First call did not execute.')
+    progress.firstCompleted = true
+    await writeFile(progressPath, JSON.stringify(progress))
+  }
+  if (!progress.secondCompleted) {
+    const second = await executeApprovedCode('return { marker: "permission-handoff-second" }')
+    if (second.marker !== 'permission-handoff-second')
+      throw new Error('Second call did not execute.')
+    progress.secondCompleted = true
+    await writeFile(progressPath, JSON.stringify(progress))
+  }
+  return 'Permission handoff: both calls executed once.'
+}
+
 const controlResultValue = (execution) => {
   if (execution?.status !== 'completed') {
     throw new Error(`Control REPL execution failed: ${JSON.stringify(execution)}`)
@@ -1414,7 +1489,10 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes('Verify interaction follow-up.')) {
+        const handoffReply = await permissionHandoffTask(context, prompt)
+        if (handoffReply) {
+          reply = handoffReply
+        } else if (prompt.includes('Verify interaction follow-up.')) {
           reply = 'Interaction follow-up completed.'
         } else if (prompt.includes('Request restart verification permission.')) {
           const toolCall = {

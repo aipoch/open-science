@@ -66,7 +66,11 @@ import { redactSensitiveText } from '../diagnostic-redaction'
 import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
-import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
+import {
+  ConversationPermissionGrantStore,
+  type AppPermissionRequest,
+  type RestoredPermissionContinuation
+} from './permission-broker'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import type { AcpPermissionContext } from './permission-context'
 import { AgentMcpHttpHost } from './mcp-http-host'
@@ -678,10 +682,7 @@ class AcpRuntime {
   private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
   private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
   private readonly planDeliveryOwner: SessionPlanDeliveryOwner | undefined
-  private durablePermissionContinuations?: Map<
-    string,
-    { projectId: string; requestId: string; cancellationRequested?: boolean }
-  >
+  private durablePermissionContinuations?: Map<string, RestoredPermissionContinuation>
   private durablePlanDeliveries?: Map<string, { projectId: string; commandId: string }>
   private readonly planDeliveryClaimRetries = new Map<string, PlanDeliveryClaimRetry>()
   private readonly planDeliveryPreparations = new Set<string>()
@@ -1804,17 +1805,44 @@ class AcpRuntime {
     request: AcpPromptRequest,
     promptAttemptId?: string,
     planDelivery?: Readonly<{ projectId: string; commandId: string }>,
-    delegatedMessageId?: string
+    delegatedMessageId?: string,
+    permissionContinuation?: RestoredPermissionContinuation
   ): Promise<PromptResponse> {
     // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
     // before that barrier is released instead of waiting on the barrier it intentionally holds.
     return this.generationActivity.withOperation(() =>
-      this.runPromptTurn(request, {
-        kind: 'app-continuation',
-        ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
-        ...(planDelivery ? { planDelivery } : {}),
-        ...(delegatedMessageId ? { delegatedMessageId } : {})
-      })
+      this.runPromptTurn(
+        request,
+        {
+          kind: 'app-continuation',
+          ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
+          ...(planDelivery ? { planDelivery } : {}),
+          ...(delegatedMessageId ? { delegatedMessageId } : {})
+        },
+        permissionContinuation
+          ? async () => {
+              const interaction = this.sessionInteractions.current(request.sessionId)
+              if (
+                !interaction ||
+                interaction.kind !== 'prompt' ||
+                this.durablePermissionContinuations?.get(request.sessionId) !==
+                  permissionContinuation
+              )
+                throw new Error('The restored permission continuation is no longer active.')
+              permissionContinuation.interactionSequence = interaction.sequence
+              permissionContinuation.agentFrameId = request.provenanceContext?.agentFrameId
+              permissionContinuation.messageBranchId = request.provenanceContext?.messageBranchId
+              permissionContinuation.isCurrent = () =>
+                this.durablePermissionContinuations?.get(request.sessionId) ===
+                  permissionContinuation &&
+                this.sessionInteractions.current(request.sessionId)?.sequence ===
+                  interaction.sequence &&
+                !this.sessionInteractions.isCancellationAccepted(interaction) &&
+                !permissionContinuation.cancellationRequested
+              return request.provenanceContext
+            }
+          : undefined
+      )
     )
   }
 
@@ -2089,16 +2117,22 @@ class AcpRuntime {
         : {})
     })
     const durablePermissionContinuations =
-      this.durablePermissionContinuations ??
-      new Map<string, { projectId: string; requestId: string; cancellationRequested?: boolean }>()
+      this.durablePermissionContinuations ?? new Map<string, RestoredPermissionContinuation>()
     this.durablePermissionContinuations = durablePermissionContinuations
     if (durablePermissionContinuations.has(restored.sessionId)) {
       throw new Error('The restored permission request is already being continued.')
     }
-    durablePermissionContinuations.set(restored.sessionId, {
+    const permissionContinuation: RestoredPermissionContinuation = {
       projectId,
-      requestId: response.requestId
-    })
+      sessionId: restored.sessionId,
+      requestId: response.requestId,
+      promptMessageId: decision.permission.originatingPromptMessageId,
+      fingerprint: decision.permission.fingerprint,
+      released: false,
+      handoffStarted: false,
+      handedOff: false
+    }
+    durablePermissionContinuations.set(restored.sessionId, permissionContinuation)
     let continuationBegan = false
     try {
       // Persist the consumed/non-replayable marker before starting provider work. A process loss or
@@ -2112,10 +2146,11 @@ class AcpRuntime {
       await this.permissionContext.prepareRestoredDecision(
         decision.permission,
         decision.option,
-        projectId
+        projectId,
+        permissionContinuation
       )
     } catch (error) {
-      this.permissionContext.clearRestoredDecision(restored.sessionId)
+      this.permissionContext.clearRestoredDecision(restored.sessionId, permissionContinuation)
       if (continuationBegan) {
         try {
           await this.permissionWaitOwner.rearmContinuation(
@@ -2142,7 +2177,8 @@ class AcpRuntime {
         }
         this.emitState()
       }
-      durablePermissionContinuations.delete(restored.sessionId)
+      if (durablePermissionContinuations.get(restored.sessionId) === permissionContinuation)
+        durablePermissionContinuations.delete(restored.sessionId)
       throw error
     }
 
@@ -2790,6 +2826,7 @@ class AcpRuntime {
     if (!pending || this.sessionInteractions.current(sessionId)) return
     const continuation = this.appContinuations.takeAndActivate(sessionId)
     if (!continuation) return
+    const durablePermission = this.durablePermissionContinuations?.get(sessionId)
     let completed = false
     let cancelled = false
     try {
@@ -2801,7 +2838,9 @@ class AcpRuntime {
       const response = await this.sendAppContinuation(
         request,
         planDelivery?.commandId,
-        planDelivery
+        planDelivery,
+        undefined,
+        durablePermission
       )
       cancelled = response.stopReason === 'cancelled'
       completed = !this.durablePlanDeliveries?.has(sessionId) || !cancelled
@@ -2829,12 +2868,17 @@ class AcpRuntime {
           })
         }
       }
-      const durablePermission = this.durablePermissionContinuations?.get(sessionId)
       const durablePlan = this.durablePlanDeliveries?.get(sessionId)
-      this.permissionContext.clearRestoredDecision(sessionId)
-      if (durablePermission?.cancellationRequested) {
+      const ownsPermission =
+        durablePermission !== undefined &&
+        this.durablePermissionContinuations?.get(sessionId) === durablePermission
+      if (ownsPermission) this.permissionContext.clearRestoredDecision(sessionId, durablePermission)
+      if (ownsPermission && durablePermission.cancellationRequested) {
         await this.settleCancelledDurablePermissionContinuation(sessionId)
-      } else if (completed && durablePermission) {
+      } else if (
+        ownsPermission &&
+        (completed || durablePermission.released || durablePermission.handoffStarted)
+      ) {
         this.restoredContinuationContextResetSessionIds?.delete(sessionId)
         try {
           const cleared = await this.permissionWaitOwner.clearAfterContinuation(
@@ -2862,9 +2906,10 @@ class AcpRuntime {
             text: errorMessage(error)
           })
         } finally {
-          this.durablePermissionContinuations?.delete(sessionId)
+          if (this.durablePermissionContinuations?.get(sessionId) === durablePermission)
+            this.durablePermissionContinuations.delete(sessionId)
         }
-      } else if (durablePermission) {
+      } else if (ownsPermission) {
         try {
           // A retry is safe only after durable authority returns from consumed to pending. If this
           // write fails, retain `continuing` as a fail-closed tombstone and do not expose the card.
@@ -2890,7 +2935,8 @@ class AcpRuntime {
             text: errorMessage(error)
           })
         } finally {
-          this.durablePermissionContinuations?.delete(sessionId)
+          if (this.durablePermissionContinuations?.get(sessionId) === durablePermission)
+            this.durablePermissionContinuations.delete(sessionId)
         }
       }
       if (cancelled && durablePlan && this.planDeliveryOwner) {
@@ -3097,7 +3143,7 @@ class AcpRuntime {
     if (this.durablePermissionContinuations?.get(sessionId) !== durablePermission) return
     this.durablePermissionContinuations.delete(sessionId)
     this.restoredContinuationContextResetSessionIds?.delete(sessionId)
-    this.permissionContext.clearRestoredDecision(sessionId)
+    this.permissionContext.clearRestoredDecision(sessionId, durablePermission)
     this.pushEvent({
       kind: 'permission',
       level: 'info',

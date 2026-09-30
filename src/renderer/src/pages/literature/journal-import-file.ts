@@ -194,7 +194,7 @@ export function journalColumns(
       ? 'externalId'
       : /issn/i.test(label) || (values.length && issns / values.length > 0.8)
         ? 'issn'
-        : /abbrev|short|缩写|簡稱/i.test(label)
+        : /alias|abbrev|short|缩写|簡稱/i.test(label)
           ? 'alias'
           : !hasName &&
               /journal|publication|periodical|期刊|刊名|revue|zeitschrift|revista/i.test(label)

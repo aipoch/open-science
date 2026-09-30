@@ -21,14 +21,14 @@ const connectorPage = query.has('connectors')
 useThemeStore.getState().setPreference(query.has('dark') ? 'dark' : 'light')
 let skills: SkillView[] = manifest.skills
   .filter((item) => !['self-awareness', 'skill-creator'].includes(item.id))
-  .map((item, index) => ({
+  .map((item) => ({
     id: item.id,
     name: item.name,
     displayName: item.name,
     description: `Research workflow · ${item.name}`,
     source: 'featured',
     updatedAt: item.updatedAt,
-    enabled: index === 0 || item.activationPolicy === 'always-on',
+    enabled: item.id === 'alphafold2' || item.activationPolicy === 'always-on',
     activationPolicy: item.activationPolicy === 'always-on' ? 'always-on' : undefined
   }))
 skills.push(
@@ -45,11 +45,11 @@ skills.push(
   )
 )
 let connectors: ConnectorsSnapshot = {
-  connectors: CONNECTOR_CATALOG.map((item, index) => ({
+  connectors: CONNECTOR_CATALOG.map((item) => ({
     ...item,
     name: item.id,
     group: item.group ?? 'featured',
-    enabled: index === 0,
+    enabled: item.id === 'chemistry',
     autoAllow: false
   })),
   customServers: [
@@ -79,7 +79,7 @@ let specialists: SpecialistView[] = Array.from(
     fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
     selectedCapabilities: {
       skillIds: index === 0 ? ['alphafold2'] : [],
-      connectorIds: index === 0 ? [CONNECTOR_CATALOG[0].id] : [],
+      connectorIds: index === 0 ? ['chemistry'] : [],
       connectorTools: []
     }
   })

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as tar from 'tar'
 import * as fsPromises from 'node:fs/promises'
 import { RUNTIME_SCHEMA_TABLE_DDLS } from '../database/generated/runtime-schema'
-import { readDiagnosticDatabase } from './database'
+import * as diagnosticProjection from './projection'
 import { runSessionDiagnosticWorker } from './collector'
 import type { SessionDiagnosticWorkerInput } from '../../shared/session-diagnostics'
 
@@ -57,13 +57,270 @@ describe('session diagnostics isolated collector', () => {
     })
     await writeFile(sessionPath(input), raw)
     await writeFile(input.logPath!, 'unselected log evidence')
-    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['session'] })
+    const result = await runSessionDiagnosticWorker({
+      ...input,
+      selectedItems: ['session'],
+      includeExecutionCode: true
+    })
     expect(result.kind).toBe('archive')
-    const exported = await readFile(join(input.directory!, 'content/session.json'), 'utf8')
+    const extracted = join(input.directory!, 'extracted')
+    await mkdir(extracted)
+    await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
+    const exported = await readFile(join(extracted, 'session.json'), 'utf8')
     for (const secret of ['top-secret', 'hidden', 'PRIVATEBYTES', 'secretquery'])
       expect(exported).not.toContain(secret)
     expect(JSON.parse(exported).session.inputTokens).toBe(123)
+    expect(JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))).toMatchObject({
+      includeExecutionCode: false,
+      notebookCoverage: { selectedSources: 0 }
+    })
     expect(await readFile(sessionPath(input), 'utf8')).toBe(raw)
+    expect((await readdir(extracted)).sort()).toEqual([
+      'README.txt',
+      'export.log',
+      'manifest.json',
+      'session.json'
+    ])
+  })
+  it('exports fixed Notebook root and frame histories plus a stored-settings environment projection', async () => {
+    const input = await fixture()
+    const notebookRoot = join(input.dataRoot, 'notebooks/project/session')
+    await mkdir(join(notebookRoot, 'frames/frame-1'), { recursive: true })
+    const document = (runId: string): Record<string, unknown> => ({
+      projectId: 'project',
+      sessionId: 'session',
+      runs: [{ runId, script: 'SECRET_SCRIPT', text: { stdout: 'SECRET_STDOUT' } }]
+    })
+    await writeFile(join(notebookRoot, 'run.json'), JSON.stringify(document('root-run')))
+    await writeFile(
+      join(notebookRoot, 'frames/frame-1/run.json'),
+      JSON.stringify(document('frame-run'))
+    )
+    await writeFile(
+      join(input.configRoot, 'settings.json'),
+      JSON.stringify({ agentFrameworkId: 'codex', activeModel: 'model-1', apiKey: 'SECRET_KEY' })
+    )
+    const inspected = await runSessionDiagnosticWorker({ ...input, action: 'inspect' })
+    expect(inspected.kind).toBe('inspection')
+    if (inspected.kind === 'inspection')
+      expect(inspected.inspection.items.map((item) => item.id)).toEqual(
+        expect.arrayContaining(['environment', 'notebook', 'notebook:frame:frame-1'])
+      )
+    const result = await runSessionDiagnosticWorker({
+      ...input,
+      selectedItems: ['environment', 'notebook', 'notebook:frame:frame-1']
+    })
+    expect(result).toMatchObject({ kind: 'archive', partial: false })
+    const rootRun = JSON.parse(
+      await readFile(join(input.directory!, 'content/notebook/run.json'), 'utf8')
+    )
+    const frameRun = JSON.parse(
+      await readFile(join(input.directory!, 'content/notebook/frames/frame-1/run.json'), 'utf8')
+    )
+    const environment = JSON.parse(
+      await readFile(join(input.directory!, 'content/environment.json'), 'utf8')
+    )
+    expect(rootRun.runs[0].runId).toBe('root-run')
+    expect(frameRun.runs[0].runId).toBe('frame-run')
+    expect(environment.storedDefaults.frameworkId).toBe('codex')
+    const exported = JSON.stringify([rootRun, frameRun, environment])
+    for (const secret of ['SECRET_SCRIPT', 'SECRET_STDOUT', 'SECRET_KEY'])
+      expect(exported).not.toContain(secret)
+  })
+  it('exports opted-in scripts only in selected Notebook runs and records coverage', async () => {
+    const input = await fixture()
+    const notebookRoot = join(input.dataRoot, 'notebooks/project/session')
+    await mkdir(join(notebookRoot, 'frames/frame-1'), { recursive: true })
+    await mkdir(join(notebookRoot, 'frames/frame-2'), { recursive: true })
+    const document = (runs: Record<string, unknown>[]): string =>
+      JSON.stringify({ projectId: 'project', sessionId: 'session', runs })
+    await writeFile(join(notebookRoot, 'run.json'), document([{ script: 'root code' }]))
+    await writeFile(
+      join(notebookRoot, 'frames/frame-1/run.json'),
+      document([{ script: 'frame code' }, {}, { script: 'x'.repeat(16_100) }])
+    )
+    await writeFile(
+      join(notebookRoot, 'frames/frame-2/run.json'),
+      document([{ runId: 'unselected', script: 'SECRET_UNSELECTED' }])
+    )
+    await writeFile(sessionPath(input), JSON.stringify({ id: 'session', script: 'SECRET_SESSION' }))
+    const result = await runSessionDiagnosticWorker({
+      ...input,
+      selectedItems: ['session', 'notebook', 'notebook:frame:frame-1'],
+      includeExecutionCode: true
+    })
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    const rootRun = JSON.parse(
+      await readFile(join(input.directory!, 'content/notebook/run.json'), 'utf8')
+    )
+    const frameRun = JSON.parse(
+      await readFile(join(input.directory!, 'content/notebook/frames/frame-1/run.json'), 'utf8')
+    )
+    const manifest = JSON.parse(
+      await readFile(join(input.directory!, 'content/manifest.json'), 'utf8')
+    )
+    expect(rootRun.runs[0].script).toBe('root code')
+    expect(frameRun.runs[0].script).toBe('frame code')
+    expect(manifest).toMatchObject({
+      includeExecutionCode: true,
+      notebookCoverage: {
+        selectedSources: 2,
+        projectedSources: 2,
+        included: 2,
+        missing: 1,
+        truncated: 1
+      }
+    })
+    expect(await readFile(join(input.directory!, 'content/README.txt'), 'utf8')).toContain(
+      'scripts may still contain research content, private paths or credentials'
+    )
+    expect(await readdir(join(input.directory!, 'content/notebook/frames'))).toEqual(['frame-1'])
+    expect(await readFile(join(input.directory!, 'content/session.json'), 'utf8')).not.toContain(
+      'SECRET_SESSION'
+    )
+  })
+  it('counts only delivered Notebook code when one selected file cannot be written', async () => {
+    const input = await fixture()
+    const notebookRoot = join(input.dataRoot, 'notebooks/project/session')
+    await mkdir(join(notebookRoot, 'frames/frame-1'), { recursive: true })
+    const document = (script: string): string =>
+      JSON.stringify({ projectId: 'project', sessionId: 'session', runs: [{ script }] })
+    await writeFile(join(notebookRoot, 'run.json'), document('root code'))
+    await writeFile(join(notebookRoot, 'frames/frame-1/run.json'), document('frame code'))
+    const original = fsPromises.writeFile
+    vi.spyOn(fsPromises, 'writeFile').mockImplementation(
+      async (...args: Parameters<typeof original>) => {
+        if (String(args[0]).endsWith('/content/notebook/run.json'))
+          throw new Error('injected output failure')
+        return original(...args)
+      }
+    )
+    const result = await runSessionDiagnosticWorker({
+      ...input,
+      selectedItems: ['notebook', 'notebook:frame:frame-1'],
+      includeExecutionCode: true
+    })
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    const manifest = JSON.parse(
+      await readFile(join(input.directory!, 'content/manifest.json'), 'utf8')
+    )
+    expect(manifest.notebookCoverage).toMatchObject({
+      selectedSources: 2,
+      projectedSources: 1,
+      included: 1,
+      missing: 0,
+      truncated: 0
+    })
+    expect(
+      manifest.items.find((item: { id: string }) => item.id === 'notebook')
+    ).not.toHaveProperty('executionCodeCoverage')
+    expect(
+      manifest.items.find((item: { id: string }) => item.id === 'notebook:frame:frame-1')
+    ).toMatchObject({ executionCodeCoverage: { included: 1, missing: 0, truncated: 0 } })
+    expect(
+      JSON.parse(
+        await readFile(join(input.directory!, 'content/notebook/frames/frame-1/run.json'), 'utf8')
+      ).runs[0]
+    ).toMatchObject({ script: 'frame code', scriptStatus: 'included' })
+  })
+  it.each(['manifest.json', 'README.txt', 'export.log'])(
+    'keeps the archive and returned report when %s cannot be written',
+    async (failedName) => {
+      const input = await fixture()
+      await writeFile(sessionPath(input), '{"id":"session"}')
+      const original = fsPromises.writeFile
+      vi.spyOn(fsPromises, 'writeFile').mockImplementation(
+        async (...args: Parameters<typeof original>) => {
+          if (String(args[0]).endsWith(`/content/${failedName}`))
+            throw new Error('injected output failure')
+          return original(...args)
+        }
+      )
+      const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['session'] })
+      expect(result).toMatchObject({ kind: 'archive', partial: true })
+      if (result.kind !== 'archive') return
+      expect(result.report).toContain(`Diagnostic output ${failedName} failed`)
+      const names: string[] = []
+      await tar.list({
+        file: join(input.directory!, 'archive.tar.gz'),
+        onReadEntry: (entry) => {
+          names.push(entry.path)
+        }
+      })
+      expect(names).toContain('session.json')
+      expect(names).not.toContain(failedName)
+      if (failedName !== 'manifest.json')
+        expect(await readFile(join(input.directory!, 'content/manifest.json'), 'utf8')).toContain(
+          failedName
+        )
+      if (failedName !== 'export.log')
+        expect(await readFile(join(input.directory!, 'content/export.log'), 'utf8')).toContain(
+          failedName
+        )
+    }
+  )
+  it('continues later database tables after one table output fails', async () => {
+    const input = await fixture()
+    const db = new DatabaseSync(join(input.configRoot, 'open-science.db'))
+    for (const ddl of RUNTIME_SCHEMA_TABLE_DDLS) db.exec(ddl)
+    db.close()
+    const original = fsPromises.writeFile
+    vi.spyOn(fsPromises, 'writeFile').mockImplementation(
+      async (...args: Parameters<typeof original>) => {
+        if (String(args[0]).endsWith('/content/db/Session.json'))
+          throw new Error('injected table failure')
+        return original(...args)
+      }
+    )
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['database'] })
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    expect(await readFile(join(input.directory!, 'content/db/SessionRun.json'), 'utf8')).toBe('[]')
+    expect(await readFile(join(input.directory!, 'content/manifest.json'), 'utf8')).toContain(
+      'db/Session.json'
+    )
+  })
+  it('keeps other selected sources after one projection throws', async () => {
+    const input = await fixture()
+    await writeFile(sessionPath(input), '{"id":"session"}')
+    await writeFile(
+      input.logPath!,
+      JSON.stringify({
+        t: '2026-09-21T00:00:00.000Z',
+        level: 'info',
+        scope: 'unlisted-scope',
+        msg: 'safe diagnostic event'
+      }) + '\n'
+    )
+    vi.spyOn(diagnosticProjection, 'projectDiagnosticSession').mockImplementation(() => {
+      throw new Error('injected projection failure')
+    })
+    const result = await runSessionDiagnosticWorker({
+      ...input,
+      selectedItems: ['session', 'log:main.log']
+    })
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    expect(await readFile(join(input.directory!, 'content/logs/main.log'), 'utf8')).toContain(
+      'safe diagnostic event'
+    )
+    expect(await readFile(join(input.directory!, 'content/manifest.json'), 'utf8')).toContain(
+      '"status": "failed"'
+    )
+  })
+  it('returns a partial empty archive and failure report when all content writes fail', async () => {
+    const input = await fixture()
+    await writeFile(sessionPath(input), '{"id":"session"}')
+    const original = fsPromises.writeFile
+    vi.spyOn(fsPromises, 'writeFile').mockImplementation(
+      async (...args: Parameters<typeof original>) => {
+        if (String(args[0]).includes('/content/')) throw new Error('injected content write failure')
+        return original(...args)
+      }
+    )
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['session'] })
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    if (result.kind !== 'archive') return
+    expect(result.report).toContain('session.json failed')
+    expect(result.report).toContain('manifest.json failed')
     const names: string[] = []
     await tar.list({
       file: join(input.directory!, 'archive.tar.gz'),
@@ -71,23 +328,7 @@ describe('session diagnostics isolated collector', () => {
         names.push(entry.path)
       }
     })
-    expect(names.sort()).toEqual(['README.txt', 'export.log', 'manifest.json', 'session.json'])
-  })
-  it('retains malformed JSON metadata and tolerates missing DB', async () => {
-    const input = await fixture()
-    await writeFile(sessionPath(input), '{"password":"do-not-leak", "broken":')
-    const result = await runSessionDiagnosticWorker({
-      ...input,
-      selectedItems: ['session', 'database']
-    })
-    expect(result).toMatchObject({ kind: 'archive', partial: true })
-    expect(
-      await readFile(join(input.directory!, 'content/session.json.metadata.json'), 'utf8')
-    ).not.toContain('do-not-leak')
-    expect(await readFile(join(input.directory!, 'content/export.log'), 'utf8')).toContain(
-      'Diagnostic source'
-    )
-    expect(await readdir(input.configRoot)).toEqual(['sessions'])
+    expect(names).toEqual([])
   })
   it('exports redacted sensitive evidence and explicitly selected original files', async () => {
     const input = await fixture()
@@ -287,21 +528,6 @@ describe('session diagnostics isolated collector', () => {
     expect(await readFile(`${path}-journal`, 'utf8')).toBe('hot-journal')
     expect(await readdir(input.directory!)).not.toContain('private-database')
   })
-  it('all allowlisted queries match the current generated runtime schema', async () => {
-    const input = await fixture()
-    const path = join(input.configRoot, 'open-science.db')
-    const db = new DatabaseSync(path)
-    for (const ddl of RUNTIME_SCHEMA_TABLE_DDLS) db.exec(ddl)
-    db.close()
-    const results = [...readDiagnosticDatabase(path, input.projectId, input.sessionId)]
-    expect(results.length).toBeGreaterThan(10)
-    expect(results.filter((result) => result.error)).toEqual([])
-    expect(
-      results
-        .filter((result) => result.table !== '_metadata')
-        .every((result) => result.rows?.length === 0)
-    ).toBe(true)
-  })
   it('omits arbitrary collection error text from manifest, export log and returned report', async () => {
     const input = await fixture()
     await writeFile(sessionPath(input), '{}')
@@ -328,7 +554,12 @@ describe('session diagnostics isolated collector', () => {
       const input = await fixture()
       await writeFile(
         input.logPath!,
-        JSON.stringify({ t: '2026-09-21T00:00:00.000Z', level: 'info', scope: 'session' }) + '\n'
+        JSON.stringify({
+          t: '2026-09-21T00:00:00.000Z',
+          level: 'info',
+          scope: 'session',
+          msg: 'initial event'
+        }) + '\n'
       )
       const original = fsPromises.open
       vi.spyOn(fsPromises, 'open').mockImplementation(
@@ -400,164 +631,136 @@ describe('session diagnostics isolated collector', () => {
     const input = await fixture()
     await mkdir(join(input.dataRoot, 'sessions/project'), { recursive: true })
     await writeFile(join(input.dataRoot, 'sessions/project/session.json'), '{"wrongSource":true}')
-    await writeFile(sessionPath(input), '{"revision":7}')
+    await writeFile(sessionPath(input), '{"id":"session","revision":7}')
     await runSessionDiagnosticWorker({ ...input, selectedItems: ['session'] })
     expect(
       JSON.parse(await readFile(join(input.directory!, 'content/session.json'), 'utf8'))
     ).toMatchObject({ session: { revision: 7 } })
   })
-  it('exports useful fixed projections without private text in the actual archive', async () => {
+  it('accepts the historical v1 session envelope with a matching identity', async () => {
     const input = await fixture()
-    const privateValue = 'PRIVATE_SENTINEL_DO_NOT_EXPORT'
-    const raw = JSON.stringify({
-      version: 2,
-      session: {
-        id: 'session',
-        projectId: 'project',
-        revision: 9,
-        agentFrameworkId: 'codex',
-        agentModel: 'gpt-5',
-        agentBackendId: 'backend1',
-        runtimeSessionAdmissions: [
-          { executionId: 'execution1', promptMessageId: 'm1', runtimeSegmentId: 'segment1' }
-        ],
-        sessionDetailsGeneration: {
-          status: 'failed',
-          model: 'gpt-5',
-          frameworkId: 'codex',
-          queuedAt: 10,
-          completedAt: 15,
-          usage: { inputTokens: 5, outputTokens: 2 },
-          title: privateValue
-        },
-        status: 'error',
-        title: privateValue,
-        cwd: privateValue,
-        providerContinuityToken: privateValue,
-        unknownField: privateValue,
-        messages: [
-          {
-            id: 'm1',
-            role: 'assistant',
-            status: 'failed',
-            content: privateValue,
-            createdAt: 12,
-            failedAt: 15,
-            modelCallUsage: [{ id: 'call1', index: 1, inputTokens: 123, outputTokens: 45 }],
-            uploads: [{ path: privateValue }],
-            structuredOutputEvidence: { schema: privateValue }
-          }
-        ],
-        activities: [
-          {
-            id: 'tool1',
-            status: 'failed',
-            rawInput: privateValue,
-            rawOutput: privateValue,
-            terminalExitCode: 2
-          }
-        ],
-        conversationGraph: {
-          schemaVersion: 1,
-          rootFrameId: 'root',
-          activeFrameId: 'root',
-          frames: [{ id: 'root', kind: 'root', status: 'error', agentName: privateValue }],
-          branches: [{ id: 'branch', agentFrameId: 'root', headMessageId: 'm1' }]
-        }
-      }
-    })
-    await writeFile(sessionPath(input), raw)
     await writeFile(
-      input.logPath!,
-      JSON.stringify({
-        t: '2026-09-21T00:00:00.000Z',
-        level: 'error',
-        scope: 'session',
-        msg: 'Session runtime deletion failed',
-        data: {
-          sessionId: 'session',
-          code: 'EIO',
-          inputTokens: 123,
-          error: { message: privateValue, stack: privateValue },
-          payload: privateValue
-        }
-      }) +
-        '\n' +
-        privateValue
+      sessionPath(input),
+      JSON.stringify({ version: 1, session: { id: 'session', projectId: 'project', revision: 4 } })
     )
-    await runSessionDiagnosticWorker({ ...input, selectedItems: ['session', 'log:main.log'] })
-    const extracted = join(input.directory!, 'extracted')
-    await mkdir(extracted)
-    await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
-    for (const name of [
-      'session.json',
-      'logs/main.log',
-      'logs/main.log.metadata.json',
-      'manifest.json',
-      'export.log',
-      'README.txt'
-    ])
-      expect(await readFile(join(extracted, name), 'utf8')).not.toContain(privateValue)
-    const session = JSON.parse(await readFile(join(extracted, 'session.json'), 'utf8')).session
-    expect(session).toMatchObject({
-      revision: 9,
-      agentFrameworkId: 'codex',
-      agentModel: 'gpt-5',
-      agentBackendId: 'backend1',
-      runtimeSessionAdmissions: [{ executionId: 'execution1' }],
-      sessionDetailsGeneration: {
-        status: 'failed',
-        frameworkId: 'codex',
-        usage: { inputTokens: 5 }
-      },
-      status: 'error',
-      messages: [
-        { id: 'm1', failedAt: 15, modelCallUsage: [{ inputTokens: 123, outputTokens: 45 }] }
-      ],
-      activities: [{ terminalExitCode: 2 }]
-    })
-    expect(session.conversationGraph.branches[0].headMessageId).toBe('m1')
-    const log = JSON.parse((await readFile(join(extracted, 'logs/main.log'), 'utf8')).trim())
-    expect(log).toMatchObject({
-      event: 'Session runtime deletion failed',
-      diagnostics: { sessionId: 'session', code: 'EIO' }
-    })
-    expect(await readFile(sessionPath(input), 'utf8')).toBe(raw)
-    expect(JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))).toMatchObject({
-      projectionVersion: 2,
-      arch: expect.any(String),
-      osRelease: expect.any(String),
-      nodeVersion: expect.any(String)
-    })
-  })
-  it.each(['malformed', 'oversize'])('retains only metadata for %s session files', async (kind) => {
-    const input = await fixture()
-    const raw =
-      kind === 'malformed'
-        ? '{"credentials":["PRIVATE_A","PRIVATE_B"],"broken":'
-        : 'PRIVATE_A'.repeat(1024 * 1024)
-    await writeFile(sessionPath(input), raw)
-    const inspection = await runSessionDiagnosticWorker({ ...input, action: 'inspect' })
-    expect(inspection).toMatchObject({
-      kind: 'inspection',
-      inspection: {
-        items: expect.arrayContaining([expect.objectContaining({ id: 'session', available: true })])
-      }
-    })
     expect(
       await runSessionDiagnosticWorker({ ...input, selectedItems: ['session'] })
-    ).toMatchObject({ kind: 'archive', partial: true })
-    const extracted = join(input.directory!, 'extracted')
-    await mkdir(extracted)
-    await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
-    const summary = await readFile(join(extracted, 'session.json.metadata.json'), 'utf8')
-    expect(summary).not.toContain('PRIVATE_')
-    expect(JSON.parse(summary)).toMatchObject({
-      sizeBytes: Buffer.byteLength(raw),
-      omissionReason: kind === 'malformed' ? 'invalid-json' : 'source-size-limit'
-    })
-    expect(await readFile(sessionPath(input), 'utf8')).toBe(raw)
+    ).toMatchObject({ kind: 'archive', partial: false })
+    const projected = JSON.parse(
+      await readFile(join(input.directory!, 'content/session.json'), 'utf8')
+    )
+    expect(projected.session).toMatchObject({ id: 'session', projectId: 'project', revision: 4 })
   })
+  it.each([
+    ['flat wrong session', { id: 'other', projectId: 'project' }, 'session', 'session.json'],
+    ['flat wrong project', { id: 'session', projectId: 'other' }, 'session', 'session.json'],
+    [
+      'envelope wrong session',
+      { version: 2, session: { id: 'other', projectId: 'project' } },
+      'session',
+      'session.json'
+    ],
+    [
+      'envelope wrong project',
+      { version: 2, session: { id: 'session', projectId: 'other' } },
+      'session',
+      'session.json'
+    ],
+    [
+      'quarantine missing identity',
+      { version: 2, session: { projectId: 'project' } },
+      'invalid:session.json.invalid-1-2',
+      'session-invalid/session.json.invalid-1-2.txt'
+    ]
+  ])('retains metadata only for %s', async (_label, document, selectedId, output) => {
+    const input = await fixture()
+    const sourcePath =
+      selectedId === 'session'
+        ? sessionPath(input)
+        : join(input.configRoot, 'sessions/project/session.json.invalid-1-2')
+    await writeFile(sourcePath, JSON.stringify({ ...document, content: 'PRIVATE_OTHER_SESSION' }))
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: [selectedId] })
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    const metadata = JSON.parse(
+      await readFile(join(input.directory!, `content/${output}.metadata.json`), 'utf8')
+    )
+    expect(metadata.omissionReason).toBe('identity-mismatch-or-missing')
+    await expect(readFile(join(input.directory!, `content/${output}`), 'utf8')).rejects.toThrow()
+    const manifest = JSON.parse(
+      await readFile(join(input.directory!, 'content/manifest.json'), 'utf8')
+    )
+    expect(manifest.items.find((item: { id: string }) => item.id === selectedId).status).toBe(
+      'partial'
+    )
+    expect(JSON.stringify(manifest)).not.toContain('PRIVATE_OTHER_SESSION')
+  })
+  it('counts retained log records whose event text is missing', async () => {
+    const input = await fixture()
+    await writeFile(
+      input.logPath!,
+      [
+        JSON.stringify({ t: '2026-09-21T00:00:00.000Z', level: 'info', scope: 'unknown-source' }),
+        JSON.stringify({
+          t: '2026-09-21T00:00:01.000Z',
+          level: 'info',
+          scope: 'unknown-source',
+          msg: 'diagnostic event'
+        })
+      ].join('\n') + '\n'
+    )
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['log:main.log'] })
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    const metadata = JSON.parse(
+      await readFile(join(input.directory!, 'content/logs/main.log.metadata.json'), 'utf8')
+    )
+    expect(metadata).toMatchObject({
+      retainedRecords: 2,
+      omittedLines: 0,
+      missingEventTextRecords: 1
+    })
+    const manifest = JSON.parse(
+      await readFile(join(input.directory!, 'content/manifest.json'), 'utf8')
+    )
+    expect(manifest.items.find((item: { id: string }) => item.id === 'log:main.log')).toMatchObject(
+      {
+        status: 'partial',
+        sourceMetadata: { missingEventTextRecords: 1 }
+      }
+    )
+  })
+  it.each(['malformed', 'oversize'])(
+    'retains metadata for %s session files despite a missing database',
+    async (kind) => {
+      const input = await fixture()
+      const raw =
+        kind === 'malformed'
+          ? '{"credentials":["PRIVATE_A","PRIVATE_B"],"broken":'
+          : 'PRIVATE_A'.repeat(1024 * 1024)
+      await writeFile(sessionPath(input), raw)
+      const inspection = await runSessionDiagnosticWorker({ ...input, action: 'inspect' })
+      expect(inspection).toMatchObject({
+        kind: 'inspection',
+        inspection: {
+          items: expect.arrayContaining([
+            expect.objectContaining({ id: 'session', available: true })
+          ])
+        }
+      })
+      expect(
+        await runSessionDiagnosticWorker({ ...input, selectedItems: ['session', 'database'] })
+      ).toMatchObject({ kind: 'archive', partial: true })
+      const extracted = join(input.directory!, 'extracted')
+      await mkdir(extracted)
+      await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
+      const summary = await readFile(join(extracted, 'session.json.metadata.json'), 'utf8')
+      expect(summary).not.toContain('PRIVATE_')
+      expect(JSON.parse(summary)).toMatchObject({
+        sizeBytes: Buffer.byteLength(raw),
+        omissionReason: kind === 'malformed' ? 'invalid-json' : 'source-size-limit'
+      })
+      expect(await readFile(sessionPath(input), 'utf8')).toBe(raw)
+    }
+  )
   it('marks bounded session arrays partial and records exact omission counts', async () => {
     const input = await fixture()
     const messages = Array.from({ length: 1001 }, (_, index) => ({

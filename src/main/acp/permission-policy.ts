@@ -36,6 +36,8 @@ type PermissionPolicyContext = {
   mcpServerNames?: readonly string[]
   // Main-owned identity of the user Message whose provider turn is parked on this request.
   promptMessageId?: string
+  // Captured by Main from the active interaction, never supplied by the provider.
+  interactionSequence?: number
 }
 
 const TRUSTED_MCP_TOOL_IDENTITY = Symbol('trusted-mcp-tool-identity')

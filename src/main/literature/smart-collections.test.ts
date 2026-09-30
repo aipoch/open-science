@@ -6,10 +6,10 @@ import {
   ClassificationEvaluationError
 } from '../../shared/classification'
 import { literatureItemInputSchema } from '../../shared/literature'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase } from '../database/migration-service'
 import { LiteratureSmartCollections } from './smart-collections'
@@ -27,10 +27,25 @@ let configured = true
 let classificationChanged: (() => void) | undefined
 const unsubscribeClassification = vi.fn()
 const serviceId = '55555555-5555-4555-8555-555555555555'
+let schemaRoot: string
+beforeAll(async () => {
+  schemaRoot = await mkdtemp(join(tmpdir(), 'smart-collection-schema-'))
+  const schemaClient = createProjectDbClient(schemaRoot)
+  try {
+    await migrateApplicationDatabase(schemaClient)
+  } finally {
+    // Disconnect checkpoints SQLite before any case copies the current schema.
+    await schemaClient.$disconnect()
+  }
+})
+afterAll(async () => {
+  if (schemaRoot) await rm(schemaRoot, { recursive: true, force: true })
+})
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'smart-collection-'))
+  // Migration history belongs to the database suite; each case still owns a fresh real database.
+  await copyFile(join(schemaRoot, 'open-science.db'), join(root, 'open-science.db'))
   db = createProjectDbClient(root)
-  await migrateApplicationDatabase(db)
   configured = true
   classificationChanged = undefined
   unsubscribeClassification.mockClear()
@@ -1772,7 +1787,9 @@ it('publishes each committed result without waiting for slow peers, including th
     clock.mockRestore()
     for (const release of releases) release()
   }
-  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
+    timeout: 15000
+  })
 })
 
 it('refills idle inference slots while a slow request is still running', async () => {

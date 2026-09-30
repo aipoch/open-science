@@ -225,6 +225,7 @@
         "src/main/permission-grants/capability.ts",
         "src/main/process-tree.ts",
         "src/main/remote-access/remoteit.ts",
+        "src/main/session-diagnostics/environment.ts",
         "src/main/settings/agent-runtime-manager.ts",
         "src/main/settings/application-commands.ts",
         "src/main/settings/claude-detect.ts",

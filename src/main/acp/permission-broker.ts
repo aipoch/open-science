@@ -77,7 +77,26 @@ type DurablePermissionWaitCandidate = Readonly<{
   fingerprint: string
   categoryKey?: string
   capability?: PermissionCapability
+  restoredContinuation?: RestoredPermissionContinuation
 }>
+
+// Main-only authority for handing a consumed restored wait to the next wait of the same Attempt.
+// It never crosses IPC or persistence; the existing `continuing` record is the durable fence.
+type RestoredPermissionContinuation = {
+  readonly projectId: string
+  readonly sessionId: string
+  readonly requestId: string
+  readonly promptMessageId: string
+  readonly fingerprint: string
+  interactionSequence?: number
+  agentFrameId?: string
+  messageBranchId?: string
+  isCurrent?: () => boolean
+  released: boolean
+  handoffStarted: boolean
+  handedOff: boolean
+  cancellationRequested?: boolean
+}
 
 type PermissionWaitHooks = Readonly<{
   persist: (candidate: DurablePermissionWaitCandidate) => Promise<boolean>
@@ -769,6 +788,7 @@ class AcpPermissionBroker {
     string,
     Readonly<{ fingerprint: string; categoryKey?: string }>
   >()
+  private readonly restoredContinuations = new Map<string, RestoredPermissionContinuation>()
   private readonly durableRequestQueues = new Map<string, string[]>()
   private readonly activeDurableRequestBySession = new Map<string, string>()
   private cancellationGeneration = 0
@@ -1106,6 +1126,20 @@ class AcpPermissionBroker {
       options: permissionOptions
     }
     const fingerprint = permissionRequestFingerprint(request)
+    const restored = this.restoredContinuations.get(request.sessionId)
+    const restoredContinuation =
+      restored?.projectId === policyContext?.projectId &&
+      restored?.promptMessageId === policyContext?.promptMessageId &&
+      restored?.interactionSequence !== undefined &&
+      restored.interactionSequence === policyContext?.interactionSequence &&
+      restored.isCurrent?.()
+        ? restored
+        : undefined
+    if (restored && !restoredContinuation)
+      return Promise.resolve({ outcome: { outcome: 'cancelled' } })
+    const markReleased = (): void => {
+      if (restoredContinuation) restoredContinuation.released = true
+    }
     const durableCandidate: DurablePermissionWaitCandidate | undefined = fingerprint
       ? {
           request,
@@ -1113,7 +1147,8 @@ class AcpPermissionBroker {
           promptMessageId: policyContext?.promptMessageId,
           fingerprint,
           categoryKey,
-          capability
+          capability,
+          ...(restoredContinuation ? { restoredContinuation } : {})
         }
       : undefined
 
@@ -1125,10 +1160,12 @@ class AcpPermissionBroker {
       )
     if (
       durableCandidate &&
+      (!restored || (restoredContinuation && !restoredContinuation.handoffStarted)) &&
       restoredAllowOnce?.fingerprint === durableCandidate.fingerprint &&
       (restoredAllowOnce.categoryKey === categoryKey || legacyCategoryCanMatch)
     ) {
       this.restoredAllowOnceBySession.delete(request.sessionId)
+      markReleased()
       return Promise.resolve({
         outcome: { outcome: 'selected', optionId: providerAllowOnceOption.optionId }
       })
@@ -1144,6 +1181,7 @@ class AcpPermissionBroker {
     )
 
     if (automaticOptionId) {
+      markReleased()
       return Promise.resolve({
         outcome: { outcome: 'selected', optionId: automaticOptionId }
       })
@@ -1159,11 +1197,13 @@ class AcpPermissionBroker {
         .then((match) => {
           if (
             cancellationGeneration !== this.cancellationGeneration ||
-            sessionCancellationToken.cancelled
+            sessionCancellationToken.cancelled ||
+            (restoredContinuation && !restoredContinuation.isCurrent?.())
           ) {
             return { outcome: { outcome: 'cancelled' as const } }
           }
           if (match && providerAllowOnceOption) {
+            markReleased()
             return {
               outcome: { outcome: 'selected' as const, optionId: providerAllowOnceOption.optionId }
             }
@@ -1191,6 +1231,7 @@ class AcpPermissionBroker {
       : undefined
 
     if (autoAllowOptionId) {
+      markReleased()
       return Promise.resolve({
         outcome: { outcome: 'selected', optionId: autoAllowOptionId }
       })
@@ -1304,6 +1345,12 @@ class AcpPermissionBroker {
       this.activeDurableRequestBySession.set(sessionId, requestId)
       stored.durableStarted = true
       stored.durablePersistenceSettled = false
+      if (candidate.restoredContinuation && !candidate.restoredContinuation.handedOff) {
+        // New arguments need a fresh decision. Retire any unused old Once before awaiting storage,
+        // so a concurrent exact retry cannot borrow it while the successor is being committed.
+        candidate.restoredContinuation.handoffStarted = true
+        this.restoredAllowOnceBySession.delete(sessionId)
+      }
       stored.durableReady = hooks.persist(candidate).then((persisted) => {
         stored.durablePersisted = persisted
         stored.durablePersistenceSettled = true
@@ -1575,8 +1622,10 @@ class AcpPermissionBroker {
   async prepareRestoredDecision(
     permission: SessionPermissionRuntimeContext,
     option: AcpPermissionRequest['options'][number] | undefined,
-    projectId: string
+    projectId: string,
+    continuation?: RestoredPermissionContinuation
   ): Promise<void> {
+    if (continuation) this.restoredContinuations.set(permission.request.sessionId, continuation)
     if (!option || option.kind.toLowerCase().startsWith('reject_')) return
     if (!option.kind.toLowerCase().startsWith('allow_')) {
       throw new Error('The restored permission option cannot be replayed safely.')
@@ -1612,8 +1661,11 @@ class AcpPermissionBroker {
     throw new Error('The restored permission scope cannot be granted safely.')
   }
 
-  clearRestoredDecision(sessionId: string): void {
+  clearRestoredDecision(sessionId: string, continuation?: RestoredPermissionContinuation): boolean {
+    if (continuation && this.restoredContinuations.get(sessionId) !== continuation) return false
+    this.restoredContinuations.delete(sessionId)
     this.restoredAllowOnceBySession.delete(sessionId)
+    return true
   }
 
   // Process/connection teardown must release the dead provider RPC without erasing the durable
@@ -1622,6 +1674,7 @@ class AcpPermissionBroker {
     this.cancellationGeneration += 1
     this.livePermissionProfiles.clear()
     this.restoredAllowOnceBySession.clear()
+    this.restoredContinuations.clear()
     this.durableRequestQueues.clear()
     this.activeDurableRequestBySession.clear()
     const pending = [...this.pendingRequests.values(), ...this.respondingRequests.values()]
@@ -1647,6 +1700,7 @@ class AcpPermissionBroker {
     this.sessionCancellationTokens.clear()
     this.livePermissionProfiles.clear()
     this.restoredAllowOnceBySession.clear()
+    this.restoredContinuations.clear()
     const pendingRequests = Array.from(this.pendingRequests.keys())
     for (const pending of Array.from(this.respondingRequests.values())) {
       this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
@@ -1663,6 +1717,7 @@ class AcpPermissionBroker {
     this.sessionCancellationTokens.delete(sessionId)
     for (const token of cancellationTokens ?? []) token.cancelled = true
     this.restoredAllowOnceBySession.delete(sessionId)
+    this.restoredContinuations.delete(sessionId)
     const pendingRequests = Array.from(this.pendingRequests.values())
     for (const pending of Array.from(this.respondingRequests.values())) {
       if (pending.request.sessionId === sessionId) {
@@ -1708,4 +1763,4 @@ export {
   resolveCategoryKey,
   resolveNotebookPermissionContext
 }
-export type { DurablePermissionWaitCandidate, PermissionWaitHooks }
+export type { DurablePermissionWaitCandidate, PermissionWaitHooks, RestoredPermissionContinuation }

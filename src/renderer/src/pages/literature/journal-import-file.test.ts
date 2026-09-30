@@ -9,6 +9,55 @@ import {
 import { utils, write } from 'styled-exceljs'
 
 const bytes = (value: string): ArrayBuffer => new TextEncoder().encode(value).buffer
+it('recognizes the template Alias column when reading a completed XLSX template', async () => {
+  const workbook = utils.book_new()
+  utils.book_append_sheet(
+    workbook,
+    utils.aoa_to_sheet([
+      [
+        'Journal name',
+        'Alias',
+        'ISSN',
+        'eISSN',
+        'Custom attribute 1',
+        'Custom attribute 2',
+        'Custom attribute 3'
+      ],
+      ['Imaginary Sky Review', 'Imag. Sky Rev.', '1234-5679', '', '<0.5', '', '']
+    ]),
+    'Journal data'
+  )
+  const data = await readJournalFile(
+    write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer,
+    'journal-attributes-template.xlsx'
+  )
+  const columns = journalColumns(data.rows, suggestJournalHeader(data.rows))
+  expect(columns.map(({ role }) => role)).toEqual([
+    'name',
+    'alias',
+    'issn',
+    'issn',
+    'ignore',
+    'ignore',
+    'ignore'
+  ])
+  expect(data.rows[1][columns.find(({ role }) => role === 'alias')!.index]).toBe('Imag. Sky Rev.')
+})
+
+it.each(['Alias', 'ALIASES', 'Journal alias', 'Abbreviation', 'Short title'])(
+  'recognizes %s as an alias even before the journal name column',
+  (heading) => {
+    const columns = journalColumns(
+      [
+        [heading, 'Journal name'],
+        ['Imag. Sky Rev.', 'Imaginary Sky Review']
+      ],
+      0
+    )
+    expect(columns.map(({ role }) => role)).toEqual(['alias', 'name'])
+  }
+)
+
 it('reads independently invented headings, quotes and multiline values without a prescribed schema', async () => {
   const data = await readJournalFile(
     bytes(

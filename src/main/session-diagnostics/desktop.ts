@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { copyFile, link, lstat, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { copyFile, link, lstat, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Worker, WorkerOptions } from 'node:worker_threads'
@@ -248,7 +248,9 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
         if (
           !Array.isArray(selected) ||
           selected.length > 100 ||
-          selected.some((id) => typeof id !== 'string' || id.length > 240)
+          selected.some((id) => typeof id !== 'string' || id.length > 240) ||
+          ((request as SessionDiagnosticExportRequest).includeExecutionCode !== undefined &&
+            typeof (request as SessionDiagnosticExportRequest).includeExecutionCode !== 'boolean')
         ) {
           throw new DiagnosticError('Invalid diagnostic selection.')
         }
@@ -273,7 +275,11 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
           action,
           directory,
           ...(action === 'export'
-            ? { selectedItems: (request as SessionDiagnosticExportRequest).selectedItems }
+            ? {
+                selectedItems: (request as SessionDiagnosticExportRequest).selectedItems,
+                includeExecutionCode:
+                  (request as SessionDiagnosticExportRequest).includeExecutionCode === true
+              }
             : {})
         },
         signal
@@ -298,7 +304,11 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
         await assertNewDestination(target, sources)
         signal.throwIfAborted()
         await link(staged, target)
-        result = { status: workerResult.partial ? 'partial' : 'exported', path: target }
+        result = {
+          status: workerResult.partial ? 'partial' : 'exported',
+          path: target,
+          ...(workerResult.partial ? { report } : {})
+        }
       } else {
         throw new DiagnosticError('Unexpected diagnostic worker result.')
       }
@@ -311,7 +321,7 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
         result = cancelled ? { status: 'cancelled' } : { status: 'failed', error: message, report }
       }
     } finally {
-      // Remove only this operation’s export staging; a sanitized failure report is optional.
+      // Remove only this operation’s export staging; return failure reports in memory.
       for (const [stage, temporary] of [
         ['collection staging', directory],
         ['publication staging', publicationDirectory]
@@ -335,19 +345,8 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
     }
     if ('status' in result && (result.status === 'failed' || cleanupFailed)) {
       result.report = report
-      let reportFolder: string | undefined
-      try {
-        const root = options.temporaryRoot ?? tmpdir()
-        if (sources) await assertOutsideSources(root, sources)
-        reportFolder = await mkdtemp(join(root, 'open-science-diagnostic-report-'))
-        const path = join(reportFolder, 'export.log')
-        await writeFile(path, report, { flag: 'wx', mode: 0o600 })
-        result.reportPath = path
-      } catch {
-        // The copyable report is still returned when every disk write is unavailable.
-        if (reportFolder)
-          await rm(reportFolder, { recursive: true, force: true }).catch(() => undefined)
-      }
+      // Keep failure evidence copyable without leaving unmanaged temporary report folders.
+      // Only the archive explicitly chosen by the user is retained on disk.
     }
     return result
   }

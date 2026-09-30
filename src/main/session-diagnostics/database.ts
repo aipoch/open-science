@@ -1,5 +1,6 @@
 import { lstatSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
+import { diagnosticText, type DiagnosticTextOptions } from './detail'
 
 // Explicit metadata projections only. No credentials, content blobs or global state.
 const tables: Record<string, string[]> = {
@@ -83,12 +84,37 @@ const tables: Record<string, string[]> = {
     'updatedAt'
   ],
   ArtifactLineage: ['id', 'projectId', 'sessionId', 'currentVersionId', 'createdAt', 'updatedAt'],
+  ArtifactVersion: [
+    'id',
+    'artifactId',
+    'versionNumber',
+    'originKind',
+    'basedOnVersionId',
+    'artifactRunId',
+    'writeOperationId',
+    'rootFrameId',
+    'agentFrameId',
+    'messageBranchId',
+    'runtimeSegmentId',
+    'promptMessageId',
+    'notebookSessionId',
+    'producerRunId',
+    'producerRunIndex',
+    'messageId',
+    'messageSnapshotId',
+    'state',
+    'managedVisibleAt',
+    'sizeBytes',
+    'createdAt',
+    'updatedAt'
+  ],
   UploadFile: ['id', 'projectId', 'sessionId', 'currentVersionId', 'createdAt', 'updatedAt'],
   Review: [
     'id',
     'projectId',
     'sessionId',
     'turnMessageId',
+    'scope',
     'lifecycle',
     'outcome',
     'model',
@@ -105,6 +131,7 @@ const tables: Record<string, string[]> = {
     'status',
     'exitCode',
     'errorCode',
+    'producerRunId',
     'analysisState',
     'analysisMessageId',
     'analysisUpdatedAt',
@@ -141,6 +168,16 @@ const tables: Record<string, string[]> = {
     'artifactBindingState',
     'sortIndex',
     'reflagCount'
+  ],
+  ReviewFindingDisposition: [
+    'id',
+    'sourceFindingId',
+    'causeReviewId',
+    'sequence',
+    'trigger',
+    'outcome',
+    'assessedArtifactVersionId',
+    'createdAt'
   ],
   BackgroundResultDelivery: [
     'id',
@@ -185,6 +222,7 @@ export type DiagnosticDatabaseMetadata = {
   truncationReasons: ('row-limit' | 'byte-limit' | 'cell-limit')[]
   timeRange?: { column: string; earliest: string; latest: string }
   missingColumns?: string[]
+  truncatedTextFields?: number
 }
 
 type DiagnosticDatabaseResult = {
@@ -226,7 +264,8 @@ function priorityOrder(table: string, available: Set<string>): string[] {
 export function* readDiagnosticDatabase(
   path: string,
   projectId: string,
-  sessionId: string
+  sessionId: string,
+  options?: DiagnosticTextOptions
 ): Generator<DiagnosticDatabaseResult> {
   const db = openReadOnlyDatabase(path)
   try {
@@ -242,7 +281,15 @@ export function* readDiagnosticDatabase(
         const missingColumns = allowedColumns.filter((column) => !available.has(column))
         let scope: string
         let parameters: string[]
-        if (table === 'ComputeJobOperation' || table === 'Finding') {
+        if (table === 'ArtifactVersion') {
+          scope =
+            '"artifactId" IN (SELECT "id" FROM "ArtifactLineage" WHERE "projectId" = ? AND "sessionId" = ?)'
+          parameters = [projectId, sessionId]
+        } else if (table === 'ReviewFindingDisposition') {
+          scope =
+            '"sourceFindingId" IN (SELECT "Finding"."id" FROM "Finding" JOIN "Review" ON "Review"."id" = "Finding"."reviewId" WHERE "Review"."projectId" = ? AND "Review"."sessionId" = ?)'
+          parameters = [projectId, sessionId]
+        } else if (table === 'ComputeJobOperation' || table === 'Finding') {
           const parent = table === 'Finding' ? 'Review' : 'ComputeJob'
           const foreign = table === 'Finding' ? 'reviewId' : 'jobId'
           scope = `"${foreign}" IN (SELECT "id" FROM "${parent}" WHERE "projectId" = ? AND "sessionId" = ?)`
@@ -278,25 +325,41 @@ export function* readDiagnosticDatabase(
             .filter((column) => columns.includes(column))
             .map((column) => `"${column}" DESC`)
         )
-        const projection = columns.map(
-          (column) =>
-            `CASE WHEN length(CAST("${column}" AS BLOB)) > 16384 THEN '[omitted: cell limit]' ELSE "${column}" END AS "${column}"`
-        )
+        const projection = columns
+          .filter(
+            (column) => !['scope', 'lastPollError', 'harvestError', 'errorMessage'].includes(column)
+          )
+          .map(
+            (column) =>
+              `CASE WHEN length(CAST("${column}" AS BLOB)) > 16384 THEN '[omitted: cell limit]' ELSE "${column}" END AS "${column}"`
+          )
+        if (table === 'Review' && available.has('scope'))
+          projection.push(
+            `CASE WHEN length(CAST("scope" AS BLOB)) > 16384 THEN NULL ELSE "scope" END AS "scope"`
+          )
         if (table === 'SessionModelCallUsage')
           projection.push(
             `(SELECT "completedAtMs" FROM "SessionTurnUsage" AS turn WHERE turn."sessionId" = "SessionModelCallUsage"."sessionId" AND turn."messageId" = "SessionModelCallUsage"."messageId") AS "turnCompletedAtMs"`
           )
-        // Error bodies may contain credentials, research content, or OS-protected ciphertext.
-        // Export presence/protection only; never fetch or decrypt those values.
+        // Encrypted Compute errors are never fetched or decrypted. Plaintext error bodies are
+        // projected through the same bounded sanitizer as logs and Notebook errors.
         for (const column of table === 'ComputeJob'
           ? ['lastPollError', 'harvestError']
           : table === 'Review'
             ? ['errorMessage']
             : []) {
-          if (available.has(column))
+          if (available.has(column)) {
             projection.push(
               `("${column}" IS NOT NULL AND length("${column}") > 0) AS "${column}Present"`
             )
+            const protectedValue =
+              table === 'ComputeJob' && available.has('sensitiveDataEncrypted')
+                ? '"sensitiveDataEncrypted" = 1 OR '
+                : ''
+            projection.push(
+              `CASE WHEN ${protectedValue}length(CAST("${column}" AS BLOB)) > 16384 THEN NULL ELSE "${column}" END AS "${column}"`
+            )
+          }
         }
         if (table === 'ComputeJob' && available.has('sensitiveDataEncrypted'))
           projection.push('"sensitiveDataEncrypted" AS "errorsProtected"')
@@ -307,6 +370,7 @@ export function* readDiagnosticDatabase(
         const iterator = statement.iterate(...parameters)
         const rows: Record<string, unknown>[] = []
         let bytes = 0
+        let truncatedTextFields = 0
         const reasons = new Set<DiagnosticDatabaseMetadata['truncationReasons'][number]>()
         try {
           for (const row of iterator) {
@@ -324,7 +388,62 @@ export function* readDiagnosticDatabase(
               break
             }
             if (Object.values(row).includes('[omitted: cell limit]')) reasons.add('cell-limit')
-            rows.push(row)
+            const projected = row as Record<string, unknown>
+            if (table === 'Review' && 'scope' in projected) {
+              const rawScope = projected.scope
+              delete projected.scope
+              if (typeof rawScope === 'string') {
+                try {
+                  const parsed = JSON.parse(rawScope) as unknown
+                  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    const scopeValue = parsed as Record<string, unknown>
+                    const safeScope: Record<string, unknown> = {}
+                    if (
+                      typeof scopeValue.turnMessageId === 'string' &&
+                      /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(scopeValue.turnMessageId)
+                    )
+                      safeScope.turnMessageId = scopeValue.turnMessageId
+                    if (Array.isArray(scopeValue.artifactVersionIds))
+                      safeScope.artifactVersionIds = scopeValue.artifactVersionIds
+                        .filter(
+                          (id): id is string =>
+                            typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(id)
+                        )
+                        .slice(0, 100)
+                    if (Array.isArray(scopeValue.blocks))
+                      safeScope.blockCount = scopeValue.blocks.length
+                    projected.scopeMetadata = safeScope
+                  } else projected.scopeUnavailable = true
+                } catch {
+                  projected.scopeUnavailable = true
+                }
+              } else if (rawScope === null) {
+                projected.scopeUnavailable = true
+                reasons.add('cell-limit')
+              }
+            }
+            for (const column of table === 'ComputeJob'
+              ? ['lastPollError', 'harvestError']
+              : table === 'Review'
+                ? ['errorMessage']
+                : []) {
+              if (!(column in projected)) continue
+              const value = projected[column]
+              if (typeof value === 'string') {
+                projected[column] = diagnosticText(value, options, 3000)
+                if ((projected[column] as string).endsWith('…[truncated]')) truncatedTextFields++
+              } else {
+                delete projected[column]
+                if (value === null && projected[`${column}Present`] === 1n) {
+                  projected[`${column}Unavailable`] =
+                    table === 'ComputeJob' && projected.errorsProtected === 1n
+                      ? 'encrypted'
+                      : 'cell-limit'
+                  if (projected[`${column}Unavailable`] === 'cell-limit') reasons.add('cell-limit')
+                }
+              }
+            }
+            rows.push(projected)
           }
         } finally {
           iterator.return?.()
@@ -334,6 +453,7 @@ export function* readDiagnosticDatabase(
           truncationReasons: [...reasons]
         }
         if (missingColumns.length) metadata.missingColumns = missingColumns
+        if (truncatedTextFields) metadata.truncatedTextFields = truncatedTextFields
         if (timeColumn) {
           const times = rows
             .map((row) => row[timeColumn])
@@ -351,7 +471,7 @@ export function* readDiagnosticDatabase(
               latest: String(times[times.length - 1])
             }
         }
-        yield { table, rows, truncated: reasons.size > 0, metadata }
+        yield { table, rows, truncated: reasons.size > 0 || truncatedTextFields > 0, metadata }
       } catch (error) {
         yield { table, error: databaseFailure(error) }
       }

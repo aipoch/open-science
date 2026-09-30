@@ -392,7 +392,7 @@ export const JournalManager = memo(function JournalManager({
     const queryChanged = previousQuery.current !== query
     previousQuery.current = query
     let active = true
-    const load = (): void => {
+    const load = (retried = false): void => {
       setEntriesLoading(true)
       void api({
         action: 'entries',
@@ -421,6 +421,15 @@ export const JournalManager = memo(function JournalManager({
         },
         (error) => {
           if (active) {
+            const reason =
+              parseApplicationCommandError(error)?.message ??
+              (error instanceof Error ? error.message : '')
+            // A concurrent write invalidates the main-process read. Retry once while
+            // this query is still current; persistent conflicts remain visible errors.
+            if (!retried && reason === 'Journal data changed. Reload the dataset.') {
+              load(true)
+              return
+            }
             setEntriesLoading(false)
             setEntriesFailed(true)
             console.error('Could not load journal entries', error)

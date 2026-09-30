@@ -1,5 +1,7 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import type { PersistedChatSession } from '../src/shared/session-persistence'
+import type { NotebookRunRecord } from '../src/shared/notebook'
 
 const scenarios = [
   { action: 'approve', restart: true },
@@ -241,6 +243,125 @@ for (const { action, restart } of scenarios) {
     await page.getByRole('button', { name: 'Send message' }).click()
     await expect(page.getByText('Interaction follow-up completed.', { exact: false })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('after-response.png') })
+  })
+}
+
+for (const secondDecision of ['allow', 'deny'] as const) {
+  test(`preserves a second permission across another restart and requires explicit ${secondDecision}`, async ({
+    app
+  }, testInfo) => {
+    test.setTimeout(240_000)
+    await app.completeOnboarding()
+    let page = await app.configureFakeAgent()
+    await page.getByRole('button', { name: 'New project' }).click()
+    const dialog = page.getByRole('dialog', { name: 'New project' })
+    await dialog.getByLabel('Name').fill(`Permission handoff ${secondDecision}`)
+    await dialog.getByRole('button', { name: 'Create project' }).click()
+    const prompt = 'Verify consecutive permissions after restart.'
+    await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await expect(page.getByTestId('permission-card')).toBeVisible()
+    const readSession = async (): Promise<PersistedChatSession> =>
+      page.evaluate(async () => (await window.api.sessions.loadAll()).sessions[0])
+    await expect
+      .poll(async () => (await readSession()).runtimeContext?.permission?.state)
+      .toBe('pending')
+    const initial = await readSession()
+    expect(initial.runtimeContext?.permission?.request.rawInput).toMatchObject({
+      code: 'return { marker: "permission-handoff-first" }'
+    })
+    const firstRequestId = initial.runtimeContext!.permission!.request.requestId
+
+    page = await app.restart()
+    await page
+      .getByRole('region', { name: 'Recent sessions' })
+      .getByRole('button', { name: prompt })
+      .click()
+    await expect(page.getByTestId('permission-card')).toBeVisible()
+    expect((await readSession()).runtimeContext?.permission?.request.requestId).toBe(firstRequestId)
+    const allowOnce = async (): Promise<void> => {
+      await page.getByTestId('permission-actions').getByTestId('scope-chevron').click()
+      await page.getByRole('menuitemradio', { name: 'Once This call only', exact: true }).click()
+      const approval = page.getByTestId('permission-actions').getByTestId('allow-primary')
+      await expect(approval).toHaveText('Allow once')
+      await approval.click()
+    }
+    await allowOnce()
+
+    // Reproduce the production failure: the restored exact call succeeds, then a different
+    // app-owned MCP call asks within the same continuation instead of silently being cancelled.
+    await expect
+      .poll(async () => (await readSession()).runtimeContext?.permission?.request.rawInput, {
+        timeout: 40_000
+      })
+      .toMatchObject({ code: 'return { marker: "permission-handoff-second" }' })
+    await expect(page.getByTestId('permission-card')).toBeVisible()
+    const next = await readSession()
+    const secondPermission = next.runtimeContext!.permission!
+    expect(secondPermission.state).toBe('pending')
+    expect(secondPermission.request.requestId).not.toBe(firstRequestId)
+    expect(secondPermission.originatingPromptMessageId).toBe(
+      initial.runtimeContext!.permission!.originatingPromptMessageId
+    )
+    const readRuns = async (): Promise<NotebookRunRecord[]> =>
+      page.evaluate(async (session) => {
+        const state = await window.api.notebook.state({
+          projectId: session.projectId,
+          sessionId: session.id,
+          workspaceCwd: session.cwd
+        })
+        return state.runs.filter((run) => run.script.includes('permission-handoff-'))
+      }, initial)
+    const beforeSecondDecision = await readRuns()
+    expect(beforeSecondDecision).toHaveLength(1)
+    expect(beforeSecondDecision[0]).toMatchObject({
+      script: 'return { marker: "permission-handoff-first" }',
+      status: 'completed'
+    })
+    await page.screenshot({ path: testInfo.outputPath('second-permission-before-restart.png') })
+    await testInfo.attach('second-permission', {
+      body: JSON.stringify(secondPermission),
+      contentType: 'application/json'
+    })
+
+    page = await app.restart()
+    await page
+      .getByRole('region', { name: 'Recent sessions' })
+      .getByRole('button', { name: prompt })
+      .click()
+    await expect(page.getByTestId('permission-card')).toBeVisible()
+    const restored = await readSession()
+    expect(restored.id).toBe(initial.id)
+    expect(restored.runtimeContext?.permission).toEqual(secondPermission)
+    expect(restored.messages.filter((message) => message.role === 'user')).toHaveLength(1)
+    expect(await readRuns()).toEqual(beforeSecondDecision)
+    await page.screenshot({ path: testInfo.outputPath('second-permission-restored.png') })
+    if (secondDecision === 'allow') await allowOnce()
+    else await page.getByTestId('permission-actions').getByTestId('deny-button').click()
+    const answer =
+      secondDecision === 'allow'
+        ? 'Permission handoff: both calls executed once.'
+        : 'Permission handoff: second call denied without execution.'
+    await expect(page.getByText(answer, { exact: false })).toBeVisible({ timeout: 40_000 })
+    await expect.poll(async () => (await readSession()).status).toBe('idle')
+    const final = await readSession()
+    expect(final.runtimeContext?.permission).toBeUndefined()
+    expect(final.messages.filter((message) => message.role === 'user')).toHaveLength(1)
+    const runs = await readRuns()
+    expect(runs.filter((run) => run.script.includes('permission-handoff-first'))).toHaveLength(1)
+    expect(runs.filter((run) => run.script.includes('permission-handoff-second'))).toHaveLength(
+      secondDecision === 'allow' ? 1 : 0
+    )
+    expect(runs.every((run) => run.status === 'completed')).toBe(true)
+    const providerPrompts = await app.readFakeAgentPrompts()
+    await testInfo.attach('provider-prompts', {
+      body: JSON.stringify(providerPrompts),
+      contentType: 'application/json'
+    })
+    // Session-title generation may use a separate provider Session. Count only this task's
+    // original prompt and its two hidden permission continuations, not auxiliary model work.
+    expect(providerPrompts.filter((entry) => entry.sessionId === initial.id)).toHaveLength(3)
+    await page.screenshot({ path: testInfo.outputPath('permission-handoff-finished.png') })
   })
 }
 

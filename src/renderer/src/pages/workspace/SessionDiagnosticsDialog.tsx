@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Check, LoaderCircle, X } from 'lucide-react'
+import { Check, CircleCheck, CircleAlert, FileArchive, LoaderCircle, X } from 'lucide-react'
 import { Checkbox } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -52,6 +52,19 @@ function diagnosticSourceCode(reason: string | undefined): string {
   )
 }
 
+type DiagnosticChoice = {
+  id: string
+  label: string
+  description?: string
+  items: SessionDiagnosticItem[]
+  fileItems?: SessionDiagnosticItem[]
+  candidateFiles?: string[]
+  notebook?: boolean
+}
+
+const sourceStatus = (item: SessionDiagnosticItem, t: TFunction): string =>
+  item.available ? t('Ready for export') : t('Unavailable')
+
 export const SessionDiagnosticsDialog = ({
   identity,
   onClose
@@ -62,8 +75,10 @@ export const SessionDiagnosticsDialog = ({
   const { t } = useTranslation()
   const [items, setItems] = useState<SessionDiagnosticItem[]>([])
   const [selected, setSelected] = useState<string[]>([])
+  const [includeExecutionCode, setIncludeExecutionCode] = useState(false)
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string>()
+  const [reportCopied, setReportCopied] = useState(false)
   const [result, setResult] = useState<SessionDiagnosticExportResult>()
   const operation = useRef<string | undefined>(undefined)
   const activeExport = useRef<
@@ -76,6 +91,9 @@ export const SessionDiagnosticsDialog = ({
   const closing = useRef(false)
   const mounted = useRef(true)
   const { projectId, sessionId } = identity
+  const hasSelectedNotebook = items.some(
+    (item) => item.kind === 'notebook' && item.available && selected.includes(item.id)
+  )
 
   useEffect(() => {
     mounted.current = true
@@ -125,7 +143,7 @@ export const SessionDiagnosticsDialog = ({
     try {
       if (active) {
         await window.api.sessions.cancelDiagnostics({ operationId: active })
-        // Cancellation joins worker cleanup, but the final report may still be being saved.
+        // Cancellation joins worker cleanup; also await the final report returned by export.
         const exported = exporting?.operationId === active ? await exporting.promise : undefined
         if (!mounted.current) return
         if (exported?.error) return
@@ -144,12 +162,14 @@ export const SessionDiagnosticsDialog = ({
     setBusy(true)
     setError(undefined)
     setResult(undefined)
+    setReportCopied(false)
     try {
       const promise = window.api.sessions.exportDiagnostics({
         projectId,
         sessionId,
         operationId,
-        selectedItems: selected
+        selectedItems: selected,
+        ...(includeExecutionCode && hasSelectedNotebook ? { includeExecutionCode: true } : {})
       })
       activeExport.current = { operationId, promise }
       const exported = await promise
@@ -168,8 +188,118 @@ export const SessionDiagnosticsDialog = ({
       }
     }
   }
-  const revealPath = result?.path ?? result?.reportPath
-  const separateReportPath = result?.reportPath !== revealPath ? result?.reportPath : undefined
+  const revealPath = result?.path
+  const single = (
+    item: SessionDiagnosticItem,
+    label: string,
+    description?: string,
+    candidateFiles?: string[]
+  ): DiagnosticChoice => ({ id: item.id, label, description, items: [item], candidateFiles })
+  const notebookItems = items.filter((item) => item.kind === 'notebook')
+  const notebookFiles = notebookItems.filter((item) => item.id !== 'notebook:frames-limited')
+  const sections: { title: string; choices: DiagnosticChoice[] }[] = [
+    {
+      title: t('Session and execution'),
+      choices: [
+        ...items
+          .filter((item) => item.kind === 'session')
+          .map((item) =>
+            single(
+              item,
+              t('Session state'),
+              t(
+                'Session state, tool activity, delegation and recovery records. Full conversations are excluded.'
+              )
+            )
+          ),
+        ...(notebookItems.length
+          ? [
+              {
+                id: 'execution-records',
+                label: t('Execution records'),
+                description: t(
+                  'Execution states, errors and recovery details for this session and its subagents. Full standard output is excluded; saved code is optional.'
+                ),
+                items: notebookItems,
+                fileItems: notebookFiles,
+                notebook: true
+              }
+            ]
+          : []),
+        ...items
+          .filter((item) => item.kind === 'database')
+          .map((item) =>
+            single(
+              item,
+              t('Related database records'),
+              t('Database records linked to this session, including reviews and artifacts.'),
+              ['db/*.json', 'db/ArtifactVersion.json', 'db/ReviewFindingDisposition.json']
+            )
+          ),
+        ...items
+          .filter((item) => item.kind === 'invalid-session')
+          .map((item) =>
+            single(
+              item,
+              t('Damaged session copy'),
+              t(
+                'An isolated copy of a damaged session file. Available diagnostic records or file metadata are exported.'
+              )
+            )
+          )
+      ]
+    },
+    {
+      title: t('Application environment'),
+      choices: items
+        .filter((item) => item.kind === 'environment')
+        .map((item) =>
+          single(
+            item,
+            t('Versions and configuration'),
+            t('Application versions and available stored configuration, captured when you export.')
+          )
+        )
+    },
+    {
+      title: t('Application logs'),
+      choices: items
+        .filter((item) => item.kind === 'log')
+        .map((item) =>
+          single(
+            item,
+            item.id === 'log:main.log'
+              ? t('Current log')
+              : item.id === 'log:main.1.log'
+                ? t('Historical log 1')
+                : t('Historical log 2'),
+            item.id === 'log:main.log'
+              ? t('Current application events and errors, including activity outside this session.')
+              : t(
+                  'Historical application events and errors, including activity outside this session. Select manually to investigate earlier issues.'
+                )
+          )
+        )
+    },
+    {
+      title: t('Sensitive content'),
+      choices: items
+        .filter((item) => item.kind === 'sensitive-evidence' || item.kind === 'sensitive-file')
+        .map((item) =>
+          single(
+            item,
+            item.kind === 'sensitive-evidence'
+              ? t('Sensitive-content evidence (redacted)')
+              : t('Flagged original file'),
+            item.kind === 'sensitive-evidence'
+              ? t('Redacted scanner evidence for the failed Session package export.')
+              : t(
+                  'Original file that triggered the Session package check. It may contain credentials or research content; review it before exporting.'
+                )
+          )
+        )
+    }
+  ]
   return (
     <Dialog.Root
       open
@@ -193,7 +323,7 @@ export const SessionDiagnosticsDialog = ({
                 </Dialog.Title>
                 <FieldHelp
                   content={t(
-                    'The archive always includes a manifest and export log; missing sources do not stop the export. Include screenshots when reporting an issue to developers.'
+                    'Individual file failures do not stop the export; details appear in the export result. Include screenshots when reporting an issue to developers.'
                   )}
                   contentClassName="max-w-[320px]"
                 />
@@ -218,7 +348,7 @@ export const SessionDiagnosticsDialog = ({
             </div>
             <Dialog.Description className={dialogDescriptionClassName}>
               {t(
-                'Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. Damaged or large files may include only a summary.'
+                'Exports diagnostic records, error details and execution errors. Review for sensitive content before sharing. Saved locally; nothing is uploaded.'
               )}
             </Dialog.Description>
           </div>
@@ -229,71 +359,207 @@ export const SessionDiagnosticsDialog = ({
                 {t('Preparing diagnostics…')}
               </p>
             )}
-            <div className="mt-3 space-y-2">
-              {items.map((item) => {
-                const label = item.kind === 'database' ? t('Session database records') : item.name
-                const description =
-                  item.kind === 'sensitive-evidence'
-                    ? t('Redacted scanner evidence for the failed Session package export.')
-                    : item.kind === 'sensitive-file'
-                      ? t(
-                          'Original file that triggered the Session package check. It may contain credentials or research content; review it before exporting.'
+            <div className="mt-3 space-y-7">
+              {sections
+                .filter((section) => section.choices.length > 0)
+                .map((section, sectionIndex) => (
+                  <section key={section.title} aria-label={section.title}>
+                    <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-text-300">
+                      {section.title}
+                    </h3>
+                    <div className="space-y-3">
+                      {section.choices.map((choice, choiceIndex) => {
+                        const files = choice.fileItems ?? choice.items
+                        const available = files.filter((item) => item.available).length
+                        const unavailable = files.length - available
+                        const selectableIds = choice.items
+                          .filter((item) => item.available)
+                          .map((item) => item.id)
+                        const selectedCount = selectableIds.filter((id) =>
+                          selected.includes(id)
+                        ).length
+                        const knownSizes = files
+                          .map((item) => item.sizeBytes)
+                          .filter((size): size is number => size !== undefined)
+                        const size = formatByteSize(
+                          knownSizes.reduce((sum, value) => sum + value, 0)
                         )
-                      : item.kind === 'log'
-                        ? item.id === 'log:main.log'
-                          ? t(
-                              'Current application log metadata, including activity outside this session.'
-                            )
-                          : t(
-                              'Historical application log metadata, including activity outside this session. Select manually to investigate earlier issues.'
-                            )
-                        : undefined
-                const sourceCode = diagnosticSourceCode(item.reason)
-                const size = formatByteSize(item.sizeBytes)
-
-                return (
-                  <Checkbox.Root
-                    key={item.id}
-                    checked={selected.includes(item.id)}
-                    disabled={busy || !item.available}
-                    onCheckedChange={(checked) =>
-                      setSelected((current) =>
-                        checked === true
-                          ? [...current, item.id]
-                          : current.filter((id) => id !== item.id)
-                      )
-                    }
-                    className="group flex min-h-14 w-full min-w-0 items-start gap-3 rounded-xl border border-transparent bg-bg-000 px-3.5 py-3 text-left outline-none transition-[background-color,border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/5 hover:shadow-sm focus-visible:ring-3 focus-visible:ring-ring/40 active:translate-y-0 active:shadow-none data-[state=checked]:border-primary/30 data-[state=checked]:bg-primary/5 data-[state=checked]:hover:border-primary/50 data-[state=checked]:hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transform-none motion-reduce:transition-none"
-                  >
-                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-border-100 bg-bg-000 text-text-000 group-data-[state=checked]:border-primary group-data-[state=checked]:bg-primary group-data-[state=checked]:text-primary-foreground">
-                      <Checkbox.Indicator>
-                        <Check className="size-3" aria-hidden="true" />
-                      </Checkbox.Indicator>
-                    </span>
-                    <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-2 gap-y-1">
-                      <span className="min-w-0 break-words text-sm font-medium text-text-000">
-                        {label}
-                      </span>
-                      {size && (
-                        <span className="shrink-0 whitespace-nowrap text-xs text-text-300">
-                          {size}
-                        </span>
-                      )}
-                      {description && (
-                        <span className="col-span-2 text-xs leading-5 text-text-300">
-                          {description}
-                        </span>
-                      )}
-                      {!item.available && (
-                        <span className="col-span-2 text-xs leading-5 text-text-300">
-                          {t('Unavailable')}
-                          {sourceCode ? `: ${sourceCode}` : ''}
-                        </span>
-                      )}
-                    </span>
-                  </Checkbox.Root>
-                )
-              })}
+                        const displayedSize = knownSizes.length
+                          ? knownSizes.length === files.length
+                            ? size
+                            : t('Known size: {{size}}', { size })
+                          : undefined
+                        const descriptionId = `diagnostic-description-${sectionIndex}-${choiceIndex}`
+                        const countId = `diagnostic-count-${sectionIndex}-${choiceIndex}`
+                        const unavailableId = `diagnostic-unavailable-${sectionIndex}-${choiceIndex}`
+                        const discoveryLimited = choice.items.some(
+                          (item) => item.id === 'notebook:frames-limited'
+                        )
+                        const missing = files.every(
+                          (item) => diagnosticSourceCode(item.reason) === 'ENOENT'
+                        )
+                        return (
+                          <div
+                            key={choice.id}
+                            className={`overflow-hidden rounded-2xl border transition-colors ${
+                              selectedCount > 0
+                                ? 'border-primary/10 bg-primary/5'
+                                : 'border-border-200/40 bg-bg-100/50'
+                            }`}
+                          >
+                            <Checkbox.Root
+                              aria-label={
+                                choice.items[0]?.kind === 'invalid-session' ||
+                                choice.items[0]?.kind === 'sensitive-file'
+                                  ? `${choice.label}: ${choice.items[0].name}`
+                                  : choice.label
+                              }
+                              aria-describedby={[
+                                choice.description ? descriptionId : undefined,
+                                choice.notebook ? countId : undefined,
+                                available === 0 ? unavailableId : undefined
+                              ]
+                                .filter(Boolean)
+                                .join(' ')}
+                              checked={
+                                selectedCount === selectableIds.length && selectableIds.length > 0
+                                  ? true
+                                  : selectedCount > 0
+                                    ? 'indeterminate'
+                                    : false
+                              }
+                              disabled={busy || selectableIds.length === 0}
+                              onCheckedChange={(checked) => {
+                                if (choice.notebook && checked !== true)
+                                  setIncludeExecutionCode(false)
+                                setSelected((current) =>
+                                  checked === true
+                                    ? [
+                                        ...current,
+                                        ...selectableIds.filter((id) => !current.includes(id))
+                                      ]
+                                    : current.filter((id) => !selectableIds.includes(id))
+                                )
+                              }}
+                              className="group flex min-h-14 w-full min-w-0 items-start gap-3 rounded-2xl px-4 py-4 text-left outline-none transition-[background-color,box-shadow] hover:bg-primary/5 focus-visible:ring-3 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-55"
+                            >
+                              <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-border-300 bg-bg-000 text-text-000 group-data-[state=checked]:border-primary group-data-[state=checked]:bg-primary group-data-[state=checked]:text-primary-foreground group-data-[state=indeterminate]:border-primary group-data-[state=indeterminate]:bg-primary group-data-[state=indeterminate]:text-primary-foreground">
+                                <Checkbox.Indicator>
+                                  <Check className="size-3" aria-hidden="true" />
+                                </Checkbox.Indicator>
+                              </span>
+                              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1.5">
+                                <span className="min-w-0 break-words text-sm font-semibold text-text-000">
+                                  {choice.label}
+                                </span>
+                                {displayedSize && (
+                                  <span className="shrink-0 rounded-full bg-primary/7 px-2 py-0.5 whitespace-nowrap text-xs font-medium text-text-200">
+                                    {displayedSize}
+                                  </span>
+                                )}
+                                {choice.description && (
+                                  <span
+                                    id={descriptionId}
+                                    className="col-span-2 text-xs leading-5 text-text-300"
+                                  >
+                                    {choice.description}
+                                  </span>
+                                )}
+                                {choice.notebook && (
+                                  <span
+                                    id={countId}
+                                    className="col-span-2 text-xs leading-5 text-text-300"
+                                  >
+                                    {t('{{available}} available, {{unavailable}} unavailable', {
+                                      available,
+                                      unavailable
+                                    })}
+                                  </span>
+                                )}
+                                {available === 0 && (
+                                  <span
+                                    id={unavailableId}
+                                    className="col-span-2 text-xs leading-5 text-text-300"
+                                  >
+                                    {choice.notebook
+                                      ? t('Execution records are unavailable for this session.')
+                                      : missing
+                                        ? t('This file was not found.')
+                                        : t('This source could not be read.')}
+                                  </span>
+                                )}
+                              </span>
+                            </Checkbox.Root>
+                            {choice.notebook && (
+                              <div className="mx-4 border-t border-primary/10 py-3">
+                                <Checkbox.Root
+                                  aria-label={t('Include execution code')}
+                                  aria-describedby={`${descriptionId}-code`}
+                                  checked={includeExecutionCode && hasSelectedNotebook}
+                                  disabled={busy || !hasSelectedNotebook}
+                                  onCheckedChange={(checked) =>
+                                    setIncludeExecutionCode(checked === true)
+                                  }
+                                  className="group flex items-center gap-2 rounded-sm text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-55"
+                                >
+                                  <span className="flex size-4 shrink-0 items-center justify-center rounded border border-border-300 group-data-[state=checked]:border-primary group-data-[state=checked]:bg-primary group-data-[state=checked]:text-primary-foreground">
+                                    <Checkbox.Indicator>
+                                      <Check className="size-3" aria-hidden="true" />
+                                    </Checkbox.Indicator>
+                                  </span>
+                                  {t('Include execution code')}
+                                </Checkbox.Root>
+                                <p
+                                  id={`${descriptionId}-code`}
+                                  className="mt-1 text-xs leading-5 text-text-300"
+                                >
+                                  {t(
+                                    'Includes saved code in selected execution records. It may contain research content, paths or credentials; review before sharing.'
+                                  )}
+                                </p>
+                              </div>
+                            )}
+                            {discoveryLimited && (
+                              <p className="px-3.5 pb-2 text-xs leading-5 text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                                {t('Some execution records could not be listed.')}
+                              </p>
+                            )}
+                            <details className="mx-4 border-t border-primary/10 py-3 text-xs text-text-300">
+                              <summary className="w-fit cursor-pointer select-none rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                                {t('Included files')}
+                              </summary>
+                              <ul className="mt-2 space-y-1.5">
+                                {(choice.candidateFiles ? [] : files).map((item) => {
+                                  const code = diagnosticSourceCode(item.reason)
+                                  return (
+                                    <li key={item.id} className="flex flex-wrap gap-x-2 break-all">
+                                      <code>
+                                        {item.kind === 'sensitive-evidence'
+                                          ? 'sensitive-content/evidence.json'
+                                          : item.name}
+                                      </code>
+                                      {formatByteSize(item.sizeBytes) && (
+                                        <span>{formatByteSize(item.sizeBytes)}</span>
+                                      )}
+                                      <span>{sourceStatus(item, t)}</span>
+                                      {code && <code>{code}</code>}
+                                    </li>
+                                  )
+                                })}
+                                {choice.candidateFiles?.map((path) => (
+                                  <li key={path} className="flex flex-wrap gap-x-2 break-all">
+                                    <code>{path}</code>
+                                    <span>{t('Generated during export')}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </section>
+                ))}
             </div>
             {items.some((item) => item.kind === 'sensitive-file') && (
               <p className="mt-3 text-xs leading-5 text-status-warning-foreground dark:text-status-warning-dark-foreground">
@@ -303,26 +569,46 @@ export const SessionDiagnosticsDialog = ({
               </p>
             )}
             {result && (
-              <p role="status">
-                {result.status === 'exported'
-                  ? t('Diagnostics exported.')
-                  : result.status === 'partial'
-                    ? t('Diagnostics exported with missing information.')
-                    : result.status === 'cancelled'
-                      ? t('Export cancelled.')
-                      : t('Diagnostic export failed.')}
-              </p>
+              <div className="mt-5 space-y-3 rounded-2xl bg-bg-100/60 p-4">
+                <div role="status">
+                  <p
+                    className={`flex items-start gap-2 text-sm font-medium leading-6 ${
+                      result.status === 'exported' || result.status === 'partial'
+                        ? 'text-primary'
+                        : 'text-text-100'
+                    }`}
+                  >
+                    {result.status === 'exported' || result.status === 'partial' ? (
+                      <CircleCheck className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+                    ) : (
+                      <CircleAlert className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+                    )}
+                    {result.status === 'exported' || result.status === 'partial'
+                      ? t('Diagnostic package exported successfully.')
+                      : result.status === 'cancelled'
+                        ? t('Export cancelled.')
+                        : t('Diagnostic export failed.')}
+                  </p>
+                  {result.status === 'partial' && (
+                    <p className="text-xs leading-5 text-text-200">
+                      {t('Some selected material could not be included in full.')}
+                    </p>
+                  )}
+                </div>
+                {revealPath && (
+                  <div className="flex items-start gap-2.5 rounded-xl bg-bg-000/80 px-3 py-2.5">
+                    <FileArchive
+                      className="mt-0.5 size-4 shrink-0 text-text-300"
+                      aria-hidden="true"
+                    />
+                    <p className="min-w-0 select-text break-all font-mono text-xs leading-5 text-text-200">
+                      {revealPath}
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
             {error && <ErrorNotice inline role="alert" title={t('Error')} description={error} />}
-            {revealPath && <p className="select-text break-all text-xs">{revealPath}</p>}
-            {separateReportPath && (
-              <p className="select-text break-all text-xs">{separateReportPath}</p>
-            )}
-            {result?.report && (
-              <pre className="max-h-40 overflow-auto whitespace-pre-wrap select-text text-xs">
-                {result.report}
-              </pre>
-            )}
           </div>
           <div className={dialogFooterClassName}>
             <Button variant="outline" onClick={() => void close()}>
@@ -340,16 +626,19 @@ export const SessionDiagnosticsDialog = ({
                 {t('Show in folder')}
               </Button>
             )}
-            {separateReportPath && window.api.compute?.revealInFolder && (
+            {result?.report && (
               <Button
                 variant="outline"
-                onClick={() => {
-                  void window.api.compute
-                    .revealInFolder(separateReportPath)
-                    .catch(() => setError(t('Could not show the exported file.')))
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(result.report!)
+                    if (mounted.current) setReportCopied(true)
+                  } catch {
+                    if (mounted.current) setError(t('Could not copy report'))
+                  }
                 }}
               >
-                {t('Show export log')}
+                {reportCopied ? t('Copied') : t('Copy report')}
               </Button>
             )}
             <Button disabled={busy} onClick={() => void exportSelected()}>
