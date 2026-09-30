@@ -129,10 +129,10 @@ const create = async (): Promise<string> =>
       scope: { kind: 'library' }
     })
   ).id
-const refresh = async (id: string): Promise<void> => {
+const refresh = async (id: string, timeout = 15000): Promise<void> => {
   await owner.execute({ kind: 'smart-collection', collectionId: id, action: 'refresh', offset: 0 })
   await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
-    timeout: 15000
+    timeout
   })
 }
 
@@ -146,7 +146,8 @@ it('reads bounded run outcomes, preserves historical verdicts and distinguishes 
     }))
   })
   const collectionId = await create()
-  await refresh(collectionId)
+  // Thirty classifications commit real SQLite results and usage records on Windows.
+  await refresh(collectionId, 30000)
   const runId = (await owner.view(collectionId)).run!.id
   await db.literatureSmartRunItem.updateMany({
     where: { runId },
@@ -212,7 +213,7 @@ it('reads bounded run outcomes, preserves historical verdicts and distinguishes 
     catalog.transact({ ...command, collectionId: 'different-collection' })
   ).rejects.toThrow()
   await expect(catalog.transact({ ...command, runId: 'missing-run' })).rejects.toThrow()
-})
+}, 45000)
 
 it('exposes only committed outcomes while other candidates are still being evaluated', async () => {
   await db.literatureItem.createMany({
@@ -3405,9 +3406,10 @@ it('drains paid requests and retains a durable pause when both result and failur
     action: 'resume-automatic',
     offset: 0
   })
-  await vi.waitFor(async () => expect((await owner.view(id)).matches).toBe(8), { timeout: 5000 })
+  // Resume drains every real SQLite commit, including the final assessment and pause clear.
+  await vi.waitFor(async () => expect((await owner.view(id)).matches).toBe(8), { timeout: 15000 })
   expect((await owner.view(id)).automaticPauseReason).toBeUndefined()
-})
+}, 30000)
 
 it('drains an active classifier before deleting its collection', async () => {
   const id = await create()

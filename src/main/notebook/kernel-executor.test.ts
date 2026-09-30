@@ -385,6 +385,15 @@ gate('NotebookKernelExecutor failed-cell output capture', () => {
         pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py')
       })
       try {
+        // This case covers interrupted output, not cold Python startup within a two-second deadline.
+        await expect(
+          executor.execute({
+            ...request,
+            cwd: request.dataRoot,
+            resolvedInterpreter: { command: python3! },
+            code: 'pass'
+          })
+        ).resolves.toMatchObject({ status: 'completed' })
         const execution = executor.execute({
           ...request,
           cwd: request.dataRoot,

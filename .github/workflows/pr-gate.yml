@@ -909,6 +909,18 @@ jobs:
           src/main/specialist/repository.test.ts
           src/main/notebook/micromamba-cache-powershell.test.ts
           src/main/notebook/micromamba-cache-acl.integration.test.ts
+      - name: Test scheduled Windows validation regressions
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        # Exercise the reported failures on a real Windows runner without expanding to its full suite.
+        run: >-
+          npm test --
+          src/main/session-diagnostics/collector.test.ts
+          src/main/literature/smart-collections.test.ts
+          src/main/literature/pdf-structure/owner.test.ts
+          src/main/notebook/kernel-startup-retry.integration.test.ts
+          --testNamePattern
+          "cannot be written|table output fails|all content writes fail|reads bounded run outcomes|drains paid requests|recovers retained cleanup|retries only a proven reaped R lane"
+          --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
       - name: Test Windows wheel evidence recovery
         id: windows_wheel_evidence
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
