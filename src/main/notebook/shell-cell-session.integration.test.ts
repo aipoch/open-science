@@ -1,4 +1,13 @@
-import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -78,6 +87,9 @@ describe('persistent platform shell cells', () => {
         exitCode: 0
       })
       const fixture = join(workspace, 'fixture')
+      const version = await adapter.execute(request(`${windows ? 'npm.cmd' : 'npm'} --version`))
+      expect(version, JSON.stringify(version)).toMatchObject({ exitCode: 0 })
+      expect(version.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/)
       await mkdir(fixture)
       await writeFile(
         join(fixture, 'package.json'),
@@ -147,6 +159,55 @@ describe('persistent platform shell cells', () => {
         exitCode: 0,
         stdout: 'shared-tool'
       })
+
+      if (sandboxed && !windows) {
+        // A private Node layout must expose npm's package without exposing sibling data or
+        // turning the read grant into write access. Exercise real filesystem syscalls.
+        const hostBin = join(root, 'host-node', 'bin')
+        const hostNpm = join(root, 'host-node', 'lib', 'node_modules', 'npm')
+        const sibling = join(root, 'host-node', 'lib', 'private.txt')
+        const protectedRoot = join(root, 'runtime', 'envs', 'protected')
+        await mkdir(hostBin, { recursive: true })
+        await mkdir(join(hostNpm, 'bin'), { recursive: true })
+        await mkdir(protectedRoot, { recursive: true })
+        await writeFile(sibling, 'private')
+        await writeFile(join(hostNpm, 'package.json'), '{"name":"npm"}')
+        await writeFile(
+          join(hostNpm, 'bin', 'npm-cli.js'),
+          `#!/usr/bin/env node
+const fs = require('node:fs')
+const path = require('node:path')
+const result = { package: JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8')).name }
+for (const [name, target, write] of ${JSON.stringify([
+            ['sibling', sibling, false],
+            ['npmWrite', join(hostNpm, 'pwn.txt'), true],
+            ['runtimeWrite', join(protectedRoot, 'pwn.txt'), true]
+          ])}) {
+  try { write ? fs.writeFileSync(target, 'bad') : fs.readFileSync(target); result[name] = 'allowed' }
+  catch (error) { result[name] = error.code }
+}
+console.log(JSON.stringify(result))
+`,
+          { mode: 0o755 }
+        )
+        await symlink('../lib/node_modules/npm/bin/npm-cli.js', join(hostBin, 'npm'))
+        const isolated = await adapter.execute({
+          ...request('npm', 'private-node'),
+          environment: { ...process.env, PATH: `${hostBin}:${process.env.PATH}` },
+          protectedDirs: [protectedRoot]
+        })
+        expect(isolated, JSON.stringify(isolated)).toMatchObject({ exitCode: 0 })
+        expect(JSON.parse(isolated.stdout)).toEqual({
+          package: 'npm',
+          sibling: expect.stringMatching(/^(EPERM|EACCES)$/),
+          npmWrite: expect.stringMatching(/^(EPERM|EACCES)$/),
+          runtimeWrite: expect.stringMatching(/^(EPERM|EACCES)$/)
+        })
+        await expect(access(join(hostNpm, 'pwn.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(access(join(protectedRoot, 'pwn.txt'))).rejects.toMatchObject({
+          code: 'ENOENT'
+        })
+      }
     }
   )
 

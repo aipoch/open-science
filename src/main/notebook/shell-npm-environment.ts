@@ -1,7 +1,38 @@
-import { lstatSync, mkdirSync, realpathSync } from 'node:fs'
-import { isAbsolute, join, posix, win32 } from 'node:path'
+import { accessSync, constants, lstatSync, mkdirSync, realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, posix, win32 } from 'node:path'
 
 import { notebookWorkloadCacheRoot } from './notebook-workload-cache-paths'
+
+// POSIX npm launchers point outside PATH's bin directory in nvm and official Node installs.
+// Read only the selected npm package, never its surrounding Node installation or user directory.
+export const shellNpmReadRoots = (
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform
+): string[] => {
+  if (platform === 'win32') return []
+  for (const directory of (environment.PATH ?? '').split(posix.delimiter)) {
+    if (!isAbsolute(directory)) continue
+    const executable = join(directory, 'npm')
+    try {
+      accessSync(executable, constants.X_OK)
+    } catch {
+      continue
+    }
+    try {
+      const cli = realpathSync.native(executable)
+      const root = dirname(dirname(cli))
+      return basename(cli) === 'npm-cli.js' &&
+        basename(dirname(cli)) === 'bin' &&
+        basename(root) === 'npm' &&
+        basename(dirname(root)) === 'node_modules'
+        ? [root]
+        : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
 
 // Host filesystem paths; WSL maps these only after checking the sandbox's authorized roots.
 export const shellNpmPaths = (

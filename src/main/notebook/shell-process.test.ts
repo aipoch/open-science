@@ -1242,6 +1242,9 @@ describe('notebook shell process behavior', () => {
             args: invocation.args,
             env: { OPEN_SCIENCE_SANDBOX_TEST: 'wrapped' },
             beginExecution,
+            // Keep this wrapper contract independent of POSIX exit-tree inspection timing.
+            // Real tree teardown and incomplete outcomes have separate coverage below.
+            confirmProcessTreeTermination: async () => true,
             annotateStderr: (stderr: string) => stderr,
             cleanup
           }

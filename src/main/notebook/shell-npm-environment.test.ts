@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync
@@ -15,7 +16,11 @@ import {
   prepareNotebookWorkloadCache,
   removeNotebookWorkloadCache
 } from './notebook-workload-cache-paths'
-import { prepareShellNpmEnvironment, shellNpmPaths } from './shell-npm-environment'
+import {
+  prepareShellNpmEnvironment,
+  shellNpmPaths,
+  shellNpmReadRoots
+} from './shell-npm-environment'
 
 describe('managed shell npm storage', () => {
   let root: string
@@ -24,6 +29,39 @@ describe('managed shell npm storage', () => {
     prepareNotebookWorkloadCache(root)
   })
   afterEach(() => rmSync(root, { recursive: true, force: true }))
+
+  it.skipIf(process.platform === 'win32')(
+    'reads only the physical npm package behind a POSIX PATH launcher',
+    () => {
+      const bin = join(root, 'node', 'bin')
+      const npmRoot = join(root, 'node', 'lib', 'node_modules', 'npm')
+      mkdirSync(bin, { recursive: true })
+      mkdirSync(join(npmRoot, 'bin'), { recursive: true })
+      writeFileSync(join(npmRoot, 'bin', 'npm-cli.js'), '#!/usr/bin/env node\n', {
+        mode: 0o755
+      })
+      symlinkSync('../lib/node_modules/npm/bin/npm-cli.js', join(bin, 'npm'))
+      for (const platform of ['darwin', 'linux'] as const) {
+        expect(shellNpmReadRoots({ PATH: bin }, platform)).toEqual([realpathSync.native(npmRoot)])
+      }
+      expect(shellNpmReadRoots({ PATH: bin }, 'win32')).toEqual([])
+      const shadow = join(root, 'shadow')
+      mkdirSync(shadow)
+      writeFileSync(join(shadow, 'npm'), '#!/bin/sh\n', { mode: 0o755 })
+      expect(shellNpmReadRoots({ PATH: `${shadow}:${bin}` }, 'darwin')).toEqual([])
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'does not authorize arbitrary npm symlink targets or missing launchers',
+    () => {
+      const cli = join(root, 'npm-cli.js')
+      writeFileSync(cli, '#!/usr/bin/env node\n', { mode: 0o755 })
+      symlinkSync(cli, join(root, 'npm'))
+      expect(shellNpmReadRoots({ PATH: root }, 'darwin')).toEqual([])
+      expect(shellNpmReadRoots({}, 'darwin')).toEqual([])
+    }
+  )
 
   it.each(['darwin', 'linux', 'win32'] as const)(
     'shares %s global tools across launches while keeping them outside disposable cache',

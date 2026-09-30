@@ -36,7 +36,11 @@ import {
   limitUtf8
 } from './content-limits'
 import { buildNotebookShellEnvironment, environmentPathRoots } from './process-environment'
-import { prepareShellNpmEnvironment, shellNpmPaths } from './shell-npm-environment'
+import {
+  prepareShellNpmEnvironment,
+  shellNpmPaths,
+  shellNpmReadRoots
+} from './shell-npm-environment'
 import {
   defaultShellRuntimeBinding,
   shellRuntimePlatform,
@@ -411,7 +415,10 @@ const prepareShellLaunchOptions = async (
                     dirname(invocation.executable),
                     ...(runtimePlatform === 'win32'
                       ? []
-                      : environmentPathRoots(baseEnv, runtimePlatform))
+                      : [
+                          ...environmentPathRoots(baseEnv, runtimePlatform),
+                          ...shellNpmReadRoots(baseEnv, runtimePlatform)
+                        ])
                   ])
             ],
             ...(runtimePlatform === 'win32'
