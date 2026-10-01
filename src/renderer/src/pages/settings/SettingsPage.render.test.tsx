@@ -6396,6 +6396,13 @@ describe('Provider editor leave protection', () => {
     document.querySelector(`[aria-label="${label}"]`)!
   const confirmation = (): HTMLElement | null =>
     document.querySelector('[data-testid="skill-discard-confirmation"]')
+  const footerButton = (label: string): HTMLButtonElement => {
+    const button = [
+      ...document.querySelectorAll<HTMLButtonElement>('[data-slot="provider-form-footer"] button')
+    ].find((item) => item.textContent?.trim() === label)
+    expect(button, `Provider footer ${label}`).toBeDefined()
+    return button!
+  }
   const clickLabel = async (label: string): Promise<void> => {
     const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
       (item) => item.textContent?.trim() === label
@@ -6565,13 +6572,49 @@ describe('Provider editor leave protection', () => {
   )
 
   it.each([false, true])(
-    'leaves a pristine or reverted provider without a decision (create=%s)',
+    'protects a dirty provider through its actual footer Cancel and restores focus (create=%s)',
     async (create) => {
+      const { onClose } = await mountEditor(create)
+      act(() => {
+        edit()
+        fireEvent.change(field('API key'), { target: { value: 'unsaved-key' } })
+      })
+      const cancel = footerButton('Cancel')
+      await act(async () => {
+        cancel.focus()
+        cancel.click()
+      })
+      expect(confirmation()?.textContent).toContain('Your provider edits have not been saved.')
+      expect(field('Provider name').value).toBe('Research endpoint draft')
+      await clickLabel('Keep editing')
+      await waitFor(() => expect(document.activeElement).toBe(cancel))
+      expect(field('API key').value).toBe('unsaved-key')
+      await act(async () => cancel.click())
+      await clickLabel('Discard changes')
+      expect(confirmation()).toBeNull()
+      expect(field('Provider name')).toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+      await act(async () => field('Back').click())
+      expect(field('Provider name').value).toBe(create ? 'Anthropic' : 'Messages gateway')
+      expect(field('API key').value).toBe('')
+    }
+  )
+
+  it.each([
+    [false, 'pristine'],
+    [false, 'reverted'],
+    [true, 'pristine'],
+    [true, 'reverted']
+  ] as const)(
+    'leaves a provider through its actual footer Cancel without a decision (create=%s, %s)',
+    async (create, draft) => {
       await mountEditor(create)
       const initial = field('Provider name').value
-      act(edit)
-      act(() => fireEvent.change(field('Provider name'), { target: { value: initial } }))
-      await clickLabel('Cancel')
+      if (draft === 'reverted') {
+        act(edit)
+        act(() => fireEvent.change(field('Provider name'), { target: { value: initial } }))
+      }
+      await act(async () => footerButton('Cancel').click())
       expect(confirmation()).toBeNull()
       expect(field('Provider name')).toBeNull()
     }
@@ -6595,6 +6638,11 @@ describe('Provider editor leave protection', () => {
       useSettingsStore.setState({ saveValidatedProvider })
       act(edit)
       await clickLabel('Save')
+      const cancel = footerButton('Cancel')
+      expect(cancel.disabled).toBe(true)
+      await act(async () => cancel.click())
+      expect(confirmation()).toBeNull()
+      expect(field('Provider name').value).toBe('Research endpoint draft')
       await act(async () => field('Close settings').click())
       expect(confirmation()?.textContent).toContain(
         'Wait for the provider save to finish before leaving.'
