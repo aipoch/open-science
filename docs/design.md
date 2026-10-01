@@ -1262,6 +1262,9 @@ preserve the editing target and use the existing command owners for settings, se
 close and quit. Alt/F10 focus the menu row; arrows move between menus and open them; Escape returns
 focus to the previous control. Scale and theme changes synchronize the native overlay from the existing
 renderer preferences and color tokens. Account for the row in full-height application layouts.
+Native fullscreen hides the row and removes its layout offset; leaving fullscreen restores both.
+Fullscreen state comes from the native window, including a fresh snapshot after renderer reload;
+Alt/F10 menu entry is inactive while the row is hidden. This state is not persisted.
 macOS and Linux keep their existing native window/menu presentation, and Web clients add no desktop row.
 
 ## Language Guidelines

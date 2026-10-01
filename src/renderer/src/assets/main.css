@@ -15,6 +15,10 @@ html[data-windows-titlebar] {
   --windows-titlebar-height: 36px;
 }
 
+html[data-windows-titlebar='fullscreen'] {
+  --windows-titlebar-height: 0px;
+}
+
 .windows-titlebar {
   position: fixed;
   inset: 0 0 auto;

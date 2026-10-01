@@ -44,6 +44,14 @@ export const contracts = {
     optionalMember: true
   }),
   'window.close': callable<() => Promise<void>>()('window', ['window:close', MAPPED_NATIVE]),
+  'window.isFullScreen': callable<() => Promise<boolean>>()(
+    'window',
+    ['window:is-full-screen', ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.onFullScreenChanged': callable<
+    (listener: (fullscreen: boolean) => void) => RemoveListener
+  >()('window', ['window:full-screen-changed', ELECTRON_EVENT], { optionalMember: true }),
   'window.showTitleBarMenu': callable<
     (request: WindowsTitleBarMenuRequest) => Promise<WindowsTitleBarCommand | null>
   >()('window', ['window:show-titlebar-menu', ELECTRON], { optionalMember: true }),

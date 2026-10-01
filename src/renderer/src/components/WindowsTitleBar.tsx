@@ -41,6 +41,7 @@ const WindowsDesktopFrame = ({ children }: { children: ReactNode }): React.JSX.E
   }, [commands])
   const [activeMenu, setActiveMenu] = useState<WindowsTitleBarMenu | null>(null)
   const [focusedMenu, setFocusedMenu] = useState(0)
+  const [fullscreen, setFullscreen] = useState(false)
   const headerRef = useRef<HTMLElement>(null)
   const previousFocus = useRef<HTMLElement | null>(null)
   const mounted = useRef(true)
@@ -61,6 +62,32 @@ const WindowsDesktopFrame = ({ children }: { children: ReactNode }): React.JSX.E
       document.documentElement.removeAttribute('data-windows-titlebar')
     }
   }, [])
+
+  useEffect(() => {
+    let stale = false
+    const unsubscribe = window.api.window.onFullScreenChanged?.((fullscreen) => {
+      stale = true
+      setFullscreen(fullscreen)
+    })
+    void window.api.window
+      .isFullScreen?.()
+      .then((fullscreen) => {
+        // A newer native event takes precedence over the initial snapshot (including reloads).
+        if (!stale) setFullscreen(fullscreen)
+      })
+      .catch((error: unknown) => console.error('Window fullscreen state query failed', error))
+    return () => {
+      stale = true
+      unsubscribe?.()
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    document.documentElement.setAttribute('data-windows-titlebar', fullscreen ? 'fullscreen' : '')
+    if (fullscreen && headerRef.current?.contains(document.activeElement)) {
+      previousFocus.current?.focus({ preventScroll: true })
+    }
+  }, [fullscreen])
 
   useEffect(() => {
     const header = headerRef.current
@@ -104,7 +131,7 @@ const WindowsDesktopFrame = ({ children }: { children: ReactNode }): React.JSX.E
           labels: {
             Settings: t('Settings'),
             'Close window': t('Close window'),
-            Quit: t('Quit', { context: 'verb' }),
+            Quit: t('Quit', { context: 'verb', ns: 'common' }),
             Undo: t('Undo'),
             Redo: t('Redo'),
             Cut: t('Cut'),
@@ -151,6 +178,7 @@ const WindowsDesktopFrame = ({ children }: { children: ReactNode }): React.JSX.E
   }
 
   useEffect(() => {
+    if (fullscreen) return
     let altOnly = false
     const cancelAlt = (): void => {
       altOnly = false
@@ -196,12 +224,13 @@ const WindowsDesktopFrame = ({ children }: { children: ReactNode }): React.JSX.E
       window.removeEventListener('keydown', focusFromShortcut)
       window.removeEventListener('blur', cancelAlt)
     }
-  }, [activeMenu, menuButtons, focusMenu])
+  }, [activeMenu, menuButtons, focusMenu, fullscreen])
 
   return (
     <WindowsTitleBarContext.Provider value={setCommands}>
       <header
         ref={headerRef}
+        hidden={fullscreen}
         className="windows-titlebar bg-background text-foreground"
         data-testid="windows-titlebar"
       >

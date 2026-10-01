@@ -73,6 +73,11 @@ export const registerWindowsTitleBarIpc = ({
       : null
   }
 
+  ipcMainHandle(
+    'window:is-full-screen',
+    (event): boolean => ownerFor(event)?.isFullScreen() ?? false
+  )
+
   ipcMainHandle('window:update-titlebar', (event, appearance: unknown): void => {
     const window = ownerFor(event)
     if (!window || !isAppearance(appearance)) return

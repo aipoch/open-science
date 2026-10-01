@@ -100,6 +100,55 @@ describe('Windows title bar', () => {
       expect.objectContaining({ settingsEnabled: false, searchEnabled: false })
     )
   })
+  it('hides fullscreen chrome and shortcuts, restores them on exit and removes the listener', async () => {
+    let onFullscreen: (fullscreen: boolean) => void = () => undefined
+    const unsubscribe = vi.fn()
+    window.api.window.onFullScreenChanged = vi.fn((listener) => {
+      onFullscreen = listener
+      return unsubscribe
+    })
+    window.api.window.isFullScreen = vi.fn().mockResolvedValue(true)
+    const view = render(
+      <WindowsTitleBar>
+        <CommandOwner />
+      </WindowsTitleBar>
+    )
+    await act(async () => {})
+    expect(screen.queryByRole('menubar')).toBeNull()
+    expect(document.documentElement.getAttribute('data-windows-titlebar')).toBe('fullscreen')
+    const editor = screen.getByRole('textbox')
+    editor.focus()
+    fireEvent.keyDown(window, { key: 'F10' })
+    expect(document.activeElement).toBe(editor)
+    act(() => onFullscreen(false))
+    fireEvent.keyDown(window, { key: 'F10' })
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'File' }))
+    act(() => onFullscreen(true))
+    expect(document.activeElement).toBe(editor)
+    view.unmount()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+    expect(document.documentElement.hasAttribute('data-windows-titlebar')).toBe(false)
+  })
+  it('ignores an initial fullscreen snapshot superseded by a native event', async () => {
+    let resolveSnapshot!: (fullscreen: boolean) => void
+    let onFullscreen!: (fullscreen: boolean) => void
+    window.api.window.isFullScreen = () =>
+      new Promise((resolve) => {
+        resolveSnapshot = resolve
+      })
+    window.api.window.onFullScreenChanged = (listener) => {
+      onFullscreen = listener
+      return vi.fn()
+    }
+    render(
+      <WindowsTitleBar>
+        <CommandOwner />
+      </WindowsTitleBar>
+    )
+    act(() => onFullscreen(true))
+    await act(async () => resolveSnapshot(false))
+    expect(screen.queryByRole('menubar')).toBeNull()
+  })
   it('keeps mouse editing focus and routes the selected command through the current owner', async () => {
     vi.mocked(window.api.window.showTitleBarMenu!).mockResolvedValue('settings')
     render(

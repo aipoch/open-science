@@ -29,9 +29,7 @@
     "src/renderer/src/components/WindowsTitleBar.tsx",
     "src/renderer/src/components/windows-titlebar-context.ts"
   ],
-  "consumerModules": [
-    "renderer_hooks"
-  ],
+  "consumerModules": ["renderer_hooks"],
   "testFiles": {
     "owner": [
       "src/renderer/src/App.test.tsx",

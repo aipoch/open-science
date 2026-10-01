@@ -96,6 +96,14 @@ describe('Windows title bar native adapter', () => {
     expect(await selected).toBe('settings')
     expect(window.removeListener).toHaveBeenCalledWith('closed', expect.any(Function))
   })
+  it('reads fullscreen only for the owning main frame', () => {
+    const { event, window } = install()
+    window.isFullScreen = vi.fn(() => true)
+    const read = mocks.handlers.get('window:is-full-screen')!
+    expect(read(event)).toBe(true)
+    expect(read({ ...event, senderFrame: {} })).toBe(false)
+    expect(window.isFullScreen).toHaveBeenCalledOnce()
+  })
   it.each([
     { origin: { x: 400, y: 200 }, scale: 1 },
     { origin: { x: 800, y: 300 }, scale: 1.25 },

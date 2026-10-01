@@ -36,7 +36,7 @@ const step = (job: Job, name: string): Step =>
   job.steps.find((candidate) => candidate.name === name)!
 const suites = [
   ['renderer_layout', 'test:e2e:browser', 0],
-  ['e2e_functional_windows', 'test:e2e:journey', 4],
+  ['e2e_functional_windows', 'test:e2e:journey', 7],
   ['e2e_workspace_windows', 'test:e2e:workspace', 4]
 ] as const
 
@@ -225,7 +225,7 @@ it('discovers the reviewed mainline subset and retains every other case in the f
     conversation: 2,
     files: 2,
     notebook: 1,
-    windows: 2
+    windows: 5
   })) {
     expect(collect('test:e2e', `@pr-mainline-${group}(?:\\s|$)`)).toHaveLength(count)
   }

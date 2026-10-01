@@ -89,6 +89,30 @@ test.describe('Windows window system', () => {
     })
   })
 
+  test('hides titlebar chrome in native fullscreen and restores it on exit @pr-mainline-windows', async ({
+    app
+  }) => {
+    const page = await app.completeOnboarding()
+    const titlebar = page.getByTestId('windows-titlebar')
+    await expect(titlebar).toBeVisible()
+    await app.pressMainWindowShortcut('F11', [])
+    await expect(titlebar).toBeHidden()
+    await page.reload()
+    await expect(titlebar).toBeHidden()
+    await expect
+      .poll(() => page.locator('main').evaluate((main) => main.getBoundingClientRect().top))
+      .toBe(0)
+    await page.keyboard.press('F10')
+    await expect(page.getByRole('menuitem')).toHaveCount(0)
+    await app.pressMainWindowShortcut('F11', [])
+    await expect(titlebar).toBeVisible()
+    await expect
+      .poll(() => page.locator('main').evaluate((main) => main.getBoundingClientRect().top))
+      .toBe(36)
+    await page.keyboard.press('F10')
+    await expect(titlebar.getByRole('menuitem', { name: 'File' })).toBeFocused()
+  })
+
   test('uses interface scale steps for Windows plus aliases and reset shortcuts @pr-mainline-windows', async ({
     app
   }, testInfo) => {
