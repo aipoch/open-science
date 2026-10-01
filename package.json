@@ -109,6 +109,9 @@
     "zod": "^4.6.5"
   },
   "overrides": {
+    "@file-viewer/core@3.0.3": {
+      "dompurify": "3.4.16"
+    },
     "@prisma/config@6.19.3": {
       "deepmerge-ts": "8.0.2"
     }
