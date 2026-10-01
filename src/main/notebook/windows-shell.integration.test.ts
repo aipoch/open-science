@@ -107,9 +107,10 @@ const shellRequest = (root: string): NotebookShellProcessRequest => ({
   timeoutMs: POWERSHELL_PROCESS_TIMEOUT_MS
 })
 
-const runPowerShell = (command: string): ReturnType<typeof runShellCommand> =>
+const runPowerShell = (command: string, version?: '7.6'): ReturnType<typeof runShellCommand> =>
   runShellCommand({
     command,
+    ...(version ? { runtimeBinding: { kind: 'powershell' as const, version } } : {}),
     cwd: process.cwd(),
     handoffDir: process.cwd(),
     runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
@@ -909,27 +910,40 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
     POWERSHELL_TEST_TIMEOUT_MS
   )
 
-  it(
-    'preserves UTF-8 output with only bundled PowerShell module paths',
-    async () => {
-      const result = await runPowerShell(`
+  it.each(['5.1', '7.6'] as const)(
+    'preserves UTF-8 output with only the selected PowerShell %s module paths',
+    async (version) => {
+      const result = await runPowerShell(
+        `
 Write-Output "分析完成"
+Write-Output "__OPEN_SCIENCE_VERSION__=$($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor)"
 Write-Output "__OPEN_SCIENCE_PSMODULEPATH__=$env:PSModulePath"
 Write-Output "__OPEN_SCIENCE_INTERNAL__=[$env:OPEN_SCIENCE_PSMODULEPATH]"
-`)
+`,
+        version === '7.6' ? version : undefined
+      )
 
       expect(result).toMatchObject({ exitCode: 0 })
       expect(result.stdout).toContain('分析完成')
-      const bundledModules = join(
-        process.cwd(),
-        'packages/notebook-network-sandbox/vendor/windows-runtime',
-        process.arch,
-        'powershell/Modules'
-      )
+      expect(result.stdout).toContain(`__OPEN_SCIENCE_VERSION__=${version}`)
+      const modules =
+        version === '7.6'
+          ? [
+              join(
+                process.cwd(),
+                'packages/notebook-network-sandbox/vendor/windows-runtime',
+                process.arch,
+                'powershell/Modules'
+              )
+            ]
+          : [
+              join(process.env.ProgramFiles!, 'WindowsPowerShell', 'Modules'),
+              join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules')
+            ]
       const modulePath = result.stdout.match(/^__OPEN_SCIENCE_PSMODULEPATH__=(.*)$/mu)?.[1]?.trim()
-      expect(modulePath?.split(';').map((entry) => entry.toLowerCase())).toEqual([
-        bundledModules.toLowerCase()
-      ])
+      expect(modulePath?.split(';').map((entry) => entry.toLowerCase())).toEqual(
+        modules.map((entry) => entry.toLowerCase())
+      )
       expect(result.stdout).toContain('__OPEN_SCIENCE_INTERNAL__=[]')
     },
     POWERSHELL_TEST_TIMEOUT_MS
