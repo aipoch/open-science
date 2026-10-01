@@ -90,6 +90,7 @@ import {
 } from '../../shared/session-persistence'
 import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { SessionRepository } from '../session-persistence/repository'
+import { assertSessionProjectionStorageShape } from '../session-persistence/projection'
 import { HeadlessTaskApi } from '../web-service/task-api'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { UploadRepository } from '../uploads/repository'
@@ -18888,6 +18889,160 @@ describe('ACP runtime session management', () => {
         .getSnapshot()
         .events.filter((event) => event.kind === 'message' && event.role === 'user')
     ).toHaveLength(0)
+  })
+
+  it('persists independent Main and settlement usage through the real finalizer and save boundary', async () => {
+    const root = await createTemporaryRoot()
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['settlement-usage-session'], {
+      replyForPrompt: (text) =>
+        text.includes('initial prompt') ? 'Original final answer' : 'Settlement notification'
+    })
+    let persisted = createRestoredContinuationSession(
+      'origin-usage',
+      'settlement-usage-session',
+      'project-1'
+    )
+    persisted.status = 'running'
+    persisted.activeRun = { promptMessageId: 'origin-usage', startedAt: 1 }
+    persisted.runtimeTranscriptOwner = 'main'
+    const repository = new SessionRepository(root)
+    persisted = await repository.saveSession(persisted)
+    const runtimeSessions = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone(persisted),
+      mutateSession: async (_scope, mutate) => {
+        const next = materializeSessionConversationGraph(mutate(structuredClone(persisted)))
+        if (persisted.activeRun && !next.activeRun)
+          next.runtimeTranscriptLastRun = persisted.activeRun
+        // prepareSave validates this unsanitized candidate before codec normalization can drop IDs.
+        assertSessionProjectionStorageShape(next)
+        persisted = await repository.saveSession(next, persisted.revision ?? 0)
+        return structuredClone(persisted)
+      },
+      finalizeArtifacts: async () => []
+    })
+    const steps = [
+      { info: { id: 'main-call', role: 'assistant', tokens: { input: 11, output: 5 } } },
+      { info: { id: 'settlement-call', role: 'assistant', tokens: { input: 17, output: 7 } } }
+    ]
+    const messageSnapshots = [[], [steps[0]], [steps[0]], steps]
+    const framework = { ...opencodeFramework, spawn: () => asAgentProcess(process) }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      framework,
+      resolveBackend: () => ({
+        framework,
+        executablePath: '/bin/opencode',
+        env: {},
+        opencodeUsageApi: { baseUrl: 'http://127.0.0.1:4242', authorization: 'Basic test' }
+      }),
+      opencodeUsageFetch: async () =>
+        new Response(JSON.stringify(messageSnapshots.shift() ?? []), {
+          headers: { 'content-type': 'application/json' }
+        }),
+      runtimeSessions,
+      callbacks: { onEvent: (event) => runtimeSessions.accept(event) }
+    })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+    const context = getActiveConversationContext(persisted.conversationGraph!, 'origin-usage')
+    const request = {
+      sessionId: persisted.id,
+      text: 'initial prompt',
+      suppressUserMessage: true,
+      provenanceContext: context
+    }
+    await runtime.sendPrompt(request)
+    const original = structuredClone(
+      persisted.conversationGraph!.messages.find(({ role }) => role === 'agent')!
+    )
+    expect(original.modelCallUsage).toHaveLength(1)
+    const graph = persisted.conversationGraph!
+    graph.frames.push({
+      id: 'usage-child',
+      kind: 'delegate',
+      status: 'completed',
+      parentFrameId: context.agentFrameId,
+      originMessageId: context.promptMessageId,
+      originBindingState: 'validated',
+      activeBranchId: 'usage-child-branch',
+      createdAt: 2
+    })
+    graph.branches.push({
+      id: 'usage-child-branch',
+      agentFrameId: 'usage-child',
+      createdAt: 2,
+      updatedAt: 3
+    })
+    persisted.runtimeContext = {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [
+          {
+            agentFrameId: 'usage-child',
+            attempts: [
+              {
+                id: 'usage-attempt',
+                initiatingTurnMessageId: context.promptMessageId,
+                status: 'completed',
+                resolvedAgent: { kind: 'main' },
+                runtimeSegmentIds: [],
+                startedAt: 2,
+                endedAt: 3
+              }
+            ]
+          }
+        ]
+      }
+    }
+    persisted = await repository.saveSession(persisted, persisted.revision ?? 0)
+    const admission = {
+      batchId: 'usage-batch',
+      projectId: persisted.projectId,
+      sessionId: persisted.id,
+      rootFrameId: context.agentFrameId,
+      originatingPromptId: context.promptMessageId,
+      rootBranchId: context.messageBranchId,
+      rootBranchRevision: `${context.messageBranchId}:${graph.branches[0].createdAt}`,
+      promptRuntimeSegmentId: context.runtimeSegmentId,
+      items: [{ frameId: 'usage-child', attemptId: 'usage-attempt', status: 'completed' as const }]
+    }
+    const continuationError = await runtime
+      .sendAppContinuation(
+        { ...request, text: 'settlement result available' },
+        'usage-attempt',
+        undefined,
+        undefined,
+        undefined,
+        admission
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      )
+    expect.soft(continuationError).toBeUndefined()
+    expect.soft(persisted.status).toBe('idle')
+    expect.soft(persisted.activeRun).toBeUndefined()
+    expect.soft(persisted.runtimeSessionAdmissions!.at(-1)!.settlement!.stage).toBe('terminal')
+    const saved = (await repository.loadSession(persisted.projectId, persisted.id))!
+    const outputs = saved.conversationGraph!.messages.filter(({ role }) => role === 'agent')
+    expect.soft(outputs.find(({ id }) => id === original.id)).toEqual(original)
+    expect
+      .soft(outputs[1]?.runtimeSegmentId)
+      .toBe(saved.runtimeSessionAdmissions!.at(-1)!.runtimeSegmentId)
+    expect.soft(outputs[1]?.runtimeSegmentId).not.toBe(original.runtimeSegmentId)
+    expect
+      .soft(outputs.map(({ content }) => content))
+      .toEqual(['Original final answer', 'Settlement notification'])
+    expect.soft(outputs.map(({ turnUsage }) => turnUsage?.inputTokens)).toEqual([11, 17])
+    expect.soft(outputs.map(({ turnUsage }) => turnUsage?.outputTokens)).toEqual([5, 7])
+    const calls = outputs.flatMap(({ modelCallUsage }) => modelCallUsage ?? [])
+    expect.soft(calls).toHaveLength(2)
+    expect.soft(new Set(calls.map(({ id }) => id)).size).toBe(2)
+    expect
+      .soft(calls.map(({ sourceInvocationId }) => sourceInvocationId))
+      .toEqual(['main-call', 'settlement-call'])
   })
 
   it.each([undefined, 'none'] as const)(

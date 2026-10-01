@@ -6,6 +6,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import JSZip from 'jszip'
 import { utils as spreadsheetUtils, write as writeSpreadsheet } from 'styled-exceljs'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
 import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
@@ -1258,6 +1259,38 @@ if (process.argv.includes('--version')) {
   process.stdout.write(`${VERSION}\n`)
 } else {
   assertValidModelLimits()
+  const usageHistory = new Map()
+  const usagePortIndex = process.argv.indexOf('--port')
+  const usageHostIndex = process.argv.indexOf('--hostname')
+  const usageServer =
+    usagePortIndex < 0
+      ? undefined
+      : createServer((request, response) => {
+          const authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
+          if (request.headers.authorization !== authorization) {
+            response.writeHead(401).end()
+            return
+          }
+          const pathname = new URL(request.url, 'http://localhost').pathname
+          const sessionId = pathname.match(/^\/session\/([^/]+)\/message$/u)?.[1]
+          if (request.method !== 'GET' || !sessionId) {
+            response.writeHead(404).end()
+            return
+          }
+          response
+            .writeHead(200, { 'content-type': 'application/json' })
+            .end(JSON.stringify(usageHistory.get(decodeURIComponent(sessionId)) ?? []))
+        })
+  if (usageServer) {
+    await new Promise((resolve, reject) => {
+      usageServer.once('error', reject)
+      usageServer.listen(
+        Number(process.argv[usagePortIndex + 1]),
+        usageHostIndex < 0 ? '127.0.0.1' : process.argv[usageHostIndex + 1],
+        resolve
+      )
+    })
+  }
   // OpenCode Sessions can run in separate processes. Keep their Session, message, and tool-call
   // identities distinct across processes, including after the app restarts.
   const fixtureInstanceId = `${randomUUID()}-`
@@ -2905,6 +2938,25 @@ if (process.argv.includes('--version')) {
         }
       })
 
+      // Only this journey reports usage. Other fixture turns retain an empty snapshot delta.
+      const settlementUsage =
+        reply === 'Main ended its turn while the file-gated child remained running.'
+          ? { input: 11, output: 3 }
+          : reply === 'Main collected the completed file-gated child evidence after its idle turn.'
+            ? { input: 17, output: 5 }
+            : undefined
+      if (settlementUsage) {
+        const history = usageHistory.get(context.params.sessionId) ?? []
+        history.push({
+          info: {
+            id: replyMessageId,
+            role: 'assistant',
+            tokens: { ...settlementUsage, cache: { read: 0, write: 0 } }
+          }
+        })
+        usageHistory.set(context.params.sessionId, history)
+      }
+
       return { stopReason: 'end_turn' }
     })
     .onNotification(acp.methods.agent.session.cancel, (context) => {
@@ -2918,4 +2970,5 @@ if (process.argv.includes('--version')) {
     acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
   )
   await connection.closed
+  if (usageServer) await new Promise((resolve) => usageServer.close(resolve))
 }

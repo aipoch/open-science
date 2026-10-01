@@ -123,13 +123,13 @@ export class AcpPromptOutcomeFinalizer {
 
   private accumulateTurnUsage(
     sessionId: string,
-    promptMessageId: string | undefined,
+    usageOwnerId: string | undefined,
     turnUsage: AcpTurnTokenUsage | undefined,
     modelCalls: ReadonlyArray<AcpProviderModelCallUsage> | undefined
   ): LogicalTurnUsage {
-    if (!promptMessageId) return turnUsage ? { turnUsage } : { unavailable: true }
+    if (!usageOwnerId) return turnUsage ? { turnUsage } : { unavailable: true }
 
-    const key = `${sessionId.length}:${sessionId}${promptMessageId}`
+    const key = `${sessionId.length}:${sessionId}${usageOwnerId}`
     const previous = this.logicalTurnUsage.get(key)
     const accumulated =
       !turnUsage || previous?.unavailable
@@ -177,6 +177,12 @@ export class AcpPromptOutcomeFinalizer {
       ...(handles.promptMessageId ? { promptMessageId: handles.promptMessageId } : {}),
       ...(runtimeSegmentId?.startsWith('settlement-') ? { runtimeSegmentId } : {})
     }
+    // Settlement publishes a separate answer while retaining the originating user prompt. Its
+    // usage belongs to that execution; detached user/permission replies still share prompt totals.
+    const usageOwnerId =
+      handles.promptMessageId && eventIdentity.runtimeSegmentId
+        ? JSON.stringify([handles.promptMessageId, eventIdentity.runtimeSegmentId])
+        : handles.promptMessageId
     const interactionCurrent = (): boolean => interactions.current(sessionId) === interaction
     const logFields = (data: LogFields): LogFields => ({ sessionId, ...data })
     const clearPermission = (): void => permission.clearCorrelationsForSession(sessionId)
@@ -219,14 +225,14 @@ export class AcpPromptOutcomeFinalizer {
       if (!terminal) return false
       const logicalUsage = this.accumulateTurnUsage(
         sessionId,
-        handles.promptMessageId,
+        usageOwnerId,
         terminal.turnUsage,
         observedStop.modelCalls
       )
       const modelCallUsage: AcpModelCallUsage[] | undefined =
-        handles.promptMessageId && logicalUsage.modelCalls
+        usageOwnerId && logicalUsage.modelCalls
           ? logicalUsage.modelCalls.map((call, index) => ({
-              id: `${handles.promptMessageId}:model-call:${index}`,
+              id: `${usageOwnerId}:model-call:${index}`,
               index,
               ...call
             }))

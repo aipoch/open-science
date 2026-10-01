@@ -5,6 +5,7 @@ import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { applySessionConversationCommands } from '../src/shared/session-conversation-command'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../src/shared/acp'
 
 import {
   createProject,
@@ -721,6 +722,8 @@ test('wakes durable idle Main through production settlement admission and collec
             content: string
             status: string
             segmentId: string | undefined
+            turnUsage: AcpTurnTokenUsage | undefined
+            modelCallUsage: AcpModelCallUsage[] | undefined
           }[]
         }
       | undefined
@@ -759,7 +762,9 @@ test('wakes durable idle Main through production settlement admission and collec
               .map((message) => ({
                 content: message.content,
                 status: message.status,
-                segmentId: message.runtimeSegmentId
+                segmentId: message.runtimeSegmentId,
+                turnUsage: message.turnUsage,
+                modelCallUsage: message.modelCallUsage
               }))
           }
         },
@@ -772,6 +777,15 @@ test('wakes durable idle Main through production settlement admission and collec
       rootAnswers: [{ content: SETTLEMENT_INITIAL_ANSWER, status: 'complete' }]
     })
     const idle = (await readEvidence())!
+    expect(idle.rootAnswers[0].turnUsage).toMatchObject({
+      inputTokens: 11,
+      cacheTokens: 0,
+      outputTokens: 3,
+      turnCount: 1
+    })
+    expect(idle.rootAnswers[0].modelCallUsage).toMatchObject([
+      { inputTokens: 11, cacheTokens: 0, outputTokens: 3 }
+    ])
     expect(idle.originSegmentId).toBeDefined()
     expect(
       (await app.readFakeAgentPrompts()).filter(
@@ -811,6 +825,27 @@ test('wakes durable idle Main through production settlement admission and collec
       ]
     })
     const finished = (await readEvidence())!
+    expect(finished.rootAnswers[1].turnUsage).toMatchObject({
+      inputTokens: 17,
+      cacheTokens: 0,
+      outputTokens: 5,
+      turnCount: 1
+    })
+    expect(finished.rootAnswers[1].modelCallUsage).toMatchObject([
+      { inputTokens: 17, cacheTokens: 0, outputTokens: 5 }
+    ])
+    const callIds = finished.rootAnswers.flatMap((answer) =>
+      answer.modelCallUsage!.map(({ id }) => id)
+    )
+    expect(callIds).toHaveLength(2)
+    expect(new Set(callIds).size).toBe(2)
+    await expect(page.locator('[data-agent-running="true"]')).toHaveCount(0)
+    await page
+      .getByRole('textbox', { name: 'Ask anything' })
+      .fill('Main is ready for another prompt.')
+    await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+    await page.getByRole('textbox', { name: 'Ask anything' }).fill('')
+    await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
     expect(finished.rootAnswers[1].segmentId).not.toBe(idle.originSegmentId)
     expect(finished.rootAnswers[1].segmentId).toBeDefined()
     page = await app.restart()
