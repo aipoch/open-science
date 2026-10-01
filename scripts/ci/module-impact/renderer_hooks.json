@@ -257,7 +257,8 @@
       "src/renderer/src/pages/workspace/ResearchReplayPreview.test.tsx",
       "src/renderer/src/pages/workspace/ResearchSubmissionQueue.test.tsx",
       "src/renderer/src/pages/workspace/research-draft-persistence.test.ts",
-      "src/renderer/src/lib/research-submissions/dispatcher.test.ts"
+      "src/renderer/src/lib/research-submissions/dispatcher.test.ts",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

@@ -349,6 +349,61 @@ describe('LibraryPreview', () => {
     expect(search).toHaveBeenCalledTimes(1)
   })
 
+  it('explains unavailable PDFs in place and offers details without opening the attachment', async () => {
+    const entry = reference()
+    entry.attachments = ['missing.pdf', 'extra-missing.pdf'].map((filename, index) => ({
+      id: `attachment ${index}`,
+      kind: 'fullText',
+      title: '',
+      sortOrder: index,
+      createdAt: 1,
+      updatedAt: 1,
+      versions: [
+        {
+          id: `missing-version-${index}`,
+          versionNumber: 1,
+          filename,
+          contentType: 'application/pdf',
+          sizeBytes: 10,
+          checksum: 'a'.repeat(64),
+          availability: 'unavailable',
+          createdAt: 1,
+          pageCount: 1
+        }
+      ]
+    }))
+    search.mockResolvedValue({ entries: [entry] })
+    const get = vi.fn().mockResolvedValue(entry)
+    Object.assign(window.api.literature, { get })
+    render(<LibraryPreview projectId="project-a" isActive />)
+    await settle()
+
+    const pdf = screen.getByRole('button', { name: 'missing.pdf' }) as HTMLButtonElement
+    expect(pdf.disabled).toBe(true)
+    const reason = screen.getByRole('button', { name: 'Attachment unavailable' })
+    expect(pdf.getAttribute('aria-describedby')).toBe(reason.id)
+    expect(reason.className).not.toContain('sr-only')
+    fireEvent.click(pdf)
+    expect(openPreview).not.toHaveBeenCalled()
+    reason.focus()
+    await act(async () => fireEvent.click(reason))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(get).toHaveBeenCalledWith(entry.id)
+    expect(openPreview).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await settle()
+    expect(document.activeElement).toBe(reason)
+
+    fireEvent.click(screen.getByRole('button', { name: /A reference/ }))
+    const extraPdf = screen.getByRole('button', { name: 'extra-missing.pdf' }) as HTMLButtonElement
+    expect(extraPdf.disabled).toBe(true)
+    expect(document.getElementById(extraPdf.getAttribute('aria-describedby')!)?.textContent).toBe(
+      'Attachment unavailable'
+    )
+    fireEvent.click(extraPdf)
+    expect(openPreview).not.toHaveBeenCalled()
+  })
+
   it('keeps the current empty-state action mounted during focus revalidation', async () => {
     render(<LibraryPreview projectId="project-a" isActive />)
     await settle()

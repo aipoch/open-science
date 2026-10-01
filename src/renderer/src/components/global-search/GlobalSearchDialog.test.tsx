@@ -82,6 +82,44 @@ vi.mock('@/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog', () => ({
 beforeEach(setupSearch)
 afterEach(teardownSearch)
 
+it('explains blocked search without presenting unavailable category counts as zero', async () => {
+  await renderSearch(true, { isSessionPersistenceReady: false })
+  await search('sin')
+  expect(screen.getByRole('status').textContent).toContain('Search is partially unavailable')
+  expect(screen.getByRole('status').textContent).toContain(
+    'Projects and session titles may still appear.'
+  )
+  for (const category of ['all', 'messages', 'uploads', 'generated', 'library']) {
+    expect(document.querySelector(`[data-category="${category}"] small`)).toBeNull()
+  }
+  act(() => document.querySelector<HTMLButtonElement>('[data-category="messages"]')!.click())
+  expect(rows()).toHaveLength(0)
+  expect(screen.queryByText('No results found')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Review recovery options' })).toBeNull()
+  expect(window.api.sessions.searchMessages).not.toHaveBeenCalled()
+  expect(
+    vi
+      .mocked(window.api.projectFiles.searchArtifacts)
+      .mock.calls.some(([request]) => request.filenameContains === 'sin')
+  ).toBe(false)
+  expect(window.api.literature.search).not.toHaveBeenCalled()
+
+  await renderSearch(true, { isSessionPersistenceReady: true })
+  await waitFor(() => expect(rows('messages')).toHaveLength(1))
+  expect(screen.queryByText('Search is partially unavailable')).toBeNull()
+  expect(window.api.sessions.searchMessages).toHaveBeenCalledOnce()
+})
+
+it('offers the provided recovery action while retaining partially available local results', async () => {
+  const openRecovery = vi.fn()
+  await renderSearch(true, { isSessionPersistenceReady: false, onOpenRecovery: openRecovery })
+  expect(rows('projects')).toHaveLength(2)
+  expect(rows('sessions')).toHaveLength(2)
+  act(() => screen.getByRole('button', { name: 'Review recovery options' }).click())
+  expect(openRecovery).toHaveBeenCalledOnce()
+  expect(window.api.sessions.searchMessages).not.toHaveBeenCalled()
+})
+
 it('loads project files and paper memberships only after visiting their tabs', async () => {
   await renderSearch()
   vi.mocked(window.api.projectFiles.searchArtifacts).mockClear()
@@ -1438,6 +1476,34 @@ describe('GlobalSearchDialog', () => {
     await act(async () => fireEvent.keyDown(input(), { key: 'Escape' }))
     expect(detail().dataset.open).toBe('false')
     expect(onClose).not.toHaveBeenCalled()
+    await act(async () => fireEvent.keyDown(input(), { key: 'Escape' }))
+    expect(onClose).toHaveBeenCalledWith(false)
+  })
+  it.each([
+    { isComposing: true, keyCode: 13 },
+    { isComposing: false, keyCode: 229 }
+  ])('leaves composing keyboard actions to the input method: %j', async (composition) => {
+    await renderSearch()
+    await search('sin')
+    act(() => fireEvent.keyDown(input(), { key: 'ArrowDown' }))
+    const activeId = input().getAttribute('aria-activedescendant')
+    for (const key of ['ArrowDown', 'ArrowUp', 'Enter', 'Escape']) {
+      const event = new KeyboardEvent('keydown', {
+        key,
+        ...composition,
+        bubbles: true,
+        cancelable: true
+      })
+      await act(async () => input().dispatchEvent(event))
+      expect(event.defaultPrevented, key).toBe(false)
+      expect(input().getAttribute('aria-activedescendant')).toBe(activeId)
+      expect(input().value).toBe('sin')
+      expect(document.activeElement).toBe(input())
+      expect(detail().dataset.open).toBe('true')
+      expect(onClose).not.toHaveBeenCalled()
+    }
+    await act(async () => fireEvent.keyDown(input(), { key: 'Escape' }))
+    expect(detail().dataset.open).toBe('false')
     await act(async () => fireEvent.keyDown(input(), { key: 'Escape' }))
     expect(onClose).toHaveBeenCalledWith(false)
   })

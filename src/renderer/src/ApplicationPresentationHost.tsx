@@ -422,6 +422,11 @@ const ApplicationPresentationContent = ({
             open
             onOpenChange={events.globalSearch.setOpen}
             isSessionPersistenceReady={sessions.isReady}
+            onOpenRecovery={
+              sessions.catalogRecovery.kind !== 'ready'
+                ? events.globalSearch.openRecovery
+                : undefined
+            }
           />
         </Suspense>
       ) : null}

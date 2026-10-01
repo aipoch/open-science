@@ -133,6 +133,16 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "来自 CELLxGENE Discover 的公开集合、数据集、版本和文件下载链接。",
+    "Search public CELLxGENE Discover collections.": "搜索 CELLxGENE Discover 公开集合。",
+    "Retrieve collection metadata and a page of datasets.": "获取集合元数据和一页数据集。",
+    "Search public single-cell datasets by metadata.": "按元数据搜索公开单细胞数据集。",
+    "Retrieve dataset metadata and file links.": "获取数据集元数据和文件链接。",
+    "List published collection versions.": "列出已发布的集合版本。",
+    "Retrieve a specific collection version.": "获取指定集合版本。",
+    "List published dataset versions.": "列出已发布的数据集版本。",
+    "Retrieve a specific dataset version.": "获取指定数据集版本。",
+    "List dataset file formats, sizes and download URLs without downloading files.": "列出数据集文件的格式、大小和下载 URL，不下载文件。",
     "Export anyway": "仍然导出",
     "I understand the risk and want to export anyway": "我理解风险，仍要导出",
     "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "此包可能包含凭据或私人信息。仍然导出会原样包含被标记的内容，不进行脱敏。分享前请检查导出包。",
@@ -5668,6 +5678,13 @@
     "Drop one .science file at a time. No files were added.": "每次拖入一个 .science 文件。未添加任何文件。",
     "This Project is unavailable for import.": "此项目当前无法导入。",
     "Drop a .science file to import into “{{project}}”": "拖入 .science 文件以导入到“{{project}}”",
+    "Import previous research": "导入之前的研究",
+    "Drag a .science research package onto this page, or choose a file": "将 .science 研究包拖到此页面，或选择文件",
+    "What is a .science research package?": "什么是 .science 研究包？",
+    "A .science research package contains the exported research history and any files included at export. Import opens read-only history; fork the imported history to continue researching in your own copy.": ".science 研究包包含导出的研究历史，以及导出时包含的文件。导入后会以只读方式打开历史记录；创建副本即可在自己的副本中继续研究。",
+    "read-only history": "读取只读历史记录",
+    "continue research": "继续研究",
+    "Choose a .science file": "选择 .science 文件",
     "Drop files": "拖入文件",
     "Models": "模型",
     "Model source": "模型来源",
@@ -6485,7 +6502,6 @@
     "Match status": "匹配状态",
     "Identify journals": "用于识别期刊",
     "Used for matching, not as attribute columns.": "用于匹配期刊，不作为属性列。",
-    "Save as attribute columns": "保存为属性列",
     "Show and filter these columns in the literature table.": "可在文献列表中显示和筛选。",
     "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "识别字段用于匹配期刊。需要在文献列表中显示和筛选的值，请选择“期刊属性”。",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "“保存名称”和“值类型”仅适用于期刊属性。跳过的列不会保存。",
@@ -6775,6 +6791,12 @@
     "Create a skill to teach the Agent a workflow you use.": "创建一个技能，把常用的流程教给智能体。",
     "Wait for the current skill operation to finish before leaving.": "请等待当前技能操作完成后再离开。",
     "Your skill edits have not been saved. Discard them and leave the editor?": "技能修改尚未保存。要放弃修改并离开编辑器吗？",
-    "Please wait…": "请稍候…"
+    "Please wait…": "请稍候…",
+    "Your provider edits have not been saved. Discard them and leave the editor?": "您对服务提供商的修改尚未保存。是否放弃修改并离开编辑器？",
+    "Wait for the provider save to finish before leaving.": "请等待服务提供商保存完成后再离开。",
+    "Your project edits have not been saved. Discard them and close the form?": "您对项目的修改尚未保存。是否放弃修改并关闭表单？",
+    "Search is partially unavailable": "搜索部分功能暂不可用",
+    "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "在已保存的会话就绪前，无法搜索消息、文件和文献库。项目和会话标题仍可能显示。",
+    "Review recovery options": "查看恢复选项"
   }
 }

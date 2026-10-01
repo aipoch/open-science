@@ -134,6 +134,16 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
+    "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Öffentliche Sammlungen, Datensätze, Versionen und Datei-Downloadlinks von CELLxGENE Discover.",
+    "Search public CELLxGENE Discover collections.": "Öffentliche Sammlungen in CELLxGENE Discover suchen.",
+    "Retrieve collection metadata and a page of datasets.": "Sammlungsmetadaten und eine Seite mit Datensätzen abrufen.",
+    "Search public single-cell datasets by metadata.": "Öffentliche Einzelzell-Datensätze anhand von Metadaten suchen.",
+    "Retrieve dataset metadata and file links.": "Datensatzmetadaten und Dateilinks abrufen.",
+    "List published collection versions.": "Veröffentlichte Sammlungsversionen auflisten.",
+    "Retrieve a specific collection version.": "Eine bestimmte Sammlungsversion abrufen.",
+    "List published dataset versions.": "Veröffentlichte Datensatzversionen auflisten.",
+    "Retrieve a specific dataset version.": "Eine bestimmte Datensatzversion abrufen.",
+    "List dataset file formats, sizes and download URLs without downloading files.": "Dateiformate, Größen und Download-URLs eines Datensatzes auflisten, ohne Dateien herunterzuladen.",
     "Export anyway": "Trotzdem exportieren",
     "I understand the risk and want to export anyway": "Ich verstehe das Risiko und möchte trotzdem exportieren",
     "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "Dieses Paket kann Zugangsdaten oder private Informationen enthalten. Beim Exportieren werden die markierten Inhalte ohne Schwärzung eingeschlossen. Prüfen Sie das Paket, bevor Sie es teilen.",
@@ -5822,6 +5832,13 @@
     "Drop one .science file at a time. No files were added.": "Jeweils nur eine .science-Datei ablegen. Es wurden keine Dateien hinzugefügt.",
     "This Project is unavailable for import.": "In dieses Projekt kann derzeit nicht importiert werden.",
     "Drop a .science file to import into “{{project}}”": ".science-Datei ablegen, um sie in „{{project}}“ zu importieren",
+    "Import previous research": "Vorherige Forschung importieren",
+    "Drag a .science research package onto this page, or choose a file": "Ziehen Sie ein .science-Forschungspaket auf diese Seite oder wählen Sie eine Datei aus",
+    "What is a .science research package?": "Was ist ein .science-Forschungspaket?",
+    "A .science research package contains the exported research history and any files included at export. Import opens read-only history; fork the imported history to continue researching in your own copy.": "Ein .science-Forschungspaket enthält den exportierten Forschungsverlauf und alle beim Export einbezogenen Dateien. Der Import öffnet den Verlauf schreibgeschützt; erstellen Sie eine Kopie, um in Ihrer eigenen Version weiterzuforschen.",
+    "read-only history": "schreibgeschützten Verlauf lesen",
+    "continue research": "Forschung fortsetzen",
+    "Choose a .science file": "Eine .science-Datei auswählen",
     "Drop files": "Dateien ablegen",
     "Models": "Modelle",
     "Model source": "Modellquelle",
@@ -6644,7 +6661,6 @@
     "Match status": "Abgleichstatus",
     "Identify journals": "Zeitschriften identifizieren",
     "Used for matching, not as attribute columns.": "Zum Abgleichen, nicht als Attributspalten.",
-    "Save as attribute columns": "Als Attributspalten speichern",
     "Show and filter these columns in the literature table.": "Diese Spalten in der Literaturliste anzeigen und filtern.",
     "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "Identitätsspalten dienen zum Abgleichen von Zeitschriften. Wählen Sie Zeitschriftenattribut für Werte, die Sie in der Literaturliste anzeigen und filtern möchten.",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "Gespeicherter Name und Werttyp gelten nur für Zeitschriftenattribute. Übersprungene Spalten werden nicht gespeichert.",
@@ -6935,6 +6951,12 @@
     "Create a skill to teach the Agent a workflow you use.": "Erstellen Sie eine Fähigkeit, um dem Agenten einen von Ihnen verwendeten Arbeitsablauf beizubringen.",
     "Wait for the current skill operation to finish before leaving.": "Warten Sie, bis der aktuelle Vorgang für die Fähigkeit abgeschlossen ist, bevor Sie den Editor verlassen.",
     "Your skill edits have not been saved. Discard them and leave the editor?": "Ihre Änderungen an der Fähigkeit wurden nicht gespeichert. Änderungen verwerfen und den Editor verlassen?",
-    "Please wait…": "Bitte warten…"
+    "Please wait…": "Bitte warten…",
+    "Your provider edits have not been saved. Discard them and leave the editor?": "Ihre Änderungen am Anbieter wurden nicht gespeichert. Änderungen verwerfen und den Editor verlassen?",
+    "Wait for the provider save to finish before leaving.": "Warten Sie, bis der Anbieter gespeichert wurde, bevor Sie den Editor verlassen.",
+    "Your project edits have not been saved. Discard them and close the form?": "Ihre Projektänderungen wurden nicht gespeichert. Änderungen verwerfen und das Formular schließen?",
+    "Search is partially unavailable": "Die Suche ist teilweise nicht verfügbar",
+    "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "Nachrichten, Dateien und die Bibliothek können erst durchsucht werden, wenn gespeicherte Konversationen bereit sind. Projekte und Sitzungstitel werden möglicherweise weiterhin angezeigt.",
+    "Review recovery options": "Wiederherstellungsoptionen prüfen"
   }
 }

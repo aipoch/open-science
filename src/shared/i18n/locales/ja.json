@@ -133,6 +133,16 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "CELLxGENE Discover の公開コレクション、データセット、バージョン、ファイルのダウンロードリンク。",
+    "Search public CELLxGENE Discover collections.": "CELLxGENE Discover の公開コレクションを検索します。",
+    "Retrieve collection metadata and a page of datasets.": "コレクションのメタデータとデータセットを1ページ取得します。",
+    "Search public single-cell datasets by metadata.": "メタデータで公開シングルセルデータセットを検索します。",
+    "Retrieve dataset metadata and file links.": "データセットのメタデータとファイルリンクを取得します。",
+    "List published collection versions.": "公開済みのコレクションバージョンを一覧表示します。",
+    "Retrieve a specific collection version.": "指定したコレクションバージョンを取得します。",
+    "List published dataset versions.": "公開済みのデータセットバージョンを一覧表示します。",
+    "Retrieve a specific dataset version.": "指定したデータセットバージョンを取得します。",
+    "List dataset file formats, sizes and download URLs without downloading files.": "ファイルをダウンロードせずに、データセットのファイル形式、サイズ、ダウンロード URL を一覧表示します。",
     "Export anyway": "リスクを承知でエクスポート",
     "I understand the risk and want to export anyway": "リスクを理解した上でエクスポートします",
     "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "このパッケージには認証情報や個人情報が含まれている可能性があります。続行すると、検出された内容がマスクされずに含まれます。共有する前にパッケージを確認してください。",
@@ -5668,6 +5678,13 @@
     "Drop one .science file at a time. No files were added.": ".science ファイルは一度に1つドロップしてください。ファイルは追加されていません。",
     "This Project is unavailable for import.": "このプロジェクトには現在インポートできません。",
     "Drop a .science file to import into “{{project}}”": "「{{project}}」にインポートする .science ファイルをドロップ",
+    "Import previous research": "以前の研究をインポート",
+    "Drag a .science research package onto this page, or choose a file": "このページに .science 研究パッケージをドラッグするか、ファイルを選択",
+    "What is a .science research package?": ".science 研究パッケージとは？",
+    "A .science research package contains the exported research history and any files included at export. Import opens read-only history; fork the imported history to continue researching in your own copy.": ".science 研究パッケージには、エクスポートした研究履歴と、エクスポート時に含めたファイルが入っています。インポートすると履歴を読み取り専用で開き、複製すると自分のコピーで研究を続けられます。",
+    "read-only history": "読み取り専用の履歴を読む",
+    "continue research": "研究を続ける",
+    "Choose a .science file": ".science ファイルを選択",
     "Drop files": "ファイルをドロップ",
     "Models": "モデル",
     "Model source": "モデルの提供元",
@@ -6485,7 +6502,6 @@
     "Match status": "照合状態",
     "Identify journals": "ジャーナルの識別",
     "Used for matching, not as attribute columns.": "照合に使用し、属性列にはしません。",
-    "Save as attribute columns": "属性列として保存",
     "Show and filter these columns in the literature table.": "文献一覧で表示・絞り込みできます。",
     "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "識別用の列はジャーナルの照合に使用します。文献一覧で表示・絞り込みする値には「雑誌属性」を選択してください。",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "「保存する名前」と「値の種類」はジャーナル属性にのみ適用されます。スキップした列は保存されません。",
@@ -6775,6 +6791,12 @@
     "Create a skill to teach the Agent a workflow you use.": "スキルを作成して、よく使うワークフローをエージェントに教えます。",
     "Wait for the current skill operation to finish before leaving.": "現在のスキル操作が完了してからエディターを離れてください。",
     "Your skill edits have not been saved. Discard them and leave the editor?": "スキルの変更は保存されていません。変更を破棄してエディターを離れますか？",
-    "Please wait…": "お待ちください…"
+    "Please wait…": "お待ちください…",
+    "Your provider edits have not been saved. Discard them and leave the editor?": "プロバイダーの変更は保存されていません。変更を破棄してエディターを閉じますか？",
+    "Wait for the provider save to finish before leaving.": "プロバイダーの保存が完了するまでお待ちください。",
+    "Your project edits have not been saved. Discard them and close the form?": "プロジェクトの変更は保存されていません。変更を破棄してフォームを閉じますか？",
+    "Search is partially unavailable": "検索の一部を利用できません",
+    "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "保存済みの会話の準備が整うまで、メッセージ、ファイル、ライブラリを検索できません。プロジェクトとセッションのタイトルは表示される場合があります。",
+    "Review recovery options": "復旧オプションを確認"
   }
 }

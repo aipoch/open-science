@@ -74,7 +74,7 @@ export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
   sideChatId?: string
   // A message chip can request a transient Library scope without changing the durable tab format.
-  libraryScopeRequest?: { collectionId?: string; collectionName?: string }
+  libraryScopeRequest?: { section?: 'inbox'; collectionId?: string; collectionName?: string }
   toolKind?:
     | 'notebook'
     | 'files'

@@ -108,15 +108,19 @@ it('keeps custom namespaces editable and rejects blank or invalid values before 
         .getAllByRole('option')
         .map((option) => option.textContent)
     ).toEqual(['Journal name', 'Abbreviation', 'ISSN', 'External journal ID'])
-    expect(
-      within(identityGroup).getByText('Used for matching, not as attribute columns.')
-    ).toBeTruthy()
-    const attributeGroup = screen.getByRole('group', { name: 'Save as attribute columns' })
-    expect(within(attributeGroup).getAllByRole('option')).toHaveLength(1)
-    expect(within(attributeGroup).getByRole('option', { name: 'Journal attribute' })).toBeTruthy()
-    expect(
-      within(attributeGroup).getByText('Show and filter these columns in the literature table.')
-    ).toBeTruthy()
+    expect(screen.queryByText('Save as attribute columns')).toBeNull()
+    expect(screen.queryByText('Used for matching, not as attribute columns.')).toBeNull()
+    expect(screen.queryByText('Show and filter these columns in the literature table.')).toBeNull()
+    const attributeOption = screen.getByRole('option', { name: 'Journal attribute' })
+    expect(attributeOption.closest('[role="group"]')).toBeNull()
+    await act(async () => attributeOption.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Show and filter these columns in the literature table.'
+    )
+    await act(async () => within(identityGroup).getByRole('option', { name: 'ISSN' }).focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Used for matching, not as attribute columns.'
+    )
     expect(screen.getByRole('option', { name: 'Skip' }).closest('[role="group"]')).toBeNull()
     fireEvent.click(within(identityGroup).getByRole('option', { name: 'External journal ID' }))
     expect(screen.getByRole('combobox', { name: 'Role for column 2' }).textContent).toBe(

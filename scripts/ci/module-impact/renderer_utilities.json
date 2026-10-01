@@ -307,6 +307,7 @@
       "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx",
       "src/renderer/src/pages/workspace/EditMessageConfirmDialog.render.test.tsx",
       "src/renderer/src/pages/workspace/EditSessionDialog.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/EmptyConversationBanner.interaction.test.tsx",
       "src/renderer/src/pages/workspace/EnvStatusBanner.render.test.tsx",
       "src/renderer/src/pages/workspace/EnvironmentPackageSearch.test.tsx",
       "src/renderer/src/pages/workspace/ExtensionPreservingFileName.test.tsx",
@@ -502,7 +503,8 @@
       "src/renderer/src/pages/workspace/research-draft-persistence.test.ts",
       "src/renderer/src/pages/workspace/workspace-research-context.test.tsx",
       "src/renderer/src/pages/workspace/workspace-research-controller.test.tsx",
-      "src/renderer/src/lib/research-submissions/dispatcher.test.ts"
+      "src/renderer/src/lib/research-submissions/dispatcher.test.ts",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

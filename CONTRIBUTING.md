@@ -21,6 +21,12 @@ Node 24 is the development and CI toolchain. The published CLI continues to supp
 Node >=22.5.0; PR Gate checks CLI/SDK compatibility on Node 22 as well. Electron
 ships its own Node runtime, so changing the toolchain does not upgrade Electron.
 
+The typecheck scripts use the native TypeScript compiler pinned as `typescript-native`.
+The separate `typescript` dependency provides the JavaScript compiler API used by API-map
+generation and architecture tests. Keep both dependencies: changing the typecheck compiler
+does not migrate those API consumers. Scripts select the compiler by its explicit path,
+because both packages expose a `tsc` binary.
+
 ### Setup
 
 ```bash
@@ -124,9 +130,64 @@ Three runtime process layers and a shared module live under `src/`:
 1. Create a branch off the default branch for your change.
 2. Make your change, keeping it focused and self-contained.
 3. Add or update tests that cover the behavior you changed.
-4. Build the final Test Impact Set and run it after the last material edit. Use the full fallback when
+4. Complete the [module-impact registration checklist](#module-impact-registration) when adding,
+   renaming, deleting, or changing dependencies of source files or tests. Stage new files before
+   running the registration guards.
+5. Build the final Test Impact Set and run it after the last material edit. Use the full fallback when
    ownership, consumers, or risks cannot be established.
-5. Open a pull request with a clear description of the change and its motivation.
+6. Open a pull request with a clear description of the change and its motivation.
+
+### Module-impact registration
+
+Module registration is part of the same change as the source and tests, not a follow-up after CI
+fails. Edit `scripts/ci/module-impact/<module-id>.json`; the filename defines the module ID
+(`^[a-z][a-z0-9_]*$`). The root `scripts/ci/module-impact.json` contains only `{"schemaVersion": 1}`;
+do not add a shared index or inline modules. Reuse the existing owner module when appropriate.
+
+Before committing:
+
+- Register every new or renamed file under `src/` or `packages/` in exactly one module's
+  `ownerPaths`, including tests, native sources, assets and fixtures. Use exact repository-relative
+  paths with `/` separators. A `testFiles` entry does not assign file ownership.
+- Register new tests in the appropriate `testFiles` category: `owner` for the module's behavior,
+  `contract` for its interfaces, or `consumer` for downstream behavior depending on it. Within one
+  module, list a test in only one category; the same test may provide evidence for multiple modules.
+- Check upstream modules when adding a test or changing imports, re-exports or mocks. The
+  consumer-coverage guard follows transitive dependencies: registering a test only in its owning
+  module may leave several upstream modules without evidence. For each reported
+  `<module-id> -> <test-path>` gap, add the test to that module's appropriate category, normally
+  `testFiles.consumer` for a downstream test. Do not remove valid dependency edges to silence it.
+- Keep public boundaries in `interfacePaths`, including test files that export helpers used by other
+  tests. Keep `consumerModules` accurate for module-to-module relationships; it does not replace
+  explicit test evidence. Native/worker loading edges use `scripts/ci/module-runtime-consumers.json`.
+  IPC, events, filesystem protocols and other dynamic relationships still need explicit contract
+  tests; static analysis cannot prove them all.
+- On renames, update ownership, interface and test references to the new paths. Remove references
+  only for files actually deleted; preserve coverage for surviving files. Do not weaken existing
+  consumer edges, capability/fallback routing or `fullTestReason` to make registration checks pass.
+
+**Stage intended new files before running these checks.** Review `git status --short`, then use
+`git add -- <paths>` for the source, tests, assets and module records in this change. The ownership
+audit and consumer-coverage guard enumerate `git ls-files`: they can miss untracked new files even
+when a targeted test passes. They read working-tree contents for tracked paths, so rerun them after
+the last material edit and review `git diff --cached` before committing.
+
+Run from the repository root:
+
+```bash
+node scripts/ci/audit-module-ownership.mjs
+npx vitest run scripts/ci/validate-module-impact.test.ts scripts/ci/check-module-ownership.test.ts scripts/ci/module-consumer-coverage.test.ts
+```
+
+These checks validate registration, not the changed product behavior. Also run
+`npm run test:module -- <module-id>` for the affected modules and the other checks required by the
+[Verification Policy](#verification-policy). After committing, inspect
+`npm run test:affected:explain -- --base origin/main --head HEAD`; this compares committed revisions
+and does not include staged or unstaged edits. Unknown ownership and existing full-validation
+markers retain the full fallback; registration does not waive required CI.
+
+See [CI control-plane approval](#ci-control-plane-approval) for additive registration exemptions,
+coverage-preservation rules and changes that require CI owner approval.
 
 ### Durable external components
 
@@ -327,6 +388,8 @@ ci(review): unify automated AI reviews
   checks ran after the last material edit, and call out uncovered risks.
 - Keep PRs reasonably small and scoped so they are easy to review.
 - Ensure the final Test Impact Set, or the full fallback when required, passes.
+- Confirm the [module-impact registration checklist](#module-impact-registration) is complete for
+  applicable changes, and report registration checks run after new files were tracked.
 - After required PR checks and review pass, add the pull request to the native merge queue once
   the queue rollout is enabled. The queue validates the combined revision before **squash merge**;
   its squash subject must retain the PR title's Conventional Commit format. Do not update a branch

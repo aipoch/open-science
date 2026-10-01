@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-import { act, useState } from 'react'
+import { act, useContext, useState } from 'react'
 import { literatureItemInputSchema } from '../../../../shared/literature'
-import { useLibraryReferenceActions } from './previews/library-reference-actions'
+import {
+  LibraryPreviewNavigationContext,
+  useLibraryReferenceActions
+} from './previews/library-reference-actions'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
@@ -36,6 +39,7 @@ import {
 } from './workspace-page-test-fixtures'
 
 // Capture the props passed to the heavy child components so the test can drive selection and drafts.
+let openLibraryPreview: React.ContextType<typeof LibraryPreviewNavigationContext>
 let libraryActions: ReturnType<typeof useLibraryReferenceActions>
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
 let sidebarProps: {
@@ -101,6 +105,7 @@ vi.mock('./WorkspaceSidebar', () => ({
 vi.mock('./ConversationPanel', () => ({
   ConversationPanel: (props: typeof conversationProps): React.JSX.Element => {
     conversationProps = props
+    openLibraryPreview = useContext(LibraryPreviewNavigationContext)
     const [localDetailOpen, setLocalDetailOpen] = useState(false)
     return (
       <section data-testid="conversation">
@@ -1377,7 +1382,10 @@ describe('WorkspacePage draft preservation', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
   })
 
-  it('opens the latest Library mention scope after preview restoration activates the project', async () => {
+  it.each([
+    { collectionId: 'collection-1', collectionName: 'TP53 evidence' },
+    { section: 'inbox' as const }
+  ])('opens the latest Library scope after restoration: %j', async (scope) => {
     const pendingLoad = createDeferred<undefined>()
     const load = vi.fn(() => pendingLoad.promise)
     window.api.preview.load = load as never
@@ -1385,10 +1393,7 @@ describe('WorkspacePage draft preservation', () => {
 
     act(() => {
       conversationProps.layout.onOpenLibraryMention!({})
-      conversationProps.layout.onOpenLibraryMention!({
-        collectionId: 'collection-1',
-        collectionName: 'TP53 evidence'
-      })
+      openLibraryPreview!(scope)
     })
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
 
@@ -1410,7 +1415,7 @@ describe('WorkspacePage draft preservation', () => {
     expect(preview.activeItemId).toBe(PROJECT_LIBRARY_PREVIEW_ID)
     expect(preview.items.find((item) => item.id === PROJECT_LIBRARY_PREVIEW_ID)).toEqual(
       expect.objectContaining({
-        libraryScopeRequest: { collectionId: 'collection-1', collectionName: 'TP53 evidence' }
+        libraryScopeRequest: scope
       })
     )
     expect(useNavigationStore.getState().view).toBe('workspace')

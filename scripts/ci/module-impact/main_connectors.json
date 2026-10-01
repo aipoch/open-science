@@ -153,6 +153,7 @@
       "src/main/connectors/descriptors/biorxiv.test.ts",
       "src/main/connectors/descriptors/cancer-models.test.ts",
       "src/main/connectors/descriptors/cellguide.test.ts",
+      "src/main/connectors/descriptors/cellxgene-discover.test.ts",
       "src/main/connectors/descriptors/chembl.test.ts",
       "src/main/connectors/descriptors/chemistry.test.ts",
       "src/main/connectors/descriptors/clinical-genomics.test.ts",

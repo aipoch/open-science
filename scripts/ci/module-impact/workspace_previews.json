@@ -123,7 +123,9 @@
     "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
     "src/renderer/src/pages/workspace/previews/LibraryChatButton.tsx",
     "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
-    "src/renderer/src/pages/workspace/previews/library-reference-actions.ts"
+    "src/renderer/src/pages/workspace/previews/library-reference-actions.ts",
+    "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.tsx",
+    "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",
@@ -211,7 +213,8 @@
       "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-search-text-cache.test.ts",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
-      "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx"
+      "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -277,7 +280,12 @@
       "src/renderer/src/reviewer-paged-preview/main.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx",
+      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

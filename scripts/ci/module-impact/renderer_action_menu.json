@@ -36,6 +36,8 @@
       "src/renderer/src/pages/workspace/ArtifactProvenanceMessages.integration.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/EmptyConversationBanner.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/EmptyConversationBanner.render.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.escape.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.focus.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.lifecycle.test.tsx",

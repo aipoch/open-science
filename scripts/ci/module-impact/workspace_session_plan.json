@@ -309,7 +309,8 @@
       "src/renderer/src/pages/workspace/ResearchSubmissionQueue.test.tsx",
       "src/renderer/src/pages/workspace/research-draft-persistence.test.ts",
       "src/renderer/src/pages/workspace/workspace-research-context.test.tsx",
-      "src/renderer/src/pages/workspace/workspace-research-controller.test.tsx"
+      "src/renderer/src/pages/workspace/workspace-research-controller.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

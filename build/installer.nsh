@@ -65,7 +65,24 @@ FunctionEnd
   StrCpy ${BACKUP} ""
   ${if} "${DIR}" != ""
     ClearErrors
-    GetFullPathName $R2 "${DIR}\.."
+    # NSIS GetFullPathName requires the parent to exist. A stale InstallLocation may outlive
+    # that directory after a manual move/delete. Resolve lexically with the Windows API so
+    # absent data is a no-op, while existing data and interrupted backups still use the guards.
+    System::Call 'kernel32::GetFullPathName(t "${DIR}\..", i ${NSIS_MAX_STRLEN}, t .R2, p 0) i.R3'
+    ${if} $R3 == 0
+    ${orIf} $R3 >= ${NSIS_MAX_STRLEN}
+      SetErrors
+    ${else}
+      # Only a missing parent is harmless. Keep refusing paths whose attributes cannot be read
+      # for other reasons (permissions, unavailable drives, invalid paths).
+      System::Call 'kernel32::GetFileAttributes(t R2) i.R3 ?e'
+      Pop $R4
+      ${if} $R3 == -1
+      ${andIf} $R4 != 2
+      ${andIf} $R4 != 3
+        SetErrors
+      ${endif}
+    ${endif}
     ${if} ${Errors}
       DetailPrint `Open-Science data protection failure code=parent-path-unresolved path="${DIR}\${FOLDER}"`
       DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; its parent path could not be resolved.`

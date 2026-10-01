@@ -232,7 +232,8 @@ const setup = (modelOwner?: ReturnType<typeof createLocalModelOwner>): Setup => 
   }
 }
 const started = async (test: Setup, count = 1): Promise<Run> => {
-  await vi.waitFor(() => expect(test.runs).toHaveLength(count))
+  // Admission stages and verifies real files; allow slower Windows disk operations.
+  await vi.waitFor(() => expect(test.runs).toHaveLength(count), { timeout: 5000 })
   return test.runs[count - 1]
 }
 

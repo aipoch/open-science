@@ -268,6 +268,7 @@
       "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx",
       "src/renderer/src/pages/workspace/EditMessageConfirmDialog.render.test.tsx",
       "src/renderer/src/pages/workspace/EditSessionDialog.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/EmptyConversationBanner.interaction.test.tsx",
       "src/renderer/src/pages/workspace/EnvStatusBanner.render.test.tsx",
       "src/renderer/src/pages/workspace/EnvironmentPackageSearch.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.escape.test.tsx",
@@ -430,7 +431,8 @@
       "src/renderer/src/pages/workspace/ResearchReplayPreview.test.tsx",
       "src/renderer/src/pages/workspace/ResearchSubmissionQueue.test.tsx",
       "src/renderer/src/pages/workspace/research-draft-persistence.test.ts",
-      "src/renderer/src/lib/research-submissions/dispatcher.test.ts"
+      "src/renderer/src/lib/research-submissions/dispatcher.test.ts",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

@@ -81,6 +81,74 @@ afterEach(() => {
 })
 
 describe('useProjectFormDialog', () => {
+  it.each(['create', 'edit'] as const)('closes a pristine %s immediately', (mode) => {
+    const onCreateCancelled = vi.fn()
+    const hook = renderHook({ onCreateCancelled })
+    act(() =>
+      mode === 'create'
+        ? hook.current().openCreateDialog()
+        : hook.current().openEditDialog(createProject())
+    )
+    act(() => hook.current().dialogProps.onCancel())
+    expect(hook.current().dialogProps.open).toBe(false)
+    expect(hook.current().dialogProps.discardConfirmationOpen).toBe(false)
+    expect(onCreateCancelled).toHaveBeenCalledTimes(mode === 'create' ? 1 : 0)
+    hook.unmount()
+  })
+
+  it.each(['create', 'edit'] as const)(
+    'keeps a dirty %s until discard and invokes cancellation only after acceptance',
+    (mode) => {
+      const onCreateCancelled = vi.fn()
+      const create = vi.fn()
+      const update = vi.fn()
+      setProjectsApi({ create, update })
+      const hook = renderHook({ onCreateCancelled })
+      act(() =>
+        mode === 'create'
+          ? hook.current().openCreateDialog()
+          : hook.current().openEditDialog(createProject())
+      )
+      act(() => hook.current().dialogProps.onNameChange('My project'))
+      act(() => hook.current().dialogProps.onDescriptionChange('My description'))
+      act(() => hook.current().dialogProps.onAgentContextChange('My instructions'))
+      act(() => hook.current().dialogProps.onCancel())
+      expect(hook.current().dialogProps).toMatchObject({
+        open: true,
+        discardConfirmationOpen: true
+      })
+      expect(onCreateCancelled).not.toHaveBeenCalled()
+      act(() => submitForm(hook.current()))
+      expect(create).not.toHaveBeenCalled()
+      expect(update).not.toHaveBeenCalled()
+      act(() => hook.current().dialogProps.onKeepEditing())
+      expect(hook.current().dialogProps).toMatchObject({
+        open: true,
+        discardConfirmationOpen: false,
+        nameDraft: 'My project',
+        descriptionDraft: 'My description',
+        agentContextDraft: 'My instructions'
+      })
+      act(() => hook.current().dialogProps.onCancel())
+      act(() => hook.current().dialogProps.onDiscardChanges())
+      expect(hook.current().dialogProps.open).toBe(false)
+      expect(onCreateCancelled).toHaveBeenCalledTimes(mode === 'create' ? 1 : 0)
+      hook.unmount()
+    }
+  )
+
+  it('allows immediate close after restoring the original field values', () => {
+    const hook = renderHook()
+    const project = createProject({ agentContext: 'Original instructions' })
+    act(() => hook.current().openEditDialog(project))
+    act(() => hook.current().dialogProps.onAgentContextChange('New instructions'))
+    act(() => hook.current().dialogProps.onAgentContextChange(project.agentContext!))
+    act(() => hook.current().dialogProps.onCancel())
+    expect(hook.current().dialogProps.open).toBe(false)
+    expect(hook.current().dialogProps.discardConfirmationOpen).toBe(false)
+    hook.unmount()
+  })
+
   it('opens the create dialog with empty drafts and create labels', () => {
     const hook = renderHook()
 
@@ -187,10 +255,20 @@ describe('useProjectFormDialog', () => {
     await act(async () => submitForm(hook.current()))
 
     expect(hook.current().dialogProps.open).toBe(true)
+    expect(hook.current().dialogProps.discardConfirmationOpen).toBe(false)
     expect(hook.current().dialogProps.error).toBe('Could not save project. Please try again.')
     expect(hook.current().dialogProps.errorDetail).toBe('database is locked')
     expect(hook.current().dialogProps.isSubmitting).toBe(false)
     expect(openProject).not.toHaveBeenCalled()
+    act(() => hook.current().dialogProps.onCancel())
+    expect(hook.current().dialogProps.discardConfirmationOpen).toBe(true)
+    act(() => hook.current().dialogProps.onKeepEditing())
+    expect(hook.current().dialogProps).toMatchObject({
+      open: true,
+      nameDraft: 'Research',
+      error: 'Could not save project. Please try again.',
+      errorDetail: 'database is locked'
+    })
     hook.unmount()
   })
 
@@ -231,12 +309,35 @@ describe('useProjectFormDialog', () => {
     expect(hook.current().dialogProps.conflictProject).toEqual(latest)
     await act(async () => submitForm(hook.current()))
     expect(update).toHaveBeenCalledTimes(1)
+    act(() => hook.current().dialogProps.onCancel())
+    act(() => hook.current().dialogProps.onKeepEditing())
+    expect(hook.current().dialogProps.conflictProject).toEqual(latest)
+    expect(hook.current().dialogProps.errorDetail).toBe('Project changed elsewhere.')
     act(() => hook.current().dialogProps.onKeepDraft?.())
     expect(hook.current().dialogProps.nameDraft).toBe('My name')
     await act(async () => submitForm(hook.current()))
     expect(update).toHaveBeenLastCalledWith(
       expect.objectContaining({ name: 'My name', expectedUpdatedAt: 2 })
     )
+    hook.unmount()
+  })
+
+  it('protects a kept conflict draft against the latest persisted values', async () => {
+    const latest = createProject({ name: 'Saved elsewhere', updatedAt: 2 })
+    setProjectsApi({
+      update: vi.fn().mockRejectedValue(new Error('Project changed elsewhere.')),
+      get: vi.fn().mockResolvedValue(latest)
+    })
+    const hook = renderHook()
+    act(() => hook.current().openEditDialog(createProject()))
+    await act(async () => submitForm(hook.current()))
+    act(() => hook.current().dialogProps.onKeepDraft?.())
+    act(() => hook.current().dialogProps.onCancel())
+    expect(hook.current().dialogProps).toMatchObject({
+      open: true,
+      nameDraft: 'Research',
+      discardConfirmationOpen: true
+    })
     hook.unmount()
   })
 
@@ -253,6 +354,8 @@ describe('useProjectFormDialog', () => {
     expect(hook.current().dialogProps.nameDraft).toBe('Latest')
     expect(hook.current().dialogProps.agentContextDraft).toBe('Latest context')
     expect(hook.current().dialogProps.conflictProject).toBeUndefined()
+    act(() => hook.current().dialogProps.onCancel())
+    expect(hook.current().dialogProps.open).toBe(false)
     hook.unmount()
   })
 
@@ -270,6 +373,7 @@ describe('useProjectFormDialog', () => {
     expect(hook.current().dialogProps.isSubmitting).toBe(true)
     act(() => hook.current().dialogProps.onCancel())
     expect(hook.current().dialogProps.open).toBe(true)
+    expect(hook.current().dialogProps.discardConfirmationOpen).toBe(false)
 
     await act(async () => resolveCreate?.(createProject({ id: 'done' })))
     expect(hook.current().dialogProps.open).toBe(false)

@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as tar from 'tar'
@@ -190,7 +190,7 @@ describe('session diagnostics isolated collector', () => {
     const original = fsPromises.writeFile
     vi.spyOn(fsPromises, 'writeFile').mockImplementation(
       async (...args: Parameters<typeof original>) => {
-        if (String(args[0]).endsWith('/content/notebook/run.json'))
+        if (String(args[0]) === join(input.directory!, 'content', 'notebook', 'run.json'))
           throw new Error('injected output failure')
         return original(...args)
       }
@@ -231,7 +231,7 @@ describe('session diagnostics isolated collector', () => {
       const original = fsPromises.writeFile
       vi.spyOn(fsPromises, 'writeFile').mockImplementation(
         async (...args: Parameters<typeof original>) => {
-          if (String(args[0]).endsWith(`/content/${failedName}`))
+          if (String(args[0]) === join(input.directory!, 'content', failedName))
             throw new Error('injected output failure')
           return original(...args)
         }
@@ -267,7 +267,7 @@ describe('session diagnostics isolated collector', () => {
     const original = fsPromises.writeFile
     vi.spyOn(fsPromises, 'writeFile').mockImplementation(
       async (...args: Parameters<typeof original>) => {
-        if (String(args[0]).endsWith('/content/db/Session.json'))
+        if (String(args[0]) === join(input.directory!, 'content', 'db', 'Session.json'))
           throw new Error('injected table failure')
         return original(...args)
       }
@@ -312,7 +312,8 @@ describe('session diagnostics isolated collector', () => {
     const original = fsPromises.writeFile
     vi.spyOn(fsPromises, 'writeFile').mockImplementation(
       async (...args: Parameters<typeof original>) => {
-        if (String(args[0]).includes('/content/')) throw new Error('injected content write failure')
+        if (String(args[0]).startsWith(join(input.directory!, 'content') + sep))
+          throw new Error('injected content write failure')
         return original(...args)
       }
     )

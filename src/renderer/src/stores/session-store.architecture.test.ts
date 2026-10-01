@@ -1387,7 +1387,8 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/research-draft-persistence.test.ts',
           'src/renderer/src/pages/workspace/research-sidebar-projection.test.ts',
           'src/renderer/src/pages/workspace/workspace-research-context.test.tsx',
-          'src/renderer/src/pages/workspace/workspace-research-controller.test.tsx'
+          'src/renderer/src/pages/workspace/workspace-research-controller.test.tsx',
+          'src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx'
         ]
       },
       capabilityOverlays: ['renderer_state'],

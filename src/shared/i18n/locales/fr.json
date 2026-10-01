@@ -135,6 +135,16 @@
     "More items": "Plus de sessions"
   },
   "renderer": {
+    "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Collections publiques, jeux de données, versions et liens de téléchargement de fichiers de CELLxGENE Discover.",
+    "Search public CELLxGENE Discover collections.": "Rechercher des collections publiques de CELLxGENE Discover.",
+    "Retrieve collection metadata and a page of datasets.": "Récupérer les métadonnées d’une collection et une page de jeux de données.",
+    "Search public single-cell datasets by metadata.": "Rechercher des jeux de données unicellulaires publics par métadonnées.",
+    "Retrieve dataset metadata and file links.": "Récupérer les métadonnées d’un jeu de données et les liens vers les fichiers.",
+    "List published collection versions.": "Lister les versions publiées d’une collection.",
+    "Retrieve a specific collection version.": "Récupérer une version précise d’une collection.",
+    "List published dataset versions.": "Lister les versions publiées d’un jeu de données.",
+    "Retrieve a specific dataset version.": "Récupérer une version précise d’un jeu de données.",
+    "List dataset file formats, sizes and download URLs without downloading files.": "Lister les formats, tailles et URL de téléchargement des fichiers d’un jeu de données sans les télécharger.",
     "Export anyway": "Exporter quand même",
     "I understand the risk and want to export anyway": "Je comprends le risque et souhaite exporter quand même",
     "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "Ce paquet peut contenir des identifiants ou des informations privées. Exporter quand même inclut le contenu signalé sans le masquer. Vérifiez le paquet avant de le partager.",
@@ -5984,6 +5994,13 @@
     "Drop one .science file at a time. No files were added.": "Déposez un seul fichier .science à la fois. Aucun fichier n’a été ajouté.",
     "This Project is unavailable for import.": "L’importation dans ce projet est actuellement indisponible.",
     "Drop a .science file to import into “{{project}}”": "Déposez un fichier .science pour l’importer dans « {{project}} »",
+    "Import previous research": "Importer une recherche précédente",
+    "Drag a .science research package onto this page, or choose a file": "Faites glisser un paquet de recherche .science sur cette page ou choisissez un fichier",
+    "What is a .science research package?": "Qu’est-ce qu’un paquet de recherche .science?",
+    "A .science research package contains the exported research history and any files included at export. Import opens read-only history; fork the imported history to continue researching in your own copy.": "Un paquet de recherche .science contient l’historique de recherche exporté et les fichiers inclus lors de l’exportation. L’importation ouvre l’historique en lecture seule; créez une copie pour poursuivre votre recherche.",
+    "read-only history": "lire l’historique en lecture seule",
+    "continue research": "poursuivre la recherche",
+    "Choose a .science file": "Choisir un fichier .science",
     "Drop files": "Déposez des fichiers",
     "Models": "Modèles",
     "Model source": "Source du modèle",
@@ -6811,7 +6828,6 @@
     "Match status": "État de correspondance",
     "Identify journals": "Identifier les revues",
     "Used for matching, not as attribute columns.": "Pour la correspondance, pas comme colonnes d’attributs.",
-    "Save as attribute columns": "Enregistrer comme attributs",
     "Show and filter these columns in the literature table.": "Afficher et filtrer ces colonnes dans la liste bibliographique.",
     "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "Les colonnes d’identification servent à faire correspondre les revues. Choisissez Attribut de revue pour les valeurs à afficher et à filtrer dans la liste bibliographique.",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "Le nom enregistré et le type de valeur s’appliquent uniquement aux attributs de revue. Les colonnes ignorées ne sont pas enregistrées.",
@@ -7103,6 +7119,12 @@
     "Create a skill to teach the Agent a workflow you use.": "Créez une compétence pour enseigner à l’Agent un flux de travail que vous utilisez.",
     "Wait for the current skill operation to finish before leaving.": "Attendez la fin de l’opération en cours sur la compétence avant de quitter l’éditeur.",
     "Your skill edits have not been saved. Discard them and leave the editor?": "Vos modifications de la compétence n’ont pas été enregistrées. Les abandonner et quitter l’éditeur ?",
-    "Please wait…": "Veuillez patienter…"
+    "Please wait…": "Veuillez patienter…",
+    "Your provider edits have not been saved. Discard them and leave the editor?": "Vos modifications du fournisseur n’ont pas été enregistrées. Les abandonner et quitter l’éditeur ?",
+    "Wait for the provider save to finish before leaving.": "Attendez la fin de l’enregistrement du fournisseur avant de quitter l’éditeur.",
+    "Your project edits have not been saved. Discard them and close the form?": "Vos modifications du projet n’ont pas été enregistrées. Les abandonner et fermer le formulaire ?",
+    "Search is partially unavailable": "La recherche est partiellement indisponible",
+    "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "Les messages, les fichiers et la bibliothèque ne peuvent pas être recherchés tant que les conversations enregistrées ne sont pas prêtes. Les projets et les titres des sessions peuvent encore apparaître.",
+    "Review recovery options": "Examiner les options de récupération"
   }
 }

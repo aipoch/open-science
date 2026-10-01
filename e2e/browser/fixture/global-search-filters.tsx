@@ -5,6 +5,7 @@ import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialo
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useSettingsStore } from '@/stores/settings-store'
 
 // Stub only native boundaries; the dialog, filter controls, state, and layout are production code.
 const nativeApi = {
@@ -47,7 +48,27 @@ useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-0' })
 
 export function Fixture(): React.JSX.Element {
   const [open, setOpen] = useState(true)
-  return <GlobalSearchDialog open={open} onOpenChange={setOpen} isSessionPersistenceReady />
+  const recoveryPanel = useSettingsStore((state) => state.pendingSettingsIntent?.route.panel)
+  return (
+    <>
+      <GlobalSearchDialog
+        open={open}
+        onOpenChange={setOpen}
+        isSessionPersistenceReady={!params.has('unready')}
+        onOpenRecovery={
+          params.has('recovery')
+            ? () => {
+                setOpen(false)
+                useSettingsStore.getState().openSettingsToPanel('archived')
+              }
+            : undefined
+        }
+      />
+      {recoveryPanel ? (
+        <output aria-label="Recovery settings target">{recoveryPanel}</output>
+      ) : null}
+    </>
+  )
 }
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {
   initI18n(locale)

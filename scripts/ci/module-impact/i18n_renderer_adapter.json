@@ -273,7 +273,8 @@
       "src/renderer/src/pages/workspace/replay/replay-context.test.ts",
       "src/renderer/src/pages/workspace/research-draft-persistence.test.ts",
       "src/renderer/src/pages/workspace/research-replay-context.test.ts",
-      "src/renderer/src/pages/workspace/workspace-research-context.test.tsx"
+      "src/renderer/src/pages/workspace/workspace-research-context.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
     ]
   },
   "capabilityOverlays": ["i18n_catalog"],

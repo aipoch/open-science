@@ -297,6 +297,18 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: true
   },
   {
+    id: 'cellxgene-discover',
+    displayName: 'CELLxGENE Discover',
+    aliases: ['CELLxGENE Discover', 'CELLxGENE datasets'],
+    description:
+      'Public collections, datasets, versions and file download links from CELLxGENE Discover.',
+    useWhen:
+      'Use to discover public single-cell datasets and collections in CELLxGENE Discover, filter dataset metadata by organism, tissue, disease, assay or cell type, inspect published collection/dataset versions, and obtain file formats, sizes and download URLs. Canonical IDs follow the current publication; version IDs pin a published snapshot. Lists are filtered and paginated client-side. Use CellGuide for cell-type descriptions and marker genes. Census expression-matrix queries and binary downloads are not provided.',
+    sources: ['CELLxGENE Discover'],
+    termsUrl: 'https://cellxgene.cziscience.com/',
+    requiresNcbi: false
+  },
+  {
     id: 'cellguide',
     displayName: 'CellGuide',
     description:

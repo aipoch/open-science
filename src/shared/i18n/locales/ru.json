@@ -136,6 +136,16 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Общедоступные коллекции, наборы данных, версии и ссылки на скачивание файлов из CELLxGENE Discover.",
+    "Search public CELLxGENE Discover collections.": "Поиск общедоступных коллекций CELLxGENE Discover.",
+    "Retrieve collection metadata and a page of datasets.": "Получение метаданных коллекции и одной страницы наборов данных.",
+    "Search public single-cell datasets by metadata.": "Поиск общедоступных данных отдельных клеток по метаданным.",
+    "Retrieve dataset metadata and file links.": "Получение метаданных набора данных и ссылок на файлы.",
+    "List published collection versions.": "Список опубликованных версий коллекции.",
+    "Retrieve a specific collection version.": "Получение определённой версии коллекции.",
+    "List published dataset versions.": "Список опубликованных версий набора данных.",
+    "Retrieve a specific dataset version.": "Получение определённой версии набора данных.",
+    "List dataset file formats, sizes and download URLs without downloading files.": "Список форматов, размеров и URL для скачивания файлов набора данных без загрузки файлов.",
     "Export anyway": "Всё равно экспортировать",
     "I understand the risk and want to export anyway": "Я понимаю риск и хочу продолжить экспорт",
     "This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.": "Этот пакет может содержать учётные данные или личную информацию. При продолжении экспорта отмеченное содержимое будет включено без скрытия. Проверьте пакет перед передачей другим.",
@@ -6117,6 +6127,13 @@
     "Drop one .science file at a time. No files were added.": "Перетаскивайте по одному файлу .science. Файлы не добавлены.",
     "This Project is unavailable for import.": "Импорт в этот проект сейчас недоступен.",
     "Drop a .science file to import into “{{project}}”": "Перетащите файл .science для импорта в «{{project}}»",
+    "Import previous research": "Импортировать предыдущее исследование",
+    "Drag a .science research package onto this page, or choose a file": "Перетащите исследовательский пакет .science на эту страницу или выберите файл",
+    "What is a .science research package?": "Что такое исследовательский пакет .science?",
+    "A .science research package contains the exported research history and any files included at export. Import opens read-only history; fork the imported history to continue researching in your own copy.": "Исследовательский пакет .science содержит экспортированную историю исследования и файлы, включённые при экспорте. Импорт открывает историю только для чтения; создайте ответвление, чтобы продолжить исследование в собственной копии.",
+    "read-only history": "прочитать историю только для чтения",
+    "continue research": "продолжить исследование",
+    "Choose a .science file": "Выбрать файл .science",
     "Drop files": "Перетащите файлы",
     "Models": "Модели",
     "Model source": "Источник модели",
@@ -6949,7 +6966,6 @@
     "Match status": "Статус сопоставления",
     "Identify journals": "Идентификация журналов",
     "Used for matching, not as attribute columns.": "Для сопоставления, а не для столбцов атрибутов.",
-    "Save as attribute columns": "Сохранение как атрибуты",
     "Show and filter these columns in the literature table.": "Эти столбцы можно отображать и фильтровать в списке литературы.",
     "Use identity columns to match journals. Choose Journal attribute for values to show and filter in the literature table.": "Столбцы идентификации используются для сопоставления журналов. Для значений, которые нужно отображать и фильтровать в списке литературы, выберите «Атрибут журнала».",
     "Saved name and Value type apply only to journal attributes. Skipped columns are not saved.": "Сохранённое имя и тип значения применяются только к атрибутам журнала. Пропущенные столбцы не сохраняются.",
@@ -7242,6 +7258,12 @@
     "Create a skill to teach the Agent a workflow you use.": "Создайте навык, чтобы научить Агента вашему рабочему процессу.",
     "Wait for the current skill operation to finish before leaving.": "Дождитесь завершения текущей операции с навыком, прежде чем выйти.",
     "Your skill edits have not been saved. Discard them and leave the editor?": "Изменения навыка не сохранены. Отменить их и выйти из редактора?",
-    "Please wait…": "Подождите…"
+    "Please wait…": "Подождите…",
+    "Your provider edits have not been saved. Discard them and leave the editor?": "Изменения поставщика не сохранены. Отменить их и выйти из редактора?",
+    "Wait for the provider save to finish before leaving.": "Дождитесь завершения сохранения поставщика, прежде чем выйти.",
+    "Your project edits have not been saved. Discard them and close the form?": "Изменения проекта не сохранены. Отменить их и закрыть форму?",
+    "Search is partially unavailable": "Поиск доступен частично",
+    "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "Поиск сообщений, файлов и библиотеки недоступен, пока сохранённые диалоги не готовы. Проекты и названия сеансов могут по-прежнему отображаться.",
+    "Review recovery options": "Просмотреть варианты восстановления"
   }
 }

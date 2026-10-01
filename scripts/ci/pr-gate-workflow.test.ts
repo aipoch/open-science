@@ -1447,6 +1447,17 @@ describe('PR Gate workflow', () => {
     }
   )
 
+  it('runs the native typechecker on Windows without expanding the process dry-run', () => {
+    const steps = workflow.jobs.windows_core.steps ?? []
+    const install = steps.find(({ name }) => name === 'Install dependencies')
+    const typecheck = steps.find(({ name }) => name === 'Typecheck sandbox on Windows')
+
+    expect(typecheck?.run).toBe('npm run typecheck:sandbox')
+    expect(typecheck?.if).toBe("${{ inputs.dry_run != 'windows-process' }}")
+    expect(typecheck?.['continue-on-error']).not.toBe(true)
+    expect(steps.indexOf(install!)).toBeLessThan(steps.indexOf(typecheck!))
+  })
+
   it('rebuilds the Windows sandbox host before the native lifecycle smoke', () => {
     const steps = workflow.jobs.windows_core.steps ?? []
     const rustTest = steps.find(({ name }) => name === 'Test Windows sandbox native source')

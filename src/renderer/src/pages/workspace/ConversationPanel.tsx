@@ -327,6 +327,7 @@ type ConversationPanelView = {
   canEditDraft: boolean
   actionError: string | null
   sideChatDisabledReason?: string
+  sessionImport?: { projectId: string; canImport: boolean }
 }
 
 type ConversationPanelSpecialist = {
@@ -502,8 +503,14 @@ const ConversationPanel = ({
   const { t } = useTranslation()
   const { research, researchSubmissions } = conversation
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
-  const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
-    view
+  const {
+    activeSession,
+    composerFocusKey,
+    canEditDraft,
+    actionError,
+    sideChatDisabledReason,
+    sessionImport
+  } = view
   const sourceSession = useSessionStore((state) =>
     state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
   )
@@ -1355,6 +1362,7 @@ const ConversationPanel = ({
             <WorkspaceMessageScroller
               activeSession={activeSession}
               researchTitle={research?.research?.sourceTitle}
+              sessionImport={sessionImport}
               onStartResearch={
                 canEditDraft &&
                 !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())

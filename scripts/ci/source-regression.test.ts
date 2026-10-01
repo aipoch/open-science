@@ -47,6 +47,31 @@ const resolvePlan = (paths: string[]): ReturnType<typeof classifyChanges> => {
   return resolveAuthoritativePlan(candidate, createAffectedTestPlan(changes, graph))
 }
 
+it('uses the packaging heap budget for Web builds in every workflow', () => {
+  const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts
+  expect(scripts['build:web']).toBe(
+    'npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts'
+  )
+})
+
+it('checks the reported Windows failures in the blocking PR core job', () => {
+  const step = pr.jobs.windows_core.steps.find(
+    ({ name }) => name === 'Test scheduled Windows validation regressions'
+  )!
+  expect(step.if).toContain("'windows_runtime'")
+  expect(step.if).toContain("inputs.dry_run != 'windows-process'")
+  expect(step).not.toHaveProperty('continue-on-error')
+  for (const path of [
+    'src/main/session-diagnostics/collector.test.ts',
+    'src/main/literature/smart-collections.test.ts',
+    'src/main/literature/pdf-structure/owner.test.ts',
+    'src/main/notebook/kernel-startup-retry.integration.test.ts'
+  ])
+    expect(step.run).toContain(path)
+  expect(step.run).toContain('--testNamePattern')
+  expect(step.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
+})
+
 describe('trusted supplemental selection', () => {
   it.each([
     'src/main/connectors/descriptors/genes-ontology.ts',

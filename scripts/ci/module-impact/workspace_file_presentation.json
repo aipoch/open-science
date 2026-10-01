@@ -325,7 +325,8 @@
       "src/renderer/src/pages/workspace/research-replay-context.test.ts",
       "src/renderer/src/pages/workspace/workspace-research-context.test.tsx",
       "src/renderer/src/pages/workspace/workspace-research-controller.test.tsx",
-      "src/renderer/src/lib/research-submissions/dispatcher.test.ts"
+      "src/renderer/src/lib/research-submissions/dispatcher.test.ts",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

@@ -275,6 +275,10 @@ describe('ConnectorAddForm copy', () => {
     const t = i18next.getFixedT('en')
     const fallback = 'runtime fallback'
     const connectorCases = [
+      [
+        'cellxgene-discover',
+        'Public collections, datasets, versions and file download links from CELLxGENE Discover.'
+      ],
       ['interproscan', 'InterProScan job status and TSV result retrieval via EMBL-EBI.'],
       ['zenodo', 'Public research records, versions and file metadata from Zenodo.'],
       [
@@ -302,6 +306,18 @@ describe('ConnectorAddForm copy', () => {
     expect(connectorDescription({ id: 'custom', description: fallback }, t)).toBe(fallback)
 
     const toolCases = [
+      ['cellxgene-discover/list_collections', 'Search public CELLxGENE Discover collections.'],
+      ['cellxgene-discover/get_collection', 'Retrieve collection metadata and a page of datasets.'],
+      ['cellxgene-discover/list_datasets', 'Search public single-cell datasets by metadata.'],
+      ['cellxgene-discover/get_dataset', 'Retrieve dataset metadata and file links.'],
+      ['cellxgene-discover/list_collection_versions', 'List published collection versions.'],
+      ['cellxgene-discover/get_collection_version', 'Retrieve a specific collection version.'],
+      ['cellxgene-discover/list_dataset_versions', 'List published dataset versions.'],
+      ['cellxgene-discover/get_dataset_version', 'Retrieve a specific dataset version.'],
+      [
+        'cellxgene-discover/list_dataset_files',
+        'List dataset file formats, sizes and download URLs without downloading files.'
+      ],
       [
         'omics-archives/workbench_search_compounds',
         'Look up Metabolomics Workbench compound structures and cross-references.'

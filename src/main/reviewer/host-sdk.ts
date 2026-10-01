@@ -838,7 +838,7 @@ export class ReviewerHostServer {
             ) {
               throw error instanceof ArtifactTargetRangeError
                 ? error
-                : new ReviewerRequestError(error.message, { cause: error })
+                : new ReviewerRequestError(toErrorMessage(error), { cause: error })
             }
             structured = {
               id,

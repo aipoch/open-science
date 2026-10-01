@@ -8,6 +8,7 @@ import {
   Copy,
   Info,
   BookOpen,
+  Inbox,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -22,6 +23,8 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ArtifactLiteratureDetailDialog } from '../ArtifactLiteratureDetailDialog'
 import { literatureItemToMentionOption } from '../literature-pdf-options'
+import { LibraryInboxPreview } from './LibraryInboxPreview'
+import type { LibraryPreviewScopeRequest } from './library-reference-actions'
 import { LibraryChatButton } from './LibraryChatButton'
 import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
@@ -49,6 +52,7 @@ const SEARCH_DEBOUNCE_MS = 200
 type Selection = {
   query: string
   all: boolean
+  inbox?: boolean
   collectionId?: string
   offset: number
   expanded?: string
@@ -139,15 +143,18 @@ function ReferenceRow({
     compact = false
   ): React.JSX.Element => {
     const version = attachment.versions[0]
-    return (
+    const unavailable = version.availability === 'unavailable'
+    const unavailableReasonId = `${detailId}-${encodeURIComponent(attachment.id)}-unavailable`
+    const button = (
       <Button
         key={attachment.id}
         variant="outline"
         size="xs"
         className={cn('min-w-0 max-w-full', !compact && 'w-full justify-start')}
         aria-label={version.filename}
-        disabled={version.availability === 'unavailable'}
-        title={version.availability === 'unavailable' ? t('PDF unavailable') : version.filename}
+        aria-describedby={unavailable ? unavailableReasonId : undefined}
+        disabled={unavailable}
+        title={unavailable ? t('PDF unavailable') : version.filename}
         onClick={() =>
           usePreviewWorkbenchStore.getState().upsertAndActivateItem({
             id: `literature:${version.id}`,
@@ -170,6 +177,24 @@ function ReferenceRow({
         <span className="truncate">{compact ? t('PDF') : version.filename}</span>
         {compact && <ArrowUpRight aria-hidden="true" />}
       </Button>
+    )
+    return unavailable ? (
+      <div
+        key={attachment.id}
+        className={cn('flex min-w-0 max-w-full flex-col items-start gap-1', !compact && 'w-full')}
+      >
+        {button}
+        <button
+          type="button"
+          id={unavailableReasonId}
+          className="max-w-full rounded-sm text-left text-xs text-destructive underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+          onClick={(event) => onDetails(event.currentTarget)}
+        >
+          {t('Attachment unavailable')}
+        </button>
+      </div>
+    ) : (
+      button
     )
   }
   return (
@@ -741,12 +766,13 @@ export default function LibraryPreview({
 }: {
   projectId?: string
   isActive: boolean
-  scopeRequest?: { collectionId?: string; collectionName?: string }
+  scopeRequest?: LibraryPreviewScopeRequest
 }): React.JSX.Element {
   const { t } = useTranslation()
   const searchId = useId()
   const [selection, setSelection] = useState<Selection>({
     query: '',
+    inbox: scopeRequest?.section === 'inbox',
     all: !projectId && !scopeRequest?.collectionId,
     collectionId: scopeRequest?.collectionId,
     offset: 0
@@ -757,6 +783,7 @@ export default function LibraryPreview({
     lastScopeRequest.current = scopeRequest
     setSelection({
       query: '',
+      inbox: scopeRequest?.section === 'inbox',
       all: !projectId && !scopeRequest?.collectionId,
       collectionId: scopeRequest?.collectionId,
       offset: 0
@@ -764,7 +791,9 @@ export default function LibraryPreview({
   }, [projectId, scopeRequest])
   const openLiterature = (): void => {
     const navigation = useNavigationStore.getState()
-    if (selection.collectionId) navigation.openCollectionLiterature(selection.collectionId, 'user')
+    if (selection.inbox) navigation.openLibrary('user')
+    else if (selection.collectionId)
+      navigation.openCollectionLiterature(selection.collectionId, 'user')
     else if (!selection.all && projectId) navigation.openProjectLiterature(projectId, 'user')
     else navigation.openLibrary('user', { section: 'library' })
   }
@@ -822,10 +851,12 @@ export default function LibraryPreview({
           {scopeRequest?.collectionId && (
             <button
               type="button"
-              aria-pressed={selection.collectionId === scopeRequest.collectionId}
+              aria-pressed={
+                !selection.inbox && selection.collectionId === scopeRequest.collectionId
+              }
               className={cn(
                 'h-9 max-w-[45%] truncate border-b-2 border-transparent text-xs hover:text-foreground active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]',
-                selection.collectionId === scopeRequest.collectionId
+                !selection.inbox && selection.collectionId === scopeRequest.collectionId
                   ? 'border-primary font-medium text-foreground'
                   : 'text-muted-foreground'
               )}
@@ -833,6 +864,7 @@ export default function LibraryPreview({
                 setSelection({
                   ...selection,
                   all: false,
+                  inbox: false,
                   collectionId: scopeRequest.collectionId,
                   offset: 0,
                   expanded: undefined
@@ -846,10 +878,10 @@ export default function LibraryPreview({
             <button
               key={String(all)}
               type="button"
-              aria-pressed={!selection.collectionId && selection.all === all}
+              aria-pressed={!selection.inbox && !selection.collectionId && selection.all === all}
               className={cn(
                 'h-9 border-b-2 border-transparent text-xs whitespace-nowrap hover:text-foreground active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]',
-                !selection.collectionId && selection.all === all
+                !selection.inbox && !selection.collectionId && selection.all === all
                   ? 'border-primary font-medium text-foreground'
                   : 'text-muted-foreground'
               )}
@@ -857,6 +889,7 @@ export default function LibraryPreview({
                 setSelection({
                   ...selection,
                   all,
+                  inbox: false,
                   collectionId: undefined,
                   offset: 0,
                   expanded: undefined
@@ -866,6 +899,20 @@ export default function LibraryPreview({
               {all ? t('All references') : t('Current project')}
             </button>
           ))}
+          <button
+            type="button"
+            aria-pressed={Boolean(selection.inbox)}
+            className={cn(
+              'flex h-9 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent text-xs hover:text-foreground active:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]',
+              selection.inbox
+                ? 'border-primary font-medium text-foreground'
+                : 'text-muted-foreground'
+            )}
+            onClick={() => setSelection({ query: '', all: false, inbox: true, offset: 0 })}
+          >
+            <Inbox aria-hidden="true" className="size-3.5" />
+            {t('Inbox')}
+          </button>
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -894,12 +941,21 @@ export default function LibraryPreview({
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
         {isActive && (
           <TooltipProvider>
-            <LibraryResults
-              projectId={projectId}
-              selection={selection}
-              onChange={setSelection}
-              openLiterature={openLiterature}
-            />
+            {selection.inbox ? (
+              <LibraryInboxPreview
+                query={selection.query}
+                batchMode={Boolean(selection.batchMode)}
+                onClearSearch={() => setSelection({ ...selection, query: '' })}
+                openLiterature={openLiterature}
+              />
+            ) : (
+              <LibraryResults
+                projectId={projectId}
+                selection={selection}
+                onChange={setSelection}
+                openLiterature={openLiterature}
+              />
+            )}
           </TooltipProvider>
         )}
       </div>
