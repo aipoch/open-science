@@ -2,6 +2,7 @@
 import { act, useImperativeHandle, type ReactNode, type Ref } from 'react'
 import type { SettingsPageHandle } from './pages/settings/SettingsPage'
 import { createRoot, type Root } from 'react-dom/client'
+import { WindowsTitleBar } from '@/components/WindowsTitleBar'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
@@ -637,6 +638,62 @@ describe('App startup routing', () => {
     root = createRoot(container)
     await act(async () => root.render(<App />))
   }
+
+  it('routes Windows menu commands through startup and dialog presentation guards', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
+      this: HTMLCanvasElement
+    ) {
+      if (this.width !== 1 || this.height !== 1) return null
+      return {
+        fillStyle: '',
+        fillRect: vi.fn(),
+        getImageData: () => ({ data: new Uint8ClampedArray([255, 255, 255, 255]) })
+      } as unknown as CanvasRenderingContext2D
+    })
+    window.api.platform = 'win32'
+    const showMenu = vi.fn().mockResolvedValue('settings')
+    window.api.window = {
+      ...window.api.window,
+      showTitleBarMenu: showMenu,
+      updateTitleBar: vi.fn().mockResolvedValue(undefined)
+    }
+    root = createRoot(container)
+    const renderFrame = (): Promise<void> =>
+      act(async () =>
+        root.render(
+          <WindowsTitleBar>
+            <App />
+          </WindowsTitleBar>
+        )
+      )
+    const selectSettings = async (): Promise<void> => {
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click()
+      })
+    }
+    await renderFrame()
+    await selectSettings()
+    expect(showMenu).toHaveBeenLastCalledWith(
+      expect.objectContaining({ settingsEnabled: false, searchEnabled: false })
+    )
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+
+    mocks.settings.isLoaded = true
+    await renderFrame()
+    await selectSettings()
+    expect(showMenu).toHaveBeenLastCalledWith(
+      expect.objectContaining({ settingsEnabled: true, searchEnabled: true })
+    )
+    expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
+
+    mocks.update.isDialogOpen = true
+    await renderFrame()
+    await selectSettings()
+    expect(showMenu).toHaveBeenLastCalledWith(
+      expect.objectContaining({ settingsEnabled: false, searchEnabled: false })
+    )
+    expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
+  })
 
   it('hydrates the persisted non-terminal Compute Job projection at app startup', async () => {
     mocks.settings.isLoaded = true

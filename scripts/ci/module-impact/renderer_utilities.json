@@ -491,7 +491,8 @@
       "src/renderer/src/pages/literature/JournalDatasetActions.render.test.tsx",
       "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx",
-      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
+      "src/renderer/src/components/WindowsTitleBar.test.tsx"
     ]
   },
   "capabilityOverlays": [],

@@ -619,7 +619,10 @@ import type {
   CloseConfirmResponse,
   WindowFindAppearance,
   WindowFindRequest,
-  WindowFindResult
+  WindowFindResult,
+  WindowsTitleBarAppearance,
+  WindowsTitleBarCommand,
+  WindowsTitleBarMenuRequest
 } from './window-controls'
 import type { DatabaseStartupState } from './database-startup'
 import type {
@@ -2944,6 +2947,14 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     optionalMember: true
   }),
   'window.close': callable<() => Promise<void>>()('window', ['window:close', MAPPED_NATIVE]),
+  'window.showTitleBarMenu': callable<
+    (request: WindowsTitleBarMenuRequest) => Promise<WindowsTitleBarCommand | null>
+  >()('window', ['window:show-titlebar-menu', ELECTRON], { optionalMember: true }),
+  'window.updateTitleBar': callable<(appearance: WindowsTitleBarAppearance) => Promise<void>>()(
+    'window',
+    ['window:update-titlebar', ELECTRON],
+    { optionalMember: true }
+  ),
   'window.setZoomFactor': callable<(factor: number) => Promise<void>>()(
     'window',
     ['window:set-zoom-factor', ELECTRON],

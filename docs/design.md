@@ -1252,6 +1252,18 @@ alert region excludes the diagnostic payload so opening it does not announce the
 | File library      | Grid/list switch                                     | `ToggleGroup type="single"`; hover `bg-muted`, selected `bg-bg-400`                      |
 | File library      | File card / file row                                 | `Card` / button row + neutral hover `bg-bg-100` / `bg-bg-200`                            |
 
+## Windows application menu row
+
+Windows desktop main windows place File, Edit, View and Help next to the Open-Science brand in a
+36px title-bar row. Electron `titleBarOverlay` retains native caption controls, window resizing and
+system window behavior. Reserve those controls with the `titlebar-area-*` CSS environment variables;
+only the menu buttons use `app-region: no-drag`, leaving the rest of the row draggable. Native popups
+preserve the editing target and use the existing command owners for settings, search, interface scale,
+close and quit. Alt/F10 focus the menu row; arrows move between menus and open them; Escape returns
+focus to the previous control. Scale and theme changes synchronize the native overlay from the existing
+renderer preferences and color tokens. Account for the row in full-height application layouts.
+macOS and Linux keep their existing native window/menu presentation, and Web clients add no desktop row.
+
 ## Language Guidelines
 
 - Product naming is consistently `Open-Science` in visible app surfaces such as window titles, sidebars, app menus, about information, and help entry points.

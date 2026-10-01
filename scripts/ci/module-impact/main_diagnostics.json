@@ -398,9 +398,14 @@
       "src/main/acp/library-auto-policy.test.ts",
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
       "src/main/literature/journal-attributes.test.ts",
-      "src/main/notebook/shell-cell-session.integration.test.ts"
+      "src/main/notebook/shell-cell-session.integration.test.ts",
+      "src/main/windows-titlebar.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

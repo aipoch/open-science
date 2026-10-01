@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "저장되지 않은 변경 사항을 버리시겠습니까?",
     "Export Session package": "세션 패키지 내보내기",
     "Import Session package": "세션 패키지 가져오기",
-    "Wait for all Session activity and pending approvals to finish before forking.": "모든 세션 활동과 대기 중인 승인이 완료된 후 복제하세요."
+    "Wait for all Session activity and pending approvals to finish before forking.": "모든 세션 활동과 대기 중인 승인이 완료된 후 복제하세요.",
+    "Close window": "창 닫기"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 시스템 자격 증명에는 원래 선택한 Secret Service 또는 KWallet 백엔드와 /usr/bin/busctl이 필요합니다. 원래 기본 키링 또는 지갑의 잠금을 해제하고 다시 시작하세요. 이 검사를 우회하기 위해 password-store 백엔드나 프로필을 변경하지 마세요.",
@@ -85,7 +86,6 @@
     "Move in progress": "이동 진행 중",
     "Open-Science is still moving your data.": "Open-Science에서 아직 데이터를 이동하고 있습니다.",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "어느 쪽을 선택해도 데이터는 안전하지만, 지금 종료하면 이동이 완료되지 않아 다시 시작해야 할 수 있습니다. 완료될 때까지 앱을 열어 두세요.",
-    "Close window": "창 닫기",
     "The app window stopped responding repeatedly.": "앱 창이 반복해서 응답하지 않았습니다.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "자동 복구가 일시 중지되었습니다. 새로고침하면 이 창이 홈 화면으로 돌아갑니다. 백그라운드 작업은 계속 실행 중일 수 있습니다.",
     "Save file": "파일 저장",
@@ -6681,6 +6681,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "프로젝트 변경 사항이 저장되지 않았습니다. 변경 사항을 버리고 양식을 닫으시겠습니까?",
     "Search is partially unavailable": "일부 검색을 사용할 수 없습니다",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "저장된 대화가 준비될 때까지 메시지, 파일 및 라이브러리를 검색할 수 없습니다. 프로젝트와 세션 제목은 계속 표시될 수 있습니다.",
-    "Review recovery options": "복구 옵션 확인"
+    "Review recovery options": "복구 옵션 확인",
+    "Help": "도움말",
+    "Application menu": "애플리케이션 메뉴",
+    "Redo": "다시 실행",
+    "Cut": "잘라내기",
+    "Paste": "붙여넣기",
+    "Full screen": "전체 화면",
+    "Documentation": "문서"
   }
 }

@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "未保存の変更を破棄しますか？",
     "Export Session package": "セッションパッケージをエクスポート",
     "Import Session package": "セッションパッケージをインポート",
-    "Wait for all Session activity and pending approvals to finish before forking.": "すべてのセッション処理と保留中の承認が完了してから複製してください。"
+    "Wait for all Session activity and pending approvals to finish before forking.": "すべてのセッション処理と保留中の承認が完了してから複製してください。",
+    "Close window": "ウィンドウを閉じる"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux のシステム認証情報には、元々選択されていた Secret Service または KWallet バックエンドと /usr/bin/busctl が必要です。元の既定のキーリングまたはウォレットのロックを解除して再起動してください。この確認を回避するために password-store バックエンドやプロファイルを変更しないでください。",
@@ -85,7 +86,6 @@
     "Move in progress": "移動中",
     "Open-Science is still moving your data.": "Open-Science はまだデータを移動しています。",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "どちらを選んでもデータは安全ですが、今終了すると移動が未完了になり、やり直しが必要になる場合があります。完了するまでアプリを開いたままにしてください。",
-    "Close window": "ウィンドウを閉じる",
     "The app window stopped responding repeatedly.": "アプリのウィンドウが繰り返し応答しなくなりました。",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "自動復旧は一時停止されています。再読み込みするとこのウィンドウはホーム画面に戻ります。バックグラウンドの作業はまだ実行中の可能性があります。",
     "Save file": "ファイルを保存",
@@ -6683,6 +6683,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "プロジェクトの変更は保存されていません。変更を破棄してフォームを閉じますか？",
     "Search is partially unavailable": "検索の一部を利用できません",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "保存済みの会話の準備が整うまで、メッセージ、ファイル、ライブラリを検索できません。プロジェクトとセッションのタイトルは表示される場合があります。",
-    "Review recovery options": "復旧オプションを確認"
+    "Review recovery options": "復旧オプションを確認",
+    "Help": "ヘルプ",
+    "Application menu": "アプリケーションメニュー",
+    "Redo": "やり直し",
+    "Cut": "切り取り",
+    "Paste": "貼り付け",
+    "Full screen": "全画面表示",
+    "Documentation": "ドキュメント"
   }
 }

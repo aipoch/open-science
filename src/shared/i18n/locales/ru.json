@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "Отменить несохранённые изменения?",
     "Export Session package": "Экспортировать пакет сеанса",
     "Import Session package": "Импортировать пакет сеанса",
-    "Wait for all Session activity and pending approvals to finish before forking.": "Дождитесь завершения всех действий сессии и ожидающих подтверждений перед созданием ответвления."
+    "Wait for all Session activity and pending approvals to finish before forking.": "Дождитесь завершения всех действий сессии и ожидающих подтверждений перед созданием ответвления.",
+    "Close window": "Закрыть окно"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Для системных учётных данных Linux необходимы исходно выбранный бэкенд Secret Service или KWallet и /usr/bin/busctl. Разблокируйте исходную связку ключей или кошелёк по умолчанию и перезапустите приложение. Не меняйте бэкенд password-store или профиль для обхода этой проверки.",
@@ -85,7 +86,6 @@
     "Move in progress": "Перенос выполняется",
     "Open-Science is still moving your data.": "Open-Science всё ещё переносит ваши данные.",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "Ваши данные в любом случае в безопасности, но при выходе сейчас перенос останется незавершённым и его, возможно, придётся начать заново. Не закрывайте приложение до завершения переноса.",
-    "Close window": "Закрыть окно",
     "The app window stopped responding repeatedly.": "Окно приложения несколько раз переставало отвечать.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "Автоматическое восстановление приостановлено. После перезагрузки это окно вернётся на главный экран; фоновые задачи могут продолжать выполняться.",
     "Save file": "Сохранить файл",
@@ -7150,6 +7150,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "Изменения проекта не сохранены. Отменить их и закрыть форму?",
     "Search is partially unavailable": "Поиск доступен частично",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "Поиск сообщений, файлов и библиотеки недоступен, пока сохранённые диалоги не готовы. Проекты и названия сеансов могут по-прежнему отображаться.",
-    "Review recovery options": "Просмотреть варианты восстановления"
+    "Review recovery options": "Просмотреть варианты восстановления",
+    "Help": "Справка",
+    "Application menu": "Меню приложения",
+    "Redo": "Повторить",
+    "Cut": "Вырезать",
+    "Paste": "Вставить",
+    "Full screen": "Полный экран",
+    "Documentation": "Документация"
   }
 }

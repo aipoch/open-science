@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "Nicht gespeicherte Änderungen verwerfen?",
     "Export Session package": "Sitzungspaket exportieren",
     "Import Session package": "Sitzungspaket importieren",
-    "Wait for all Session activity and pending approvals to finish before forking.": "Warten Sie, bis alle Sitzungsaktivitäten und ausstehenden Freigaben abgeschlossen sind, bevor Sie eine Kopie erstellen."
+    "Wait for all Session activity and pending approvals to finish before forking.": "Warten Sie, bis alle Sitzungsaktivitäten und ausstehenden Freigaben abgeschlossen sind, bevor Sie eine Kopie erstellen.",
+    "Close window": "Fenster schließen"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux-Systemzugangsdaten benötigen das ursprünglich ausgewählte Secret-Service- oder KWallet-Backend und /usr/bin/busctl. Entsperren Sie den ursprünglichen Standardschlüsselbund oder die ursprüngliche Wallet und starten Sie neu. Ändern Sie weder das password-store-Backend noch das Profil, um diese Prüfung zu umgehen.",
@@ -64,7 +65,6 @@
     "Move in progress": "Datenverschiebung läuft",
     "Open-Science is still moving your data.": "Open-Science verschiebt Ihre Daten noch.",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "Ihre Daten bleiben in beiden Fällen sicher. Wenn Sie jetzt beenden, wird die Verschiebung jedoch nicht abgeschlossen und muss möglicherweise erneut gestartet werden. Lassen Sie die App bis zum Abschluss geöffnet.",
-    "Close window": "Fenster schließen",
     "The app window stopped responding repeatedly.": "Das App-Fenster reagierte wiederholt nicht mehr.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "Die automatische Wiederherstellung wurde angehalten. Beim Neuladen kehrt dieses Fenster zum Startbildschirm zurück. Möglicherweise läuft die Hintergrundarbeit noch.",
     "Save file": "Datei speichern",
@@ -6843,6 +6843,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "Ihre Projektänderungen wurden nicht gespeichert. Änderungen verwerfen und das Formular schließen?",
     "Search is partially unavailable": "Die Suche ist teilweise nicht verfügbar",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "Nachrichten, Dateien und die Bibliothek können erst durchsucht werden, wenn gespeicherte Konversationen bereit sind. Projekte und Sitzungstitel werden möglicherweise weiterhin angezeigt.",
-    "Review recovery options": "Wiederherstellungsoptionen prüfen"
+    "Review recovery options": "Wiederherstellungsoptionen prüfen",
+    "Help": "Hilfe",
+    "Application menu": "Anwendungsmenü",
+    "Redo": "Wiederholen",
+    "Cut": "Ausschneiden",
+    "Paste": "Einfügen",
+    "Full screen": "Vollbild",
+    "Documentation": "Dokumentation"
   }
 }

@@ -519,6 +519,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { registerLocalePreferenceIpc },
         { applyInterfaceScaleShortcut, installWindowShortcuts },
         { registerWindowZoomIpcHandler },
+        { registerWindowsTitleBarIpc },
         { registerNetworkIpcHandlers },
         { createDatabaseStartupLogging },
         { createDatabaseStartupOwner },
@@ -534,6 +535,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./locale/ipc'),
         import('./window-shortcuts'),
         import('./window-ipc'),
+        import('./windows-titlebar'),
         import('./network-ipc'),
         import('./database/database-startup-logging'),
         import('./database/database-startup-owner'),
@@ -595,6 +597,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // composed. Install this small handler before creating the first BrowserWindow so that the
       // initial renderer call cannot race the desktop utility surface.
       registerWindowZoomIpcHandler()
+      registerWindowsTitleBarIpc({ isMainWindow })
 
       const databaseStartupLogging = createDatabaseStartupLogging(log, app.getVersion())
       const databaseStartupOwner = createDatabaseStartupOwner({

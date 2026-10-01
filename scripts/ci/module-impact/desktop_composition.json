@@ -198,7 +198,9 @@
     "src/main/credential-identity/macos.test.ts",
     "src/main/credential-identity/probe-logging.test.ts",
     "src/main/process-tree-windows.ts",
-    "src/main/process-tree.windows.integration.test.ts"
+    "src/main/process-tree.windows.integration.test.ts",
+    "src/main/windows-titlebar.ts",
+    "src/main/windows-titlebar.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -338,7 +340,8 @@
       "src/main/credential-identity/windows-profile-key.test.ts",
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
-      "src/main/process-tree.windows.integration.test.ts"
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/windows-titlebar.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1177,6 +1180,10 @@
       "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

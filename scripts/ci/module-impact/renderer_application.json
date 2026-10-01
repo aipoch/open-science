@@ -17,14 +17,21 @@
     "src/renderer/src/renderer-diagnostics.test.ts",
     "src/renderer/src/renderer-diagnostics.ts",
     "src/renderer/src/security-policy.test.ts",
-    "src/renderer/vitest.worktree.config.ts"
+    "src/renderer/vitest.worktree.config.ts",
+    "src/renderer/src/components/WindowsTitleBar.tsx",
+    "src/renderer/src/components/WindowsTitleBar.test.tsx",
+    "src/renderer/src/components/windows-titlebar-context.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/app-shell-presentation-owner.ts",
     "src/renderer/src/main.tsx",
-    "src/renderer/src/renderer-diagnostics.ts"
+    "src/renderer/src/renderer-diagnostics.ts",
+    "src/renderer/src/components/WindowsTitleBar.tsx",
+    "src/renderer/src/components/windows-titlebar-context.ts"
   ],
-  "consumerModules": [],
+  "consumerModules": [
+    "renderer_hooks"
+  ],
   "testFiles": {
     "owner": [
       "src/renderer/src/App.test.tsx",
@@ -32,7 +39,8 @@
       "src/renderer/src/app-shell-presentation-owner.test.ts",
       "src/renderer/src/main.render.test.tsx",
       "src/renderer/src/renderer-diagnostics.test.ts",
-      "src/renderer/src/security-policy.test.ts"
+      "src/renderer/src/security-policy.test.ts",
+      "src/renderer/src/components/WindowsTitleBar.test.tsx"
     ],
     "contract": [],
     "consumer": [

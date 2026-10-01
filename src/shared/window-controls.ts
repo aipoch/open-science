@@ -11,6 +11,38 @@ import type { ActiveSessionInfo } from './storage'
 // Renderer -> main: close the focused window (the fallback when no pane is open).
 export const WINDOW_CLOSE_CHANNEL = 'window:close'
 
+// Windows desktop chrome only. These are transient menu commands, never stored preferences.
+export const WINDOWS_TITLEBAR_HEIGHT = 36
+export type WindowsTitleBarMenu = 'file' | 'edit' | 'view' | 'help'
+export type WindowsTitleBarCommand = 'settings' | 'search'
+export const WINDOWS_TITLEBAR_LABELS = [
+  'Settings',
+  'Close window',
+  'Quit',
+  'Undo',
+  'Redo',
+  'Cut',
+  'Copy',
+  'Paste',
+  'Select all',
+  'Search',
+  'Zoom in',
+  'Zoom out',
+  'Reset zoom',
+  'Full screen',
+  'Documentation',
+  'GitHub'
+] as const
+export type WindowsTitleBarMenuRequest = {
+  menu: WindowsTitleBarMenu
+  x: number
+  y: number
+  settingsEnabled: boolean
+  searchEnabled: boolean
+  labels: Record<(typeof WINDOWS_TITLEBAR_LABELS)[number], string>
+}
+export type WindowsTitleBarAppearance = { color: string; symbolColor: string }
+
 // Main -> renderer: the close chord was pressed; the renderer decides pane-vs-window.
 export const CLOSE_ACTIVE_PANE_CHANNEL = 'shortcut:close-active-pane'
 

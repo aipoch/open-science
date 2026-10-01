@@ -95,6 +95,7 @@ let lastWindowOptions: BrowserWindowConstructorOptions | undefined
 let loadRendererDocument = (): Promise<void> => Promise.resolve()
 
 class FakeBrowserWindow {
+  removeMenu = vi.fn()
   removeListener = vi.fn()
   closeMock = vi.fn()
   destroyMock = vi.fn()
@@ -304,6 +305,17 @@ describe('window presentation', () => {
     }
 
     expect(lastWindowOptions?.autoHideMenuBar).toBe(autoHideMenuBar)
+    if (platformName === 'win32') {
+      expect(lastWindowOptions).toMatchObject({
+        titleBarStyle: 'hidden',
+        titleBarOverlay: { height: 36 }
+      })
+      expect(lastWindow?.removeMenu).toHaveBeenCalledOnce()
+    } else {
+      expect(lastWindowOptions?.titleBarStyle).toBeUndefined()
+      expect(lastWindowOptions?.titleBarOverlay).toBeUndefined()
+      expect(lastWindow?.removeMenu).not.toHaveBeenCalled()
+    }
   })
 
   it('gives the find overlay a dedicated least-privilege preload', () => {

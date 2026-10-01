@@ -16,6 +16,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { startLocalePreferenceSync } from '@/stores/locale-store'
 import { useInterfaceScaleStore } from '@/stores/interface-scale-store'
+import { WindowsTitleBar } from '@/components/WindowsTitleBar'
 
 const rendererBootMark = 'open-science:renderer-boot-start'
 performance.mark(rendererBootMark)
@@ -70,11 +71,13 @@ const startRenderer = (): void => {
 
   rendererRoot.render(
     <StrictMode>
-      <ApplicationErrorBoundary>
-        <DatabaseStartupGate>
-          <App />
-        </DatabaseStartupGate>
-      </ApplicationErrorBoundary>
+      <WindowsTitleBar>
+        <ApplicationErrorBoundary>
+          <DatabaseStartupGate>
+            <App />
+          </DatabaseStartupGate>
+        </ApplicationErrorBoundary>
+      </WindowsTitleBar>
     </StrictMode>
   )
   performance.mark('open-science:renderer-render-scheduled')
@@ -89,9 +92,11 @@ const preparing = prepareI18nLocale(initialLocale)
         throw error
       }
       createRoot(document.getElementById('root')!).render(
-        <ApplicationErrorBoundary>
-          <StartupFailure />
-        </ApplicationErrorBoundary>
+        <WindowsTitleBar>
+          <ApplicationErrorBoundary>
+            <StartupFailure />
+          </ApplicationErrorBoundary>
+        </WindowsTitleBar>
       )
     })
 }

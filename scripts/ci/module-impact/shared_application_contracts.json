@@ -274,7 +274,8 @@
     "consumer": [
       "src/main/literature/journal-attributes.test.ts",
       "src/renderer/src/pages/literature/journal-import-file.test.ts",
-      "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx"
+      "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
+      "src/main/windows-titlebar.test.ts"
     ]
   },
   "capabilityOverlays": [],

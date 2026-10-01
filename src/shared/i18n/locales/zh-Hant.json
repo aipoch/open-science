@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "要捨棄未儲存的變更嗎？",
     "Export Session package": "匯出工作階段套件",
     "Import Session package": "匯入工作階段套件",
-    "Wait for all Session activity and pending approvals to finish before forking.": "請等待所有工作階段活動和待處理核准結束後再建立副本。"
+    "Wait for all Session activity and pending approvals to finish before forking.": "請等待所有工作階段活動和待處理核准結束後再建立副本。",
+    "Close window": "關閉視窗"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 系統認證資訊需要原先選定的 Secret Service 或 KWallet 後端以及 /usr/bin/busctl。請解鎖原有的預設金鑰圈或錢包後重新啟動。請勿變更 password-store 後端或設定檔來略過此檢查。",
@@ -85,7 +86,6 @@
     "Move in progress": "正在移動",
     "Open-Science is still moving your data.": "Open-Science 仍在移動你的資料。",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "無論如何你的資料都是安全的，但現在結束會使移動未完成，你可能需要重新開始。請保持應用程式開啟，直到移動完成。",
-    "Close window": "關閉視窗",
     "The app window stopped responding repeatedly.": "應用程式視窗多次停止回應。",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "自動復原已暫停。重新載入會使此視窗返回首頁；背景工作可能仍在執行。",
     "Save file": "儲存檔案",
@@ -6683,6 +6683,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "您對專案的修改尚未儲存。是否放棄修改並關閉表單？",
     "Search is partially unavailable": "部分搜尋功能暫時無法使用",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "已儲存的對話尚未就緒，因此無法搜尋訊息、檔案和文獻庫。專案和對話標題仍可能顯示。",
-    "Review recovery options": "檢視復原選項"
+    "Review recovery options": "檢視復原選項",
+    "Help": "說明",
+    "Application menu": "應用程式選單",
+    "Redo": "重做",
+    "Cut": "剪下",
+    "Paste": "貼上",
+    "Full screen": "全螢幕",
+    "Documentation": "文件"
   }
 }

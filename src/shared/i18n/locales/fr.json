@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "Ignorer les modifications non enregistrées ?",
     "Export Session package": "Exporter un paquet de session",
     "Import Session package": "Importer un paquet de session",
-    "Wait for all Session activity and pending approvals to finish before forking.": "Attendez la fin de toutes les activités de la session et des approbations en attente avant de dupliquer."
+    "Wait for all Session activity and pending approvals to finish before forking.": "Attendez la fin de toutes les activités de la session et des approbations en attente avant de dupliquer.",
+    "Close window": "Fermer la fenêtre"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Les identifiants système Linux nécessitent le backend Secret Service ou KWallet sélectionné à l’origine et /usr/bin/busctl. Déverrouillez le trousseau ou le portefeuille par défaut d’origine et redémarrez. Ne changez pas le backend password-store ni le profil pour contourner cette vérification.",
@@ -85,7 +86,6 @@
     "Move in progress": "Déplacement en cours",
     "Open-Science is still moving your data.": "Open-Science déplace encore vos données.",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "Vos données restent en sécurité, mais quitter maintenant laissera le déplacement inachevé et vous devrez peut-être le recommencer. Gardez l'application ouverte jusqu'à la fin.",
-    "Close window": "Fermer la fenêtre",
     "The app window stopped responding repeatedly.": "La fenêtre de l'application a cessé de répondre à plusieurs reprises.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "La récupération automatique a été suspendue. Le rechargement ramène cette fenêtre à l'écran d'accueil ; des tâches peuvent encore s'exécuter en arrière-plan.",
     "Save file": "Enregistrer le fichier",
@@ -7011,6 +7011,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "Vos modifications du projet n’ont pas été enregistrées. Les abandonner et fermer le formulaire ?",
     "Search is partially unavailable": "La recherche est partiellement indisponible",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "Les messages, les fichiers et la bibliothèque ne peuvent pas être recherchés tant que les conversations enregistrées ne sont pas prêtes. Les projets et les titres des sessions peuvent encore apparaître.",
-    "Review recovery options": "Examiner les options de récupération"
+    "Review recovery options": "Examiner les options de récupération",
+    "Help": "Aide",
+    "Application menu": "Menu de l’application",
+    "Redo": "Rétablir",
+    "Cut": "Couper",
+    "Paste": "Coller",
+    "Full screen": "Plein écran",
+    "Documentation": "Documentation"
   }
 }

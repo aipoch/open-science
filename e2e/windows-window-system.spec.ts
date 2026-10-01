@@ -16,6 +16,79 @@ test.describe('Windows window system', () => {
   test.skip(process.platform !== 'win32', 'Windows window behavior requires a Windows host.')
   test.use({ windowMode: 'normal' })
 
+  test.beforeEach(async ({ app }) => {
+    // Native locale resolution follows the host OS, so --lang alone cannot pin test copy.
+    await app.page.evaluate(async () => {
+      await window.api.locale.setPreference({ preference: 'en' })
+    })
+    await expect(app.page.locator('html')).toHaveAttribute('lang', 'en')
+  })
+
+  test('keeps the Windows application menu beside native caption controls at interface zoom @pr-mainline-windows', async ({
+    app
+  }, testInfo) => {
+    const page = await app.completeOnboarding()
+    const titlebar = page.getByTestId('windows-titlebar')
+    await expect(titlebar).toBeVisible()
+    await expect(titlebar.getByRole('menuitem')).toHaveText(['File', 'Edit', 'View', 'Help'])
+
+    for (const scale of [1, 1.25, 1] as const) {
+      // Use the production scale shortcut so both the renderer preference and native overlay update.
+      await app.pressMainWindowShortcut('0', ['control'])
+      if (scale === 1.25) {
+        await app.pressMainWindowShortcut('=', ['control'])
+        await app.pressMainWindowShortcut('=', ['control'])
+      }
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const overlay = (
+              navigator as Navigator & {
+                windowControlsOverlay: { visible: boolean; getTitlebarAreaRect: () => DOMRect }
+              }
+            ).windowControlsOverlay
+            const header = document.querySelector<HTMLElement>('[data-testid="windows-titlebar"]')!
+            const safeArea = header.querySelector<HTMLElement>('.windows-titlebar-safe-area')!
+            const main = document.querySelector('main')!
+            const menu = header.querySelector<HTMLElement>('[role="menubar"]')!
+            return {
+              overlay: overlay.visible,
+              // Windows rounds native caption geometry to device pixels at fractional DPI/zoom.
+              overlayAligned:
+                Math.abs(
+                  overlay.getTitlebarAreaRect().height - header.getBoundingClientRect().height
+                ) <= 1,
+              rowHeight: Math.round(header.getBoundingClientRect().height),
+              captionsReserved: safeArea.getBoundingClientRect().right < innerWidth,
+              contentTop: Math.round(main.getBoundingClientRect().top),
+              overflow: document.documentElement.scrollHeight > innerHeight + 1,
+              drag: getComputedStyle(header).getPropertyValue('-webkit-app-region'),
+              menuDrag: getComputedStyle(menu).getPropertyValue('-webkit-app-region')
+            }
+          })
+        )
+        .toEqual({
+          overlay: true,
+          overlayAligned: true,
+          rowHeight: 36,
+          captionsReserved: true,
+          contentTop: 36,
+          overflow: false,
+          drag: 'drag',
+          menuDrag: 'no-drag'
+        })
+    }
+    await page.keyboard.press('F10')
+    await expect(titlebar.getByRole('menuitem', { name: 'File' })).toBeFocused()
+    await page.keyboard.press('ArrowRight')
+    await expect(titlebar.getByRole('menuitem', { name: 'Edit' })).toBeFocused()
+    await page.keyboard.press('Escape')
+    await testInfo.attach('windows-titlebar', {
+      body: await page.screenshot(),
+      contentType: 'image/png'
+    })
+  })
+
   test('uses interface scale steps for Windows plus aliases and reset shortcuts @pr-mainline-windows', async ({
     app
   }, testInfo) => {

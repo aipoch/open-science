@@ -162,7 +162,9 @@ const GENERATED_SOURCE_OMISSIONS = [
   'window.onShowWindowFind',
   'window.onWindowFindAppearance',
   'window.sendCloseConfirmResponse',
-  'window.setZoomFactor'
+  'window.setZoomFactor',
+  'window.showTitleBarMenu',
+  'window.updateTitleBar'
 ] as const
 
 const BROWSER_NATIVE_CALLABLE_PATHS = [
