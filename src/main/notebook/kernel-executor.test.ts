@@ -5392,61 +5392,80 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
     }
   })
 
-  it('preserves the Windows repl main module without widening sandbox access', async () => {
-    // This portable adapter test substitutes an ordinary test Node; native isolation is exercised
-    // separately by windows-notebook-runtime.integration.test.ts with the patched binaries.
-    const runtime = vi
-      .spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookRuntime')
-      .mockReturnValue({
-        root: dirname(process.execPath),
-        node: process.execPath,
-        powershell: 'C:\\runtime\\pwsh.exe'
-      })
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-windows-main-'))
-    const cleanup = vi.fn()
-    const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
-      executable: invocation.executable,
-      args: invocation.args,
-      env: invocation.env,
-      beginExecution: () => () => undefined,
-      annotateStderr: (stderr) => stderr,
-      cleanup
-    }))
-    const executor = new NotebookKernelExecutor({
-      replLoopPath: REPL_LOOP,
-      platform: 'win32',
-      processSandbox: { wrap }
-    })
-
-    try {
-      const result = await executor.execute({
-        ...baseRequest(cwdDir),
-        code: 'return 1',
-        kind: 'repl',
-        sessionId: 'session-1',
-        projectId: 'project-1'
-      })
-
-      expect(result.status, result.stderr || result.traceback).toBe('completed')
-      expect(wrap).toHaveBeenCalledWith(
-        expect.objectContaining({
-          executable: process.execPath,
-          args: ['--preserve-symlinks-main', REPL_LOOP],
-          env: expect.objectContaining({
-            NPM_CONFIG_PREFIX: shellNpmPaths(baseRequest(cwdDir).runtimeRoot, 'win32').prefix
-          }),
-          filesystem: expect.objectContaining({
-            readWriteRoots: expect.arrayContaining([
-              shellNpmPaths(baseRequest(cwdDir).runtimeRoot, 'win32').prefix
-            ])
-          })
+  it.each([true, false])(
+    'preserves the Windows repl main module with runtime root: %s',
+    async (hasRuntimeRoot) => {
+      // This portable adapter test substitutes an ordinary test Node; native isolation is exercised
+      // separately by windows-notebook-runtime.integration.test.ts with the patched binaries.
+      const runtime = vi
+        .spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookRuntime')
+        .mockReturnValue({
+          root: dirname(process.execPath),
+          node: process.execPath,
+          powershell: 'C:\\runtime\\pwsh.exe'
         })
-      )
-    } finally {
-      await executor.shutdown()
-      runtime.mockRestore()
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-windows-main-'))
+      const cleanup = vi.fn()
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        beginExecution: () => () => undefined,
+        annotateStderr: (stderr) => stderr,
+        cleanup
+      }))
+      const executor = new NotebookKernelExecutor({
+        replLoopPath: REPL_LOOP,
+        platform: 'win32',
+        processSandbox: { wrap }
+      })
+      const request = {
+        ...baseRequest(cwdDir),
+        ...(!hasRuntimeRoot ? { runtimeRoot: '' } : {})
+      }
+
+      try {
+        const result = await executor.execute({
+          ...request,
+          code: 'return 1',
+          kind: 'repl',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        })
+
+        expect(result.status, result.stderr || result.traceback).toBe('completed')
+        expect(wrap).toHaveBeenCalledWith(
+          expect.objectContaining({
+            executable: process.execPath,
+            args: ['--preserve-symlinks-main', REPL_LOOP],
+            env: expect.objectContaining({
+              NODE_OPTIONS: '--preserve-symlinks --preserve-symlinks-main'
+            })
+          })
+        )
+        const invocation = wrap.mock.calls[0][0]
+        const npmPrefix = invocation.env.NPM_CONFIG_PREFIX
+        if (hasRuntimeRoot) {
+          expect(npmPrefix).toBe(shellNpmPaths(request.runtimeRoot, 'win32').prefix)
+          expect(invocation.filesystem.readWriteRoots).toContain(npmPrefix)
+        } else {
+          expect(npmPrefix).toBeUndefined()
+          expect(invocation.env.NPM_CONFIG_CACHE).toBeUndefined()
+          expect(invocation.env.OPEN_SCIENCE_CANONICAL_NPM_PREFIX).toBeUndefined()
+          expect(invocation.filesystem.readWriteRoots).toEqual([
+            request.notebookSessionRoot,
+            request.cwd,
+            expect.any(String)
+          ])
+          expect(invocation.filesystem.readWriteRoots.every((path) => path.length > 0)).toBe(true)
+          expect(existsSync(join(cwdDir, 'runtime'))).toBe(false)
+        }
+      } finally {
+        await executor.shutdown()
+        runtime.mockRestore()
+      }
     }
-  })
+  )
 
   it.runIf(process.platform === 'win32')(
     'cancels by terminating and lazily respawning the kernel on Windows',

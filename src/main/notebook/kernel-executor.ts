@@ -1118,7 +1118,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
           nativeInvocation,
           request.runtimeRoot,
           this.platform,
-          kind === 'repl' && this.platform === 'win32' ? [spawnEnv.NPM_CONFIG_PREFIX!] : []
+          kind === 'repl' && this.platform === 'win32' && spawnEnv.NPM_CONFIG_PREFIX
+            ? [spawnEnv.NPM_CONFIG_PREFIX]
+            : []
         )
     const sessionId = request.sessionId
     const projectId = request.projectId
@@ -1177,8 +1179,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
               request.notebookSessionRoot,
               request.cwd,
               figuresDir,
-              ...(kind === 'repl' && this.platform === 'win32'
-                ? [spawnEnv.NPM_CONFIG_PREFIX!]
+              ...(kind === 'repl' && this.platform === 'win32' && spawnEnv.NPM_CONFIG_PREFIX
+                ? [spawnEnv.NPM_CONFIG_PREFIX]
                 : []),
               ...(request.runtimeRoot ? [notebookWorkloadCacheRoot(request.runtimeRoot)] : [])
             ]),
@@ -1507,11 +1509,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
       )
     }
     if (kind === 'repl' && this.platform === 'win32') {
-      return prepareShellNpmEnvironment(
-        request.runtimeRoot,
-        'win32',
-        windowsNotebookRuntimeEnvironment(env, resolveWindowsNotebookRuntime())
-      )
+      const runtimeEnv = windowsNotebookRuntimeEnvironment(env, resolveWindowsNotebookRuntime())
+      // Control-plane REPL requests can run without managed storage. They still need the bundled
+      // interpreter, but cannot create or grant a shared npm prefix without its runtime owner.
+      return request.runtimeRoot
+        ? prepareShellNpmEnvironment(request.runtimeRoot, 'win32', runtimeEnv)
+        : runtimeEnv
     }
     return kind === 'r' ? normalizeRProcessLocale(env, this.platform) : env
   }
