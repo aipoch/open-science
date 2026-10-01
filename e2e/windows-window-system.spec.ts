@@ -24,8 +24,10 @@ nativeTest(
   async ({ browserName }, testInfo) => {
     expect(browserName).toBe('chromium')
     nativeTest.skip(
-      process.platform !== 'win32' || Number(release().split('.')[2]) < 22621,
-      'Native efficiency mode requires Windows 11 22H2 or later.'
+      process.platform !== 'win32' ||
+        Number(release().split('.')[2]) < 22621 ||
+        Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
+      'Native efficiency mode requires a source Electron launch on Windows 11 22H2 or later.'
     )
     nativeTest.setTimeout(240_000)
     const storageRoot = testInfo.outputPath('storage')
@@ -51,8 +53,7 @@ nativeTest(
       OPEN_SCIENCE_POWER_QUERY: resolve('e2e/fixtures/windows-process-power.ps1')
     }
     delete environment['ELECTRON_RUN_AS_NODE']
-    const executable =
-      target.executablePath ?? (createRequire(resolve('package.json'))('electron') as string)
+    const executable = createRequire(resolve('package.json'))('electron') as string
     // No debugger: Playwright's loader switches and CDP focus emulation prevent real backgrounding.
     const running = execFileAsync(
       executable,

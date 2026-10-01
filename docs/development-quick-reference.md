@@ -54,7 +54,7 @@ interface does not pause research tasks. Hidden document-generation windows inte
 background throttling so that rendering can finish. No project/session migration, new persisted
 status, or saved efficiency preference is introduced.
 
-The Windows window-system E2E regression reads the real renderer priority and power-throttling
+The source-app Windows window-system E2E regression reads the real renderer priority and power-throttling
 flags on Windows 11 22H2 or later, covering minimize, tray hide, restoration, and reload. A test-only
 preloader drives the production window without attaching a debugger: Playwright's source-app
 loader disables backgrounding, and its CDP focus emulation keeps renderers foregrounded during
