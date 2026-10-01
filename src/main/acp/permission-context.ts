@@ -254,7 +254,12 @@ const errorMessage = (error: unknown): string => {
 }
 
 const isOpenCodeNativeSkillToolCall = (update: SessionNotification['update']): boolean => {
-  if (update.sessionUpdate !== 'tool_call' || update.kind !== 'other') return false
+  // OpenCode's first pending call can have empty input; arguments arrive in a running update.
+  if (
+    (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') ||
+    update.kind !== 'other'
+  )
+    return false
   const providerToolName = extractProviderToolName(update)?.trim().toLowerCase()
   if (providerToolName !== undefined) return providerToolName === 'skill'
 
@@ -912,7 +917,10 @@ class AcpPermissionContext {
       closedToolCalls?.delete(event.toolCallId)
       if (closedToolCalls?.size === 0) this.closedOpenCodeToolCalls.delete(sessionId)
     }
-    if (isOpenCodeNativeSkillToolCall(update)) {
+    if (
+      !this.closedOpenCodeToolCalls.get(sessionId)?.has(event.toolCallId) &&
+      isOpenCodeNativeSkillToolCall(update)
+    ) {
       const calls = this.opencodeNativeSkillToolCalls.get(sessionId) ?? new Map<string, true>()
       this.setBounded(calls, event.toolCallId, true, MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION)
       this.opencodeNativeSkillToolCalls.set(sessionId, calls)

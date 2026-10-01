@@ -21,7 +21,11 @@ import {
   permissionRequestFingerprint,
   type RestoredPermissionContinuation
 } from './permission-broker'
-import { isNativeWebFetchPermission, isNativeWebSearchPermission } from './permission-policy'
+import {
+  isManagedSkillPermission,
+  isNativeWebFetchPermission,
+  isNativeWebSearchPermission
+} from './permission-policy'
 
 const NOTEBOOK_SERVERS = ['open-science-notebook']
 
@@ -113,6 +117,162 @@ describe('ACP permission context', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it.each(['before-request', 'during-request'] as const)(
+    'correlates native OpenCode Skill arguments from an update %s',
+    async (timing) => {
+      const onOpenCodeWaitTimeout = vi.fn()
+      const context = new AcpPermissionContext({
+        emitPermissionRequest: vi.fn(),
+        routing: permissionRouting(),
+        onOpenCodeWaitTimeout
+      })
+      const request = permissionRequest('skill-session', 'skill-call', { title: 'skill' })
+      const restore = (): Promise<RequestPermissionRequest | undefined> =>
+        context.restoreToolCall(request, {
+          sessionId: request.sessionId,
+          framework: 'opencode',
+          mcpServerNames: [],
+          isCancelled: () => false
+        })
+      // OpenCode starts the call before argument streaming finishes; permission metadata is {}.
+      observe(
+        context,
+        {
+          sessionId: request.sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'skill-call',
+            title: 'skill',
+            kind: 'other',
+            rawInput: {},
+            status: 'pending'
+          }
+        },
+        'opencode'
+      )
+      const update = (): void =>
+        observe(
+          context,
+          {
+            sessionId: request.sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: request.toolCall.toolCallId,
+              kind: 'other',
+              title: 'skill',
+              status: 'in_progress',
+              rawInput: { name: 'example' }
+            }
+          },
+          'opencode'
+        )
+      try {
+        if (timing === 'before-request') update()
+        const pending = restore()
+        if (timing === 'during-request') update()
+        const restored = await pending
+        expect(
+          isManagedSkillPermission(restored!, { frameworkId: 'opencode', profile: 'ask' })
+        ).toBe(true)
+        expect(onOpenCodeWaitTimeout).not.toHaveBeenCalled()
+      } finally {
+        context.dispose()
+      }
+    }
+  )
+
+  it.each([
+    { title: 'another-tool', kind: 'other' as const, rawInput: { name: 'example' } },
+    { title: 'skill', kind: 'read' as const, rawInput: { name: 'example' } },
+    { title: 'skill', kind: 'other' as const, rawInput: {} },
+    { title: 'skill', kind: 'other' as const, rawInput: { name: ' ' } },
+    {
+      title: 'skill',
+      kind: 'other' as const,
+      rawInput: { name: 'example' },
+      _meta: { toolName: 'another-tool' }
+    }
+  ])('does not infer native Skill identity from an unrelated or incomplete update %j', (call) => {
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
+    try {
+      observe(
+        context,
+        {
+          sessionId: 'skill-session',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'skill-call',
+            status: 'in_progress',
+            ...call
+          }
+        },
+        'opencode'
+      )
+      expect(context.snapshot().sessions['skill-session']?.opencodeNativeSkills ?? 0).toBe(0)
+    } finally {
+      context.dispose()
+    }
+  })
+
+  it.each(['completed', 'failed'] as const)(
+    'does not resurrect a %s native Skill call with a late update',
+    async (status) => {
+      const context = new AcpPermissionContext({
+        emitPermissionRequest: vi.fn(),
+        routing: permissionRouting()
+      })
+      const toolCall = {
+        toolCallId: 'skill-call',
+        title: 'skill',
+        kind: 'other' as const,
+        rawInput: { name: 'example' }
+      }
+      try {
+        observe(
+          context,
+          {
+            sessionId: 'skill-session',
+            update: { sessionUpdate: 'tool_call', status: 'pending', ...toolCall }
+          },
+          'opencode'
+        )
+        observe(
+          context,
+          {
+            sessionId: 'skill-session',
+            update: { sessionUpdate: 'tool_call_update', status, toolCallId: toolCall.toolCallId }
+          },
+          'opencode'
+        )
+        observe(
+          context,
+          {
+            sessionId: 'skill-session',
+            update: { sessionUpdate: 'tool_call_update', status: 'in_progress', ...toolCall }
+          },
+          'opencode'
+        )
+        expect(context.snapshot().sessions['skill-session']?.opencodeNativeSkills).toBe(0)
+        await expect(
+          context.restoreToolCall(
+            permissionRequest('skill-session', 'skill-call', { title: 'skill' }),
+            {
+              sessionId: 'skill-session',
+              framework: 'opencode',
+              mcpServerNames: [],
+              isCancelled: () => false
+            }
+          )
+        ).resolves.toBeUndefined()
+      } finally {
+        context.dispose()
+      }
+    }
+  )
 
   it('denies app preflight approval using the reserved prompt policy without publishing a wait', async () => {
     const emitPermissionRequest = vi.fn()

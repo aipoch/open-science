@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -14,7 +14,8 @@ import { seedDefaultPermissionGrants } from '../permission-grants/defaults'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { AcpPermissionBroker, projectRegistrySessionGrants } from './permission-broker'
 import { withTrustedMcpToolIdentity, withTrustedNativeToolIdentity } from './permission-policy'
-import { claudeCodeFramework } from '../agent-framework'
+import { createLogger, flushLogs, initLogger } from '../logger'
+import { claudeCodeFramework, opencodeFramework } from '../agent-framework'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import {
   AcpSessionCapabilityOwner,
@@ -1750,6 +1751,104 @@ it.each([
   await expect(pending).resolves.toEqual({
     outcome: { outcome: 'selected', optionId: 'provider-reject-once' }
   })
+})
+
+it('routes the first OpenCode Skill update through the Registry without routine diagnostics and honors revocation', async () => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'permission-first-opencode-skill-'))
+  client = createProjectDbClient(storageRoot)
+  await migrateApplicationDatabase(client)
+  const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+  await seedDefaultPermissionGrants(registry, client)
+  initLogger({ logDir: storageRoot, mirrorToConsole: false })
+  createLogger('test').info('first Skill test boundary')
+  const emit = vi.fn()
+  const timeout = vi.fn()
+  const context = new AcpPermissionContext({
+    emitPermissionRequest: emit,
+    permissionGrantRegistry: registry,
+    onOpenCodeWaitTimeout: timeout,
+    routing: {
+      resolveAppSessionId: (id) => id,
+      sessionSnapshot: () => ({
+        cwd: storageRoot!,
+        frameworkId: 'opencode',
+        permissionProfile: { selectedProfile: 'ask' }
+      }),
+      hasActivePrimarySession: () => true,
+      capturePrompt: () => ({ sequence: 1, isCancellationAccepted: () => false }),
+      currentInteractionSequence: () => 1,
+      mcpServerNamesFor: () => [],
+      reviewerContextFor: () => undefined,
+      resolveReviewerPermission: () => undefined,
+      currentFramework: () => opencodeFramework,
+      resolveProjectId: () => 'project-skill'
+    }
+  })
+  const load = (toolCallId: string): Promise<unknown> => {
+    context.observeToolCall(
+      {
+        sessionId: 'session-skill',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId,
+          title: 'skill',
+          kind: 'other',
+          status: 'pending',
+          rawInput: {}
+        }
+      },
+      { sessionId: 'session-skill', framework: 'opencode', mcpServerNames: [] }
+    )
+    const response = context.handleProviderRequest({
+      ...mcpRequest('session-skill', 'skill'),
+      toolCall: { toolCallId, title: 'skill', kind: 'other', rawInput: {} }
+    })
+    context.observeToolCall(
+      {
+        sessionId: 'session-skill',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId,
+          title: 'skill',
+          kind: 'other',
+          status: 'in_progress',
+          rawInput: { name: 'private-skill-name' }
+        }
+      },
+      { sessionId: 'session-skill', framework: 'opencode', mcpServerNames: [] }
+    )
+    return response
+  }
+  try {
+    await expect(load('first-call')).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+    })
+    expect(emit).not.toHaveBeenCalled()
+    const grant = (await registry.list()).find(
+      (record) => record.capability.key === 'skill:invoke'
+    )!
+    await registry.revoke({ grants: [{ id: grant.id, revision: grant.revision }] })
+    const pending = load('revoked-call')
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+    expect(
+      emit.mock.calls[0][0].options.map((option: { scope?: string }) => option.scope)
+    ).toContain('global')
+    await context.respondToPermission(
+      { requestId: emit.mock.calls[0][0].requestId, optionId: 'provider-reject-once' },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(pending).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-reject-once' }
+    })
+    expect(timeout).not.toHaveBeenCalled()
+    await flushLogs()
+    const log = await readFile(join(storageRoot, 'main.log'), 'utf8')
+    expect(log).not.toContain('permission decision trace')
+    expect(log).not.toContain('private-skill-name')
+  } finally {
+    context.dispose()
+    await flushLogs()
+  }
 })
 
 it('keeps historical MCP Skill authority on its original loader only', async () => {
