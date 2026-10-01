@@ -35,12 +35,18 @@ export const probeWindowsRuntimeComponent = async (
     : `$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';
        if ($PSVersionTable.PSVersion.ToString() -ne '${selection.release.version}') { throw 'Version mismatch' }
        if (!(Get-Location).Path) { throw 'FileSystem provider unavailable' }
+       if (!(Get-PSDrive -Name Temp -ErrorAction Stop).Root) { throw 'Temporary drive unavailable' }
        Set-Content -LiteralPath './probe.txt' -Value 'ok';
        if ((Get-Content -LiteralPath './probe.txt').Trim() -ne 'ok') { throw 'Workspace access failed' }
        $blocked = $false; try { [IO.File]::ReadAllText($env:OPEN_SCIENCE_PROBE_PRIVATE) | Out-Null } catch { $blocked = $true }
        if (!$blocked) { throw 'Private file was readable' }
        Write-Output 'RUNTIME_PROBE_OK'`
   const env = buildNotebookKernelEnvironment('win32')
+  // A clean AppContainer (including over-the-shoulder setup under another administrator) may
+  // have no profile Temp folder. Match normal execution by supplying an already granted folder.
+  env.TEMP = cwd
+  env.TMP = cwd
+  env.TMPDIR = cwd
   env.OPEN_SCIENCE_PROBE_PRIVATE = privateFile
   env.NODE_OPTIONS = '--preserve-symlinks --preserve-symlinks-main'
   env.PSModulePath = join(dirname(selection.executable), 'Modules')

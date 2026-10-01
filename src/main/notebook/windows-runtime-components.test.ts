@@ -160,6 +160,13 @@ describe('Windows runtime component preparation', () => {
     await expect(
       f.store.select([release()], { ...f.request, allowDownload: false })
     ).rejects.toThrow('contained probe failed')
+    // A transient host/probe failure does not damage the verified bytes. A later setup retries
+    // compatibility at the same final path without deleting or downloading the component again.
+    f.probe.mockResolvedValue(undefined)
+    const recovered = await f.store.select([release()], f.request)
+    expect(await readFile(recovered.executable, 'utf8')).toBe(binary)
+    expect(f.download).toHaveBeenCalledOnce()
+    expect(f.probe).toHaveBeenCalledTimes(3)
   })
 
   it('rejects a corrupt archive before extraction or execution', async () => {
