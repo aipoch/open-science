@@ -933,6 +933,9 @@ jobs:
           src/main/notebook/micromamba-cache-acl.integration.test.ts
       - name: Test scheduled Windows validation regressions
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        env:
+          # Inline Vitest projects inherit worker/hook limits before root CLI overrides.
+          VITEST_WINDOWS_FULL_TEST: '1'
         # Exercise the reported failures on a real Windows runner without expanding to its full suite.
         run: >-
           npm test --

@@ -401,6 +401,11 @@ const EntryRow = ({
   const updateEntry = useMemoryStore((state) => state.updateEntry)
   const [editing, setEditing] = useState<MemoryEntryView>()
   const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timeout = window.setTimeout(() => setCopied(false), 1_200)
+    return () => window.clearTimeout(timeout)
+  }, [copied])
   const entryCategoryName =
     entry.categoryId === ABOUT_YOU_MEMORY_CATEGORY_ID ? t('About you') : entry.categoryName
   const categoryLabel = viewKind === 'project' ? entryCategoryName : null
@@ -413,7 +418,6 @@ const EntryRow = ({
       if (!navigator.clipboard) return
       await navigator.clipboard.writeText(entry.content)
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 1_200)
     } catch {
       setCopied(false)
     }

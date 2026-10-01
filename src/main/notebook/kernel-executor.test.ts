@@ -45,6 +45,7 @@ import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-
 import { verifyReplayCapture } from './scientific-replay.test-support'
 import * as windowsNotebookRuntime from './windows-notebook-runtime'
 import { shellNpmPaths } from './shell-npm-environment'
+import { prepareNotebookWorkloadCache } from './notebook-workload-cache-paths'
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 
@@ -4025,6 +4026,13 @@ type BuildEnvFn = (
 ) => NodeJS.ProcessEnv
 
 describe('NotebookKernelExecutor spawn env', () => {
+  beforeEach(async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-spawn-env-'))
+    // Direct buildEnv calls bypass spawnLoop, which prepares the runtime/cache parents before
+    // the Windows REPL prepares its shared npm prefix. Keep the same real filesystem boundary.
+    prepareNotebookWorkloadCache(baseRequest(cwdDir).runtimeRoot)
+  })
+
   it('grants the complete macOS app bundle to the Electron-backed repl kernel', () => {
     const executable = '/Applications/Open-Science.app/Contents/MacOS/Open-Science'
 
@@ -4038,7 +4046,7 @@ describe('NotebookKernelExecutor spawn env', () => {
 
   it('injects OPEN_SCIENCE_HANDOFF_DIR under the notebook session root for every kernel language', () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
-    const request = { ...baseRequest('/tmp/os-handoff-test'), code: 'x' }
+    const request = { ...baseRequest(cwdDir!), code: 'x' }
     const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
 
     const expected = join(request.notebookSessionRoot, 'handoff')
@@ -4049,7 +4057,7 @@ describe('NotebookKernelExecutor spawn env', () => {
 
   it('projects cache-only Data Storage paths for every kernel language', () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
-    const request = { ...baseRequest('/tmp/os-cache-env'), code: 'x' }
+    const request = { ...baseRequest(cwdDir!), code: 'x' }
     const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
     const cacheRoot = join(request.runtimeRoot, 'cache', 'notebook')
 
@@ -4072,7 +4080,7 @@ describe('NotebookKernelExecutor spawn env', () => {
       platform: 'win32'
     })
     const request = {
-      ...baseRequest('/tmp/os-repl-env'),
+      ...baseRequest(cwdDir!),
       code: 'x',
       mcpRpcEndpoint: 'http://127.0.0.1:9/x',
       mcpRpcSocketPath: '\\\\.\\pipe\\open-science-notebook',
@@ -4093,7 +4101,7 @@ describe('NotebookKernelExecutor spawn env', () => {
       platform: 'linux'
     })
     const request = {
-      ...baseRequest('/tmp/os-repl-env'),
+      ...baseRequest(cwdDir!),
       code: 'x',
       mcpRpcEndpoint: 'http://127.0.0.1:9/x',
       mcpRpcToken: 'tok'
@@ -4108,7 +4116,7 @@ describe('NotebookKernelExecutor spawn env', () => {
   it('withholds the connector RPC env from python/r data kernels (host.mcp is repl-only)', () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
     const request = {
-      ...baseRequest('/tmp/os-repl-env'),
+      ...baseRequest(cwdDir!),
       code: 'x',
       mcpRpcEndpoint: 'http://127.0.0.1:9/x',
       mcpRpcSocketPath: '\\\\.\\pipe\\open-science-notebook',
@@ -4131,7 +4139,7 @@ describe('NotebookKernelExecutor spawn env', () => {
   it('activates the complete Windows conda PATH before spawning a named managed R kernel', () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform: 'win32' })
     const request = {
-      ...baseRequest('/tmp/os-r-windows-path'),
+      ...baseRequest(cwdDir!),
       code: 'x',
       environment: 'r-stats'
     }
@@ -4151,7 +4159,7 @@ describe('NotebookKernelExecutor spawn env', () => {
   it('does not contaminate an external Windows R interpreter with managed conda DLL paths', () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform: 'win32' })
     const request = {
-      ...baseRequest('/tmp/os-r-external-path'),
+      ...baseRequest(cwdDir!),
       code: 'x',
       resolvedInterpreter: { command: 'C:\\ExternalR\\bin\\Rscript.exe' }
     }
@@ -4167,7 +4175,7 @@ describe('NotebookKernelExecutor spawn env', () => {
     (platform) => {
       const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform })
       const request = {
-        ...baseRequest('/tmp/os-r-library'),
+        ...baseRequest(cwdDir!),
         code: 'x',
         resolvedInterpreter: { command: '/external/Rscript', rLibrary: '/personal/library' }
       }
@@ -4187,7 +4195,7 @@ describe('NotebookKernelExecutor spawn env', () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform: 'win32' })
     const prefix = 'C:\\Users\\HM\\miniforge3\\envs\\analysis'
     const request = {
-      ...baseRequest('/tmp/os-r-external-conda-path'),
+      ...baseRequest(cwdDir!),
       code: 'x',
       resolvedInterpreter: {
         command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,

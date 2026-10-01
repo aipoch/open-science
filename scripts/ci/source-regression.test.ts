@@ -70,6 +70,7 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
     expect(step.run).toContain(path)
   expect(step.run).toContain('--testNamePattern')
   expect(step.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
+  expect(step.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
 })
 
 describe('trusted supplemental selection', () => {

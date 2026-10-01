@@ -262,8 +262,15 @@ describe('session diagnostics isolated collector', () => {
   it('continues later database tables after one table output fails', async () => {
     const input = await fixture()
     const db = new DatabaseSync(join(input.configRoot, 'open-science.db'))
-    for (const ddl of RUNTIME_SCHEMA_TABLE_DDLS) db.exec(ddl)
-    db.close()
+    try {
+      // This fixture needs a schema, not one durable filesystem commit per table/index. Windows
+      // scanner contention can otherwise consume the whole test budget before collection starts.
+      db.exec('BEGIN')
+      for (const ddl of RUNTIME_SCHEMA_TABLE_DDLS) db.exec(ddl)
+      db.exec('COMMIT')
+    } finally {
+      db.close()
+    }
     const original = fsPromises.writeFile
     vi.spyOn(fsPromises, 'writeFile').mockImplementation(
       async (...args: Parameters<typeof original>) => {
@@ -442,7 +449,11 @@ describe('session diagnostics isolated collector', () => {
   it('rejects ancestor symlinks and permits oversized metadata sources during inspection', async () => {
     const input = await fixture()
     await rm(join(input.configRoot, 'sessions/project'), { recursive: true })
-    await symlink(input.configRoot, join(input.configRoot, 'sessions/project'))
+    await symlink(
+      input.configRoot,
+      join(input.configRoot, 'sessions/project'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
     await writeFile(join(input.configRoot, 'session.json'), '{}')
     await writeFile(input.logPath!, Buffer.alloc(8 * 1024 * 1024 + 1))
     const result = await runSessionDiagnosticWorker({ ...input, action: 'inspect' })

@@ -267,6 +267,36 @@ describe('MemoryPanel', () => {
     expect(document.body.textContent).not.toContain('Copied')
   })
 
+  it.each([false, true])(
+    'releases copy feedback on unmount (pending write: %s)',
+    async (pending) => {
+      vi.useFakeTimers()
+      try {
+        let resolveWrite!: () => void
+        const write = new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: { writeText: vi.fn(() => write) }
+        })
+        useMemoryStore.setState({
+          categories: [aboutYouCategory({ entries: [memoryEntry()] })]
+        })
+        await renderMemoryPanel()
+        fireEvent.click(container.querySelector('button[aria-label="Copy note"]')!)
+        if (!pending) await act(async () => resolveWrite())
+        await act(async () => root.render(null))
+        const remainingTimers = vi.getTimerCount()
+        if (pending) await act(async () => resolveWrite())
+        expect(vi.getTimerCount()).toBe(remainingTimers)
+        expect(remainingTimers).toBe(0)
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('discards a category-bound note draft when the selected category changes', async () => {
     useMemoryStore.setState({
       categories: [
