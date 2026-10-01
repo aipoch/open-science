@@ -7009,6 +7009,86 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it.each(['rpc', 'file-context'] as const)(
+    'cancels a background REPL during %s preparation without dispatching or losing the lane',
+    async (preparation) => {
+      const root = await createStorageRoot()
+      const preparing = createDeferred<void>()
+      const release = createDeferred<void>()
+      const prepare = async (): Promise<undefined> => {
+        preparing.resolve()
+        await release.promise
+        return undefined
+      }
+      const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+        status: 'completed' as const,
+        stdout: request.code,
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      }))
+      const repository = new NotebookRunRepository(root)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository,
+        backgroundExecutionEnabled: true,
+        ...(preparation === 'rpc'
+          ? {
+              getMcpRpcConnection: async () => {
+                await prepare()
+                return { endpoint: 'http://127.0.0.1:1', token: 'test-token' }
+              }
+            }
+          : {
+              dependencyAnalyzer: {
+                project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+                sourceFileAccessContext: prepare
+              }
+            }),
+        executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+      })
+      const request = { sessionId: 'session-repl-preparation', workspaceCwd: root }
+      const receipt = await service.executeControlBackground({
+        ...request,
+        code: 'must not execute',
+        background: true
+      })
+      await preparing.promise
+      const abort = vi.spyOn(AbortController.prototype, 'abort')
+      const cancelled = service.cancelBackgroundRun({ ...request, runId: receipt.runId })
+      // Wait for the public cancel path to deliver its signal before releasing preparation.
+      try {
+        await vi.waitFor(() => expect(abort).toHaveBeenCalled())
+      } finally {
+        abort.mockRestore()
+        release.resolve()
+      }
+      await expect(cancelled).resolves.toMatchObject({
+        run: { status: 'cancelled', kernelDispatched: false }
+      })
+      expect(execute).not.toHaveBeenCalled()
+      expect(service.getProjectActivity({ projectId: 'default-project' }).kernels).toEqual([
+        expect.objectContaining({ kind: 'repl', status: 'idle' })
+      ])
+      await expect(
+        service.cancelBackgroundRun({ ...request, runId: receipt.runId })
+      ).resolves.toMatchObject({ run: { status: 'cancelled' } })
+      expect(
+        (await repository.findExisting('default-project', request.sessionId))?.runs[0]
+      ).toMatchObject({ status: 'cancelled', kernelDispatched: false })
+      await expect(
+        service.executeControl({ ...request, code: 'return 42' })
+      ).resolves.toMatchObject({
+        status: 'completed',
+        stdout: 'return 42'
+      })
+      expect(execute).toHaveBeenCalledOnce()
+    }
+  )
+
   it('cancels a background REPL idempotently and reports persistent namespace loss', async () => {
     const root = await createStorageRoot()
     const dispatched = createDeferred<void>()

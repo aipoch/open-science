@@ -1368,6 +1368,23 @@ class NotebookExecutionOwner {
                 .finally(() => releaseControlInvocation?.())
             })()
         ).catch((error: unknown) => {
+          // Preparation can yield after the Run starts but before the interpreter receives it.
+          if (
+            !reachedExecutor &&
+            signal?.aborted &&
+            error === signal.reason &&
+            !(error instanceof NotebookExecutionStopError)
+          ) {
+            return {
+              status: 'cancelled',
+              kernelDispatched: false,
+              stdout: '',
+              stderr: error instanceof Error ? error.message : String(error),
+              traceback: '',
+              cwdAfter: session.cwd,
+              outputs: []
+            }
+          }
           executedOnLiveKernel = false
           return errorToExecutionResult(error, session.cwd)
         }),

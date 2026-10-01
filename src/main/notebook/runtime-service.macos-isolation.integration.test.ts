@@ -22,6 +22,100 @@ import { NotebookRuntimeService } from './runtime-service'
 // Point at an existing, read-only interpreter fixture. This suite never provisions environments.
 const python = process.env.OPEN_SCIENCE_TEST_PY_ENV
 
+it.skipIf(process.platform !== 'darwin').each([false, true])(
+  'preserves protected REPL state after cancellation before dispatch (warm=%s)',
+  async (warm) => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'REPL 取消-')))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: join(process.cwd(), 'packages', 'notebook-network-sandbox', 'vendor'),
+      temporaryRoot: join(root, 'commands'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+    let blockPreparation = false
+    let announcePreparation!: () => void
+    let releasePreparation!: () => void
+    const preparing = new Promise<void>((resolve) => {
+      announcePreparation = resolve
+    })
+    const release = new Promise<void>((resolve) => {
+      releasePreparation = resolve
+    })
+    const repository = new NotebookRunRepository(root)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'repl-cancel',
+      repository,
+      processSandbox: owner,
+      backgroundExecutionEnabled: true,
+      dependencyAnalyzer: {
+        project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+        sourceFileAccessContext: async () => {
+          if (blockPreparation) {
+            announcePreparation()
+            await release
+          }
+          return undefined
+        }
+      }
+    })
+    const scope = { sessionId: 'session', workspaceCwd: root }
+    try {
+      if (warm) {
+        expect(
+          await service.executeControl({ ...scope, code: 'globalThis.savedBeforeCancel = 42' })
+        ).toMatchObject({ status: 'completed' })
+      }
+      blockPreparation = true
+      const receipt = await service.executeControlBackground({
+        ...scope,
+        code: 'globalThis.cancelledPreparation = true',
+        background: true
+      })
+      await preparing
+      const abort = vi.spyOn(AbortController.prototype, 'abort')
+      const cancelled = service.cancelBackgroundRun({ ...scope, runId: receipt.runId })
+      try {
+        await vi.waitFor(() => expect(abort).toHaveBeenCalled())
+      } finally {
+        abort.mockRestore()
+        blockPreparation = false
+        releasePreparation()
+      }
+      expect(await cancelled).toMatchObject({
+        run: { status: 'cancelled', kernelDispatched: false }
+      })
+      expect(service.getProjectActivity({ projectId: 'repl-cancel' }).kernels).toEqual([
+        expect.objectContaining({ kind: 'repl', status: 'idle' })
+      ])
+      const continued = await service.executeControl({
+        ...scope,
+        code: 'console.log(typeof cancelledPreparation, typeof savedBeforeCancel === "undefined" ? "cold" : savedBeforeCancel)'
+      })
+      expect(continued).toMatchObject({
+        status: 'completed',
+        stdout: warm ? 'undefined 42\n' : 'undefined cold\n'
+      })
+      expect(
+        (await repository.findExisting('repl-cancel', scope.sessionId))?.runs.find(
+          (run) => run.runId === receipt.runId
+        )
+      ).toMatchObject({
+        status: 'cancelled',
+        kernelDispatched: false
+      })
+    } finally {
+      releasePreparation()
+      await service.dispose()
+      await owner.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  60_000
+)
+
 it
   .skipIf(process.platform !== 'darwin' || !python)
   .each([
