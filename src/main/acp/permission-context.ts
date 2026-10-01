@@ -253,22 +253,29 @@ const errorMessage = (error: unknown): string => {
   }
 }
 
-const isOpenCodeNativeSkillToolCall = (update: SessionNotification['update']): boolean => {
-  // OpenCode's first pending call can have empty input; arguments arrive in a running update.
-  if (
-    (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') ||
-    update.kind !== 'other'
-  )
-    return false
+// false retains a pending Skill candidate; true means its native identity is ready.
+// Store only the readiness bit, never a Skill name or input payload.
+const openCodeNativeSkillContext = (
+  update: SessionNotification['update'],
+  previous: boolean | undefined
+): boolean | undefined => {
+  if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') {
+    return undefined
+  }
+  const inheritsIdentity = update.sessionUpdate === 'tool_call_update' && previous !== undefined
+  const kind = update.kind ?? (inheritsIdentity ? 'other' : undefined)
+  const title = update.title?.trim().toLowerCase() ?? (inheritsIdentity ? 'skill' : undefined)
   const providerToolName = extractProviderToolName(update)?.trim().toLowerCase()
-  if (providerToolName !== undefined) return providerToolName === 'skill'
+  if (
+    kind !== 'other' ||
+    (providerToolName !== undefined ? providerToolName !== 'skill' : title !== 'skill')
+  )
+    return undefined
 
   const rawInput = isRecord(update.rawInput) ? update.rawInput : undefined
-  return (
-    update.title?.trim().toLowerCase() === 'skill' &&
-    typeof rawInput?.name === 'string' &&
-    rawInput.name.trim().length > 0
-  )
+  const hasSkillName = typeof rawInput?.name === 'string' && rawInput.name.trim().length > 0
+  if (providerToolName === 'skill' || hasSkillName || (inheritsIdentity && previous)) return true
+  return update.sessionUpdate === 'tool_call' || inheritsIdentity ? false : undefined
 }
 
 const boundedNotebookPermissionInput = (
@@ -380,7 +387,7 @@ class AcpPermissionContext {
   private readonly opencodeMcpToolInputs = new Map<string, Map<string, OpenCodeMcpToolInput>>()
   private readonly notebookExecutionInputs = new Map<string, Map<string, Record<string, unknown>>>()
   private readonly nativeNotebookExecutionAuthorizations = new Map<string, Set<string>>()
-  private readonly opencodeNativeSkillToolCalls = new Map<string, Map<string, true>>()
+  private readonly opencodeNativeSkillToolCalls = new Map<string, Map<string, boolean>>()
   private readonly seenNativeWebSearchCalls = new Map<string, Set<string>>()
   private readonly nativeWebToolCalls = new Map<
     string,
@@ -917,16 +924,25 @@ class AcpPermissionContext {
       closedToolCalls?.delete(event.toolCallId)
       if (closedToolCalls?.size === 0) this.closedOpenCodeToolCalls.delete(sessionId)
     }
+    const skillCalls = this.opencodeNativeSkillToolCalls.get(sessionId)
+    const skillContext = openCodeNativeSkillContext(update, skillCalls?.get(event.toolCallId))
     if (
       !this.closedOpenCodeToolCalls.get(sessionId)?.has(event.toolCallId) &&
-      isOpenCodeNativeSkillToolCall(update)
+      skillContext !== undefined
     ) {
-      const calls = this.opencodeNativeSkillToolCalls.get(sessionId) ?? new Map<string, true>()
-      this.setBounded(calls, event.toolCallId, true, MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION)
+      const calls = skillCalls ?? new Map<string, boolean>()
+      this.setBounded(
+        calls,
+        event.toolCallId,
+        skillContext,
+        MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION
+      )
       this.opencodeNativeSkillToolCalls.set(sessionId, calls)
-      this.resolveOpenCodeWaiters(sessionId, event.toolCallId)
+      if (skillContext) this.resolveOpenCodeWaiters(sessionId, event.toolCallId)
       return
     }
+    skillCalls?.delete(event.toolCallId)
+    if (skillCalls?.size === 0) this.opencodeNativeSkillToolCalls.delete(sessionId)
 
     const originalRawInput =
       update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update'
@@ -1271,7 +1287,8 @@ class AcpPermissionContext {
     sessionId: string
   ): RequestPermissionRequest {
     const calls = this.opencodeNativeSkillToolCalls.get(sessionId)
-    if (!calls?.delete(params.toolCall.toolCallId)) return params
+    if (calls?.get(params.toolCall.toolCallId) !== true) return params
+    calls.delete(params.toolCall.toolCallId)
     if (calls.size === 0) this.opencodeNativeSkillToolCalls.delete(sessionId)
 
     const providerToolName = extractProviderToolName(params.toolCall)?.trim().toLowerCase()
@@ -1293,7 +1310,7 @@ class AcpPermissionContext {
     if (this.isOpenCodeRequestCancelled(sessionId, toolCallId, context)) {
       return Promise.resolve('cancelled')
     }
-    if (this.opencodeNativeSkillToolCalls.get(sessionId)?.has(toolCallId)) {
+    if (this.opencodeNativeSkillToolCalls.get(sessionId)?.get(toolCallId) === true) {
       return Promise.resolve('ready')
     }
     const rawInput = this.opencodeMcpToolInputs.get(sessionId)?.get(toolCallId)?.rawInput
@@ -1324,7 +1341,7 @@ class AcpPermissionContext {
         finish('cancelled')
         return
       }
-      if (this.opencodeNativeSkillToolCalls.get(sessionId)?.has(toolCallId)) {
+      if (this.opencodeNativeSkillToolCalls.get(sessionId)?.get(toolCallId) === true) {
         finish('ready')
         return
       }

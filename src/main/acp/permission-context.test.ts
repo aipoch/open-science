@@ -118,9 +118,14 @@ describe('ACP permission context', () => {
     }
   })
 
-  it.each(['before-request', 'during-request'] as const)(
-    'correlates native OpenCode Skill arguments from an update %s',
-    async (timing) => {
+  it.each([
+    ['before-request', 'full'],
+    ['during-request', 'full'],
+    ['before-request', 'sparse'],
+    ['during-request', 'sparse']
+  ] as const)(
+    'correlates native OpenCode Skill arguments from an update %s / %s',
+    async (timing, shape) => {
       const onOpenCodeWaitTimeout = vi.fn()
       const context = new AcpPermissionContext({
         emitPermissionRequest: vi.fn(),
@@ -159,8 +164,7 @@ describe('ACP permission context', () => {
             update: {
               sessionUpdate: 'tool_call_update',
               toolCallId: request.toolCall.toolCallId,
-              kind: 'other',
-              title: 'skill',
+              ...(shape === 'full' ? { kind: 'other' as const, title: 'skill' } : {}),
               status: 'in_progress',
               rawInput: { name: 'example' }
             }
@@ -215,6 +219,76 @@ describe('ACP permission context', () => {
       expect(context.snapshot().sessions['skill-session']?.opencodeNativeSkills ?? 0).toBe(0)
     } finally {
       context.dispose()
+    }
+  })
+
+  it.each([
+    'no-update',
+    'foreign-session',
+    'foreign-call',
+    'foreign-framework',
+    'conflicting-title',
+    'conflicting-kind',
+    'conflicting-provider'
+  ] as const)('does not promote a pending Skill candidate with %s', async (scenario) => {
+    vi.useFakeTimers()
+    const onOpenCodeWaitTimeout = vi.fn()
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting(),
+      onOpenCodeWaitTimeout
+    })
+    try {
+      observe(
+        context,
+        {
+          sessionId: 'skill-session',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'skill-call',
+            title: 'skill',
+            kind: 'other',
+            status: 'pending',
+            rawInput: {}
+          }
+        },
+        'opencode'
+      )
+      const request = permissionRequest('skill-session', 'skill-call', { title: 'skill' })
+      const pending = context.restoreToolCall(request, {
+        sessionId: 'skill-session',
+        framework: 'opencode',
+        mcpServerNames: [],
+        isCancelled: () => false
+      })
+      expect(context.snapshot().sessions['skill-session']?.pendingWaiters).toBe(1)
+      if (scenario !== 'no-update')
+        observe(
+          context,
+          {
+            sessionId: scenario === 'foreign-session' ? 'foreign-session' : 'skill-session',
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: scenario === 'foreign-call' ? 'foreign-call' : 'skill-call',
+              status: 'in_progress',
+              rawInput: { name: 'example' },
+              ...(scenario === 'conflicting-title' ? { title: 'another-tool' } : {}),
+              ...(scenario === 'conflicting-kind' ? { kind: 'read' as const } : {}),
+              ...(scenario === 'conflicting-provider'
+                ? { _meta: { toolName: 'another-tool' } }
+                : {})
+            }
+          },
+          scenario === 'foreign-framework' ? 'claude-code' : 'opencode'
+        )
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(
+        isManagedSkillPermission((await pending)!, { frameworkId: 'opencode', profile: 'ask' })
+      ).toBe(false)
+      expect(onOpenCodeWaitTimeout).toHaveBeenCalledOnce()
+    } finally {
+      context.dispose()
+      vi.useRealTimers()
     }
   })
 

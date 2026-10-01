@@ -1809,8 +1809,6 @@ it('routes the first OpenCode Skill update through the Registry without routine 
         update: {
           sessionUpdate: 'tool_call_update',
           toolCallId,
-          title: 'skill',
-          kind: 'other',
           status: 'in_progress',
           rawInput: { name: 'private-skill-name' }
         }
