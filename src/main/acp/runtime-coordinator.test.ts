@@ -17,6 +17,7 @@ import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
 import type { ConversationPermissionGrantStore } from './permission-broker'
 import type { AgentModelChangeTarget } from '../agent-framework'
 import type { AgentFrameworkId } from '../../shared/settings'
+import { SettlementAdmissionError } from '../../shared/runtime-session-admission'
 import { DelegateMessageParkedError } from '../delegation/execution-port'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import { createProjectHandlers } from '../projects/ipc'
@@ -2514,6 +2515,112 @@ describe('AcpRuntimeCoordinator', () => {
     })
     expect(created.sendAppContinuation).not.toHaveBeenCalled()
     expect(onProviderPromptAccepted).not.toHaveBeenCalled()
+  })
+
+  it.each(['user', 'continuation', 'parent-message'] as const)(
+    'preserves ordinary downstream %s provider failures under the admission guard',
+    async (kind) => {
+      const failure = new Error('provider rejected after dispatch')
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          skipProviderPromptAccepted: true,
+          prompt: async () => {
+            throw failure
+          }
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession()
+      coordinator.setPromptDispatchAdmissionGuard((_sessionId, dispatch) => dispatch())
+      const request = { sessionId: session.sessionId, text: 'provider input' }
+      const completion =
+        kind === 'user'
+          ? coordinator.sendPrompt(request)
+          : kind === 'parent-message'
+            ? coordinator.startContinuationWhenDispatchAdmitted(
+                request,
+                async () => undefined,
+                'message-1',
+                undefined,
+                (dispatch) => dispatch()
+              )
+            : coordinator.sendAppContinuationObserved(request, vi.fn())
+      await expect(completion).rejects.toBe(failure)
+      expect(
+        kind === 'user' ? created.sendPrompt : created.sendAppContinuation
+      ).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('classifies a synchronous settlement guard rejection before dispatch', async () => {
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    coordinator.setPromptDispatchAdmissionGuard(() => {
+      throw new Error('sync guard failed')
+    })
+    const admission = {
+      batchId: 'batch-1',
+      projectId: 'project-1',
+      sessionId: session.sessionId,
+      rootFrameId: 'root-1',
+      originatingPromptId: 'prompt-1',
+      rootBranchId: 'branch-1',
+      rootBranchRevision: 'revision-1',
+      promptRuntimeSegmentId: 'segment-1',
+      items: [{ frameId: 'child-1', attemptId: 'attempt-1', status: 'completed' as const }]
+    }
+    await expect(
+      coordinator.sendAppContinuationObserved(
+        { sessionId: session.sessionId, text: 'settlement' },
+        vi.fn(),
+        admission
+      )
+    ).rejects.toMatchObject({ name: 'SettlementAdmissionError', disposition: 'retry' })
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
+  })
+
+  it('rechecks live settlement eligibility after a queued user turn completes', async () => {
+    const user = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: () => user.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    const active = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'user turn' })
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+    const validation = vi.fn(() => {
+      throw new SettlementAdmissionError('collected during user turn', 'invalidated')
+    })
+    const queued = coordinator.sendAppContinuationObserved(
+      { sessionId: session.sessionId, text: 'settlement' },
+      vi.fn(),
+      undefined,
+      validation
+    )
+    const rejected = expect(queued).rejects.toMatchObject({
+      name: 'SettlementAdmissionError',
+      disposition: 'invalidated'
+    })
+    expect(validation).not.toHaveBeenCalled()
+    user.resolve({ stopReason: 'end_turn' })
+    await active
+    await rejected
+    expect(validation).toHaveBeenCalledOnce()
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
   })
 
   it('reports completed user and application-owned root turns to delegated settlement watching', async () => {

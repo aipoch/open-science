@@ -18799,6 +18799,97 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('passes an internal settlement descriptor through the real runtime workflow and composition', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['settlement-session'])
+    const persisted = createRestoredContinuationSession(
+      'origin-1',
+      'settlement-session',
+      'project-1'
+    )
+    const runtimeSessions = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone(persisted),
+      mutateSession: async (_scope, mutate) => mutate(structuredClone(persisted)),
+      finalizeArtifacts: async () => []
+    })
+    const begin = vi.spyOn(runtimeSessions, 'begin').mockResolvedValue(persisted)
+    const dispatch = vi
+      .spyOn(runtimeSessions, 'markSettlementDispatch')
+      .mockResolvedValue(persisted)
+    const accepted = vi
+      .spyOn(runtimeSessions, 'markSettlementAccepted')
+      .mockResolvedValue(persisted)
+    vi.spyOn(runtimeSessions, 'consumeReplay').mockResolvedValue(undefined)
+    vi.spyOn(runtimeSessions, 'accept').mockImplementation(() => undefined)
+    vi.spyOn(runtimeSessions, 'flush').mockResolvedValue(undefined)
+    const cleanup = vi
+      .spyOn(runtimeSessions, 'finishSettlementNotDispatched')
+      .mockResolvedValue(persisted)
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      runtimeSessions
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+    const admission = {
+      batchId: 'batch-1',
+      projectId: 'project-1',
+      sessionId: session.sessionId,
+      rootFrameId: 'root-frame-1',
+      originatingPromptId: 'origin-1',
+      rootBranchId: 'branch-1',
+      rootBranchRevision: 'revision-1',
+      promptRuntimeSegmentId: 'origin-segment',
+      items: [{ frameId: 'child-1', attemptId: 'attempt-1', status: 'completed' as const }]
+    }
+    await runtime.sendAppContinuation(
+      {
+        sessionId: session.sessionId,
+        text: 'settlement result available',
+        suppressUserMessage: true,
+        provenanceContext: {
+          promptMessageId: 'origin-1',
+          agentFrameId: 'root-frame-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'origin-segment'
+        }
+      },
+      'attempt-1',
+      undefined,
+      undefined,
+      undefined,
+      admission
+    )
+    const scope = begin.mock.calls[0][0]
+    expect(scope.runtimeSegmentId).toBe(`settlement-${scope.executionId}`)
+    expect(begin.mock.calls[0][1]).toMatchObject({ settlementAdmission: admission })
+    expect(dispatch).toHaveBeenCalledWith(scope)
+    expect(accepted).toHaveBeenCalledWith(scope)
+    expect(cleanup).not.toHaveBeenCalled()
+    expect(fakeAgent.prompts).toHaveLength(1)
+    expect(runtime.getSnapshot().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'message',
+          role: 'assistant',
+          promptMessageId: 'origin-1',
+          runtimeSegmentId: scope.runtimeSegmentId
+        }),
+        expect.objectContaining({
+          kind: 'stop',
+          promptMessageId: 'origin-1',
+          runtimeSegmentId: scope.runtimeSegmentId
+        })
+      ])
+    )
+    expect(
+      runtime
+        .getSnapshot()
+        .events.filter((event) => event.kind === 'message' && event.role === 'user')
+    ).toHaveLength(0)
+  })
+
   it.each([undefined, 'none'] as const)(
     'preserves permission prompts %s when publishing generated Notebook files',
     async (permissionPrompts) => {

@@ -172,9 +172,11 @@ export class AcpPromptOutcomeFinalizer {
     let observedStop: ObservedPromptStop | undefined
     const sessionId = handles.sessionId
     const { context, interaction, interactions, permission } = handles
-    const eventIdentity = handles.promptMessageId
-      ? { promptMessageId: handles.promptMessageId }
-      : {}
+    const runtimeSegmentId = interaction.provenanceContext?.runtimeSegmentId
+    const eventIdentity = {
+      ...(handles.promptMessageId ? { promptMessageId: handles.promptMessageId } : {}),
+      ...(runtimeSegmentId?.startsWith('settlement-') ? { runtimeSegmentId } : {})
+    }
     const interactionCurrent = (): boolean => interactions.current(sessionId) === interaction
     const logFields = (data: LogFields): LogFields => ({ sessionId, ...data })
     const clearPermission = (): void => permission.clearCorrelationsForSession(sessionId)

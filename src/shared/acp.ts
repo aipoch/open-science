@@ -507,6 +507,8 @@ export const sanitizeAcpContextWindowSample = (
 }
 
 type AcpRuntimeEventBase = {
+  // Main-stamped settlement execution identity; retains ownership when the source prompt is reused.
+  runtimeSegmentId?: string
   id: string
   timestamp: number
   level: AcpRuntimeEventLevel

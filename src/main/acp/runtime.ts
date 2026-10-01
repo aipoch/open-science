@@ -193,6 +193,7 @@ import type {
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import type { SettlementAdmission } from '../../shared/runtime-session-admission'
 import type { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 import type { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 import { composeAcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
@@ -1806,7 +1807,8 @@ class AcpRuntime {
     promptAttemptId?: string,
     planDelivery?: Readonly<{ projectId: string; commandId: string }>,
     delegatedMessageId?: string,
-    permissionContinuation?: RestoredPermissionContinuation
+    permissionContinuation?: RestoredPermissionContinuation,
+    settlementAdmission?: SettlementAdmission
   ): Promise<PromptResponse> {
     // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
     // before that barrier is released instead of waiting on the barrier it intentionally holds.
@@ -1817,7 +1819,8 @@ class AcpRuntime {
           kind: 'app-continuation',
           ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
           ...(planDelivery ? { planDelivery } : {}),
-          ...(delegatedMessageId ? { delegatedMessageId } : {})
+          ...(delegatedMessageId ? { delegatedMessageId } : {}),
+          ...(settlementAdmission ? { settlementAdmission } : {})
         },
         permissionContinuation
           ? async () => {
@@ -1864,6 +1867,7 @@ class AcpRuntime {
           promptAttemptId?: string
           planDelivery?: Readonly<{ projectId: string; commandId: string }>
           delegatedMessageId?: string
+          settlementAdmission?: SettlementAdmission
         }>,
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {

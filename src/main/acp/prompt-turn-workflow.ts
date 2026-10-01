@@ -1,6 +1,10 @@
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import {
+  SettlementAdmissionError,
+  type SettlementAdmission
+} from '../../shared/runtime-session-admission'
 import type { MessageAttribution } from '../../shared/session-persistence'
 import type {
   ActivePlanProjection,
@@ -63,7 +67,15 @@ type AcpPromptTurnMode =
       promptAttemptId?: string
       planDelivery?: Readonly<{ projectId: string; commandId: string }>
       delegatedMessageId?: string
+      settlementAdmission?: SettlementAdmission
     }>
+
+type SettlementExecution = {
+  request: AcpPromptRequest
+  executionId?: string
+  admitted: boolean
+  providerPossible: boolean
+}
 
 type AcpPromptTurnPlanContext = Readonly<{
   active?: ActivePlanProjection
@@ -236,8 +248,14 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     reviewOwner: 'task' | 'renderer',
     planDeliveryCommandId?: string,
     delegatedMessageId?: string,
-    applicationPrompt?: { text: string; attribution: MessageAttribution }
+    applicationPrompt?: { text: string; attribution: MessageAttribution },
+    settlementAdmission?: SettlementAdmission
   ) => Promise<void>
+  settlementLifecycle?: Readonly<{
+    markDispatch: (request: AcpPromptRequest, executionId: string) => Promise<void>
+    markAccepted: (request: AcpPromptRequest, executionId: string) => Promise<void>
+    finishNotDispatched: (request: AcpPromptRequest, executionId: string) => Promise<void>
+  }>
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
 }>
@@ -266,10 +284,42 @@ class AcpPromptTurnWorkflow {
       throw new Error(`ACP session not found: ${request.sessionId}`)
     }
     this.assertSessionIdle(request.sessionId)
+    const settlementExecution: SettlementExecution | undefined =
+      mode.kind === 'app-continuation' && mode.settlementAdmission
+        ? { request, admitted: false, providerPossible: false }
+        : undefined
     const cancellation = { cancelled: false }
     this.requests.set(request.sessionId, cancellation)
     try {
-      return await this.runRequest(request, mode, cancellation, onPromptAdmitted)
+      let response: PromptResponse | undefined
+      let failure: { error: unknown } | undefined
+      try {
+        response = await this.runRequest(
+          request,
+          mode,
+          cancellation,
+          onPromptAdmitted,
+          settlementExecution
+        )
+      } catch (error) {
+        failure = { error }
+      }
+      if (settlementExecution && !settlementExecution.providerPossible) {
+        if (settlementExecution.admitted) {
+          await this.options.settlementLifecycle!.finishNotDispatched(
+            settlementExecution.request,
+            settlementExecution.executionId!
+          )
+        }
+        if (failure) {
+          if (failure.error instanceof SettlementAdmissionError) throw failure.error
+          throw Object.assign(new SettlementAdmissionError('pre-provider-failure', 'retry'), {
+            cause: failure.error
+          })
+        }
+      }
+      if (failure) throw failure.error
+      return response!
     } finally {
       if (this.requests.get(request.sessionId) === cancellation)
         this.requests.delete(request.sessionId)
@@ -280,7 +330,8 @@ class AcpPromptTurnWorkflow {
     request: AcpPromptRequest,
     mode: AcpPromptTurnMode,
     cancellation: { cancelled: boolean },
-    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
+    settlementExecution?: SettlementExecution
   ): Promise<PromptResponse> {
     if (request.permissionPrompts === 'none' && request.turnIntent === 'plan-first') {
       throw new Error('Plan-first requires an available human approver.')
@@ -397,6 +448,23 @@ class AcpPromptTurnWorkflow {
         this.options.interactions.updatePromptProvenance(interaction, admittedProvenanceContext)
         admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }
       }
+      if (settlementExecution) {
+        if (!this.options.beginRuntimeSessionTurn || !this.options.settlementLifecycle)
+          throw new Error('Settlement durable workflow is unavailable.')
+        admittedRequest = {
+          ...admittedRequest,
+          provenanceContext: {
+            ...admittedRequest.provenanceContext!,
+            runtimeSegmentId: `settlement-${interaction.turnToken}`
+          }
+        }
+        this.options.interactions.updatePromptProvenance(
+          interaction,
+          admittedRequest.provenanceContext!
+        )
+        settlementExecution.request = admittedRequest
+        settlementExecution.executionId = interaction.turnToken
+      }
       if (this.options.beginRuntimeSessionTurn) {
         await this.options.beginRuntimeSessionTurn(
           admittedRequest,
@@ -406,8 +474,10 @@ class AcpPromptTurnWorkflow {
           mode.kind === 'app-continuation' ? mode.delegatedMessageId : undefined,
           mode.kind === 'application'
             ? { text: admittedRequest.text ?? '', attribution: mode.attribution }
-            : undefined
+            : undefined,
+          mode.kind === 'app-continuation' ? mode.settlementAdmission : undefined
         )
+        if (settlementExecution) settlementExecution.admitted = true
       }
       this.options.registry.select(admittedRequest.sessionId)
       this.options.recordAdmittedPrompt(admittedRequest)
@@ -431,18 +501,24 @@ class AcpPromptTurnWorkflow {
       sessionId: request.sessionId,
       textLength: request.text?.length ?? 0
     })
-    return this.executeTurn({
-      request: admittedRequest,
-      connectionGeneration: this.options.environment.connectionGeneration?.() ?? 0,
-      mode,
-      session: activeSession,
-      interaction,
-      skill,
-      plan
-    })
+    return this.executeTurn(
+      {
+        request: admittedRequest,
+        connectionGeneration: this.options.environment.connectionGeneration?.() ?? 0,
+        mode,
+        session: activeSession,
+        interaction,
+        skill,
+        plan
+      },
+      settlementExecution
+    )
   }
 
-  private async executeTurn(turn: AcpActivatedPromptTurn): Promise<PromptResponse> {
+  private async executeTurn(
+    turn: AcpActivatedPromptTurn,
+    settlementExecution?: SettlementExecution
+  ): Promise<PromptResponse> {
     const { request, session, interaction, skill } = turn
     const {
       artifacts,
@@ -605,6 +681,17 @@ class AcpPromptTurnWorkflow {
             }
             return this.checkpoint(interaction)
           },
+          ...(settlementExecution
+            ? {
+                beforeProviderCall: async () => {
+                  if (!settlementExecution.providerPossible) {
+                    await this.options.settlementLifecycle!.markDispatch(request, turnToken)
+                    settlementExecution.providerPossible = true
+                  }
+                  return this.checkpoint(interaction)
+                }
+              }
+            : {}),
           onDispatched: () => {
             providerDispatched = true
           },
@@ -616,6 +703,8 @@ class AcpPromptTurnWorkflow {
             return interactions.captureTerminal(interaction, 'stop')
           },
           onAccepted: async () => {
+            if (settlementExecution)
+              await this.options.settlementLifecycle!.markAccepted(request, turnToken)
             if (resumeAccepted) {
               const accept = resumeAccepted
               resumeAccepted = undefined

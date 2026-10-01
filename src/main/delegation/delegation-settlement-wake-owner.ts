@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { createLogger } from '../logger'
+import { SettlementAdmissionError } from '../../shared/runtime-session-admission'
 import {
   isDelegatedAttemptSettled,
   type DurableSettledAttemptStatus
@@ -7,6 +9,7 @@ import {
 type SettledStatus = DurableSettledAttemptStatus
 
 const MAX_RETRY_DELAY_MS = 5_000
+const log = createLogger('delegation')
 
 type DelegationSettlementAttempt = Readonly<{
   frameId: string
@@ -22,6 +25,7 @@ type DelegationSettlementSnapshot = Readonly<{
   sessionId: string
   rootFrameId: string
   rootBranchId?: string
+  rootBranchRevision?: string
   activeRootPromptIds: readonly string[]
   rootPromptRuntimeSegments: Readonly<Record<string, string>>
   attempts: readonly DelegationSettlementAttempt[]
@@ -33,9 +37,13 @@ type DelegationSettlementDispatch = Readonly<{
   originatingPromptId: string
   rootFrameId: string
   rootBranchId?: string
+  rootBranchRevision?: string
   runtimeSegmentId: string
+  batchId: string
+  items: readonly SettlementItem[]
   promptId: string
   text: string
+  validate?: () => void
 }>
 
 type DelegationSettlementWakeOwnerOptions = Readonly<{
@@ -58,9 +66,12 @@ type Watch = {
   originatingPromptId: string
   rootFrameId: string
   rootBranchId?: string
+  rootBranchRevision?: string
   runtimeSegmentId: string
   remaining: Map<string, WatchedAttempt>
   pending: Map<string, SettlementItem>
+  retry?: DelegationSettlementDispatch
+  observed: Set<string>
 }
 
 type SessionWakeState = {
@@ -74,11 +85,13 @@ type SessionWakeState = {
       unobserved: Map<string, WatchedAttempt>
     }
   >
-  flight?: Readonly<{
+  flight?: {
     promptId: string
     originatingPromptId: string
     items: readonly SettlementItem[]
-  }>
+    request: DelegationSettlementDispatch
+    validated: boolean
+  }
   timer?: ReturnType<typeof setTimeout>
   retryDelayMs?: number
 }
@@ -193,6 +206,47 @@ class DelegationSettlementWakeOwner {
         lease.unobserved.delete(handleKey(attempt.frameId, attempt.attemptId))
       }
     }
+    const observed = new Set(
+      input.attempts.map(({ frameId, attemptId }) => handleKey(frameId, attemptId))
+    )
+    // A later user turn can collect children created by an earlier prompt on the active path.
+    // Observation follows exact handles within the Session, rather than the collecting prompt.
+    for (const watch of state.watches.values()) {
+      for (const key of observed) {
+        watch.observed.add(key)
+        watch.remaining.delete(key)
+        watch.pending.delete(key)
+      }
+      // A frozen batch cannot lose an item under the same identity. Its other unobserved items
+      // become a new batch if a competing root turn collected part of the old batch.
+      if (
+        watch.retry?.items.some(({ frameId, attemptId }) =>
+          observed.has(handleKey(frameId, attemptId))
+        )
+      ) {
+        for (const item of watch.retry.items) {
+          if (!observed.has(handleKey(item.frameId, item.attemptId)))
+            watch.pending.set(handleKey(item.frameId, item.attemptId), item)
+        }
+        watch.retry = undefined
+      }
+      const queuedFlight = state.flight
+      if (
+        queuedFlight?.originatingPromptId === watch.originatingPromptId &&
+        !queuedFlight.validated &&
+        queuedFlight.items.some(({ frameId, attemptId }) =>
+          observed.has(handleKey(frameId, attemptId))
+        )
+      ) {
+        for (const item of queuedFlight.items) {
+          if (!observed.has(handleKey(item.frameId, item.attemptId))) {
+            watch.pending.set(handleKey(item.frameId, item.attemptId), item)
+          }
+        }
+      }
+    }
+    this.cleanupWatches(state)
+    this.finishInvalidation(input.sessionId, state)
   }
 
   onRootTurnEnded(
@@ -254,7 +308,9 @@ class DelegationSettlementWakeOwner {
         existing &&
         existing.projectId === snapshot.projectId &&
         existing.rootFrameId === snapshot.rootFrameId &&
-        existing.runtimeSegmentId === runtimeSegmentId
+        existing.runtimeSegmentId === runtimeSegmentId &&
+        existing.rootBranchId === snapshot.rootBranchId &&
+        existing.rootBranchRevision === snapshot.rootBranchRevision
       ) {
         existing.rootBranchId = snapshot.rootBranchId
         for (const [key, watched] of remaining) {
@@ -270,9 +326,13 @@ class DelegationSettlementWakeOwner {
           originatingPromptId: input.originatingPromptId,
           rootFrameId: snapshot.rootFrameId,
           ...(snapshot.rootBranchId ? { rootBranchId: snapshot.rootBranchId } : {}),
+          ...(snapshot.rootBranchRevision
+            ? { rootBranchRevision: snapshot.rootBranchRevision }
+            : {}),
           runtimeSegmentId,
           remaining,
-          pending
+          pending,
+          observed: new Set()
         })
       }
       await this.reconcile(input.sessionId, state)
@@ -387,7 +447,19 @@ class DelegationSettlementWakeOwner {
       snapshot.attempts.map((attempt) => [handleKey(attempt.frameId, attempt.attemptId), attempt])
     )
     for (const [originatingPromptId, watch] of state.watches) {
-      if (!active.has(originatingPromptId) || watch.projectId !== snapshot.projectId) {
+      if (
+        !active.has(originatingPromptId) ||
+        watch.projectId !== snapshot.projectId ||
+        watch.rootFrameId !== snapshot.rootFrameId ||
+        watch.rootBranchId !== snapshot.rootBranchId ||
+        watch.rootBranchRevision !== snapshot.rootBranchRevision
+      ) {
+        log.info('Settlement invalidated', {
+          sessionId,
+          originatingPromptId,
+          batchId: watch.retry?.batchId,
+          reason: 'source-path-changed'
+        })
         state.watches.delete(originatingPromptId)
         continue
       }
@@ -416,28 +488,62 @@ class DelegationSettlementWakeOwner {
       void this.enqueueExisting(sessionId, state, async () => {
         await this.reconcile(sessionId, state, false)
         if (this.sessions.get(sessionId) !== state || state.flight) return
-        const selected = [...state.watches.values()].find((watch) => watch.pending.size > 0)
+        const selected = [...state.watches.values()].find(
+          (watch) => watch.retry || watch.pending.size > 0
+        )
         if (!selected) return
-        const items = stableItems(selected.pending.values())
-        selected.pending.clear()
         const promptId = this.createPromptId()
+        const items = selected.retry?.items ?? stableItems(selected.pending.values())
+        const request: DelegationSettlementDispatch = selected.retry
+          ? { ...selected.retry, promptId }
+          : {
+              projectId: selected.projectId,
+              sessionId,
+              originatingPromptId: selected.originatingPromptId,
+              rootFrameId: selected.rootFrameId,
+              ...(selected.rootBranchId ? { rootBranchId: selected.rootBranchId } : {}),
+              ...(selected.rootBranchRevision
+                ? { rootBranchRevision: selected.rootBranchRevision }
+                : {}),
+              runtimeSegmentId: selected.runtimeSegmentId,
+              batchId: randomUUID(),
+              items,
+              promptId,
+              text: settlementText(items, selected.remaining.size)
+            }
+        const validatedRequest = {
+          ...request,
+          validate: () => {
+            if (
+              this.sessions.get(sessionId) !== state ||
+              state.watches.get(selected.originatingPromptId) !== selected ||
+              state.flight?.promptId !== promptId ||
+              items.some(({ frameId, attemptId }) =>
+                selected.observed.has(handleKey(frameId, attemptId))
+              )
+            ) {
+              throw new SettlementAdmissionError('live-batch-invalidated', 'invalidated')
+            }
+            state.flight.validated = true
+          }
+        }
+        if (!selected.retry) selected.pending.clear()
+        selected.retry = undefined
         state.flight = {
           promptId,
           originatingPromptId: selected.originatingPromptId,
-          items
+          items,
+          request: validatedRequest,
+          validated: false
         }
-        const request: DelegationSettlementDispatch = {
-          projectId: selected.projectId,
+        log.info('Settlement queued', {
+          batchId: request.batchId,
           sessionId,
-          originatingPromptId: selected.originatingPromptId,
-          rootFrameId: selected.rootFrameId,
-          ...(selected.rootBranchId ? { rootBranchId: selected.rootBranchId } : {}),
-          runtimeSegmentId: selected.runtimeSegmentId,
-          promptId,
-          text: settlementText(items, selected.remaining.size)
-        }
+          originatingPromptId: request.originatingPromptId,
+          items: items.map(({ frameId, attemptId, status }) => ({ frameId, attemptId, status }))
+        })
         try {
-          const dispatched = this.options.dispatch(request)
+          const dispatched = this.options.dispatch(validatedRequest)
           void Promise.resolve(dispatched).catch(() => {
             void this.onDispatchFailed(sessionId, promptId)
           })
@@ -461,9 +567,16 @@ class DelegationSettlementWakeOwner {
     if (flight?.promptId !== promptId) return
     const watch = state.watches.get(flight.originatingPromptId)
     if (watch) {
-      for (const item of flight.items) {
-        watch.pending.set(handleKey(item.frameId, item.attemptId), item)
-      }
+      if (
+        flight.items.some(({ frameId, attemptId }) =>
+          watch.observed.has(handleKey(frameId, attemptId))
+        )
+      ) {
+        for (const item of flight.items) {
+          if (!watch.observed.has(handleKey(item.frameId, item.attemptId)))
+            watch.pending.set(handleKey(item.frameId, item.attemptId), item)
+        }
+      } else watch.retry = flight.request
     }
     state.flight = undefined
     state.retryDelayMs = Math.min(
@@ -478,14 +591,14 @@ class DelegationSettlementWakeOwner {
   private cleanupWatches(state: SessionWakeState): void {
     for (const [origin, watch] of state.watches) {
       const ownsFlight = state.flight?.originatingPromptId === origin
-      if (watch.remaining.size === 0 && watch.pending.size === 0 && !ownsFlight) {
+      if (watch.remaining.size === 0 && watch.pending.size === 0 && !watch.retry && !ownsFlight) {
         state.watches.delete(origin)
       }
     }
   }
 
   private hasPending(state: SessionWakeState): boolean {
-    return [...state.watches.values()].some((watch) => watch.pending.size > 0)
+    return [...state.watches.values()].some((watch) => watch.retry || watch.pending.size > 0)
   }
 
   private finishInvalidation(sessionId: string, state: SessionWakeState): void {

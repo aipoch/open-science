@@ -188,6 +188,7 @@ const settlementSnapshot = (
     sessionId: session.id,
     rootFrameId: graph.rootFrameId,
     rootBranchId: rootBranch.id,
+    rootBranchRevision: `${rootBranch.id}:${rootBranch.createdAt}`,
     activeRootPromptIds: activeRootMessages.map(({ id }) => id),
     rootPromptRuntimeSegments: Object.fromEntries(
       activeRootMessages.flatMap(({ id, runtimeSegmentId }) =>

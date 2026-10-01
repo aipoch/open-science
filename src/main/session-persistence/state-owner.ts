@@ -1253,6 +1253,7 @@ class SessionPersistenceStateOwner {
       delete rendererOwnedSession.runtimeTranscriptOwner
       delete rendererOwnedSession.runtimeTranscriptReviewOwner
       delete rendererOwnedSession.runtimeTranscriptLastRun
+      delete rendererOwnedSession.runtimeSessionAdmissionsQuarantine
       delete rendererOwnedSession.runtimeSessionAdmissions
       delete rendererOwnedSession.runtimeConversationCommandIds
     }

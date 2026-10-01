@@ -67,6 +67,77 @@ const event = <Kind extends AcpRuntimeEvent['kind']>(
   >
 
 describe('runtime Session projection', () => {
+  it('scopes repeated provider stream IDs to the durable settlement execution Segment', () => {
+    const { session, scope } = fixture()
+    const original = applyRuntimeSessionEvents(session, scope, [
+      event('message', {
+        id: 'original-output',
+        timestamp: 2,
+        role: 'assistant',
+        messageId: 'same-provider-stream',
+        text: 'Original final answer'
+      }),
+      event('stop', { id: 'original-stop', timestamp: 3, title: 'Stopped', text: 'end_turn' })
+    ])
+    const originalAnswer = structuredClone(
+      original.conversationGraph!.messages.find(({ role }) => role === 'agent')!
+    )
+    const execution = { ...scope, runtimeSegmentId: 'settlement-followup' }
+    original.runtimeTranscriptOwner = 'main'
+    original.activeRun = { promptMessageId: scope.promptMessageId, startedAt: 4 }
+    original.conversationGraph!.runtimeSegments.push({
+      id: execution.runtimeSegmentId,
+      agentFrameId: scope.agentFrameId,
+      frameworkId: 'claude-code',
+      startedAt: 4
+    })
+    original.runtimeSessionAdmissions = [
+      {
+        executionId: 'followup',
+        promptMessageId: scope.promptMessageId,
+        promptRuntimeSegmentId: scope.runtimeSegmentId,
+        rootFrameId: scope.agentFrameId,
+        agentFrameId: scope.agentFrameId,
+        messageBranchId: scope.messageBranchId,
+        runtimeSegmentId: execution.runtimeSegmentId,
+        settlement: {
+          admission: {
+            batchId: 'batch',
+            projectId: original.projectId,
+            sessionId: original.id,
+            rootFrameId: scope.agentFrameId,
+            originatingPromptId: scope.promptMessageId,
+            rootBranchId: scope.messageBranchId,
+            rootBranchRevision: `${scope.messageBranchId}:1`,
+            promptRuntimeSegmentId: scope.runtimeSegmentId,
+            items: [{ frameId: 'child', attemptId: 'attempt', status: 'completed' }]
+          },
+          stage: 'accepted',
+          runStartedAt: 4
+        }
+      }
+    ]
+    const next = applyRuntimeSessionEvents(original, execution, [
+      event('message', {
+        id: 'settlement-output',
+        timestamp: 5,
+        role: 'assistant',
+        messageId: 'same-provider-stream',
+        text: 'New settlement answer'
+      }),
+      event('stop', { id: 'settlement-stop', timestamp: 6, title: 'Stopped', text: 'end_turn' })
+    ])
+    expect(next.conversationGraph!.messages.find(({ id }) => id === originalAnswer.id)).toEqual(
+      originalAnswer
+    )
+    expect(
+      next.conversationGraph!.messages.find(
+        ({ runtimeSegmentId, role }) =>
+          runtimeSegmentId === execution.runtimeSegmentId && role === 'agent'
+      )
+    ).toMatchObject({ content: 'New settlement answer' })
+  })
+
   it('appends partial chunks by stream, deduplicates events, and separates streams', () => {
     const { session, scope } = fixture()
     const events = [

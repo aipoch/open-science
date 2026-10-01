@@ -494,6 +494,67 @@ describe('AcpRuntimePublicationOwner', () => {
     ])
   })
 
+  it('stamps the exact active settlement Segment without overwriting captured event ownership', () => {
+    const interactions = new AcpSessionInteractionOwner()
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions,
+      snapshotProjection: createProjection,
+      callbacks: {}
+    })
+    const prompt = interactions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'active-prompt',
+      provenanceContext: {
+        promptMessageId: 'active-prompt',
+        runtimeSegmentId: 'settlement-execution-1'
+      }
+    })
+    const publish = (
+      text: string,
+      metadata: { promptMessageId?: string; runtimeSegmentId?: string } = {}
+    ): void =>
+      owner.pushEvent(
+        Object.freeze({
+          kind: 'message' as const,
+          level: 'info' as const,
+          sessionId: 'session-1',
+          role: 'assistant' as const,
+          text,
+          ...metadata
+        })
+      )
+    publish('inherited')
+    publish('matching', { promptMessageId: 'active-prompt' })
+    publish('stale', {
+      promptMessageId: 'active-prompt',
+      runtimeSegmentId: 'settlement-old-execution'
+    })
+    publish('unrelated', { promptMessageId: 'other-prompt' })
+    interactions.release(prompt)
+    interactions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'ordinary-prompt',
+      provenanceContext: {
+        promptMessageId: 'ordinary-prompt',
+        runtimeSegmentId: 'ordinary-segment'
+      }
+    })
+    publish('ordinary')
+    expect(
+      owner.getSnapshot().events.map(({ text, runtimeSegmentId }) => ({ text, runtimeSegmentId }))
+    ).toEqual([
+      { text: 'inherited', runtimeSegmentId: 'settlement-execution-1' },
+      { text: 'matching', runtimeSegmentId: 'settlement-execution-1' },
+      { text: 'stale', runtimeSegmentId: 'settlement-old-execution' },
+      { text: 'unrelated', runtimeSegmentId: undefined },
+      { text: 'ordinary', runtimeSegmentId: undefined }
+    ])
+    owner.cancelPendingStatePublication()
+  })
+
   it('retains a frozen event with the inherited prompt id intact', () => {
     const interactions = new AcpSessionInteractionOwner()
     const owner = new AcpRuntimePublicationOwner({

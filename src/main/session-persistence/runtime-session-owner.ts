@@ -3,7 +3,8 @@ import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
 import {
   resolveActiveConversationActivities,
-  resolveActiveConversationMessages
+  resolveActiveConversationMessages,
+  resolveMessageBranchPath
 } from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
@@ -12,7 +13,11 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
-import { hasDurableRuntimeSessionAdmission } from '../../shared/runtime-session-admission'
+import {
+  hasDurableRuntimeSessionAdmission,
+  SettlementAdmissionError,
+  type SettlementAdmission
+} from '../../shared/runtime-session-admission'
 import {
   applyRuntimeSessionEvents,
   attachRuntimeSessionArtifacts,
@@ -53,6 +58,7 @@ export type RuntimeSessionAdmission = {
   planDeliveryCommandId?: string
   // Main-only identity of the fenced reliable message; never serialized as provider binding.
   delegatedMessageId?: string
+  settlementAdmission?: SettlementAdmission
   // Main-owned application turns create their prompt and execution authority in one commit.
   applicationPrompt?: { text: string; attribution: MessageAttribution }
 }
@@ -109,8 +115,15 @@ type Turn = {
   cancelScheduledFlush?: () => void
   terminalObserved: boolean
   replayConsumptionPending: boolean
+  settlementAdmission?: SettlementAdmission
+  settlementDispatchStarted?: boolean
+  notDispatchedCleanupPending?: boolean
   elicitationReceipts: Map<string, number | undefined>
 }
+
+// Ownership/stage refusal is permanent for this execution; a repository failure is retryable
+// only while the live workflow retains its proof that the provider boundary was never entered.
+class SettlementStageOwnershipError extends Error {}
 
 type PublicationAttempt = {
   key: string
@@ -202,7 +215,16 @@ const assertScopeMatchesSession = (
     !prompt ||
     prompt.role !== 'user' ||
     prompt.agentFrameId !== frame.id ||
-    prompt.introducedOnBranchId !== branch.id ||
+    (prompt.introducedOnBranchId !== branch.id &&
+      !(
+        session.runtimeSessionAdmissions?.some(
+          (entry) =>
+            entry.executionId === scope.executionId &&
+            entry.settlement &&
+            entry.messageBranchId === branch.id &&
+            entry.runtimeSegmentId === scope.runtimeSegmentId
+        ) && resolveMessageBranchPath(graph, branch.id).some(({ id }) => id === prompt.id)
+      )) ||
     prompt.runtimeSegmentId !== promptRuntimeSegmentId
   ) {
     throw new Error('Runtime Session turn has no durable prompt path.')
@@ -451,6 +473,152 @@ const admitDelegatedMessage = (
   }
 }
 
+const admitSettlement = (
+  session: PersistedChatSession,
+  scope: RuntimeSessionTurnScope,
+  admission: RuntimeSessionAdmission,
+  now: number
+): PersistedChatSession => {
+  const settlement = admission.settlementAdmission
+  if (!settlement) return session
+  const invalid = (reason: string): never => {
+    throw new SettlementAdmissionError(reason, 'invalidated')
+  }
+  if (
+    admission.applicationPrompt ||
+    admission.delegatedMessageId ||
+    admission.planDeliveryCommandId
+  )
+    invalid('conflicting-admission')
+  if (session.runtimeSessionAdmissionsQuarantine !== undefined)
+    invalid('corrupt-settlement-authority')
+  const graph = session.conversationGraph
+  const root = graph?.frames.find(({ id }) => id === graph.rootFrameId)
+  const branch = graph?.branches.find(({ id }) => id === root?.activeBranchId)
+  const prompt = graph?.messages.find(({ id }) => id === scope.promptMessageId)
+  const originalSegment = graph?.runtimeSegments.find(
+    ({ id }) => id === settlement.promptRuntimeSegmentId
+  )
+  if (
+    !settlement.batchId ||
+    settlement.projectId !== scope.projectId ||
+    settlement.sessionId !== scope.sessionId ||
+    session.id !== scope.sessionId ||
+    session.projectId !== scope.projectId ||
+    session.archivedAt !== undefined ||
+    settlement.rootFrameId !== scope.agentFrameId ||
+    root?.id !== scope.agentFrameId ||
+    graph?.activeFrameId !== root.id ||
+    settlement.originatingPromptId !== scope.promptMessageId ||
+    settlement.rootBranchId !== scope.messageBranchId ||
+    branch?.id !== scope.messageBranchId ||
+    `${branch.id}:${branch.createdAt}` !== settlement.rootBranchRevision ||
+    prompt?.role !== 'user' ||
+    prompt.agentFrameId !== root.id ||
+    prompt.runtimeSegmentId !== settlement.promptRuntimeSegmentId ||
+    originalSegment?.agentFrameId !== root.id ||
+    !resolveMessageBranchPath(graph, branch.id).some(({ id }) => id === prompt.id) ||
+    scope.runtimeSegmentId !== `settlement-${scope.executionId}` ||
+    graph.runtimeSegments.some(({ id }) => id === scope.runtimeSegmentId)
+  )
+    invalid('origin-path-changed')
+  if (
+    session.resumeRecovery?.cause === 'cancelled' &&
+    session.resumeRecovery.promptMessageId === scope.promptMessageId
+  )
+    invalid('origin-cancelled')
+  if (
+    session.activeRun ||
+    session.status === 'running' ||
+    session.status.startsWith('waiting-') ||
+    session.runtimeContext?.permission?.state === 'pending' ||
+    session.runtimeContext?.permission?.state === 'continuing' ||
+    session.runtimeContext?.plan?.approval === 'pending' ||
+    graph!.activities.some(({ elicitation }) => elicitation?.state === 'pending')
+  )
+    throw new SettlementAdmissionError('session-busy', 'deferred')
+  if (session.status !== 'idle') invalid('session-not-idle')
+  const records = session.runtimeContext?.delegatedWork
+  if (records?.recordsQuarantine || !settlement.items.length) invalid('missing-terminal-evidence')
+  const itemKeys = new Set<string>()
+  for (const item of settlement.items) {
+    const key = `${item.frameId}\0${item.attemptId}`
+    const frame = graph!.frames.find(({ id }) => id === item.frameId)
+    const attempt = records?.records
+      .find(({ agentFrameId }) => agentFrameId === item.frameId)
+      ?.attempts.find(({ id }) => id === item.attemptId)
+    if (
+      itemKeys.has(key) ||
+      frame?.parentFrameId !== root!.id ||
+      frame.originBindingState !== 'validated' ||
+      attempt?.initiatingTurnMessageId !== scope.promptMessageId ||
+      attempt.status !== item.status ||
+      !['completed', 'cancelled', 'error'].includes(item.status) ||
+      attempt.endedAt === undefined ||
+      attempt.cancellationReason === 'main_agent_stop' ||
+      attempt.cancellationReason === 'session_stop'
+    )
+      invalid('invalid-terminal-attempt')
+    itemKeys.add(key)
+  }
+  for (const entry of session.runtimeSessionAdmissions ?? []) {
+    if (entry.executionId === scope.executionId) invalid('execution-already-admitted')
+    const previous = entry.settlement
+    if (!previous) continue
+    if (previous.admission.batchId === settlement.batchId) {
+      if (!isDeepStrictEqual(previous.admission, settlement)) invalid('batch-facts-changed')
+      if (previous.stage !== 'not-dispatched') invalid('batch-already-consumed')
+    } else if (
+      previous.stage !== 'not-dispatched' &&
+      previous.admission.items.some((item) => itemKeys.has(`${item.frameId}\0${item.attemptId}`))
+    )
+      invalid('attempt-already-consumed')
+  }
+  const startedAt = Math.max(
+    now,
+    (session.runtimeTranscriptLastRun?.startedAt ?? 0) + 1,
+    ...(session.runtimeSessionAdmissions ?? []).map(
+      ({ settlement }) => (settlement?.runStartedAt ?? 0) + 1
+    )
+  )
+  return {
+    ...session,
+    status: 'running',
+    updatedAt: Math.max(session.updatedAt, startedAt),
+    activeRun: { promptMessageId: scope.promptMessageId, startedAt },
+    runtimeSessionAdmissions: [
+      ...(session.runtimeSessionAdmissions ?? []),
+      {
+        executionId: scope.executionId,
+        promptMessageId: scope.promptMessageId,
+        promptRuntimeSegmentId: settlement.promptRuntimeSegmentId,
+        rootFrameId: root!.id,
+        agentFrameId: scope.agentFrameId,
+        messageBranchId: scope.messageBranchId,
+        runtimeSegmentId: scope.runtimeSegmentId,
+        settlement: {
+          admission: structuredClone(settlement),
+          stage: 'admitted',
+          runStartedAt: startedAt
+        }
+      }
+    ],
+    conversationGraph: {
+      ...graph!,
+      runtimeSegments: [
+        ...graph!.runtimeSegments,
+        {
+          id: scope.runtimeSegmentId,
+          agentFrameId: scope.agentFrameId,
+          frameworkId:
+            admission.agentFrameworkId ?? session.agentFrameworkId ?? originalSegment!.frameworkId,
+          startedAt
+        }
+      ]
+    }
+  }
+}
+
 export class RuntimeSessionOwner {
   private readonly turns = new Map<string, Turn>()
   private readonly publications = new Map<string, PublicationAttempt>()
@@ -468,6 +636,20 @@ export class RuntimeSessionOwner {
     // then starts a different prompt, while approval/question answers reuse the old one.
     // Drain every terminal turn in this Session before admitting either continuation;
     // otherwise a queued feedback echo looks like a competing live turn until the timer fires.
+    for (const turn of this.turns.values()) {
+      if (
+        !turn.notDispatchedCleanupPending ||
+        turn.scope.sessionId !== scope.sessionId ||
+        turn.scope.projectId !== scope.projectId
+      )
+        continue
+      if (
+        admission.settlementAdmission?.batchId === turn.settlementAdmission?.batchId &&
+        !isDeepStrictEqual(turn.settlementAdmission, admission.settlementAdmission)
+      )
+        throw new SettlementAdmissionError('batch-facts-changed', 'invalidated')
+      await this.finishSettlementNotDispatched(turn.scope)
+    }
     const previousTurn = this.turns.get(turnKey(scope.sessionId, scope.promptMessageId))
     for (const turn of this.turns.values()) {
       if (turn.scope.sessionId === scope.sessionId && turn.terminalObserved) {
@@ -475,15 +657,27 @@ export class RuntimeSessionOwner {
       }
     }
     let loaded = await this.dependencies.loadSession(scope)
-    if (!loaded) throw new Error('Runtime Session turn is not durable.')
+    if (!loaded) {
+      if (admission.settlementAdmission)
+        throw new SettlementAdmissionError('session-not-durable', 'invalidated')
+      throw new Error('Runtime Session turn is not durable.')
+    }
     const sameExecution =
       previousTurn?.scope.executionId === scope.executionId &&
       previousTurn.scope.agentFrameId === scope.agentFrameId &&
       previousTurn.scope.messageBranchId === scope.messageBranchId &&
       previousTurn.scope.runtimeSegmentId === scope.runtimeSegmentId
+    if (sameExecution && admission.settlementAdmission) {
+      const witness = loaded.runtimeSessionAdmissions?.find(
+        ({ executionId }) => executionId === scope.executionId
+      )?.settlement
+      if (!witness || !isDeepStrictEqual(witness.admission, admission.settlementAdmission))
+        throw new SettlementAdmissionError('batch-facts-changed', 'invalidated')
+    }
     if (!sameExecution) {
       loaded = admitApplicationPrompt(loaded, scope, admission, this.now())
       loaded = admitDelegatedMessage(loaded, scope, admission, this.now())
+      loaded = admitSettlement(loaded, scope, admission, this.now())
     }
     const continuationRun = continuationRunFor(
       loaded,
@@ -493,7 +687,7 @@ export class RuntimeSessionOwner {
     )
     const promptRuntimeSegmentId = sameExecution
       ? previousTurn.promptRuntimeSegmentId
-      : admission.delegatedMessageId
+      : admission.delegatedMessageId || admission.settlementAdmission
         ? loaded.conversationGraph!.messages.find(({ id }) => id === scope.promptMessageId)!
             .runtimeSegmentId!
         : resolvePromptRuntimeSegmentId(loaded, scope)
@@ -521,7 +715,11 @@ export class RuntimeSessionOwner {
     }
     for (const turn of this.turns.values()) {
       if (turn.scope.sessionId === scope.sessionId) {
-        if (turn.terminalObserved && turn.pending.length === 0) {
+        if (
+          turn.terminalObserved &&
+          turn.pending.length === 0 &&
+          !turn.notDispatchedCleanupPending
+        ) {
           this.turns.delete(turnKey(turn.scope.sessionId, turn.scope.promptMessageId))
           continue
         }
@@ -533,6 +731,7 @@ export class RuntimeSessionOwner {
     const session = await this.mutateSession(scope, 'begin-turn', (latest) => {
       latest = admitApplicationPrompt(latest, scope, admission, this.now())
       latest = admitDelegatedMessage(latest, scope, admission, this.now())
+      latest = admitSettlement(latest, scope, admission, this.now())
       // Re-derive against the durable record Main is about to write: only a still-parked turn may
       // be continued, and its re-armed run has to be newer than the run it replaces.
       const resumedRun = continuationRunFor(
@@ -543,6 +742,7 @@ export class RuntimeSessionOwner {
       )
       if (
         !admission.delegatedMessageId &&
+        !admission.settlementAdmission &&
         resolvePromptRuntimeSegmentId(latest, scope) !== promptRuntimeSegmentId
       )
         throw new Error('Runtime Session prompt Segment changed before admission.')
@@ -552,11 +752,13 @@ export class RuntimeSessionOwner {
         planDeliveryCommandId: _planDeliveryCommandId,
         delegatedMessageId: _delegatedMessageId,
         applicationPrompt: _applicationPrompt,
+        settlementAdmission: _settlementAdmission,
         ...runtimeBinding
       } = admission
       void _planDeliveryCommandId
       void _delegatedMessageId
       void _applicationPrompt
+      void _settlementAdmission
       const durableAdmission = {
         executionId: scope.executionId,
         promptMessageId: scope.promptMessageId,
@@ -613,10 +815,135 @@ export class RuntimeSessionOwner {
           )
           .map((activity) => [activity.id, activity.elicitation?.respondedAt])
       ),
-      replayConsumptionPending: false
+      replayConsumptionPending: false,
+      ...(admission.settlementAdmission
+        ? { settlementAdmission: structuredClone(admission.settlementAdmission) }
+        : {})
     })
     this.trimTurns()
     return session
+  }
+
+  async markSettlementDispatch(scope: RuntimeSessionTurnScope): Promise<PersistedChatSession> {
+    const pending = this.turns.get(turnKey(scope.sessionId, scope.promptMessageId))
+    if (pending?.scope.executionId === scope.executionId && pending.notDispatchedCleanupPending)
+      throw new SettlementStageOwnershipError(
+        'Settlement execution is awaiting not-dispatched cleanup.'
+      )
+    const session = await this.transitionSettlement(scope, 'dispatching')
+    const turn = this.turns.get(turnKey(scope.sessionId, scope.promptMessageId))
+    if (turn?.scope.executionId === scope.executionId) turn.settlementDispatchStarted = true
+    return session
+  }
+
+  async markSettlementAccepted(scope: RuntimeSessionTurnScope): Promise<PersistedChatSession> {
+    return this.transitionSettlement(scope, 'accepted')
+  }
+
+  async finishSettlementNotDispatched(
+    scope: RuntimeSessionTurnScope
+  ): Promise<PersistedChatSession> {
+    const turn = this.turns.get(turnKey(scope.sessionId, scope.promptMessageId))
+    if (
+      !turn?.settlementAdmission ||
+      !isDeepStrictEqual(turn.scope, scope) ||
+      turn.settlementDispatchStarted
+    )
+      throw new SettlementStageOwnershipError(
+        'Settlement cleanup has no owned pre-provider execution.'
+      )
+    turn.notDispatchedCleanupPending = true
+    let next: PersistedChatSession
+    try {
+      next = await this.transitionSettlement(scope, 'not-dispatched')
+    } catch (cause) {
+      if (cause instanceof SettlementStageOwnershipError) {
+        turn.notDispatchedCleanupPending = false
+        throw cause
+      }
+      throw new SettlementAdmissionError('not-dispatched-cleanup-pending', 'retry', cause)
+    }
+    turn.notDispatchedCleanupPending = false
+    turn.terminalObserved = true
+    turn.cancelScheduledFlush?.()
+    turn.cancelScheduledFlush = undefined
+    return next
+  }
+
+  private async transitionSettlement(
+    scope: RuntimeSessionTurnScope,
+    stage: 'dispatching' | 'accepted' | 'not-dispatched'
+  ): Promise<PersistedChatSession> {
+    const next = await this.mutateSession(scope, 'settlement-stage', (latest) => {
+      const entry = latest.runtimeSessionAdmissions?.find(
+        ({ executionId }) => executionId === scope.executionId
+      )
+      const witness = entry?.settlement
+      if (
+        !entry ||
+        !witness ||
+        entry.promptMessageId !== scope.promptMessageId ||
+        entry.agentFrameId !== scope.agentFrameId ||
+        entry.messageBranchId !== scope.messageBranchId ||
+        entry.runtimeSegmentId !== scope.runtimeSegmentId ||
+        latest.id !== scope.sessionId ||
+        latest.projectId !== scope.projectId
+      )
+        throw new SettlementStageOwnershipError(
+          'Settlement stage has no matching durable execution.'
+        )
+      if (witness.stage === stage || (stage === 'accepted' && witness.stage === 'terminal'))
+        return latest
+      if (stage === 'not-dispatched') {
+        if (witness.stage !== 'admitted')
+          throw new SettlementStageOwnershipError(
+            'Settlement provider dispatch may already have started.'
+          )
+      } else if (stage === 'dispatching') {
+        if (witness.stage !== 'admitted')
+          throw new SettlementStageOwnershipError(
+            'Settlement provider dispatch may already have started.'
+          )
+      } else if (witness.stage !== 'dispatching')
+        throw new SettlementStageOwnershipError(
+          'Settlement provider acceptance has no dispatch fence.'
+        )
+      const ownsRun =
+        latest.activeRun?.promptMessageId === scope.promptMessageId &&
+        latest.activeRun.startedAt === witness.runStartedAt
+      if (stage === 'dispatching' && !ownsRun)
+        throw new SettlementStageOwnershipError(
+          'Settlement execution was superseded before its stage transition.'
+        )
+      const result = structuredClone(latest)
+      result.runtimeSessionAdmissions!.find(
+        ({ executionId }) => executionId === scope.executionId
+      )!.settlement!.stage = stage
+      if (stage === 'not-dispatched') {
+        if (ownsRun) {
+          result.runtimeTranscriptLastRun = result.activeRun
+          delete result.activeRun
+          result.status = 'idle'
+        }
+        if (
+          !result.activeRun &&
+          (result.runtimeTranscriptLastRun?.startedAt ?? 0) <= witness.runStartedAt &&
+          (result.status === 'error' || result.status === 'idle')
+        ) {
+          result.status = 'idle'
+          delete result.error
+          delete result.errorReportable
+        }
+        const segment = result.conversationGraph!.runtimeSegments.find(
+          ({ id }) => id === scope.runtimeSegmentId
+        )!
+        segment.endedAt ??= Math.max(this.now(), witness.runStartedAt)
+      }
+      result.updatedAt = Math.max(latest.updatedAt + 1, this.now())
+      return result
+    })
+    this.notifyCommitted(next)
+    return next
   }
 
   async preparePermissionTranscript(
@@ -695,15 +1022,25 @@ export class RuntimeSessionOwner {
     // otherwise keep cloning and scheduling persistence batches for data that is discarded anyway.
     if (event.kind === 'thought') return
     const turn = this.turns.get(turnKey(event.sessionId, event.promptMessageId))
+    const exactSettlementSegment =
+      turn?.settlementAdmission && event.runtimeSegmentId === turn.scope.runtimeSegmentId
     if (
       !turn ||
-      event.timestamp < turn.runStartedAt ||
+      (event.runtimeSegmentId !== undefined &&
+        event.runtimeSegmentId !== turn.scope.runtimeSegmentId) ||
+      (!exactSettlementSegment && event.timestamp < turn.runStartedAt) ||
       turn.acceptedEventIds.has(event.id) ||
       turn.terminalEventIds.has(event.id)
     )
       return
     turn.acceptedEventIds.add(event.id)
-    turn.pending.push(structuredClone(event))
+    turn.pending.push(
+      structuredClone(
+        exactSettlementSegment
+          ? { ...event, timestamp: Math.max(event.timestamp, turn.runStartedAt) }
+          : event
+      )
+    )
     if (event.kind === 'stop' || event.kind === 'error') {
       turn.terminalObserved = true
       // Terminal events are committed before being republished to renderer observers. Retain their
@@ -741,6 +1078,13 @@ export class RuntimeSessionOwner {
       committed = await this.mutateSession(turn.scope, 'flush-events', (latest) => {
         assertScopeMatchesSession(turn.scope, latest, false, turn.promptRuntimeSegmentId)
         const next = applyRuntimeSessionEvents(latest, turn.scope, batch)
+        if (batch.some(({ kind }) => kind === 'stop' || kind === 'error')) {
+          const witness = next.runtimeSessionAdmissions?.find(
+            ({ executionId }) => executionId === turn.scope.executionId
+          )?.settlement
+          if (witness && (witness.stage === 'dispatching' || witness.stage === 'accepted'))
+            witness.stage = 'terminal'
+        }
         if (consumeReplay) {
           delete next.pendingHistoryReplay
           delete next.branchContextResetRequired
@@ -893,7 +1237,12 @@ export class RuntimeSessionOwner {
   private async mutateSession(
     scope: RuntimeSessionTurnScope,
     phase:
-      'begin-turn' | 'prepare-permission' | 'flush-events' | 'stage-artifacts' | 'attach-artifacts',
+      | 'begin-turn'
+      | 'prepare-permission'
+      | 'flush-events'
+      | 'stage-artifacts'
+      | 'attach-artifacts'
+      | 'settlement-stage',
     mutate: (latest: PersistedChatSession) => PersistedChatSession
   ): Promise<PersistedChatSession> {
     try {
@@ -930,7 +1279,8 @@ export class RuntimeSessionOwner {
   private trimTurns(): void {
     if (this.turns.size <= MAX_RETAINED_TURNS) return
     for (const [key, turn] of this.turns) {
-      if (!turn.terminalObserved || turn.pending.length > 0) continue
+      if (!turn.terminalObserved || turn.pending.length > 0 || turn.notDispatchedCleanupPending)
+        continue
       this.turns.delete(key)
       if (this.turns.size <= MAX_RETAINED_TURNS) return
     }

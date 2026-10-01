@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import type { SettlementAdmission } from '../../shared/runtime-session-admission'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { opencodeFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
@@ -133,6 +134,18 @@ const planProjection = (): ActivePlanProjection => ({
   counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
 })
 
+const settlement = (): SettlementAdmission => ({
+  batchId: 'batch-1',
+  projectId: 'project-1',
+  sessionId: 's1',
+  rootFrameId: 'root-1',
+  originatingPromptId: 'prompt-1',
+  rootBranchId: 'branch-1',
+  rootBranchRevision: 'revision-1',
+  promptRuntimeSegmentId: 'origin-segment',
+  items: [{ frameId: 'child-1', attemptId: 'attempt-1', status: 'completed' as const }]
+})
+
 const createHarness = (
   input: {
     serialization?: AcpPromptTurnWorkflowOptions['serialization']
@@ -145,6 +158,7 @@ const createHarness = (
     execute?: AcpPromptTurnWorkflowOptions['executor']['execute']
     finalize?: AcpPromptOutcomeFinalizer['finalize']
     beginRuntimeSessionTurn?: AcpPromptTurnWorkflowOptions['beginRuntimeSessionTurn']
+    settlementLifecycle?: AcpPromptTurnWorkflowOptions['settlementLifecycle']
     onPromptStarted?: () => void
     preflightPlan?: AcpPromptTurnWorkflowOptions['plan']['preflight']
     preemptCompaction?: AcpPromptTurnWorkflowOptions['finalization']['preemptCompaction']
@@ -364,6 +378,7 @@ const createHarness = (
     resumeAfterReload,
     recordAdmittedPrompt: vi.fn(() => journal.push('handoff')),
     beginRuntimeSessionTurn: input.beginRuntimeSessionTurn,
+    settlementLifecycle: input.settlementLifecycle,
     onPromptStarted: vi.fn(() => {
       journal.push('start')
       input.onPromptStarted?.()
@@ -872,7 +887,8 @@ describe('AcpPromptTurnWorkflow', () => {
       'renderer',
       undefined,
       undefined,
-      { text: request().text, attribution }
+      { text: request().text, attribution },
+      undefined
     )
     expect(begin.mock.invocationCallOrder[0]).toBeLessThan(
       harness.executor.mock.invocationCallOrder[0]
@@ -896,10 +912,161 @@ describe('AcpPromptTurnWorkflow', () => {
       'renderer',
       undefined,
       'message-1',
+      undefined,
       undefined
     )
     expect(harness.executor).not.toHaveBeenCalled()
     expect(harness.owner.current('s1')).toBeUndefined()
+  })
+
+  it.each(['artifact', 'preparation', 'before-dispatch', 'fence'] as const)(
+    'safely releases a committed settlement %s failure before retry',
+    async (phase) => {
+      const failure = new Error(`${phase} failed`)
+      const begin = vi.fn<NonNullable<AcpPromptTurnWorkflowOptions['beginRuntimeSessionTurn']>>(
+        async () => undefined
+      )
+      const lifecycle = {
+        markDispatch: vi.fn(async () => {
+          if (phase === 'fence') throw failure
+        }),
+        markAccepted: vi.fn(async () => undefined),
+        finishNotDispatched: vi.fn(async () => undefined)
+      }
+      const harness = createHarness({
+        beginRuntimeSessionTurn: begin,
+        settlementLifecycle: lifecycle,
+        ...(phase === 'preparation'
+          ? {
+              prepare: async () => {
+                throw failure
+              }
+            }
+          : {}),
+        ...(phase === 'before-dispatch'
+          ? {
+              beforePromptDispatch: async () => {
+                throw failure
+              }
+            }
+          : {}),
+        execute: async (input) => {
+          await input.beforeDispatch()
+          await input.beforeProviderCall?.()
+          throw new Error('unexpected provider call')
+        }
+      })
+      if (phase === 'artifact') harness.artifacts.open.mockRejectedValueOnce(failure)
+      const settlementAdmission = settlement()
+      await expect(
+        harness.workflow.run(request(), { kind: 'app-continuation', settlementAdmission })
+      ).rejects.toMatchObject({ name: 'SettlementAdmissionError', disposition: 'retry' })
+      expect(lifecycle.finishNotDispatched).toHaveBeenCalledOnce()
+      const executionId = begin.mock.calls[0][1]
+      expect(begin.mock.calls[0][0].provenanceContext?.runtimeSegmentId).toBe(
+        `settlement-${executionId}`
+      )
+      expect(begin.mock.calls[0][6]).toBe(settlementAdmission)
+      expect(lifecycle.markAccepted).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['throw', 'reject'] as const)(
+    'never classifies a settlement provider %s as safe to replay',
+    async (providerFailure) => {
+      const failure = new Error('provider outcome unknown')
+      const lifecycle = {
+        markDispatch: vi.fn(async () => undefined),
+        markAccepted: vi.fn(async () => undefined),
+        finishNotDispatched: vi.fn(async () => undefined)
+      }
+      const harness = createHarness({
+        beginRuntimeSessionTurn: vi.fn(async () => undefined),
+        settlementLifecycle: lifecycle,
+        execute: async (input) => {
+          await input.beforeProviderCall?.()
+          if (providerFailure === 'throw') throw failure
+          return Promise.reject(failure)
+        }
+      })
+      await expect(
+        harness.workflow.run(request(), {
+          kind: 'app-continuation',
+          settlementAdmission: settlement()
+        })
+      ).rejects.toBe(failure)
+      expect(lifecycle.markDispatch).toHaveBeenCalledOnce()
+      expect(lifecycle.finishNotDispatched).not.toHaveBeenCalled()
+    }
+  )
+
+  it('does not permit replay after settlement cleanup persistence fails', async () => {
+    const cleanup = new Error('cleanup uncertain')
+    const lifecycle = {
+      markDispatch: vi.fn(async () => undefined),
+      markAccepted: vi.fn(async () => undefined),
+      finishNotDispatched: vi.fn(async () => {
+        throw cleanup
+      })
+    }
+    const harness = createHarness({
+      beginRuntimeSessionTurn: vi.fn(async () => undefined),
+      settlementLifecycle: lifecycle,
+      prepare: async () => {
+        throw new Error('prepare failed')
+      }
+    })
+    await expect(
+      harness.workflow.run(request(), {
+        kind: 'app-continuation',
+        settlementAdmission: settlement()
+      })
+    ).rejects.toBe(cleanup)
+    expect(lifecycle.markDispatch).not.toHaveBeenCalled()
+  })
+
+  it('retains one settlement fence across a human-approved Plan provider resume', async () => {
+    let paused = false
+    let providerCalls = 0
+    let fenced = false
+    const lifecycle = {
+      markDispatch: vi.fn(async () => {
+        if (fenced) throw new Error('Settlement provider dispatch may already have started.')
+        fenced = true
+      }),
+      markAccepted: vi.fn(async () => undefined),
+      finishNotDispatched: vi.fn(async () => undefined)
+    }
+    const accepted = vi.fn(async () => undefined)
+    const harness = createHarness({
+      beginRuntimeSessionTurn: vi.fn(async () => undefined),
+      settlementLifecycle: lifecycle,
+      planPause: {
+        isProviderPaused: () => paused,
+        resumeAfterProviderStop: async () => {
+          paused = false
+          return { content: 'Approved Plan continuation', accepted }
+        }
+      },
+      execute: async (input) => {
+        await input.beforeDispatch()
+        await input.beforeProviderCall?.()
+        providerCalls += 1
+        await input.onAccepted()
+        paused = providerCalls === 1
+        return { kind: 'stopped', response: { stopReason: 'end_turn' }, facts: {} }
+      }
+    })
+    await expect(
+      harness.workflow.run(request(), {
+        kind: 'app-continuation',
+        settlementAdmission: settlement()
+      })
+    ).resolves.toEqual({ stopReason: 'end_turn' })
+    expect(providerCalls).toBe(2)
+    expect(lifecycle.markDispatch).toHaveBeenCalledOnce()
+    expect(accepted).toHaveBeenCalledOnce()
+    expect(lifecycle.finishNotDispatched).not.toHaveBeenCalled()
   })
 
   it('propagates app-continuation identity without publishing its synthetic text', async () => {

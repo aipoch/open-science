@@ -14,6 +14,7 @@ import {
 import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import type { RuntimeSessionTurnScope } from '../session-persistence/runtime-session-owner'
 import type { NotebookWorkingFile } from './artifact-publication-continuation'
 
 type AcpRuntimePromptReloadHost = Readonly<{
@@ -78,6 +79,24 @@ const composeAcpRuntimePromptOwners = (
   const currentFramework = () => base.backendGeneration.current.framework
   const projectId = (sessionId: string): string => session.sessionEnvironment.projectId(sessionId)
   const emitState = (): void => session.publication.emitState()
+  const runtimeScope = (
+    request: AcpPromptRequest,
+    executionId: string
+  ): RuntimeSessionTurnScope => {
+    const provenance = request.provenanceContext
+    if (!provenance?.agentFrameId || !provenance.messageBranchId || !provenance.runtimeSegmentId)
+      throw new Error('Runtime Session admission requires a durable conversation path.')
+    return {
+      projectId: projectId(request.sessionId),
+      sessionId: request.sessionId,
+      promptMessageId: provenance.promptMessageId,
+      agentFrameId: provenance.agentFrameId,
+      messageBranchId: provenance.messageBranchId,
+      runtimeSegmentId: provenance.runtimeSegmentId,
+      executionId
+    }
+  }
+
   const diagnosticContext = () => ({
     framework: currentFramework().id,
     generation: base.connectionResources.epoch,
@@ -402,13 +421,31 @@ const composeAcpRuntimePromptOwners = (
     recordAdmittedPrompt: (request) => base.handoffContinuity.recordAdmittedPrompt(request),
     ...(options.runtimeSessions
       ? {
+          settlementLifecycle: {
+            markDispatch: async (request, executionId) => {
+              await options.runtimeSessions!.markSettlementDispatch(
+                runtimeScope(request, executionId)
+              )
+            },
+            markAccepted: async (request, executionId) => {
+              await options.runtimeSessions!.markSettlementAccepted(
+                runtimeScope(request, executionId)
+              )
+            },
+            finishNotDispatched: async (request, executionId) => {
+              await options.runtimeSessions!.finishSettlementNotDispatched(
+                runtimeScope(request, executionId)
+              )
+            }
+          },
           beginRuntimeSessionTurn: async (
             request,
             executionId,
             reviewOwner,
             planDeliveryCommandId,
             delegatedMessageId,
-            applicationPrompt
+            applicationPrompt,
+            settlementAdmission
           ) => {
             const provenance = request.provenanceContext
             if (
@@ -445,7 +482,8 @@ const composeAcpRuntimePromptOwners = (
                 reviewOwner,
                 ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
                 ...(delegatedMessageId ? { delegatedMessageId } : {}),
-                ...(applicationPrompt ? { applicationPrompt } : {})
+                ...(applicationPrompt ? { applicationPrompt } : {}),
+                ...(settlementAdmission ? { settlementAdmission } : {})
               }
             )
           }

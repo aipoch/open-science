@@ -184,12 +184,22 @@ export function composeDelegation({
     onAgentRuntimeUpdate: (update) => broadcastToRenderers('acp:agent-runtime-update', update),
     settlementContinuations: {
       dispatch: createDelegationSettlementContinuationDispatch({
-        sendAppContinuationObserved: (request, onProviderPromptAccepted) => {
+        sendAppContinuationObserved: (
+          request,
+          onProviderPromptAccepted,
+          settlementAdmission,
+          validate
+        ) => {
           const activeRuntime = runtimeRef.current
           if (!activeRuntime) {
             throw new DelegateMessagePreAcceptanceError('The Main Agent runtime is unavailable.')
           }
-          return activeRuntime.sendAppContinuationObserved(request, onProviderPromptAccepted)
+          return activeRuntime.sendAppContinuationObserved(
+            request,
+            onProviderPromptAccepted,
+            settlementAdmission,
+            validate
+          )
         },
         onPromptEnded: (sessionId, promptId) =>
           delegatedWorkRef.current?.root.settlementPromptEnded?.(sessionId, promptId)

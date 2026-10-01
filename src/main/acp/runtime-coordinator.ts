@@ -24,6 +24,10 @@ import type {
   AcpStateUpdate
 } from '../../shared/acp'
 import type { AcpHandoffFailure } from '../../shared/acp'
+import {
+  SettlementAdmissionError,
+  type SettlementAdmission
+} from '../../shared/runtime-session-admission'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { MessageAttribution } from '../../shared/session-persistence'
@@ -1023,10 +1027,13 @@ class AcpRuntimeCoordinator {
 
   sendAppContinuationObserved(
     request: AcpPromptRequest,
-    onProviderPromptAccepted: () => void
+    onProviderPromptAccepted: () => void,
+    settlementAdmission?: SettlementAdmission,
+    validate?: () => void
   ): ReturnType<AcpRuntime['sendAppContinuation']> {
-    return this.linearizeRootAdmission(request.sessionId, (cancellation) =>
-      this.dispatchPrompt(
+    return this.linearizeRootAdmission(request.sessionId, (cancellation) => {
+      validate?.()
+      return this.dispatchPrompt(
         request,
         observePromptAcceptance(onProviderPromptAccepted),
         'sendAppContinuation',
@@ -1037,9 +1044,10 @@ class AcpRuntimeCoordinator {
         undefined,
         'renderer',
         undefined,
-        cancellation
+        cancellation,
+        settlementAdmission
       )
-    )
+    })
   }
 
   private linearizeRootAdmission<Result>(
@@ -1282,7 +1290,8 @@ class AcpRuntimeCoordinator {
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
     startAdmission?: PromptAcceptance,
-    cancellation?: RootAdmissionCancellation
+    cancellation?: RootAdmissionCancellation,
+    settlementAdmission?: SettlementAdmission
   ): ReturnType<AcpRuntime['sendPrompt']> {
     let dispatchStarted = false
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> => {
@@ -1300,15 +1309,21 @@ class AcpRuntimeCoordinator {
         runtimeReviewOwner,
         startAdmission,
         undefined,
-        cancellation
+        cancellation,
+        settlementAdmission
       )
     }
     if (!this.promptDispatchAdmissionGuard) return dispatch()
-    const guarded = this.promptDispatchAdmissionGuard(
-      request.sessionId,
-      dispatch,
-      operation === 'sendPrompt'
-    )
+    let guarded: ReturnType<AcpRuntime['sendPrompt']>
+    try {
+      guarded = this.promptDispatchAdmissionGuard(
+        request.sessionId,
+        dispatch,
+        operation === 'sendPrompt'
+      )
+    } catch (error) {
+      guarded = Promise.reject(error)
+    }
     return Promise.race([
       guarded,
       cancellation?.promise ?? new Promise<never>(() => undefined)
@@ -1318,7 +1333,17 @@ class AcpRuntimeCoordinator {
           throw error
         })
       }
-      if (error instanceof DelegateMessagePreAcceptanceError) throw error
+      if (
+        dispatchStarted ||
+        error instanceof DelegateMessagePreAcceptanceError ||
+        error instanceof SettlementAdmissionError
+      )
+        throw error
+      if (settlementAdmission) {
+        throw Object.assign(new SettlementAdmissionError('dispatch-guard-rejected', 'retry'), {
+          cause: error
+        })
+      }
       throw new DelegateMessagePreAcceptanceError(
         error instanceof Error ? error.message : String(error),
         error
@@ -1338,7 +1363,8 @@ class AcpRuntimeCoordinator {
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
     startAdmission?: PromptAcceptance,
     delegatedMessageId?: string,
-    cancellation?: RootAdmissionCancellation
+    cancellation?: RootAdmissionCancellation,
+    settlementAdmission?: SettlementAdmission
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const origin =
@@ -1434,6 +1460,16 @@ class AcpRuntimeCoordinator {
         return admitPrompt
           ? runtime.sendPrompt(taskRequest, attempt.id, admitPrompt)
           : runtime.sendPrompt(taskRequest, attempt.id)
+      }
+      if (settlementAdmission) {
+        return runtime.sendAppContinuation(
+          taskRequest,
+          attempt.id,
+          undefined,
+          undefined,
+          undefined,
+          settlementAdmission
+        )
       }
       return delegatedMessageId
         ? runtime.sendAppContinuation(taskRequest, attempt.id, undefined, delegatedMessageId)

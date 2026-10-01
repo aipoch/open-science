@@ -18,6 +18,11 @@ import { retrySessionRevisionConflict } from './fixtures/session-revision-retry'
 const ROOT_PROMPT = 'Coordinate the release-gate delegates.'
 const CHILD_COUNT = 24
 const TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
+const SETTLEMENT_PROMPT = 'Run the production idle Main settlement journey.'
+const SETTLEMENT_CHILD = 'Idle Main settlement child'
+const SETTLEMENT_INITIAL_ANSWER = 'Main ended its turn while the file-gated child remained running.'
+const SETTLEMENT_FINAL_ANSWER =
+  'Main collected the completed file-gated child evidence after its idle turn.'
 const ARTIFACT_VERSION_INPUT_PROMPT =
   'Run the production Artifact Version input delegation journey.'
 const BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
@@ -688,6 +693,139 @@ test('resolves a bare Artifact version_id into a delegated read-only input', asy
   })
   expect(evidence?.artifactVersions).toHaveLength(1)
   expect(evidence?.artifactVersions[0]).toMatch(/^[0-9a-f-]{36}$/)
+})
+
+test('wakes durable idle Main through production settlement admission and collects its child', async ({
+  app
+}) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  await createProject(page, 'Idle Main settlement release gate')
+  const releaseFile = join(await app.createTestDirectory('idle-main-settlement'), 'release')
+  const prompt = `${SETTLEMENT_PROMPT}\nRelease file: ${JSON.stringify(releaseFile)}`
+  try {
+    await sendPrompt(page, prompt, SETTLEMENT_INITIAL_ANSWER, 120_000)
+    await expectDurableChildStatus(page, SETTLEMENT_CHILD, 'running')
+    const readEvidence = async (): Promise<
+      | {
+          sessionId: string
+          status: PersistedChatSession['status']
+          activeRun: PersistedChatSession['activeRun']
+          frameId: string
+          attemptId: string | undefined
+          childStatus: string | undefined
+          originSegmentId: string | undefined
+          rootUsers: string[]
+          rootAnswers: {
+            content: string
+            status: string
+            segmentId: string | undefined
+          }[]
+        }
+      | undefined
+    > =>
+      page.evaluate(
+        async ({ childName, prompt }) => {
+          const session = (await window.api.sessions.loadAll()).sessions.find((candidate) =>
+            candidate.conversationGraph?.frames.some((frame) => frame.delegateName === childName)
+          )
+          if (!session) return undefined
+          const graph = session.conversationGraph!
+          const origin = graph.messages.find(
+            (message) => message.role === 'user' && message.content === prompt
+          )
+          const child = graph.frames.find((frame) => frame.delegateName === childName)!
+          const attempt = session.runtimeContext?.delegatedWork?.records
+            .find((record) => record.agentFrameId === child.id)
+            ?.attempts.at(-1)
+          return {
+            sessionId: session.id,
+            status: session.status,
+            activeRun: session.activeRun,
+            frameId: child.id,
+            attemptId: attempt?.id,
+            childStatus: attempt?.status,
+            originSegmentId: origin?.runtimeSegmentId,
+            rootUsers: graph.messages
+              .filter(
+                (message) => message.agentFrameId === graph.rootFrameId && message.role === 'user'
+              )
+              .map((message) => message.content),
+            rootAnswers: graph.messages
+              .filter(
+                (message) => message.agentFrameId === graph.rootFrameId && message.role === 'agent'
+              )
+              .map((message) => ({
+                content: message.content,
+                status: message.status,
+                segmentId: message.runtimeSegmentId
+              }))
+          }
+        },
+        { childName: SETTLEMENT_CHILD, prompt }
+      )
+    await expect.poll(readEvidence).toMatchObject({
+      status: 'idle',
+      activeRun: undefined,
+      childStatus: 'running',
+      rootAnswers: [{ content: SETTLEMENT_INITIAL_ANSWER, status: 'complete' }]
+    })
+    const idle = (await readEvidence())!
+    expect(idle.originSegmentId).toBeDefined()
+    expect(
+      (await app.readFakeAgentPrompts()).filter(
+        ({ role, sessionId }) => role === 'main' && sessionId === idle.sessionId
+      )
+    ).toHaveLength(1)
+
+    await writeFile(releaseFile, '')
+    await expectDurableChildStatus(page, SETTLEMENT_CHILD, 'completed')
+    await expect
+      .poll(async () =>
+        (await app.readFakeAgentPrompts()).filter(
+          ({ role, sessionId, prompt }) =>
+            role === 'main' &&
+            sessionId === idle.sessionId &&
+            prompt.includes('Delegated work settlement update')
+        )
+      )
+      .toHaveLength(1)
+    const settlementPrompt = (await app.readFakeAgentPrompts()).find(
+      ({ role, sessionId, prompt }) =>
+        role === 'main' &&
+        sessionId === idle.sessionId &&
+        prompt.includes('Delegated work settlement update')
+    )!.prompt
+    expect(settlementPrompt).toContain(
+      `frame=${idle.frameId}; attempt=${idle.attemptId}; status=completed`
+    )
+    await expect.poll(readEvidence).toMatchObject({
+      status: 'idle',
+      activeRun: undefined,
+      originSegmentId: idle.originSegmentId,
+      rootUsers: [prompt],
+      rootAnswers: [
+        { content: SETTLEMENT_INITIAL_ANSWER, status: 'complete' },
+        { content: SETTLEMENT_FINAL_ANSWER, status: 'complete' }
+      ]
+    })
+    const finished = (await readEvidence())!
+    expect(finished.rootAnswers[1].segmentId).not.toBe(idle.originSegmentId)
+    expect(finished.rootAnswers[1].segmentId).toBeDefined()
+    page = await app.restart()
+    await expect.poll(readEvidence).toEqual(finished)
+    expect(
+      (await app.readFakeAgentPrompts()).filter(
+        ({ role, sessionId, prompt }) =>
+          role === 'main' &&
+          sessionId === idle.sessionId &&
+          prompt.includes('Delegated work settlement update')
+      )
+    ).toHaveLength(1)
+  } finally {
+    await writeFile(releaseFile, '')
+  }
 })
 
 test('projects real production-composed delegation, permission, and Stop lifecycle', async ({

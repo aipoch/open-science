@@ -58,6 +58,11 @@ const createPreviewContextMenuXlsxBase64 = async () => {
   return archive.generateAsync({ type: 'base64', compression: 'DEFLATE' })
 }
 const DELEGATION_TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
+const DELEGATION_SETTLEMENT_PROMPT = 'Run the production idle Main settlement journey.'
+const DELEGATED_SETTLEMENT_TASK = 'Complete the file-gated settlement evidence.'
+const DELEGATED_SETTLEMENT_NAME = 'Idle Main settlement child'
+const SETTLEMENT_CONTROL_MARKER =
+  'Delegated work settlement update (application-owned context, not a user message).'
 const DELEGATION_ARTIFACT_VERSION_INPUT_PROMPT =
   'Run the production Artifact Version input delegation journey.'
 const DELEGATION_BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
@@ -509,12 +514,19 @@ const captureDelegatedHandoff = async (sessionId, task) => {
 const captureProviderPrompt = async (sessionId, prompt) => {
   const captureRoot = process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT
   if (!captureRoot) return
+  const route = sessionRoutes.get(sessionId)
+  const handoff = route?.artifactCurrentRunFile
+    ? await readFile(route.artifactCurrentRunFile, 'utf8').then((content) => JSON.parse(content))
+    : undefined
+  // Main settlement executions also use scoped handoffs. Frame identity determines the role.
+  const role =
+    handoff?.agentFrameId && handoff.agentFrameId !== handoff.rootFrameId ? 'delegate' : 'main'
   await mkdir(captureRoot, { recursive: true })
   await appendFile(
     join(captureRoot, 'provider-prompts.jsonl'),
     `${JSON.stringify({
       sessionId,
-      role: sessionRoutes.get(sessionId)?.artifactCurrentRunFile ? 'delegate' : 'main',
+      role,
       prompt
     })}\n`,
     'utf8'
@@ -1297,6 +1309,7 @@ if (process.argv.includes('--version')) {
       // delegate task text wins the first matching branch and the continuation starts a duplicate
       // child instead of handling the delivered message.
       const controlStart = Math.max(
+        rawPrompt.lastIndexOf(SETTLEMENT_CONTROL_MARKER),
         ...RELIABLE_CONTROL_MARKERS.map((marker) => rawPrompt.lastIndexOf(marker))
       )
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
@@ -2248,6 +2261,49 @@ if (process.argv.includes('--version')) {
           reply = await createPreviewContextMenuArtifacts(context.params.sessionId)
         } else if (prompt.includes(SPREADSHEET_SEARCH_ARTIFACT_PROMPT)) {
           reply = await createSpreadsheetSearchArtifacts(context.params.sessionId)
+        } else if (
+          prompt.includes(SETTLEMENT_CONTROL_MARKER) &&
+          prompt.includes(DELEGATED_SETTLEMENT_NAME)
+        ) {
+          const handle = prompt.match(/frame=([^;\n]+); attempt=([^;\n]+); status=completed/u)
+          if (!handle) throw new Error('Settlement did not include the exact completed handle.')
+          const results = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `return await host.collect([{ frameId: ${JSON.stringify(handle[1])}, attemptId: ${JSON.stringify(handle[2])} }], { timeoutSeconds: 0 })`
+            )
+          )
+          if (
+            results.length !== 1 ||
+            results[0].status !== 'completed' ||
+            results[0].response !== 'File-gated child evidence completed.'
+          ) {
+            throw new Error(`Settlement collect failed: ${JSON.stringify(results)}`)
+          }
+          reply = 'Main collected the completed file-gated child evidence after its idle turn.'
+        } else if (prompt.includes(SETTLEMENT_CONTROL_MARKER)) {
+          // Other journeys collect on their own schedule. A settled child's display name can
+          // repeat a task-routing marker; acknowledge the update without executing that task.
+          reply = 'Delegated settlement observed.'
+        } else if (prompt.includes(DELEGATION_SETTLEMENT_PROMPT)) {
+          const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
+          const delegated = controlResultValue(
+            await runProductionDelegationRequest(
+              context.params.sessionId,
+              {
+                task: `${DELEGATED_SETTLEMENT_TASK}\nRelease file: ${JSON.stringify(releaseFile)}`,
+                name: DELEGATED_SETTLEMENT_NAME
+              },
+              false
+            )
+          )
+          if (delegated.kind !== 'receipts' || delegated.children?.[0]?.status !== 'running') {
+            throw new Error(`Async settlement delegation failed: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Main ended its turn while the file-gated child remained running.'
+        } else if (prompt.includes(DELEGATED_SETTLEMENT_TASK)) {
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]), 120_000)
+          reply = 'File-gated child evidence completed.'
         } else if (prompt.includes(DELEGATION_TERMINAL_PROMPT)) {
           const delegated = await runProductionDelegation(
             context.params.sessionId,

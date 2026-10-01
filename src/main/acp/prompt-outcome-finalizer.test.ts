@@ -122,6 +122,40 @@ const stopped = (
   }
 })
 
+it.each(['stop', 'error'] as const)(
+  'commits %s against its captured settlement Segment before releasing the interaction',
+  async (kind) => {
+    const harness = createHarness()
+    harness.interactions.updatePromptProvenance(harness.interaction, {
+      promptMessageId: 'prompt-1',
+      runtimeSegmentId: 'settlement-execution-1'
+    })
+    harness.handles.commitTerminal = vi.fn(async (event) => {
+      expect(harness.interactions.current('s1')).toBe(harness.interaction)
+      harness.events.push(event)
+    })
+    harness.handles.emitArtifact = vi.fn(async (onPublished) => {
+      harness.interactions.updatePromptProvenance(harness.interaction, {
+        promptMessageId: 'prompt-1',
+        runtimeSegmentId: 'settlement-later-metadata'
+      })
+      onPublished()
+    })
+    const failure = new Error('provider failed')
+    const outcome = kind === 'stop' ? stopped() : { kind: 'failed' as const, error: failure }
+    if (kind === 'stop') harness.interactions.captureTerminal(harness.interaction, 'stop')
+    const completion = new AcpPromptOutcomeFinalizer().finalize(harness.handles, outcome)
+    if (kind === 'stop') await completion
+    else await expect(completion).rejects.toBe(failure)
+    expect(harness.events[0]).toMatchObject({
+      kind,
+      promptMessageId: 'prompt-1',
+      runtimeSegmentId: 'settlement-execution-1'
+    })
+    expect(harness.interactions.current('s1')).toBeUndefined()
+  }
+)
+
 describe('AcpPromptOutcomeFinalizer', () => {
   it.each([true, false])(
     'retains failed Notebook stop severity after cleanup (fatal: %s)',
