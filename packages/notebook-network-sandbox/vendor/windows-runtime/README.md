@@ -154,8 +154,9 @@ The existing data-root migration owner copies and verifies this package tree.
 Host global packages and experimental Session-local `.notebook-tools/npm` packages
 are not imported automatically; reinstall any needed tools with `npm install -g`.
 
-Only protected Windows Notebook child processes use this managed Node. Electron and the
-development toolchain are independent. Upgrading Notebook from Node 22
+This managed Node is limited to Windows Notebook child processes, including restoration of
+existing Core-bound Sessions from cache. Electron and the development toolchain are independent.
+Upgrading Notebook from Node 22
 to Node 24 preserves its shared tool directory, but packages with native addons may need
 reinstallation or rebuilding for Node 24. No automatic migration of those packages
 or historical Notebook data is performed.
@@ -196,8 +197,10 @@ owned test installation; setup and final removal remain owned by that smoke.
 This does not certify arbitrary native addons, online
 registry access, or a clean installed application.
 
-New Shell bindings record PowerShell `7.6`. Historical `5.1` bindings remain
-readable and retain their original interpreter identity. There is no database
-migration or new execution state. Re-running a historical cell uses the selected
-Session runtime, as before. A source build is not a vendor-signed runtime; Windows
-release packaging must include these artifacts in its normal signing process.
+New standard-mode Shell bindings record PowerShell `5.1`; new protected bindings
+record verified `7.6`. Existing bindings retain their interpreter identity.
+There is no database migration or new persisted execution state. Re-running a
+historical cell uses the selected Session runtime, as before. A source build is
+not a signed distribution: sign changed runtime components before the independent
+CDN staging workflow verifies them. Application releases reuse those signed bytes
+and do not bundle or re-sign Node/PowerShell.

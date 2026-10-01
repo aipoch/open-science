@@ -103,13 +103,22 @@ jobs:
         shell: pwsh
         run: |
           $env:OPEN_SCIENCE_TEST_RUNTIME_ARCHIVES = Join-Path $PWD 'staged-components'
+          $desktopLocalAppData = $env:LOCALAPPDATA
           & packages/notebook-network-sandbox/vendor/windows-src/ci/smoke.ps1 -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe -AfterSetup {
             param($port, $installationId, $ownershipRoot)
             $env:RUN_WINDOWS_CDN_RUNTIME = '1'
             $env:OPEN_SCIENCE_TEST_SANDBOX_INSTALLATION_ID = $installationId
             $env:OPEN_SCIENCE_TEST_SANDBOX_OWNERSHIP_ROOT = $ownershipRoot
-            npx vitest run src/main/notebook/windows-runtime-probe.windows.test.ts
-            if ($LASTEXITCODE -ne 0) { throw 'Signed component isolation verification failed.' }
+            # The smoke simulates another administrator during setup. Runtime execution belongs
+            # to the original desktop user: Windows derives the AppContainer Temp path from it.
+            $setupLocalAppData = $env:LOCALAPPDATA
+            try {
+              $env:LOCALAPPDATA = $desktopLocalAppData
+              npx vitest run src/main/notebook/windows-runtime-probe.windows.test.ts
+              if ($LASTEXITCODE -ne 0) { throw 'Signed component isolation verification failed.' }
+            } finally {
+              $env:LOCALAPPDATA = $setupLocalAppData
+            }
           }
       - name: Upload verified candidates
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
