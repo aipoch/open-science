@@ -38,8 +38,17 @@ export function checkWindowsNotebookRuntime({
     if (
       marker.node !== sources.node.version ||
       marker.powershell !== sources.powershell.version ||
-      !marker.patches?.includes('node-appcontainer-package-scope-v1') ||
-      !marker.patches?.includes(npmRepair)
+      typeof sources.powershell.commit !== 'string' ||
+      !/^[a-f0-9]{40}$/i.test(sources.powershell.commit) ||
+      marker.powershellSourceCommit !== sources.powershell.commit ||
+      !Array.isArray(marker.patches) ||
+      ![
+        'libuv-f46e4246b5277fe1c5888b88b24d8b78020dd4f8',
+        'node-appcontainer-package-scope-v1',
+        'powershell-appcontainer-v1',
+        'powershell-source-archive-metadata-v1',
+        npmRepair
+      ].every((patch) => marker.patches.includes(patch))
     ) {
       throw setupError
     }

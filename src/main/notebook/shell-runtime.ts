@@ -40,10 +40,11 @@ export const captureShellRuntimeBinding = (binding: ShellRuntimeBinding): ShellR
 }
 
 export const defaultShellRuntimeBinding = (
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  protectedMode = false
 ): ShellRuntimeBinding =>
   platform === 'win32'
-    ? Object.freeze({ kind: 'powershell', version: '7.6' })
+    ? Object.freeze({ kind: 'powershell', version: protectedMode ? '7.6' : '5.1' })
     : Object.freeze({ kind: 'native-posix', shell: '/bin/sh' })
 
 export const shellRuntimeDialect = (binding: ShellRuntimeBinding): ShellRuntimeDialect =>

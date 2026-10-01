@@ -38,10 +38,62 @@ Preserve an existing runtime until the replacement has been verified.
 
 These CI artifacts currently have a short retention period; they are not a durable
 download distribution. Automatic development downloads are not implemented yet.
-Packaged applications include their runtime assets. Rebuilding the runtimes is a
-maintainer task when their sources or patches change.
+Packaged applications prepare separate verified CDN components only when protection
+is enabled. Standard development does not require these source-build fixtures.
+Rebuilding is a maintainer task when sources or patches change.
 
-## Building from source
+## On-demand distribution
+
+Application packages omit Node and PowerShell. Standard-mode new Sessions retain
+Windows PowerShell 5.1 and the Electron-backed REPL. Explicit protection setup
+prepares the components in the application's configuration directory under
+`notebook-runtimes/<component>/<architecture>/<archive-sha256>`. This cache survives
+Session deletion, disabling protection, and application upgrades. It is separate
+from writable npm tools; no historical tools or Session bindings are migrated.
+Incomplete downloads are discarded. Existing corrupt versions are preserved and
+reported for repair, never overwritten while another process may be using them.
+
+The application catalog pins every executable, library, module and archive byte.
+Only catalog-listed official versions are candidates: a newer version number alone
+does not establish AppContainer compatibility. Official installations at known
+installation paths take precedence after file verification and a native probe;
+otherwise an exact bundled/cached component is reused, then explicit setup can
+download its CDN archive. A changed official installation is checked again before
+another launch. The current catalog contains patched x64 releases; future verified
+official releases can replace either component independently. Missing official
+installations still need a download. A PowerShell minor-version change also needs
+explicit Session binding support; changing a catalog must not reinterpret 7.6 as
+another language version. Existing 5.1/7.6 Session bindings are never
+silently converted; unavailable dependencies or a protection mismatch prompt the
+user to prepare protection or explicitly switch/start a Session.
+
+Maintainers prepare **already signed** runtime directories with:
+
+```powershell
+node scripts/stage-windows-notebook-components.mjs <signed-runtime-root> <output>
+node scripts/windows-runtime-cdn.mjs verify <output>
+```
+
+Staging validates source identities, repairs, every PE signature and timestamp,
+and creates Node/npm and PowerShell archives plus a candidate catalog. Review and
+commit the catalog before publication. `Stage Windows Notebook CDN components`
+accepts an exact successful signing run and artifact ID. Its default `dry_run=true`
+uploads Actions artifacts only, without signing again or writing to the CDN.
+The existing `Stage runtime bundle` workflow also exposes this path through
+`windows_runtime_run` and `windows_runtime_artifact`; setting these skips Python/R
+staging. Source artifacts may contain `build.json`, `node/` and `powershell/`, or
+an older signed installer containing that directory. Installers are extracted,
+never executed by the staging workflow.
+
+Publication uses the existing S3 credentials and content-addressed CDN keys, with
+SHA-256 and S3 create-only conditions. Existing identical objects are reused;
+different bytes at an existing key stop publication. There is no remote mutable
+manifest and no GitHub Release publication. Application packaging checks pinned
+CDN availability without rebuilding or re-signing these runtimes. Keep published
+objects available for all application versions which reference them; do not apply
+short-lived Actions cache/artifact retention to these CDN objects.
+
+## Building from source (maintainers)
 
 `sources.json` pins upstream source and portable SDK archive checksums. The runtime
 patches above and the source-archive metadata patch are the complete source delta.
@@ -64,13 +116,12 @@ deadline, a progress message every 30 seconds, and completion timing. This avoid
 depending on the runner's selected `tar` and external decompressor. Sources are
 promoted from a temporary `.extracting` directory only after successful extraction;
 an interrupted extraction is retained for inspection and requires a fresh BuildRoot.
-Generated `x64/` is ignored and copied by electron-builder outside app.asar.
-`build.json` is written last; incomplete builds fail closed at runtime.
-The same staged directory is used by `npm run dev`.
+Generated `x64/` is ignored and used by native CI fixtures, not electron-builder.
+`build.json` is written last; incomplete builds fail closed in preflight.
 
 CI builds once per workflow through `windows-notebook-runtime.yml` on
 `windows-2022` (VS 2022), using `.github/actions/windows-notebook-runtime`.
-Packaging, Windows core, E2E setup, full-test dependency snapshots and resource
+Windows core, E2E setup, full-test dependency snapshots and resource
 probes consume its artifact by ID. The cache is keyed
 by the pinned sources, patches and build script; restored binaries must pass
 version and npm startup checks. E2E/dependency snapshots already include this
@@ -103,7 +154,7 @@ The existing data-root migration owner copies and verifies this package tree.
 Host global packages and experimental Session-local `.notebook-tools/npm` packages
 are not imported automatically; reinstall any needed tools with `npm install -g`.
 
-Only Windows Notebook child processes use this bundled Node. Electron and the
+Only protected Windows Notebook child processes use this managed Node. Electron and the
 development toolchain are independent. Upgrading Notebook from Node 22
 to Node 24 preserves its shared tool directory, but packages with native addons may need
 reinstallation or rebuilding for Node 24. No automatic migration of those packages

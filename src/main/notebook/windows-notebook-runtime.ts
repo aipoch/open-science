@@ -7,13 +7,27 @@ export type WindowsNotebookRuntime = Readonly<{
   powershell: string
 }>
 
-// This runtime contains the upstream libuv AppContainer pipe fix and the PowerShell provider
-// fixes. Never fall back to the system runtimes: they can hang before a child timeout is armed.
+let preparedRuntime: (() => WindowsNotebookRuntime) | undefined
+
+// Installed by the application composition root; preparation remains asynchronous and explicit.
+// Tests and source-build CI without composition retain the isolated vendor fixture resolver.
+export const configureWindowsNotebookRuntime = (
+  resolver: () => WindowsNotebookRuntime
+): (() => void) => {
+  preparedRuntime = resolver
+  return () => {
+    if (preparedRuntime === resolver) preparedRuntime = undefined
+  }
+}
+
+// Production resolves only a prepared, verified selection. The vendor path below is retained for
+// source-build/native CI fixtures; arbitrary host runtimes are never a protected-mode fallback.
 export const resolveWindowsNotebookRuntime = (
   resourcesPath: string | undefined = process.resourcesPath,
   moduleDirectory: string = __dirname,
   architecture: string = process.arch
 ): WindowsNotebookRuntime => {
+  if (preparedRuntime) return preparedRuntime()
   if (architecture !== 'x64' && architecture !== 'arm64') {
     throw new Error(`Windows Notebook runtime does not support ${architecture}.`)
   }

@@ -17,7 +17,7 @@ describe('shell runtime binding', () => {
     expect(shellRuntimeAgentContract(binding).sessionInstruction).toContain(`PowerShell ${version}`)
   })
   it.each([
-    ['win32', { kind: 'powershell', version: '7.6' }],
+    ['win32', { kind: 'powershell', version: '5.1' }],
     ['linux', { kind: 'native-posix', shell: '/bin/sh' }],
     ['darwin', { kind: 'native-posix', shell: '/bin/sh' }]
   ] as const)('keeps the existing %s default', (platform, expected) => {

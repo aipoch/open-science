@@ -4322,6 +4322,50 @@ const delayedSandboxCleanup = (
 }
 
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
+  it('executes standard Windows REPL without resolving or downloading a protected runtime', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-standard-repl-'))
+    const resolver = vi
+      .spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookRuntime')
+      .mockImplementation(() => {
+        throw new Error('Protected runtime must not be used in standard mode')
+      })
+    resolver.mockClear()
+    const resolveWindowsRuntime = vi.fn(async () => null)
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      platform: 'win32',
+      processSandbox: {
+        resolveWindowsRuntime,
+        wrap: async (invocation) => ({
+          ...invocation,
+          annotateStderr: (stderr) => stderr,
+          cleanup: async (_reason, outcome) => ({
+            processesTerminated: outcome.processesTerminated,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+        })
+      }
+    })
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        sessionId: 'fixture-session',
+        projectId: 'fixture-project',
+        kind: 'repl',
+        code: 'console.log("STANDARD_READY")'
+      })
+      expect(result, JSON.stringify(result)).toMatchObject({
+        status: 'completed',
+        stdout: expect.stringContaining('STANDARD_READY')
+      })
+      expect(resolveWindowsRuntime).toHaveBeenCalledOnce()
+      expect(resolver).not.toHaveBeenCalled()
+    } finally {
+      await executor.shutdown()
+      resolver.mockRestore()
+    }
+  }, 15_000)
   it('retains original exit cleanup proof when recovery admits a successor during the retry delay', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-exit-retry-epoch-'))
     let proofAvailable = false

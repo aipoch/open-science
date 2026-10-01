@@ -28,10 +28,17 @@ on:
         description: Validate and upload workflow artifacts without writing to the CDN
         type: boolean
         default: true
+      windows_runtime_run:
+        description: Optional signed Windows Node/PowerShell run; replaces Python/R staging
+        type: string
+      windows_runtime_artifact:
+        description: Exact signed Windows runtime or installer artifact ID
+        type: string
 
 # Read-only on the repo; writes go to S3, not back to git.
 permissions:
   contents: read
+  actions: read
 
 # Only one publisher may upload a versioned target at a time. Matrix jobs still publish distinct
 # subdirs concurrently within one run; separate workflow runs queue instead of racing the same
@@ -41,7 +48,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  windows_components:
+    if: ${{ inputs.windows_runtime_run != '' || inputs.windows_runtime_artifact != '' }}
+    uses: ./.github/workflows/windows-runtime-cdn.yml
+    with:
+      source_run: ${{ inputs.windows_runtime_run }}
+      artifact_id: ${{ inputs.windows_runtime_artifact }}
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit
+
   setup:
+    if: ${{ inputs.windows_runtime_run == '' && inputs.windows_runtime_artifact == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

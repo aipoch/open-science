@@ -210,6 +210,7 @@ const createService = (
     log?: Logger
     installCoordinator?: SettingsInstallCoordinator
     wslSetup?: SettingsServiceOptions['wslSetup']
+    getNotebookNetworkStatus?: SettingsServiceOptions['getNotebookNetworkStatus']
     wsl2PreviewStatus?: SettingsServiceOptions['wsl2PreviewStatus']
   } = {}
 ): InstanceType<typeof SettingsService> =>
@@ -301,6 +302,13 @@ const createService = (
     claudeSharedAuth: options.claudeSharedAuth as any,
     installCoordinator: options.installCoordinator,
     wslSetup: options.wslSetup,
+    getNotebookNetworkStatus:
+      options.getNotebookNetworkStatus ??
+      (async () => ({
+        kind: 'setupRequired',
+        platform: 'win32',
+        reasons: ['windowsProfileMissing']
+      })),
     wsl2PreviewStatus:
       options.wsl2PreviewStatus ?? (() => ({ available: true, reason: 'available' }))
   })
@@ -629,6 +637,33 @@ describe('SettingsService: Marketplace installation projection', () => {
 })
 
 describe('SettingsService: Local Shell runtime', () => {
+  it('uses Core only after protection is ready', async () => {
+    const service = createService(undefined, {
+      getNotebookNetworkStatus: async () => ({ kind: 'ready', warnings: [] })
+    })
+    expect((await service.switchLocalShellToPowerShell()).result.runtimeBinding).toEqual({
+      kind: 'powershell',
+      version: '7.6'
+    })
+  })
+
+  it.each(['error', 'checking'] as const)(
+    'preserves the selected runtime while protection is %s',
+    async (kind) => {
+      const service = createService(undefined, {
+        getNotebookNetworkStatus: async () =>
+          kind === 'error' ? { kind, reason: 'runtimeFailure' } : { kind }
+      })
+      const profile = { distro: 'fixture-distro', user: 'fixture-user' }
+      await repository.setLocalShellRuntime('wsl2-bash', profile)
+      await expect(service.switchLocalShellToPowerShell()).rejects.toThrow(
+        'Prepare Notebook protection'
+      )
+      await expect(repository.getSettings()).resolves.toMatchObject({
+        localShellRuntime: 'wsl2-bash'
+      })
+    }
+  )
   it('projects the current persisted Shell runtime into a cached WSL setup snapshot', async () => {
     const selection = { distro: 'Ubuntu-24.04', user: 'scientist' }
     let cachedRuntime: 'powershell' | 'wsl2-bash' = 'wsl2-bash'
@@ -688,7 +723,7 @@ describe('SettingsService: Local Shell runtime', () => {
     const write = await service.switchLocalShellToPowerShell()
 
     expect(write.result).toEqual({
-      runtimeBinding: { kind: 'powershell', version: '7.6' },
+      runtimeBinding: { kind: 'powershell', version: '5.1' },
       appliesTo: 'subsequent-executions',
       wslProfilePreserved: true
     })

@@ -583,6 +583,8 @@
       "src/main/notebook/r-connection-guard.test.ts",
       "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
       "scripts/check-windows-notebook-runtime.test.ts",
+      "scripts/windows-runtime-cdn.test.ts",
+      "src/main/notebook/windows-runtime-probe.windows.test.ts",
       "scripts/windows-release-workflows.test.ts"
     ]
   },

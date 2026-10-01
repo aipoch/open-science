@@ -332,6 +332,24 @@ const prepareShellLaunchOptions = async (
     })
   }
   const runtimeBinding = options.runtimeBinding ?? defaultShellRuntimeBinding(hostPlatform)
+  if (hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
+    try {
+      await options.processSandbox?.resolveWindowsRuntime?.({
+        runtime: 'bash',
+        binding: runtimeBinding,
+        signal: options.signal
+      })
+    } catch (error) {
+      throw new ShellPreparationError({
+        stdout: '',
+        stderr: error instanceof Error ? error.message : String(error),
+        exitCode: null,
+        runtimeStatus: 'unavailable',
+        errorCode: 'shell-runtime-unavailable',
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+      })
+    }
+  }
   if (
     runtimeBinding.kind === 'wsl2-bash' &&
     (!(options.previewAvailable ?? (() => wsl2BashPreviewStatus().available))() ||

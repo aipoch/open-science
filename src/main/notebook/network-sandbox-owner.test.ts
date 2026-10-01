@@ -75,6 +75,7 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
 }))
 
 import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
+import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from './runtime-paths'
 import {
@@ -1035,6 +1036,72 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(serialized).toContain('"outcome":"cancelled"')
     expect(serialized).not.toContain('C:\\\\private\\\\notebook-sandbox')
     await owner.dispose()
+  })
+
+  it('keeps standard execution offline and preserves existing PowerShell bindings', async () => {
+    const prepare = vi
+      .spyOn(WindowsNotebookRuntimeManager.prototype, 'prepare')
+      .mockRejectedValue(new Error('Prepare protected mode in Settings'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      windowsRuntimeRoot: join(tmpdir(), 'fixture-runtime'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+      const legacy = Object.freeze({ kind: 'powershell' as const, version: '5.1' as const })
+      await expect(
+        owner.resolveWindowsRuntime({ runtime: 'bash', binding: legacy })
+      ).resolves.toBeNull()
+      await expect(owner.resolveWindowsRuntime({ runtime: 'repl' })).resolves.toBeNull()
+      expect(prepare).not.toHaveBeenCalled()
+      await expect(
+        owner.resolveWindowsRuntime({
+          runtime: 'bash',
+          binding: { kind: 'powershell', version: '7.6' }
+        })
+      ).rejects.toThrow('Prepare protected mode')
+      expect(prepare).toHaveBeenCalledExactlyOnceWith(false, undefined, 'standard')
+      backend.isWindowsProtectionConfigured.mockResolvedValue(true)
+      await expect(
+        owner.resolveWindowsRuntime({ runtime: 'bash', binding: legacy })
+      ).rejects.toThrow('bound to PowerShell 5.1')
+      expect(legacy.version).toBe('5.1')
+      await expect(owner.windowsProtectionReady()).rejects.toThrow('Prepare protected mode')
+    } finally {
+      prepare.mockRestore()
+      await owner.dispose()
+    }
+  })
+
+  it('downloads only after explicit setup and reports failed preparation without a standard-mode fallback', async () => {
+    const prepare = vi
+      .spyOn(WindowsNotebookRuntimeManager.prototype, 'prepare')
+      .mockRejectedValue(new Error('download failed'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      windowsRuntimeRoot: join(tmpdir(), 'fixture-runtime'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      await expect(owner.installWindows()).rejects.toThrow('download failed')
+      expect(prepare).toHaveBeenCalledWith(true)
+      await expect(owner.status()).resolves.toEqual({ kind: 'error', reason: 'runtimeFailure' })
+      expect(backend.removeWindows).not.toHaveBeenCalled()
+      backend.installWindows.mockResolvedValueOnce({ cancelled: true })
+      prepare.mockClear()
+      await expect(owner.installWindows()).resolves.toEqual({ cancelled: true })
+      expect(prepare).not.toHaveBeenCalled()
+    } finally {
+      prepare.mockRestore()
+      await owner.dispose()
+    }
   })
 
   it('fails closed instead of giving an ambiguous approval to the wrong runtime', async () => {

@@ -1,4 +1,6 @@
 import type { RequestNotebookNetworkAccessResult } from '../../shared/notebook'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
+import type { WindowsNotebookRuntime } from './windows-notebook-runtime'
 
 export type NotebookSandboxTarget =
   | Readonly<{ kind: 'native' }>
@@ -101,6 +103,11 @@ export type NotebookRuntimeAccessAdmission = Readonly<{
 }>
 
 export interface NotebookProcessSandbox {
+  resolveWindowsRuntime?(request: {
+    runtime: 'repl' | 'bash'
+    binding?: ShellRuntimeBinding
+    signal?: AbortSignal
+  }): Promise<WindowsNotebookRuntime | null | undefined>
   ensureRuntimeAccess?(
     request: Pick<NotebookSandboxInvocation, 'runtime' | 'executable' | 'sessionId' | 'signal'>
   ): Promise<NotebookRuntimeAccessAdmission | void>

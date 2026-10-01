@@ -19,6 +19,13 @@ import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { assertProcessTreeSupport } from '../process-tree'
+import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
+import {
+  configureWindowsNotebookRuntime,
+  type WindowsNotebookRuntime
+} from './windows-notebook-runtime'
+import { probeWindowsRuntimeComponent } from './windows-runtime-probe'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 
 import {
   buildNotebookNetworkPolicy,
@@ -182,6 +189,7 @@ const blockedDestinationKey = (sessionId: string, hostname: string): string =>
   `${sessionId}\0${hostname}`
 
 type NotebookNetworkSandboxOwnerOptions = Readonly<{
+  windowsRuntimeRoot?: string
   packaged?: boolean
   resourceRoot: string
   allowRuntimeAccessPrompt?: boolean
@@ -306,13 +314,74 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   private runtimeAccessRevision = 0
   private pendingRuntimeAccessChanges = 0
   private readonly cancelledRuntimeAccess = new Set<string>()
+  private readonly windowsRuntime?: WindowsNotebookRuntimeManager
+  private readonly releaseWindowsRuntime?: () => void
+  private preparingWindowsRuntime = false
 
   constructor(private readonly options: NotebookNetworkSandboxOwnerOptions) {
     this.platform = options.platform ?? process.platform
     this.log = options.logger ?? createLogger('notebook:network-sandbox')
+    if (this.platform === 'win32' && options.windowsRuntimeRoot) {
+      this.windowsRuntime = new WindowsNotebookRuntimeManager(
+        options.windowsRuntimeRoot,
+        (selection, signal) =>
+          probeWindowsRuntimeComponent(selection, (request) => this.prepare(request), signal)
+      )
+      this.releaseWindowsRuntime = configureWindowsNotebookRuntime(() => this.windowsRuntime!.get())
+    }
+  }
+
+  async windowsProtectionConfigured(): Promise<boolean> {
+    return this.platform === 'win32' && this.getOrCreateSandbox().isWindowsProtectionConfigured()
+  }
+
+  async windowsProtectionReady(): Promise<boolean> {
+    if (!(await this.windowsProtectionConfigured())) return false
+    if ((await this.getOrCreateSandbox().status('win32')).kind !== 'ready')
+      throw new Error(
+        'Prepare Notebook protection in Settings before creating a protected Session.'
+      )
+    if (this.windowsRuntime) await this.windowsRuntime.prepare(false)
+    return true
+  }
+
+  async resolveWindowsRuntime(request: {
+    runtime: 'repl' | 'bash'
+    binding?: ShellRuntimeBinding
+    signal?: AbortSignal
+  }): Promise<WindowsNotebookRuntime | null | undefined> {
+    if (!this.windowsRuntime) return undefined
+    const protectedMode = await this.windowsProtectionConfigured()
+    if (
+      protectedMode &&
+      request.binding?.kind === 'powershell' &&
+      request.binding.version === '5.1'
+    ) {
+      throw new Error(
+        'This Session is bound to PowerShell 5.1. Start a new Session after preparing protected mode to use the verified PowerShell runtime. The saved binding was not changed.'
+      )
+    }
+    if (
+      !protectedMode &&
+      (request.runtime === 'repl' ||
+        request.binding?.kind !== 'powershell' ||
+        request.binding.version === '5.1')
+    )
+      return null
+    // Executing a cell never starts a download. Setup is the only download-authorized entry point.
+    return this.windowsRuntime.prepare(
+      false,
+      request.signal,
+      protectedMode ? 'protected' : 'standard'
+    )
   }
 
   async status(): Promise<NotebookNetworkStatus> {
+    if (this.preparingWindowsRuntime)
+      return this.recordStatus({
+        kind: 'checking',
+        runtimePreparation: this.windowsRuntime?.progress
+      })
     if (this.initializePromise) return this.recordStatus({ kind: 'checking' })
     try {
       await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
@@ -324,7 +393,29 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
     try {
       assertProcessTreeSupport(this.platform)
-      return this.recordStatus(presentStatus(await this.getOrCreateSandbox().status(this.platform)))
+      const status = presentStatus(await this.getOrCreateSandbox().status(this.platform))
+      if (
+        this.windowsRuntime &&
+        status.kind === 'setupRequired' &&
+        (await this.windowsProtectionConfigured())
+      ) {
+        return this.recordStatus({ kind: 'error', reason: status.reasons[0] ?? 'runtimeFailure' })
+      }
+      if (status.kind === 'ready' && this.windowsRuntime) {
+        try {
+          this.windowsRuntime.getProtected()
+        } catch {
+          try {
+            await this.windowsRuntime.prepare(false)
+          } catch {
+            return this.recordStatus({
+              kind: 'error',
+              reason: 'runtimeFailure'
+            })
+          }
+        }
+      }
+      return this.recordStatus(status)
     } catch (error) {
       return this.recordStatus(
         { kind: 'error', reason: 'runtimeFailure' },
@@ -345,6 +436,21 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    if (
+      this.windowsRuntime &&
+      invocation.target?.kind !== 'wsl2' &&
+      (await this.windowsProtectionConfigured())
+    ) {
+      if (invocation.runtime === 'bash' || invocation.runtime === 'repl') {
+        const runtime = this.windowsRuntime.getProtected()
+        const expected = invocation.runtime === 'bash' ? runtime.powershell : runtime.node
+        if (invocation.executable.toLowerCase() !== expected.toLowerCase()) {
+          throw new Error(
+            'The selected interpreter does not match the prepared protected runtime. Start a new Session or prepare the selected runtime in Settings.'
+          )
+        }
+      }
+    }
     try {
       return await this.prepare(invocation)
     } catch (error) {
@@ -897,6 +1003,14 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     })
     try {
       const result = await this.getOrCreateSandbox().installWindows()
+      if (!result.cancelled && this.windowsRuntime) {
+        this.preparingWindowsRuntime = true
+        try {
+          await this.windowsRuntime.prepare(true)
+        } finally {
+          this.preparingWindowsRuntime = false
+        }
+      }
       if (result.cancelled) operation.cancel()
       else operation.complete()
       return result
@@ -1346,6 +1460,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
     this.log.info('sandbox disposed')
     this.initialized = false
+    this.releaseWindowsRuntime?.()
     this.sandbox = undefined
     this.nextExecutionGrants.clear()
     this.blockedDestinationCommands.clear()

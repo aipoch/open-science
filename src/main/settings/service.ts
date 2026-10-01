@@ -810,10 +810,19 @@ class SettingsService {
     result: SwitchToPowerShellResult
     mutation: LocalShellRuntimeMutation
   }> {
+    const status = await this.getNotebookNetworkStatusImpl()
+    if (status.kind === 'checking' || status.kind === 'error') {
+      throw new Error(
+        'Prepare Notebook protection in Settings before switching this Session runtime.'
+      )
+    }
     const write = await this.repository.setLocalShellRuntime('powershell')
     return Object.freeze({
       result: Object.freeze({
-        runtimeBinding: Object.freeze({ kind: 'powershell', version: '7.6' }),
+        runtimeBinding: Object.freeze({
+          kind: 'powershell',
+          version: status.kind === 'ready' ? '7.6' : '5.1'
+        }),
         appliesTo: 'subsequent-executions',
         wslProfilePreserved:
           write.settings.wslSelection !== undefined ||

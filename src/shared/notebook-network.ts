@@ -41,7 +41,15 @@ export type NotebookNetworkStatusReason =
   | 'windowsProfileMissing'
 
 export type NotebookNetworkStatus =
-  | Readonly<{ kind: 'checking' }>
+  | Readonly<{
+      kind: 'checking'
+      runtimePreparation?: Readonly<{
+        component: 'node' | 'powershell'
+        phase: 'checking' | 'downloading' | 'verifying'
+        received?: number
+        total?: number
+      }>
+    }>
   | Readonly<{ kind: 'ready'; warnings: readonly NotebookNetworkStatusReason[] }>
   | Readonly<{
       kind: 'setupRequired'

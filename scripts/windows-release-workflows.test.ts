@@ -173,7 +173,6 @@ describe('post-merge Windows validation', () => {
 
   it('prepares the bundled runtime before Windows consumers and snapshot publication', () => {
     const consumers = [
-      ['build.yml', 'build', 'Build & package'],
       ['pr-gate.yml', 'windows_core', 'Test Windows notebook shell behavior'],
       ['pr-gate.yml', 'windows_e2e_setup', 'Pack E2E setup'],
       ['windows-e2e-regression.yml', 'windows_e2e_setup', 'Pack E2E setup'],

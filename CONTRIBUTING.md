@@ -66,15 +66,14 @@ partially patched installation. See the upstream
 npm run dev
 ```
 
-The Windows Notebook sandbox uses a separate bundled Node and PowerShell runtime.
-Use a version-matched, verified prebuilt runtime when working on that execution path;
-source compilation is a maintainer workflow for changes to its sources or patches.
-Packaged applications carry the runtime and do not require users to compile it.
-The current Windows development entry points check that the runtime assets are present
-and match the pinned versions. `npm install` does not prepare these assets. See the
+Windows standard-mode development does not require a separate Notebook runtime.
+Enabling Notebook protection prepares verified Node and PowerShell components on demand:
+compatible official installations are preferred, and missing components are downloaded from
+the pinned CDN catalog. Prepared components are reused across Sessions and application upgrades.
+Source compilation is a maintainer workflow for changes to runtime sources or patches. See the
 [Windows runtime notes](packages/notebook-network-sandbox/vendor/windows-runtime/README.md)
-for the current CI artifact and source-build procedures. An automatic runtime download
-for development is not implemented yet.
+for CI artifacts and source-build procedures. Neither application packaging nor end-user setup
+compiles these components.
 
 On Windows x64, opt into the unpackaged WSL2 Bash development flow from PowerShell with:
 

@@ -346,6 +346,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/notebook/windows-runtime-manager.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/literature/command-owner.test.ts",
       "src/main/delegation/escaped-descendant.test.ts",

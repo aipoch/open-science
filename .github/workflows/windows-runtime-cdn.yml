@@ -1,0 +1,129 @@
+name: Stage Windows Notebook CDN components
+
+# Maintainer operation, independent of application releases. Consumes an already signed runtime
+# artifact (or an older signed installer containing it); never signs or publishes a Release.
+on:
+  workflow_call:
+    inputs:
+      source_run:
+        type: string
+        required: true
+      artifact_id:
+        type: string
+        required: true
+      dry_run:
+        type: boolean
+        default: true
+    secrets:
+      S3_ACCESS_KEY_ID:
+        required: false
+      S3_SECRET_ACCESS_KEY:
+        required: false
+      S3_BUCKET:
+        required: false
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: Successful signing run containing the reviewed runtime
+        type: string
+        required: true
+      artifact_id:
+        description: Exact signed runtime or signed Windows package artifact ID
+        type: string
+        required: true
+      dry_run:
+        description: Verify and upload workflow artifacts without CDN writes
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: windows-notebook-cdn-publisher
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Verify source run
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.source_run }}
+          ARTIFACT_ID: ${{ inputs.artifact_id }}
+        run: |
+          if ($env:SOURCE_RUN -notmatch '^\d+$' -or $env:ARTIFACT_ID -notmatch '^\d+$') { throw 'Numeric run and artifact IDs are required.' }
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $run.conclusion -ne 'success') { throw 'Source run must have succeeded.' }
+          $artifact = gh api "repos/$env:GITHUB_REPOSITORY/actions/artifacts/$env:ARTIFACT_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $artifact.workflow_run.id -ne [long]$env:SOURCE_RUN -or $artifact.expired) { throw 'Artifact does not belong to this completed run.' }
+      - name: Download signed source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ inputs.artifact_id }}
+          run-id: ${{ inputs.source_run }}
+          github-token: ${{ github.token }}
+          path: signed-source
+          merge-multiple: true
+      - name: Install staging dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Stage and verify signed components
+        shell: pwsh
+        run: |
+          $root = Join-Path $PWD 'signed-source'
+          if (!(Test-Path (Join-Path $root 'build.json'))) {
+            $installers = @(Get-ChildItem -LiteralPath $root -File -Filter '*-setup.exe')
+            if ($installers.Count -ne 1) { throw 'Expected one signed installer or a signed runtime root.' }
+            & 7z x $installers[0].FullName '-osigned-source/extracted' '$PLUGINSDIR/app-64.7z' -y
+            if ($LASTEXITCODE -ne 0) { throw 'Installer extraction failed.' }
+            & 7z x 'signed-source/extracted/$PLUGINSDIR/app-64.7z' '-osigned-source/unpacked' 'resources/notebook-runtime/*' -y
+            if ($LASTEXITCODE -ne 0) { throw 'Runtime extraction failed.' }
+            $root = Join-Path $PWD 'signed-source/unpacked/resources/notebook-runtime/x64'
+          }
+          node scripts/stage-windows-notebook-components.mjs $root staged-components
+          if ($LASTEXITCODE -ne 0) { throw 'Signed component staging failed.' }
+          node scripts/windows-runtime-cdn.mjs verify staged-components
+          if ($LASTEXITCODE -ne 0) { throw 'Staged bytes differ from the reviewed catalog.' }
+          "OPEN_SCIENCE_TEST_SIGNED_RUNTIME_ROOT=$root" >> $env:GITHUB_ENV
+      - name: Build native test helper
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
+      - name: Verify signed components in AppContainer
+        shell: pwsh
+        run: |
+          $env:OPEN_SCIENCE_TEST_RUNTIME_ARCHIVES = Join-Path $PWD 'staged-components'
+          & packages/notebook-network-sandbox/vendor/windows-src/ci/smoke.ps1 -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe -AfterSetup {
+            param($port, $installationId, $ownershipRoot)
+            $env:RUN_WINDOWS_CDN_RUNTIME = '1'
+            $env:OPEN_SCIENCE_TEST_SANDBOX_INSTALLATION_ID = $installationId
+            $env:OPEN_SCIENCE_TEST_SANDBOX_OWNERSHIP_ROOT = $ownershipRoot
+            npx vitest run src/main/notebook/windows-runtime-probe.windows.test.ts
+            if ($LASTEXITCODE -ne 0) { throw 'Signed component isolation verification failed.' }
+          }
+      - name: Upload verified candidates
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-notebook-cdn-components
+          path: staged-components
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish immutable CDN components
+        if: ${{ !inputs.dry_run }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.S3_REGION }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+        run: node scripts/windows-runtime-cdn.mjs publish staged-components

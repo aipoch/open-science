@@ -25,6 +25,8 @@ const GROUP_LABELS: Record<OpenScienceDomainGroupId, string> = {
   clinical: 'Clinical and translational research'
 }
 const DOMAIN_EXAMPLE = 'data.example.org'
+// Product/runtime names are technical identifiers, shared unchanged across locales.
+const RUNTIME_COMPONENT_NAMES = { node: 'Node.js', powershell: 'PowerShell' } as const
 type FormMessage = Readonly<{ kind: 'success' | 'error'; text: string }>
 
 const statusReasonLabel = (
@@ -64,6 +66,23 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
   const [status, setStatus] = useState<NotebookNetworkStatus>({ kind: 'checking' })
   const [isInstalling, setIsInstalling] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
+
+  useEffect(() => {
+    if (!isInstalling) return
+    let active = true
+    const timer = setInterval(() => {
+      void window.api.settings.getNotebookNetworkStatus().then(
+        (next) => {
+          if (active && next.kind === 'checking') setStatus(next)
+        },
+        () => undefined
+      )
+    }, 1000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [isInstalling])
 
   useEffect(() => {
     void window.api.settings
@@ -162,6 +181,22 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
               <p className="text-sm font-medium text-foreground">
                 {t('Notebook network protection')}
               </p>
+              {status.kind === 'checking' && status.runtimePreparation ? (
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground" role="status">
+                  {RUNTIME_COMPONENT_NAMES[status.runtimePreparation.component]}
+                  {' · '}
+                  {status.runtimePreparation.phase === 'downloading'
+                    ? status.runtimePreparation.total
+                      ? t('Downloading… {{percent}}%', {
+                          percent: Math.floor(
+                            (100 * (status.runtimePreparation.received ?? 0)) /
+                              status.runtimePreparation.total
+                          )
+                        })
+                      : t('Downloading…')
+                    : t('Checking…')}
+                </p>
+              ) : null}
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                 {status.kind === 'checking'
                   ? t('Checking…')
@@ -194,7 +229,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
               {window.api.platform === 'win32' && status.kind === 'error' ? (
                 <>
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    {t('Notebook continues using standard execution. No protected mode is active.')}
+                    {t('Notebook network protection needs setup before notebooks can run.')}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {statusReasonLabel(status.reason, t)}

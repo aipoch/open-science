@@ -138,8 +138,6 @@ win:
       to: windows-notebook-sandbox-uninstall.ps1
     - from: packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe
       to: notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe
-    - from: packages/notebook-network-sandbox/vendor/windows-runtime/${arch}
-      to: notebook-runtime/${arch}
     - from: packages/notebook-network-sandbox/vendor/wsl2/manifest.json
       to: notebook-network-sandbox/wsl2/manifest.json
 nsis:
