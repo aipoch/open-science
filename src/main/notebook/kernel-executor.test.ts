@@ -5446,7 +5446,9 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
         const invocation = wrap.mock.calls[0][0]
         const npmPrefix = invocation.env.NPM_CONFIG_PREFIX
         if (hasRuntimeRoot) {
-          expect(npmPrefix).toBe(shellNpmPaths(request.runtimeRoot, 'win32').prefix)
+          expect(npmPrefix).toBe(
+            realpathSync.native(shellNpmPaths(request.runtimeRoot, 'win32').prefix)
+          )
           expect(invocation.filesystem.readWriteRoots).toContain(npmPrefix)
         } else {
           expect(npmPrefix).toBeUndefined()
