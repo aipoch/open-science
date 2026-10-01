@@ -58,10 +58,18 @@ nativeTest(
     const running = execFileAsync(
       executable,
       ['--require', resolve('e2e/fixtures/windows-renderer-efficiency.cjs'), ...target.args],
-      { cwd: process.cwd(), env: environment, windowsHide: true, timeout: 210_000 }
+      { cwd: process.cwd(), env: environment, windowsHide: true }
     )
+    // Keep the leader alive until tree cleanup: execFile's timeout would kill only that process.
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      deadlineTimer = setTimeout(
+        () => reject(new Error('Native efficiency test exceeded its 210-second launch budget.')),
+        210_000
+      )
+    })
     try {
-      await running
+      await Promise.race([running, deadline])
       const evidence = JSON.parse(await readFile(evidencePath, 'utf8')) as {
         completed: boolean
         phases: Record<string, WindowProcessPower & { backgroundThrottling: boolean }>
@@ -79,6 +87,7 @@ nativeTest(
       for (const phase of Object.values(evidence.phases))
         expect(phase.backgroundThrottling).toBe(true)
     } finally {
+      clearTimeout(deadlineTimer)
       if (running.child.exitCode === null && running.child.signalCode === null) {
         const result = await terminateProcessTree(running.child, 'SIGKILL')
         expect(result.reaped, 'Native efficiency test process cleanup').toBe(true)
