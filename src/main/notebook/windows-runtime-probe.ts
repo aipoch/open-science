@@ -93,7 +93,14 @@ export const probeWindowsRuntimeComponent = async (
     admission = undefined
     const { stdout, stderr } = await execution
     if (!stdout.includes('RUNTIME_PROBE_OK') || stderr.trim()) {
-      throw new Error('Windows runtime isolation probe did not complete cleanly.')
+      // The fixed probe contains no user script or credentials. Keep bounded output so startup
+      // provider errors can be distinguished from runtime/launcher diagnostics on clean hosts.
+      throw new Error(
+        `Windows runtime isolation probe did not complete cleanly: ${JSON.stringify({
+          stdout: stdout.slice(-4096),
+          stderr: stderr.slice(-4096)
+        })}`
+      )
     }
   } catch (error) {
     admission?.notStarted()
