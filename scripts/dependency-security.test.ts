@@ -21,12 +21,9 @@ function runNode(source: string): void {
 describe('security dependency compatibility', () => {
   it('preserves printable file-viewer content while removing executable markup', () => {
     runNode(`
-      const { dirname, join } = require('node:path');
-      const { pathToFileURL } = require('node:url');
       const { JSDOM } = require('jsdom');
       (async () => {
-        const moduleUrl = pathToFileURL(join(dirname(require.resolve('@file-viewer/core')), 'exportDocument.js'));
-        const { sanitizeFileViewerExportDocumentDom } = await import(moduleUrl.href);
+        const { sanitizeFileViewerExportDocumentDom } = await import('@file-viewer/core/export');
         const dom = new JSDOM('<!DOCTYPE html><body></body>');
         const root = sanitizeFileViewerExportDocumentDom(
           '<html><body><b>data</b><a href="https://example.com" target="_blank">link</a><script>ATTACKER()</script><img onerror="ATTACKER()"></body></html>',
