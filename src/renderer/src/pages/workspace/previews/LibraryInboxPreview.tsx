@@ -1,6 +1,11 @@
+import { readMatchingCandidateIds } from '../../literature/literature-inbox-reconciliation'
 /* Hallmark · component: inbox preview · genre: modern-minimal · theme: existing workspace
  * Pre-emit critique: P5 H4 E4 S5 R5 V4. Reuse semantic tokens and shared control states.
  */
+import { ErrorNotice } from '@/components/error-notice'
+import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import {
   Check,
   ChevronDown,
@@ -13,10 +18,6 @@ import {
 } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
-import { ErrorNotice } from '@/components/error-notice'
-import { ExternalTextLink } from '@/components/ExternalTextLink'
-import { cn } from '@/lib/utils'
 import {
   createLiteratureIdentifierUrl,
   type LiteratureCatalogSearchPage,
@@ -245,22 +246,8 @@ export function LibraryInboxPreview({
   }, [query, offset, token])
 
   // Only the exceptional Undo conflict path scans dismissed rows. Never restore an accepted row.
-  const stillDismissed = async (id: string): Promise<boolean> => {
-    let next = 0
-    while (mounted.current) {
-      const page = await window.api.literature.search({
-        scope: 'inbox',
-        inboxState: 'dismissed',
-        offset: next,
-        limit: 100
-      })
-      if (page.entries.some((entry) => isCandidate(entry) && entry.id === id)) return true
-      if (page.nextOffset === undefined) return false
-      if (page.nextOffset <= next) throw new Error('Inbox pagination did not advance.')
-      next = page.nextOffset
-    }
-    return true
-  }
+  const stillDismissed = async (id: string): Promise<boolean> =>
+    (await readMatchingCandidateIds(new Set([id]), 'dismissed', () => mounted.current)).has(id)
   const change = async (
     entry: UndoEntry,
     action: 'accept' | 'dismiss' | 'restore'
