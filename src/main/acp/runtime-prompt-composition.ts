@@ -447,45 +447,27 @@ const composeAcpRuntimePromptOwners = (
             applicationPrompt,
             settlementAdmission
           ) => {
-            const provenance = request.provenanceContext
-            if (
-              !provenance?.agentFrameId ||
-              !provenance.messageBranchId ||
-              !provenance.runtimeSegmentId
-            ) {
-              throw new Error('Runtime Session admission requires a durable conversation path.')
-            }
+            const scope = runtimeScope(request, executionId)
             const aggregate = session.sessionRegistry
               .lookup(request.sessionId)
               ?.aggregate.snapshot()
             const backend = base.backendGeneration.current
-            await options.runtimeSessions!.begin(
-              {
-                projectId: projectId(request.sessionId),
-                sessionId: request.sessionId,
-                promptMessageId: provenance.promptMessageId,
-                agentFrameId: provenance.agentFrameId,
-                messageBranchId: provenance.messageBranchId,
-                runtimeSegmentId: provenance.runtimeSegmentId,
-                executionId
-              },
-              {
-                ...(aggregate?.providerSessionId
-                  ? { providerSessionId: aggregate.providerSessionId }
-                  : {}),
-                ...(backend.providerContinuityToken
-                  ? { providerContinuityToken: backend.providerContinuityToken }
-                  : {}),
-                agentFrameworkId: backend.framework.id,
-                ...(backend.backendId ? { agentBackendId: backend.backendId } : {}),
-                ...(backend.session.model ? { agentModel: backend.session.model } : {}),
-                reviewOwner,
-                ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
-                ...(delegatedMessageId ? { delegatedMessageId } : {}),
-                ...(applicationPrompt ? { applicationPrompt } : {}),
-                ...(settlementAdmission ? { settlementAdmission } : {})
-              }
-            )
+            await options.runtimeSessions!.begin(scope, {
+              ...(aggregate?.providerSessionId
+                ? { providerSessionId: aggregate.providerSessionId }
+                : {}),
+              ...(backend.providerContinuityToken
+                ? { providerContinuityToken: backend.providerContinuityToken }
+                : {}),
+              agentFrameworkId: backend.framework.id,
+              ...(backend.backendId ? { agentBackendId: backend.backendId } : {}),
+              ...(backend.session.model ? { agentModel: backend.session.model } : {}),
+              reviewOwner,
+              ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
+              ...(delegatedMessageId ? { delegatedMessageId } : {}),
+              ...(applicationPrompt ? { applicationPrompt } : {}),
+              ...(settlementAdmission ? { settlementAdmission } : {})
+            })
           }
         }
       : {}),

@@ -313,9 +313,7 @@ class AcpPromptTurnWorkflow {
         }
         if (failure) {
           if (failure.error instanceof SettlementAdmissionError) throw failure.error
-          throw Object.assign(new SettlementAdmissionError('pre-provider-failure', 'retry'), {
-            cause: failure.error
-          })
+          throw new SettlementAdmissionError('pre-provider-failure', 'retry', failure.error)
         }
       }
       if (failure) throw failure.error

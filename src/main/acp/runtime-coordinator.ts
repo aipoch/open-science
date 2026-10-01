@@ -1340,9 +1340,7 @@ class AcpRuntimeCoordinator {
       )
         throw error
       if (settlementAdmission) {
-        throw Object.assign(new SettlementAdmissionError('dispatch-guard-rejected', 'retry'), {
-          cause: error
-        })
+        throw new SettlementAdmissionError('dispatch-guard-rejected', 'retry', error)
       }
       throw new DelegateMessagePreAcceptanceError(
         error instanceof Error ? error.message : String(error),

@@ -894,12 +894,7 @@ export class RuntimeSessionOwner {
         )
       if (witness.stage === stage || (stage === 'accepted' && witness.stage === 'terminal'))
         return latest
-      if (stage === 'not-dispatched') {
-        if (witness.stage !== 'admitted')
-          throw new SettlementStageOwnershipError(
-            'Settlement provider dispatch may already have started.'
-          )
-      } else if (stage === 'dispatching') {
+      if (stage === 'not-dispatched' || stage === 'dispatching') {
         if (witness.stage !== 'admitted')
           throw new SettlementStageOwnershipError(
             'Settlement provider dispatch may already have started.'

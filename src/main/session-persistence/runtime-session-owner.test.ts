@@ -13,6 +13,7 @@ import {
 import {
   RuntimeSessionArtifactPublicationError,
   RuntimeSessionOwner,
+  type RuntimeSessionArtifactPublication,
   type RuntimeSessionTurnScope
 } from './runtime-session-owner'
 
@@ -324,10 +325,30 @@ const settlementFixture = () => {
   return { turn, durable, admission }
 }
 
+const settlementHarness = (): ReturnType<typeof settlementFixture> & ReturnType<typeof harness> => {
+  const fixture = settlementFixture()
+  return { ...fixture, ...harness([fixture.durable]) }
+}
+
+const roundTripSession = (value: unknown): PersistedChatSession =>
+  normalizeSessionFile(JSON.parse(JSON.stringify(value)))!
+
+const settlementPublication = (
+  turn: RuntimeSessionTurnScope,
+  artifactClaimId: string,
+  runId: string
+): RuntimeSessionArtifactPublication => ({
+  appSessionId: turn.sessionId,
+  artifactClaimId,
+  runId,
+  promptMessageId: turn.promptMessageId,
+  artifacts: [artifact({ id: 'version-1' })],
+  executionId: turn.executionId
+})
+
 describe('durable settlement admission', () => {
   it('re-arms idle root atomically with a fresh Segment and immutable origin', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions } = harness([durable])
+    const { turn, durable, admission, owner, sessions } = settlementHarness()
     const next = await owner.begin(turn, { settlementAdmission: admission })
     expect(next.activeRun).toEqual({ promptMessageId: turn.promptMessageId, startedAt: 21 })
     expect(next.conversationGraph!.messages).toEqual(durable.conversationGraph!.messages)
@@ -344,8 +365,7 @@ describe('durable settlement admission', () => {
   })
 
   it('only retries a frozen batch after safe not-dispatched cleanup with a new execution', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions } = harness([durable])
+    const { turn, admission, owner, sessions } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     await owner.finishSettlementNotDispatched(turn)
     expect(sessions.get(turn.sessionId)!.activeRun).toBeUndefined()
@@ -361,8 +381,7 @@ describe('durable settlement admission', () => {
   it.each(['dispatching', 'accepted', 'terminal'])(
     'fences %s batches against replay, including after a codec round trip',
     async (stage) => {
-      const { turn, durable, admission } = settlementFixture()
-      const { owner, sessions } = harness([durable])
+      const { turn, admission, owner, sessions } = settlementHarness()
       await owner.begin(turn, { settlementAdmission: admission })
       await owner.markSettlementDispatch(turn)
       if (stage !== 'dispatching') await owner.markSettlementAccepted(turn)
@@ -372,7 +391,7 @@ describe('durable settlement admission', () => {
       }
       const saved = sessions.get(turn.sessionId)!
       saved.runtimeTranscriptOwner = 'main'
-      const restored = normalizeSessionFile(JSON.parse(JSON.stringify(saved)))!
+      const restored = roundTripSession(saved)
       expect(restored.runtimeSessionAdmissions![0].settlement!.stage).toBe(stage)
       delete restored.activeRun
       restored.status = 'idle'
@@ -387,8 +406,7 @@ describe('durable settlement admission', () => {
   )
 
   it('retains an admitted run on cleanup failure and never clears a newer run', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions, mutateSession } = harness([durable])
+    const { turn, admission, owner, sessions, mutateSession } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     mutateSession.mockRejectedValueOnce(new Error('disk offline'))
     await expect(owner.finishSettlementNotDispatched(turn)).rejects.toMatchObject({
@@ -433,14 +451,7 @@ describe('durable settlement admission', () => {
       await owner.markSettlementDispatch(turn)
       await owner.markSettlementAccepted(turn)
       const receipt = await owner.publish(
-        {
-          appSessionId: turn.sessionId,
-          artifactClaimId: 'settlement-artifact',
-          runId: 'settlement-run',
-          promptMessageId: turn.promptMessageId,
-          artifacts: [artifact({ id: 'version-1' })],
-          executionId: turn.executionId
-        },
+        settlementPublication(turn, 'settlement-artifact', 'settlement-run'),
         { timestamp: 25 }
       )
       if (withText)
@@ -466,29 +477,24 @@ describe('durable settlement admission', () => {
   )
 
   it('isolates corrupt settlement witnesses and preserves unrelated durable work', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions } = harness([durable])
+    const { turn, durable, admission, owner, sessions } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     const saved = sessions.get(turn.sessionId)!
-    const restored = normalizeSessionFile(
-      JSON.parse(
-        JSON.stringify({
-          ...saved,
-          runtimeSessionAdmissions: [
-            {
-              ...saved.runtimeSessionAdmissions![0],
-              settlement: { admission, stage: 'forged', runStartedAt: 21 }
-            }
-          ]
-        })
-      )
-    )!
+    const restored = roundTripSession({
+      ...saved,
+      runtimeSessionAdmissions: [
+        {
+          ...saved.runtimeSessionAdmissions![0],
+          settlement: { admission, stage: 'forged', runStartedAt: 21 }
+        }
+      ]
+    })
     expect(restored.runtimeSessionAdmissionsQuarantine).toBeDefined()
     expect(restored.runtimeContext!.delegatedWork!.records).toEqual(
       durable.runtimeContext!.delegatedWork!.records
     )
     expect(restored.conversationGraph!.messages).toEqual(
-      normalizeSessionFile(JSON.parse(JSON.stringify(saved)))!.conversationGraph!.messages
+      roundTripSession(saved).conversationGraph!.messages
     )
     delete restored.activeRun
     restored.status = 'idle'
@@ -501,8 +507,7 @@ describe('durable settlement admission', () => {
   })
 
   it('rejects changed frozen facts and overlapping consumed items in a different batch', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions } = harness([durable])
+    const { turn, admission, owner, sessions } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     await expect(
       owner.begin(turn, { settlementAdmission: { ...admission, batchId: 'changed' } })
@@ -520,8 +525,7 @@ describe('durable settlement admission', () => {
   })
 
   it('rechecks branch identity in the atomic admission mutation', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions, mutateSession } = harness([durable])
+    const { turn, admission, owner, sessions, mutateSession } = settlementHarness()
     const originalMutate = mutateSession.getMockImplementation()!
     mutateSession.mockImplementationOnce(async (scope, mutate) => {
       const changed = sessions.get(scope.sessionId)!
@@ -553,17 +557,9 @@ describe('durable settlement admission', () => {
       if (kind === 'text')
         owner.accept(messageEvent(originalTurn, 'original-output', 'Original final answer'))
       else
-        await owner.publish(
-          {
-            appSessionId: turn.sessionId,
-            artifactClaimId: 'original-claim',
-            runId: 'reused-run',
-            promptMessageId: turn.promptMessageId,
-            artifacts: [artifact({ id: 'version-1' })],
-            executionId: originalTurn.executionId
-          },
-          { timestamp: 15 }
-        )
+        await owner.publish(settlementPublication(originalTurn, 'original-claim', 'reused-run'), {
+          timestamp: 15
+        })
       owner.accept(stopEvent(originalTurn, 20))
       await owner.flush(turn.sessionId, turn.promptMessageId)
       const originalMessages = structuredClone(
@@ -579,17 +575,9 @@ describe('durable settlement admission', () => {
           timestamp: 25
         })
       else
-        await owner.publish(
-          {
-            appSessionId: turn.sessionId,
-            artifactClaimId: 'settlement-claim',
-            runId: 'reused-run',
-            promptMessageId: turn.promptMessageId,
-            artifacts: [artifact({ id: 'version-1' })],
-            executionId: turn.executionId
-          },
-          { timestamp: 25 }
-        )
+        await owner.publish(settlementPublication(turn, 'settlement-claim', 'reused-run'), {
+          timestamp: 25
+        })
       owner.accept(stopEvent(turn, 30))
       await owner.flush(turn.sessionId, turn.promptMessageId)
       const graph = sessions.get(turn.sessionId)!.conversationGraph!
@@ -612,14 +600,10 @@ describe('durable settlement admission', () => {
   it('quarantines a corrupt whole admission container without reopening consumed settlement work', async () => {
     const { turn, durable, admission } = settlementFixture()
     const saved = await harness([durable]).owner.begin(turn, { settlementAdmission: admission })
-    const restored = normalizeSessionFile(
-      JSON.parse(
-        JSON.stringify({
-          ...saved,
-          runtimeSessionAdmissions: { corrupted: saved.runtimeSessionAdmissions }
-        })
-      )
-    )!
+    const restored = roundTripSession({
+      ...saved,
+      runtimeSessionAdmissions: { corrupted: saved.runtimeSessionAdmissions }
+    })
     expect(restored.runtimeSessionAdmissionsQuarantine).toBeDefined()
     expect(restored.runtimeContext!.delegatedWork!.records).toEqual(
       durable.runtimeContext!.delegatedWork!.records
@@ -645,8 +629,7 @@ describe('durable settlement admission', () => {
   })
 
   it('recovers a failed not-dispatched commit before admitting a replacement execution', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions, mutateSession } = harness([durable])
+    const { turn, admission, owner, sessions, mutateSession } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     mutateSession.mockRejectedValueOnce(new Error('disk temporarily offline'))
     await expect(owner.finishSettlementNotDispatched(turn)).rejects.toMatchObject({
@@ -665,8 +648,7 @@ describe('durable settlement admission', () => {
   })
 
   it('keeps one owned run through persistent not-dispatched cleanup failure and refuses replay after restart', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions, mutateSession } = harness([durable])
+    const { turn, admission, owner, sessions, mutateSession } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     mutateSession.mockRejectedValue(new Error('disk offline'))
     await expect(owner.finishSettlementNotDispatched(turn)).rejects.toMatchObject({
@@ -691,8 +673,7 @@ describe('durable settlement admission', () => {
   })
 
   it('drains pending pre-provider cleanup before a neighboring reliable parent admission', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions, mutateSession } = harness([durable])
+    const { turn, admission, owner, sessions, mutateSession } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     owner.accept({ ...stopEvent(turn, 30), kind: 'error', text: 'preparation failed' })
     await owner.flush(turn.sessionId, turn.promptMessageId)
@@ -737,8 +718,7 @@ describe('durable settlement admission', () => {
   })
 
   it('accepts same-tick events from the exact fresh settlement Segment and rejects stale Segment events', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions } = harness([durable])
+    const { turn, admission, owner, sessions } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     await owner.markSettlementDispatch(turn)
     owner.accept(
@@ -776,8 +756,7 @@ describe('durable settlement admission', () => {
   })
 
   it('finalizes pending old cleanup while preserving an already installed neighboring user run', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions, mutateSession } = harness([durable])
+    const { turn, admission, owner, sessions, mutateSession } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     owner.accept({ ...stopEvent(turn, 30), kind: 'error', text: 'preparation failed' })
     await owner.flush(turn.sessionId, turn.promptMessageId)
@@ -815,8 +794,7 @@ describe('durable settlement admission', () => {
   })
 
   it('treats same-execution begin as idempotent without creating another Segment', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions, mutateSession } = harness([durable])
+    const { turn, admission, owner, sessions, mutateSession } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     await owner.begin(turn, { settlementAdmission: admission })
     expect(mutateSession).toHaveBeenCalledTimes(1)
@@ -825,37 +803,31 @@ describe('durable settlement admission', () => {
   })
 
   it('keeps valid historical admissions alongside isolated corrupt settlement authority', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner } = harness([durable])
+    const { turn, admission, owner } = settlementHarness()
     const saved = await owner.begin(turn, { settlementAdmission: admission })
     const valid = saved.runtimeSessionAdmissions![0]
-    const restored = normalizeSessionFile(
-      JSON.parse(
-        JSON.stringify({
-          ...saved,
-          runtimeSessionAdmissions: [
-            valid,
-            {
-              ...valid,
-              executionId: 'bad',
-              runtimeSegmentId: 'settlement-bad',
-              settlement: { ...valid.settlement, stage: 'broken' }
-            }
-          ]
-        })
-      )
-    )!
+    const restored = roundTripSession({
+      ...saved,
+      runtimeSessionAdmissions: [
+        valid,
+        {
+          ...valid,
+          executionId: 'bad',
+          runtimeSegmentId: 'settlement-bad',
+          settlement: { ...valid.settlement, stage: 'broken' }
+        }
+      ]
+    })
     expect(restored.runtimeSessionAdmissions).toEqual([valid])
     expect(restored.runtimeSessionAdmissionsQuarantine).toBeDefined()
-    const again = normalizeSessionFile(JSON.parse(JSON.stringify(restored)))!
+    const again = roundTripSession(restored)
     expect(again.runtimeSessionAdmissionsQuarantine).toEqual(
       restored.runtimeSessionAdmissionsQuarantine
     )
   })
 
   it('safely releases a preparation error finalized before not-dispatched cleanup', async () => {
-    const { turn, durable, admission } = settlementFixture()
-    const { owner, sessions } = harness([durable])
+    const { turn, admission, owner, sessions } = settlementHarness()
     await owner.begin(turn, { settlementAdmission: admission })
     owner.accept({ ...stopEvent(turn, 30), kind: 'error', text: 'preparation failed' })
     await owner.flush(turn.sessionId, turn.promptMessageId)

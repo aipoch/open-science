@@ -146,6 +146,16 @@ const settlement = (): SettlementAdmission => ({
   items: [{ frameId: 'child-1', attemptId: 'attempt-1', status: 'completed' as const }]
 })
 
+type SettlementLifecycle = NonNullable<AcpPromptTurnWorkflowOptions['settlementLifecycle']>
+
+const createSettlementLifecycle = (): {
+  [Key in keyof SettlementLifecycle]: Mock<SettlementLifecycle[Key]>
+} => ({
+  markDispatch: vi.fn(async () => undefined),
+  markAccepted: vi.fn(async () => undefined),
+  finishNotDispatched: vi.fn(async () => undefined)
+})
+
 const createHarness = (
   input: {
     serialization?: AcpPromptTurnWorkflowOptions['serialization']
@@ -926,13 +936,8 @@ describe('AcpPromptTurnWorkflow', () => {
       const begin = vi.fn<NonNullable<AcpPromptTurnWorkflowOptions['beginRuntimeSessionTurn']>>(
         async () => undefined
       )
-      const lifecycle = {
-        markDispatch: vi.fn(async () => {
-          if (phase === 'fence') throw failure
-        }),
-        markAccepted: vi.fn(async () => undefined),
-        finishNotDispatched: vi.fn(async () => undefined)
-      }
+      const lifecycle = createSettlementLifecycle()
+      if (phase === 'fence') lifecycle.markDispatch.mockRejectedValue(failure)
       const harness = createHarness({
         beginRuntimeSessionTurn: begin,
         settlementLifecycle: lifecycle,
@@ -975,11 +980,7 @@ describe('AcpPromptTurnWorkflow', () => {
     'never classifies a settlement provider %s as safe to replay',
     async (providerFailure) => {
       const failure = new Error('provider outcome unknown')
-      const lifecycle = {
-        markDispatch: vi.fn(async () => undefined),
-        markAccepted: vi.fn(async () => undefined),
-        finishNotDispatched: vi.fn(async () => undefined)
-      }
+      const lifecycle = createSettlementLifecycle()
       const harness = createHarness({
         beginRuntimeSessionTurn: vi.fn(async () => undefined),
         settlementLifecycle: lifecycle,
@@ -1002,13 +1003,8 @@ describe('AcpPromptTurnWorkflow', () => {
 
   it('does not permit replay after settlement cleanup persistence fails', async () => {
     const cleanup = new Error('cleanup uncertain')
-    const lifecycle = {
-      markDispatch: vi.fn(async () => undefined),
-      markAccepted: vi.fn(async () => undefined),
-      finishNotDispatched: vi.fn(async () => {
-        throw cleanup
-      })
-    }
+    const lifecycle = createSettlementLifecycle()
+    lifecycle.finishNotDispatched.mockRejectedValue(cleanup)
     const harness = createHarness({
       beginRuntimeSessionTurn: vi.fn(async () => undefined),
       settlementLifecycle: lifecycle,
@@ -1029,14 +1025,11 @@ describe('AcpPromptTurnWorkflow', () => {
     let paused = false
     let providerCalls = 0
     let fenced = false
-    const lifecycle = {
-      markDispatch: vi.fn(async () => {
-        if (fenced) throw new Error('Settlement provider dispatch may already have started.')
-        fenced = true
-      }),
-      markAccepted: vi.fn(async () => undefined),
-      finishNotDispatched: vi.fn(async () => undefined)
-    }
+    const lifecycle = createSettlementLifecycle()
+    lifecycle.markDispatch.mockImplementation(async () => {
+      if (fenced) throw new Error('Settlement provider dispatch may already have started.')
+      fenced = true
+    })
     const accepted = vi.fn(async () => undefined)
     const harness = createHarness({
       beginRuntimeSessionTurn: vi.fn(async () => undefined),

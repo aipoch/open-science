@@ -39,12 +39,8 @@ const createDelegationSettlementContinuationDispatch =
             originMessageId: request.originatingPromptId,
             rootFrameId: request.rootFrameId,
             agentFrameId: request.rootFrameId,
-            ...(request.rootBranchId
-              ? {
-                  messageBranchId: request.rootBranchId,
-                  messageBranchAncestry: [request.rootBranchId]
-                }
-              : {}),
+            messageBranchId: request.rootBranchId,
+            messageBranchAncestry: [request.rootBranchId],
             messageAncestry: [request.originatingPromptId],
             runtimeSegmentId: request.runtimeSegmentId
           }
