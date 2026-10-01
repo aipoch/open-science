@@ -1038,7 +1038,7 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
-  it('keeps standard execution offline and preserves existing PowerShell bindings', async () => {
+  it('keeps standard execution offline and rejects stale capabilities in either switch direction', async () => {
     const prepare = vi
       .spyOn(WindowsNotebookRuntimeManager.prototype, 'prepare')
       .mockRejectedValue(new Error('Prepare protected mode in Settings'))
@@ -1063,12 +1063,12 @@ describe('NotebookNetworkSandboxOwner', () => {
           runtime: 'bash',
           binding: { kind: 'powershell', version: '7.6' }
         })
-      ).rejects.toThrow('Prepare protected mode')
-      expect(prepare).toHaveBeenCalledExactlyOnceWith(false, undefined, 'standard')
+      ).rejects.toThrow('Shell capability refresh')
+      expect(prepare).not.toHaveBeenCalled()
       backend.isWindowsProtectionConfigured.mockResolvedValue(true)
       await expect(
         owner.resolveWindowsRuntime({ runtime: 'bash', binding: legacy })
-      ).rejects.toThrow('bound to PowerShell 5.1')
+      ).rejects.toThrow('Shell capability refresh')
       expect(legacy.version).toBe('5.1')
       await expect(owner.windowsProtectionReady()).rejects.toThrow('Prepare protected mode')
     } finally {

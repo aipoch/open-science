@@ -306,6 +306,13 @@ export async function composeSettingsBootstrap({
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
+      refreshNotebookShellCapabilities: async () => {
+        const runtime = getRuntimeRef().current
+        if (!runtime) throw new Error('Shell capability lifecycle is not ready.')
+        // Reuse the global Shell switch boundary: existing conversations reconnect with the
+        // current interpreter, tool descriptions and permission qualifiers on their next turn.
+        await runtime.requestShellCapabilityRefresh()
+      },
       wslSetup,
       wslSetupSessions,
       ensureDefaultWslSetupWorkspace: async () => {

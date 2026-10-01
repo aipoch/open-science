@@ -339,7 +339,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (!(await this.windowsProtectionConfigured())) return false
     if ((await this.getOrCreateSandbox().status('win32')).kind !== 'ready')
       throw new Error(
-        'Prepare Notebook protection in Settings before creating a protected Session.'
+        'Prepare Notebook protection in Settings before protected execution.'
       )
     if (this.windowsRuntime) await this.windowsRuntime.prepare(false)
     return true
@@ -353,27 +353,16 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (!this.windowsRuntime) return undefined
     const protectedMode = await this.windowsProtectionConfigured()
     if (
-      protectedMode &&
       request.binding?.kind === 'powershell' &&
-      request.binding.version === '5.1'
+      request.binding.version !== (protectedMode ? '7.6' : '5.1')
     ) {
       throw new Error(
-        'This Session is bound to PowerShell 5.1. Start a new Session after preparing protected mode to use the verified PowerShell runtime. The saved binding was not changed.'
+        'Notebook protection changed. Retry in the same conversation after the Shell capability refresh completes.'
       )
     }
-    if (
-      !protectedMode &&
-      (request.runtime === 'repl' ||
-        request.binding?.kind !== 'powershell' ||
-        request.binding.version === '5.1')
-    )
-      return null
+    if (!protectedMode) return null
     // Executing a cell never starts a download. Setup is the only download-authorized entry point.
-    return this.windowsRuntime.prepare(
-      false,
-      request.signal,
-      protectedMode ? 'protected' : 'standard'
-    )
+    return this.windowsRuntime.prepare(false, request.signal)
   }
 
   async status(): Promise<NotebookNetworkStatus> {
@@ -403,7 +392,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       }
       if (status.kind === 'ready' && this.windowsRuntime) {
         try {
-          this.windowsRuntime.getProtected()
+          this.windowsRuntime.get()
         } catch {
           try {
             await this.windowsRuntime.prepare(false)
@@ -442,11 +431,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       (await this.windowsProtectionConfigured())
     ) {
       if (invocation.runtime === 'bash' || invocation.runtime === 'repl') {
-        const runtime = this.windowsRuntime.getProtected()
+        const runtime = this.windowsRuntime.get()
         const expected = invocation.runtime === 'bash' ? runtime.powershell : runtime.node
         if (invocation.executable.toLowerCase() !== expected.toLowerCase()) {
           throw new Error(
-            'The selected interpreter does not match the prepared protected runtime. Start a new Session or prepare the selected runtime in Settings.'
+            'The selected interpreter does not match the prepared protected runtime. Prepare protection in Settings, then retry after the Shell capability refresh.'
           )
         }
       }

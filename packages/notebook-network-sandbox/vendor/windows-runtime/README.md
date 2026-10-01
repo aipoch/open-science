@@ -63,9 +63,10 @@ another launch. The current catalog contains patched x64 releases; future verifi
 official releases can replace either component independently. Missing official
 installations still need a download. A PowerShell minor-version change also needs
 explicit Session binding support; changing a catalog must not reinterpret 7.6 as
-another language version. Existing 5.1/7.6 Session bindings are never
-silently converted; unavailable dependencies or a protection mismatch prompt the
-user to prepare protection or explicitly switch/start a Session.
+another language version. Explicit protection setup/removal refreshes existing
+conversations for subsequent turns, including interpreter selection, tool descriptions
+and permission qualifiers. A stale in-flight capability fails closed until refreshed;
+the user does not need to create a new Session.
 
 Maintainers prepare **already signed** runtime directories with:
 
@@ -198,7 +199,8 @@ This does not certify arbitrary native addons, online
 registry access, or a clean installed application.
 
 New standard-mode Shell bindings record PowerShell `5.1`; new protected bindings
-record verified `7.6`. Existing bindings retain their interpreter identity.
+record verified `7.6`. Explicitly switching protection refreshes existing Sessions
+to the corresponding version for subsequent turns; switching back restores 5.1.
 There is no database migration or new persisted execution state. Re-running a
 historical cell uses the selected Session runtime, as before. A source build is
 not a signed distribution: sign changed runtime components before the independent

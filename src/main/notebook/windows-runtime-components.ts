@@ -142,7 +142,6 @@ export class WindowsRuntimeComponentStore {
       officialRoots: readonly string[]
       bundledRoots?: readonly string[]
       allowDownload: boolean
-      verifyCompatibility?: boolean
       signal?: AbortSignal
       onProgress?: (progress: WindowsRuntimeComponentProgress) => void
     }>
@@ -158,34 +157,21 @@ export class WindowsRuntimeComponentStore {
     for (const release of candidates.filter((entry) => entry.source === 'official')) {
       for (const root of request.officialRoots) {
         if (!isAbsolute(root)) continue
-        const selection = await this.tryVerified(
-          release,
-          root,
-          request.signal,
-          true,
-          request.verifyCompatibility
-        )
+        const selection = await this.tryVerified(release, root, request.signal, true)
         if (selection) return selection
       }
     }
     for (const release of candidates) {
       for (const root of request.bundledRoots ?? []) {
         if (!isAbsolute(root)) continue
-        const selection = await this.tryVerified(
-          release,
-          root,
-          request.signal,
-          true,
-          request.verifyCompatibility
-        )
+        const selection = await this.tryVerified(release, root, request.signal, true)
         if (selection) return selection
       }
       const selection = await this.tryVerified(
         release,
         this.destination(release),
         request.signal,
-        false,
-        request.verifyCompatibility
+        false
       )
       if (selection) return selection
     }
@@ -219,8 +205,7 @@ export class WindowsRuntimeComponentStore {
     release: WindowsRuntimeComponentRelease,
     root: string,
     signal?: AbortSignal,
-    skipIncompatible = true,
-    verifyCompatibility = true
+    skipIncompatible = true
   ): Promise<WindowsRuntimeComponentSelection | undefined> {
     try {
       await verifyWindowsRuntimeComponent(release, root, signal)
@@ -229,7 +214,6 @@ export class WindowsRuntimeComponentStore {
       return undefined
     }
     const selection = { release, root, executable: join(root, executableName(release.component)) }
-    if (!verifyCompatibility) return selection
     try {
       await this.deps.probe(selection, signal)
       signal?.throwIfAborted()

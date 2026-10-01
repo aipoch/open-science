@@ -17,7 +17,6 @@ import type { WindowsNotebookRuntime } from './windows-notebook-runtime'
 export class WindowsNotebookRuntimeManager {
   private readonly store: WindowsRuntimeComponentStore
   private selected?: WindowsNotebookRuntime
-  private protectedReady = false
   private officialSelections: WindowsRuntimeComponentSelection[] = []
   private pending?: Promise<WindowsNotebookRuntime>
   progress?: WindowsRuntimeComponentProgress
@@ -60,23 +59,11 @@ export class WindowsNotebookRuntimeManager {
     return this.selected
   }
 
-  getProtected(): WindowsNotebookRuntime {
-    if (!this.protectedReady)
-      throw new Error('Windows runtime protection verification is required.')
-    return this.get()
-  }
-
-  async prepare(
-    allowDownload: boolean,
-    signal?: AbortSignal,
-    mode: 'protected' | 'standard' = 'protected'
-  ): Promise<WindowsNotebookRuntime> {
+  async prepare(allowDownload: boolean, signal?: AbortSignal): Promise<WindowsNotebookRuntime> {
     signal?.throwIfAborted()
-    if (mode === 'standard' && allowDownload)
-      throw new Error('Standard mode does not download runtime components.')
     // Managed components are immutable and read-only to Notebook processes. Official installations
     // can be updated externally, so check their bytes before reusing a previous compatibility result.
-    if (this.selected && (mode === 'standard' || this.protectedReady)) {
+    if (this.selected) {
       try {
         for (const selection of this.officialSelections)
           await verifyWindowsRuntimeComponent(selection.release, selection.root, signal)
@@ -84,17 +71,14 @@ export class WindowsNotebookRuntimeManager {
       } catch {
         signal?.throwIfAborted()
         this.selected = undefined
-        this.protectedReady = false
       }
     }
     if (this.pending) {
       const runtime = await this.pending
       signal?.throwIfAborted()
-      if (mode === 'protected' && !this.protectedReady)
-        return this.prepare(allowDownload, signal, mode)
       return runtime
     }
-    const operation = this.prepareComponents(allowDownload, signal, mode)
+    const operation = this.prepareComponents(allowDownload, signal)
     this.pending = operation
     try {
       return await operation
@@ -106,8 +90,7 @@ export class WindowsNotebookRuntimeManager {
 
   private async prepareComponents(
     allowDownload: boolean,
-    signal: AbortSignal | undefined,
-    mode: 'protected' | 'standard'
+    signal: AbortSignal | undefined
   ): Promise<WindowsNotebookRuntime> {
     const paths: Partial<Record<'node' | 'powershell', string>> = {}
     const officialSelections: WindowsRuntimeComponentSelection[] = []
@@ -126,7 +109,6 @@ export class WindowsNotebookRuntimeManager {
           ? [join(process.resourcesPath, 'notebook-runtime', this.architecture, component)]
           : [],
         allowDownload,
-        verifyCompatibility: mode === 'protected',
         signal,
         onProgress: (progress) => {
           this.progress = progress
@@ -137,7 +119,6 @@ export class WindowsNotebookRuntimeManager {
     }
     signal?.throwIfAborted()
     this.officialSelections = officialSelections
-    this.protectedReady = mode === 'protected'
     this.selected = Object.freeze({
       root: this.root,
       node: paths.node!,

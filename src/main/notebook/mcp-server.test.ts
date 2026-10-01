@@ -1807,27 +1807,31 @@ describe('bash_execute tool', () => {
     expect(tool?.description).toContain('resets its state')
   })
 
-  it('documents the actual Windows PowerShell dialect and keeps generated notebook files out of shell copies', () => {
-    const windowsDoc = buildShellExecuteDoc('win32')
+  it.each(['5.1', '7.6'] as const)(
+    'documents PowerShell %s and keeps generated notebook files out of shell copies',
+    (version) => {
+      const windowsDoc = buildShellExecuteDoc({ kind: 'powershell', version })
 
-    expect(windowsDoc).toContain('PowerShell 7.6')
-    expect(windowsDoc).not.toContain('`sh -c`')
-    expect(windowsDoc).toContain('$env:OPEN_SCIENCE_HANDOFF_DIR')
-    expect(windowsDoc).not.toContain('./handoff/')
-    expect(windowsDoc).not.toContain('`&&` is unavailable')
-    expect(buildShellExecuteDoc({ kind: 'powershell', version: '5.1' })).toContain(
-      '`&&` is unavailable'
-    )
-    expect(windowsDoc).toContain('cmdlet failure')
-    expect(windowsDoc).toContain('unhandled cmdlet failure')
-    expect(windowsDoc).toContain('native programs must emit UTF-8')
-    expect(windowsDoc).toContain('write_artifact_file')
-    expect(windowsDoc).toContain('Do NOT copy a generated notebook output into the workspace')
-    // Aligned with the relative-path artifact flow: point at the saved relative filename, not the
-    // old "generated file's absolute local path" wording.
-    expect(windowsDoc).toContain('same relative filename you saved with')
-    expect(windowsDoc).not.toContain("generated file's absolute local path")
-  })
+      expect(windowsDoc).toContain(`PowerShell ${version}`)
+      expect(buildShellExecuteDoc('win32')).toContain('Windows PowerShell 5.1')
+      expect(windowsDoc).not.toContain('`sh -c`')
+      expect(windowsDoc).toContain('$env:OPEN_SCIENCE_HANDOFF_DIR')
+      expect(windowsDoc).not.toContain('./handoff/')
+      expect(windowsDoc.includes('`&&` is unavailable')).toBe(version === '5.1')
+      expect(buildShellExecuteDoc({ kind: 'powershell', version: '5.1' })).toContain(
+        '`&&` is unavailable'
+      )
+      expect(windowsDoc).toContain('cmdlet failure')
+      expect(windowsDoc).toContain('unhandled cmdlet failure')
+      expect(windowsDoc).toContain('native programs must emit UTF-8')
+      expect(windowsDoc).toContain('write_artifact_file')
+      expect(windowsDoc).toContain('Do NOT copy a generated notebook output into the workspace')
+      // Aligned with the relative-path artifact flow: point at the saved relative filename, not the
+      // old "generated file's absolute local path" wording.
+      expect(windowsDoc).toContain('same relative filename you saved with')
+      expect(windowsDoc).not.toContain("generated file's absolute local path")
+    }
+  )
 
   it('derives the WSL2 Bash tool contract from the same captured binding', () => {
     const binding = {

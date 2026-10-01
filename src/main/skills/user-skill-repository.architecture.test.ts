@@ -389,6 +389,7 @@ describe('User Skill repository architecture', () => {
           'src/shared/renderer-contract-catalog.test.ts'
         ],
         consumer: [
+          'src/main/notebook/windows-runtime-manager.test.ts',
           'src/main/storage/wsl-npm-migration.integration.test.ts',
           'src/main/composition/notebook-environment.test.ts',
           'src/main/literature/command-owner.test.ts',

@@ -288,10 +288,8 @@ describe('release and scheduled workflow topology', () => {
     const nightly = workflow('nightly.yml')
     const release = workflow('release.yml')
 
-    expect(build.needs).toEqual(['setup', 'windows_notebook_runtime'])
-    expect(build.if).toBe(
-      "${{ !cancelled() && needs.setup.result == 'success' && (needs.windows_notebook_runtime.result == 'success' || needs.windows_notebook_runtime.result == 'skipped') }}"
-    )
+    expect(build.needs).toEqual(['setup'])
+    expect(build.if).toBe("${{ !cancelled() && needs.setup.result == 'success' }}")
     expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
     expect(release.jobs.publish.needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
     expect(release.jobs['notarize-mac'].needs).toEqual(['build', 'package-smoke'])
@@ -861,10 +859,8 @@ describe('build verification throughput', () => {
       "${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}"
     )
     expect(build.jobs.setup.if).toBe('${{ !inputs.verify_only }}')
-    expect(build.jobs.build.needs).toEqual(['setup', 'windows_notebook_runtime'])
-    expect(build.jobs.build.if).toBe(
-      "${{ !cancelled() && needs.setup.result == 'success' && (needs.windows_notebook_runtime.result == 'success' || needs.windows_notebook_runtime.result == 'skipped') }}"
-    )
+    expect(build.jobs.build.needs).toEqual(['setup'])
+    expect(build.jobs.build.if).toBe("${{ !cancelled() && needs.setup.result == 'success' }}")
     expect(release.jobs['package-smoke'].if).toBe('${{ !inputs.verify_only }}')
     for (const name of ['publish', 'notarize-mac']) {
       expect(release.jobs[name].if).toBe(

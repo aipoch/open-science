@@ -8883,3 +8883,79 @@ describe('SettingsService: claude-shared login orchestration', () => {
     expect(auth.cancelLogin).toHaveBeenCalledOnce()
   })
 })
+
+describe('Notebook protection Shell capability switch', () => {
+  it('refreshes existing conversations after setup and removal before returning status', async () => {
+    const calls: string[] = []
+    let protectedMode = false
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      installNotebookNetwork: async () => {
+        protectedMode = true
+        calls.push('install')
+        return { cancelled: false }
+      },
+      removeNotebookNetwork: async () => {
+        protectedMode = false
+        calls.push('remove')
+        return { cancelled: false }
+      },
+      refreshNotebookShellCapabilities: async () => {
+        calls.push(protectedMode ? 'refresh-7.6' : 'refresh-5.1')
+      },
+      getNotebookNetworkStatus: async () => {
+        calls.push('status')
+        return protectedMode
+          ? { kind: 'ready', warnings: [] }
+          : { kind: 'setupRequired', platform: 'win32', reasons: [] }
+      }
+    })
+    await service.installNotebookNetwork()
+    await service.removeNotebookNetwork()
+    expect(calls).toEqual(['install', 'refresh-7.6', 'status', 'remove', 'refresh-5.1', 'status'])
+  })
+
+  it.each(['installNotebookNetwork', 'removeNotebookNetwork'] as const)(
+    'does not refresh when %s is cancelled or fails',
+    async (method) => {
+      const operation = vi
+        .fn()
+        .mockResolvedValueOnce({ cancelled: true })
+        .mockRejectedValueOnce(new Error('setup failed'))
+      const refresh = vi.fn()
+      const service = new SettingsService({
+        configRoot: storageRoot,
+        repository,
+        [method]: operation,
+        refreshNotebookShellCapabilities: refresh,
+        getNotebookNetworkStatus: async () => ({
+          kind: 'setupRequired',
+          platform: 'win32',
+          reasons: []
+        })
+      })
+      await service[method]()
+      await expect(service[method]()).rejects.toThrow('setup failed')
+      expect(refresh).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['installNotebookNetwork', 'removeNotebookNetwork'] as const)(
+    'does not report %s success until capabilities have refreshed',
+    async (method) => {
+      const status = vi.fn().mockResolvedValue({ kind: 'ready' })
+      const service = new SettingsService({
+        configRoot: storageRoot,
+        repository,
+        [method]: async () => ({ cancelled: false }),
+        refreshNotebookShellCapabilities: async () => {
+          throw new Error('refresh failed')
+        },
+        getNotebookNetworkStatus: status
+      })
+      await expect(service[method]()).rejects.toThrow('refresh failed')
+      expect(status).not.toHaveBeenCalled()
+    }
+  )
+})

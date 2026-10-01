@@ -52,25 +52,23 @@ const fixture = async () => {
 }
 
 describe('Windows runtime component preparation', () => {
-  it('restores existing standard-mode dependencies after checking bytes without a protected probe', async () => {
+  it('rechecks cached component compatibility offline and rejects changed bytes', async () => {
     const f = await fixture()
     const selected = await f.store.select([release()], f.request)
     f.probe.mockClear()
     expect(
       await f.store.select([release()], {
         ...f.request,
-        allowDownload: false,
-        verifyCompatibility: false
+        allowDownload: false
       })
     ).toEqual(selected)
-    expect(f.probe).not.toHaveBeenCalled()
+    expect(f.probe).toHaveBeenCalledOnce()
     expect(f.download).toHaveBeenCalledOnce()
     await writeFile(selected.executable, 'modified')
     await expect(
       f.store.select([release()], {
         ...f.request,
-        allowDownload: false,
-        verifyCompatibility: false
+        allowDownload: false
       })
     ).rejects.toThrow('not ready')
   })
