@@ -750,10 +750,12 @@ describe('pull request change classification', () => {
     expect(plan.lanes).not.toContain('e2e_workspace_windows')
   })
 
-  it('adds Windows GUI consumers only for a Windows-sensitive source change', () => {
-    const plan = classifyChanges([
-      { path: 'src/main/notebook/windows-shell.ts', status: 'modified' }
-    ])
+  it.each([
+    'src/main/notebook/windows-shell.ts',
+    'src/shared/renderer-contract-catalog.ts',
+    'src/shared/renderer-contracts/settings-preferences.ts'
+  ])('adds Windows GUI consumers for Windows-sensitive source %s', (path) => {
+    const plan = classifyChanges([{ path, status: 'modified' }])
 
     expect(plan.lanes).toEqual(
       expect.arrayContaining([

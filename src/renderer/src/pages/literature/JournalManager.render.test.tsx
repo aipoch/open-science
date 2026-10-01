@@ -23,7 +23,7 @@ vi.mock('./JournalAttributes', async () => {
   }
 })
 
-vi.mock('./LiteratureImportDialogFrame', () => ({
+vi.mock('./imports/LiteratureImportDialogFrame', () => ({
   LiteratureImportDialogFrame: ({
     children,
     footer

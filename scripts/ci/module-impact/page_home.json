@@ -56,7 +56,7 @@
       "src/renderer/src/lib/session-fork.test.ts",
       "src/renderer/src/lib/session-package-export.test.ts",
       "src/renderer/src/main.render.test.tsx",
-      "src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
       "src/renderer/src/pages/onboarding/AgentStep.render.test.tsx",
       "src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx",
@@ -207,7 +207,7 @@
       "src/renderer/src/stores/settings-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx"
+      "src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx"
     ]
   },
   "capabilityOverlays": [],

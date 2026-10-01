@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import * as Dialog from '@/components/ui/dialog'
-import { LiteratureDuplicatePolicyField } from '@/pages/literature/LiteratureDuplicatePolicyField'
+import { LiteratureDuplicatePolicyField } from '@/pages/literature/imports/LiteratureDuplicatePolicyField'
 import {
   DropdownMenu,
   DropdownMenuContent,

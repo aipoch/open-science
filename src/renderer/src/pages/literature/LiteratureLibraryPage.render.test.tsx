@@ -28,8 +28,8 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
-import { LiteratureSearchInput } from './LiteratureSearchInput'
-import { useAttachmentOperations } from './literature-attachment-operations'
+import { LiteratureSearchInput } from './list/LiteratureSearchInput'
+import { useAttachmentOperations } from './workflows/literature-attachment-operations'
 import { i18next } from '@/i18n'
 
 if (!Element.prototype.scrollIntoView) {
@@ -61,8 +61,8 @@ vi.mock('./LiteratureTable', async (importOriginal) => {
   }
 })
 
-vi.mock('./literature-pdf-metadata', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./literature-pdf-metadata')>()),
+vi.mock('./imports/literature-pdf-metadata', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./imports/literature-pdf-metadata')>()),
   extractLiteraturePdfDraft,
   completeLiteraturePdfDraft
 }))

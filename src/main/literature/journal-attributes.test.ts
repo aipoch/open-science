@@ -1827,7 +1827,7 @@ it('paginates journal rows with a bounded requested page size', async () => {
 
 it('round-trips a portable bundle with all rows and presentation into an independent library', async () => {
   const { exportJournalBundle, importJournalBundle, readJournalBundle } =
-    await import('../../renderer/src/pages/literature/journal-bundle')
+    await import('../../renderer/src/pages/literature/journals/journal-bundle')
   const origin = await setup()
   const target = await setup()
   const portableFields = [
@@ -1887,7 +1887,7 @@ it('round-trips a portable bundle with all rows and presentation into an indepen
 
 it('rejects stale export pages and imports no partial bundle when a row is invalid', async () => {
   const { exportJournalBundle, importJournalBundle, readJournalBundle } =
-    await import('../../renderer/src/pages/literature/journal-bundle')
+    await import('../../renderer/src/pages/literature/journals/journal-bundle')
   const origin = await setup()
   const draft = await preview(origin.service)
   const saved = await origin.service.run({ action: 'commit', ...draft, skipProblems: false })

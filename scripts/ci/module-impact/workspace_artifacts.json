@@ -116,7 +116,7 @@
       "src/renderer/src/main.render.test.tsx",
       "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
       "src/renderer/src/pages/home/HomePage.render.test.tsx",
-      "src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
       "src/renderer/src/pages/onboarding/AgentStep.render.test.tsx",
       "src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx",
@@ -296,7 +296,7 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
-      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
+      "src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx",
       "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"

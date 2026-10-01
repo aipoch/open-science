@@ -1192,17 +1192,6 @@ const observePermissionToolContext = (
   notification: SessionNotification
 ): void => permissionContext(runtime).observeProviderUpdate(notification)
 
-// Finds the isMcp flag the runtime logged for a given permission request (identified by toolCallId).
-const auditedIsMcp = (toolCallId: string): boolean | undefined => {
-  const call = infoLogSpy.mock.calls.find(
-    ([message, data]) =>
-      message === 'permission request received' &&
-      (data as { toolCallId?: string }).toolCallId === toolCallId
-  )
-
-  return (call?.[1] as { isMcp?: boolean } | undefined)?.isMcp
-}
-
 afterEach(async () => {
   vi.restoreAllMocks()
   await Promise.allSettled(temporaryDisconnections.splice(0).map((disconnect) => disconnect()))
@@ -13289,7 +13278,7 @@ describe('ACP runtime session management', () => {
     await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
   })
 
-  it('audits OpenCode MCP calls with canonical identities without logging raw tool titles', async () => {
+  it('logs OpenCode permission failures with canonical identities without routine request logs', async () => {
     infoLogSpy.mockClear()
     warnLogSpy.mockClear()
     errorLogSpy.mockClear()
@@ -13406,17 +13395,7 @@ describe('ACP runtime session management', () => {
     const auditCalls = infoLogSpy.mock.calls.filter(
       ([message]) => message === 'permission request received'
     )
-    expect(auditCalls).toHaveLength(3)
-
-    const dataFor = (toolCallId: string): Record<string, unknown> =>
-      auditCalls.find(
-        ([, data]) => (data as { toolCallId?: string }).toolCallId === toolCallId
-      )?.[1] as Record<string, unknown>
-
-    // OpenCode's model-facing identity is classified as MCP but logged with the canonical identity.
-    expect(dataFor('tool-mcp').isMcp).toBe(true)
-    expect(dataFor('tool-mcp').tool).toBe('open-science-artifacts/write_artifact_file')
-    expect(dataFor('tool-fetch').isMcp).toBe(false)
+    expect(auditCalls).toEqual([])
 
     const failureAudit = warnLogSpy.mock.calls.find(([message]) => message === 'tool call failed')
     expect(failureAudit?.[1]).toMatchObject({
@@ -13713,7 +13692,7 @@ describe('ACP runtime session management', () => {
     ])
   })
 
-  it('silently allows OpenCode native skill loading without publishing a permission request', async () => {
+  it('routes OpenCode native skill loading through managed approval when no grant exists', async () => {
     const process = new FakeAgentProcess()
     const permissionRequests: AcpPermissionRequest[] = []
     let permissionResponse: unknown
@@ -13744,9 +13723,13 @@ describe('ACP runtime session management', () => {
     })
     const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
 
-    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'load a skill' })
-
-    expect(permissionRequests).toEqual([])
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'load a skill' })
+    await vi.waitFor(() => expect(permissionRequests).toHaveLength(1))
+    await runtime.respondToPermission({
+      requestId: permissionRequests[0].requestId,
+      optionId: 'once'
+    })
+    await prompt
     expect(permissionResponse).toEqual({ outcome: { outcome: 'selected', optionId: 'once' } })
     expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([])
   })
@@ -14939,8 +14922,9 @@ describe('ACP runtime session management', () => {
     ])
   })
 
-  it('records MCP server names on resume so a resumed session audits its MCP tool calls as MCP', async () => {
+  it('records MCP server names on resume so a resumed session classifies its MCP permission requests correctly', async () => {
     infoLogSpy.mockClear()
+    const permissionRequests: AcpPermissionRequest[] = []
     const process = new FakeAgentProcess()
     startPermissionProbeAgent(process, {
       newSessionId: 'unused-new-session',
@@ -14962,6 +14946,7 @@ describe('ACP runtime session management', () => {
       },
       callbacks: {
         onPermissionRequest: (request) => {
+          permissionRequests.push(request)
           runtime.respondToPermission({ requestId: request.requestId, optionId: 'allow-once' })
         }
       }
@@ -14972,12 +14957,16 @@ describe('ACP runtime session management', () => {
     await runtime.resumeSession({ sessionId: 'resumed-session', cwd: '/workspace' })
     await runtime.sendPrompt({ sessionId: 'resumed-session', text: 'continue resumed session' })
 
-    expect(auditedIsMcp('resumed-mcp')).toBe(true)
+    expect(permissionRequests).toEqual([
+      expect.objectContaining({ toolCallId: 'resumed-mcp', isMcp: true })
+    ])
+    expect(infoLogSpy).not.toHaveBeenCalledWith('permission request received', expect.anything())
     expect(mcpServerNamesFor(runtime, 'resumed-session')).toEqual(['open-science-artifacts'])
   })
 
   it('records MCP server names when adopting a fresh session after an unresumable resume', async () => {
     infoLogSpy.mockClear()
+    const permissionRequests: AcpPermissionRequest[] = []
     const process = new FakeAgentProcess()
     // Resume rejects with resourceNotFound, forcing the runtime to adopt a fresh agent session
     // (adopted-session-1) under the app-facing id (switched-session).
@@ -15001,6 +14990,7 @@ describe('ACP runtime session management', () => {
       },
       callbacks: {
         onPermissionRequest: (request) => {
+          permissionRequests.push(request)
           runtime.respondToPermission({ requestId: request.requestId, optionId: 'allow-once' })
         }
       }
@@ -15015,19 +15005,26 @@ describe('ACP runtime session management', () => {
     await runtime.sendPrompt({ sessionId: 'switched-session', text: 'keep going' })
 
     // The adopted session recorded its MCP names under the app-facing id, so the relabeled permission
-    // request audits as MCP.
-    expect(auditedIsMcp('adopted-mcp')).toBe(true)
+    // request remains classified as MCP without writing a routine request log.
+    expect(permissionRequests).toEqual([
+      expect.objectContaining({ toolCallId: 'adopted-mcp', isMcp: true })
+    ])
+    expect(infoLogSpy).not.toHaveBeenCalledWith('permission request received', expect.anything())
     expect(mcpServerNamesFor(runtime, 'switched-session')).toEqual(['open-science-artifacts'])
   })
 
-  it('returns an explicit reviewer role while preserving MCP audit routing', async () => {
+  it('returns an explicit reviewer role while preserving MCP permission routing', async () => {
     infoLogSpy.mockClear()
+    let permissionResponse: unknown
     const process = new FakeAgentProcess()
     startPermissionProbeAgent(process, {
       newSessionId: 'reviewer-session-1',
       toolCallId: 'reviewer-mcp',
       toolTitle: 'Submit review checks',
-      providerToolName: 'open-science-reviewer_submit_findings'
+      providerToolName: 'open-science-reviewer_submit_findings',
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
     })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
@@ -15035,8 +15032,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process)
     })
 
-    // The reviewer session records its MCP server name so its (auto-approved) tool calls still audit
-    // with the correct isMcp classification.
+    // The reviewer session records its MCP server name for permission routing.
     const built = await runtime.buildReviewerSession({
       cwd: '/workspace',
       mcpServers: [
@@ -15063,7 +15059,10 @@ describe('ACP runtime session management', () => {
     // Drive a tool-call permission request through the reviewer session (auto-approved by the runtime).
     await session.prompt([{ type: 'text', text: 'review this turn' }])
 
-    expect(auditedIsMcp('reviewer-mcp')).toBe(true)
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(infoLogSpy).not.toHaveBeenCalledWith('permission request received', expect.anything())
 
     // Disposing the reviewer session clears only the owner-private invocation context.
     runtime.disposeReviewerSession(session)
@@ -15192,7 +15191,7 @@ describe('ACP runtime session management', () => {
       })
       await session.prompt([{ type: 'text', text: 'submit the reviewer findings' }])
 
-      expect(auditedIsMcp(`codex-reviewer-${tool}`)).toBe(true)
+      expect(infoLogSpy).not.toHaveBeenCalledWith('permission request received', expect.anything())
       expect(permissionResponse).toEqual({
         outcome: { outcome: 'selected', optionId: expectedOptionId }
       })
@@ -17671,9 +17670,8 @@ describe('ACP runtime session management', () => {
     expect(permissionResponse).toEqual({
       outcome: { outcome: 'selected', optionId: 'reject-once' }
     })
-    // It is generically recognized as MCP for audit logging, but the reviewer gate rejects it because
-    // its namespace does not exactly match open-science-reviewer.
-    expect(auditedIsMcp('reviewer-foreign-mcp')).toBe(true)
+    // A normal reviewer rejection does not emit a routine request log.
+    expect(infoLogSpy).not.toHaveBeenCalledWith('permission request received', expect.anything())
     runtime.disposeReviewerSession(session)
   })
 

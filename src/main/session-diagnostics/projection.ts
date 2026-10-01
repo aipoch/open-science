@@ -283,6 +283,53 @@ const diagnosticStringFields = [
   'reason'
 ] as const
 
+// Permission traces carry fixed product classifications and hashed correlation identities only.
+const permissionLogStates: Record<string, readonly string[]> = {
+  stage: ['request', 'decision', 'settlement', 'context', 'profile'],
+  modelRoute: [
+    'claude-anthropic',
+    'opencode-anthropic',
+    'opencode-openai',
+    'codebuddy-openai',
+    'codex-responses',
+    'codex-responses-compatibility',
+    'codex-bridge'
+  ],
+  profile: ['ask', 'auto', 'full'],
+  authority: [
+    'registry_grant',
+    'automatic_policy',
+    'legacy_session',
+    'human',
+    'system',
+    'restored_once',
+    'provider_native',
+    'connector_policy'
+  ],
+  identitySource: ['verified_context', 'provider_metadata', 'tool_kind', 'unavailable'],
+  toolKind: [
+    'read',
+    'edit',
+    'delete',
+    'move',
+    'search',
+    'execute',
+    'think',
+    'fetch',
+    'switch_mode',
+    'other'
+  ],
+  matchedScope: ['global', 'project', 'session'],
+  capabilityKind: [
+    'customize_mutation',
+    'execution',
+    'mcp_tool',
+    'file_operation',
+    'skill_operation',
+    'builtin_tool'
+  ]
+}
+
 export function projectDiagnosticLog(
   value: unknown,
   options: DiagnosticTextOptions = {}
@@ -299,6 +346,32 @@ export function projectDiagnosticLog(
   if (typeof source.msg === 'string') result.event = diagnosticText(source.msg, options, 2_000)
   const data = object(source.data)
   const diagnostic = fields(data, options)
+  if (source.scope === 'permission' && source.msg === 'permission decision trace') {
+    for (const [key, allowed] of Object.entries(permissionLogStates)) {
+      delete diagnostic[key]
+      if (allowed.includes(data[key] as string)) diagnostic[key] = data[key]
+    }
+    for (const key of [
+      'sessionRef',
+      'toolCallRef',
+      'requestRef',
+      'reportedToolRef',
+      'capabilityRef'
+    ]) {
+      if (typeof data[key] === 'string' && /^[a-f0-9]{16}$/.test(data[key]))
+        diagnostic[key] = data[key]
+    }
+    for (const key of ['fallback', 'hasReportedToolName', 'hasRawInput', 'hasLocations'])
+      if (typeof data[key] === 'boolean') diagnostic[key] = data[key]
+    // These closed built-in keys are useful in exports; custom/MCP names remain fingerprinted.
+    if (
+      typeof data.capabilityKey === 'string' &&
+      /^(?:skill:invoke|builtin:web_(?:fetch|search)|file:(?:read|write|edit|notebook_edit|delete|move))$/.test(
+        data.capabilityKey
+      )
+    )
+      diagnostic.capabilityKey = data.capabilityKey
+  }
   for (const key of diagnosticStringFields)
     if (typeof data[key] === 'string') diagnostic[key] = diagnosticText(data[key], options, 1_000)
   if (data.authorityStatus === 'missing' || data.authorityStatus === 'unreadable')

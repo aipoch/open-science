@@ -177,6 +177,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         const snapshot = sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
         return snapshot
           ? {
+              modelRoute: base.backendGeneration.current.modelRoute,
               ...(snapshot.cwd === undefined ? {} : { cwd: snapshot.cwd }),
               ...(snapshot.frameworkId === undefined ? {} : { frameworkId: snapshot.frameworkId }),
               ...(snapshot.permissionProfile === undefined

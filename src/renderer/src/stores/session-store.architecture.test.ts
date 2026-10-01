@@ -1126,8 +1126,8 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/home/HomePage.persistence.test.tsx',
           'src/renderer/src/pages/home/HomePage.render.test.tsx',
           'src/renderer/src/pages/home/ProjectFormDialog.behavior.test.tsx',
-          'src/renderer/src/pages/literature/LiteratureAttachments.render.test.tsx',
-          'src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx',
+          'src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx',
+          'src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx',
           'src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx',
           'src/renderer/src/pages/onboarding/AgentStep.render.test.tsx',
           'src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx',
@@ -1369,12 +1369,13 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx',
           'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
           'src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx',
-          'src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx',
+          'src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx',
           'src/renderer/src/pages/workspace/file-type-icon.test.ts',
           'src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts',
           'src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx',
           'src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx',
-          'src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx'
+          'src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx',
+          'src/renderer/src/pages/literature/literature-localization.render.test.tsx'
         ]
       },
       capabilityOverlays: ['renderer_state'],

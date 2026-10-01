@@ -828,7 +828,9 @@ describe('preload bridge — public surface inventory', () => {
       'window.onShowWindowFind',
       'window.onWindowFindAppearance',
       'window.sendCloseConfirmResponse',
-      'window.setZoomFactor'
+      'window.setZoomFactor',
+      'window.showTitleBarMenu',
+      'window.updateTitleBar'
     ])
   })
 })

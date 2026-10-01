@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import * as tar from 'tar'
 import { createLogger, errorLogFields, flushLogs, initLogger } from '../logger'
+import { logPermissionDiagnostic } from '../permission-grants/diagnostics'
 import { runSessionDiagnosticWorker } from './collector'
 
 const roots: string[] = []
@@ -34,7 +35,32 @@ it('preserves an unfamiliar operation failure through real logging, rotation, re
     projectId: 'project',
     ...errorLogFields(error)
   })
+  logPermissionDiagnostic({
+    stage: 'decision',
+    frameworkId: 'opencode',
+    modelRoute: 'opencode-openai',
+    sessionId: 'session',
+    toolCallId: '/opt/private-user/private-tool',
+    fallback: true,
+    reason: 'command_not_rememberable',
+    toolKind: 'execute',
+    hasRawInput: true,
+    hasReportedToolName: false,
+    outcome: 'approval_required',
+    authority: 'human'
+  })
+  for (const authority of ['registry_grant', 'human', 'automatic_policy'] as const) {
+    logPermissionDiagnostic({
+      stage: 'decision',
+      sessionId: 'session',
+      authority,
+      fallback: false,
+      outcome: 'allowed',
+      reason: 'normal_permission_canary'
+    })
+  }
   await flushLogs()
+  expect(await readFile(join(logDir, 'main.log'), 'utf8')).not.toContain('normal_permission_canary')
   // Force exactly one rotation with a record that fits alone but exceeds the remaining file space.
   log.info('rotation boundary', { reason: 'x'.repeat(3600) })
   await flushLogs()
@@ -63,13 +89,19 @@ it('preserves an unfamiliar operation failure through real logging, rotation, re
     'an-unregistered-operation',
     'reading-a-new-source',
     'operation-evidence',
+    'permission decision trace',
+    'command_not_rememberable',
+    '"toolKind":"execute"',
+    '"hasRawInput":true',
+    '"hasReportedToolName":false',
+    'opencode-openai',
     'disk read failed',
     'EIO',
     'read',
     'loader.js:42:7'
   ])
     expect(exported).toContain(retained)
-  for (const excluded of ['diagnostic-secret-123', '/opt/private-user'])
+  for (const excluded of ['diagnostic-secret-123', '/opt/private-user', 'normal_permission_canary'])
     expect(exported).not.toContain(excluded)
   expect(await readFile(join(logDir, 'main.1.log'), 'utf8')).toBe(before)
   const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))

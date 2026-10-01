@@ -19,7 +19,7 @@ import type { Annotation } from '../../../../shared/annotations'
 import type { LiteratureItemView } from '../../../../shared/literature'
 import { SOURCE_PREVIEW_PARTITION } from '../../../../shared/source-preview'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
-import { literatureReadingDocument } from '../literature/literature-reading'
+import { literatureReadingDocument } from '../literature/workflows/literature-reading'
 import { createPreviewFileItemFromPdfContext } from './preview-file-item'
 
 // jsdom does not implement layout scrolling; real visibility is covered in keyboard-focus.spec.ts.

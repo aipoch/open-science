@@ -10,7 +10,7 @@ import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase } from '../database/migration-service'
 import { JournalAttributes } from './journal-attributes'
 import type { JournalField, JournalImportRow } from '../../shared/journal-attributes'
-import type { JournalSheet } from '../../renderer/src/pages/literature/journal-import-file'
+import type { JournalSheet } from '../../renderer/src/pages/literature/journals/journal-import-file'
 
 // Opt-in scale acceptance; every name, header and value is independently invented.
 // JOURNAL_SCALE_PROFILE=rows|wide|text|history|xlsx JOURNAL_SCALE_REPORT=/absolute/report.json
@@ -102,7 +102,7 @@ it.runIf(Boolean(profileName))(
       const parserPath = join(root, 'parser.mjs')
       await build({
         stdin: {
-          contents: `import { parentPort, workerData } from 'node:worker_threads'; import { readJournalFile } from ${JSON.stringify(resolve('src/renderer/src/pages/literature/journal-import-file.ts'))}; parentPort.postMessage(await readJournalFile(workerData.bytes, workerData.name));`,
+          contents: `import { parentPort, workerData } from 'node:worker_threads'; import { readJournalFile } from ${JSON.stringify(resolve('src/renderer/src/pages/literature/journals/journal-import-file.ts'))}; parentPort.postMessage(await readJournalFile(workerData.bytes, workerData.name));`,
           resolveDir: process.cwd(),
           loader: 'ts'
         },

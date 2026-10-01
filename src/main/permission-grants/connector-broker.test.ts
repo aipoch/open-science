@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { PermissionGrantRecord } from '../../shared/permission-grants'
 import type { PermissionGrantRegistry } from './registry'
 import { ConnectorPermissionBroker, type ConnectorPermissionRequest } from './connector-broker'
+import * as mainLogger from '../logger'
 
 const capability = {
   kind: 'mcp_tool' as const,
@@ -53,6 +54,35 @@ const createRegistry = (
 }
 
 describe('ConnectorPermissionBroker', () => {
+  it.each([false, true])('logs storage failures with deferred write %s', async (deferRemember) => {
+    const { registry, remember } = createRegistry()
+    const error = new Error('private-storage-error')
+    remember.mockRejectedValue(error)
+    const broker = new ConnectorPermissionBroker(registry, vi.fn().mockResolvedValue('global'))
+    const info = vi.fn()
+    const logger = mainLogger.createLogger('permission')
+    const logging = vi.spyOn(mainLogger, 'createLogger').mockReturnValue({ ...logger, info })
+    try {
+      const request = createRequest()
+      const authorization = broker.authorize(request, 'require_approval', { deferRemember })
+      if (deferRemember) {
+        const scope = await authorization
+        expect(info).not.toHaveBeenCalled()
+        await expect(broker.remember(request, scope!)).rejects.toBe(error)
+      } else {
+        await expect(authorization).rejects.toBe(error)
+      }
+      expect(info).toHaveBeenCalledExactlyOnceWith(
+        'permission decision trace',
+        expect.objectContaining({ reason: 'permission_settlement_failed', outcome: 'cancelled' })
+      )
+      expect(JSON.stringify(info.mock.calls)).not.toContain('private-storage-error')
+      expect(JSON.stringify(info.mock.calls)).not.toContain('tumor immunology')
+    } finally {
+      logging.mockRestore()
+    }
+  })
+
   it('enforces Block before consulting remembered grants or prompting', () => {
     const { registry, resolve } = createRegistry()
     const prompt = vi.fn()

@@ -19,10 +19,17 @@ import {
   type LiteratureItemType,
   type LiteratureItemView
 } from '../../../../shared/literature'
-import { CollectionEditorDialog, type CollectionEditorDialogHandle } from './CollectionEditorDialog'
+import {
+  CollectionEditorDialog,
+  type CollectionEditorDialogHandle
+} from './collections/CollectionEditorDialog'
 import { CitationStylesView } from './CitationStylesView'
-import { LiteratureMergeReview } from './LiteratureMergeReview'
-import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
+import { LiteratureMergeReview } from './duplicates/LiteratureMergeReview'
+import { LiteratureMetadataEditor } from './detail/LiteratureMetadataEditor'
+import { LiteratureResultsTable } from './list/LiteratureResultsTable'
+import { LiteratureTypeControl } from './list/LiteratureInlineEditors'
+import { createLiteratureSelectionStore } from './list/literature-selection'
+import type { SmartCollectionCellActions } from './collections/SmartCollectionDecision'
 
 const previousApi = window.api
 const roots: string[] = []
@@ -38,6 +45,115 @@ afterEach(async () => {
   window.api = previousApi
   await switchLanguage('en')
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+it('updates the selected type label without replacing the focused select trigger', async () => {
+  const labels = Object.fromEntries(LITERATURE_ITEM_TYPES.map((type) => [type, type])) as Record<
+    LiteratureItemType,
+    string
+  >
+  const onCommit = vi.fn().mockResolvedValue(undefined)
+  const view = render(
+    <LiteratureTypeControl
+      value="book"
+      title="Reference"
+      labels={{ ...labels, book: 'Book' }}
+      onCommit={onCommit}
+    />
+  )
+  const trigger = screen.getByRole('combobox', { name: 'Reference type: Reference' })
+  expect(trigger.textContent).toBe('Book')
+  trigger.focus()
+  await switchLanguage('fr')
+  view.rerender(
+    <LiteratureTypeControl
+      value="book"
+      title="Reference"
+      labels={{ ...labels, book: 'Livre' }}
+      onCommit={onCommit}
+    />
+  )
+  expect(screen.getByRole('combobox')).toBe(trigger)
+  expect(trigger.textContent).toBe('Livre')
+  expect(document.activeElement).toBe(trigger)
+  expect(onCommit).not.toHaveBeenCalled()
+})
+
+it('retranslates shared rating labels without replacing focused row controls or their actions', async () => {
+  const entry: LiteratureItemView = {
+    id: 'rating-reference',
+    item: literatureItemInputSchema.parse({ itemType: 'book', title: 'Reference' }),
+    metadataRevision: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    attachments: [],
+    collectionIds: [],
+    projectIds: []
+  }
+  const persistInlineItem = vi.fn().mockResolvedValue(undefined)
+  render(
+    <LiteratureResultsTable
+      tableScrollRef={createRef()}
+      tableMinWidth={600}
+      selectedCollection={undefined}
+      smartTableBlocked={false}
+      items={[entry]}
+      selectionStore={createLiteratureSelectionStore()}
+      visibleOrderedTableColumns={['rating']}
+      tableColumnLabels={{
+        type: 'Type',
+        authors: 'Authors',
+        year: 'Year',
+        publication: 'Publication',
+        tags: 'Tags',
+        abstract: 'Abstract',
+        rating: 'Rating',
+        notes: 'Notes',
+        url: 'URL'
+      }}
+      rowNumbers={new Map([[entry.id, 1]])}
+      section="library"
+      isBatching={false}
+      pendingDecisions={new Set()}
+      collectionId={undefined}
+      smartRunningCollection={undefined}
+      smartView={undefined}
+      completedReevaluation={undefined}
+      singleReevaluation={undefined}
+      attachmentOperations={[]}
+      smartCellActions={{ current: {} as SmartCollectionCellActions }}
+      itemTypeLabels={
+        Object.fromEntries(LITERATURE_ITEM_TYPES.map((type) => [type, type])) as Record<
+          LiteratureItemType,
+          string
+        >
+      }
+      rowActions={{
+        current: {
+          persistInlineItem,
+          openSelectedItemDetail: vi.fn(),
+          previewFirstAttachment: vi.fn(),
+          setItemsLifecycle: vi.fn(),
+          requestPermanentDeletion: vi.fn()
+        }
+      }}
+      entriesPageTransitionLoading={false}
+      entriesPagination={null}
+    />
+  )
+  const button = screen.getByRole('button', { name: 'Set rating to 4' })
+  button.focus()
+  for (const locale of ['zh-Hans', 'fr']) {
+    await switchLanguage(locale)
+    expect(
+      screen.getByRole('button', {
+        name: i18next.t('Set rating to {{rating}}', { rating: 4 })
+      })
+    ).toBe(button)
+    expect(document.activeElement).toBe(button)
+  }
+  await act(async () => fireEvent.click(button))
+  expect(persistInlineItem).toHaveBeenCalledWith(entry, { rating: 4 })
 })
 
 it.each([
