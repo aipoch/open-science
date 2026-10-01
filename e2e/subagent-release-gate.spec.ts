@@ -839,6 +839,9 @@ test('wakes durable idle Main through production settlement admission and collec
     )
     expect(callIds).toHaveLength(2)
     expect(new Set(callIds).size).toBe(2)
+    await expect(
+      page.getByRole('log').getByText(SETTLEMENT_FINAL_ANSWER, { exact: true })
+    ).toBeVisible()
     await expect(page.locator('[data-agent-running="true"]')).toHaveCount(0)
     await page
       .getByRole('textbox', { name: 'Ask anything' })
