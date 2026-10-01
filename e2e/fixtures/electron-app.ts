@@ -300,6 +300,13 @@ type BrandState = {
   title: string
   menus: string[]
 }
+type NativeMenuProbe = {
+  anchor: { x: number | undefined; y: number | undefined; zoom: number } | null
+  shown: boolean
+  closed: boolean
+  close: () => void
+  dispose: () => void
+}
 type ElectronApp = {
   captureBrandState: () => Promise<BrandState>
   restartWithBrandFixture: (
@@ -334,6 +341,7 @@ type ElectronApp = {
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
+  observeMainWindowMenuPopup: (offset: number) => Promise<JSHandle<NativeMenuProbe>>
   trustSourcePreviewCertificate: (certificate: string) => Promise<void>
   setDefaultSessionCookie: (url: string) => Promise<void>
   readClipboardText: () => Promise<string>
@@ -1014,6 +1022,39 @@ class ElectronAppHarness implements ElectronApp {
 
       return { minimized: mainWindow.isMinimized(), visible: mainWindow.isVisible() }
     })
+  }
+
+  async observeMainWindowMenuPopup(offset: number): Promise<JSHandle<NativeMenuProbe>> {
+    return this.runningApplication.evaluateHandle(({ BrowserWindow, Menu, screen }, nextOffset) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      const area = screen.getDisplayMatching(window.getBounds()).workArea
+      window.setPosition(area.x + nextOffset, area.y + nextOffset)
+      const original = Menu.prototype.popup
+      const probe: NativeMenuProbe = {
+        anchor: null,
+        shown: false,
+        closed: false,
+        close: () => undefined,
+        dispose: () => {
+          Menu.prototype.popup = original
+          probe.close()
+        }
+      }
+      Menu.prototype.popup = function (options = {}) {
+        Menu.prototype.popup = original
+        probe.anchor = { x: options.x, y: options.y, zoom: window.webContents.getZoomFactor() }
+        this.once('menu-will-show', () => {
+          probe.shown = true
+        })
+        this.once('menu-will-close', () => {
+          probe.closed = true
+        })
+        probe.close = () => this.closePopup(options.window)
+        // Observe the production call while still opening and closing a real native popup.
+        return original.call(this, options)
+      }
+      return probe
+    }, offset)
   }
 
   async auditSourceAttachments(): Promise<JSHandle<boolean[]>> {

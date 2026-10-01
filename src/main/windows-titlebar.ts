@@ -186,7 +186,8 @@ export const registerWindowsTitleBarIpc = ({
         window.webContents.on('did-start-navigation', onNavigation)
         try {
           menu = Menu.buildFromTemplate(template)
-          menu.popup({ window, x: bounds.x + x, y: bounds.y + y, callback: () => finish() })
+          // Electron adds the window's content origin internally. Keep this anchor in local DIPs.
+          menu.popup({ window, x, y, callback: () => finish() })
         } catch (error) {
           finish(null, error)
         }

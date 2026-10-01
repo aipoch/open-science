@@ -120,6 +120,39 @@ test.describe('Windows window system', () => {
     await expect.poll(pixelRatio).toBeCloseTo(baseline, 4)
   })
 
+  test('anchors native titlebar popups below their buttons after moving and zooming the window @pr-mainline-windows', async ({
+    app
+  }) => {
+    const page = await app.completeOnboarding()
+    for (const { offset, scale } of [
+      { offset: 80, scale: 1 },
+      { offset: 200, scale: 1.25 }
+    ]) {
+      await app.setMainWindowZoomFactor(scale)
+      for (const name of ['File', 'Edit', 'View', 'Help']) {
+        const probe = await app.observeMainWindowMenuPopup(offset)
+        try {
+          const button = page.getByRole('menuitem', { name, exact: true })
+          const bounds = await button.boundingBox()
+          expect(bounds).not.toBeNull()
+          await button.click()
+          await expect.poll(() => probe.evaluate((value) => value.shown)).toBe(true)
+          expect(await probe.evaluate((value) => value.anchor)).toEqual({
+            x: Math.round(bounds!.x * scale),
+            y: Math.round((bounds!.y + bounds!.height) * scale),
+            zoom: scale
+          })
+          await probe.evaluate((value) => value.close())
+          await expect.poll(() => probe.evaluate((value) => value.closed)).toBe(true)
+          await expect(button).toHaveAttribute('aria-expanded', 'false')
+        } finally {
+          await probe.evaluate((value) => value.dispose())
+          await probe.dispose()
+        }
+      }
+    }
+  })
+
   test('persists minimize-to-tray across titlebar close, relaunch, and Ctrl+W @pr-mainline-windows', async ({
     app
   }) => {

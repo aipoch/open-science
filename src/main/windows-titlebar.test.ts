@@ -86,7 +86,7 @@ describe('Windows title bar native adapter', () => {
   it('anchors a native popup using CSS-to-DIP zoom exactly once and returns a selected app command', async () => {
     const { event, window } = install()
     const selected = show(event)
-    expect(mocks.popup).toHaveBeenCalledWith(expect.objectContaining({ window, x: 325, y: 140 }))
+    expect(mocks.popup).toHaveBeenCalledWith(expect.objectContaining({ window, x: 125, y: 40 }))
     expect(items()[0]).toMatchObject({
       label: 'localized Settings',
       enabled: true,
@@ -96,6 +96,29 @@ describe('Windows title bar native adapter', () => {
     expect(await selected).toBe('settings')
     expect(window.removeListener).toHaveBeenCalledWith('closed', expect.any(Function))
   })
+  it.each([
+    { origin: { x: 400, y: 200 }, scale: 1 },
+    { origin: { x: 800, y: 300 }, scale: 1.25 },
+    { origin: { x: -1200, y: -100 }, scale: 0.8 }
+  ])(
+    'keeps popup coordinates window-relative at $origin and zoom $scale',
+    async ({ origin, scale }) => {
+      const owner = makeOwner(scale)
+      owner.window.getContentBounds = () => ({ ...origin, width: 1200, height: 900 })
+      const { event, window } = install(owner)
+      const selected = show(event)
+      // Electron Menu.popup adds the content origin itself; pass only zoomed renderer coordinates.
+      expect(mocks.popup).toHaveBeenCalledWith(
+        expect.objectContaining({
+          window,
+          x: Math.round(100 * scale),
+          y: Math.round(32 * scale)
+        })
+      )
+      dismiss()
+      await selected
+    }
+  )
   it('preserves native edit roles and does not register competing accelerators', async () => {
     const { event } = install()
     const selected = show(event, request('edit'))
