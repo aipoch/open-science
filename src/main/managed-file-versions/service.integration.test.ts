@@ -18,7 +18,7 @@ import { dirname, join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
 import { MANAGED_TEXT_EDIT_MAX_BYTES } from '../../shared/managed-file-versions'
 import {
   ManagedFileVersionError,
@@ -39,11 +39,15 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
   let storageRoot: string
   let outsideRoot: string | undefined
   let client: PrismaClient
+  let disposeFixture: (() => Promise<void>) | undefined
 
   beforeEach(async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-managed-version-'))
-    client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
+    disposeFixture = undefined
+    // Clone a migrated empty schema into each test's private SQLite file and filesystem root.
+    const fixture = await createProvenanceTestFixture()
+    storageRoot = fixture.storageRoot
+    client = fixture.client
+    disposeFixture = fixture.dispose
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
@@ -51,8 +55,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
   })
 
   afterEach(async () => {
-    await client.$disconnect()
-    await rm(storageRoot, { recursive: true, force: true })
+    await disposeFixture?.()
     if (outsideRoot) await rm(outsideRoot, { recursive: true, force: true })
     outsideRoot = undefined
   })
