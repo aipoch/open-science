@@ -135,4 +135,10 @@ jobs:
           AWS_DEFAULT_REGION: ${{ vars.S3_REGION }}
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}
-        run: node scripts/windows-runtime-cdn.mjs publish staged-components
+        shell: pwsh
+        run: |
+          $startup = [Diagnostics.Stopwatch]::StartNew()
+          aws --version
+          if ($LASTEXITCODE -ne 0) { throw 'AWS CLI startup failed.' }
+          Write-Host "AWS CLI startup: $($startup.Elapsed.TotalSeconds) seconds"
+          node scripts/windows-runtime-cdn.mjs publish staged-components

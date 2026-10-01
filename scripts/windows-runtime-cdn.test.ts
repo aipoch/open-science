@@ -121,6 +121,34 @@ it.each(['different', 'identical', 'denied'] as const)(
   }
 )
 
+it('reports an inspection timeout without disclosing credentials or attempting upload', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'cdn-timeout-'))
+  try {
+    await writeFile(join(directory, 'node.tar.zst'), content)
+    const invoke = vi.fn(() => ({
+      status: null,
+      error: { code: 'ETIMEDOUT' },
+      stderr: 'fixture-bucket fixture-access fixture-secret fixture-token'
+    }))
+    const outcome = publishRuntimeArchives(
+      directory,
+      catalog,
+      {
+        S3_BUCKET: 'fixture-bucket',
+        S3_PREFIX: 'open-science',
+        AWS_ACCESS_KEY_ID: 'fixture-access',
+        AWS_SECRET_ACCESS_KEY: 'fixture-secret',
+        AWS_SESSION_TOKEN: 'fixture-token'
+      },
+      invoke
+    )
+    await expect(outcome).rejects.toThrow('ETIMEDOUT: [redacted] [redacted] [redacted] [redacted]')
+    expect(invoke).toHaveBeenCalledOnce()
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 it('keeps CDN preparation separate from releases and defaults to a non-publishing dry run', async () => {
   const workflow = load(
     await readFile('.github/workflows/windows-runtime-cdn.yml', 'utf8')

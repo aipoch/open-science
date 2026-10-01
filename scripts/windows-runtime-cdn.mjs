@@ -70,15 +70,27 @@ export async function publishRuntimeArchives(
   const prefix = environment.S3_PREFIX?.split('/')[0]
   if (!bucket || prefix !== 'open-science')
     throw new Error('Expected the configured Open-Science CDN bucket and prefix')
+  const failureDetails = (result) => {
+    let diagnostic = result.stderr ?? ''
+    for (const value of [
+      bucket,
+      environment.AWS_ACCESS_KEY_ID,
+      environment.AWS_SECRET_ACCESS_KEY,
+      environment.AWS_SESSION_TOKEN
+    ]) {
+      if (value) diagnostic = diagnostic.replaceAll(value, '[redacted]')
+    }
+    return `${result.error?.code ?? result.status ?? 'unknown'}: ${diagnostic.slice(-1500)}`
+  }
   const aws = (args) => {
     const result = invoke('aws', ['s3api', ...args, '--output', 'json', '--no-cli-pager'], {
       encoding: 'utf8',
       timeout: 600_000
     })
     if (result.error || result.status !== 0)
-      throw new Error('CDN object operation failed; no overwrite was attempted.', {
-        cause: result.error
-      })
+      throw new Error(
+        `CDN object operation failed; no overwrite was attempted. ${failureDetails(result)}`
+      )
     return JSON.parse(result.stdout)
   }
   for (const { component, archive } of catalog.releases) {
@@ -108,7 +120,7 @@ export async function publishRuntimeArchives(
       continue
     }
     if (head.error || !/\((?:404|NoSuchKey|NotFound)\)/.test(head.stderr ?? ''))
-      throw new Error('Cannot inspect the CDN object; refusing to publish.')
+      throw new Error(`Cannot inspect the CDN object; refusing to publish. ${failureDetails(head)}`)
     // S3 enforces create-only even if a different publisher races this process.
     aws([
       'put-object',
