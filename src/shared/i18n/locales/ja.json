@@ -133,6 +133,7 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "The Notebook environment needs attention. You can continue using other features.": "Notebook 環境の確認が必要です。他の機能は引き続き使用できます。",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "CELLxGENE Discover の公開コレクション、データセット、バージョン、ファイルのダウンロードリンク。",
     "Search public CELLxGENE Discover collections.": "CELLxGENE Discover の公開コレクションを検索します。",
     "Retrieve collection metadata and a page of datasets.": "コレクションのメタデータとデータセットを1ページ取得します。",

@@ -35,6 +35,7 @@ type ApplicationStartupProjection = Readonly<{
   quitPersistence: QuitPersistenceFlushProjection
   environment: Readonly<{
     ui: ProvisionUiState
+    statusError?: string
     retry: () => Promise<void>
   }>
   storageRecovery: Readonly<{
@@ -64,6 +65,7 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
   const initUpdates = useUpdateStore((state) => state.init)
   const initEnvironment = useNotebookEnvStore((state) => state.init)
   const environmentUi = useNotebookEnvStore((state) => state.ui)
+  const environmentStatusError = useNotebookEnvStore((state) => state.statusError)
   const retryEnvironment = useNotebookEnvStore((state) => state.retry)
   const [missingDataRoot, setMissingDataRoot] = useState<string>()
   const [legacyMove, setLegacyMove] = useState<LegacyDataMove>()
@@ -140,7 +142,11 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
     },
     sessions,
     quitPersistence,
-    environment: { ui: environmentUi, retry: retryEnvironment },
+    environment: {
+      ui: environmentUi,
+      statusError: environmentStatusError,
+      retry: retryEnvironment
+    },
     storageRecovery: {
       missingDataRoot,
       legacyMove,

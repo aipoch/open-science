@@ -136,6 +136,7 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "The Notebook environment needs attention. You can continue using other features.": "Среда Notebook требует внимания. Вы можете продолжать пользоваться другими функциями.",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Общедоступные коллекции, наборы данных, версии и ссылки на скачивание файлов из CELLxGENE Discover.",
     "Search public CELLxGENE Discover collections.": "Поиск общедоступных коллекций CELLxGENE Discover.",
     "Retrieve collection metadata and a page of datasets.": "Получение метаданных коллекции и одной страницы наборов данных.",

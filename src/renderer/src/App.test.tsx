@@ -157,6 +157,8 @@ const mocks = vi.hoisted(() => {
     },
     sideChatParentSessionIds: new Set<string>(),
     presentationProps: {
+      settings: undefined as
+        { sessionLoadError?: string; onRetryCatalogRecovery?: () => void } | undefined,
       closeConfirmation: undefined as { active?: boolean } | undefined,
       update: undefined as { active?: boolean } | undefined,
       computeApproval: undefined as { active?: boolean } | undefined,
@@ -390,12 +392,17 @@ vi.mock('@/pages/settings/SettingsPage', () => ({
   SettingsPage: ({
     ref,
     open,
-    onOpenSession
+    onOpenSession,
+    sessionLoadError,
+    onRetryCatalogRecovery
   }: {
     ref?: Ref<SettingsPageHandle>
     open: boolean
     onOpenSession?: (sessionId: string) => void
+    sessionLoadError?: string
+    onRetryCatalogRecovery?: () => void
   }): React.JSX.Element => {
+    mocks.presentationProps.settings = { sessionLoadError, onRetryCatalogRecovery }
     useImperativeHandle(ref, () => ({
       requestLeave: mocks.requestSettingsLeave,
       closeActivePane: () => false
@@ -1726,6 +1733,29 @@ describe('App startup routing', () => {
     expect(mocks.sessionPersistence.retryLoad).toHaveBeenCalledOnce()
   })
 
+  it('dismisses a post-hydration load error without opening storage gates or removing Settings recovery', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isReady = false
+    mocks.sessionPersistence.loadError = 'Storage unavailable'
+    mocks.sessionPersistence.canDeleteSessionsAndProjects = false
+    await render()
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')!
+        .click()
+    )
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
+    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+    expect(mocks.sessionPersistence.isReady).toBe(false)
+    expect(mocks.sessionPersistence.loadError).toBe('Storage unavailable')
+    expect(mocks.sessionPersistence.retryLoad).not.toHaveBeenCalled()
+    expect(mocks.presentationProps.settings?.sessionLoadError).toBe('Storage unavailable')
+    expect(mocks.presentationProps.settings?.onRetryCatalogRecovery).toBe(
+      mocks.sessionPersistence.retryLoad
+    )
+  })
+
   it('warns that in-memory conversation changes are not durable and retries them', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.writeError =
@@ -1760,7 +1790,7 @@ describe('App startup routing', () => {
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Conversation storage limit reached')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
-    expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).toBeNull()
+    expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).not.toBeNull()
 
     container
       .querySelector<HTMLButtonElement>('[data-testid="session-persistence-action"]')
@@ -1769,6 +1799,16 @@ describe('App startup routing', () => {
     expect(mocks.presentationProps.workspace?.persistenceBlockedSessionIds).toEqual(['session-1'])
     mocks.presentationProps.workspace?.onSessionSizeLimit?.('session-plan')
     expect(mocks.sessionPersistence.reportSessionSizeLimit).toHaveBeenCalledWith('session-plan')
+    await act(async () =>
+      alert
+        ?.querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')
+        ?.click()
+    )
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
+    expect(mocks.presentationProps.workspace?.persistenceBlockedSessionIds).toEqual(['session-1'])
+    expect(mocks.sessionPersistence.dismissWriteWarning).not.toHaveBeenCalled()
+    await act(async () => root.render(<App />))
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
   })
 
   it('stops a persistence-blocked active run while the Home page is visible', async () => {

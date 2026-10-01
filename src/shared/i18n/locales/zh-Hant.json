@@ -133,6 +133,7 @@
     "More items": "更多會話"
   },
   "renderer": {
+    "The Notebook environment needs attention. You can continue using other features.": "Notebook 環境需要處理，您可以繼續使用其他功能。",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "來自 CELLxGENE Discover 的公開集合、資料集、版本與檔案下載連結。",
     "Search public CELLxGENE Discover collections.": "搜尋 CELLxGENE Discover 公開集合。",
     "Retrieve collection metadata and a page of datasets.": "取得集合中繼資料與一頁資料集。",

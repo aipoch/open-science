@@ -133,6 +133,7 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "The Notebook environment needs attention. You can continue using other features.": "Notebook 环境需要处理，您可以继续使用其他功能。",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "来自 CELLxGENE Discover 的公开集合、数据集、版本和文件下载链接。",
     "Search public CELLxGENE Discover collections.": "搜索 CELLxGENE Discover 公开集合。",
     "Retrieve collection metadata and a page of datasets.": "获取集合元数据和一页数据集。",

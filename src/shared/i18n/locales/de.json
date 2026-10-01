@@ -134,6 +134,7 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
+    "The Notebook environment needs attention. You can continue using other features.": "Die Notebook-Umgebung erfordert Ihre Aufmerksamkeit. Sie können andere Funktionen weiterhin verwenden.",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Öffentliche Sammlungen, Datensätze, Versionen und Datei-Downloadlinks von CELLxGENE Discover.",
     "Search public CELLxGENE Discover collections.": "Öffentliche Sammlungen in CELLxGENE Discover suchen.",
     "Retrieve collection metadata and a page of datasets.": "Sammlungsmetadaten und eine Seite mit Datensätzen abrufen.",

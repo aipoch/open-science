@@ -6,6 +6,24 @@ synthetic failures; they do not simulate every Electron service failure.
 
 ## Selection rules
 
+Restriction follows the failure's actual scope. A failed preview or conversation restricts only that
+region; unrelated navigation and features remain usable. Reserve application-wide startup gates for
+failures that prevent safe application operation, such as an unavailable or incompatible database.
+A floating error is never itself an admission gate: it always offers dismissal. Closing it does not
+clear the underlying failure, authorize a write, dismiss an approval, or report successful recovery.
+
+Floating Session load and size-limit notices can be closed without changing persistence state.
+Settings / Archived retains the Session-load Retry entry, and an affected conversation retains its
+storage-limit explanation beside its composer. Existing per-session send gates remain in force;
+unaffected conversations stay usable. Catalog recovery reappears when the affected recovery data
+changes, but unchanged refreshes do not reopen the dismissed notice.
+
+Environment status-read failures use the existing status-error provenance and a status-check title.
+The floating summary stays brief; complete diagnostics are initially collapsed and excluded from
+its live region. Retry indicates an in-flight request, suppresses duplicate clicks and leaves Close
+available. Settings / Runtimes remains the local recovery destination. An unconfirmed old process
+tree still blocks unsafe runtime operations after the notice is closed.
+
 | Situation                                                         | Presentation                                                                                            | Lifetime and recovery                                                                               |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Invalid input field                                               | Small inline text beside the control; link with `aria-describedby` where the field owns the error       | Until corrected or retried; no modal, timer or brand mark                                           |
@@ -33,7 +51,7 @@ for startup blockers, not routine inline errors.
 | Connector reauthentication              | 8 seconds; actionable state remains in Settings / Connectors                                           |
 | Missing notification target             | 6 seconds; the original message-center item remains the navigation source                              |
 | Storage cleanup / language rollback     | Explicit Close / Dismiss; no automatic disappearance                                                   |
-| Session catalog / write / quit recovery | Existing owner decides whether dismissal is allowed; no timer                                          |
+| Session catalog / write / quit recovery | Floating notices are dismissible; owners retain failed targets and local recovery; no timer            |
 | Permission / archive Undo               | Existing receipt deadline, renewal and pending-restore guards; layout does not invent another lifetime |
 | Literature Inbox undo                   | Existing page-owned lifetime and reconciliation; inline near page actions                              |
 

@@ -66,6 +66,32 @@ describe('ArchivedPanel', () => {
     container.remove()
   })
 
+  it('keeps session-load recovery available locally after the global notice is closed', async () => {
+    const retry = vi.fn()
+    await act(async () =>
+      root.render(
+        <ArchivedPanel
+          view={{ kind: 'list' }}
+          onNavigate={vi.fn()}
+          sessionLoadError="Storage unavailable"
+          onRetryCatalogRecovery={retry}
+          hasCompleteSessionCatalog={false}
+          canDeleteProjects={false}
+        />
+      )
+    )
+    expect(container.textContent).toContain('Saved conversations could not be loaded')
+    expect(container.querySelector('[data-testid="session-persistence-dismiss"]')).toBeNull()
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')!
+        .click()
+    )
+    expect(retry).toHaveBeenCalledOnce()
+    expect(deleteProject).not.toHaveBeenCalled()
+    expect(deleteSession).not.toHaveBeenCalled()
+  })
+
   it('restores an individually archived session from Settings', async () => {
     await act(async () =>
       root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)

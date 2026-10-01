@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EnvStatusBanner } from './EnvStatusBanner'
 import { deriveProvisionUi } from './provisioning-view'
@@ -54,14 +54,14 @@ describe('EnvStatusBanner', () => {
     const banner = container.querySelector('[role="alert"]')
     expect(banner?.textContent).toContain('Runtime recovery blocked')
     expect(banner?.textContent).not.toContain(diagnostic)
-    const action = banner?.querySelector('[data-testid="env-status-banner-retry"]')
+    const action = container.querySelector('[data-testid="env-status-banner-retry"]')
     expect(action?.textContent).toBe('Open Settings')
     act(() => action?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(openedSettings).toBe(1)
     expect(retried).toBe(0)
   })
 
-  it('keeps Recheck available when settings are not mounted during onboarding', () => {
+  it('keeps Recheck available when settings are not mounted during onboarding', async () => {
     let rechecked = 0
     act(() =>
       root.render(
@@ -77,7 +77,7 @@ describe('EnvStatusBanner', () => {
       '[data-testid="env-status-banner-retry"]'
     ) as HTMLButtonElement
     expect(button?.textContent).toBe('Recheck')
-    act(() => button?.click())
+    await act(async () => button?.click())
     expect(rechecked).toBe(1)
   })
 
@@ -158,25 +158,28 @@ describe('EnvStatusBanner', () => {
     )
   })
 
-  it('shows an error banner with a retry affordance wired to the store retry action', () => {
+  it('shows an error banner with a retry affordance wired to the store retry action', async () => {
     let retried = 0
     act(() =>
       root.render(
         <EnvStatusBanner
           ui={{ kind: 'error', message: 'offline' }}
-          onRetry={() => (retried += 1)}
+          onRetry={() => {
+            retried += 1
+          }}
         />
       )
     )
     const banner = container.querySelector('[data-testid="env-status-banner"]')
     expect(banner?.textContent).toContain('offline')
-    expect(banner?.getAttribute('role')).toBe('alert')
-    expect(banner?.getAttribute('aria-live')).toBe('assertive')
+    expect(banner?.querySelector('[role="alert"]')?.textContent).not.toContain('offline')
     const button = container.querySelector(
       '[data-testid="env-status-banner-retry"]'
     ) as HTMLButtonElement
     expect(button).not.toBeNull()
-    act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await act(async () => {
+      button.click()
+    })
     expect(retried).toBe(1)
   })
 
@@ -243,9 +246,11 @@ describe('EnvStatusBanner', () => {
     expect(banner.className).toContain('shadow-dialog')
     // The reason is bounded (max-h) and scrollable (overflow-y-auto) rather than line-clamped, so the
     // banner cannot fill the screen yet the full excerpt remains reachable — no line-clamp truncation.
-    const reason = banner.querySelector('p') as HTMLElement
+    const details = banner.querySelector('details')!
+    expect(details.open).toBe(false)
+    const reason = details.querySelector('pre') as HTMLElement
     expect(reason).not.toBeNull()
-    expect(reason.closest('section')?.className).toContain('[&_p]:max-h-28')
+    expect(reason.closest('section')?.className).toContain('[&_pre]:max-h-40')
     expect(reason.className).not.toContain('line-clamp')
     expect(reason.textContent).toContain('micromamba failed (exit 1)')
     // The full reason text is rendered (not truncated in the DOM), so scrolling exposes all of it.
@@ -288,4 +293,44 @@ describe('EnvStatusBanner', () => {
     expect(completion?.getAttribute('role')).toBe('status')
     expect(completion?.textContent).toBe('Notebook environment ready')
   })
+})
+
+it('distinguishes failed status reads and keeps dismissal available during a failed retry', async () => {
+  let rejectRetry!: (error: Error) => void
+  const onRetry = vi.fn(
+    () =>
+      new Promise<void>((_, reject) => {
+        rejectRetry = reject
+      })
+  )
+  const ui = { kind: 'error', message: 'SHELL_PROCESS_RECOVERY_BLOCKED: old tree' } as const
+  const render = (): void =>
+    root.render(
+      <EnvStatusBanner
+        ui={ui}
+        statusError={ui.message}
+        onRetry={onRetry}
+        onOpenRuntimes={vi.fn()}
+      />
+    )
+  act(render)
+  expect(container.textContent).toContain('Could not re-check runtimes.')
+  expect(container.textContent).not.toContain('Environment update failed')
+  expect(container.querySelector('[role="alert"]')?.textContent).not.toContain(ui.message)
+  const retry = container.querySelector<HTMLButtonElement>(
+    '[data-testid="env-status-banner-retry"]'
+  )!
+  act(() => {
+    retry.click()
+    retry.click()
+  })
+  expect(onRetry).toHaveBeenCalledOnce()
+  expect(retry.disabled).toBe(true)
+  expect(retry.getAttribute('aria-busy')).toBe('true')
+  act(() =>
+    container.querySelector<HTMLButtonElement>('[data-testid="env-status-banner-dismiss"]')!.click()
+  )
+  await act(async () => rejectRetry(new Error('still blocked')))
+  act(render)
+  expect(container.querySelector('[data-testid="env-status-banner"]')).toBeNull()
 })
