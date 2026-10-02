@@ -182,6 +182,26 @@ describe('scientific storage modes', () => {
     expect((await analyzeNotebookSourceFileAccess('r', source)).writes).toEqual([])
   })
 
+  it.each([
+    'write <- custom_writer; emit <- function(x, file) write(x, file); emit("next", "report.txt")',
+    'write <- function(x, file) NULL; emit <- function(file) write("next", file); emit("report.txt")',
+    'if (flag) write <- custom_writer; emit <- function(file) write("next", file); emit("report.txt")',
+    'emit <- function(file) write("next", file); write <- custom_writer; emit("report.txt")',
+    'emit <- function(file, write) write("next", file); emit("report.txt", custom_writer)'
+  ])('does not infer a base R writer through a shadowed wrapper: %s', async (source) => {
+    const access = await analyzeNotebookSourceFileAccess('r', source)
+    expect(access.writes).toEqual([])
+    expect(access.writeState).toBe('partial')
+  })
+
+  it('retains an explicitly qualified base writer inside a wrapper despite shadowing', async () => {
+    const access = await analyzeNotebookSourceFileAccess(
+      'r',
+      'write <- custom_writer; emit <- function(x, file) base::write(x, file); emit("next", "report.txt")'
+    )
+    expect(access.writes).toEqual(['report.txt'])
+  })
+
   it('does not promote an append wrapper into a replacement contract', async () => {
     const result = await analyzeNotebookSourceFileAccess(
       'r',

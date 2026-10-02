@@ -7235,16 +7235,16 @@ const rLocalFileWrappers = (
     }
     if (isCall(body) && body.operator === '{' && body.args.length === 1) body = body.args[0]
     const name = rCalledName(body)
+    const qualified = isCall(body) ? rQualifiedCall(body) : undefined
     const effect = name ? R_FILE_CALL_EFFECTS.get(name) : undefined
     const parameters = formals?.kind === 'formals' ? formals.names : []
     const argument = isCall(body) && effect ? rFileCallArgument(body, effect) : undefined
     const parameterIndex = isSymbol(argument) ? parameters.indexOf(argument.name) : -1
     if (
       !effect ||
-      (name === 'write' &&
-        isCall(body) &&
-        rQualifiedCall(body) &&
-        rQualifiedCall(body)?.package !== 'base') ||
+      // A function body can resolve an unqualified writer against changed caller
+      // bindings. Only an explicit base qualifier establishes this wrapper contract.
+      (name === 'write' && qualified?.package !== 'base') ||
       effect.additionalPaths?.length ||
       [
         'getGEO',
