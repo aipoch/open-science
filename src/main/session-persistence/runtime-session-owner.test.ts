@@ -708,35 +708,53 @@ describe('durable settlement admission', () => {
     }
   )
 
-  it('isolates corrupt settlement witnesses and preserves unrelated durable work', async () => {
-    const { turn, durable, admission, owner, sessions } = settlementHarness()
-    await owner.begin(turn, { settlementAdmission: admission })
-    const saved = sessions.get(turn.sessionId)!
-    const restored = roundTripSession({
-      ...saved,
-      runtimeSessionAdmissions: [
-        {
-          ...saved.runtimeSessionAdmissions![0],
-          settlement: { admission, stage: 'forged', runStartedAt: 21 }
-        }
-      ]
-    })
-    expect(restored.runtimeSessionAdmissionsQuarantine).toBeDefined()
-    expect(restored.runtimeContext!.delegatedWork!.records).toEqual(
-      durable.runtimeContext!.delegatedWork!.records
-    )
-    expect(restored.conversationGraph!.messages).toEqual(
-      roundTripSession(saved).conversationGraph!.messages
-    )
-    delete restored.activeRun
-    restored.status = 'idle'
-    await expect(
-      harness([restored]).owner.begin(
-        { ...turn, executionId: 'retry', runtimeSegmentId: 'settlement-retry' },
-        { settlementAdmission: admission }
+  it.each(['unknown-stage', 'array-stage', 'array-status'])(
+    'isolates corrupt settlement witnesses and preserves unrelated durable work: %s',
+    async (corruption) => {
+      const { turn, durable, admission, owner, sessions } = settlementHarness()
+      await owner.begin(turn, { settlementAdmission: admission })
+      const saved = sessions.get(turn.sessionId)!
+      const restored = roundTripSession({
+        ...saved,
+        runtimeSessionAdmissions: [
+          {
+            ...saved.runtimeSessionAdmissions![0],
+            settlement: {
+              admission:
+                corruption === 'array-status'
+                  ? {
+                      ...admission,
+                      items: admission.items.map((item) => ({ ...item, status: ['completed'] }))
+                    }
+                  : admission,
+              stage:
+                corruption === 'array-stage'
+                  ? ['accepted']
+                  : corruption === 'unknown-stage'
+                    ? 'forged'
+                    : 'accepted',
+              runStartedAt: 21
+            }
+          }
+        ]
+      })
+      expect(restored.runtimeSessionAdmissionsQuarantine).toBeDefined()
+      expect(restored.runtimeContext!.delegatedWork!.records).toEqual(
+        durable.runtimeContext!.delegatedWork!.records
       )
-    ).rejects.toThrow('corrupt-settlement-authority')
-  })
+      expect(restored.conversationGraph!.messages).toEqual(
+        roundTripSession(saved).conversationGraph!.messages
+      )
+      delete restored.activeRun
+      restored.status = 'idle'
+      await expect(
+        harness([restored]).owner.begin(
+          { ...turn, executionId: 'retry', runtimeSegmentId: 'settlement-retry' },
+          { settlementAdmission: admission }
+        )
+      ).rejects.toThrow('corrupt-settlement-authority')
+    }
+  )
 
   it('rejects changed frozen facts and overlapping consumed items in a different batch', async () => {
     const { turn, admission, owner, sessions } = settlementHarness()

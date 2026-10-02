@@ -14,6 +14,8 @@ import { isSkillActivity } from './workspace-tool-activity-details'
 import { getLoadedSkillName } from './workspace-skill-load'
 import {
   projectInlineParentMessages,
+  projectSubagentCompletions,
+  type SubagentCompletionProjection,
   type InlineParentMessageProjection
 } from './subagent-release-projection'
 import { isNotebookExecutionActivity, type ToolExecutionPhase } from './tool-execution-phase'
@@ -60,6 +62,14 @@ type ConversationSubagentMessageItem = {
   message: InlineParentMessageProjection
 }
 
+type ConversationSubagentCompletionItem = {
+  id: string
+  type: 'subagent-completion'
+  createdAt: number
+  sortIndex: number
+  completion: SubagentCompletionProjection
+}
+
 // A quiet divider derived (never persisted) above a user Message whose resolved send target
 // differs from the previous stamped turn.
 type ConversationSessionConfigChangeItem = {
@@ -77,6 +87,7 @@ type ConversationItem =
   | ConversationCompactionActivityItem
   | ConversationHandoffItem
   | ConversationSubagentMessageItem
+  | ConversationSubagentCompletionItem
   | ConversationSessionConfigChangeItem
 
 const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
@@ -350,6 +361,15 @@ const createConversationItems = (
       message
     })
   )
+  const subagentCompletions: ConversationItem[] = projectSubagentCompletions(session).map(
+    (completion) => ({
+      id: `subagent-completion-${JSON.stringify([completion.frameId, completion.attemptId])}`,
+      type: 'subagent-completion',
+      createdAt: completion.endedAt,
+      sortIndex: Number.MAX_SAFE_INTEGER,
+      completion
+    })
+  )
 
   // Runtime events and chat chunks use separate sequences, so sorting uses timestamps first.
   return [
@@ -357,6 +377,7 @@ const createConversationItems = (
     ...activities,
     ...handoffs,
     ...subagentMessages,
+    ...subagentCompletions,
     ...createSessionConfigChangeItems(messages)
   ].sort((left, right) => {
     if (left.createdAt !== right.createdAt) return left.createdAt - right.createdAt

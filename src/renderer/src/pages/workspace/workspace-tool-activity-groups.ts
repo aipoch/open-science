@@ -43,6 +43,7 @@ const groupConversationItems = (
     if (
       item.type === 'message' ||
       item.type === 'subagent-message' ||
+      item.type === 'subagent-completion' ||
       item.type === 'handoff' ||
       item.type === 'plan-activity' ||
       item.type === 'compaction-activity' ||

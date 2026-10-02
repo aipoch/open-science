@@ -330,6 +330,35 @@ describe('DelegationSettlementWakeOwner', () => {
     vi.useRealTimers()
   })
 
+  it('does not rewatch a previous-turn continuation receipt while preserving explicit delegation tracking', async () => {
+    vi.useFakeTimers()
+    const current = snapshot([child('existing', 'completed')])
+    const dispatch = vi.fn(acceptDispatch)
+    const owner = new DelegationSettlementWakeOwner({ readSnapshot: async () => current, dispatch })
+    const input = {
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt',
+      attempts: [{ frameId: 'existing', attemptId: 'attempt-existing' }]
+    }
+    await endRootTurn(
+      owner,
+      { sessionId: 'session-1', originatingPromptId: 'root-prompt', clean: true },
+      () => owner.trackUnobservedAttempts({ ...input, onlyNewAttempts: true })
+    )
+    await vi.advanceTimersByTimeAsync(100)
+    expect(dispatch).not.toHaveBeenCalled()
+    await endRootTurn(
+      owner,
+      { sessionId: 'session-1', originatingPromptId: 'root-prompt', clean: true },
+      () => owner.trackUnobservedAttempts(input)
+    )
+    await vi.advanceTimersByTimeAsync(100)
+    expect(dispatch).toHaveBeenCalledOnce()
+    expect(dispatch.mock.calls[0][0].items).toMatchObject([{ name: 'existing' }])
+    owner.shutdown()
+    vi.useRealTimers()
+  })
+
   it('wakes only for the unobserved sibling after a partial same-turn collect', async () => {
     vi.useFakeTimers()
     let current = snapshot([])

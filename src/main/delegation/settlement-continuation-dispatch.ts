@@ -5,7 +5,7 @@ import {
   SettlementAdmissionError,
   type SettlementAdmission
 } from '../../shared/runtime-session-admission'
-import { createLogger } from '../logger'
+import { createLogger, diagnosticErrorFields } from '../logger'
 
 const log = createLogger('delegation')
 
@@ -72,7 +72,8 @@ const createDelegationSettlementContinuationDispatch =
       )
     } catch (error) {
       if (!providerAccepted && error instanceof SettlementAdmissionError) {
-        log.info(
+        const report = error.disposition === 'retry' ? log.warn : log.info
+        report(
           error.disposition === 'invalidated'
             ? 'Settlement invalidated'
             : 'Settlement admission rejected',
@@ -80,17 +81,26 @@ const createDelegationSettlementContinuationDispatch =
             batchId: request.batchId,
             sessionId: request.sessionId,
             reason: error.reason,
-            disposition: error.disposition
+            disposition: error.disposition,
+            ...(error.disposition === 'retry' ? diagnosticErrorFields(error.cause ?? error) : {})
           }
         )
         if (error.disposition !== 'invalidated') throw error
       } else if (!providerAccepted && error instanceof DelegateMessagePreAcceptanceError) {
-        log.info('Settlement admission rejected', {
+        log.warn('Settlement admission rejected', {
           batchId: request.batchId,
           sessionId: request.sessionId,
-          reason: 'pre-dispatch-rejection'
+          reason: 'pre-dispatch-rejection',
+          ...diagnosticErrorFields(error.cause ?? error)
         })
         throw error
+      } else {
+        log.warn('Settlement provider execution failed', {
+          batchId: request.batchId,
+          sessionId: request.sessionId,
+          providerAccepted,
+          ...diagnosticErrorFields(error)
+        })
       }
     }
     log.info('Settlement terminal', {
@@ -101,8 +111,13 @@ const createDelegationSettlementContinuationDispatch =
     })
     try {
       await options.onPromptEnded(request.sessionId, request.promptId)
-    } catch {
+    } catch (error) {
       // Terminal cleanup must never turn a possibly dispatched batch into another model call.
+      log.warn('Settlement terminal cleanup failed', {
+        batchId: request.batchId,
+        sessionId: request.sessionId,
+        ...diagnosticErrorFields(error)
+      })
     }
   }
 

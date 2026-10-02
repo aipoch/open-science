@@ -86,7 +86,9 @@
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.ts",
     "src/renderer/src/pages/workspace/TurnOutcomeNotice.tsx",
-    "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx"
+    "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceSubagentCompletionRow.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceSubagentCompletionRow.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ComposerMessageQueue.tsx",
@@ -160,7 +162,8 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-details.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-groups.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
-      "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx"
+      "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSubagentCompletionRow.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -259,7 +262,8 @@
       "src/renderer/src/components/SessionPackageOperation.test.tsx",
       "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
       "src/renderer/src/pages/home/HomePage.render.test.tsx",
-      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/subagent-release-projection.test.ts"
     ]
   },
   "capabilityOverlays": [],

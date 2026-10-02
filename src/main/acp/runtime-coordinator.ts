@@ -133,6 +133,7 @@ type PendingResumeReconciliation = {
 }
 
 type RootAdmissionLease = {
+  cancelPending: () => void
   release: () => void
 }
 
@@ -1062,11 +1063,11 @@ class AcpRuntimeCoordinator {
     request: AcpPromptRequest,
     onProviderPromptAccepted: () => void,
     settlementAdmission?: SettlementAdmission,
-    validate?: () => void
+    validate?: () => void,
+    prepare?: () => Promise<void>
   ): ReturnType<AcpRuntime['sendAppContinuation']> {
-    return this.linearizeRootAdmission(request.sessionId, (cancellation) => {
-      validate?.()
-      return this.dispatchPrompt(
+    return this.linearizeRootAdmission(request.sessionId, (cancellation) =>
+      this.dispatchPrompt(
         request,
         observePromptAcceptance(onProviderPromptAccepted),
         'sendAppContinuation',
@@ -1078,9 +1079,25 @@ class AcpRuntimeCoordinator {
         'renderer',
         undefined,
         cancellation,
-        settlementAdmission
+        settlementAdmission,
+        async () => {
+          validate?.()
+          cancellation.throwIfCancelled()
+          if (!prepare) return
+          try {
+            await prepare()
+          } catch (error) {
+            if (error instanceof SettlementAdmissionError) throw error
+            throw new DelegateMessagePreAcceptanceError(
+              'Continuation Session preparation failed.',
+              error
+            )
+          }
+          cancellation.throwIfCancelled()
+          validate?.()
+        }
       )
-    })
+    )
   }
 
   private linearizeRootAdmission<Result>(
@@ -1113,6 +1130,11 @@ class AcpRuntimeCoordinator {
     })
     let released = false
     const lease: RootAdmissionLease = {
+      // Stop invalidates only this admission, leaving later queued user turns intact. Running
+      // provider calls still settle through their normal cancellation/terminal callbacks.
+      cancelPending: () => {
+        cancellation.cancelled = true
+      },
       release: () => {
         if (released) return
         released = true
@@ -1324,10 +1346,11 @@ class AcpRuntimeCoordinator {
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
     startAdmission?: PromptAcceptance,
     cancellation?: RootAdmissionCancellation,
-    settlementAdmission?: SettlementAdmission
+    settlementAdmission?: SettlementAdmission,
+    beforeDispatch?: () => Promise<void>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     let dispatchStarted = false
-    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> => {
+    const start = (): ReturnType<AcpRuntime['sendPrompt']> => {
       cancellation?.throwIfCancelled()
       dispatchStarted = true
       return this.dispatchAdmittedPrompt(
@@ -1346,6 +1369,9 @@ class AcpRuntimeCoordinator {
         settlementAdmission
       )
     }
+    // Session restoration participates in the same deletion guard as provider dispatch.
+    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
+      beforeDispatch ? beforeDispatch().then(start) : start()
     if (!this.promptDispatchAdmissionGuard) return dispatch()
     let guarded: ReturnType<AcpRuntime['sendPrompt']>
     try {
@@ -1407,7 +1433,9 @@ class AcpRuntimeCoordinator {
     }
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
     if (!pinnedRuntime && owner && this.retiredRuntimes.has(owner)) {
-      return Promise.reject(new Error('ACP session must resume before sending a prompt'))
+      return Promise.reject(
+        new DelegateMessagePreAcceptanceError('ACP session must resume before sending a prompt')
+      )
     }
 
     const runtime = owner ?? this.getActiveRuntime()
@@ -1588,6 +1616,7 @@ class AcpRuntimeCoordinator {
     const initiatingTurnMessageId = this.activePromptRequests.get(request.sessionId)?.request
       .provenanceContext?.promptMessageId
     const cancelledAdmission = this.activeRootAdmissions.get(request.sessionId)
+    cancelledAdmission?.cancelPending()
     // Production delegated-work establishes its admission fence synchronously before this call
     // returns a Promise. Keep the pinned child stops in flight so a cleanup failure cannot prevent
     // the root Attempt from being invalidated and cancelled.
@@ -1610,6 +1639,7 @@ class AcpRuntimeCoordinator {
     // Supersede the old turn exactly like user cancellation, but do not emit the user-generation
     // cancellation callback: that callback marks the approved handoff itself cancelled.
     const cancelledAdmission = this.activeRootAdmissions.get(sessionId)
+    cancelledAdmission?.cancelPending()
     this.invalidateSessionTurn(sessionId, false)
     await this.runtimeForSession(sessionId).cancelPrompt({ sessionId })
     cancelledAdmission?.release()

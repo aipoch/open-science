@@ -154,7 +154,8 @@
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/session-persistence/ipc.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
-      "src/main/acp/approved-handoff-outcome.test.ts"
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/composition/delegation.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],

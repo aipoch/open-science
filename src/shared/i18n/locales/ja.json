@@ -6829,6 +6829,12 @@
     "The run failed with no error message.": "実行はエラーメッセージなしで失敗しました。",
     "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "未送信のメッセージをロールバックできませんでした（{{failure}}）。もう一度送信するか、実行を停止して再試行してください。",
     "The unsent Session could not be removed ({{failure}}).": "未送信のセッションを削除できませんでした（{{failure}}）。",
-    "Agent Session cleanup did not complete.": "エージェントセッションのクリーンアップが完了しませんでした。"
+    "Agent Session cleanup did not complete.": "エージェントセッションのクリーンアップが完了しませんでした。",
+    "Subagent {{name}} completed": "サブエージェント {{name}} が完了しました",
+    "Subagent {{name}} failed": "サブエージェント {{name}} が失敗しました",
+    "Subagent {{name}} cancelled": "サブエージェント {{name}} がキャンセルされました",
+    "Subagent completed": "サブエージェントが完了しました",
+    "Subagent failed": "サブエージェントが失敗しました",
+    "Subagent cancelled": "サブエージェントがキャンセルされました"
   }
 }

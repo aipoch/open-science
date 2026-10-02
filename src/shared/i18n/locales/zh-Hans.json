@@ -6829,6 +6829,12 @@
     "The run failed with no error message.": "运行失败，未提供错误信息。",
     "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "未发送的消息无法回滚（{{failure}}）。请重新发送或停止运行后重试。",
     "The unsent Session could not be removed ({{failure}}).": "未发送的会话无法移除（{{failure}}）。",
-    "Agent Session cleanup did not complete.": "智能体会话清理未完成。"
+    "Agent Session cleanup did not complete.": "智能体会话清理未完成。",
+    "Subagent {{name}} completed": "子智能体 {{name}} 已完成",
+    "Subagent {{name}} failed": "子智能体 {{name}} 失败",
+    "Subagent {{name}} cancelled": "子智能体 {{name}} 已取消",
+    "Subagent completed": "子智能体已完成",
+    "Subagent failed": "子智能体失败",
+    "Subagent cancelled": "子智能体已取消"
   }
 }

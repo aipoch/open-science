@@ -6989,6 +6989,12 @@
     "The run failed with no error message.": "Der Lauf ist ohne Fehlermeldung fehlgeschlagen.",
     "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "Die nicht gesendete Nachricht konnte nicht zurückgesetzt werden ({{failure}}). Senden Sie sie erneut oder beenden Sie die Ausführung, um es noch einmal zu versuchen.",
     "The unsent Session could not be removed ({{failure}}).": "Die nicht gesendete Sitzung konnte nicht entfernt werden ({{failure}}).",
-    "Agent Session cleanup did not complete.": "Die Bereinigung der Agentensitzung wurde nicht abgeschlossen."
+    "Agent Session cleanup did not complete.": "Die Bereinigung der Agentensitzung wurde nicht abgeschlossen.",
+    "Subagent {{name}} completed": "Unteragent {{name}} abgeschlossen",
+    "Subagent {{name}} failed": "Unteragent {{name}} fehlgeschlagen",
+    "Subagent {{name}} cancelled": "Unteragent {{name}} abgebrochen",
+    "Subagent completed": "Unteragent abgeschlossen",
+    "Subagent failed": "Unteragent fehlgeschlagen",
+    "Subagent cancelled": "Unteragent abgebrochen"
   }
 }

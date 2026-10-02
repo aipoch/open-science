@@ -111,6 +111,7 @@ type AcpPromptTurnEnvironment = Readonly<{
     status: 'in_progress' | 'completed' | 'failed'
   ) => void
   onSkillImportAttachmentEligible?: (sessionId: string, turnToken: string, uri: string) => void
+  onProviderContextAccepted?: (sessionId: string, session: ActiveSession) => void
   onProviderPromptAccepted?: (sessionId: string, promptAttemptId?: string) => void
   onRuntimeSessionProviderAccepted?: (sessionId: string, promptMessageId: string) => Promise<void>
   sideChatRelays?: Readonly<{
@@ -284,9 +285,17 @@ class AcpPromptTurnWorkflow {
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
     if (!this.activeSession(request.sessionId)) {
+      if (mode.kind === 'app-continuation' && mode.settlementAdmission)
+        throw new SettlementAdmissionError('session-not-attached', 'retry')
       throw new Error(`ACP session not found: ${request.sessionId}`)
     }
-    this.assertSessionIdle(request.sessionId)
+    try {
+      this.assertSessionIdle(request.sessionId)
+    } catch (error) {
+      if (mode.kind === 'app-continuation' && mode.settlementAdmission)
+        throw new SettlementAdmissionError('session-busy', 'deferred', error)
+      throw error
+    }
     const settlementExecution: SettlementExecution | undefined =
       mode.kind === 'app-continuation' && mode.settlementAdmission
         ? { request, admitted: false, providerPossible: false }
@@ -368,7 +377,8 @@ class AcpPromptTurnWorkflow {
       skill.reloadDecision.kind === 'reload' ? 'reload-restored' : 'failed'
 
     if (
-      skill.reloadDecision.kind === 'reload' &&
+      (skill.reloadDecision.kind === 'reload' ||
+        (request.contextReset && !request.historyPreamble)) &&
       mode.kind === 'app-continuation' &&
       !request.resumeFallback
     ) {
@@ -386,6 +396,12 @@ class AcpPromptTurnWorkflow {
     }
 
     try {
+      // An admission-level Session restore may already have replaced the provider context.
+      if (mode.kind === 'app-continuation' && request.contextReset && !request.historyPreamble) {
+        request.historyPreamble = request.resumeFallback?.historyPreamble
+        request.historyAttachments = request.resumeFallback?.historyAttachments
+        request.historyImages = request.resumeFallback?.historyImages
+      }
       if (skill.reloadDecision.kind === 'reload') {
         this.assertSessionIdle(request.sessionId)
         if (cancellation.cancelled) {
@@ -708,6 +724,12 @@ class AcpPromptTurnWorkflow {
             return interactions.captureTerminal(interaction, 'stop')
           },
           onAccepted: async () => {
+            // The provider already has this context even if a durable receipt write fails.
+            if (this.isCurrent(turn)) {
+              this.safeCallback('provider-context-accepted callback failed', () =>
+                env.onProviderContextAccepted?.(sessionId, session)
+              )
+            }
             if (settlementExecution)
               await this.options.settlementLifecycle!.markAccepted(request, turnToken)
             if (resumeAccepted) {

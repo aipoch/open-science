@@ -894,6 +894,113 @@ describe('production delegated-work composition', () => {
     vi.useRealTimers()
   })
 
+  it.each([
+    { observed: false, completion: 'before-end', duplicate: 'none' },
+    { observed: false, completion: 'after-end', duplicate: 'none' },
+    { observed: true, completion: 'before-end', duplicate: 'none' },
+    { observed: true, completion: 'before-end', duplicate: 'same-turn' },
+    { observed: true, completion: 'before-end', duplicate: 'next-turn' }
+  ])(
+    'tracks sendMessage settlement (observed=$observed, completion=$completion, duplicate=$duplicate)',
+    async ({ observed, completion, duplicate }) => {
+      vi.useFakeTimers()
+      root = await mkdtemp(join(tmpdir(), 'delegated-followup-settlement-'))
+      const dispatch = vi.fn(async (request: DelegationSettlementDispatch) => {
+        void request
+      })
+      const execution = createDeterministicDelegateExecution()
+      execution.plan({ status: 'completed', response: 'Original result' })
+      const harness = await createCompositionHarness(root, 'codex', execution, undefined, {
+        settlementContinuations: { dispatch }
+      })
+      const original = await harness.composition.host.delegate(harness.caller, {
+        task: 'Initial task',
+        name: 'Followup child'
+      })
+      let leaseId = await harness.composition.root.rootTurnStarted!({
+        sessionId: harness.session.id,
+        originatingPromptId: harness.caller.originMessageId
+      })
+      const continued = await harness.composition.host.sendMessage(
+        { ...harness.caller, toolInvocationId: 'followup' },
+        original.children[0].frameId,
+        'Continue this task',
+        { requestId: 'followup' }
+      )
+      expect(continued.disposition).toBe('continued')
+      if (continued.disposition !== 'continued') throw new Error('Expected a continued Attempt.')
+      await expect.poll(() => execution.controls()).toHaveLength(2)
+      const control = execution.control(continued.continuation_attempt_id)
+      control.accept()
+      if (completion === 'after-end') {
+        await harness.composition.root.rootTurnEnded!({
+          sessionId: harness.session.id,
+          originatingPromptId: harness.caller.originMessageId,
+          clean: true,
+          leaseId
+        })
+      }
+      control.complete('Fast followup result')
+      await expect
+        .poll(() => harness.composition.host.children(harness.caller))
+        .toMatchObject([{ status: 'completed' }])
+      if (observed) {
+        await harness.composition.host.collect(harness.caller, [
+          { frameId: continued.target_frame_id, attemptId: continued.continuation_attempt_id }
+        ])
+      }
+      if (duplicate === 'next-turn') {
+        await harness.composition.root.rootTurnEnded!({
+          sessionId: harness.session.id,
+          originatingPromptId: harness.caller.originMessageId,
+          clean: true,
+          leaseId
+        })
+        leaseId = await harness.composition.root.rootTurnStarted!({
+          sessionId: harness.session.id,
+          originatingPromptId: harness.caller.originMessageId
+        })
+      }
+      if (duplicate !== 'none') {
+        expect(
+          await harness.composition.host.sendMessage(
+            { ...harness.caller, toolInvocationId: 'followup' },
+            original.children[0].frameId,
+            'Continue this task',
+            { requestId: 'followup' }
+          )
+        ).toMatchObject({
+          disposition: 'continued',
+          message_id: continued.message_id,
+          target_frame_id: continued.target_frame_id,
+          continuation_attempt_id: continued.continuation_attempt_id
+        })
+      }
+      if (completion !== 'after-end') {
+        await harness.composition.root.rootTurnEnded!({
+          sessionId: harness.session.id,
+          originatingPromptId: harness.caller.originMessageId,
+          clean: true,
+          leaseId
+        })
+      }
+      await vi.advanceTimersByTimeAsync(100)
+      expect(dispatch).toHaveBeenCalledTimes(observed ? 0 : 1)
+      if (!observed) {
+        expect(dispatch.mock.calls[0][0].items).toEqual([
+          {
+            frameId: continued.target_frame_id,
+            attemptId: continued.continuation_attempt_id,
+            name: 'Followup child',
+            status: 'completed'
+          }
+        ])
+      }
+      await harness.composition.root.stopAll()
+      vi.useRealTimers()
+    }
+  )
+
   it('does not wake for terminal child results already returned in the originating root turn', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-observed-settlement-'))
     const dispatch = vi.fn(async (request: DelegationSettlementDispatch) => {

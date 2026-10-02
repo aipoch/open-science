@@ -7157,6 +7157,12 @@
     "The run failed with no error message.": "La ejecución ha fallado sin mensaje de error.",
     "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "No se pudo revertir el mensaje sin enviar ({{failure}}). Vuelve a enviarlo o detén la ejecución para reintentar.",
     "The unsent Session could not be removed ({{failure}}).": "No se pudo eliminar la sesión sin enviar ({{failure}}).",
-    "Agent Session cleanup did not complete.": "La limpieza de la sesión del agente no se completó."
+    "Agent Session cleanup did not complete.": "La limpieza de la sesión del agente no se completó.",
+    "Subagent {{name}} completed": "Subagente {{name}} completado",
+    "Subagent {{name}} failed": "Subagente {{name}} fallido",
+    "Subagent {{name}} cancelled": "Subagente {{name}} cancelado",
+    "Subagent completed": "Subagente completado",
+    "Subagent failed": "Subagente fallido",
+    "Subagent cancelled": "Subagente cancelado"
   }
 }

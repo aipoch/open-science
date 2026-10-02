@@ -6827,6 +6827,12 @@
     "The run failed with no error message.": "실행이 오류 메시지 없이 실패했습니다.",
     "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "전송되지 않은 메시지를 롤백하지 못했습니다({{failure}}). 다시 보내거나 실행을 중지한 후 다시 시도하세요.",
     "The unsent Session could not be removed ({{failure}}).": "전송되지 않은 세션을 제거하지 못했습니다({{failure}}).",
-    "Agent Session cleanup did not complete.": "에이전트 세션 정리가 완료되지 않았습니다."
+    "Agent Session cleanup did not complete.": "에이전트 세션 정리가 완료되지 않았습니다.",
+    "Subagent {{name}} completed": "서브에이전트 {{name}} 완료",
+    "Subagent {{name}} failed": "서브에이전트 {{name}} 실패",
+    "Subagent {{name}} cancelled": "서브에이전트 {{name}} 취소됨",
+    "Subagent completed": "서브에이전트 완료",
+    "Subagent failed": "서브에이전트 실패",
+    "Subagent cancelled": "서브에이전트 취소됨"
   }
 }

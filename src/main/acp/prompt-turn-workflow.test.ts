@@ -158,6 +158,8 @@ const createSettlementLifecycle = (): {
 
 const createHarness = (
   input: {
+    attached?: boolean
+    onProviderContextAccepted?: AcpPromptTurnWorkflowOptions['environment']['onProviderContextAccepted']
     serialization?: AcpPromptTurnWorkflowOptions['serialization']
     planPause?: Partial<AcpPromptTurnWorkflowOptions['plan']>
     admitPlan?: AcpPromptTurnWorkflowOptions['plan']['admit']
@@ -206,12 +208,15 @@ const createHarness = (
     appSessionId: 'app-1',
     generation: 1,
     aggregate,
-    attachment: {
-      appSessionId: 'app-1',
-      providerSessionId: session.sessionId,
-      generation: 1,
-      session
-    }
+    attachment:
+      input.attached === false
+        ? undefined
+        : {
+            appSessionId: 'app-1',
+            providerSessionId: session.sessionId,
+            generation: 1,
+            session
+          }
   }))
   const interactions: Harness['interactions'] = {
     current: vi.fn((sessionId: string) => owner.current(sessionId)),
@@ -367,6 +372,7 @@ const createHarness = (
         ? { resolveComputeExecutionTargetIds: input.resolveComputeExecutionTargetIds }
         : {}),
       emitSkillActivities,
+      onProviderContextAccepted: input.onProviderContextAccepted,
       onProviderPromptAccepted,
       ...(input.sideChatClaim ? { sideChatRelays: { claim: input.sideChatClaim } } : {}),
       routeNotification,
@@ -1684,3 +1690,57 @@ it('does not dispatch after cancellation is accepted during framework preparatio
     harness.owner.supersedeAll()
   }
 })
+
+it('replays durable history when settlement admission restores a fresh provider context', async () => {
+  const harness = createHarness({
+    beginRuntimeSessionTurn: vi.fn(async () => undefined),
+    settlementLifecycle: createSettlementLifecycle()
+  })
+  const turn = { ...request(), contextReset: true }
+  await harness.workflow.run(turn, { kind: 'app-continuation', settlementAdmission: settlement() })
+  expect(harness.prepareContinuationReplay).toHaveBeenCalledOnce()
+  expect(harness.preparation.mock.calls[0][0].request).toMatchObject({
+    contextReset: true,
+    historyPreamble: 'durable history'
+  })
+  expect(harness.disconnectForReload).not.toHaveBeenCalled()
+  expect(harness.executor).toHaveBeenCalledOnce()
+})
+
+it('classifies a missing settlement provider Session before dispatch as safe to retry', async () => {
+  const harness = createHarness({ attached: false })
+  await expect(
+    harness.workflow.run(request(), { kind: 'app-continuation', settlementAdmission: settlement() })
+  ).rejects.toMatchObject({ reason: 'session-not-attached', disposition: 'retry' })
+  expect(harness.executor).not.toHaveBeenCalled()
+})
+
+it('defers settlement while an existing prompt still owns the Session', async () => {
+  const harness = createHarness()
+  const active = harness.owner.activatePrompt(
+    harness.owner.reservePrompt({ sessionId: 's1', kind: 'prompt' })
+  )
+  await expect(
+    harness.workflow.run(request(), { kind: 'app-continuation', settlementAdmission: settlement() })
+  ).rejects.toMatchObject({ reason: 'session-busy', disposition: 'deferred' })
+  expect(harness.owner.current('s1')).toBe(active)
+  expect(harness.executor).not.toHaveBeenCalled()
+})
+
+it.each(['interaction', 'attachment'] as const)(
+  'ignores delayed provider context acceptance after %s replacement',
+  async (replacement) => {
+    const accepted = vi.fn()
+    const harness = createHarness({
+      onProviderContextAccepted: accepted,
+      execute: async (input) => {
+        if (replacement === 'interaction') harness.owner.supersedeAll()
+        else harness.setSession({ sessionId: 'provider-1' } as ActiveSession)
+        await input.onAccepted()
+        return { kind: 'stopped', response: { stopReason: 'end_turn' }, facts: {} }
+      }
+    })
+    await harness.workflow.run(request(), { kind: 'user' })
+    expect(accepted).not.toHaveBeenCalled()
+  }
+)

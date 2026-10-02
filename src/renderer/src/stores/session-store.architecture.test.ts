@@ -1396,7 +1396,8 @@ describe('Session Store architecture', () => {
           'src/renderer/src/lib/acp/workspace-prompt-admission.test.ts',
           'src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts',
           'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
-          'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts'
+          'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts',
+          'src/renderer/src/pages/workspace/subagent-release-projection.test.ts'
         ]
       },
       capabilityOverlays: ['renderer_state'],

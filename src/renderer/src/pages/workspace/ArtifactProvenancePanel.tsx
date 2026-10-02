@@ -627,6 +627,7 @@ const ProvenanceMessagesTimeline = ({
                   if (
                     conversationItem.type === 'handoff' ||
                     conversationItem.type === 'subagent-message' ||
+                    conversationItem.type === 'subagent-completion' ||
                     conversationItem.type === 'session-config-change' ||
                     conversationItem.type === 'turn-outcome'
                   )

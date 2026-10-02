@@ -59,6 +59,8 @@ type WatchedAttempt = Readonly<{
   name: string
 }>
 
+type UnobservedAttempt = Omit<WatchedAttempt, 'name'> & Readonly<{ name?: string }>
+
 type SettlementItem = WatchedAttempt & Readonly<{ status: SettledStatus }>
 
 type Watch = {
@@ -82,7 +84,8 @@ type SessionWakeState = {
     {
       originatingPromptId: string
       baselineAttemptKeys: ReadonlySet<string>
-      unobserved: Map<string, WatchedAttempt>
+      unobserved: Map<string, UnobservedAttempt>
+      observed: Set<string>
     }
   >
   flight?: {
@@ -147,7 +150,8 @@ class DelegationSettlementWakeOwner {
     state.turnLeases.set(leaseId, {
       originatingPromptId: input.originatingPromptId,
       baselineAttemptKeys: new Set(),
-      unobserved: new Map()
+      unobserved: new Map(),
+      observed: new Set()
     })
     let snapshot: DelegationSettlementSnapshot | undefined
     try {
@@ -169,7 +173,8 @@ class DelegationSettlementWakeOwner {
       baselineAttemptKeys: new Set(
         snapshot?.attempts.map((attempt) => handleKey(attempt.frameId, attempt.attemptId)) ?? []
       ),
-      unobserved: state.turnLeases.get(leaseId)?.unobserved ?? new Map()
+      unobserved: state.turnLeases.get(leaseId)?.unobserved ?? new Map(),
+      observed: state.turnLeases.get(leaseId)?.observed ?? new Set()
     })
     return leaseId
   }
@@ -178,7 +183,8 @@ class DelegationSettlementWakeOwner {
     input: Readonly<{
       sessionId: string
       originatingPromptId: string
-      attempts: readonly WatchedAttempt[]
+      attempts: readonly UnobservedAttempt[]
+      onlyNewAttempts?: boolean
     }>
   ): void {
     const state = this.sessions.get(input.sessionId)
@@ -186,7 +192,13 @@ class DelegationSettlementWakeOwner {
     for (const lease of state.turnLeases.values()) {
       if (lease.originatingPromptId !== input.originatingPromptId) continue
       for (const attempt of input.attempts) {
-        lease.unobserved.set(handleKey(attempt.frameId, attempt.attemptId), attempt)
+        const key = handleKey(attempt.frameId, attempt.attemptId)
+        if (
+          lease.observed.has(key) ||
+          (input.onlyNewAttempts && lease.baselineAttemptKeys.has(key))
+        )
+          continue
+        lease.unobserved.set(key, attempt)
       }
     }
   }
@@ -201,9 +213,10 @@ class DelegationSettlementWakeOwner {
     const state = this.sessions.get(input.sessionId)
     if (!state) return
     for (const lease of state.turnLeases.values()) {
-      if (lease.originatingPromptId !== input.originatingPromptId) continue
       for (const attempt of input.attempts) {
-        lease.unobserved.delete(handleKey(attempt.frameId, attempt.attemptId))
+        const key = handleKey(attempt.frameId, attempt.attemptId)
+        lease.observed.add(key)
+        lease.unobserved.delete(key)
       }
     }
     const observed = new Set(
@@ -288,10 +301,10 @@ class DelegationSettlementWakeOwner {
         ) {
           continue
         }
-        const watched = lease.unobserved.get(key) ?? {
+        const watched: WatchedAttempt = {
           frameId: attempt.frameId,
           attemptId: attempt.attemptId,
-          name: attempt.name
+          name: lease.unobserved.get(key)?.name ?? attempt.name
         }
         if (isDelegatedAttemptSettled(attempt.status)) {
           if (lease.unobserved.has(key)) pending.set(key, { ...watched, status: attempt.status })

@@ -1,6 +1,8 @@
 import { app } from 'electron'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../../shared/uploads'
+import type { PersistedChatSession } from '../../shared/session-persistence'
+import { SettlementAdmissionError } from '../../shared/runtime-session-admission'
 import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import {
@@ -164,6 +166,41 @@ export function composeDelegation({
   const delegatedWorkRef: {
     current?: ReturnType<typeof createProductionDelegatedWorkComposition>
   } = {}
+  const resumeContinuationSession = async (
+    runtime: ReturnType<typeof createAcpRuntime>,
+    session: PersistedChatSession
+  ): Promise<{ contextReset?: boolean } | undefined> => {
+    let latest = session
+    const agentTarget = await resolveSessionAgentTarget(latest)
+    if (
+      agentTarget &&
+      shouldPersistSessionAgentConfiguration(latest.agentConfiguration, agentTarget)
+    ) {
+      latest = await sessionPersistenceCoordinator.saveSession({
+        ...latest,
+        agentConfiguration: toSessionAgentConfiguration(agentTarget)
+      })
+    }
+    if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
+      return runtime.resumeSession({
+        sessionId: latest.id,
+        cwd: latest.cwd,
+        projectId: latest.projectId,
+        ...(latest.permissionProfile ? { permissionProfile: latest.permissionProfile } : {}),
+        memoryEnabled: latest.memoryEnabled !== false,
+        ...(latest.agentFrameworkId ? { previousFrameworkId: latest.agentFrameworkId } : {}),
+        ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
+        ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
+        ...(latest.specialistBindingPending === true ? { specialistBindingPending: true } : {}),
+        ...(latest.providerSessionId ? { providerSessionId: latest.providerSessionId } : {}),
+        ...(latest.providerContinuityToken
+          ? { providerContinuityToken: latest.providerContinuityToken }
+          : {}),
+        ...(agentTarget ? { agentTarget } : {})
+      })
+    }
+    return undefined
+  }
   const delegatedWork = createProductionDelegatedWorkComposition({
     resolvePermissionPrompts: (sessionId) => runtimeRef.current?.getPermissionPrompts(sessionId),
     dataRoot: resolveDataRoot(),
@@ -198,7 +235,26 @@ export function composeDelegation({
             request,
             onProviderPromptAccepted,
             settlementAdmission,
-            validate
+            validate,
+            async () => {
+              const session = await sessionRepository.loadSession(
+                settlementAdmission.projectId,
+                settlementAdmission.sessionId
+              )
+              const graph = session?.conversationGraph
+              const root = graph?.frames.find(({ id }) => id === settlementAdmission.rootFrameId)
+              const branch = graph?.branches.find(({ id }) => id === root?.activeBranchId)
+              if (
+                !session ||
+                session.archivedAt !== undefined ||
+                graph?.rootFrameId !== settlementAdmission.rootFrameId ||
+                branch?.id !== settlementAdmission.rootBranchId ||
+                `${branch.id}:${branch.createdAt}` !== settlementAdmission.rootBranchRevision
+              )
+                throw new SettlementAdmissionError('origin-path-changed', 'invalidated')
+              const resumed = await resumeContinuationSession(activeRuntime, session)
+              if (resumed?.contextReset) request.contextReset = true
+            }
           )
         },
         onPromptEnded: (sessionId, promptId) =>
@@ -329,7 +385,7 @@ export function composeDelegation({
             }
           },
           async () => {
-            let latest = await sessionRepository.loadSession(
+            const latest = await sessionRepository.loadSession(
               delivery.session.projectId,
               delivery.session.sessionId
             )
@@ -347,42 +403,7 @@ export function composeDelegation({
                 'Parent message root Branch changed before dispatch.'
               )
             }
-            const agentTarget = await resolveSessionAgentTarget(latest)
-            if (
-              agentTarget &&
-              shouldPersistSessionAgentConfiguration(latest.agentConfiguration, agentTarget)
-            ) {
-              latest = await sessionPersistenceCoordinator.saveSession({
-                ...latest,
-                agentConfiguration: toSessionAgentConfiguration(agentTarget)
-              })
-            }
-            if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
-              await runtime.resumeSession({
-                sessionId: latest.id,
-                cwd: latest.cwd,
-                projectId: latest.projectId,
-                ...(latest.permissionProfile
-                  ? { permissionProfile: latest.permissionProfile }
-                  : {}),
-                memoryEnabled: latest.memoryEnabled !== false,
-                ...(latest.agentFrameworkId
-                  ? { previousFrameworkId: latest.agentFrameworkId }
-                  : {}),
-                ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
-                ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
-                ...(latest.specialistBindingPending === true
-                  ? { specialistBindingPending: true }
-                  : {}),
-                ...(latest.providerSessionId
-                  ? { providerSessionId: latest.providerSessionId }
-                  : {}),
-                ...(latest.providerContinuityToken
-                  ? { providerContinuityToken: latest.providerContinuityToken }
-                  : {}),
-                ...(agentTarget ? { agentTarget } : {})
-              })
-            }
+            await resumeContinuationSession(runtime, latest)
             const started = await delivery.startDispatch()
             if (started !== 'started') {
               throw new DelegateMessageParkedError(

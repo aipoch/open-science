@@ -118,6 +118,7 @@ import type { NotebookSessionReference } from '../../../../shared/notebook'
 import { useNotebookRunsById } from './use-notebook-runs-by-id'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
+import { WorkspaceSubagentCompletionRow } from './WorkspaceSubagentCompletionRow'
 import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 import { useTranscriptWindow } from './use-transcript-window'
@@ -1950,6 +1951,32 @@ const WorkspaceMessageScrollerImpl = ({
                             promptMessageId={item.promptMessageId}
                             outcome={item.outcome}
                             actions={turnOutcomeActions}
+                          />
+                        </div>
+                      </div>
+                    </MessageScrollerItem>
+                  )
+                }
+
+                if (item.type === 'subagent-completion') {
+                  return (
+                    <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
+                      <div className="px-4 pb-1 pt-3 md:px-6">
+                        <div className="mx-auto w-full max-w-[56rem]">
+                          <WorkspaceSubagentCompletionRow
+                            completion={item.completion}
+                            onOpenSource={() => {
+                              if (!currentSessionId) return
+                              usePreviewWorkbenchStore
+                                .getState()
+                                .upsertAndActivateItem(
+                                  createSessionSubagentsPreviewItem(
+                                    currentSessionId,
+                                    currentProjectId,
+                                    item.completion.frameId
+                                  )
+                                )
+                            }}
                           />
                         </div>
                       </div>

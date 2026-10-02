@@ -188,7 +188,8 @@
       "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
       "src/main/session-persistence/ipc.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
-      "src/main/acp/approved-handoff-outcome.test.ts"
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/composition/delegation.test.ts"
     ]
   },
   "capabilityOverlays": [],

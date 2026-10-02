@@ -836,6 +836,10 @@ class AcpRuntime {
       },
       requestArtifactPublicationContinuation: (input) =>
         this.parkArtifactPublicationContinuation(input),
+      onProviderContextAccepted: (sessionId, session) => {
+        if (this.activeSessionFor(sessionId) === session)
+          this.restoredContinuationContextResetSessionIds?.delete(sessionId)
+      },
       onPromptEnded: (sessionId, turnToken) => this.nativeFollowUp.releaseTurn(sessionId, turnToken)
     })
     this.contextCompactionWorkflow = prompt.contextCompactionWorkflow
@@ -1254,13 +1258,17 @@ class AcpRuntime {
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(async () => {
-      this.restoredContinuationContextResetSessionIds?.delete(request.sessionId)
+      const previousSession = this.activeSessionFor(request.sessionId)
       const resumed = await this.providerSessionResumer.resume(request)
       if (resumed.contextReset) {
         const contextResetSessionIds =
           this.restoredContinuationContextResetSessionIds ?? new Set<string>()
         this.restoredContinuationContextResetSessionIds = contextResetSessionIds
         contextResetSessionIds.add(request.sessionId)
+      } else if (previousSession !== this.activeSessionFor(request.sessionId)) {
+        // A warm resume of this same empty provider context must not forget pending replay.
+        // A replacement that resumed known history no longer needs the prior attachment's replay.
+        this.restoredContinuationContextResetSessionIds?.delete(request.sessionId)
       }
       this.scheduleQueuedPlanDelivery(
         this.sessionEnvironment.projectId(request.sessionId),
@@ -1850,6 +1858,12 @@ class AcpRuntime {
     permissionContinuation?: RestoredPermissionContinuation,
     settlementAdmission?: SettlementAdmission
   ): Promise<PromptResponse> {
+    if (
+      settlementAdmission &&
+      this.restoredContinuationContextResetSessionIds?.has(request.sessionId)
+    ) {
+      request = { ...request, contextReset: true }
+    }
     // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
     // before that barrier is released instead of waiting on the barrier it intentionally holds.
     return this.generationActivity.withOperation(() =>

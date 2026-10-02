@@ -182,6 +182,7 @@ const resolveTimelineItemPrompt = (
   }
   if (item.type === 'handoff') return item.originatingUserMessageId
   if (item.type === 'subagent-message') return item.message.promptMessageId
+  if (item.type === 'subagent-completion') return item.completion.promptMessageId
   return undefined
 }
 

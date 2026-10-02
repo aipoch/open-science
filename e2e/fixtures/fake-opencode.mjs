@@ -62,6 +62,8 @@ const DELEGATION_TERMINAL_PROMPT = 'Run the production delegation terminal journ
 const DELEGATION_SETTLEMENT_PROMPT = 'Run the production idle Main settlement journey.'
 const DELEGATED_SETTLEMENT_TASK = 'Complete the file-gated settlement evidence.'
 const DELEGATED_SETTLEMENT_NAME = 'Idle Main settlement child'
+const DELEGATION_PROGRESS_PROMPT = 'Wait for three file-gated Subagents and report progress.'
+const DELEGATED_PROGRESS_TASK = 'Complete one file-gated progress task.'
 const SETTLEMENT_CONTROL_MARKER =
   'Delegated work settlement update (application-owned context, not a user message).'
 const DELEGATION_ARTIFACT_VERSION_INPUT_PROMPT =
@@ -2385,6 +2387,28 @@ if (process.argv.includes('--version')) {
           // Other journeys collect on their own schedule. A settled child's display name can
           // repeat a task-routing marker; acknowledge the update without executing that task.
           reply = 'Delegated settlement observed.'
+        } else if (prompt.includes(DELEGATION_PROGRESS_PROMPT)) {
+          const releaseFiles = JSON.parse(prompt.split('Release files: ')[1])
+          const delegated = controlResultValue(
+            await runProductionDelegationRequest(
+              context.params.sessionId,
+              releaseFiles.map((releaseFile, index) => ({
+                task: `${DELEGATED_PROGRESS_TASK}\nRelease file: ${JSON.stringify(releaseFile)}`,
+                name: `Progress child ${index + 1}`
+              })),
+              true
+            )
+          )
+          if (
+            delegated.children?.length !== 3 ||
+            delegated.children.some(({ status }) => status !== 'completed')
+          ) {
+            throw new Error(`Progress delegation failed: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Main collected all three progress results.'
+        } else if (prompt.includes(DELEGATED_PROGRESS_TASK)) {
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]), 120_000)
+          reply = 'File-gated progress result.'
         } else if (prompt.includes(DELEGATION_SETTLEMENT_PROMPT)) {
           const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
           const delegated = controlResultValue(

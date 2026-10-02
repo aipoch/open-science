@@ -73,7 +73,6 @@ const asSessionStatus = (value: unknown): PersistedSessionStatus => {
   return status && SESSION_STATUSES.has(status) ? status : 'idle'
 }
 
-// Keeps the active run pointer only when both its message id and timestamp are valid.
 const sanitizeSettlementWitness = (
   value: unknown
 ): PersistedRuntimeSessionAdmission['settlement'] | undefined => {
@@ -81,9 +80,8 @@ const sanitizeSettlementWitness = (
     !isRecord(value) ||
     !hasOnlyFields(value, ['admission', 'stage', 'runStartedAt']) ||
     !isRecord(value.admission) ||
-    !['admitted', 'not-dispatched', 'dispatching', 'accepted', 'terminal'].includes(
-      String(value.stage)
-    ) ||
+    typeof value.stage !== 'string' ||
+    !['admitted', 'not-dispatched', 'dispatching', 'accepted', 'terminal'].includes(value.stage) ||
     typeof value.runStartedAt !== 'number' ||
     !Number.isFinite(value.runStartedAt) ||
     value.runStartedAt < 0
@@ -117,7 +115,8 @@ const sanitizeSettlementWitness = (
       !['frameId', 'attemptId'].every(
         (key) => typeof item[key] === 'string' && item[key].length > 0 && item[key].length <= 256
       ) ||
-      !['completed', 'cancelled', 'error'].includes(String(item.status))
+      typeof item.status !== 'string' ||
+      !['completed', 'cancelled', 'error'].includes(item.status)
     )
       return undefined
     const key = `${item.frameId}\0${item.attemptId}`
@@ -141,6 +140,7 @@ const sanitizeSettlementWitness = (
   }
 }
 
+// Keeps the active run pointer only when both its message id and timestamp are valid.
 const sanitizeActiveRun = (activeRun: unknown): PersistedActiveRun | undefined => {
   if (!isRecord(activeRun)) return undefined
 

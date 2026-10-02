@@ -312,7 +312,8 @@
       "src/renderer/src/pages/workspace/ReplayReferenceText.test.tsx",
       "src/renderer/src/pages/workspace/SessionDiscussionSource.test.tsx",
       "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
-      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/subagent-release-projection.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -27,6 +27,7 @@ type AcpRuntimePromptHost = Readonly<{
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
+  onProviderContextAccepted?: (sessionId: string, session: acp.ActiveSession) => void
   requestArtifactPublicationContinuation?: (input: {
     permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
@@ -326,6 +327,7 @@ const composeAcpRuntimePromptOwners = (
         : {}),
       emitSkillActivities,
       onSkillImportAttachmentEligible: callbacks.onSkillImportAttachmentEligible,
+      onProviderContextAccepted: host.onProviderContextAccepted,
       onProviderPromptAccepted: callbacks.onProviderPromptAccepted,
       ...(options.runtimeSessions
         ? {

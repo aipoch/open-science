@@ -7296,6 +7296,12 @@
     "The run failed with no error message.": "Выполнение завершилось с ошибкой без сообщения об ошибке.",
     "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "Не удалось откатить неотправленное сообщение ({{failure}}). Отправьте его снова или остановите выполнение, чтобы повторить попытку.",
     "The unsent Session could not be removed ({{failure}}).": "Не удалось удалить неотправленную сессию ({{failure}}).",
-    "Agent Session cleanup did not complete.": "Очистка сессии агента не завершена."
+    "Agent Session cleanup did not complete.": "Очистка сессии агента не завершена.",
+    "Subagent {{name}} completed": "Субагент {{name}} завершил работу",
+    "Subagent {{name}} failed": "Субагент {{name}} завершился с ошибкой",
+    "Subagent {{name}} cancelled": "Работа субагента {{name}} отменена",
+    "Subagent completed": "Субагент завершил работу",
+    "Subagent failed": "Субагент завершился с ошибкой",
+    "Subagent cancelled": "Работа субагента отменена"
   }
 }
