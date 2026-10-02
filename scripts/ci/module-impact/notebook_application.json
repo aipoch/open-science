@@ -284,8 +284,12 @@
     "src/main/notebook/real-parquet-lineage.integration.test.ts",
     "src/main/notebook/fixtures/lineage/cwd-unpacked-atomic-paths.json",
     "src/main/notebook/fixtures/lineage/failed-cell-language-handoff.json",
+    "src/main/notebook/fixtures/lineage/failed-empty-model-report.json",
     "src/main/notebook/fixtures/lineage/r-source-callback-inputs.json",
     "src/main/notebook/fixtures/lineage/readonly-sqlite-handoff.json",
+    "src/main/notebook/fixtures/lineage/native-array-report-handoff.json",
+    "src/main/notebook/fixtures/lineage/native-model-missing-global.json",
+    "src/main/notebook/fixtures/lineage/native-callback-helper-promises.json",
     "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
     "src/main/notebook/host-session-reading.ts"
   ],

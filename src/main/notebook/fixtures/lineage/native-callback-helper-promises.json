@@ -1,0 +1,62 @@
+{
+  "description": "Reduced native callback recovery from live workflows: a locally closed function first loses its transitive global helper, then a repaired helper retains an unforced argument promise to a prior kernel. Original scientific data and provider transcripts are omitted.",
+  "input": "x,y\n1,3\n2,5\n3,7\n4,9\n",
+  "cells": [
+    {
+      "language": "r",
+      "kernel_epoch": 0,
+      "status": "completed",
+      "code": "records <- read.csv('inputs/calibration.csv')\nscale <- diff(records$y)[1]/diff(records$x)[1]\nscale_signal <- function(x) x*scale\nfactory <- function(offset) {\n  force(offset)\n  function(x) offset+scale_signal(x)\n}\ncallback <- factory(records$y[1]-scale*records$x[1])\nstopifnot(max(abs(callback(c(2,4))-c(5,9))) < 1e-10)\nsaveRDS(callback, 'outputs/model.rds')\nwriteLines('warm-only', 'outputs/report.txt')",
+      "reads": ["inputs/calibration.csv"],
+      "writes": ["outputs/model.rds", "outputs/report.txt"]
+    },
+    {
+      "language": "r",
+      "kernel_epoch": 1,
+      "status": "failed",
+      "code": "restored <- readRDS('outputs/model.rds')\nwriteLines('cold-pending', 'outputs/report.txt')\nprediction <- restored(c(2,4))",
+      "reads": ["outputs/model.rds"],
+      "writes": ["outputs/report.txt"]
+    },
+    {
+      "language": "python",
+      "kernel_epoch": 0,
+      "status": "completed",
+      "code": "from pathlib import Path\nreport = Path('outputs/report.txt')\nassert report.read_text(encoding='utf-8') == 'cold-pending\\n'\nreport.write_text('failure-observed\\n', encoding='utf-8')",
+      "reads": ["outputs/report.txt"],
+      "writes": ["outputs/report.txt"]
+    },
+    {
+      "language": "r",
+      "kernel_epoch": 1,
+      "status": "completed",
+      "code": "records <- read.csv('inputs/calibration.csv')\nscale <- diff(records$y)[1]/diff(records$x)[1]\nfactory <- function(multiplier) {\n  offset <- 1\n  helper <- function(x) x*multiplier\n  function(x) offset+helper(x)\n}\ncallback <- factory(scale)\nsaveRDS(callback, 'outputs/model.rds')\nwriteLines('lazy-pending', 'outputs/report.txt')",
+      "reads": ["inputs/calibration.csv"],
+      "writes": ["outputs/model.rds", "outputs/report.txt"]
+    },
+    {
+      "language": "r",
+      "kernel_epoch": 2,
+      "status": "failed",
+      "code": "restored <- readRDS('outputs/model.rds')\nwriteLines('cold-pending', 'outputs/report.txt')\nprediction <- restored(c(2,4))",
+      "reads": ["outputs/model.rds"],
+      "writes": ["outputs/report.txt"]
+    },
+    {
+      "language": "r",
+      "kernel_epoch": 2,
+      "status": "completed",
+      "code": "records <- read.csv('inputs/calibration.csv')\nfactory <- function(multiplier) {\n  force(multiplier)\n  offset <- 1\n  helper <- function(x) x*multiplier\n  function(x) offset+helper(x)\n}\ncallback <- factory(diff(records$y)[1]/diff(records$x)[1])\nsaveRDS(callback, 'outputs/model.rds')\nprediction <- callback(c(2,4))\nstopifnot(max(abs(prediction-c(5,9))) < 1e-10)\nwrite(prediction, 'outputs/report.txt', ncolumns=2)",
+      "reads": ["inputs/calibration.csv"],
+      "writes": ["outputs/model.rds", "outputs/report.txt"]
+    },
+    {
+      "language": "r",
+      "kernel_epoch": 3,
+      "status": "completed",
+      "code": "restored <- readRDS('outputs/model.rds')\nprevious <- scan('outputs/report.txt', quiet=TRUE)\nstopifnot(max(abs(previous-c(5,9))) < 1e-10)\nrecipe <- environment(restored)\nstopifnot(!identical(recipe, globalenv()), exists('helper', recipe, inherits=FALSE), exists('multiplier', recipe, inherits=FALSE))\nstopifnot(identical(environment(recipe$helper), recipe), identical(recipe$multiplier, 2))\nreversed <- restored(c(4,2))\nsingleton <- restored(2)\nempty <- restored(numeric(0))\nstopifnot(max(abs(reversed-c(9,5))) < 1e-10, abs(singleton-5) < 1e-10, is.numeric(empty), length(empty) == 0)\nbase::write(reversed, file='outputs/report.txt', ncolumns=2)",
+      "reads": ["outputs/model.rds", "outputs/report.txt"],
+      "writes": ["outputs/report.txt"]
+    }
+  ]
+}
