@@ -21,6 +21,7 @@ export type PdfOutlineItem = Readonly<{
   id: string
   title: string
   pageNumber?: number
+  position?: Readonly<{ left: number; top: number; aspectRatio: number }>
   children: readonly PdfOutlineItem[]
 }>
 
@@ -75,19 +76,26 @@ const flattenVisible = (
 
 const activeOutlineId = (
   items: readonly PdfOutlineItem[],
-  currentPage: number
+  currentPage: number,
+  position?: Readonly<{ pageNumber: number; top: number }>
 ): string | undefined => {
   let active: PdfOutlineItem | undefined
   let activePage = 0
+  let activeTop = -Infinity
   const visit = (children: readonly PdfOutlineItem[]): void => {
     for (const item of children) {
       if (
         item.pageNumber !== undefined &&
-        item.pageNumber <= currentPage &&
-        item.pageNumber >= activePage
+        item.pageNumber <= (position?.pageNumber ?? currentPage) &&
+        (!position ||
+          item.pageNumber < position.pageNumber ||
+          (item.position?.top ?? 0) <= position.top) &&
+        (item.pageNumber > activePage ||
+          (item.pageNumber === activePage && (!position || (item.position?.top ?? 0) > activeTop)))
       ) {
         active = item
         activePage = item.pageNumber
+        activeTop = item.position?.top ?? 0
       }
       visit(item.children)
     }
@@ -247,9 +255,10 @@ const PdfThumbnailList = ({
           {Array.from({ length: visibleRange.end - visibleRange.start }, (_, offset) => {
             const pageNumber = visibleRange.start + offset + 1
             const customLabel = pageLabels?.[pageNumber - 1]
-            const label = customLabel
-              ? `${t('Page {{page}}', { page: pageNumber })} · ${customLabel}`
-              : t('Page {{page}}', { page: pageNumber })
+            const label =
+              customLabel && customLabel !== String(pageNumber)
+                ? `${t('Page {{page}}', { page: pageNumber })} · ${customLabel}`
+                : t('Page {{page}}', { page: pageNumber })
             return (
               <div key={pageNumber} style={{ height: `${THUMBNAIL_ROW_HEIGHT}px` }}>
                 <PdfThumbnail
@@ -271,15 +280,19 @@ const PdfThumbnailList = ({
 const PdfOutlineTree = ({
   items,
   currentPage,
+  position,
+  selectedId,
   onNavigate
 }: {
   items: readonly PdfOutlineItem[]
   currentPage: number
-  onNavigate: (pageNumber: number) => void
+  position?: Readonly<{ pageNumber: number; top: number }>
+  selectedId?: string
+  onNavigate: (pageNumber: number, item?: PdfOutlineItem) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const parents = useMemo(() => collectParents(items), [items])
-  const activeId = useMemo(() => activeOutlineId(items, currentPage), [currentPage, items])
+  const activeId = selectedId ?? activeOutlineId(items, currentPage, position)
   const expandActiveParents = (current: ReadonlySet<string>): ReadonlySet<string> => {
     const next = new Set(current)
     let parentId = activeId ? parents.get(activeId) : undefined
@@ -373,7 +386,7 @@ const PdfOutlineTree = ({
                 onFocus={() => setFocusedId(item.id)}
                 onClick={() =>
                   item.pageNumber !== undefined
-                    ? onNavigate(item.pageNumber)
+                    ? onNavigate(item.pageNumber, item)
                     : hasChildren && toggle(item.id)
                 }
                 onKeyDown={(event) => {
@@ -386,7 +399,7 @@ const PdfOutlineTree = ({
                     if (hasChildren && isExpanded) toggle(item.id, false)
                     else focusItem(parentId)
                   } else if (event.key === 'Enter') {
-                    if (item.pageNumber !== undefined) onNavigate(item.pageNumber)
+                    if (item.pageNumber !== undefined) onNavigate(item.pageNumber, item)
                     else if (hasChildren) toggle(item.id)
                   } else return
                   event.preventDefault()
@@ -408,6 +421,8 @@ export const PdfOutlineSidebar = ({
   pageCount,
   pageLabels,
   currentPage,
+  position,
+  selectedId,
   width,
   onWidthChange,
   onClose,
@@ -418,10 +433,12 @@ export const PdfOutlineSidebar = ({
   pageCount: number
   pageLabels?: readonly string[] | null
   currentPage: number
+  position?: Readonly<{ pageNumber: number; top: number }>
+  selectedId?: string
   width: number
   onWidthChange: (width: number) => void
   onClose: () => void
-  onNavigate: (pageNumber: number) => void
+  onNavigate: (pageNumber: number, item?: PdfOutlineItem) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [mode, setMode] = useState<PdfNavigationMode>(items.length > 0 ? 'outline' : 'pages')
@@ -482,7 +499,13 @@ export const PdfOutlineSidebar = ({
         </div>
         {effectiveMode === 'outline' ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
-            <PdfOutlineTree items={items} currentPage={currentPage} onNavigate={onNavigate} />
+            <PdfOutlineTree
+              items={items}
+              currentPage={currentPage}
+              position={position}
+              selectedId={selectedId}
+              onNavigate={onNavigate}
+            />
           </div>
         ) : (
           <PdfThumbnailList

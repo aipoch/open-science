@@ -1519,6 +1519,206 @@ describe('PdfPreviewContent', () => {
     expect(outlineToggle.getAttribute('aria-label')).toBe('Show navigation')
   })
 
+  it('navigates and tracks distinct same-page outline destinations without changing zoom', async () => {
+    vi.useFakeTimers()
+    const page = await (
+      getPage as ReturnType<
+        typeof vi.fn<() => Promise<{ view?: number[]; getViewport: ReturnType<typeof vi.fn> }>>
+      >
+    )()
+    page.view = [0, 0, 600, 1200]
+    page.getViewport.mockImplementation(() => ({
+      width: 600,
+      height: 1200,
+      convertToViewportPoint: (x: number, y: number) => [x, 1200 - y]
+    }))
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 2,
+        getPage,
+        getDestination: vi.fn().mockResolvedValue([0, { name: 'XYZ' }, 40, 600, 2]),
+        getOutline: vi.fn().mockResolvedValue([
+          { title: 'First heading', dest: [0, { name: 'XYZ' }, 40, 1100, null], items: [] },
+          { title: 'Second heading', dest: 'second', items: [] },
+          { title: 'Same destination alias', dest: [0, { name: 'FitH' }, 600], items: [] }
+        ]),
+        destroy: destroyDocument
+      }),
+      destroy: vi.fn()
+    } as never)
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/outline.pdf" name="outline.pdf" />)
+      await flush()
+    })
+    await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+    const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      left: 0,
+      height: 400,
+      bottom: 400
+    } as DOMRect)
+    const pages = Array.from(container.querySelectorAll<HTMLElement>('[data-page-number]'))
+    pages.forEach((element, index) =>
+      vi.spyOn(element, 'getBoundingClientRect').mockImplementation(
+        () =>
+          ({
+            top: index * 1212 - scroll.scrollTop,
+            bottom: index * 1212 + 1200 - scroll.scrollTop,
+            left: 0,
+            width: 600,
+            height: 1200
+          }) as DOMRect
+      )
+    )
+    const first = screen.getByRole('treeitem', { name: 'First heading' })
+    const second = screen.getByRole('treeitem', { name: 'Second heading' })
+    const alias = screen.getByRole('treeitem', { name: 'Same destination alias' })
+    await act(async () => second.click())
+    expect(scroll.scrollTop).toBe(536)
+    expect(second.getAttribute('aria-selected')).toBe('true')
+    await act(async () => {
+      scroll.dispatchEvent(new Event('scroll'))
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(second.getAttribute('aria-selected')).toBe('true')
+    await act(async () => alias.click())
+    expect(alias.getAttribute('aria-selected')).toBe('true')
+    await act(async () => first.click())
+    expect(scroll.scrollTop).toBe(36)
+    expect(first.getAttribute('aria-selected')).toBe('true')
+    await act(async () => {
+      scroll.scrollTop = 650
+      scroll.dispatchEvent(new Event('scroll'))
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(second.getAttribute('aria-selected')).toBe('true')
+    expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' })
+    await act(async () => {
+      scroll.scrollTop = 200
+      scroll.dispatchEvent(new Event('scroll'))
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(first.getAttribute('aria-selected')).toBe('true')
+    expect(container.textContent).toContain('100%')
+  })
+
+  it.each([
+    ['XYZ', [40, 600, null], 600],
+    ['FitH', [600], 600],
+    ['FitBH', [600], 600],
+    ['FitR', [40, 400, 200, 600], 600],
+    ['FitV', [40], 0],
+    ['FitBV', [40], 0],
+    ['XYZ', [null, null, null], 0],
+    ['Fit', [], 0],
+    ['FitB', [], 0]
+  ])(
+    'resolves %s outline coordinates on a single-page document',
+    async (type, coordinates, expectedTop) => {
+      const convertToViewportPoint = vi.fn((x: number, y: number) => [x - 10, 1220 - y])
+      const pdfPage = {
+        view: [10, 20, 610, 1220],
+        getViewport: () => ({ width: 600, height: 1200, convertToViewportPoint }),
+        getTextContent: async () => ({ items: [] }),
+        render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+        cleanup: vi.fn()
+      }
+      getPage.mockResolvedValue(pdfPage)
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 1,
+          getPage,
+          getOutline: async () => [
+            {
+              title: 'Destination',
+              dest: [0, { name: type }, ...(coordinates as unknown[])],
+              items: []
+            }
+          ],
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn()
+      } as never)
+      await act(async () => {
+        root.render(<PdfPreviewContent path="/single.pdf" name="single.pdf" />)
+        await flush()
+      })
+      await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+      const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+      const page = container.querySelector<HTMLElement>('[data-page-number="1"]')!
+      vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({ top: 0, left: 0 } as DOMRect)
+      vi.spyOn(page, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        left: 0,
+        width: 600,
+        height: 1200
+      } as DOMRect)
+      await act(async () => screen.getByRole('treeitem', { name: 'Destination' }).click())
+      // The crop box starts at y=20; numeric destinations are absolute PDF coordinates.
+      expect(scroll.scrollTop).toBeCloseTo(
+        Number(expectedTop) > 0 ? Number(expectedTop) + 20 - 64 : 0
+      )
+      expect(
+        screen.getByRole('treeitem', { name: 'Destination' }).getAttribute('aria-selected')
+      ).toBe('true')
+    }
+  )
+
+  it('discards outline coordinates resolved after the PDF is replaced', async () => {
+    let finish!: (value: unknown) => void
+    const delayed = new Promise((resolve) => {
+      finish = resolve
+    })
+    const initialPage = await (getPage as ReturnType<typeof vi.fn<() => Promise<unknown>>>)()
+    getPage.mockReturnValue(delayed)
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValueOnce({
+      promise: Promise.resolve({
+        numPages: 2,
+        getPage,
+        getOutline: async () => [
+          { title: 'Old destination', dest: [0, { name: 'XYZ' }, 0, 100, null], items: [] }
+        ],
+        destroy: destroyDocument
+      }),
+      destroy: vi.fn()
+    } as never)
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/old.pdf" name="old.pdf" />)
+      await flush()
+    })
+    getPage.mockResolvedValue(initialPage)
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/new.pdf" name="new.pdf" />)
+      await flush()
+      finish(initialPage)
+      await flush()
+    })
+    expect(container.querySelector('[aria-label="Show navigation"]')).toBeNull()
+    expect(container.textContent).not.toContain('Old destination')
+  })
+
+  it('omits redundant PDF page labels and preserves distinct labels', async () => {
+    await act(async () =>
+      root.render(
+        <PdfOutlineSidebar
+          document={{ getPage } as never}
+          items={[]}
+          pageCount={3}
+          pageLabels={['1', 'ii', '1']}
+          currentPage={1}
+          width={240}
+          onNavigate={vi.fn()}
+          onClose={vi.fn()}
+          onWidthChange={vi.fn()}
+        />
+      )
+    )
+    expect(screen.getByRole('button', { name: 'Page 1' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Page 2 · ii' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Page 3 · 1' })).not.toBeNull()
+  })
+
   it('keeps the outline control hidden when the PDF has no native outline', async () => {
     vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
       promise: Promise.resolve({

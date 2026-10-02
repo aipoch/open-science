@@ -348,16 +348,73 @@ const isPdfPageRef = (value: unknown): value is { num: number; gen: number } =>
   typeof (value as { num?: unknown }).num === 'number' &&
   typeof (value as { gen?: unknown }).gen === 'number'
 
-const resolvePdfOutlinePage = async (
+// Keep destination headings below the floating reader controls.
+const OUTLINE_TOP_INSET = 64
+const EMPTY_OUTLINE_ITEMS: readonly PdfOutlineItem[] = []
+
+// PDF destinations use bottom-left PDF coordinates. Let PDF.js handle crop boxes and rotation,
+// then retain fractions so outline navigation remains valid at any reader width/zoom.
+const resolvePdfOutlineTarget = async (
   document: PdfDocument,
   destination: PdfOutlineNode['dest']
-): Promise<number | undefined> => {
+): Promise<Pick<PdfOutlineItem, 'pageNumber' | 'position'>> => {
   const resolved =
     typeof destination === 'string' ? await document.getDestination(destination) : destination
-  const page = resolved?.[0]
-  if (typeof page === 'number') return page + 1
-  if (isPdfPageRef(page)) return (await document.getPageIndex(page)) + 1
-  return undefined
+  const ref = resolved?.[0]
+  const pageNumber =
+    typeof ref === 'number'
+      ? ref + 1
+      : isPdfPageRef(ref)
+        ? (await document.getPageIndex(ref)) + 1
+        : undefined
+  if (
+    pageNumber === undefined ||
+    !Number.isInteger(pageNumber) ||
+    pageNumber < 1 ||
+    pageNumber > document.numPages
+  )
+    return {}
+  const type = resolved?.[1]?.name
+  if (!resolved || !['XYZ', 'FitH', 'FitBH', 'FitV', 'FitBV', 'FitR'].includes(type))
+    return { pageNumber }
+  try {
+    const page = await document.getPage(pageNumber)
+    const viewport = page.getViewport({ scale: 1 })
+    const [xMin, yMin, xMax, yMax] = page.view
+    const coordinate = (value: unknown, fallback: number): number =>
+      typeof value === 'number' && Number.isFinite(value) ? value : fallback
+    let x = xMin,
+      y = yMax,
+      right = xMin,
+      bottom = yMax
+    if (type === 'XYZ') {
+      x = right = coordinate(resolved[2], xMin)
+      y = bottom = coordinate(resolved[3], yMax)
+    } else if (type === 'FitH' || type === 'FitBH') {
+      y = bottom = coordinate(resolved[2], yMax)
+    } else if (type === 'FitV' || type === 'FitBV') {
+      x = right = coordinate(resolved[2], xMin)
+      bottom = yMin
+    } else {
+      x = coordinate(resolved[2], xMin)
+      y = coordinate(resolved[3], yMin)
+      right = coordinate(resolved[4], xMax)
+      bottom = coordinate(resolved[5], yMax)
+    }
+    const first = viewport.convertToViewportPoint(x, y)
+    const last = viewport.convertToViewportPoint(right, bottom)
+    return {
+      pageNumber,
+      position: {
+        left: Math.max(0, Math.min(1, Math.min(first[0], last[0]) / viewport.width)),
+        top: Math.max(0, Math.min(1, Math.min(first[1], last[1]) / viewport.height)),
+        aspectRatio: viewport.width / viewport.height
+      }
+    }
+  } catch {
+    // An unreadable page/destination must not remove the rest of its outline branch.
+    return { pageNumber }
+  }
 }
 
 const resolvePdfOutline = async (
@@ -369,14 +426,14 @@ const resolvePdfOutline = async (
     nodes.map(async (node, index): Promise<PdfOutlineItem | undefined> => {
       const id = parentPath ? `${parentPath}.${index}` : String(index)
       const title = node.title.replaceAll('\0', '').trim()
-      const [pageNumber, children] = await Promise.all([
+      const [target, children] = await Promise.all([
         node.dest
-          ? resolvePdfOutlinePage(document, node.dest).catch(() => undefined)
-          : Promise.resolve(undefined),
+          ? resolvePdfOutlineTarget(document, node.dest).catch(() => ({}))
+          : Promise.resolve({}),
         resolvePdfOutline(document, node.items ?? [], id)
       ])
-      if (!title || (pageNumber === undefined && children.length === 0)) return undefined
-      return { id, title, pageNumber, children }
+      if (!title || (!('pageNumber' in target) && children.length === 0)) return undefined
+      return { id, title, ...target, children }
     })
   )
   return items.filter((item): item is PdfOutlineItem => item !== undefined)
@@ -1727,6 +1784,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   nativeAnnotationRevision,
   pageNumber,
   pageWidth,
+  outlineAspectRatio,
   registerDisposer,
   annotationProps,
   pdfEvidenceSource,
@@ -1745,6 +1803,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   nativeAnnotationRevision: number
   pageNumber: number
   pageWidth: number
+  outlineAspectRatio?: number
   registerDisposer: (dispose: () => void) => () => void
   annotationProps?: PreviewFileRendererProps
   pdfEvidenceSource?: PdfAnnotation['source']
@@ -1987,7 +2046,11 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
         // measured the fit width.
         pageWidth > 0 ? 'max-w-none' : 'w-full max-w-3xl'
       )}
-      style={pageWidth > 0 ? { aspectRatio, width: pageWidth } : { aspectRatio }}
+      style={
+        pageWidth > 0
+          ? { aspectRatio: outlineAspectRatio ?? aspectRatio, width: pageWidth }
+          : { aspectRatio: outlineAspectRatio ?? aspectRatio }
+      }
       data-page-number={pageNumber}
       data-pdf-page-rotation={pageRotation}
     >
@@ -2142,6 +2205,9 @@ export const PdfPreviewContent = ({
     setNotesWidth(Math.max(NOTES_SIDEBAR_MIN_WIDTH, Math.min(maxNotesWidth, width)))
   const [currentPage, setCurrentPage] = useState(1)
   const currentPageRef = useRef(1)
+  const [outlinePosition, setOutlinePosition] = useState({ pageNumber: 1, top: 0 })
+  const [selectedOutlineId, setSelectedOutlineId] = useState<string>()
+  const outlineClickRef = useRef<{ top: number; left: number } | undefined>(undefined)
   const [pageLabels, setPageLabels] = useState<
     Readonly<{ requestKey: string; labels: readonly string[] | null }> | undefined
   >()
@@ -2182,6 +2248,8 @@ export const PdfPreviewContent = ({
     setNotesOpen(false)
     setNotesWidth(320)
     setCurrentPage(1)
+    setOutlinePosition({ pageNumber: 1, top: 0 })
+    setSelectedOutlineId(undefined)
     setSelectedEvidenceId(undefined)
     setSelectedBookmarkId(undefined)
     setSearchOpen(false)
@@ -2193,6 +2261,7 @@ export const PdfPreviewContent = ({
   useLayoutEffect(() => {
     viewportAnchorRef.current = undefined
     currentPageRef.current = 1
+    outlineClickRef.current = undefined
     searchTextCacheRef.current.clear()
   }, [requestKey])
   // The width one page fills at 100%: the content box, capped to a comfortable reading width. Owned
@@ -2436,9 +2505,23 @@ export const PdfPreviewContent = ({
   })
   const pageCount = document?.numPages ?? 0
   const pageWidth = fitWidth > 0 ? Math.round(fitWidth * zoom) : 0
-  const outlineItems = outlineState?.requestKey === requestKey ? outlineState.items : []
+  const outlineItems =
+    outlineState?.requestKey === requestKey ? outlineState.items : EMPTY_OUTLINE_ITEMS
+  const outlineAspectRatios = useMemo(() => {
+    const ratios = new Map<number, number>()
+    const visit = (items: readonly PdfOutlineItem[]): void => {
+      for (const item of items) {
+        if (item.pageNumber && item.position) ratios.set(item.pageNumber, item.position.aspectRatio)
+        visit(item.children)
+      }
+    }
+    visit(outlineItems)
+    return ratios
+  }, [outlineItems])
   const resolvedPageLabels = pageLabels?.requestKey === requestKey ? pageLabels.labels : null
   const scrollToPage = useCallback((pageNumber: number): void => {
+    outlineClickRef.current = undefined
+    setSelectedOutlineId(undefined)
     scrollRef.current
       ?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)
       ?.scrollIntoView({ block: 'start', behavior: 'auto' })
@@ -2462,7 +2545,30 @@ export const PdfPreviewContent = ({
     },
     [document, resourceRequestKey, searchQuery, scrollToPage]
   )
-  const navigateToPage = scrollToPage
+  const navigateToPage = (pageNumber: number, item?: PdfOutlineItem): void => {
+    scrollToPage(pageNumber)
+    const scroll = scrollRef.current
+    const page = scroll?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)
+    if (!scroll || !page || !item) return
+    if (item.position) {
+      const bounds = page.getBoundingClientRect()
+      const viewport = scroll.getBoundingClientRect()
+      scroll.scrollTop = Math.max(
+        0,
+        scroll.scrollTop +
+          bounds.top -
+          viewport.top +
+          item.position.top * bounds.height -
+          OUTLINE_TOP_INSET
+      )
+      // Leave fitting pages centered; horizontal panning is needed only for overflowing pages.
+      if (bounds.width > scroll.clientWidth) {
+        scroll.scrollLeft += bounds.left - viewport.left + item.position.left * bounds.width
+      }
+    }
+    outlineClickRef.current = { top: scroll.scrollTop, left: scroll.scrollLeft }
+    setSelectedOutlineId(item.id)
+  }
   useEffect(
     () =>
       subscribeBookmarkRevealPreparation((target) => {
@@ -2668,6 +2774,32 @@ export const PdfPreviewContent = ({
       const pageNumber = nearestPage()
       currentPageRef.current = pageNumber
       setCurrentPage((current) => (current === pageNumber ? current : pageNumber))
+      if (outlineItems.length > 0) {
+        const viewport = scroll.getBoundingClientRect()
+        const topPage = pageAtViewportMidpoint(pages, {
+          ...viewport,
+          top: viewport.top + OUTLINE_TOP_INSET + 2,
+          height: 0
+        } as DOMRect)
+        const bounds = topPage?.getBoundingClientRect()
+        if (topPage && bounds && bounds.height > 0) {
+          const next = {
+            pageNumber: Number(topPage.dataset.pageNumber),
+            top: Math.max(0, (viewport.top + OUTLINE_TOP_INSET + 2 - bounds.top) / bounds.height)
+          }
+          setOutlinePosition((current) =>
+            current.pageNumber === next.pageNumber && current.top === next.top ? current : next
+          )
+        }
+      }
+      const click = outlineClickRef.current
+      if (
+        click &&
+        (Math.abs(click.top - scroll.scrollTop) > 1 || Math.abs(click.left - scroll.scrollLeft) > 1)
+      ) {
+        outlineClickRef.current = undefined
+        setSelectedOutlineId(undefined)
+      }
       if (lastReportedPage === pageNumber) return
       lastReportedPage = pageNumber
       onReadingPositionChange?.({ pageNumber, pageCount })
@@ -3005,7 +3137,9 @@ export const PdfPreviewContent = ({
               aria-label={t('PDF reading mode')}
               className="relative flex h-8 min-w-0 shrink-0 justify-center gap-2 border-b border-border bg-bg-000 px-10"
             >
-              {document && readingMode === 'original' && (pageCount > 1 || attachmentVersionId) ? (
+              {document &&
+              readingMode === 'original' &&
+              (pageCount > 1 || outlineItems.length > 0 || attachmentVersionId) ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -3125,7 +3259,9 @@ export const PdfPreviewContent = ({
                 showNotesSidebar && !floatingNotes ? { right: effectiveNotesWidth } : undefined
               }
             >
-              {document && outlineOpen && (pageCount > 1 || attachmentVersionId) ? (
+              {document &&
+              outlineOpen &&
+              (pageCount > 1 || outlineItems.length > 0 || attachmentVersionId) ? (
                 <PdfOutlineSidebar
                   key={requestKey}
                   document={document}
@@ -3133,6 +3269,8 @@ export const PdfPreviewContent = ({
                   pageCount={pageCount}
                   pageLabels={resolvedPageLabels}
                   currentPage={currentPage}
+                  position={outlinePosition}
+                  selectedId={selectedOutlineId}
                   width={outlineWidth}
                   onWidthChange={setOutlineWidth}
                   onClose={() => setOutlineOpen(false)}
@@ -3226,6 +3364,7 @@ export const PdfPreviewContent = ({
                           document={document}
                           pageNumber={index + 1}
                           pageWidth={pageWidth}
+                          outlineAspectRatio={outlineAspectRatios.get(index + 1)}
                           registerDisposer={registerPageDisposer}
                           annotationProps={annotationProps}
                           pdfEvidenceSource={pdfEvidenceSource}
@@ -3276,7 +3415,8 @@ export const PdfPreviewContent = ({
                       textMarkStyle={textMarkStyle}
                       onTextMarkStyleChange={setTextMarkStyle}
                       navigationAvailable={
-                        !hasReadingTabs && (pageCount > 1 || Boolean(attachmentVersionId))
+                        !hasReadingTabs &&
+                        (pageCount > 1 || outlineItems.length > 0 || Boolean(attachmentVersionId))
                       }
                       navigationOpen={outlineOpen}
                       searchOpen={searchOpen}
