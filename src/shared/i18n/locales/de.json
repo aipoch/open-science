@@ -5841,7 +5841,6 @@
     "read-only history": "schreibgeschützten Verlauf lesen",
     "continue research": "Forschung fortsetzen",
     "Choose a .science file": "Eine .science-Datei auswählen",
-    "Drop files": "Dateien ablegen",
     "Models": "Modelle",
     "Model source": "Modellquelle",
     "Local parsing models": "Lokale Analysemodelle",
@@ -6970,6 +6969,11 @@
     "Full screen": "Vollbild",
     "Documentation": "Dokumentation",
     "Load earlier messages": "Frühere Nachrichten laden",
-    "Return to current step": "Zum aktuellen Schritt zurückkehren"
+    "Return to current step": "Zum aktuellen Schritt zurückkehren",
+    "File access failed. System permissions or Notebook protection may be responsible.": "Der Dateizugriff ist fehlgeschlagen. Die Ursache können Systemberechtigungen oder der Notebook-Schutz sein.",
+    "Folder access was updated. Run the command again when you are ready.": "Der Ordnerzugriff wurde aktualisiert. Führen Sie den Befehl erneut aus, wenn Sie bereit sind.",
+    "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "Diese Ordnerberechtigung gilt sitzungsübergreifend, bis Sie sie unter Dateien widerrufen. Befehle werden nicht automatisch ausgeführt.",
+    "Drop files to attach or import a .science package": "Dateien zum Anhängen oder ein .science-Paket zum Importieren ablegen",
+    "Files cannot be attached right now.": "Dateien können derzeit nicht angehängt werden."
   }
 }

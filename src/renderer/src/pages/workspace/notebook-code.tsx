@@ -42,7 +42,7 @@ const NotebookCodeBlock = ({
           )}
         </span>
       </button>
-      <div className="overflow-auto">
+      <div className="scrollbar-auto-hide overflow-auto">
         <pre className="m-0 w-max min-w-full p-4 font-mono text-[13px] leading-[1.5]">
           <code>
             <HighlightedCodeLines

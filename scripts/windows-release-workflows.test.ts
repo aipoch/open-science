@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { load } from 'js-yaml'
@@ -41,7 +41,7 @@ type Workflow = {
   jobs: Record<string, WorkflowJob>
   permissions?: Record<string, string>
   on?: {
-    push?: { branches?: string[]; tags?: string[] }
+    push?: { branches?: string[]; tags?: string[]; paths?: string[] }
     schedule?: Array<{ cron: string }>
     workflow_run?: { workflows?: string[]; types?: string[] }
     workflow_call?: {
@@ -63,6 +63,36 @@ const findStep = (job: WorkflowJob, name: string): WorkflowStep => {
 }
 
 describe('post-merge Windows validation', () => {
+  it('warms a shared main-branch runtime cache when its recipe changes', () => {
+    const workflow = readWorkflow('windows-notebook-runtime.yml')
+    expect(workflow.on).toHaveProperty('workflow_call')
+    expect(workflow.on).toHaveProperty('workflow_dispatch')
+    expect(workflow.on?.push?.branches).toEqual(['main'])
+    const paths = workflow.on?.push?.paths ?? []
+    const action = load(
+      readFileSync('.github/actions/windows-notebook-runtime/action.yml', 'utf8')
+    ) as { runs: { steps: WorkflowStep[] } }
+    const cache = action.runs.steps.find(({ id }) => id === 'runtime')!
+    const inputs = [...String(cache.with?.key).matchAll(/'([^']+)'/g)].map((match) => match[1])
+    expect(inputs).toHaveLength(3)
+    for (const input of inputs) expect(paths).toContain(input)
+    expect(paths).toContain('.github/workflows/windows-notebook-runtime.yml')
+    expect(paths).toContain('.github/actions/windows-notebook-runtime/action.yml')
+    for (const unrelated of [
+      'src/renderer/src/pages/workspace/replay/ReplayPanel.tsx',
+      'e2e/replay-stage.spec.ts',
+      'packages/notebook-network-sandbox/src/index.ts',
+      'packages/notebook-network-sandbox/vendor/windows-runtime/README.md'
+    ]) {
+      expect(
+        paths.some((pattern) => posix.matchesGlob(unrelated, pattern)),
+        unrelated
+      ).toBe(false)
+    }
+    expect(workflow.permissions).toEqual({ contents: 'read' })
+    expect(Object.keys(workflow.jobs)).toEqual(['runtime'])
+  })
+
   it.skipIf(process.platform !== 'win32')(
     'extracts compressed runtime sources and never promotes failed or timed-out extraction',
     () => {

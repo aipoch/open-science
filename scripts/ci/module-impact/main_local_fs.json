@@ -6,7 +6,8 @@
     "src/main/local-fs/ipc.ts",
     "src/main/local-fs/service.test.ts",
     "src/main/local-fs/service.ts",
-    "src/main/local-fs/windows-drive-listing.ts"
+    "src/main/local-fs/windows-drive-listing.ts",
+    "src/main/local-fs/notebook-folder-access.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/local-fs/granted-roots-repository.ts",
@@ -18,7 +19,8 @@
     "owner": [
       "src/main/local-fs/granted-roots-repository.test.ts",
       "src/main/local-fs/ipc.test.ts",
-      "src/main/local-fs/service.test.ts"
+      "src/main/local-fs/service.test.ts",
+      "src/main/local-fs/notebook-folder-access.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

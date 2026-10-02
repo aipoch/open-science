@@ -192,8 +192,9 @@ export const validateGrantCandidate = (
   path: string,
   home: string,
   platform: string
-): { ok: true } | { ok: false; reason: 'not-absolute' | 'is-home' } => {
+): { ok: true } | { ok: false; reason: 'not-absolute' | 'is-home' | 'is-root' } => {
   if (validateLocalPath(path, platform) !== undefined) return { ok: false, reason: 'not-absolute' }
+  if (isLocalPathRoot(path, platform)) return { ok: false, reason: 'is-root' }
   if (sameLocalDirectory(path, home, platform)) return { ok: false, reason: 'is-home' }
   return { ok: true }
 }
@@ -201,6 +202,40 @@ export const validateGrantCandidate = (
 const localPathRoot = (path: string, platform: string): string => {
   if (isWindowsDrivePath(path)) return path.slice(0, 3)
   return (platform === 'win32' ? path.match(/^[\\/]{2}[^\\/]+[\\/][^\\/]+/)?.[0] : undefined) ?? '/'
+}
+
+// Canonicalizes only lexical dot segments. The main process still resolves symlinks with realpath;
+// this lightweight form lets renderer-side recovery reject a diagnostic that would collapse to a
+// filesystem root before it can be offered as a grant candidate.
+const normalizeLocalPathSegments = (path: string, platform: string): string => {
+  if (platform !== 'win32') {
+    const segments: string[] = []
+    for (const segment of path.split('/')) {
+      if (!segment || segment === '.') continue
+      if (segment === '..') {
+        segments.pop()
+        continue
+      }
+      segments.push(segment)
+    }
+    return `/${segments.join('/')}`
+  }
+
+  const normalized = path.replace(/\//g, '\\')
+  const drive = normalized.match(/^[A-Za-z]:\\/)
+  const unc = normalized.match(/^\\\\[^\\]+\\[^\\]+/)
+  const root = drive?.[0] ?? unc?.[0]
+  if (!root) return path
+  const segments: string[] = []
+  for (const segment of normalized.slice(root.length).split('\\')) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') {
+      segments.pop()
+      continue
+    }
+    segments.push(segment)
+  }
+  return `${root}${segments.length > 0 ? `${root.endsWith('\\') ? '' : '\\'}${segments.join('\\')}` : ''}`
 }
 
 const withoutTrailingSeparators = (path: string, platform: string): string => {
@@ -226,8 +261,14 @@ export const parentLocalPath = (path: string, platform: string): string => {
   return separator < root.length ? root : normalized.slice(0, separator)
 }
 
-export const isLocalPathRoot = (path: string, platform: string): boolean =>
-  sameLocalDirectory(path, localPathRoot(path, platform), platform)
+export const isLocalPathRoot = (path: string, platform: string): boolean => {
+  if (validateLocalPath(path, platform) !== undefined) return false
+  return sameLocalDirectory(
+    normalizeLocalPathSegments(path, platform),
+    localPathRoot(path, platform),
+    platform
+  )
+}
 
 // The mounted drive/volume a path lives on: the longest listDrives() entry containing it, so
 // /media/user/usb/sub resolves to the usb mount rather than /. Windows compares

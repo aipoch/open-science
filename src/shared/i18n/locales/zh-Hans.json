@@ -5687,7 +5687,6 @@
     "read-only history": "读取只读历史记录",
     "continue research": "继续研究",
     "Choose a .science file": "选择 .science 文件",
-    "Drop files": "拖入文件",
     "Models": "模型",
     "Model source": "模型来源",
     "Local parsing models": "本地解析模型",
@@ -6810,6 +6809,11 @@
     "Full screen": "全屏",
     "Documentation": "文档",
     "Load earlier messages": "加载更早的消息",
-    "Return to current step": "回到当前步骤"
+    "Return to current step": "回到当前步骤",
+    "File access failed. System permissions or Notebook protection may be responsible.": "文件访问失败，可能由系统权限或 Notebook 保护导致。",
+    "Folder access was updated. Run the command again when you are ready.": "文件夹访问权限已更新。准备好后，请手动重新运行命令。",
+    "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "此文件夹权限跨会话生效，直到您在“文件”中撤销。命令不会自动运行。",
+    "Drop files to attach or import a .science package": "拖放文件以添加附件，或导入 .science 研究包",
+    "Files cannot be attached right now.": "当前无法添加附件。"
   }
 }

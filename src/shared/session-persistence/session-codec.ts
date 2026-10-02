@@ -36,6 +36,7 @@ import {
   normalizeActivityGroupAfterRestore,
   normalizeSessionAfterRestore,
   rearmUnacceptedElicitationContinuations,
+  restorePendingElicitationWait,
   resolveRestorablePermissionToolAuthority,
   normalizeActivityAfterRestore
 } from './restore'
@@ -489,6 +490,17 @@ export const sanitizeSession = (
   // Normalize only after resolving the canonical active Branch. Recovery references and the durable
   // interrupted marker must never be inferred from an abandoned Branch.
   if (!options.preserveRuntimeState) {
+    // The pre-graph restore may have classified a pending question as an interrupted run or
+    // an idle approved Plan; older releases may have saved that projection. Resolve its actual
+    // wait only with sanitized active-Branch authority.
+    if (
+      session.status === 'running' ||
+      session.status === 'waiting-for-user' ||
+      session.status === 'idle' ||
+      session.status === 'error'
+    ) {
+      sanitized = restorePendingElicitationWait(sanitized)
+    }
     sanitized = rearmUnacceptedElicitationContinuations(sanitized)
     sanitized = normalizeSessionAfterRestore(sanitized, { reconcileCompletedRecovery: true })
   }

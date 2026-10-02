@@ -77,7 +77,8 @@
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
     ]
   },
   "capabilityOverlays": [],

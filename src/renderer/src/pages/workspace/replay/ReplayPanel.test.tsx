@@ -1395,6 +1395,7 @@ it('groups adjacent generated files in one gallery without changing timeline ste
   expect(cards[0].parentElement).toBe(cards[1].parentElement)
   expect(source.branches[0].steps).toHaveLength(3)
   seekProgress(2000)
+  expect(screen.getAllByText('GENERATED · 2')).toHaveLength(1)
   expect(
     screen.getByRole('button', { name: 'Preview generated file v1.txt' }).hasAttribute('disabled')
   ).toBe(false)
@@ -1405,6 +1406,40 @@ it('groups adjacent generated files in one gallery without changing timeline ste
   expect(screen.queryByRole('button', { name: /Preview generated file/ })).toBeNull()
   await act(async () => {})
 })
+
+it.each([false, true])(
+  'restores the prior Notebook panel after Back and Escape from a conversation file (open: %s)',
+  async (notebookOpen) => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1150)
+    const source = makeDocument()
+    source.branches[0].steps[1].kind = 'artifact'
+    source.branches[0].steps[1].message = undefined
+    render(<ReplayPanel document={source} {...callbacks()} expanded />)
+    seekProgress(3000)
+    const notebook = screen.getByRole('button', { name: 'Notebook' })
+    if (!notebookOpen) fireEvent.click(notebook)
+    const original = screen.getByRole('button', { name: 'Preview generated file v1.txt' })
+    const conversation = screen.getByRole('region', { name: 'Historical conversation' })
+    const notebookViewport = globalThis.document.querySelector<HTMLElement>(
+      '[data-replay-notebook-scroll]'
+    )!
+    for (const close of ['back', 'escape']) {
+      conversation.scrollTop = 73
+      notebookViewport.scrollTop = 91
+      original.focus()
+      fireEvent.click(original)
+      await screen.findByRole('button', { name: 'Back to conversation' })
+      if (close === 'back')
+        fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }))
+      else fireEvent.keyDown(screen.getByTestId('replay-stage'), { key: 'Escape' })
+      await waitFor(() => expect(globalThis.document.activeElement).toBe(original))
+      expect(notebook.getAttribute('aria-expanded')).toBe(String(notebookOpen))
+      expect(screen.queryByRole('button', { name: 'Back to conversation' })).toBeNull()
+      expect(conversation.scrollTop).toBe(73)
+      expect(notebookViewport.scrollTop).toBe(91)
+    }
+  }
+)
 
 it.each([false, true])(
   'keeps playback running when toggling Notebook and Files (expanded: %s)',

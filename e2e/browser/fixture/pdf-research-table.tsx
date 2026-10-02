@@ -73,6 +73,10 @@ if (new URLSearchParams(location.search).has('dark')) document.documentElement.c
 initI18n('en')
 createRoot(document.getElementById('root')!).render(
   <main style={{ height: '100vh' }}>
-    <PdfFiguresView attachmentVersionId="table-version" pageCount={1} onNavigate={() => {}} />
+    <PdfFiguresView
+      source={{ attachmentVersionId: 'table-version' }}
+      pageCount={1}
+      onNavigate={() => {}}
+    />
   </main>
 )

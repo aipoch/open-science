@@ -1,3 +1,4 @@
+import type { ManagedPdfStructureSource } from '../../../shared/pdf-structure'
 import { createHash } from 'node:crypto'
 import { lstat, open, unlink } from 'node:fs/promises'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../../uploads/attachment-media'
@@ -11,6 +12,7 @@ import type {
 } from '../session-pdf-source-resolver'
 
 export type PdfStructureSourceRequest =
+  | ManagedPdfStructureSource
   | Readonly<{ kind: 'literature'; attachmentVersionId: string }>
   | Readonly<{
       kind: 'session'
@@ -57,6 +59,20 @@ export class PdfStructureSourceAuthority {
           path: version.path
         }
       }
+    } else if (request.kind === 'managed') {
+      source = await this.dependencies.sources.resolveVersion({
+        projectId: request.projectId,
+        sourceKind: request.sourceKind,
+        sourceVersionId: request.sourceVersionId,
+        expectedSourceFileId: request.sourceFileId
+      })
+      if (
+        !source?.openContent ||
+        source.sourceKind !== request.sourceKind ||
+        source.sourceFileId !== request.sourceFileId ||
+        source.sourceVersionId !== request.sourceVersionId
+      )
+        throw unavailable()
     } else {
       const context = await resolveCurrentPdfContext(this.dependencies.sessions, request)
       const binding = context.bindings.find(({ bindingId }) => bindingId === request.bindingId)

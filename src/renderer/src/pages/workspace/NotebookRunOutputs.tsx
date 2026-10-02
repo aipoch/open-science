@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { Notice } from '@/components/notice'
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
 import { resolveNotebookRunFigures } from './notebook-run-figures'
+import { NotebookFolderAccessNotice } from './NotebookFolderAccessNotice'
 
 // Shared cell-output area for Notebook, Session dialog, and conversation tool rows. Text and figures
 // are intentionally separate: text owns its collapse control, while every figure stays visible in an
@@ -370,7 +371,13 @@ const NotebookNetworkRecoveryNotice = (): React.JSX.Element => {
 }
 
 // Composes the two independent output surfaces used by the notebook panel and session dialog.
-const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
+const NotebookRunOutputs = ({
+  run,
+  allowFolderAccess = false
+}: {
+  run: NotebookRunRecord
+  allowFolderAccess?: boolean
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const networkRecovery = requiresNotebookNetworkRecovery(run)
   const hasText =
@@ -411,6 +418,7 @@ const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Elem
 
   return (
     <div data-testid="notebook-run-outputs">
+      {allowFolderAccess ? <NotebookFolderAccessNotice run={run} /> : null}
       {networkRecovery ? <NotebookNetworkRecoveryNotice /> : null}
       {notice ? (
         <p className="mt-2 text-xs text-text-300" data-testid="notebook-run-outcome">

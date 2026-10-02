@@ -6136,7 +6136,6 @@
     "read-only history": "прочитать историю только для чтения",
     "continue research": "продолжить исследование",
     "Choose a .science file": "Выбрать файл .science",
-    "Drop files": "Перетащите файлы",
     "Models": "Модели",
     "Model source": "Источник модели",
     "Local parsing models": "Локальные модели разбора",
@@ -7277,6 +7276,11 @@
     "Full screen": "Полный экран",
     "Documentation": "Документация",
     "Load earlier messages": "Загрузить предыдущие сообщения",
-    "Return to current step": "Вернуться к текущему шагу"
+    "Return to current step": "Вернуться к текущему шагу",
+    "File access failed. System permissions or Notebook protection may be responsible.": "Не удалось получить доступ к файлу. Причиной могут быть системные разрешения или защита Notebook.",
+    "Folder access was updated. Run the command again when you are ready.": "Доступ к папке обновлён. Запустите команду повторно, когда будете готовы.",
+    "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "Это разрешение для папки действует во всех сессиях, пока вы не отзовёте его в разделе «Файлы». Команды не будут запускаться автоматически.",
+    "Drop files to attach or import a .science package": "Перетащите файлы для прикрепления или пакет .science для импорта",
+    "Files cannot be attached right now.": "Сейчас невозможно прикрепить файлы."
   }
 }

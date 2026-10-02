@@ -6003,7 +6003,6 @@
     "read-only history": "leer el historial de solo lectura",
     "continue research": "continuar la investigación",
     "Choose a .science file": "Elegir un archivo .science",
-    "Drop files": "Arrastrar archivos",
     "Models": "Modelos",
     "Model source": "Fuente del modelo",
     "Local parsing models": "Modelos de análisis locales",
@@ -7138,6 +7137,11 @@
     "Full screen": "Pantalla completa",
     "Documentation": "Documentación",
     "Load earlier messages": "Cargar mensajes anteriores",
-    "Return to current step": "Volver al paso actual"
+    "Return to current step": "Volver al paso actual",
+    "File access failed. System permissions or Notebook protection may be responsible.": "No se pudo acceder al archivo. Puede deberse a los permisos del sistema o a la protección de Notebook.",
+    "Folder access was updated. Run the command again when you are ready.": "Se ha actualizado el acceso a la carpeta. Ejecute el comando de nuevo cuando esté listo.",
+    "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "Este permiso de carpeta se aplica a todas las sesiones hasta que lo revoque en Archivos. Los comandos no se ejecutarán automáticamente.",
+    "Drop files to attach or import a .science package": "Soltar archivos para adjuntarlos o un paquete .science para importarlo",
+    "Files cannot be attached right now.": "No se pueden adjuntar archivos en este momento."
   }
 }

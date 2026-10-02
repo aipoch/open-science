@@ -22,6 +22,7 @@ export const NotebookRecordCell = ({
   showEnvironmentCaptureWarning = true,
   code = run.script,
   showResult = true,
+  allowFolderAccess = false,
   children
 }: {
   run: NotebookRunRecord
@@ -30,6 +31,7 @@ export const NotebookRecordCell = ({
   showEnvironmentCaptureWarning?: boolean
   code?: string
   showResult?: boolean
+  allowFolderAccess?: boolean
   children?: ReactNode
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -83,7 +85,7 @@ export const NotebookRecordCell = ({
           children
         ) : (
           <>
-            <NotebookRunOutputs run={run} />
+            <NotebookRunOutputs run={run} allowFolderAccess={allowFolderAccess} />
             <NotebookRunEvidence
               run={run}
               showEnvironmentCaptureWarning={showEnvironmentCaptureWarning}

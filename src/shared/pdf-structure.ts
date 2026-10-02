@@ -312,33 +312,47 @@ export const parsePdfStructureResult = (
   return result
 }
 
-export type ParsePdfStructureRequest = Readonly<{
-  attachmentVersionId: string
-  page: number
-  requestId: string
-}>
-export type ReadPdfStructureThumbnailRequest = Readonly<{
-  attachmentVersionId: string
-  page: number
-  extractionId: string
-  thumbnailId: string
-}>
-export type ReadCachedPdfStructureRequest = Pick<
-  ParsePdfStructureRequest,
-  'attachmentVersionId' | 'page'
->
+const managedSource = z
+  .object({
+    kind: z.literal('managed'),
+    projectId: z.string().min(1).max(200),
+    sourceKind: z.enum(['upload-version', 'artifact-version']),
+    sourceFileId: z.string().min(1).max(200),
+    sourceVersionId: z.string().min(1).max(200)
+  })
+  .strict()
 
-const sourceRequest = z.object({
+export type ManagedPdfStructureSource = z.infer<typeof managedSource>
+export type PdfStructureSource =
+  Readonly<{ attachmentVersionId: string }> | Readonly<{ source: ManagedPdfStructureSource }>
+export type ReadCachedPdfStructureRequest = PdfStructureSource & Readonly<{ page: number }>
+export type ParsePdfStructureRequest = ReadCachedPdfStructureRequest &
+  Readonly<{ requestId: string }>
+export type ReadPdfStructureThumbnailRequest = ReadCachedPdfStructureRequest &
+  Readonly<{
+    extractionId: string
+    thumbnailId: string
+  }>
+
+const literatureRequest = z.object({
   attachmentVersionId: z.string().min(1).max(200),
   page: z.number().int().positive()
 })
-export const readCachedPdfStructureRequest = sourceRequest.strict()
-export const parsePdfStructureRequest = sourceRequest
-  .extend({ requestId: z.string().uuid() })
-  .strict()
-export const readPdfStructureThumbnailRequest = sourceRequest
-  .extend({ extractionId: z.string().uuid(), thumbnailId: id })
-  .strict()
+const managedRequest = z.object({ source: managedSource, page: z.number().int().positive() })
+export const readCachedPdfStructureRequest = z.union([
+  literatureRequest.strict(),
+  managedRequest.strict()
+])
+const parseFields = { requestId: z.string().uuid() }
+export const parsePdfStructureRequest = z.union([
+  literatureRequest.extend(parseFields).strict(),
+  managedRequest.extend(parseFields).strict()
+])
+const thumbnailFields = { extractionId: z.string().uuid(), thumbnailId: id }
+export const readPdfStructureThumbnailRequest = z.union([
+  literatureRequest.extend(thumbnailFields).strict(),
+  managedRequest.extend(thumbnailFields).strict()
+])
 export const pdfStructureCommandContracts = {
   readCached: defineApplicationCommandContract(z.tuple([readCachedPdfStructureRequest]), {
     parse(value: unknown): PdfStructureResult | undefined {

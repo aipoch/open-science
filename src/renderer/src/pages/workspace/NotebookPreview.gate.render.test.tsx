@@ -527,6 +527,11 @@ describe('NotebookPreview per-kernel tabs', () => {
       }
     } as never
 
+    Object.assign(window.api, {
+      platform: 'linux',
+      localFs: {},
+      settings: { getNotebookNetworkStatus: vi.fn(async () => ({ kind: 'ready', warnings: [] })) }
+    })
     await act(async () => {
       root.render(<NotebookPreview item={previewItem} />)
     })
@@ -539,6 +544,37 @@ describe('NotebookPreview per-kernel tabs', () => {
       })
     }
   }
+
+  it('withholds folder recovery until the session content establishes a live local owner', async () => {
+    const session = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({ sessions: [{ ...session, contentLoaded: false }] })
+    const run = makeRun({ runId: 'denied', kernelKind: 'bash', status: 'failed' })
+    run.text.stderr =
+      '<sandbox_violations>\nOPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: /fixture/config/settings.json Filesystem access failed; native permissions, read-only mounts, or the sandbox may be responsible.\n</sandbox_violations>\n'
+    await mountWithRuns([run])
+    const notice = (): Element | null =>
+      container.querySelector('[data-testid="notebook-folder-access-notice"]')
+    expect(notice()).toBeNull()
+    await act(async () =>
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...session,
+            packageOrigin: {
+              importId: 'fixture-import',
+              importedAt: 1,
+              sourceProjectId: 'fixture-project',
+              sourceSessionId: 'fixture-session',
+              manifestChecksum: 'a'.repeat(64)
+            }
+          }
+        ]
+      })
+    )
+    expect(notice()).toBeNull()
+    await act(async () => useSessionStore.setState({ sessions: [session] }))
+    expect(notice()).not.toBeNull()
+  })
 
   it('uses one notebook scroll owner and an accessible real resize handle', async () => {
     await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])

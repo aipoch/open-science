@@ -334,7 +334,8 @@
       "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts",
       "src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],

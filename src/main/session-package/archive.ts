@@ -68,10 +68,40 @@ export const writePackageArchive = async (
   const manifest = sessionPackageManifestSchema.parse(
     await readPackageJson(join(directory, 'manifest.json'))
   )
-  const entries = [
-    { path: 'manifest.json', sizeBytes: (await stat(join(directory, 'manifest.json'))).size },
-    ...manifest.inventory
-  ]
+  // The manifest keeps one logical entry per storage key. The archive stores each shared object once.
+  const entriesByPath = new Map<
+    string,
+    Pick<SessionPackageManifest['inventory'][number], 'path' | 'sizeBytes' | 'checksum'> & {
+      storageKey?: string
+    }
+  >()
+  const addEntry = (
+    entry: Pick<SessionPackageManifest['inventory'][number], 'path' | 'sizeBytes' | 'checksum'> & {
+      storageKey?: string
+    }
+  ): void => {
+    const existing = entriesByPath.get(entry.path)
+    if (!existing) {
+      entriesByPath.set(entry.path, entry)
+      return
+    }
+    if (
+      !manifest.requiredFeatures?.includes('content-dedupe') ||
+      !entry.storageKey ||
+      !existing.storageKey ||
+      existing.storageKey === entry.storageKey ||
+      existing.sizeBytes !== entry.sizeBytes ||
+      existing.checksum !== entry.checksum
+    )
+      throw new Error('Session package inventory contains duplicate entries.')
+  }
+  addEntry({
+    path: 'manifest.json',
+    sizeBytes: (await stat(join(directory, 'manifest.json'))).size,
+    checksum: await fileChecksum(join(directory, 'manifest.json'), signal)
+  })
+  for (const entry of manifest.inventory) addEntry(entry)
+  const entries = [...entriesByPath.values()]
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
     .map((entry) => {
       const header = new Header({
@@ -284,6 +314,11 @@ export const validatePackageDirectory = async (
   assertPackageCompatibility(rawManifest)
   const manifest = sessionPackageManifestSchema.parse(rawManifest)
   const declared = new Set(['manifest.json', 'objects/'])
+  // Duplicate inventory paths are valid only as content-dedupe aliases with identical bytes.
+  const contentPaths = new Map<
+    string,
+    Pick<SessionPackageManifest['inventory'][number], 'sizeBytes' | 'checksum' | 'storageKey'>
+  >()
   const metadata = manifest.inventory.filter((entry) => entry.path === PACKAGE_RO_CRATE_METADATA)
   if (
     Boolean(manifest.requiredFeatures?.includes('ro-crate')) !== (metadata.length === 1) ||
@@ -293,9 +328,27 @@ export const validatePackageDirectory = async (
     )
   )
     throw new Error('RO-Crate package capability declaration is invalid.')
+  if (
+    manifest.inventory.reduce((sum, entry) => sum + (entry.storageKey ? entry.sizeBytes : 0), 0) >
+    PACKAGE_MAX_BYTES
+  )
+    throw new Error('Session package exceeds the reconstructed content limit.')
   for (const entry of manifest.inventory) {
-    if (declared.has(entry.path))
-      throw new Error('Session package inventory contains duplicate entries.')
+    const existing = contentPaths.get(entry.path)
+    if (declared.has(entry.path)) {
+      if (
+        !existing ||
+        !manifest.requiredFeatures?.includes('content-dedupe') ||
+        !entry.storageKey ||
+        !existing.storageKey ||
+        existing.storageKey === entry.storageKey ||
+        existing.sizeBytes !== entry.sizeBytes ||
+        existing.checksum !== entry.checksum
+      )
+        throw new Error('Session package inventory contains duplicate entries.')
+    } else {
+      contentPaths.set(entry.path, entry)
+    }
     declared.add(entry.path)
     const file = join(directory, entry.path)
     await assertPackageSourcePath(directory, entry.path)

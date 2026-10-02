@@ -279,7 +279,8 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/literature/imports/LiteraturePdfBatchImportDialog.test.tsx",
-      "src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx"
+      "src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
     ]
   },
   "capabilityOverlays": ["renderer_state"],

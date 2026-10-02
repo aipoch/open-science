@@ -150,6 +150,16 @@ describe('PdfPreviewContent', () => {
       }
     )
     window.api = {
+      pdfStructure: {
+        readCached: vi.fn().mockResolvedValue(undefined),
+        parse: vi.fn(() => new Promise(() => {})),
+        cancel: vi.fn().mockResolvedValue(undefined)
+      },
+      localModels: {
+        getSnapshot: vi
+          .fn()
+          .mockResolvedValue({ availability: 'notInstalled', updateAvailable: false })
+      },
       previewResources: {
         acquire: vi.fn().mockResolvedValue({
           id: 'resource-1',
@@ -1293,6 +1303,83 @@ describe('PdfPreviewContent', () => {
       })
     )
   })
+
+  it.each(['upload', 'artifact'] as const)(
+    'opens Figures & Tables for a finalized %s without Agent context',
+    async (kind) => {
+      const source = {
+        kind: kind === 'upload' ? ('upload-version' as const) : ('artifact-version' as const),
+        projectId: 'project-1',
+        sessionId: 'source-session',
+        sourceFileId: 'file-1',
+        versionId: 'version-1',
+        checksum: 'a'.repeat(64),
+        name: 'paper.pdf',
+        path:
+          kind === 'upload'
+            ? 'upload-version:project-1/source-session/file-1/version-1'
+            : 'artifact-version:version-1'
+      }
+      window.api = {
+        ...window.api,
+        bookmarks: { resolvePdfSource: vi.fn().mockResolvedValue({ ok: true, source }) },
+        pdfAnnotations: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
+        tags: { snapshot: vi.fn().mockResolvedValue({ revision: 0, tags: [], assignments: [] }) },
+        localModels: {
+          getSnapshot: vi.fn().mockResolvedValue({
+            installedRevision: 'v1',
+            availability: 'ready',
+            updateAvailable: false
+          })
+        }
+      } as unknown as Window['api']
+      useSessionStore.setState({
+        selectedSessionId: 'session-owner',
+        sessions: [{ id: 'session-owner', projectId: 'project-1' }]
+      } as never)
+      await act(async () => {
+        root.render(
+          <PdfPreviewRenderer
+            item={{
+              id: 'file-1',
+              type: 'file',
+              format: 'pdf',
+              source: kind,
+              projectId: 'project-1',
+              sessionId: 'source-session',
+              managedFileId: 'file-1',
+              selectedVersionId: 'version-1',
+              title: 'paper.pdf',
+              name: 'paper.pdf',
+              path: source.path
+            }}
+          />
+        )
+        await flush()
+      })
+      expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
+      const figures = screen.getByRole('tab', { name: /Figures & Tables/ })
+      await act(async () => fireEvent.mouseDown(figures, { button: 0 }))
+      expect(figures.getAttribute('aria-selected')).toBe('true')
+      expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Analyze PDF' })))
+      expect(window.api.pdfStructure.parse).toHaveBeenCalledWith({
+        source: {
+          kind: 'managed',
+          projectId: 'project-1',
+          sourceKind: source.kind,
+          sourceFileId: 'file-1',
+          sourceVersionId: 'version-1'
+        },
+        page: 1,
+        requestId: expect.any(String)
+      })
+      expect(useSessionStore.getState().sessions[0].runtimeContext).toBeUndefined()
+      expect(screen.getByRole('tab', { name: 'Notes & Annotations' })).not.toBeNull()
+      await act(async () => root.render(<div />))
+      expect(window.api.pdfStructure.cancel).toHaveBeenCalledOnce()
+    }
+  )
 
   it('shows a native outline, expands nested sections, and navigates to their PDF pages', async () => {
     const getDestination = vi.fn().mockResolvedValue([{ num: 20, gen: 0 }])

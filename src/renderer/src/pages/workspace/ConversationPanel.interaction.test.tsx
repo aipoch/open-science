@@ -907,13 +907,18 @@ const dispatchPaste = (files: File[]): boolean => {
   return event.defaultPrevented
 }
 
-const dispatchDrag = (type: string, dataTransferTypes: string[], files: File[] = []): void => {
+const dispatchDrag = (
+  type: string,
+  dataTransferTypes: string[],
+  files: File[] = [],
+  target = getComposerForm()
+): void => {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'dataTransfer', {
     value: { types: dataTransferTypes, files, dropEffect: 'none' }
   })
   act(() => {
-    getComposerForm().dispatchEvent(event)
+    target.dispatchEvent(event)
   })
 }
 
@@ -3022,6 +3027,20 @@ describe('ConversationPanel composer intake', () => {
     expect(hasDropOverlay()).toBe(false)
   })
 
+  it.each(['workspace-file-drop-zone', 'conversation-header'])(
+    'stages files dropped on %s outside the composer',
+    (testId) => {
+      renderPanel()
+      const target = container.querySelector(`[data-testid="${testId}"]`) as HTMLElement
+      const file = new File(['data'], 'paper.pdf', { type: 'application/pdf' })
+      dispatchDrag('dragenter', ['Files'], [], target)
+      expect(hasDropOverlay()).toBe(true)
+      dispatchDrag('drop', ['Files'], [file], target)
+      expect(onStageAttachmentFiles).toHaveBeenCalledExactlyOnceWith([file])
+      expect(hasDropOverlay()).toBe(false)
+    }
+  )
+
   it('ignores plain-text drags with no overlay and no upload', () => {
     renderPanel()
 
@@ -3041,6 +3060,29 @@ describe('ConversationPanel composer intake', () => {
 
     dispatchDrag('dragenter', ['Files'])
     expect(hasDropOverlay()).toBe(false)
+    dispatchDrag('drop', ['Files'], [new File(['data'], 'data.csv')])
+    expect(onStageAttachmentFiles).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Files cannot be attached right now.')
+  })
+
+  it('does not stage workspace files while an attachment upload is in progress', () => {
+    renderPanel({ composer: { view: { isUploading: true } } })
+    const target = container.querySelector(
+      '[data-testid="workspace-file-drop-zone"]'
+    ) as HTMLElement
+    dispatchDrag('dragenter', ['Files'], [], target)
+    expect(hasDropOverlay()).toBe(false)
+    dispatchDrag('drop', ['Files'], [new File(['data'], 'data.csv')], target)
+    expect(onStageAttachmentFiles).not.toHaveBeenCalled()
+  })
+
+  it('does not stage workspace files into a composer covered by permission approval', () => {
+    renderPanel({ permissions: { requests: [{} as never] } })
+    const target = container.querySelector(
+      '[data-testid="workspace-file-drop-zone"]'
+    ) as HTMLElement
+    dispatchDrag('drop', ['Files'], [new File(['data'], 'data.csv')], target)
+    expect(onStageAttachmentFiles).not.toHaveBeenCalled()
   })
 
   it('submits on Enter through the editor with the picked skill ids', () => {

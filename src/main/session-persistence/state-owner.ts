@@ -696,7 +696,13 @@ class SessionPersistenceStateOwner {
         scope.projectId,
         scope.sessionId
       )
-      if (authority.status !== 'found' || !authority.session.activeRun) return
+      if (authority.status !== 'found') return
+      // Persist the decoder's validated wait even when the old run marker is already absent.
+      // Attached reads preserve runtime state, so the question must be waiting on disk first.
+      const restoredQuestionWait =
+        restored.session.status === 'waiting-for-user' &&
+        authority.session.status !== 'waiting-for-user'
+      if (!authority.session.activeRun && !restoredQuestionWait) return
     }
     await this.mutateRuntimeSession(scope, (latest) => {
       if (sessionRevision(latest) !== sessionRevision(restored.session)) {

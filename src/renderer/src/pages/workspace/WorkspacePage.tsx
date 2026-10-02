@@ -89,7 +89,6 @@ import { SessionReproducibilityDialog } from './SessionReproducibilityDialog'
 import { FilePreviewDialog } from './FilePreviewDialog'
 import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
-import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { BookmarksProvider } from './bookmarks/BookmarksProvider'
 import { PdfAnnotationsProvider } from './pdf-annotations/PdfAnnotationsProvider'
 import { JobDetailModal } from '@/components/JobDetailModal'
@@ -1442,10 +1441,7 @@ const WorkspacePage = ({
     isSessionPersistenceReady && Boolean(activeProject) && activeProject?.archivedAt === undefined
 
   const content = (
-    <ProjectPackageDropZone
-      projectId={scopedProjectId}
-      projectName={activeProject?.name ?? t('Project')}
-      canImport={canImportSessionPackage}
+    <main
       ref={previewFocusFallbackRef}
       tabIndex={-1}
       className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]"
@@ -1690,7 +1686,11 @@ const WorkspacePage = ({
                   ),
                   actionError: visibleActionError,
                   sideChatDisabledReason,
-                  sessionImport: { projectId: scopedProjectId, canImport: canImportSessionPackage }
+                  sessionImport: {
+                    projectId: scopedProjectId,
+                    projectName: activeProject?.name ?? t('Project'),
+                    canImport: canImportSessionPackage
+                  }
                 }}
                 composer={composer}
                 conversation={conversation}
@@ -1900,7 +1900,7 @@ const WorkspacePage = ({
           <ProjectFormDialog {...projectFormDialog.dialogProps} />
         </PdfAnnotationsProvider>
       </BookmarksProvider>
-    </ProjectPackageDropZone>
+    </main>
   )
   return (
     <LibraryReferenceActionsContext.Provider

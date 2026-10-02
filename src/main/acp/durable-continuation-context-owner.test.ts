@@ -6,6 +6,7 @@ import {
   synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from '../../shared/conversation-graph'
+import { applyRuntimeSessionEvents } from '../../shared/runtime-session-projection'
 import { normalizeSessionFile } from '../../shared/session-persistence'
 import type {
   PersistedChatMessage,
@@ -90,6 +91,188 @@ const setActivities = (
 }
 
 describe('AcpDurableContinuationContextOwner', () => {
+  it.each([
+    { providerStopped: false, approvedPlan: false, previouslyRestored: false },
+    { providerStopped: true, approvedPlan: false, previouslyRestored: false },
+    { providerStopped: false, approvedPlan: true, previouslyRestored: false },
+    { providerStopped: false, approvedPlan: false, previouslyRestored: true },
+    { providerStopped: false, approvedPlan: true, previouslyRestored: true }
+  ])(
+    'answers a persisted question after restart (stopped: $providerStopped, approved Plan: $approvedPlan, previously restored: $previouslyRestored)',
+    async ({ providerStopped, approvedPlan, previouslyRestored }) => {
+      const initial = createSession([message('prompt-active', 'Choose the next step.')])
+      initial.runtimeTranscriptOwner = 'main'
+      initial.status = 'running'
+      initial.activeRun = { promptMessageId: 'prompt-active', startedAt: 1 }
+      if (approvedPlan) {
+        initial.runtimeContext = {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'plan-1',
+            artifactVersionId: 'plan-version-1',
+            artifactChecksum: 'a'.repeat(64),
+            originatingPromptMessageId: 'prompt-active',
+            approval: 'approved',
+            stepStatuses: {}
+          }
+        }
+      }
+      const graph = initial.conversationGraph!
+      const scope = {
+        promptMessageId: 'prompt-active',
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: graph.branches[0].id,
+        runtimeSegmentId: graph.runtimeSegments[0].id
+      }
+      // Persist the same public tool event used by app-owned and native durable questions.
+      // Closing the app does not require the provider to have emitted its final stop first.
+      const projected = applyRuntimeSessionEvents(initial, scope, [
+        {
+          id: 'question-event',
+          timestamp: 2,
+          sessionId: initial.id,
+          promptMessageId: scope.promptMessageId,
+          kind: 'tool',
+          level: 'info',
+          toolCallId: 'tool-choice-1',
+          title: 'Choose an approach',
+          status: 'in_progress',
+          elicitation: pendingChoice().elicitation
+        },
+        ...(providerStopped
+          ? [
+              {
+                id: 'stop-event',
+                timestamp: 3,
+                sessionId: initial.id,
+                promptMessageId: scope.promptMessageId,
+                kind: 'stop' as const,
+                level: 'info' as const,
+                text: 'end_turn'
+              }
+            ]
+          : [])
+      ])
+      // Older releases could save their interrupted/error or approved-Plan/idle projection.
+      if (previouslyRestored) {
+        projected.status = approvedPlan ? 'idle' : 'error'
+        projected.activeRun = undefined
+        if (!approvedPlan) {
+          projected.error = 'Session was interrupted before the app closed.'
+          projected.resumeRecovery = {
+            kind: 'resume-required',
+            cause: 'app-restart',
+            promptMessageId: 'prompt-active'
+          }
+        }
+      }
+      let restored = normalizeSessionFile(JSON.parse(JSON.stringify(projected)))!
+      expect(restored.activities?.[0].elicitation?.state).toBe('pending')
+      const owner = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => structuredClone(restored),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          restored = mutate(structuredClone(restored))
+          return restored
+        }
+      })
+      await expect(
+        owner.prepareElicitation({
+          projectId: restored.projectId,
+          sessionId: restored.id,
+          requestId: 'choice-1',
+          toolCallId: 'tool-choice-1',
+          action: 'accept',
+          answers: [{ fieldId: 'question_0', value: 'Let the agent decide' }]
+        })
+      ).resolves.toMatchObject({ request: { requestId: 'choice-1' } })
+      expect(restored.activities?.[0].elicitation?.state).toBe('answered')
+    }
+  )
+
+  it('keeps a live provider run intact when decoding a pending question', () => {
+    const session = createSession([message('prompt-active', 'Choose an approach.')])
+    session.status = 'running'
+    session.activeRun = { promptMessageId: 'prompt-active', startedAt: 1 }
+    setActivities(session, [pendingChoice()])
+    const decoded = normalizeSessionFile(session, { preserveRuntimeState: true })!
+    expect(decoded.status).toBe('running')
+    expect(decoded.activeRun).toEqual(session.activeRun)
+  })
+
+  it.each([
+    'missing-flat',
+    'different-fields',
+    'duplicate-request',
+    'older-prompt',
+    'different-branch',
+    'cancelled',
+    'answered',
+    'unrelated-error',
+    'unrelated-recovery'
+  ])('does not restore an unsafe pending question (%s)', async (invalid) => {
+    const session = createSession([message('prompt-active', 'Choose an approach.')])
+    session.status = 'running'
+    session.activeRun = { promptMessageId: 'prompt-active', startedAt: 1 }
+    setActivities(session, [pendingChoice()])
+    if (invalid === 'missing-flat') session.activities = []
+    if (invalid === 'different-fields') session.activities![0].elicitation!.message = 'Different'
+    if (invalid === 'duplicate-request') {
+      setActivities(session, [pendingChoice(), pendingChoice({ id: 'tool-choice-2' })])
+    }
+    if (invalid === 'older-prompt') {
+      session.messages.push(message('prompt-new', 'Do something else.'))
+      session.conversationGraph = synchronizeActiveConversationMessages(
+        session.conversationGraph!,
+        session.messages,
+        3
+      )
+      session.activeRun = { promptMessageId: 'prompt-new', startedAt: 3 }
+    }
+    if (invalid === 'different-branch') {
+      const graph = session.conversationGraph!
+      graph.branches.push({
+        id: 'empty-branch',
+        agentFrameId: graph.activeFrameId,
+        createdAt: 3,
+        updatedAt: 3
+      })
+      graph.frames[0].activeBranchId = 'empty-branch'
+    }
+    if (invalid === 'cancelled' || invalid === 'answered') {
+      const activity = pendingChoice()
+      activity.elicitation!.state = invalid
+      setActivities(session, [activity])
+      session.status = 'idle'
+      session.activeRun = undefined
+    }
+    if (invalid === 'unrelated-error' || invalid === 'unrelated-recovery') {
+      session.status = 'error'
+      session.activeRun = undefined
+      session.error =
+        invalid === 'unrelated-error'
+          ? 'Provider authentication failed'
+          : 'Session was interrupted before the app closed.'
+      session.resumeRecovery = {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: invalid === 'unrelated-recovery' ? 'another-prompt' : 'prompt-active'
+      }
+    }
+    const restored = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
+    expect(restored.status).not.toBe('waiting-for-user')
+    await expect(
+      createOwner(restored).prepareElicitation({
+        projectId: restored.projectId,
+        sessionId: restored.id,
+        requestId: 'choice-1',
+        toolCallId: 'tool-choice-1',
+        action: 'accept',
+        answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+      })
+    ).rejects.toThrow('pending Session activity')
+  })
+
   it('rejects an originating prompt that is no longer on the active Message Branch', async () => {
     const inactivePrompt = message('prompt-inactive', 'Use the abandoned approach.')
     const activePrompt = message('prompt-active', 'Use the revised approach.')

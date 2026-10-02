@@ -3,7 +3,14 @@ import type { ReadPdfStructureThumbnailRequest } from '../../../../../../shared/
 type Entry = { url?: string; ready: boolean; pending?: Promise<string | undefined> }
 const keyOf = (request: ReadPdfStructureThumbnailRequest): string =>
   JSON.stringify([
-    request.attachmentVersionId,
+    'source' in request
+      ? [
+          request.source.projectId,
+          request.source.sourceKind,
+          request.source.sourceFileId,
+          request.source.sourceVersionId
+        ]
+      : request.attachmentVersionId,
     request.extractionId,
     request.page,
     request.thumbnailId

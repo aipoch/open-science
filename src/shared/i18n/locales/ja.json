@@ -5687,7 +5687,6 @@
     "read-only history": "読み取り専用の履歴を読む",
     "continue research": "研究を続ける",
     "Choose a .science file": ".science ファイルを選択",
-    "Drop files": "ファイルをドロップ",
     "Models": "モデル",
     "Model source": "モデルの提供元",
     "Local parsing models": "ローカル解析モデル",
@@ -6810,6 +6809,11 @@
     "Full screen": "全画面表示",
     "Documentation": "ドキュメント",
     "Load earlier messages": "以前のメッセージを読み込む",
-    "Return to current step": "現在のステップに戻る"
+    "Return to current step": "現在のステップに戻る",
+    "File access failed. System permissions or Notebook protection may be responsible.": "ファイルへのアクセスに失敗しました。システムの権限または Notebook の保護が原因の可能性があります。",
+    "Folder access was updated. Run the command again when you are ready.": "フォルダーへのアクセス権を更新しました。準備ができたら、コマンドを再実行してください。",
+    "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "このフォルダーの権限は、「ファイル」で取り消すまで、すべてのセッションに適用されます。コマンドは自動実行されません。",
+    "Drop files to attach or import a .science package": "ファイルをドロップして添付するか、.science パッケージをインポート",
+    "Files cannot be attached right now.": "現在ファイルを添付できません。"
   }
 }
