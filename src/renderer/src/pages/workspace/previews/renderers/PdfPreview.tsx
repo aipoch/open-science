@@ -2129,14 +2129,15 @@ export const PdfPreviewContent = ({
   >(undefined)
   const hasNotes = Boolean(attachmentVersionId || pdfBookmarkSource)
   const hasReadingTabs = Boolean(figuresSource || pdfBookmarkSource) && presentation !== 'search'
-  const canShowNotesSidebar =
-    presentation !== 'search' && readerWidth >= NOTES_SIDEBAR_MIN_READER_WIDTH
-  const showNotesSidebar = canShowNotesSidebar && notesOpen && readingMode === 'original'
+  const showNotesSidebar = presentation !== 'search' && notesOpen && readingMode === 'original'
+  const floatingNotes = showNotesSidebar && readerWidth < NOTES_SIDEBAR_MIN_READER_WIDTH
   const maxNotesWidth = Math.min(
     NOTES_SIDEBAR_MAX_WIDTH,
     Math.max(NOTES_SIDEBAR_MIN_WIDTH, readerWidth - 752)
   )
-  const effectiveNotesWidth = Math.min(notesWidth, maxNotesWidth)
+  const effectiveNotesWidth = floatingNotes
+    ? Math.max(0, Math.min(320, readerWidth - 16))
+    : Math.min(notesWidth, maxNotesWidth)
   const resizeNotes = (width: number): void =>
     setNotesWidth(Math.max(NOTES_SIDEBAR_MIN_WIDTH, Math.min(maxNotesWidth, width)))
   const [currentPage, setCurrentPage] = useState(1)
@@ -2803,7 +2804,7 @@ export const PdfPreviewContent = ({
           ['area', 'area-annotation', 'text-annotation'].includes(cursorMode)
         }
         data-preview-escape-boundary={
-          source === 'literature' && selectedBookmarkId ? '' : undefined
+          floatingNotes || (source === 'literature' && selectedBookmarkId) ? '' : undefined
         }
         onKeyDown={(event) => {
           // Portalled panels remain mounted during exit motion. Let their own
@@ -2823,6 +2824,13 @@ export const PdfPreviewContent = ({
             event.preventDefault()
             event.stopPropagation()
             setSelectedBookmarkId(undefined)
+            return
+          }
+          if (event.key === 'Escape' && !event.nativeEvent.isComposing && floatingNotes) {
+            event.preventDefault()
+            event.stopPropagation()
+            setNotesOpen(false)
+            notesToggleRef.current?.focus()
             return
           }
           if (
@@ -3083,27 +3091,20 @@ export const PdfPreviewContent = ({
                       type="button"
                       variant={showNotesSidebar ? 'secondary' : 'ghost'}
                       size="icon-sm"
-                      className="absolute right-2 top-0.5 size-7 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                      className="absolute right-2 top-0.5 size-7"
                       aria-label={
                         showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')
                       }
                       ref={notesToggleRef}
                       aria-expanded={showNotesSidebar}
                       aria-controls={notebookPanelId}
-                      aria-disabled={!canShowNotesSidebar}
-                      onClick={() => {
-                        if (canShowNotesSidebar) setNotesOpen((open) => !open)
-                      }}
+                      onClick={() => setNotesOpen((open) => !open)}
                     >
                       <PanelRight className="size-4" aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    {!canShowNotesSidebar
-                      ? t('Widen the window to show notes beside the PDF')
-                      : showNotesSidebar
-                        ? t('Hide notes sidebar')
-                        : t('Show notes sidebar')}
+                    {showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')}
                   </TooltipContent>
                 </Tooltip>
               ) : null}
@@ -3120,7 +3121,9 @@ export const PdfPreviewContent = ({
               inert={readingMode !== 'original'}
               aria-hidden={readingMode !== 'original'}
               data-pdf-original-view
-              style={showNotesSidebar ? { right: effectiveNotesWidth } : undefined}
+              style={
+                showNotesSidebar && !floatingNotes ? { right: effectiveNotesWidth } : undefined
+              }
             >
               {document && outlineOpen && (pageCount > 1 || attachmentVersionId) ? (
                 <PdfOutlineSidebar
@@ -3354,6 +3357,7 @@ export const PdfPreviewContent = ({
                 className={cn(
                   'absolute inset-y-0 right-0',
                   showNotesSidebar ? 'border-l border-border bg-bg-000' : 'left-0',
+                  floatingNotes && 'z-50 shadow-lg',
                   readingMode !== 'notes' && !showNotesSidebar && 'invisible pointer-events-none'
                 )}
                 id={notebookPanelId}
@@ -3383,7 +3387,7 @@ export const PdfPreviewContent = ({
                   onOpenPdf={() => setReadingMode('original')}
                   pageCount={pageCount}
                 />
-                {showNotesSidebar ? (
+                {showNotesSidebar && !floatingNotes ? (
                   <button
                     type="button"
                     role="separator"
