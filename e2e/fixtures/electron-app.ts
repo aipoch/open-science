@@ -401,6 +401,12 @@ const launchEnvironment = (
   environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
   environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode
+  if (environment.OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT === '1') {
+    environment.OPEN_SCIENCE_E2E_APPCONTAINER_DENIED_FILE = join(
+      dirname(storageRoot),
+      'outside-granted-roots.txt'
+    )
+  }
   if (process.platform === 'win32' && environment.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS) {
     // The production runner caches resolved tools under LocalAppData. Keep the controlled process
     // fixture isolated from any micromamba selected by an ordinary Open-Science session.
@@ -617,7 +623,14 @@ class ElectronAppHarness implements ElectronApp {
     windowMode: E2eWindowMode,
     testInfo: Pick<TestInfo, 'attach'>
   ): Promise<ElectronAppHarness> {
-    const testRoot = await mkdtemp(join(tmpdir(), 'open-science-electron-e2e-'))
+    const testRoot = await mkdtemp(
+      join(
+        tmpdir(),
+        process.env.OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT === '1'
+          ? 'open-science-electron-e2e-程序-한글-'
+          : 'open-science-electron-e2e-'
+      )
+    )
     const harness = new ElectronAppHarness(
       testRoot,
       {
@@ -631,6 +644,9 @@ class ElectronAppHarness implements ElectronApp {
     )
     try {
       await mkdir(harness.roots.storageRoot, { recursive: true })
+      if (process.env.OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT === '1') {
+        await writeFile(join(testRoot, 'outside-granted-roots.txt'), 'isolation witness', 'utf8')
+      }
       await writeFile(harness.roots.fakeRemoteItState, JSON.stringify({ services: [] }), 'utf8')
       await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
       await writeFakeRemoteItCommands(harness.roots.fakeRemoteItRoot)

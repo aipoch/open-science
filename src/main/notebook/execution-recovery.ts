@@ -21,14 +21,17 @@ export const executionRecoveryContext = (
     (candidate.signal === null ||
       (typeof candidate.signal === 'string' && /^SIG[A-Z0-9]+$/.test(candidate.signal))) &&
     (candidate.exitCode === null || Number.isInteger(candidate.exitCode)) &&
-    ['unknown', 'os-memory-pressure'].includes(String(candidate.cause)) &&
+    ['unknown', 'os-memory-pressure', 'nul-initialization-unavailable'].includes(
+      String(candidate.cause)
+    ) &&
     ['verified', 'unverified'].includes(String(candidate.cleanup))
       ? {
           kind: candidate.kind as 'python' | 'r' | 'repl',
           ...(candidate.kind !== 'repl' ? { environment: candidate.environment as string } : {}),
           signal: candidate.signal as string | null,
           exitCode: candidate.exitCode as number | null,
-          cause: candidate.cause as 'unknown' | 'os-memory-pressure',
+          cause: candidate.cause as
+            'unknown' | 'os-memory-pressure' | 'nul-initialization-unavailable',
           cleanup: candidate.cleanup as 'verified' | 'unverified'
         }
       : undefined
@@ -48,7 +51,9 @@ export const executionRecoveryContext = (
     const cause =
       kernel.cause === 'os-memory-pressure'
         ? 'OS logs confirm memory pressure; consider reducing memory demand.'
-        : 'Exit cause: unknown.'
+        : kernel.cause === 'nul-initialization-unavailable'
+          ? 'Electron could not initialize the Windows NUL device inside the restricted process.'
+          : 'Exit cause: unknown.'
     const recovery =
       kernel.cleanup === 'unverified'
         ? `At failure, cleanup was unverified. If still unresolved, notebook_restart with ${target} can recheck cleanup for this interpreter. A subsequent execution also rechecks cleanup before starting; if it succeeds, preserve its rebuilt state without restarting.`

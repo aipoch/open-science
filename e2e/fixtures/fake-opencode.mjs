@@ -642,6 +642,47 @@ const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
     return `Notebook lifecycle verified for ${initial.sessionId}.`
   })
 
+const verifyWindowsReplLifecycle = async (sessionId) =>
+  withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    const call = async (name, arguments_ = {}) =>
+      toolResult(name, await client.callTool({ name, arguments: arguments_ }))
+    const execute = async (code) =>
+      controlResultValue(await call('repl_execute', { code, timeoutMs: 30_000 }))
+    const first = await execute(`
+      globalThis.certificationState = 'first-cell';
+      return { marker: globalThis.certificationState, electron: Boolean(process.versions.electron) };
+    `)
+    if (first.marker !== 'first-cell') throw new Error('First REPL cell did not execute.')
+    if (process.env.OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT === '1') {
+      if (first.electron) throw new Error('Protected REPL did not use the prepared Node runtime.')
+      const deniedPath = process.env.OPEN_SCIENCE_E2E_APPCONTAINER_DENIED_FILE
+      if (!deniedPath) throw new Error('Missing AppContainer filesystem isolation witness.')
+      const denied = await execute(`
+        try { require('node:fs').readFileSync(${JSON.stringify(deniedPath)}); return { denied: false }; }
+        catch (error) { return { denied: ['EACCES', 'EPERM'].includes(error.code) }; }
+      `)
+      if (!denied.denied) throw new Error('AppContainer allowed reading outside the granted roots.')
+    }
+    const restarted = await call('notebook_restart', { kernel: 'repl' })
+    if (restarted.status !== 'restarted') throw new Error('REPL restart did not confirm cleanup.')
+    const second = await execute(`
+      return { marker: 'second-cell', reset: typeof globalThis.certificationState === 'undefined' };
+    `)
+    if (second.marker !== 'second-cell' || !second.reset)
+      throw new Error('REPL restart did not produce a fresh interpreter.')
+    // Exercise an actual child exit, then verify cleanup does not fence the next Shell run.
+    const exited = await call('repl_execute', { code: 'process.exit(23)', timeoutMs: 30_000 })
+    if (exited.status !== 'failed') throw new Error('The deliberate REPL exit was not reported.')
+    const shell = await call('bash_execute', { command: "Write-Output 'REPL_CLEANUP_SHELL_OK'" })
+    if (shell.exitCode !== 0 || !shell.stdout?.includes('REPL_CLEANUP_SHELL_OK'))
+      throw new Error('Shell remained blocked after REPL exit.')
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const shutdown = await call('notebook_shutdown')
+      if (shutdown.status !== 'shutdown') throw new Error('Repeated Notebook cleanup failed.')
+    }
+    return 'Windows REPL lifecycle verified: first cell, fresh restart, second cell, process exit, Shell recovery, repeated cleanup.'
+  })
+
 const verifyGlobalNpmTools = async (sessionId, mode) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     const execute = async (command) => {
@@ -2251,6 +2292,8 @@ if (process.argv.includes('--version')) {
             withMcpClient,
             toolResult
           )
+        } else if (prompt.includes('Verify Windows REPL lifecycle.')) {
+          reply = await verifyWindowsReplLifecycle(context.params.sessionId)
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
         } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {

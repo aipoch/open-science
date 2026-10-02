@@ -16,6 +16,22 @@ const captureLifecycleEvidence = async (
 const controlledWindowsFixtureAvailable =
   process.platform === 'win32' && Boolean(process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS)
 
+test('executes Windows REPL cells and recovers Shell after an interpreter exit', async ({
+  app
+}) => {
+  test.skip(process.platform !== 'win32', 'Exercises the Windows REPL and PowerShell launch paths.')
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page, 'Windows REPL lifecycle')
+  await sendPrompt(
+    page,
+    'Verify Windows REPL lifecycle.',
+    'Windows REPL lifecycle verified:',
+    120_000
+  )
+})
+
 test('installs global npm tools through the app and reuses them across Sessions and restart', async ({
   app
 }) => {

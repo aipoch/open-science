@@ -19,7 +19,7 @@ import {
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import { createNotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
 import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
-import type { NotebookProcessSandbox } from './process-sandbox'
+import type { NotebookProcessSandbox, NotebookSandboxProcessState } from './process-sandbox'
 import { NotebookRuntimeService } from './runtime-service'
 import { NotebookRunRepository } from './repository'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
@@ -74,7 +74,9 @@ const fixtureSandbox = (
               const confirmed = await launch.confirmProcessTreeTermination()
               observe?.({ phase: 'native-proof', confirmed })
               return confirmed
-            }
+            },
+            requestProcessTreeTermination: async () => launch.requestProcessTreeTermination(),
+            confirmProcessState: async () => launch.confirmProcessState()
           }
         : {}),
       annotateStderr: (stderr) => stderr,
@@ -392,6 +394,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           const wrapped = await launch.call(this, request)
           expect(wrapped.argv[1]).toBe('supervise')
           expect(wrapped.confirmProcessTreeTermination).toBeTypeOf('function')
+          expect(wrapped.confirmProcessState).toBeTypeOf('function')
           const first = proofs.length === 0
           const index = proofs.length
           proofReads.push(0)
@@ -402,12 +405,22 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
             confirmed ||= result
             return result
           }
-          proofs.push(async () => confirmed || confirm())
+          const confirmState = async (): Promise<NotebookSandboxProcessState> => {
+            proofReads[index]++
+            const result = await wrapped.confirmProcessState!()
+            confirmed ||= result !== 'termination-unknown'
+            return result
+          }
+          proofs.push(async () => confirmed || (await confirmState()) !== 'termination-unknown')
           return {
             ...wrapped,
             // Inject only unavailable evidence. The real native Job and original receipt remain in use.
             confirmProcessTreeTermination: () =>
-              first && !allowProof ? Promise.resolve(false) : confirm()
+              first && !allowProof ? Promise.resolve(false) : confirm(),
+            confirmProcessState: () =>
+              first && !allowProof
+                ? Promise.resolve('termination-unknown' as const)
+                : confirmState()
           }
         })
       const scope = (sessionId: string): { sessionId: string; workspaceCwd: string } => ({
@@ -843,7 +856,9 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
               // Reap the real fixture but model an unreadable proof at the existing system port.
               await wrapped.confirmProcessTreeTermination?.()
               return false
-            }
+            },
+            requestProcessTreeTermination: async () => false,
+            confirmProcessState: async () => 'termination-unknown' as const
           }
         }
       },

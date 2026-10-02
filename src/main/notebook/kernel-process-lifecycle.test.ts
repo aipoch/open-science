@@ -81,6 +81,47 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(record.pid).toBe(host.pid)
   })
 
+  it('forwards the contained kernel executable and arguments through the process host', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-host-forwarding-'))
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const intent = owner.beginSpawn({
+      laneKey: 'lane',
+      processKey: 'repl',
+      kernelEpochId: 'epoch'
+    })
+    const marker = join(root, 'forwarded.json')
+    const script = [
+      "const fs = require('node:fs');",
+      `fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ argv: process.argv.slice(1), electron: process.env.ELECTRON_RUN_AS_NODE }))`
+    ].join('')
+    const host = spawn(
+      process.execPath,
+      [
+        join(__dirname, '../../../resources/notebook/kernel_process_host.js'),
+        intent.path,
+        intent.record.receiptId,
+        process.execPath,
+        '-e',
+        script,
+        'kernel-forwarded-a',
+        'kernel-forwarded-b'
+      ],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true }
+    )
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      host.once('error', reject)
+      host.once('close', resolve)
+    })
+
+    expect(exitCode).toBe(0)
+    expect(JSON.parse(await readFile(marker, 'utf8'))).toEqual({
+      argv: ['kernel-forwarded-a', 'kernel-forwarded-b'],
+      electron: '1'
+    })
+    const record = JSON.parse(await readFile(intent.activePath(host.pid!), 'utf8'))
+    expect(record.commandIdentityMarker).toBe(intent.record.receiptId)
+  })
+
   it('reaps a verified stale owner before opening process admission', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-owner-'))
     const first = new KernelProcessLifecycleOwner({

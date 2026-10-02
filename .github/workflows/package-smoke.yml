@@ -86,7 +86,7 @@ jobs:
     environment: ${{ inputs.require_windows_signing && matrix.platform == 'win' && 'windows-signing' || '' }}
     # Windows Notebook provisioning now runs through the installed app; leave headroom for that
     # operation in addition to install, migration, launch, and shutdown probes.
-    timeout-minutes: 25
+    timeout-minutes: ${{ matrix.platform == 'win' && 40 || 25 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
@@ -121,6 +121,33 @@ jobs:
         if: ${{ !inputs.install_only && matrix.platform == 'win' }}
         timeout-minutes: 20
         run: node scripts/windows-installer-smoke.mjs --installer-dir dist
+
+      - name: Install Windows package for AppContainer certification
+        if: ${{ !inputs.install_only && matrix.platform == 'win' }}
+        shell: pwsh
+        env:
+          OPEN_SCIENCE_CERT_INSTALL_ROOT: ${{ runner.temp }}\open-science-certification
+        run: |
+          $installer = (Get-ChildItem -LiteralPath dist -Filter '*setup.exe' | Select-Object -First 1).FullName
+          if (-not $installer) { throw 'Windows setup installer was not found for AppContainer certification.' }
+          $installDir = Join-Path $env:OPEN_SCIENCE_CERT_INSTALL_ROOT 'installed app 程序'
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          & $installer '/S' "/D=$installDir"
+          if ($LASTEXITCODE -ne 0) { throw "Windows installer exited with $LASTEXITCODE." }
+          $executable = Join-Path $installDir 'open-science.exe'
+          if (-not (Test-Path -LiteralPath $executable)) { throw "Installed executable not found at $executable." }
+          "OPEN_SCIENCE_E2E_EXECUTABLE=$executable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OPEN_SCIENCE_CERT_INSTALL_ROOT=$env:OPEN_SCIENCE_CERT_INSTALL_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # The repository fixture calls the production MCP boundary and verifies native cleanup.
+      # Hosted Windows runners are elevated; missing runtime/setup prerequisites fail this gate.
+      - name: Run packaged Windows AppContainer REPL certification gate
+        if: ${{ !inputs.install_only && matrix.platform == 'win' }}
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT: '1'
+        run: npx playwright test e2e/certification/windows-appcontainer.spec.ts --retries=0
 
       - name: Verify Windows Authenticode signature
         if: ${{ !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}

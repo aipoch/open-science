@@ -1,12 +1,16 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { access, readFile, rm } from 'node:fs/promises'
+import { access, readFile, rm, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 
 import { proxyEnvironment } from './proxy-environment.js'
 import { normalizeFilesystemLayout, type FilesystemLayoutInput } from './filesystem-layout.js'
+import {
+  applyElectronAsNodeLaunchPolicy,
+  ELECTRON_NO_STDIO_INIT
+} from './electron-as-node-launch-policy.js'
 import type { DependencyCheck } from './linux-isolation.js'
 import {
   LOCAL_RPC_BROKER_HOST,
@@ -26,6 +30,7 @@ type WindowsLaunchRequest = Readonly<{
   command: string
   executable?: string
   args?: readonly string[]
+  electronAsNode?: boolean
   shell?: string | WindowsShell
   cwd: string
   gatewayPort: number
@@ -93,7 +98,12 @@ type ProcessTreeTerminationProof = Readonly<{
   path: string
   token: string
   confirm: () => Promise<boolean>
+  confirmState: () => Promise<WindowsProcessState>
+  request: () => Promise<boolean>
+  requestPath: string
 }>
+
+type WindowsProcessState = 'never-started' | 'started-and-reaped' | 'termination-unknown'
 
 type AppContainerStatus = Readonly<{
   profileExists: boolean
@@ -632,18 +642,81 @@ const createProcessTreeTerminationProof = (
     env.TEMP ?? env.TMP ?? cwd,
     `.open-science-process-tree-terminated-${token}.proof`
   )
+  const requestPath = `${path}.request`
+  let requestSent = false
+  let terminalState: WindowsProcessState | undefined
+  let requesting: Promise<boolean> | undefined
+  let confirming: Promise<WindowsProcessState> | undefined
+  const confirmState = (): Promise<WindowsProcessState> => {
+    if (terminalState) return Promise.resolve(terminalState)
+    if (confirming) return confirming
+    confirming = (async () => {
+      try {
+        const parse = (contents: string): WindowsProcessState => {
+          if (contents === token) return 'started-and-reaped'
+          try {
+            const value = JSON.parse(contents) as Record<string, unknown>
+            return value.version === 1 &&
+              value.token === token &&
+              (value.processState === 'never-started' ||
+                value.processState === 'started-and-reaped')
+              ? value.processState
+              : 'termination-unknown'
+          } catch {
+            return 'termination-unknown'
+          }
+        }
+        try {
+          const state = parse(await readFile(path, 'utf8'))
+          if (state !== 'termination-unknown') {
+            terminalState = state
+            await rm(path, { force: true }).catch(() => undefined)
+            await rm(requestPath, { force: true }).catch(() => undefined)
+            return state
+          }
+        } catch {
+          // The proof may not exist yet. Missing evidence never upgrades process state.
+        }
+        return 'termination-unknown'
+      } finally {
+        confirming = undefined
+      }
+    })()
+    return confirming
+  }
+  const request = (): Promise<boolean> => {
+    if (requesting) return requesting
+    requesting = (async () => {
+      if ((await confirmState()) !== 'termination-unknown') return true
+      // The supervisor is the only process allowed to publish started-and-reaped. Ask it to
+      // terminate its own Job before falling back to PID/tree teardown. This request is
+      // idempotent and token-bound by the launch-specific path.
+      if (!requestSent) {
+        requestSent = await writeFile(requestPath, token, { encoding: 'utf8' }).then(
+          () => true,
+          () => false
+        )
+        if (!requestSent) return false
+      }
+      // Give the original owner a bounded window to terminate its Job and publish proof. The
+      // caller may still use taskkill afterwards, but that fallback remains unverified.
+      for (let attempt = 0; attempt < 80; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        if ((await confirmState()) !== 'termination-unknown') return true
+      }
+      return false
+    })().finally(() => {
+      requesting = undefined
+    })
+    return requesting
+  }
   return {
     path,
     token,
-    confirm: async () => {
-      try {
-        return (await readFile(path, 'utf8')) === token
-      } catch {
-        return false
-      } finally {
-        await rm(path, { force: true }).catch(() => undefined)
-      }
-    }
+    confirmState,
+    request,
+    confirm: async () => (await confirmState()) !== 'termination-unknown',
+    requestPath
   }
 }
 
@@ -653,6 +726,8 @@ const windowsLaunch = (
   argv: string[]
   env: NodeJS.ProcessEnv
   confirmProcessTreeTermination: () => Promise<boolean>
+  requestProcessTreeTermination: () => Promise<boolean>
+  confirmProcessState: () => Promise<WindowsProcessState>
 } => {
   const shell: WindowsShell =
     typeof request.shell === 'object'
@@ -669,17 +744,30 @@ const windowsLaunch = (
       ? windowsBatchInvocation(request.executable, request.args ?? [], request.env)
       : { executable: request.executable, args: [...(request.args ?? [])] }
     : { executable: shell.path, args: childArgs }
+  // The AppContainer launch is the one place where the Electron-as-Node child is created under
+  // the restricted token. Electron's NUL initialization can fail there; preserve the same args and
+  // environment everywhere else (including Python/R, ordinary shells, and standard-mode workers).
+  const policyArguments = applyElectronAsNodeLaunchPolicy({
+    platform: process.platform,
+    restricted: true,
+    electronAsNode:
+      request.executable !== undefined &&
+      !WINDOWS_BATCH_FILE.test(request.executable) &&
+      request.electronAsNode === true,
+    args: directInvocation.args
+  })
+  const policyInvocation = { ...directInvocation, args: [...policyArguments] }
   const layout = normalizeFilesystemLayout(request.filesystem)
   const proof = createProcessTreeTerminationProof(request.env, request.cwd)
   const specification = Buffer.from(
     JSON.stringify({
-      executable: directInvocation.executable,
+      executable: policyInvocation.executable,
       ...(request.windowsShellControlPipe
         ? { shellControlPipe: request.windowsShellControlPipe }
         : {}),
-      arguments: directInvocation.args,
-      ...('verbatimArguments' in directInvocation
-        ? { verbatimArguments: directInvocation.verbatimArguments }
+      arguments: policyInvocation.args,
+      ...('verbatimArguments' in policyInvocation
+        ? { verbatimArguments: policyInvocation.verbatimArguments }
         : {}),
       cwd: request.cwd,
       readOnlyRoots: layout.readOnlyRoots,
@@ -688,7 +776,8 @@ const windowsLaunch = (
       deniedReadRoots: layout.deniedReadRoots,
       deniedWriteRoots: layout.deniedWriteRoots,
       terminationProofPath: proof.path,
-      terminationProofToken: proof.token
+      terminationProofToken: proof.token,
+      terminationRequestPath: proof.requestPath
     }),
     'utf8'
   ).toString('base64url')
@@ -714,7 +803,9 @@ const windowsLaunch = (
       specification
     ],
     env,
-    confirmProcessTreeTermination: proof.confirm
+    confirmProcessTreeTermination: proof.confirm,
+    requestProcessTreeTermination: proof.request,
+    confirmProcessState: proof.confirmState
   }
 }
 
@@ -754,6 +845,8 @@ const windowsSupervisedLaunch = (
   argv: string[]
   env: NodeJS.ProcessEnv
   confirmProcessTreeTermination: () => Promise<boolean>
+  requestProcessTreeTermination: () => Promise<boolean>
+  confirmProcessState: () => Promise<WindowsProcessState>
 } => {
   // This path does not apply AppContainer capabilities or ACLs. It only asks the bundled host to
   // contain an opted-in standard-mode worker and its helpers in a kill-on-close Job Object.
@@ -774,18 +867,23 @@ const windowsSupervisedLaunch = (
       deniedReadRoots: [],
       deniedWriteRoots: [],
       terminationProofPath: proof.path,
-      terminationProofToken: proof.token
+      terminationProofToken: proof.token,
+      terminationRequestPath: proof.requestPath
     }),
     'utf8'
   ).toString('base64url')
   return {
     argv: [request.hostPath, 'supervise', specification],
     env: direct.env,
-    confirmProcessTreeTermination: proof.confirm
+    confirmProcessTreeTermination: proof.confirm,
+    requestProcessTreeTermination: proof.request,
+    confirmProcessState: proof.confirmState
   }
 }
 
 export {
+  applyElectronAsNodeLaunchPolicy,
+  ELECTRON_NO_STDIO_INIT,
   checkWindowsAppContainer,
   isWindowsProtectionConfigured,
   connectionProbeSpecification,

@@ -5488,6 +5488,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
           })
         )
         const invocation = wrap.mock.calls[0][0]
+        expect(invocation).not.toHaveProperty('electronAsNode')
         const npmPrefix = invocation.env.NPM_CONFIG_PREFIX
         if (hasRuntimeRoot) {
           expect(npmPrefix).toBe(
@@ -5509,6 +5510,69 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       } finally {
         await executor.shutdown()
         runtime.mockRestore()
+      }
+    }
+  )
+
+  it('marks the Windows standard-mode fallback as Electron-as-Node', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-electron-fallback-'))
+    const stop = new Error('capture fallback launch intent')
+    const wrap = vi.fn<NotebookProcessSandbox['wrap']>().mockRejectedValue(stop)
+    const executor = new NotebookKernelExecutor({
+      platform: 'win32',
+      processSandbox: { wrap, resolveWindowsRuntime: async () => null }
+    })
+    try {
+      await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'return 1',
+        kind: 'repl',
+        sessionId: 'fallback-session',
+        projectId: 'fallback-project'
+      })
+      expect(wrap).toHaveBeenCalledWith(
+        expect.objectContaining({ executable: process.execPath, electronAsNode: true })
+      )
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it.each(['python', 'r'] as const)(
+    'does not mark the %s data kernel as Electron-as-Node',
+    async (kind) => {
+      cwdDir = await mkdtemp(join(tmpdir(), `os-kernel-${kind}-launch-intent-`))
+      const stop = new Error('capture launch intent')
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>().mockRejectedValue(stop)
+      const executor = new NotebookKernelExecutor({
+        platform: 'win32',
+        processSandbox: { wrap }
+      })
+
+      try {
+        const spawnLoop = (
+          executor as unknown as {
+            spawnLoop: (
+              processKind: KernelProcessKind,
+              environment: string,
+              request: NotebookExecutionRequest
+            ) => Promise<unknown>
+          }
+        ).spawnLoop.bind(executor)
+        const request = {
+          ...baseRequest(cwdDir),
+          sessionId: 'data-kernel-session',
+          projectId: 'data-kernel-project',
+          resolvedInterpreter: { command: process.execPath }
+        } as NotebookExecutionRequest
+
+        await expect(
+          spawnLoop(kind, kind === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV, request)
+        ).rejects.toBe(stop)
+        expect(wrap).toHaveBeenCalledTimes(1)
+        expect(wrap.mock.calls[0]?.[0]).not.toHaveProperty('electronAsNode')
+      } finally {
+        await executor.shutdown()
       }
     }
   )

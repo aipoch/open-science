@@ -55,7 +55,8 @@ import {
   type NotebookRuntimeAccessAdmission,
   type NotebookSandboxCleanupReason,
   type NotebookSandboxCleanupResult,
-  type NotebookSandboxProcessOutcome
+  type NotebookSandboxProcessOutcome,
+  withNotebookSandboxProcessState
 } from './process-sandbox'
 import {
   notebookWorkloadCacheEnv,
@@ -979,7 +980,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
       this.procs.delete(key)
       proc.readline.close()
       const terminationError = kernelExitError(proc, code, signal)
-      const diagnosis = diagnoseKernelExit({ pid: child.pid, signal, platform: this.platform })
+      const diagnosis = diagnoseKernelExit({
+        pid: child.pid,
+        signal,
+        platform: this.platform,
+        stderr: proc.stderrTail
+      })
       proc.terminationError = terminationError
       // Publish the crash as soon as the direct child exits. Process-tree and sandbox cleanup still
       // gate settlement of any in-flight execution, but status observers should not have to wait for
@@ -1019,7 +1025,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
           terminationError.message +=
             kernel.cause === 'os-memory-pressure'
               ? '\nThe operating system killed this process under memory pressure.'
-              : '\nExit cause: unknown.'
+              : kernel.cause === 'nul-initialization-unavailable'
+                ? '\nElectron could not initialize the Windows NUL device in the restricted process.'
+                : '\nExit cause: unknown.'
           terminationError.message += "\nThe exited interpreter's in-memory state was lost."
           if (!result.reaped)
             terminationError.message += '\nProcess-tree cleanup could not be verified.'
@@ -1092,7 +1100,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     let args: string[]
     let loopPath: string
     if (kind === 'repl') {
-      // Run the control-plane loop as plain Node via the app binary (ELECTRON_RUN_AS_NODE set in env).
+      // Windows protection uses the prepared Node runtime; standard-mode fallback and other
+      // platforms use the app binary with ELECTRON_RUN_AS_NODE.
       command =
         this.platform === 'win32' && windowsRuntime !== null
           ? (windowsRuntime ?? resolveWindowsNotebookRuntime()).node
@@ -1159,6 +1168,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ? await this.processSandbox.wrap({
           executable: invocation.executable,
           args: invocation.args,
+          ...(kind === 'repl' && (this.platform !== 'win32' || windowsRuntime === null)
+            ? { electronAsNode: true }
+            : {}),
           env: spawnEnv,
           cwd: spawnCwd ?? process.cwd(),
           commandText: [invocation.executable, ...invocation.args].join(' '),
@@ -1232,11 +1244,26 @@ class NotebookKernelExecutor implements NotebookExecutor {
               })
               return { reaped: false }
             })
-          const osResult = await (this.platform === 'win32'
-            ? (windowsOsProof ??= killOwnedChild())
-            : killOwnedChild())
+          // On Windows the native supervisor owns the Job proof. Ask it to terminate first;
+          // taskkill is only a conservative fallback because it can kill the proof publisher.
+          const osResult =
+            this.platform === 'win32' &&
+            sandboxed?.confirmProcessState &&
+            sandboxed.requestProcessTreeTermination
+              ? (await sandboxed.requestProcessTreeTermination().catch(() => false))
+                ? { reaped: true }
+                : await (windowsOsProof ??= killOwnedChild())
+              : this.platform === 'win32'
+                ? await (windowsOsProof ??= killOwnedChild())
+                : await killOwnedChild()
           let result = osResult
-          if (!result.reaped && (await nativeTerminationProof?.().catch(() => false))) {
+          if (
+            this.platform === 'win32' &&
+            nativeTerminationProof &&
+            sandboxed?.requestProcessTreeTermination
+          ) {
+            result = { reaped: await nativeTerminationProof().catch(() => false) }
+          } else if (!result.reaped && (await nativeTerminationProof?.().catch(() => false))) {
             result = { reaped: true }
           }
           log.info('kernel process termination proof', {
@@ -1293,15 +1320,32 @@ class NotebookKernelExecutor implements NotebookExecutor {
       reason: NotebookSandboxCleanupReason,
       processOutcome: NotebookSandboxProcessOutcome
     ): Promise<NotebookSandboxCleanupResult> =>
-      sandboxed?.cleanup(reason, {
-        ...processOutcome,
-        confirmTermination
-      }) ??
-      Promise.resolve({
-        processesTerminated: processOutcome.processesTerminated,
-        networkClosed: true,
-        temporaryResourcesRemoved: true
-      })
+      (async () => {
+        const nativeState =
+          processOutcome.processState === 'never-started'
+            ? processOutcome.processState
+            : await sandboxed?.confirmProcessState?.().catch(() => undefined)
+        const state =
+          nativeState ??
+          processOutcome.processState ??
+          (processOutcome.processesTerminated ? 'started-and-reaped' : 'termination-unknown')
+        const outcome = withNotebookSandboxProcessState(
+          {
+            processesTerminated: state !== 'termination-unknown',
+            confirmTermination
+          },
+          state
+        )
+        return (
+          sandboxed?.cleanup(reason, outcome) ??
+          Promise.resolve({
+            processesTerminated: state !== 'termination-unknown',
+            networkClosed: true,
+            temporaryResourcesRemoved: true,
+            processState: state
+          })
+        )
+      })()
     const rpcTokenFileDescriptor =
       kind === 'repl' && this.platform === 'linux' && request.mcpRpcToken ? 3 : undefined
     let ownershipIntent: KernelProcessSpawnIntent | undefined
@@ -1360,7 +1404,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
     } catch (error) {
       spawnAdmission?.notStarted()
       if (ownershipIntent) this.processLifecycle?.abandonSpawn(ownershipIntent)
-      await cleanupSandbox('spawn-failed', { processesTerminated: true })
+      await cleanupSandbox(
+        'spawn-failed',
+        withNotebookSandboxProcessState({ processesTerminated: true }, 'never-started')
+      )
       throw error
     }
     child.once('spawn', () => spawnAdmission?.started())
@@ -1372,7 +1419,17 @@ class NotebookKernelExecutor implements NotebookExecutor {
       if (!ownershipReceipt && ownershipIntent && result.reaped) {
         this.processLifecycle?.abandonSpawn(ownershipIntent)
       }
-      await cleanupSandbox('spawn-failed', { processesTerminated: result.reaped })
+      await cleanupSandbox(
+        'spawn-failed',
+        withNotebookSandboxProcessState(
+          { processesTerminated: result.reaped },
+          child.pid === undefined
+            ? 'never-started'
+            : result.reaped
+              ? 'started-and-reaped'
+              : 'termination-unknown'
+        )
+      )
     }
     const recordOwnership = (): void => {
       if (!ownershipIntent || child.pid === undefined || ownershipReceipt) return
@@ -1932,9 +1989,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
       proc
         .teardownProcess()
         .then(async (result) => {
-          const cleanup = await this.cleanupProc(proc, reason, {
-            processesTerminated: result.reaped
-          })
+          const cleanup = await this.cleanupProc(
+            proc,
+            reason,
+            withNotebookSandboxProcessState(
+              { processesTerminated: result.reaped },
+              result.reaped ? 'started-and-reaped' : 'termination-unknown'
+            )
+          )
           return {
             reaped:
               cleanup.processesTerminated &&

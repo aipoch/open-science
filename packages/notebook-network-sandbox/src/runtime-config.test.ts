@@ -244,6 +244,7 @@ describe('Notebook runtime configuration updates', () => {
       })
     ).resolves.toEqual({
       processesTerminated: true,
+      processState: 'started-and-reaped',
       networkClosed: true,
       temporaryResourcesRemoved: true
     })
@@ -335,6 +336,7 @@ describe('Notebook runtime configuration updates', () => {
       })
     ).resolves.toEqual({
       processesTerminated: true,
+      processState: 'started-and-reaped',
       networkClosed: false,
       temporaryResourcesRemoved: false
     })
@@ -414,6 +416,7 @@ describe('Notebook runtime configuration updates', () => {
       })
     ).resolves.toEqual({
       processesTerminated: true,
+      processState: 'started-and-reaped',
       networkClosed: true,
       temporaryResourcesRemoved: true
     })

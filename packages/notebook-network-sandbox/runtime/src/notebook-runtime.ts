@@ -74,6 +74,7 @@ type NotebookSandboxTarget =
 
 type SandboxCleanupResult = Readonly<{
   processesTerminated: boolean
+  processState?: SandboxProcessState
   networkClosed: boolean
   temporaryResourcesRemoved: boolean
   /** Omitted means blocked; never substitutes for complete process cleanup. */
@@ -82,7 +83,14 @@ type SandboxCleanupResult = Readonly<{
 
 type SandboxProcessOutcome = Readonly<{
   processesTerminated: boolean
+  processState?: SandboxProcessState
 }>
+
+type SandboxProcessState = 'never-started' | 'started-and-reaped' | 'termination-unknown'
+
+const processStateForOutcome = (outcome: SandboxProcessOutcome): SandboxProcessState =>
+  outcome.processState ??
+  (outcome.processesTerminated ? 'started-and-reaped' : 'termination-unknown')
 
 type SandboxCleanupReason = 'exit' | 'cancel' | 'timeout' | 'spawn-failed'
 
@@ -94,6 +102,7 @@ type NetworkWrapRequest = Readonly<{
   command: string
   executable?: string
   args?: readonly string[]
+  electronAsNode?: boolean
   commandId: string
   shell?: string | WindowsShell
   cwd: string
@@ -259,6 +268,8 @@ const wrap = async (
   argv: string[]
   env: NodeJS.ProcessEnv
   confirmProcessTreeTermination?: () => Promise<boolean>
+  requestProcessTreeTermination?: () => Promise<boolean>
+  confirmProcessState?: () => Promise<SandboxProcessState>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
 }> => {
   if (finishing.size > 0) await Promise.allSettled([...finishing])
@@ -320,7 +331,8 @@ const wrap = async (
     } catch (error) {
       if (commandContexts.has(request.commandId)) {
         const cleanup = await cleanupAfterCommand(request.commandId, 'spawn-failed', {
-          processesTerminated: true
+          processesTerminated: true,
+          processState: 'never-started'
         })
         if (!cleanupComplete(cleanup)) {
           throw new Error(
@@ -487,6 +499,7 @@ const wrap = async (
         : {}
       const launchRequest = {
         command: request.command,
+        ...(request.electronAsNode ? { electronAsNode: true } : {}),
         ...(request.windowsShellControlPipe
           ? { windowsShellControlPipe: request.windowsShellControlPipe }
           : {}),
@@ -525,7 +538,8 @@ const wrap = async (
     throw new Error(`Notebook process sandbox does not support ${process.platform}.`)
   } catch (error) {
     const cleanup = await cleanupAfterCommand(request.commandId, 'spawn-failed', {
-      processesTerminated: true
+      processesTerminated: true,
+      processState: 'never-started'
     })
     if (!cleanupComplete(cleanup)) {
       throw new Error(
@@ -562,10 +576,18 @@ const closeContext = async (
           networkClosed: platformResult !== false,
           temporaryResourcesRemoved: platformResult !== false
         }
+  const processState =
+    platformCleanup.processState ??
+    (context.platformOwnsProcesses && platformCleanup.processesTerminated
+      ? (processOutcome.processState ?? 'started-and-reaped')
+      : processOutcome.processState)
+  const callerProcessesTerminated = processStateForOutcome(processOutcome) !== 'termination-unknown'
+  const processesTerminated = context.platformOwnsProcesses
+    ? platformCleanup.processesTerminated
+    : platformCleanup.processesTerminated && callerProcessesTerminated
   return {
-    processesTerminated: context.platformOwnsProcesses
-      ? platformCleanup.processesTerminated
-      : platformCleanup.processesTerminated && processOutcome.processesTerminated,
+    processesTerminated,
+    ...(processState !== undefined ? { processState } : {}),
     networkClosed: network.status === 'fulfilled' && platformCleanup.networkClosed,
     temporaryResourcesRemoved:
       platformCleanup.temporaryResourcesRemoved && trustBundle.status === 'fulfilled',
@@ -587,9 +609,10 @@ const cleanupAfterCommand = async (
   const context = commandContexts.get(commandId)
   if (!context) {
     return {
-      processesTerminated: processOutcome.processesTerminated,
+      processesTerminated: processStateForOutcome(processOutcome) !== 'termination-unknown',
       networkClosed: true,
-      temporaryResourcesRemoved: true
+      temporaryResourcesRemoved: true,
+      ...(processOutcome.processState ? { processState: processOutcome.processState } : {})
     }
   }
   const task = closeContext(context, reason, processOutcome)

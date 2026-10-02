@@ -89,7 +89,10 @@ export const probeWindowsRuntimeComponent = async (
       env: prepared.env,
       cwd,
       windowsHide: true,
-      timeout: 30_000,
+      // Bound the complete native operation, including recursive ACL grants and rollback over
+      // the runtime tree. The child can finish quickly while Windows is still restoring ACLs.
+      // Killing the owner after only 30 seconds can destroy its cleanup evidence on slower disks.
+      timeout: 90_000,
       signal,
       maxBuffer: 1024 * 1024
     })

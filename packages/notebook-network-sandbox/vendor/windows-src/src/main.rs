@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
@@ -6,9 +7,20 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 const WINDOWS_ACL_ACCESS_DENIED_MARKER: &str = "WINDOWS_ACL_ACCESS_DENIED";
+const WINDOWS_ACL_TARGET_MISSING_MARKER: &str = "WINDOWS_ACL_TARGET_MISSING";
+const WINDOWS_ACL_OPERATION_FAILED_MARKER: &str = "WINDOWS_ACL_OPERATION_FAILED";
 
+fn acl_error_marker(code: u32) -> &'static str {
+    match code {
+        2 | 3 | 0x8007_0002 | 0x8007_0003 => WINDOWS_ACL_TARGET_MISSING_MARKER,
+        5 | 1314 | 0x8007_0005 | 0x8007_0522 => WINDOWS_ACL_ACCESS_DENIED_MARKER,
+        _ => WINDOWS_ACL_OPERATION_FAILED_MARKER,
+    }
+}
+
+#[cfg(test)]
 fn icacls_error_marker(status_code: Option<i32>) -> Option<&'static str> {
-    (status_code == Some(5)).then_some(WINDOWS_ACL_ACCESS_DENIED_MARKER)
+    Some(acl_error_marker(status_code.unwrap_or_default() as u32))
 }
 
 #[cfg(windows)]
@@ -33,7 +45,76 @@ struct LaunchSpec {
     denied_write_roots: Vec<String>,
     termination_proof_path: Option<String>,
     termination_proof_token: Option<String>,
+    #[serde(default)]
+    termination_request_path: Option<String>,
     shell_control_pipe: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ProcessTerminationProof<'a> {
+    version: u8,
+    token: &'a str,
+    #[serde(rename = "processState")]
+    process_state: &'a str,
+}
+
+fn write_process_proof_state(spec: &LaunchSpec, process_state: &'static str) -> Result<()> {
+    match (&spec.termination_proof_path, &spec.termination_proof_token) {
+        (Some(path), Some(token)) => fs::write(
+            path,
+            serde_json::to_vec(&ProcessTerminationProof {
+                version: 1,
+                token,
+                process_state,
+            })?,
+        )
+        .context("write process tree termination proof"),
+        (None, None) => Ok(()),
+        _ => bail!("incomplete process tree termination proof specification"),
+    }
+}
+
+// A launch still preparing may create a child later. Only an abandoned preparation is a
+// terminal never-started outcome; readers cache terminal proofs and may release ACLs immediately.
+#[cfg(windows)]
+struct PendingLaunchProof<'a> {
+    spec: &'a LaunchSpec,
+    armed: bool,
+}
+
+#[cfg(windows)]
+impl<'a> PendingLaunchProof<'a> {
+    fn new(spec: &'a LaunchSpec) -> Result<Self> {
+        write_process_proof_state(spec, "termination-unknown")?;
+        Ok(Self { spec, armed: true })
+    }
+
+    fn hand_off(&mut self) {
+        self.armed = false;
+    }
+}
+
+#[cfg(windows)]
+impl Drop for PendingLaunchProof<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = write_process_proof_state(self.spec, "never-started");
+        }
+    }
+}
+
+fn termination_request_matches(spec: &LaunchSpec) -> bool {
+    spec.termination_request_path
+        .as_deref()
+        .is_some_and(|path| {
+            spec.termination_proof_token
+                .as_deref()
+                .is_some_and(|token| {
+                    fs::read_to_string(path)
+                        .map(|contents| contents == token)
+                        .unwrap_or(false)
+                })
+        })
 }
 
 fn decode_launch_spec(encoded: &str) -> Result<LaunchSpec> {
@@ -166,6 +247,7 @@ mod windows_host {
     use std::net::TcpListener;
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use std::path::{Path, PathBuf};
+    #[cfg(test)]
     use std::process::Command;
     use std::time::{Duration, Instant};
 
@@ -189,22 +271,24 @@ mod windows_host {
         DeriveAppContainerSidFromAppContainerName, GetAppContainerFolderPath,
     };
     use windows::Win32::Security::{
-        ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION_DS, ACL_SIZE_INFORMATION,
-        AclSizeInformation, AddAccessAllowedAceEx, AddAce, DACL_SECURITY_INFORMATION,
-        DeriveCapabilitySidsFromName, EqualSid, FreeSid, GetAce, GetAclInformation, GetLengthSid,
-        GetSecurityDescriptorControl, GetSecurityDescriptorDacl, GetTokenInformation,
-        INHERITED_ACE, InitializeAcl, InitializeSecurityDescriptor, OBJECT_SECURITY_INFORMATION,
-        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_AUTO_INHERIT_REQ,
-        SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES,
-        SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_CONTROL, SID_AND_ATTRIBUTES, SetFileSecurityW,
+        ACCESS_ALLOWED_ACE, ACE_FLAGS, ACE_HEADER, ACL, ACL_REVISION_DS, ACL_SIZE_INFORMATION,
+        AclSizeInformation, AddAccessAllowedAceEx, AddAce, CONTAINER_INHERIT_ACE,
+        DACL_SECURITY_INFORMATION, DeriveCapabilitySidsFromName, EqualSid, FreeSid, GetAce,
+        GetAclInformation, GetLengthSid, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
+        GetTokenInformation, INHERITED_ACE, InitializeAcl, InitializeSecurityDescriptor,
+        OBJECT_INHERIT_ACE, OBJECT_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, PSID, SE_DACL_AUTO_INHERIT_REQ, SE_DACL_AUTO_INHERITED,
+        SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, SECURITY_DESCRIPTOR,
+        SECURITY_DESCRIPTOR_CONTROL, SID_AND_ATTRIBUTES, SetFileSecurityW,
         SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_APPCONTAINER_INFORMATION,
         TOKEN_GROUPS, TOKEN_QUERY, TOKEN_USER, TokenAppContainerSid, TokenCapabilities, TokenUser,
         UNPROTECTED_DACL_SECURITY_INFORMATION,
     };
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_SHARE_DELETE,
+        FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, MOVEFILE_REPLACE_EXISTING,
+        MOVEFILE_WRITE_THROUGH, MoveFileExW,
         OPEN_EXISTING, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_OUTBOUND, ReadFile, WRITE_DAC,
     };
     use windows::Win32::System::Com::{CoCreateGuid, CoTaskMemFree};
@@ -1832,13 +1916,13 @@ mod windows_host {
     fn write_acl_record(path: &Path, record: &AclLeaseRecord) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
-                .with_context(|| format!("create ACL lease directory {}", parent.display()))?;
+                .context("create ACL lease directory")?;
         }
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(path)
-            .with_context(|| format!("write ACL lease record {}", path.display()))?;
+            .context("write ACL lease record")?;
         serde_json::to_writer_pretty(&mut file, record)?;
         file.write_all(b"\n")?;
         file.sync_all()?;
@@ -1848,10 +1932,11 @@ mod windows_host {
     fn read_acl_state(installation_id: &str, ownership_root: &Path) -> Result<Option<AclState>> {
         let path = acl_state_path(ownership_root);
         let state = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(strip_utf8_bom(&bytes))
-                .with_context(|| format!("parse ACL state {}", path.display()))?,
+            Ok(bytes) => {
+                serde_json::from_slice(strip_utf8_bom(&bytes)).context("parse ACL state")?
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+            Err(error) => return Err(error).context("read ACL state"),
         };
         validate_acl_state(&state, installation_id)?;
         Ok(Some(state))
@@ -1866,8 +1951,7 @@ mod windows_host {
                     Ok(()) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => {
-                        return Err(error)
-                            .with_context(|| format!("remove ACL state {}", candidate.display()));
+                        return Err(error).context("remove ACL state");
                     }
                 }
             }
@@ -1875,26 +1959,24 @@ mod windows_host {
         }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
-                .with_context(|| format!("create ACL state directory {}", parent.display()))?;
+                .context("create ACL state directory")?;
         }
         match fs::remove_file(&temporary) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("remove stale ACL state {}", temporary.display()));
+                return Err(error).context("remove stale ACL state");
             }
         }
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temporary)
-            .with_context(|| format!("write ACL state {}", temporary.display()))?;
+            .context("write ACL state")?;
         serde_json::to_writer_pretty(&mut file, state)?;
         file.write_all(b"\n")?;
         file.sync_all()?;
-        fs::rename(&temporary, &path)
-            .with_context(|| format!("commit ACL state {}", path.display()))
+        fs::rename(&temporary, &path).context("commit ACL state")
     }
 
     fn process_is_running(process_id: u32) -> bool {
@@ -1961,16 +2043,16 @@ mod windows_host {
         Ok(())
     }
 
-    fn serialize_dacl(dacl: *const ACL, path: &str) -> Result<String> {
+    fn serialize_dacl(dacl: *const ACL) -> Result<String> {
         let mut descriptor = SECURITY_DESCRIPTOR::default();
         let descriptor_ptr = PSECURITY_DESCRIPTOR(
             (&mut descriptor as *mut SECURITY_DESCRIPTOR).cast::<std::ffi::c_void>(),
         );
         unsafe {
             InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION)
-                .with_context(|| format!("initialize ACL snapshot for {path}"))?;
+                .context("initialize ACL snapshot")?;
             SetSecurityDescriptorDacl(descriptor_ptr, true, Some(dacl), false)
-                .with_context(|| format!("attach DACL snapshot for {path}"))?;
+                .context("attach DACL snapshot")?;
         }
         let mut sddl = PWSTR::null();
         unsafe {
@@ -1982,13 +2064,12 @@ mod windows_host {
                 None,
             )
         }
-        .with_context(|| format!("serialize filesystem ACL for {path}"))?;
+        .context("serialize filesystem ACL")?;
         let _sddl = LocalAllocation(sddl.0.cast());
-        unsafe { sddl.to_string() }
-            .with_context(|| format!("read serialized filesystem ACL for {path}"))
+        unsafe { sddl.to_string() }.context("read serialized filesystem ACL")
     }
 
-    fn serialize_explicit_dacl(dacl: *const ACL, path: &str) -> Result<String> {
+    fn serialize_explicit_dacl(dacl: *const ACL) -> Result<String> {
         let mut information = ACL_SIZE_INFORMATION::default();
         unsafe {
             GetAclInformation(
@@ -1998,7 +2079,7 @@ mod windows_host {
                 AclSizeInformation,
             )
         }
-        .with_context(|| format!("inspect filesystem ACL for {path}"))?;
+        .context("inspect filesystem ACL")?;
 
         let word_count = (information.AclBytesInUse as usize).div_ceil(size_of::<usize>());
         let mut storage = vec![0usize; word_count.max(1)];
@@ -2010,11 +2091,10 @@ mod windows_host {
                 ACL_REVISION_DS,
             )
         }
-        .with_context(|| format!("initialize explicit filesystem ACL for {path}"))?;
+        .context("initialize explicit filesystem ACL")?;
         for index in 0..information.AceCount {
             let mut ace = std::ptr::null_mut();
-            unsafe { GetAce(dacl, index, &mut ace) }
-                .with_context(|| format!("read filesystem ACE for {path}"))?;
+            unsafe { GetAce(dacl, index, &mut ace) }.context("read filesystem ACE")?;
             let header = unsafe { &*ace.cast::<ACE_HEADER>() };
             if header.AceFlags & INHERITED_ACE.0 as u8 == 0 {
                 unsafe {
@@ -2026,10 +2106,10 @@ mod windows_host {
                         header.AceSize as u32,
                     )
                 }
-                .with_context(|| format!("copy explicit filesystem ACE for {path}"))?;
+                .context("copy explicit filesystem ACE")?;
             }
         }
-        serialize_dacl(explicit, path)
+        serialize_dacl(explicit)
     }
 
     fn capture_acl_snapshot(path: &str) -> Result<AclSnapshot> {
@@ -2048,7 +2128,7 @@ mod windows_host {
             )
         }
         .ok()
-        .with_context(|| format!("read filesystem ACL for {path}"))?;
+        .context("read filesystem ACL")?;
         let _descriptor = LocalAllocation(descriptor.0);
 
         let mut dacl_present = BOOL::default();
@@ -2062,19 +2142,19 @@ mod windows_host {
                 &mut dacl_defaulted,
             )
         }
-        .with_context(|| format!("read filesystem DACL for {path}"))?;
+        .context("read filesystem DACL")?;
         if !dacl_present.as_bool() || dacl.is_null() {
-            bail!("Windows sandbox cannot lease a filesystem path without a concrete DACL: {path}");
+            bail!("WINDOWS_ACL_OPERATION_FAILED: filesystem ACL has no concrete DACL");
         }
         let mut control = 0u16;
         let mut revision = 0u32;
         unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) }
-            .with_context(|| format!("read filesystem ACL inheritance for {path}"))?;
+            .context("read filesystem ACL inheritance")?;
         let dacl_protected = control & SE_DACL_PROTECTED.0 != 0;
         let dacl_sddl = if dacl_protected {
-            serialize_dacl(dacl.cast_const(), path)?
+            serialize_dacl(dacl.cast_const())?
         } else {
-            serialize_explicit_dacl(dacl.cast_const(), path)?
+            serialize_explicit_dacl(dacl.cast_const())?
         };
         Ok(AclSnapshot {
             path: path.to_owned(),
@@ -2117,7 +2197,7 @@ mod windows_host {
                 None,
             )
         }
-        .with_context(|| format!("parse saved filesystem ACL for {}", snapshot.path))?;
+        .context("parse saved filesystem ACL")?;
         let _descriptor = LocalAllocation(descriptor.0);
 
         let mut dacl_present = BOOL::default();
@@ -2131,7 +2211,7 @@ mod windows_host {
                 &mut dacl_defaulted,
             )
         }
-        .with_context(|| format!("read saved filesystem ACL for {}", snapshot.path))?;
+        .context("read saved filesystem ACL")?;
         let inheritance = if snapshot.dacl_protected {
             PROTECTED_DACL_SECURITY_INFORMATION
         } else {
@@ -2151,7 +2231,7 @@ mod windows_host {
             )
         }
         .ok()
-        .with_context(|| format!("restore filesystem ACL for {}", snapshot.path))?;
+        .context("restore filesystem ACL")?;
 
         let mut restored_descriptor = PSECURITY_DESCRIPTOR::default();
         unsafe {
@@ -2167,7 +2247,7 @@ mod windows_host {
             )
         }
         .ok()
-        .with_context(|| format!("read restored filesystem ACL for {}", snapshot.path))?;
+        .context("read restored filesystem ACL")?;
         let _restored_descriptor = LocalAllocation(restored_descriptor.0);
         let auto_inherit_mask =
             SECURITY_DESCRIPTOR_CONTROL(SE_DACL_AUTO_INHERITED.0 | SE_DACL_AUTO_INHERIT_REQ.0);
@@ -2187,7 +2267,7 @@ mod windows_host {
                 SECURITY_DESCRIPTOR_CONTROL(auto_inherit_bits),
             )
         }
-        .with_context(|| format!("restore filesystem ACL control for {}", snapshot.path))?;
+        .context("restore filesystem ACL control")?;
         unsafe {
             SetFileSecurityW(
                 PCWSTR(path.as_ptr()),
@@ -2196,31 +2276,188 @@ mod windows_host {
             )
         }
         .ok()
-        .with_context(|| format!("commit filesystem ACL control for {}", snapshot.path))?;
-        if snapshot.dacl_auto_inherited && !snapshot.dacl_protected {
-            run_icacls(
-                &snapshot.path,
-                &["/inheritancelevel:e", "/Q"],
-                "restore automatic ACL inheritance on",
-            )?;
-        }
+        .context("commit filesystem ACL control")?;
         Ok(())
     }
 
+    #[cfg(test)]
     fn run_icacls(path: &str, arguments: &[&str], action: &str) -> Result<()> {
         let output = Command::new("icacls.exe")
             .arg(path)
             .args(arguments)
             .output()
-            .with_context(|| format!("start icacls to {action} {path}"))?;
+            .with_context(|| format!("start icacls to {action}"))?;
         if output.status.success() {
             return Ok(());
         }
-        let message = String::from_utf8_lossy(&output.stderr);
         let marker = super::icacls_error_marker(output.status.code())
             .map(|value| format!("{value}: "))
             .unwrap_or_default();
-        bail!("{action} {path}: {marker}{}", message.trim())
+        // icacls localizes stderr. The status code is the stable Win32 boundary; never expose or
+        // parse localized text, and keep profile paths out of the default diagnostic payload.
+        bail!("{marker}ACL operation failed")
+    }
+
+    // Command leases use the same Unicode-wide Win32 boundary as ACL snapshot/restore. The
+    // mutation is built from the current DACL so unrelated ACEs and inherited entries survive.
+    fn update_command_acl_native(
+        path: &str,
+        identity: &str,
+        grant: Option<AclGrant>,
+        protect: bool,
+    ) -> Result<()> {
+        if !Path::new(path).exists() {
+            bail!(
+                "{}: ACL target is missing",
+                super::WINDOWS_ACL_TARGET_MISSING_MARKER
+            );
+        }
+        let name = wide(path);
+        let sid_name = wide(identity);
+        let mut sid = PSID::default();
+        unsafe { ConvertStringSidToSidW(PCWSTR(sid_name.as_ptr()), &mut sid) }
+            .context("parse ACL capability identity")?;
+        let _sid = LocalAllocation(sid.0);
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        let mut dacl = std::ptr::null_mut();
+        unsafe {
+            GetNamedSecurityInfoW(
+                PCWSTR(name.as_ptr()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                Some(&mut dacl),
+                None,
+                &mut descriptor,
+            )
+        }
+        .ok()
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "{}: read command ACL",
+                super::acl_error_marker(error.code().0 as u32)
+            )
+        })?;
+        let _descriptor = LocalAllocation(descriptor.0);
+        if dacl.is_null() {
+            bail!(
+                "{}: command ACL has no concrete DACL",
+                super::WINDOWS_ACL_OPERATION_FAILED_MARKER
+            );
+        }
+        let mut info = ACL_SIZE_INFORMATION::default();
+        unsafe {
+            GetAclInformation(
+                dacl,
+                (&mut info as *mut ACL_SIZE_INFORMATION).cast(),
+                size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            )
+        }
+        .context("read command ACL entries")?;
+        let mut aces = Vec::new();
+        for index in 0..info.AceCount {
+            let mut ace = std::ptr::null_mut();
+            unsafe { GetAce(dacl, index, &mut ace) }?;
+            let ace = std::ptr::NonNull::new(ace).context("Windows returned a null command ACE")?;
+            let header = unsafe { ace.cast::<ACE_HEADER>().as_ref() };
+            if (header.AceSize as usize) < size_of::<ACE_HEADER>() {
+                bail!(
+                    "{}: invalid command ACL entry",
+                    super::WINDOWS_ACL_OPERATION_FAILED_MARKER
+                );
+            }
+            let matches_identity = if header.AceType <= 1
+                && (header.AceSize as usize) >= size_of::<ACCESS_ALLOWED_ACE>()
+            {
+                let entry = unsafe { ace.cast::<ACCESS_ALLOWED_ACE>().as_ref() };
+                let entry_sid = PSID((&entry.SidStart as *const u32).cast_mut().cast());
+                unsafe { EqualSid(sid, entry_sid) }.is_ok()
+            } else {
+                false
+            };
+            if matches_identity && header.AceFlags & INHERITED_ACE.0 as u8 == 0 {
+                continue;
+            }
+            aces.push(unsafe {
+                std::slice::from_raw_parts(ace.cast::<u8>().as_ptr(), header.AceSize as usize)
+                    .to_vec()
+            });
+        }
+        let is_directory = Path::new(path).is_dir();
+        let (mask, flags) = match grant {
+            Some(AclGrant::ReadOnlyTree) => (
+                // Runtime trees contain executable images, DLLs and command shims. Preserve
+                // icacls RX semantics: read-only forbids writes, not execution/traversal.
+                FILE_GENERIC_READ.0 | FILE_GENERIC_EXECUTE.0,
+                if is_directory {
+                    OBJECT_INHERIT_ACE.0 | CONTAINER_INHERIT_ACE.0
+                } else {
+                    0
+                },
+            ),
+            Some(AclGrant::ModifyTree) => (
+                0x0013_01bf,
+                if is_directory {
+                    OBJECT_INHERIT_ACE.0 | CONTAINER_INHERIT_ACE.0
+                } else {
+                    0
+                },
+            ),
+            None => (0, 0),
+        };
+        let extra = grant
+            .is_some()
+            .then(|| size_of::<ACCESS_ALLOWED_ACE>() + unsafe { GetLengthSid(sid) } as usize)
+            .unwrap_or(0);
+        let mut storage =
+            vec![0usize; (info.AclBytesInUse as usize + extra).div_ceil(size_of::<usize>())];
+        let target = storage.as_mut_ptr().cast::<ACL>();
+        unsafe {
+            InitializeAcl(
+                target,
+                (storage.len() * size_of::<usize>()) as u32,
+                ACL_REVISION_DS,
+            )
+        }?;
+        for ace in &aces {
+            unsafe {
+                AddAce(
+                    target,
+                    ACL_REVISION_DS,
+                    u32::MAX,
+                    ace.as_ptr().cast(),
+                    ace.len() as u32,
+                )
+            }?;
+        }
+        if grant.is_some() {
+            unsafe { AddAccessAllowedAceEx(target, ACL_REVISION_DS, ACE_FLAGS(flags), mask, sid) }?;
+        }
+        let mut information = DACL_SECURITY_INFORMATION;
+        if protect {
+            information |= PROTECTED_DACL_SECURITY_INFORMATION;
+        }
+        unsafe {
+            SetNamedSecurityInfoW(
+                PCWSTR(name.as_ptr()),
+                SE_FILE_OBJECT,
+                information,
+                None,
+                None,
+                Some(target.cast_const()),
+                None,
+            )
+        }
+        .ok()
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "{}: write command ACL",
+                super::acl_error_marker(error.code().0 as u32)
+            )
+        })?;
+        Ok(())
     }
 
     fn is_protected_write_boundary(spec: &LaunchSpec, path: &str) -> bool {
@@ -2298,24 +2535,13 @@ mod windows_host {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => {
-                Err(error).with_context(|| format!("remove ACL lease {}", path.display()))
-            }
+            Err(error) => Err(error).context("remove ACL lease"),
         }
     }
 
     fn apply_acl_grant(path: &str, capability_sid: &str, grant: AclGrant) -> Result<()> {
-        let access = match (grant, Path::new(path).is_dir()) {
-            (AclGrant::ReadOnlyTree, true) => format!("*{capability_sid}:(OI)(CI)RX"),
-            (AclGrant::ModifyTree, true) => format!("*{capability_sid}:(OI)(CI)M"),
-            (AclGrant::ReadOnlyTree, false) => format!("*{capability_sid}:RX"),
-            (AclGrant::ModifyTree, false) => format!("*{capability_sid}:M"),
-        };
-        run_icacls(
-            path,
-            &["/grant:r", &access, "/Q"],
-            "grant AppContainer access to",
-        )
+        update_command_acl_native(path, capability_sid, Some(grant), false)
+            .map_err(|error| anyhow::anyhow!("grant AppContainer access to: {error:#}"))
     }
 
     fn refresh_owned_runtime_acl_snapshots(installation_id: &str, root: &Path) -> Result<()> {
@@ -2346,8 +2572,8 @@ mod windows_host {
             }
             // Runtime receipts use canonical paths, while command snapshots retain the caller's
             // spelling (including short names, junctions, and extended-length prefixes).
-            let canonical = fs::canonicalize(&snapshot.path)
-                .with_context(|| format!("resolve runtime ACL snapshot {}", snapshot.path))?;
+            let canonical =
+                fs::canonicalize(&snapshot.path).context("resolve runtime ACL snapshot")?;
             let canonical = canonical.to_string_lossy();
             let canonical = canonical.strip_prefix(r"\\?\").unwrap_or(&canonical);
             if !directories
@@ -2480,7 +2706,7 @@ mod windows_host {
                 )
             }?;
         }
-        serialize_dacl(target, &snapshot.path)
+        serialize_dacl(target)
     }
 
     fn rebuild_acl_state(state: &mut AclState, ownership_root: &Path) -> Result<()> {
@@ -2503,18 +2729,15 @@ mod windows_host {
                 })
                 .collect::<Vec<_>>();
             if grants.iter().any(|(_, grant)| grant.protected_boundary) {
-                run_icacls(
-                    &snapshot.path,
-                    &["/inheritancelevel:d", "/Q"],
-                    "isolate protected ACL inheritance on",
-                )?;
+                let mut protected = true;
                 for (lease, _) in grants.iter().filter(|(_, grant)| grant.protected_boundary) {
-                    let principal = format!("*{}", lease.capability_sid);
-                    run_icacls(
+                    update_command_acl_native(
                         &snapshot.path,
-                        &["/remove:g", &principal, "/Q"],
-                        "remove inherited AppContainer access from",
+                        &lease.capability_sid,
+                        None,
+                        protected,
                     )?;
+                    protected = false;
                 }
             }
             for (lease, grant) in grants {
@@ -2579,11 +2802,9 @@ mod windows_host {
                     if path.extension().and_then(|value| value.to_str()) != Some("json") {
                         continue;
                     }
-                    let record: AclLeaseRecord = serde_json::from_slice(
-                        &fs::read(&path)
-                            .with_context(|| format!("read ACL lease {}", path.display()))?,
-                    )
-                    .with_context(|| format!("parse ACL lease {}", path.display()))?;
+                    let record: AclLeaseRecord =
+                        serde_json::from_slice(&fs::read(&path).context("read ACL lease")?)
+                            .context("parse ACL lease")?;
                     validate_acl_record(&path, &record, installation_id)?;
                     receipts.insert(record.lease_id.clone(), (path, record));
                 }
@@ -2926,12 +3147,27 @@ mod windows_host {
             Ok(Some(Self { pipe, null_input }))
         }
 
-        fn forward(&mut self, process: HANDLE, timeout: u32) -> Result<WAIT_EVENT> {
+        fn forward(
+            &mut self,
+            process: HANDLE,
+            timeout: u32,
+            termination_request_path: Option<&str>,
+            termination_request_token: Option<&str>,
+        ) -> Result<WAIT_EVENT> {
             let started = Instant::now();
             loop {
                 let state = unsafe { WaitForSingleObject(process, 10) };
                 if state != WAIT_TIMEOUT {
                     return Ok(state);
+                }
+                if termination_request_path.is_some_and(|path| {
+                    termination_request_token.is_some_and(|token| {
+                        fs::read_to_string(path)
+                            .map(|contents| contents == token)
+                            .unwrap_or(false)
+                    })
+                }) {
+                    return Ok(WAIT_ABANDONED);
                 }
                 if started.elapsed() > Duration::from_secs(30) {
                     bail!("Shell control pipe connection timed out");
@@ -2957,6 +3193,15 @@ mod windows_host {
                 let state = unsafe { WaitForSingleObject(process, 10) };
                 if state != WAIT_TIMEOUT {
                     return Ok(state);
+                }
+                if termination_request_path.is_some_and(|path| {
+                    termination_request_token.is_some_and(|token| {
+                        fs::read_to_string(path)
+                            .map(|contents| contents == token)
+                            .unwrap_or(false)
+                    })
+                }) {
+                    return Ok(WAIT_ABANDONED);
                 }
                 if timeout != INFINITE && started.elapsed() >= Duration::from_millis(timeout.into())
                 {
@@ -3019,8 +3264,31 @@ mod windows_host {
         terminate.armed = false;
         drop(operation_lock);
         let wait = match &mut control {
-            Some(pipe) => pipe.forward(process.0, timeout),
-            None => Ok(unsafe { WaitForSingleObject(process.0, timeout) }),
+            Some(pipe) => pipe.forward(
+                process.0,
+                timeout,
+                spec.termination_request_path.as_deref(),
+                spec.termination_proof_token.as_deref(),
+            ),
+            None => {
+                let started = Instant::now();
+                loop {
+                    let state = unsafe { WaitForSingleObject(process.0, 10) };
+                    if state != WAIT_TIMEOUT
+                        || super::termination_request_matches(spec)
+                        || (timeout != INFINITE
+                            && started.elapsed() >= Duration::from_millis(timeout.into()))
+                    {
+                        break Ok(
+                            if state == WAIT_TIMEOUT && super::termination_request_matches(spec) {
+                                WAIT_ABANDONED
+                            } else {
+                                state
+                            },
+                        );
+                    }
+                }
+            }
         };
         if wait.is_err() {
             unsafe { TerminateJobObject(job.0, 1) }
@@ -3028,11 +3296,14 @@ mod windows_host {
             unsafe { WaitForSingleObject(process.0, INFINITE) };
         }
         let process_wait = *wait.as_ref().unwrap_or(&WAIT_OBJECT_0);
-        if process_wait == WAIT_TIMEOUT {
+        if process_wait == WAIT_TIMEOUT || process_wait == WAIT_ABANDONED {
             unsafe { TerminateJobObject(job.0, 1) }.context("stop timed-out R verification")?;
             unsafe { WaitForSingleObject(process.0, INFINITE) };
         }
-        if process_wait != WAIT_OBJECT_0 && process_wait != WAIT_TIMEOUT {
+        if process_wait != WAIT_OBJECT_0
+            && process_wait != WAIT_TIMEOUT
+            && process_wait != WAIT_ABANDONED
+        {
             bail!("wait for supervised process returned {process_wait:?}");
         }
         let mut exit_code = 1u32;
@@ -3064,13 +3335,7 @@ mod windows_host {
             std::thread::sleep(Duration::from_millis(10));
         }
         drop(control);
-        match (&spec.termination_proof_path, &spec.termination_proof_token) {
-            (Some(path), Some(token)) => {
-                fs::write(path, token).context("write process tree termination proof")?;
-            }
-            (None, None) => {}
-            _ => bail!("incomplete process tree termination proof specification"),
-        }
+        super::write_process_proof_state(spec, "started-and-reaped")?;
         drop(job);
         wait?;
         if process_wait == WAIT_TIMEOUT {
@@ -3087,6 +3352,7 @@ mod windows_host {
         timeout: u32,
         stdout: Option<HANDLE>,
     ) -> Result<u32> {
+        let mut pending = super::PendingLaunchProof::new(spec)?;
         let control = ShellControlPipe::create(spec, Some(capability.sid()))?;
         let capabilities = SECURITY_CAPABILITIES {
             AppContainerSid: app_container_sid,
@@ -3111,7 +3377,9 @@ mod windows_host {
         let mut mutable_command = wide(&command_line(spec));
         let current_directory = wide(&spec.cwd);
         let mut process_info: PROCESS_INFORMATION = unsafe { zeroed() };
-        unsafe {
+        // Once creation begins, a crash must retain the conservative unknown state.
+        pending.hand_off();
+        let created = unsafe {
             CreateProcessW(
                 PCWSTR::null(),
                 Some(PWSTR(mutable_command.as_mut_ptr())),
@@ -3125,7 +3393,11 @@ mod windows_host {
                 &mut process_info,
             )
         }
-        .context("create AppContainer process")?;
+        .context("create AppContainer process");
+        if let Err(error) = created {
+            let _ = super::write_process_proof_state(spec, "never-started");
+            return Err(error);
+        }
         let process = Handle(process_info.hProcess);
         let thread = Handle(process_info.hThread);
         let mut terminate = TerminateOnDrop {
@@ -3158,6 +3430,7 @@ mod windows_host {
     }
 
     pub fn supervise(spec: LaunchSpec) -> Result<u32> {
+        let mut pending = super::PendingLaunchProof::new(&spec)?;
         let control = ShellControlPipe::create(&spec, None)?;
         let mut startup = STARTUPINFOW {
             cb: size_of::<STARTUPINFOW>() as u32,
@@ -3174,7 +3447,8 @@ mod windows_host {
         let mut mutable_command = wide(&command_line(&spec));
         let current_directory = wide(&spec.cwd);
         let mut process_info: PROCESS_INFORMATION = unsafe { zeroed() };
-        unsafe {
+        pending.hand_off();
+        let created = unsafe {
             CreateProcessW(
                 PCWSTR::null(),
                 Some(PWSTR(mutable_command.as_mut_ptr())),
@@ -3188,7 +3462,11 @@ mod windows_host {
                 &mut process_info,
             )
         }
-        .context("create supervised process")?;
+        .context("create supervised process");
+        if let Err(error) = created {
+            let _ = super::write_process_proof_state(&spec, "never-started");
+            return Err(error);
+        }
         let process = Handle(process_info.hProcess);
         let thread = Handle(process_info.hThread);
         let mut terminate = TerminateOnDrop {
@@ -3207,6 +3485,7 @@ mod windows_host {
     }
 
     pub fn launch(installation_id: &str, requested_root: &str, spec: LaunchSpec) -> Result<u32> {
+        let mut pending = super::PendingLaunchProof::new(&spec)?;
         let operation_lock = OperationLock::acquire(installation_id)?;
         let ownership_root = ownership_directory(installation_id, requested_root)?;
         recover_acl_leases(installation_id, &ownership_root, false)?;
@@ -3230,6 +3509,7 @@ mod windows_host {
             &capability,
             &spec,
         )?;
+        pending.hand_off();
         let result = launch_child(
             &spec,
             sid.0,
@@ -3252,6 +3532,42 @@ mod windows_host {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::WINDOWS_ACL_TARGET_MISSING_MARKER;
+
+        #[test]
+        fn pending_launch_is_not_a_terminal_never_started_proof() {
+            let installation_id = "abcdef0123456789abcdef01";
+            let root = unique_test_root("pending-launch-proof");
+            fs::create_dir_all(&root).unwrap();
+            let proof = root.join("termination.json");
+            let ownership = root.join(installation_id);
+            let spec: LaunchSpec = serde_json::from_value(serde_json::json!({
+                "executable": "unused", "arguments": [], "cwd": root,
+                "readOnlyRoots": [], "readWriteRoots": [], "deniedReadRoots": [],
+                "deniedWriteRoots": [], "terminationProofPath": proof,
+                "terminationProofToken": "pending-launch"
+            })).unwrap();
+            let lock = OperationLock::acquire(installation_id).unwrap();
+            let child = std::thread::spawn(move || {
+                launch(installation_id, &ownership.to_string_lossy(), spec)
+            });
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let preparing = loop {
+                if let Ok(bytes) = fs::read(&proof) {
+                    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        break value;
+                    }
+                }
+                assert!(Instant::now() < deadline, "launch did not publish preparation state");
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            drop(lock);
+            assert!(child.join().unwrap().is_err());
+            let finished: serde_json::Value = serde_json::from_slice(&fs::read(&proof).unwrap()).unwrap();
+            fs::remove_dir_all(root).unwrap();
+            assert_eq!(preparing["processState"], "termination-unknown");
+            assert_eq!(finished["processState"], "never-started");
+        }
 
         #[test]
         fn shell_control_pipe_rejects_unowned_names_before_creating_resources() {
@@ -3848,6 +4164,7 @@ mod windows_host {
                 denied_write_roots: vec![],
                 termination_proof_path: None,
                 termination_proof_token: None,
+                termination_request_path: None,
                 shell_control_pipe: None,
             };
             let result = AclLease::acquire(installation_id, &root, id, &capability, &spec)
@@ -3881,6 +4198,7 @@ mod windows_host {
                 denied_write_roots: vec![],
                 termination_proof_path: None,
                 termination_proof_token: None,
+                termination_request_path: None,
                 shell_control_pipe: None,
             };
             let (id, capability) = make_capability();
@@ -4045,6 +4363,7 @@ mod windows_host {
                     denied_write_roots: vec![],
                     termination_proof_path: None,
                     termination_proof_token: None,
+                    termination_request_path: None,
                     shell_control_pipe: None,
                 },
             );
@@ -4115,6 +4434,7 @@ mod windows_host {
                 denied_write_roots: vec![],
                 termination_proof_path: None,
                 termination_proof_token: None,
+                termination_request_path: None,
                 shell_control_pipe: None,
             };
             validate_runtime_verification(pending.pending_runtime_access.as_ref().unwrap(), &spec)
@@ -4289,6 +4609,7 @@ mod windows_host {
                     denied_write_roots: vec![],
                     termination_proof_path: None,
                     termination_proof_token: None,
+                    termination_request_path: None,
                     shell_control_pipe: None,
                 },
             );
@@ -4314,6 +4635,7 @@ mod windows_host {
                 denied_write_roots: vec![],
                 termination_proof_path: Some(proof.to_string_lossy().into_owned()),
                 termination_proof_token: Some("owned-timeout-proof".into()),
+                termination_request_path: None,
                 shell_control_pipe: None,
             };
             let startup = STARTUPINFOW {
@@ -4357,7 +4679,15 @@ mod windows_host {
             let proof_value = fs::read_to_string(&proof).ok();
             assert!(format!("{:#}", result.unwrap_err()).contains("R verification timed out"));
             assert!(started.elapsed() < Duration::from_secs(5));
-            assert_eq!(proof_value.as_deref(), Some("owned-timeout-proof"));
+            let proof_value: serde_json::Value = serde_json::from_str(
+                proof_value
+                    .as_deref()
+                    .expect("timeout proof should be written"),
+            )
+            .unwrap();
+            assert_eq!(proof_value["version"], 1);
+            assert_eq!(proof_value["token"], "owned-timeout-proof");
+            assert_eq!(proof_value["processState"], "started-and-reaped");
             drop(terminate);
             drop(thread);
             drop(process);
@@ -4546,6 +4876,98 @@ mod windows_host {
             fs::remove_dir_all(&root).unwrap();
 
             assert_eq!(restored, original);
+        }
+
+        #[test]
+        fn native_command_acl_handles_unicode_targets_and_missing_release_targets() {
+            let root = unique_test_root("命令-权限-lease");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&path).unwrap();
+            let capability = CommandCapability::new(format!(
+                "open-science.test.{}",
+                new_resource_key().unwrap()
+            ))
+            .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            apply_acl_grant(&path, &identity, AclGrant::ReadOnlyTree).unwrap();
+            assert_ne!(capture_acl_snapshot(&path).unwrap(), original);
+            fs::remove_dir_all(&root).unwrap();
+            restore_acl_snapshot(&original).unwrap();
+        }
+
+        #[test]
+        fn native_read_only_grant_retains_icacls_read_and_execute_permissions() {
+            fn capability_grants(path: &str, identity: &str) -> Vec<String> {
+                let name = wide(path);
+                let mut descriptor = PSECURITY_DESCRIPTOR::default();
+                let mut dacl = std::ptr::null_mut();
+                unsafe {
+                    GetNamedSecurityInfoW(
+                        PCWSTR(name.as_ptr()),
+                        SE_FILE_OBJECT,
+                        DACL_SECURITY_INFORMATION,
+                        None,
+                        None,
+                        Some(&mut dacl),
+                        None,
+                        &mut descriptor,
+                    )
+                }
+                .ok()
+                .unwrap();
+                let _descriptor = LocalAllocation(descriptor.0);
+                // Compare this capability's effective ACEs, including child inheritance. icacls
+                // can materialize unrelated system ACEs on hosted runners; those are not part
+                // of the command grant and must not define its expected access mask.
+                serialize_dacl(dacl)
+                    .unwrap()
+                    .split('(')
+                    .skip(1)
+                    .filter(|ace| ace.ends_with(&format!(";;;{identity})")))
+                    .map(str::to_owned)
+                    .collect()
+            }
+            let root = unique_test_root("runtime-读取-执行");
+            fs::create_dir_all(&root).unwrap();
+            let child = root.join("runtime.dll");
+            fs::write(&child, b"runtime fixture").unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let child_path = child.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&path).unwrap();
+            let capability = CommandCapability::new(format!(
+                "open-science.test.{}",
+                new_resource_key().unwrap()
+            ))
+            .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            let access = format!("*{identity}:(OI)(CI)RX");
+            run_icacls(&path, &["/grant:r", &access, "/Q"], "grant runtime execution").unwrap();
+            let expected_root = capability_grants(&path, &identity);
+            let expected_child = capability_grants(&child_path, &identity);
+            restore_acl_snapshot(&original).unwrap();
+            apply_acl_grant(&path, &identity, AclGrant::ReadOnlyTree).unwrap();
+            let actual_root = capability_grants(&path, &identity);
+            let actual_child = capability_grants(&child_path, &identity);
+            fs::remove_dir_all(&root).unwrap();
+            assert_eq!(expected_root.len(), 1);
+            assert_eq!(expected_child.len(), 1);
+            assert_eq!(actual_root, expected_root);
+            assert_eq!(actual_child, expected_child);
+        }
+
+        #[test]
+        fn native_acl_grant_error_keeps_action_context_and_stable_marker() {
+            let path = unique_test_root("missing-grant-target");
+            let error = apply_acl_grant(
+                &path.to_string_lossy(),
+                "S-1-15-3-1",
+                AclGrant::ReadOnlyTree,
+            )
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("grant AppContainer access to"));
+            assert!(message.contains(WINDOWS_ACL_TARGET_MISSING_MARKER));
         }
 
         #[test]
@@ -4893,6 +5315,7 @@ mod tests {
             denied_write_roots: Vec::new(),
             termination_proof_path: None,
             termination_proof_token: None,
+            termination_request_path: None,
             shell_control_pipe: None,
         };
         assert_eq!(
@@ -4920,6 +5343,7 @@ mod tests {
             denied_write_roots: Vec::new(),
             termination_proof_path: None,
             termination_proof_token: None,
+            termination_request_path: None,
             shell_control_pipe: None,
         };
         assert_eq!(
@@ -4950,8 +5374,30 @@ mod tests {
             icacls_error_marker(Some(5)),
             Some(WINDOWS_ACL_ACCESS_DENIED_MARKER)
         );
-        assert_eq!(icacls_error_marker(Some(3)), None);
-        assert_eq!(icacls_error_marker(None), None);
+        assert_eq!(
+            icacls_error_marker(Some(3)),
+            Some(WINDOWS_ACL_TARGET_MISSING_MARKER)
+        );
+        assert_eq!(
+            icacls_error_marker(None),
+            Some(WINDOWS_ACL_OPERATION_FAILED_MARKER)
+        );
+    }
+
+    #[test]
+    fn native_acl_hresult_uses_the_same_stable_markers() {
+        assert_eq!(
+            acl_error_marker(0x8007_0005),
+            WINDOWS_ACL_ACCESS_DENIED_MARKER
+        );
+        assert_eq!(
+            acl_error_marker(0x8007_0002),
+            WINDOWS_ACL_TARGET_MISSING_MARKER
+        );
+        assert_eq!(
+            acl_error_marker(0x8007_0006),
+            WINDOWS_ACL_OPERATION_FAILED_MARKER
+        );
     }
 
     #[test]
@@ -4997,6 +5443,7 @@ mod tests {
             denied_write_roots: vec![git.to_string_lossy().into_owned()],
             termination_proof_path: None,
             termination_proof_token: None,
+            termination_request_path: None,
             shell_control_pipe: None,
         };
 

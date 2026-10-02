@@ -14,7 +14,7 @@ describe('Notebook network sandbox resources', () => {
   it.each([
     [
       'vendor/windows/x64/notebook-appcontainer-host.exe',
-      '580f54e54bc87c218f1045b74e4942e68d03f6bd4b9f6a805162813a23ffe393'
+      'ac4a72dea29f00461871b612b762c0a7a6e818c3cb72a1013aabb7305f9fd0df'
     ],
     [
       'vendor/windows/arm64/notebook-appcontainer-host.exe',
