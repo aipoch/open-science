@@ -3,6 +3,40 @@ import { isLocalPathRoot, validateLocalPath } from '../../../../shared/local-fs'
 
 const permissionFailure = String.raw`(?:permission denied|operation not permitted|access is denied|read-only file system)`
 
+const diagnosticLines = (text: string): string[] => {
+  const lines: string[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const decodedLines: string[] = []
+    let index = 0
+    while (index < line.length) {
+      if (line[index] !== '"') {
+        index += 1
+        continue
+      }
+      const start = index++
+      while (index < line.length) {
+        if (line[index] === '\\') {
+          index += 2
+          continue
+        }
+        if (line[index] === '"') {
+          index += 1
+          try {
+            const decoded = JSON.parse(line.slice(start, index))
+            if (typeof decoded === 'string') decodedLines.push(decoded)
+          } catch {
+            // Quoted shell output is not necessarily a JSON string.
+          }
+          break
+        }
+        index += 1
+      }
+    }
+    lines.push(...decodedLines, line)
+  }
+  return lines
+}
+
 const diagnosticPaths = (text: string, quotedOnly = false): string[] => {
   const tokens = /"[^"\r\n]*"|'[^'\r\n]*'|`[^`\r\n]*`|(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`:]+/g
   const paths: string[] = []
@@ -24,7 +58,7 @@ const diagnosticPaths = (text: string, quotedOnly = false): string[] => {
 
 const rawPermissionPath = (text: string): string | undefined => {
   const failurePattern = new RegExp(permissionFailure, 'i')
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of diagnosticLines(text)) {
     const failure = failurePattern.exec(line)
     if (!failure) continue
     const before = diagnosticPaths(line.slice(0, failure.index), true).at(-1)

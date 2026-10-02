@@ -84,6 +84,24 @@ describe('Notebook folder recovery candidate', () => {
       field: 'stdout' as const,
       platform: 'linux' as const,
       expected: '/fixture/home/.config/tool/access-token.txt'
+    },
+    {
+      text: JSON.stringify({
+        error:
+          "EPERM: operation not permitted, open 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'"
+      }),
+      field: 'stdout' as const,
+      platform: 'win32' as const,
+      expected: 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'
+    },
+    {
+      text: JSON.stringify({
+        error:
+          "EPERM: operation not permitted, open '\\\\fixture-server\\share\\config\\access-token.txt'"
+      }),
+      field: 'stdout' as const,
+      platform: 'win32' as const,
+      expected: '\\\\fixture-server\\share\\config\\access-token.txt'
     }
   ])(
     'offers recovery for an explicit absolute path in raw permission output',
