@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { dirname, join, posix, win32 } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
+import { APP } from '../../shared/app-config'
 
 // Default environment version; bump when the default package set changes so a newer app triggers an
 // additive upgrade of an older user's environments (spec §6.3).
@@ -18,7 +19,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 //      manifest is live before packaging an installer.
 export const DEFAULT_ENV_VERSION = 2
 
-export const DEFAULT_RUNTIME_CDN_BASE = 'https://statics.aipoch.com/open-science'
+export const DEFAULT_RUNTIME_CDN_BASE = APP.cdnBaseUrl
 
 // The runtime bundle publisher and consumer must agree on the conda platform segment. Keep this
 // mapping here rather than letting each caller infer a CDN key independently.

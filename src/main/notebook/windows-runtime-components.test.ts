@@ -3,7 +3,10 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { APP } from '../../shared/app-config'
+import catalog from './windows-runtime-catalog.json'
 import {
+  assertWindowsRuntimeComponentRelease,
   WindowsRuntimeComponentStore,
   WindowsRuntimeIncompatibleError,
   verifyWindowsRuntimeComponent,
@@ -24,7 +27,7 @@ const release = (source: 'official' | 'patched' = 'patched'): WindowsRuntimeComp
   architecture: 'x64',
   source,
   archive: {
-    url: 'https://statics.aipoch.com/open-science/notebook-runtime/fixture/component.tar.zst',
+    url: `${APP.cdnBaseUrl}/notebook-runtime/fixture/component.tar.zst`,
     sha256: hash(archive),
     size: Buffer.byteLength(archive)
   },
@@ -52,6 +55,55 @@ const fixture = async () => {
 }
 
 describe('Windows runtime component preparation', () => {
+  it('accepts the shipped catalog under the configured CDN root', () => {
+    for (const entry of catalog.releases) {
+      expect(() =>
+        assertWindowsRuntimeComponentRelease(entry as unknown as WindowsRuntimeComponentRelease)
+      ).not.toThrow()
+    }
+  })
+
+  it('uses the shared CDN configuration while retaining the executable download boundary', async () => {
+    vi.resetModules()
+    vi.doMock('../../shared/app-config', () => ({
+      APP: { cdnBaseUrl: 'https://cdn.fixture.test/fixture-app' }
+    }))
+    vi.stubEnv('OPEN_SCIENCE_ENV_CDN_BASE', 'https://override.fixture.test/fixture-app')
+    try {
+      const { assertWindowsRuntimeComponentRelease: validate } =
+        await import('./windows-runtime-components')
+      const { resolveRuntimeCdnBase } = await import('./runtime-paths')
+      const trusted = 'https://cdn.fixture.test/fixture-app/notebook-runtime/component.tar.zst'
+      const candidate = release()
+      expect(resolveRuntimeCdnBase()).toBe('https://override.fixture.test/fixture-app')
+      expect(() =>
+        validate({ ...candidate, archive: { ...candidate.archive, url: trusted } })
+      ).not.toThrow()
+      for (const url of [
+        candidate.archive.url,
+        trusted.replace('https:', 'http:'),
+        trusted.replace('cdn.fixture.test', 'override.fixture.test'),
+        trusted.replace('cdn.fixture.test', 'cdn.fixture.test.other.test'),
+        trusted.replace('/fixture-app/', '/other-app/'),
+        trusted.replace('/notebook-runtime/', '/notebook-runtime-extra/'),
+        trusted.replace('/notebook-runtime/', '/notebook-runtime/../'),
+        trusted.replace('https://', 'https://user:password@'),
+        `${trusted}?redirect=other`,
+        `${trusted}#fragment`
+      ]) {
+        expect(() => validate({ ...candidate, archive: { ...candidate.archive, url } })).toThrow(
+          'Invalid Windows runtime component catalog entry'
+        )
+      }
+      vi.stubEnv('OPEN_SCIENCE_ENV_CDN_BASE', undefined)
+      expect(resolveRuntimeCdnBase()).toBe('https://cdn.fixture.test/fixture-app')
+    } finally {
+      vi.unstubAllEnvs()
+      vi.doUnmock('../../shared/app-config')
+      vi.resetModules()
+    }
+  })
+
   it('rechecks cached component compatibility offline and rejects changed bytes', async () => {
     const f = await fixture()
     const selected = await f.store.select([release()], f.request)

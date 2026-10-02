@@ -5,11 +5,13 @@
 const GITHUB_OWNER = 'aipoch'
 const GITHUB_REPO = 'open-science'
 const GITHUB_REPO_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`
+const CDN_BASE_URL = 'https://statics.aipoch.com/open-science'
 
 export const APP = {
   name: 'Open-Science',
   githubOwner: GITHUB_OWNER,
   githubRepo: GITHUB_REPO,
+  cdnBaseUrl: CDN_BASE_URL,
   links: {
     website: 'https://www.aipoch.com/open-science',
     docs: 'https://www.aipoch.com/docs/',
@@ -24,7 +26,7 @@ export const APP = {
   },
   copyright: '© 2026 AIPOCH. All rights reserved.',
   update: {
-    manifestUrl: 'https://statics.aipoch.com/open-science/app/stable/version.json',
+    manifestUrl: `${CDN_BASE_URL}/app/stable/version.json`,
     downloadPage: 'https://www.aipoch.com/open-science'
   }
 } as const

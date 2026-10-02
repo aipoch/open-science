@@ -299,6 +299,10 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/notebook/runtime-paths.test.ts",
+      "src/main/notebook/windows-runtime-components.test.ts",
+      "src/main/notebook/windows-runtime-manager.test.ts",
+      "src/main/update/ipc.test.ts",
       "src/main/literature/journal-attributes.test.ts",
       "src/renderer/src/pages/literature/journals/journal-import-file.test.ts",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",

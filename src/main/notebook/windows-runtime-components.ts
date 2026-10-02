@@ -1,4 +1,5 @@
 import type { DownloadProgress } from '../../shared/download-progress'
+import { APP } from '../../shared/app-config'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises'
@@ -47,6 +48,8 @@ export type WindowsRuntimeComponentDependencies = Readonly<{
 export class WindowsRuntimeIncompatibleError extends Error {}
 
 const digestPattern = /^[a-f0-9]{64}$/
+// Executable downloads use application configuration, never the environment-bundle override.
+const componentCdnRoot = new URL(`${APP.cdnBaseUrl}/notebook-runtime/`)
 const executableName = (component: WindowsRuntimeComponent): string =>
   component === 'node' ? 'node.exe' : 'pwsh.exe'
 
@@ -65,8 +68,9 @@ export const assertWindowsRuntimeComponentRelease = (
     !['official', 'patched'].includes(release.source) ||
     !['x64', 'arm64'].includes(release.architecture) ||
     !/^\d+\.\d+\.\d+$/.test(release.version) ||
-    url.origin !== 'https://statics.aipoch.com' ||
-    !url.pathname.startsWith('/open-science/notebook-runtime/') ||
+    url.protocol !== 'https:' ||
+    url.origin !== componentCdnRoot.origin ||
+    !url.pathname.startsWith(componentCdnRoot.pathname) ||
     url.username ||
     url.password ||
     url.search ||
