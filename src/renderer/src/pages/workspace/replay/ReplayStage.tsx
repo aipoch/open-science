@@ -273,10 +273,7 @@ const ReplayNotebook = memo(function ReplayNotebook({
     </>
   ) : null
   return (
-    <article
-      className="space-y-3 [&_.overflow-auto]:[scrollbar-width:none] [&_.overflow-auto::-webkit-scrollbar]:hidden"
-      data-replay-notebook-run={run.runId}
-    >
+    <article className="space-y-3" data-replay-notebook-run={run.runId}>
       {interactive ? (
         <NotebookRecordCell
           run={run}
@@ -351,9 +348,11 @@ const StepConversation = memo(function StepConversation({
   runDetails,
   artifactResources,
   resources,
+  visibleResourceIds,
   onSelectResource
 }: {
   resources: ReplayResourceMap
+  visibleResourceIds: readonly string[]
   artifactResources: ReplayResource[]
   onSelectResource?: (id: string, element?: HTMLElement) => void
   runDetails: Readonly<Record<string, ReplayNotebookRunDetails>>
@@ -482,6 +481,7 @@ const StepConversation = memo(function StepConversation({
           <div className={artifactGalleryClassName}>
             {stepResources.map((resource) => {
               const prepared = resources[resource.id]
+              const revealed = visibleResourceIds.includes(resource.id)
               const name =
                 resource.versionNumber === undefined
                   ? resource.name
@@ -493,10 +493,10 @@ const StepConversation = memo(function StepConversation({
                   sizeLabel={formatByteSize(resource.size)}
                   label={t('Preview generated file {{name}}', { name })}
                   title={name}
-                  disabled={!showResults || !onSelectResource}
+                  disabled={!revealed || !onSelectResource}
                   onClick={(event) => onSelectResource?.(resource.id, event.currentTarget)}
                   preview={
-                    showResults && prepared?.status === 'ready' && prepared.kind === 'image' ? (
+                    revealed && prepared?.status === 'ready' && prepared.kind === 'image' ? (
                       <img
                         src={prepared.content}
                         alt={resource.name}
@@ -677,8 +677,7 @@ const ReplayStageContent = ({
       !step.review &&
       !step.activities.length &&
       !step.runs.length &&
-      !step.issues.length &&
-      (step.id !== scene.step?.id || scene.showResults)
+      !step.issues.length
     for (const step of scene.visibleSteps.slice(transcriptStart)) {
       const previous = rows.at(-1)
       if (previous && isGallery(previous) && isGallery(step)) {
@@ -690,7 +689,7 @@ const ReplayStageContent = ({
       } else rows.push(step)
     }
     return rows
-  }, [fitContainer, transcriptStart, scene.visibleSteps, scene.step?.id, scene.showResults])
+  }, [fitContainer, transcriptStart, scene.visibleSteps])
   const materialStep = [...scene.visibleSteps]
     .reverse()
     .find((step) => step.runs.length || step.resourceIds.length)
@@ -939,10 +938,12 @@ const ReplayStageContent = ({
       closeResource()
       return
     }
-    onCloseMaterials?.()
+    onSelectResource?.()
     requestAnimationFrame(() => {
       const origin = resourceOrigin
       if (origin && transcript.current) transcript.current.scrollTop = origin.scrollTop
+      if (origin && notebookViewport.current)
+        notebookViewport.current.scrollTop = origin.notebookScrollTop
       ;(origin?.element?.isConnected ? origin.element : transcript.current)?.focus({
         preventScroll: true
       })
@@ -1063,6 +1064,7 @@ const ReplayStageContent = ({
                 interactive={fitContainer}
                 artifactResources={replayDocument.resources}
                 resources={resources}
+                visibleResourceIds={scene.visibleResourceIds}
                 onSelectResource={onSelectResource ? selectResource : undefined}
                 runDetails={runDetails}
                 key={step.id}

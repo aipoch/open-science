@@ -413,6 +413,7 @@ const ReplayPanelContent = ({
     (id?: string): void => {
       if (id && !materialCatalog.files.some((resource) => resource.id === id)) return
       pause()
+      if (id) setNotebookFollowing(false)
       if (id && !selectedResourceId) beforeFile.current = materialsOpen
       setSelectedResourceId(id)
       setMaterialsOverride(id ? true : beforeFile.current)

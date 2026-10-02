@@ -305,6 +305,30 @@ if (params.has('longName')) {
     mimeType: 'image/png'
   }))
 }
+if (params.has('previewRegressions')) {
+  document.resources.push({
+    ...document.resources[0],
+    id: 'plot-v3',
+    versionId: 'version-3',
+    versionNumber: 3,
+    size: 425000,
+    name: 'LDHA_TF_screening_report_with_additional_details.docx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    locator: 'artifact-version://version-3'
+  })
+  document.branches[0].steps.push(
+    step('file-v3', 'artifact', 11000, 1000, { resourceIds: ['plot-v3'] })
+  )
+  document.branches[0].durationMs = 12000
+  run.script = `plot_title = "${'long recorded plot label '.repeat(40)}"\nprint(plot_title)`
+}
+const pendingResources = new Map()
+if (params.has('delayedArtifacts')) {
+  window.releaseReplayResource = (id) => {
+    pendingResources.get(id)?.()
+    pendingResources.delete(id)
+  }
+}
 if (params.has('detailIssue')) {
   document.branches[0].steps.slice(0, 2).forEach((step) => {
     step.issues = [{ code: 'incomplete-history' }]
@@ -595,13 +619,18 @@ function PanelFixture() {
                 setEvidence(resource?.versionId ?? step.id)
                 if (params.has('evidencePage')) setEvidenceStep(step)
               }}
-              readResource={async () => ({
-                status: 'ready',
-                kind: 'image',
-                mimeType: 'image/svg+xml',
-                truncated: false,
-                content: freezeReplaySvg(svg)
-              })}
+              readResource={async (resource) => {
+                if (params.has('delayedArtifacts'))
+                  await new Promise((resolve) => pendingResources.set(resource.id, resolve))
+                if (resource.id === 'plot-v3') return { status: 'unsupported' }
+                return {
+                  status: 'ready',
+                  kind: 'image',
+                  mimeType: 'image/svg+xml',
+                  truncated: false,
+                  content: freezeReplaySvg(svg)
+                }
+              }}
               readNotebookRun={async (_source, index) => ({
                 status: 'ready',
                 run: params.has('history')
