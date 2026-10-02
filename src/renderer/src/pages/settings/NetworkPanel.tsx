@@ -252,41 +252,39 @@ const NetworkPanel = ({
           aria-label={t('Network status')}
         >
           <div className="rounded-xl border border-border px-4">
-            <ul aria-live="polite">
-              {isChecking ? (
-                <PendingCheckRow
-                  id={NETWORK_CHECK_ID}
-                  label={networkLabel}
-                  pendingText={t('Checking…')}
-                />
-              ) : (
-                <EnvironmentCheckRow check={networkCheck} icon={networkIcon} />
-              )}
-            </ul>
-
-            <div className="pb-4">
-              {!isOnline || connectivity === 'unreachable' || connectivity === 'probe-failed' ? (
-                <div className="mb-4 rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
-                  <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
-                    {!isOnline ? <li>{t('Check your cable or Wi-Fi connection.')}</li> : null}
-                    <li>{t('Check proxy, VPN, or firewall settings.')}</li>
-                    <li>{t('Check the package mirror configuration below.')}</li>
-                  </ol>
-                </div>
-              ) : null}
-              <div className="mt-3 flex justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleRetry}
-                  disabled={isChecking}
-                >
-                  <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
-                  {isChecking ? t('Checking…') : t('Check again')}
-                </Button>
-              </div>
+            <div className="flex flex-wrap items-center gap-3 py-4">
+              <ul className="min-w-0 flex-1 basis-64 [&>li]:py-0" aria-live="polite">
+                {isChecking ? (
+                  <PendingCheckRow
+                    id={NETWORK_CHECK_ID}
+                    label={networkLabel}
+                    pendingText={t('Checking…')}
+                  />
+                ) : (
+                  <EnvironmentCheckRow check={networkCheck} icon={networkIcon} />
+                )}
+              </ul>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="ml-auto shrink-0"
+                onClick={handleRetry}
+                disabled={isChecking}
+              >
+                <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
+                {isChecking ? t('Checking…') : t('Check again')}
+              </Button>
             </div>
+            {!isOnline || connectivity === 'unreachable' || connectivity === 'probe-failed' ? (
+              <div className="mb-4 rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
+                <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
+                  {!isOnline ? <li>{t('Check your cable or Wi-Fi connection.')}</li> : null}
+                  <li>{t('Check proxy, VPN, or firewall settings.')}</li>
+                  <li>{t('Check the package mirror configuration below.')}</li>
+                </ol>
+              </div>
+            ) : null}
           </div>
         </SettingsSection>
       ) : null}
