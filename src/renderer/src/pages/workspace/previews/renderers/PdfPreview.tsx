@@ -2814,10 +2814,8 @@ export const PdfPreviewContent = ({
           // Portalled panels remain mounted during exit motion. Let their own
           // dismissal consume Escape before the surrounding PDF tool handles it.
           if (event.target instanceof Node && !event.currentTarget.contains(event.target)) return
-          const layer =
-            event.target instanceof Element
-              ? event.target.closest('[role="dialog"], [role="menu"]')
-              : null
+          const target = event.target instanceof Element ? event.target : null
+          const layer = target?.closest('[role="dialog"], [role="menu"]')
           if (layer && !layer.contains(event.currentTarget)) return
           if (
             event.key === 'Escape' &&
@@ -2835,7 +2833,8 @@ export const PdfPreviewContent = ({
             !event.nativeEvent.isComposing &&
             floatingNavigation &&
             (!floatingNotes ||
-              (event.target instanceof Element && event.target.closest('#pdf-navigation-sidebar')))
+              (!target?.closest('[data-pdf-notes-sidebar]') &&
+                !notesToggleRef.current?.contains(target)))
           ) {
             event.preventDefault()
             event.stopPropagation()

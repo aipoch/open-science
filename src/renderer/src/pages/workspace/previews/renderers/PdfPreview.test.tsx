@@ -524,6 +524,51 @@ describe('PdfPreviewContent', () => {
     expect(destroyDocument).not.toHaveBeenCalled()
   })
 
+  it.each(['pdf', 'navigation-toggle', 'navigation', 'notes-toggle', 'notes'])(
+    'dismisses the focused floating sidebar from %s when both sidebars are open',
+    async (focus) => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            path="literature-attachment-version:version-1"
+            name="paper.pdf"
+            source="literature"
+          />
+        )
+        await flush()
+      })
+      const notesToggle = screen.getByRole('button', { name: 'Show notes sidebar' })
+      const navigationToggle = screen.getByRole('button', { name: 'Show navigation' })
+      await act(async () => notesToggle.click())
+      await act(async () => navigationToggle.click())
+      const navigation = screen.getByRole('complementary', { name: 'PDF navigation' })
+      const notes = container.querySelector<HTMLElement>('[data-pdf-notes-sidebar]')!
+      const pdf = container.querySelector<HTMLElement>('[data-pdf-cursor-mode]')!
+      const targets = {
+        pdf,
+        'navigation-toggle': navigationToggle,
+        navigation: navigation.querySelector<HTMLButtonElement>('[aria-label="Page 1"]')!,
+        'notes-toggle': notesToggle,
+        notes: notes.querySelector<HTMLButtonElement>('button')!
+      }
+      const target = targets[focus as keyof typeof targets]
+      await act(async () => target.focus())
+      await act(async () => fireEvent.keyDown(target, { key: 'Escape' }))
+      const closesNotes = focus === 'notes' || focus === 'notes-toggle'
+      expect(container.querySelector('#pdf-navigation-sidebar')).toBe(
+        closesNotes ? navigation : null
+      )
+      expect(notes.hasAttribute('inert')).toBe(closesNotes)
+      expect(document.activeElement).toBe(closesNotes ? notesToggle : pdf)
+      expect(container.querySelector('[data-preview-escape-boundary]')).not.toBeNull()
+      await act(async () => fireEvent.keyDown(document.activeElement!, { key: 'Escape' }))
+      expect(container.querySelector('#pdf-navigation-sidebar')).toBeNull()
+      expect(notes.hasAttribute('inert')).toBe(true)
+      expect(container.querySelector('[data-preview-escape-boundary]')).toBeNull()
+    }
+  )
+
   it('keeps notes docked at the default application modal width', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1150)
     await act(async () => {
