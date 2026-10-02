@@ -5990,6 +5990,7 @@
     "Use a new API key": "新しい API キーを使用",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "このサービスを削除しても、共有アカウントとキーは保持されます。スキルとコネクタの選択は標準の方法に戻ります。",
     "OpenRouter": "OpenRouter",
+    "OpenCode Zen": "OpenCode Zen",
     "Add to Specialist": "スペシャリストに追加",
     "Always enabled": "常に有効",
     "Changes saved.": "変更を保存しました。",

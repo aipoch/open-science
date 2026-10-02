@@ -694,6 +694,30 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
   })
 
+  it.each([
+    ['gpt-6.1-sol', 'responses', 'codex'],
+    ['gpt-6-sol', 'responses', 'codex'],
+    ['gpt-6-luna', 'responses', 'codex'],
+    ['claude-opus-5-5', 'anthropic', 'claude-code'],
+    ['claude-sonnet-5-5', 'anthropic', 'claude-code'],
+    ['qwen3.8-max', 'openai', 'codex'],
+    ['deepseek-v4-flash-vision-exp', 'openai', 'codex']
+  ] as const)('routes the new Zen model %s through %s', (model, endpoint, framework) => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const target = owner.resolveRuntimeTarget(
+      { id: 'zen', type: 'official', vendorId: 'opencode', name: 'Zen' },
+      { kind: 'required', model },
+      getAgentFramework(framework)
+    )
+    expect(target).toMatchObject({
+      effectiveModel: model,
+      apiEndpoints: [endpoint],
+      frameworkCompatible: true,
+      needsChatResponsesBridge: endpoint === 'openai',
+      needsNativeResponsesCompatibility: endpoint === 'responses'
+    })
+  })
+
   it('keeps an exact required model when a subscription catalog is unknown', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

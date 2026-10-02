@@ -986,6 +986,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // product-excluded models while preserving the existing Kimi default. Legacy lower-tier
     // models are not backfilled, and the transient limited-time free entries stay out (the
     // two grandfathered free models at the tail predate that policy).
+    // New entries verified against Zen docs/live models and models.dev (opencode), 2026-10-03.
+    // Sonnet 5.5 uses the Anthropic SDK in models.dev while the Zen endpoint table catches up.
     models: [
       { id: 'kimi-k2.7-code', contextWindow: 262_144 },
       {
@@ -993,6 +995,24 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         contextWindow: 1_050_000,
         apiEndpoint: 'responses',
         reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'gpt-6.1-sol',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'gpt-6-sol',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-max'
+      },
+      {
+        id: 'gpt-6-luna',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'none-low-medium-high-max'
       },
       {
         id: 'gpt-5.6-sol',
@@ -1025,7 +1045,19 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         reasoningEffort: 'standard-5'
       },
       {
+        id: 'claude-opus-5-5',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'standard-5'
+      },
+      {
         id: 'claude-opus-5',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'claude-sonnet-5-5',
         contextWindow: 1_000_000,
         apiEndpoint: 'anthropic',
         reasoningEffort: 'standard-5'
@@ -1172,6 +1204,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         reasoningEffort: 'minimal-low-medium-high'
       },
       {
+        id: 'qwen3.8-max',
+        contextWindow: 262_144,
+        apiEndpoint: 'openai',
+        reasoningEffort: 'none-high'
+      },
+      {
         id: 'qwen3.8-flash',
         contextWindow: 1_000_000,
         apiEndpoint: 'anthropic',
@@ -1202,6 +1240,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         contextWindow: 1_000_000,
         reasoningEffort: 'low-high-max'
       },
+      {
+        id: 'deepseek-v4-flash-vision-exp',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'openai',
+        reasoningEffort: 'low-high-max'
+      },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'minimax-m3', contextWindow: 512_000 },
@@ -1218,13 +1262,18 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       multimodalModels: [
         'kimi-k2.7-code',
         'gpt-6-astra',
+        'gpt-6.1-sol',
+        'gpt-6-sol',
+        'gpt-6-luna',
         'gpt-5.6-sol',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
         'claude-fable-5-1',
         'claude-fable-5',
         'claude-opus-5',
+        'claude-opus-5-5',
         'claude-sonnet-5',
+        'claude-sonnet-5-5',
         'grok-4.7',
         'grok-4.6',
         'gpt-5.5',
@@ -1250,10 +1299,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         'muse-spark-1.3',
         'muse-spark-1.2',
         'qwen3.8-flash',
+        'qwen3.8-max',
         'qwen3.5-plus',
         'kimi-k3',
         'kimi-k2.6',
         'deepseek-v4.1-flash',
+        'deepseek-v4-flash-vision-exp',
         'minimax-m3',
         'glm-5.3-flash',
         'mimo-v2.5-free'

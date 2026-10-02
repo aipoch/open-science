@@ -2,11 +2,15 @@ import type { ValidateProviderResult } from './settings'
 
 /** Classification endpoints are not chat providers and never enter conversation model catalogs. */
 export const TYPESAFE_MODEL_ID = 'jev-latest'
-export type ClassificationAdapter = 'typesafe' | 'openrouter' | 'custom'
+export type ClassificationAdapter = 'typesafe' | 'openrouter' | 'opencode' | 'custom'
 export type ClassificationModel = { id: string; label: string }
 export const CLASSIFICATION_MODELS = {
   typesafe: [{ id: TYPESAFE_MODEL_ID, label: 'Jev Latest' }],
-  openrouter: [{ id: 'typesafe/jev-1.13', label: 'Jev 1.13' }]
+  openrouter: [{ id: 'typesafe/jev-1.13', label: 'Jev 1.13' }],
+  opencode: [
+    { id: 'jev-1.13', label: 'Jev 1.13' },
+    { id: 'jev-1.13-free', label: 'Jev 1.13 Free' }
+  ]
 } satisfies Record<Exclude<ClassificationAdapter, 'custom'>, ClassificationModel[]>
 
 export const classificationModelsForService = (service: {
@@ -14,7 +18,16 @@ export const classificationModelsForService = (service: {
   models?: readonly string[]
   modelId?: string
 }): ClassificationModel[] => {
-  if (service.adapter !== 'custom') return CLASSIFICATION_MODELS[service.adapter]
+  if (service.adapter !== 'custom') {
+    const catalog = CLASSIFICATION_MODELS[service.adapter]
+    if (service.adapter !== 'opencode') return catalog
+    // Zen stores the explicitly selected default first; retain the complete allowlisted catalog.
+    const preferredId = service.modelId ?? service.models?.[0]
+    return [
+      ...catalog.filter((model) => model.id === preferredId),
+      ...catalog.filter((model) => model.id !== preferredId)
+    ]
+  }
   const models = service.models?.length ? service.models : service.modelId ? [service.modelId] : []
   return models.map((id) => ({ id, label: id }))
 }
@@ -35,7 +48,13 @@ export type ClassificationSnapshot = {
   services: ClassificationServiceView[]
   smartCollections?: ClassificationBinding
   capabilitySelection?: ClassificationBinding
-  availableProviders: { id: string; name: string; maskedKey?: string }[]
+  availableProviders: {
+    id: string
+    name: string
+    /** Older snapshots contained only OpenRouter accounts and omitted this field. */
+    vendorId?: 'openrouter' | 'opencode'
+    maskedKey?: string
+  }[]
 }
 export type ClassificationMutation = { revision: number } & (
   | {

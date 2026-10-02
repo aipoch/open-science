@@ -6445,6 +6445,7 @@
     "Use a new API key": "Использовать новый API-ключ",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "При удалении этого сервиса общий аккаунт и ключ сохраняются. Для выбора возможностей снова используется способ по умолчанию.",
     "OpenRouter": "OpenRouter",
+    "OpenCode Zen": "OpenCode Zen",
     "Add to Specialist": "Добавить специалисту",
     "Always enabled": "Всегда включено",
     "Changes saved.": "Изменения сохранены.",

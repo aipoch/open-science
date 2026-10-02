@@ -686,6 +686,277 @@ it.each([true, false])(
     ).toEqual({ serviceId, modelId: 'typesafe/jev-1.13' })
   }
 )
+it.each([true, false])(
+  'persists Zen classification and routes validation, probe and selected models with linked credentials=%s',
+  async (linked) => {
+    if (linked) {
+      await repository.upsertProvider({
+        id: providerId,
+        type: 'official',
+        vendorId: 'opencode',
+        name: 'Shared Zen',
+        keyRef: `enc:${Buffer.from('zen-key').toString('base64')}`
+      })
+    }
+    const saved = await owner.mutate({
+      revision: 0,
+      kind: 'save',
+      id: serviceId,
+      adapter: 'opencode',
+      name: 'Zen classifier',
+      ...(linked ? { providerId } : { apiKey: 'zen-key' })
+    })
+    expect(saved.capabilitySelection).toEqual({ serviceId, modelId: 'jev-1.13' })
+    expect(saved.smartCollections).toEqual(saved.capabilitySelection)
+    expect(saved.services[0]).toMatchObject({ adapter: 'opencode', configured: true })
+    expect((await repository.getSettings()).classification?.services[0]?.models).toEqual([
+      'jev-1.13',
+      'jev-1.13-free'
+    ])
+    if (linked) expect(saved.availableProviders[0]).toMatchObject({ vendorId: 'opencode' })
+    await owner.probe({ serviceId, revision: 1 })
+    await owner.mutate({
+      revision: 1,
+      kind: 'bind',
+      binding: { serviceId, modelId: 'jev-1.13-free' }
+    })
+    const reopened = new ClassificationSettingsOwner(new SettingsRepository(dir), fetchMock)
+    expect((await reopened.snapshot()).capabilitySelection).toEqual({
+      serviceId,
+      modelId: 'jev-1.13-free'
+    })
+    expect(await reopened.selectSkills(request())).toEqual([
+      { name: candidate.name, path: candidate.path }
+    ])
+    fetchMock.mockResolvedValueOnce(readingResponse(0.9, 0.1))
+    expect(await reopened.selectReadingRoute({ text: 'Read the full paper' })).toBe('full-document')
+    expect(fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).model)).toEqual([
+      'jev-1.13',
+      'jev-1.13',
+      'jev-1.13-free',
+      'jev-1.13-free'
+    ])
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(url).toBe('https://opencode.ai/zen/v1/systemone')
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer zen-key' })
+      expect(init?.redirect).toBe('manual')
+      expect(JSON.parse(String(init?.body))).toHaveProperty('questions')
+    }
+    await expect(
+      reopened.mutate({
+        revision: 2,
+        kind: 'bind',
+        binding: { serviceId, modelId: 'typesafe/jev-1.13' }
+      })
+    ).rejects.toThrow('model is unavailable')
+    const serialized = JSON.stringify(await reopened.snapshot())
+    expect(serialized).not.toContain('zen-key')
+    expect(serialized).not.toContain('keyRef')
+  }
+)
+it('saves a free-only Zen account without trying paid inference and persists its selected default', async () => {
+  const probe = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (...args) => {
+    const model = JSON.parse(String(args[1]?.body)).model
+    return model === 'jev-1.13' ? new Response('{}', { status: 402 }) : probe(...args)
+  })
+  const paid = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Free-only Zen',
+    apiKey: 'free-only-key',
+    modelId: 'jev-1.13'
+  })
+  expect(paid.validation?.ok).toBe(false)
+  expect((await repository.getSettings()).classification).toBeUndefined()
+  fetchMock.mockClear()
+  const saved = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Free-only Zen',
+    apiKey: 'free-only-key',
+    modelId: 'jev-1.13-free'
+  })
+  expect(saved.capabilitySelection).toEqual({ serviceId, modelId: 'jev-1.13-free' })
+  expect(saved.smartCollections).toEqual(saved.capabilitySelection)
+  expect(saved.services[0]?.modelId).toBe('jev-1.13-free')
+  expect((await repository.getSettings()).classification?.services[0]?.models).toEqual([
+    'jev-1.13-free',
+    'jev-1.13'
+  ])
+  const reopened = new ClassificationSettingsOwner(new SettingsRepository(dir), fetchMock)
+  expect((await reopened.snapshot()).services[0]?.modelId).toBe('jev-1.13-free')
+  expect(await reopened.probe({ serviceId, revision: 1 })).toEqual({ ok: true })
+  await reopened.mutate({ revision: 1, kind: 'bind' })
+  await reopened.mutate({ revision: 2, kind: 'bind', feature: 'smart-collections' })
+  expect(await reopened.probe({ serviceId, revision: 3 })).toEqual({ ok: true })
+  await reopened.mutate({
+    revision: 3,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Edited free account'
+  })
+  expect(fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).model)).toEqual([
+    'jev-1.13-free',
+    'jev-1.13-free',
+    'jev-1.13-free',
+    'jev-1.13-free'
+  ])
+})
+it.each(['gpt-6.1-sol', 'jev-latest', 'typesafe/jev-1.13', 'unavailable-jev'])(
+  'rejects an unsupported Zen default %s before fetching',
+  async (modelId) => {
+    await expect(
+      owner.mutate({
+        revision: 0,
+        kind: 'save',
+        id: serviceId,
+        adapter: 'opencode',
+        name: 'Zen',
+        apiKey: 'key',
+        modelId
+      })
+    ).rejects.toThrow('model is unavailable')
+    expect(fetchMock).not.toHaveBeenCalled()
+  }
+)
+it.each([false, true])(
+  'uses a smart-only free binding for Zen probe and credential replacement with another capability service=%s',
+  async (otherCapabilityService) => {
+    await repository.mutateClassification(() => ({
+      revision: 1,
+      services: [
+        {
+          id: serviceId,
+          adapter: 'opencode',
+          name: 'Zen',
+          models: ['jev-1.13', 'jev-1.13-free'],
+          keyRef: `enc:${Buffer.from('old-key').toString('base64')}`
+        },
+        ...(otherCapabilityService
+          ? [
+              {
+                id: otherServiceId,
+                adapter: 'typesafe' as const,
+                name: 'Other',
+                models: ['jev-latest'],
+                keyRef: `enc:${Buffer.from('other-key').toString('base64')}`
+              }
+            ]
+          : [])
+      ],
+      capabilitySelection: otherCapabilityService
+        ? { serviceId: otherServiceId, modelId: 'jev-latest' }
+        : undefined,
+      smartCollections: { serviceId, modelId: 'jev-1.13-free' }
+    }))
+    expect(await owner.probe({ serviceId, revision: 1 })).toEqual({ ok: true })
+    const saved = await owner.mutate({
+      revision: 1,
+      kind: 'save',
+      id: serviceId,
+      adapter: 'opencode',
+      name: 'Zen replacement',
+      apiKey: 'new-key'
+    })
+    expect(saved.smartCollections).toEqual({ serviceId, modelId: 'jev-1.13-free' })
+    expect(saved.capabilitySelection).toEqual(
+      otherCapabilityService ? { serviceId: otherServiceId, modelId: 'jev-latest' } : undefined
+    )
+    expect(saved.services.find((service) => service.id === serviceId)?.modelId).toBe(
+      'jev-1.13-free'
+    )
+    expect(fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).model)).toEqual([
+      'jev-1.13-free',
+      'jev-1.13-free'
+    ])
+    expect(fetchMock.mock.calls[1]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer new-key' })
+  }
+)
+it('preserves existing feature bindings when explicitly changing the Zen default', async () => {
+  const first = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Zen',
+    apiKey: 'key'
+  })
+  const saved = await owner.mutate({
+    revision: 1,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Zen',
+    modelId: 'jev-1.13-free'
+  })
+  expect(saved.capabilitySelection).toEqual(first.capabilitySelection)
+  expect(saved.smartCollections).toEqual(first.smartCollections)
+  expect(saved.services[0]?.modelId).toBe('jev-1.13-free')
+  expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).model).toBe('jev-1.13-free')
+})
+it.each([
+  ['opencode', 'openrouter'],
+  ['opencode', 'opencode-go'],
+  ['openrouter', 'opencode'],
+  ['typesafe', 'opencode']
+] as const)('rejects %s classification linked to %s credentials', async (adapter, vendorId) => {
+  await repository.upsertProvider({
+    id: providerId,
+    type: 'official',
+    vendorId,
+    name: 'Wrong account',
+    keyRef: `enc:${Buffer.from('wrong-vendor-key').toString('base64')}`
+  })
+  await expect(
+    owner.mutate({
+      revision: 0,
+      kind: 'save',
+      id: serviceId,
+      adapter,
+      name: 'Classifier',
+      providerId
+    })
+  ).rejects.toThrow('account is unavailable')
+  expect(fetchMock).not.toHaveBeenCalled()
+  expect((await repository.getSettings()).classification).toBeUndefined()
+})
+it('never sends a mismatched linked Zen credential read from persisted settings', async () => {
+  await addOpenRouter('wrong-vendor-key')
+  await repository.mutateClassification(() => ({
+    revision: 1,
+    services: [
+      { id: serviceId, adapter: 'opencode', name: 'Zen', models: ['jev-1.13'], providerId }
+    ],
+    capabilitySelection: { serviceId, modelId: 'jev-1.13' }
+  }))
+  expect((await owner.snapshot()).services[0]).toMatchObject({ configured: false, needsKey: true })
+  expect(await owner.selectSkills(request())).toBeUndefined()
+  expect(await owner.probe({ serviceId, revision: 1 })).toEqual({ ok: false })
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+it('leaves Zen settings unchanged when validation fails', async () => {
+  fetchMock.mockResolvedValueOnce(new Response('{}', { status: 401 }))
+  const saved = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Zen',
+    apiKey: 'invalid-zen'
+  })
+  expect(saved).toMatchObject({
+    revision: 0,
+    services: [],
+    validation: { ok: false, category: 'auth' }
+  })
+  expect((await repository.getSettings()).classification).toBeUndefined()
+})
 it('resolves a rotated shared key and falls back after the shared account is removed', async () => {
   await configureRouter()
   await addOpenRouter('rotated-key')
@@ -1037,7 +1308,7 @@ it('persists independent smart collection binding without changing the capabilit
   expect(unbound.smartCollections).toBeUndefined()
   expect(unbound.capabilitySelection).toEqual(snapshot.capabilitySelection)
 })
-it.each(['typesafe', 'openrouter', 'custom'] as const)(
+it.each(['typesafe', 'openrouter', 'opencode', 'custom'] as const)(
   'classifies literature with a closed Choice contract through %s',
   async (adapter) => {
     await owner.mutate({
@@ -1067,7 +1338,9 @@ it.each(['typesafe', 'openrouter', 'custom'] as const)(
         ? 'https://api.typesafe.ai/v1/systemone'
         : adapter === 'openrouter'
           ? 'https://openrouter.ai/api/alpha/decisions'
-          : 'https://classifier.example.test/decisions'
+          : adapter === 'opencode'
+            ? 'https://opencode.ai/zen/v1/systemone'
+            : 'https://classifier.example.test/decisions'
     )
     const body = JSON.parse(String(init?.body))
     expect(body.questions.membership.type).toBe('choice')
