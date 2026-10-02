@@ -1102,7 +1102,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/web-service/controller.test.ts',
       'src/main/web-service/task-api.test.ts',
       'src/main/literature/smart-collections.test.ts',
-      'src/main/session-persistence/ipc.test.ts'
+      'src/main/session-persistence/ipc.test.ts',
+      'src/main/composition/delegation.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
       'src/main/storage/wsl-npm-migration.integration.test.ts',
@@ -1550,7 +1551,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
       'src/main/session-persistence/attention-projection.test.ts',
       'src/main/acp/approved-handoff-outcome.integration.test.ts',
-      'src/main/acp/approved-handoff-outcome.test.ts'
+      'src/main/acp/approved-handoff-outcome.test.ts',
+      'src/main/composition/delegation.test.ts'
     ])
     expect(
       [
