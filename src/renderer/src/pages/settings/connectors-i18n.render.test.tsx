@@ -276,6 +276,10 @@ describe('ConnectorAddForm copy', () => {
     const fallback = 'runtime fallback'
     const connectorCases = [
       [
+        'cellosaurus',
+        'Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.'
+      ],
+      [
         'cellxgene-discover',
         'Public collections, datasets, versions and file download links from CELLxGENE Discover.'
       ],
@@ -306,6 +310,11 @@ describe('ConnectorAddForm copy', () => {
     expect(connectorDescription({ id: 'custom', description: fallback }, t)).toBe(fallback)
 
     const toolCases = [
+      ['cellosaurus/search_cell_lines', 'Search cell lines by name or synonym.'],
+      [
+        'cellosaurus/get_cell_line',
+        'Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.'
+      ],
       ['cellxgene-discover/list_collections', 'Search public CELLxGENE Discover collections.'],
       ['cellxgene-discover/get_collection', 'Retrieve collection metadata and a page of datasets.'],
       ['cellxgene-discover/list_datasets', 'Search public single-cell datasets by metadata.'],

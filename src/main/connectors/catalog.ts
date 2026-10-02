@@ -309,6 +309,19 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
+    id: 'cellosaurus',
+    displayName: 'Cellosaurus',
+    aliases: ['Cellosaurus', 'cell line identity', 'CVCL'],
+    description:
+      'Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.',
+    useWhen:
+      'Use for laboratory cell line identity and curated quality information: search names and aliases, resolve CVCL or RRID:CVCL identifiers, inspect species/tissue origin and donor disease, known contamination or misidentification, ICLAC registrations, and external database mappings. Search returns candidates; select an accession before requesting details. No recorded problem does not certify a sample. This read-only API requires no authentication.',
+    sources: ['Cellosaurus'],
+    termsUrl: 'https://www.cellosaurus.org/description.html',
+    requiresNcbi: false,
+    group: 'directory'
+  },
+  {
     id: 'cellguide',
     displayName: 'CellGuide',
     description:

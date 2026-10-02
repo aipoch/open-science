@@ -4,6 +4,7 @@ import { ALLIANCE_TOOLS } from './descriptors/alliance'
 import { BIOMART_TOOLS } from './descriptors/biomart'
 import { BIORXIV_TOOLS } from './descriptors/biorxiv'
 import { CANCER_MODELS_TOOLS } from './descriptors/cancer-models'
+import { CELLOSAURUS_TOOLS } from './descriptors/cellosaurus'
 import { CELLGUIDE_TOOLS } from './descriptors/cellguide'
 import { CELLXGENE_DISCOVER_TOOLS } from './descriptors/cellxgene-discover'
 import { CHEMBL_TOOLS } from './descriptors/chembl'
@@ -39,6 +40,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...BIOMART_TOOLS,
   ...BIORXIV_TOOLS,
   ...CANCER_MODELS_TOOLS,
+  ...CELLOSAURUS_TOOLS,
   ...CELLGUIDE_TOOLS,
   ...CELLXGENE_DISCOVER_TOOLS,
   ...CHEMBL_TOOLS,

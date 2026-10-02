@@ -5,6 +5,11 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'cellosaurus') {
+    return t(
+      'Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.'
+    )
+  }
   if (connector.id === 'cellxgene-discover') {
     return t(
       'Public collections, datasets, versions and file download links from CELLxGENE Discover.'
@@ -53,6 +58,12 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'cellosaurus/search_cell_lines':
+      return t('Search cell lines by name or synonym.')
+    case 'cellosaurus/get_cell_line':
+      return t(
+        'Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.'
+      )
     case 'cellxgene-discover/list_collections':
       return t('Search public CELLxGENE Discover collections.')
     case 'cellxgene-discover/get_collection':

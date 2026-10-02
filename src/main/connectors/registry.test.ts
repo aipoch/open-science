@@ -570,3 +570,23 @@ describe('CELLxGENE Discover registration and input contracts', () => {
     }
   )
 })
+
+describe('Cellosaurus registration', () => {
+  it('exposes identity and quality tools with valid generated examples', () => {
+    const tools = getConnectorTools('cellosaurus')
+    expect(tools.map((tool) => tool.id)).toEqual(['search_cell_lines', 'get_cell_line'])
+    expect(CONNECTOR_CATALOG.find((entry) => entry.id === 'cellosaurus')).toMatchObject({
+      sources: ['Cellosaurus'],
+      requiresNcbi: false
+    })
+    const doc = renderSkillDoc('cellosaurus')
+    expect(doc).toContain('name: mcp-cellosaurus')
+    expect(doc).toContain('No recorded problem')
+    expect(doc).toContain('next_offset')
+    for (const tool of tools) {
+      expect(doc).toContain(`### ${tool.id}`)
+      const args = JSON.parse(tool.example!.slice(tool.example!.lastIndexOf(', {') + 2, -1))
+      expect(() => validateToolArguments(tool, args)).not.toThrow()
+    }
+  })
+})

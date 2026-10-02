@@ -133,6 +133,9 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "来自 Cellosaurus 的细胞系身份、来源、疾病、质量记录和数据库映射。",
+    "Search cell lines by name or synonym.": "按名称或别名搜索细胞系。",
+    "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "通过 CVCL 或 RRID 获取细胞系身份、来源、质量记录和数据库映射。",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "来自 CELLxGENE Discover 的公开集合、数据集、版本和文件下载链接。",
     "Search public CELLxGENE Discover collections.": "搜索 CELLxGENE Discover 公开集合。",
     "Retrieve collection metadata and a page of datasets.": "获取集合元数据和一页数据集。",

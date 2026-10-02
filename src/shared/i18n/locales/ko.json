@@ -133,6 +133,9 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Cellosaurus의 세포주 식별 정보, 유래, 질환, 품질 기록 및 데이터베이스 매핑.",
+    "Search cell lines by name or synonym.": "이름 또는 동의어로 세포주 검색.",
+    "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "CVCL 또는 RRID로 세포주 식별 정보, 유래, 품질 기록 및 데이터베이스 매핑 조회.",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "CELLxGENE Discover의 공개 컬렉션, 데이터셋, 버전 및 파일 다운로드 링크입니다.",
     "Search public CELLxGENE Discover collections.": "CELLxGENE Discover 공개 컬렉션을 검색합니다.",
     "Retrieve collection metadata and a page of datasets.": "컬렉션 메타데이터와 데이터셋 한 페이지를 가져옵니다.",

@@ -136,6 +136,9 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Идентификация, происхождение, заболевания, сведения о качестве и связи с базами данных для клеточных линий из Cellosaurus.",
+    "Search cell lines by name or synonym.": "Поиск клеточных линий по названию или синониму.",
+    "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "Получение идентификации, происхождения, сведений о качестве и связей с базами данных клеточной линии по CVCL или RRID.",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Общедоступные коллекции, наборы данных, версии и ссылки на скачивание файлов из CELLxGENE Discover.",
     "Search public CELLxGENE Discover collections.": "Поиск общедоступных коллекций CELLxGENE Discover.",
     "Retrieve collection metadata and a page of datasets.": "Получение метаданных коллекции и одной страницы наборов данных.",

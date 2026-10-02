@@ -134,6 +134,9 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
+    "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Identität, Herkunft, Krankheiten, Qualitätsdaten und Datenbankzuordnungen von Zelllinien aus Cellosaurus.",
+    "Search cell lines by name or synonym.": "Zelllinien nach Namen oder Synonym suchen.",
+    "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "Identität, Herkunft, Qualitätsdaten und Datenbankzuordnungen einer Zelllinie über CVCL oder RRID abrufen.",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Öffentliche Sammlungen, Datensätze, Versionen und Datei-Downloadlinks von CELLxGENE Discover.",
     "Search public CELLxGENE Discover collections.": "Öffentliche Sammlungen in CELLxGENE Discover suchen.",
     "Retrieve collection metadata and a page of datasets.": "Sammlungsmetadaten und eine Seite mit Datensätzen abrufen.",

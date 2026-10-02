@@ -133,6 +133,9 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Cellosaurus による細胞株の同定情報、由来、疾患、品質記録、外部データベースとの対応。",
+    "Search cell lines by name or synonym.": "名前または別名で細胞株を検索。",
+    "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "CVCL または RRID で細胞株の同定情報、由来、品質記録、データベースとの対応を取得。",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "CELLxGENE Discover の公開コレクション、データセット、バージョン、ファイルのダウンロードリンク。",
     "Search public CELLxGENE Discover collections.": "CELLxGENE Discover の公開コレクションを検索します。",
     "Retrieve collection metadata and a page of datasets.": "コレクションのメタデータとデータセットを1ページ取得します。",
