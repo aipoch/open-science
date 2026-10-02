@@ -22,6 +22,25 @@ describe('SessionCatalogRecoveryAlert', () => {
     container.remove()
   })
 
+  it('keeps an unchanged recovery dismissed but shows a newly affected file', () => {
+    const render = (fileName: string): void =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{ kind: 'damaged-authority', affectedFiles: [{ projectId: 'p', fileName }] }}
+        />
+      )
+    act(() => render('first.json'))
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')!
+        .click()
+    )
+    act(() => render('first.json'))
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
+    act(() => render('second.json'))
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).not.toBeNull()
+  })
+
   it('presents a partial Session scan as index repair before a Project action', () => {
     const onRetry = vi.fn()
     act(() =>

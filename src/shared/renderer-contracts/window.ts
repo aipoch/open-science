@@ -4,7 +4,10 @@ import type {
   CloseConfirmResponse,
   WindowFindAppearance,
   WindowFindRequest,
-  WindowFindResult
+  WindowFindResult,
+  WindowsTitleBarAppearance,
+  WindowsTitleBarCommand,
+  WindowsTitleBarMenuRequest
 } from '../window-controls'
 
 import type { InterfaceScale } from '../interface-scale'
@@ -41,6 +44,22 @@ export const contracts = {
     optionalMember: true
   }),
   'window.close': callable<() => Promise<void>>()('window', ['window:close', MAPPED_NATIVE]),
+  'window.isFullScreen': callable<() => Promise<boolean>>()(
+    'window',
+    ['window:is-full-screen', ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.onFullScreenChanged': callable<
+    (listener: (fullscreen: boolean) => void) => RemoveListener
+  >()('window', ['window:full-screen-changed', ELECTRON_EVENT], { optionalMember: true }),
+  'window.showTitleBarMenu': callable<
+    (request: WindowsTitleBarMenuRequest) => Promise<WindowsTitleBarCommand | null>
+  >()('window', ['window:show-titlebar-menu', ELECTRON], { optionalMember: true }),
+  'window.updateTitleBar': callable<(appearance: WindowsTitleBarAppearance) => Promise<void>>()(
+    'window',
+    ['window:update-titlebar', ELECTRON],
+    { optionalMember: true }
+  ),
   'window.setZoomFactor': callable<(factor: number) => Promise<void>>()(
     'window',
     ['window:set-zoom-factor', ELECTRON],

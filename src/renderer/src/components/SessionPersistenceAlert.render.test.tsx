@@ -124,3 +124,30 @@ describe('SessionPersistenceAlert', () => {
     expect(dismiss?.parentElement).not.toBe(action?.parentElement)
   })
 })
+
+it('dismisses a floating failure without changing its owner and keeps local recovery available', () => {
+  const retry = vi.fn()
+  const render = (message = 'unavailable', inline = false): void =>
+    root.render(
+      <SessionPersistenceAlert title="Storage" message={message} inline={inline} onRetry={retry} />
+    )
+  act(() => render())
+  act(() =>
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')!
+      .click()
+  )
+  expect(container.querySelector('[role="alert"]')).toBeNull()
+  act(() => render())
+  expect(container.querySelector('[role="alert"]')).toBeNull()
+  expect(retry).not.toHaveBeenCalled()
+  act(() => render('unavailable', true))
+  expect(container.querySelector('[role="alert"]')).not.toBeNull()
+  expect(container.querySelector('[data-testid="session-persistence-dismiss"]')).toBeNull()
+  act(() =>
+    container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')!.click()
+  )
+  expect(retry).toHaveBeenCalledOnce()
+  act(() => render('different failure'))
+  expect(container.querySelector('[role="alert"]')).not.toBeNull()
+})

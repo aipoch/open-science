@@ -9,6 +9,54 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Windows alone replaces its native title text with an application-menu row. CSS safe-area
+   variables reserve the actual system caption controls, including DPI and interface zoom. */
+html[data-windows-titlebar] {
+  --windows-titlebar-height: 36px;
+}
+
+html[data-windows-titlebar='fullscreen'] {
+  --windows-titlebar-height: 0px;
+}
+
+.windows-titlebar {
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--windows-titlebar-height);
+  z-index: 40;
+  -webkit-app-region: drag;
+}
+
+.windows-titlebar-safe-area {
+  display: flex;
+  align-items: center;
+  margin-left: env(titlebar-area-x, 0px);
+  width: env(titlebar-area-width, 100%);
+  height: 100%;
+}
+
+.windows-titlebar-menu {
+  -webkit-app-region: no-drag;
+}
+
+.windows-app-content {
+  padding-top: var(--windows-titlebar-height);
+}
+
+html[data-windows-titlebar] .windows-app-content :is(.h-svh, .h-screen, .h-\[100dvh\]) {
+  height: calc(100svh - var(--windows-titlebar-height));
+}
+
+html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) {
+  min-height: calc(100svh - var(--windows-titlebar-height));
+}
+
+@media (min-width: 768px) {
+  html[data-windows-titlebar] .windows-app-content .md\:h-screen {
+    height: calc(100svh - var(--windows-titlebar-height));
+  }
+}
+
 /* Scope highlight inheritance to its text surface: global highlight styles make unrelated
    token-heavy Notebook trees recalculate every named highlight during panel resizing. */
 [data-annotation-surface]::highlight(agent-annotation-draft) {

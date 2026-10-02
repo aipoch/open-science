@@ -375,11 +375,20 @@ describe('WorkspacePage send gate while compacting', () => {
     })
 
     await renderPage(['sess-a'])
+    expect(conversationProps.view.persistenceBlocked).toBe(true)
 
     await act(async () => {
       conversationProps.composer.actions.changeDoc(textDoc('continue growing'))
     })
     expect(conversationProps.conversation.availability.submit).toBe(false)
+  })
+
+  it('keeps unrelated conversations usable when another conversation exceeds its storage limit', async () => {
+    runtime.nativeContextCompactionSessionIds = []
+    await renderPage(['another-session'])
+    await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Keep working')))
+    expect(conversationProps.view.persistenceBlocked).toBe(false)
+    expect(conversationProps.conversation.availability.submit).toBe(true)
   })
 
   it('defaults Memory off and explains the global gate when Memory is off in Settings', async () => {

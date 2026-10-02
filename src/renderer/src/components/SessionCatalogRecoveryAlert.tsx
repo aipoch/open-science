@@ -20,7 +20,7 @@ type SessionCatalogRecoveryAlertProps = {
 
 // Catalog recovery is a storage concern shown before a Project command is attempted. Keep it
 // distinct from command failures and from the Project Files index, which cannot restore Session JSON.
-const SessionCatalogRecoveryAlert = ({
+const SessionCatalogRecoveryAlertContent = ({
   recovery,
   inline,
   onRetry,
@@ -209,5 +209,11 @@ const SessionCatalogRecoveryAlert = ({
     />
   )
 }
+
+const SessionCatalogRecoveryAlert = (
+  props: SessionCatalogRecoveryAlertProps
+): React.JSX.Element => (
+  <SessionCatalogRecoveryAlertContent key={JSON.stringify(props.recovery)} {...props} />
+)
 
 export { SessionCatalogRecoveryAlert }

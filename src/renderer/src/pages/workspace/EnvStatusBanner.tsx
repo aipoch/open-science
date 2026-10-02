@@ -1,5 +1,5 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
@@ -10,43 +10,77 @@ type ProvisionErrorUi = Extract<ProvisionUiState, { kind: 'error' }>
 const provisionErrorKey = (ui: ProvisionErrorUi): string =>
   JSON.stringify([ui.message, ui.scope ?? null, ui.sessionId ?? null, ui.recoveryBlocked ?? false])
 
-// Keep the provisioner reason fully readable on the global surface, including Home where there is no
-// EnvProvisionOverlay. Keying this component by stable failure content preserves dismissal across
-// status refreshes, while a changed failure or a non-error transition mounts a fresh notice.
+// Keep diagnostics available without making the technical payload the global announcement.
+// Stable failure content preserves dismissal across status refreshes; a changed failure or a
+// non-error transition mounts a fresh notice.
 const EnvironmentErrorBanner = ({
   ui,
   onRetry,
-  onOpenRuntimes
+  onOpenRuntimes,
+  statusError
 }: {
   ui: ProvisionErrorUi
-  onRetry?: () => void
+  onRetry?: () => void | Promise<void>
   onOpenRuntimes?: () => void
+  statusError?: string
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const [dismissed, setDismissed] = useState(false)
+  const [retrying, setRetrying] = useState(false)
+  const retryInFlight = useRef(false)
   if (dismissed) return null
 
   const recoveryBlocked = ui.recoveryBlocked
-  const onAction = recoveryBlocked ? (onOpenRuntimes ?? onRetry) : onRetry
+  const opensSettings = recoveryBlocked ? onOpenRuntimes : undefined
+  const onAction = opensSettings ?? onRetry
+  const runAction = async (): Promise<void> => {
+    if (!onAction || retryInFlight.current) return
+    if (opensSettings) {
+      opensSettings()
+      return
+    }
+    retryInFlight.current = true
+    setRetrying(true)
+    try {
+      await onAction()
+    } catch {
+      // The recovery owner keeps the failure available; dismissal never changes its state.
+    } finally {
+      retryInFlight.current = false
+      setRetrying(false)
+    }
+  }
 
   return (
     <div
       data-testid="env-status-banner"
       data-bottom-notice
-      role="alert"
-      aria-live="assertive"
       className="pointer-events-auto fixed right-3 bottom-3 z-toast w-[min(420px,calc(100vw-24px))] rounded-2xl bg-card text-left shadow-dialog"
     >
       <ErrorNotice
-        title={recoveryBlocked ? t('Runtime recovery blocked') : t('Environment update failed')}
+        role="alert"
+        title={
+          statusError
+            ? t('Could not re-check runtimes.')
+            : recoveryBlocked
+              ? t('Runtime recovery blocked')
+              : t('Environment update failed')
+        }
         description={
           recoveryBlocked
             ? t(
                 'Use Recheck to retry safe recovery. Only confirmed stopped operations can be reconciled; permissions and repair requirements remain in force.'
               )
-            : ui.message
+            : t('The Notebook environment needs attention. You can continue using other features.')
         }
-        className="[&_p]:max-h-28 [&_p]:overflow-y-auto"
+        className="[&_pre]:max-h-40 [&_pre]:overflow-y-auto"
+        errorCode={ui.message}
+        diagnosticsLabel={t('Diagnostics')}
+        secondaryButton={
+          !recoveryBlocked && onOpenRuntimes
+            ? { label: t('Open Settings'), onClick: onOpenRuntimes }
+            : undefined
+        }
         dismissButton={{
           label: t('Close'),
           onClick: () => setDismissed(true),
@@ -60,7 +94,8 @@ const EnvironmentErrorBanner = ({
                     ? t('Open Settings')
                     : t('Recheck')
                   : t('Retry'),
-                onClick: onAction,
+                onClick: runAction,
+                loading: retrying,
                 testId: 'env-status-banner-retry'
               }
             : undefined
@@ -79,11 +114,13 @@ const EnvironmentErrorBanner = ({
 const EnvStatusBanner = ({
   ui,
   onRetry,
-  onOpenRuntimes
+  onOpenRuntimes,
+  statusError
 }: {
   ui: ProvisionUiState
-  onRetry?: () => void
+  onRetry?: () => void | Promise<void>
   onOpenRuntimes?: () => void
+  statusError?: string
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const show = (ui.kind === 'preparing' && ui.scope === 'upgrade') || ui.kind === 'error'
@@ -105,10 +142,11 @@ const EnvStatusBanner = ({
       <>
         {readyAnnouncement}
         <EnvironmentErrorBanner
-          key={provisionErrorKey(ui)}
+          key={JSON.stringify([provisionErrorKey(ui), Boolean(statusError)])}
           ui={ui}
           onRetry={onRetry}
           onOpenRuntimes={onOpenRuntimes}
+          statusError={statusError}
         />
       </>
     )

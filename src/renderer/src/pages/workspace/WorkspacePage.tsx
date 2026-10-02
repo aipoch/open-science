@@ -1683,6 +1683,9 @@ const WorkspacePage = ({
                   activeSession,
                   composerFocusKey: currentDraftKey,
                   canEditDraft,
+                  persistenceBlocked: persistenceBlockedSessionIds.includes(
+                    activeSession?.id ?? ''
+                  ),
                   actionError: visibleActionError,
                   sideChatDisabledReason,
                   sessionImport: { projectId: scopedProjectId, canImport: canImportSessionPackage }

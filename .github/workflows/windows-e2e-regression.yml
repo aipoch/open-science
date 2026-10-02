@@ -97,7 +97,7 @@ jobs:
     needs: [plan, windows_e2e_setup]
     if: ${{ !cancelled() && needs.plan.outputs.should_test == 'true' && needs.windows_e2e_setup.result == 'success' }}
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -145,7 +145,9 @@ jobs:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
         # Isolate Electron desktops: parallelize across runners, never within one runner.
-        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=600000 --fail-on-flaky-tests
+        # The complete serial shard exceeded 10 minutes with 12/15 tests passing; reserve
+        # 15 minutes for all journeys and teardown while retaining per-test timeouts.
+        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=900000 --fail-on-flaky-tests
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true

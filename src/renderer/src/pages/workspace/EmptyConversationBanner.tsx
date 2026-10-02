@@ -133,7 +133,7 @@ const SessionPackageEntryRow = ({ projectId }: { projectId: string }): React.JSX
         <span className="block text-[13px] font-medium text-text-000">
           {t('Import previous research')}
         </span>
-        <span className="mt-0.5 block text-xs text-text-300">
+        <span className="mt-0.5 block text-xs text-text-100">
           {t('Drag a .science research package onto this page, or choose a file')}
         </span>
       </button>

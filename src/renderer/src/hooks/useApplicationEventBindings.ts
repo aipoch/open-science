@@ -14,6 +14,7 @@ import { useLifecycleSync } from '@/hooks/useLifecycleSync'
 import { useUnreadTaskViewSync } from '@/hooks/useUnreadTaskViewSync'
 import { useWebEventConnection } from '@/hooks/useWebEventConnection'
 import { useWindowFindAppearanceSync } from '@/hooks/useWindowFindAppearanceSync'
+import { useWindowsTitleBarCommands } from '@/components/windows-titlebar-context'
 import type { StartupView } from '@/pages/onboarding/startup-gate'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore, type NavigationView } from '@/stores/navigation-store'
@@ -225,6 +226,15 @@ const useApplicationEventBindings = ({
     if (presentation.allowsShortcut('globalSearch')) setIsGlobalSearchOpen(true)
   }, [presentation])
   const setGlobalSearchOpen = useCallback((open: boolean): void => setIsGlobalSearchOpen(open), [])
+  const openTitleBarSettings = useCallback((): void => {
+    if (presentation.allowsShortcut('settings')) openSettings()
+  }, [presentation, openSettings])
+  useWindowsTitleBarCommands({
+    settingsEnabled: presentation.allowsShortcut('settings'),
+    searchEnabled: presentation.allowsShortcut('globalSearch'),
+    openSettings: openTitleBarSettings,
+    openSearch: openGlobalSearch
+  })
   const openSearchRecovery = useCallback((): void => {
     setIsGlobalSearchOpen(false)
     openSettingsToPanel('archived')

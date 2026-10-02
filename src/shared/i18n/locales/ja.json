@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "未保存の変更を破棄しますか？",
     "Export Session package": "セッションパッケージをエクスポート",
     "Import Session package": "セッションパッケージをインポート",
-    "Wait for all Session activity and pending approvals to finish before forking.": "すべてのセッション処理と保留中の承認が完了してから複製してください。"
+    "Wait for all Session activity and pending approvals to finish before forking.": "すべてのセッション処理と保留中の承認が完了してから複製してください。",
+    "Close window": "ウィンドウを閉じる"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux のシステム認証情報には、元々選択されていた Secret Service または KWallet バックエンドと /usr/bin/busctl が必要です。元の既定のキーリングまたはウォレットのロックを解除して再起動してください。この確認を回避するために password-store バックエンドやプロファイルを変更しないでください。",
@@ -85,7 +86,6 @@
     "Move in progress": "移動中",
     "Open-Science is still moving your data.": "Open-Science はまだデータを移動しています。",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "どちらを選んでもデータは安全ですが、今終了すると移動が未完了になり、やり直しが必要になる場合があります。完了するまでアプリを開いたままにしてください。",
-    "Close window": "ウィンドウを閉じる",
     "The app window stopped responding repeatedly.": "アプリのウィンドウが繰り返し応答しなくなりました。",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "自動復旧は一時停止されています。再読み込みするとこのウィンドウはホーム画面に戻ります。バックグラウンドの作業はまだ実行中の可能性があります。",
     "Save file": "ファイルを保存",
@@ -133,6 +133,7 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "The Notebook environment needs attention. You can continue using other features.": "Notebook 環境の確認が必要です。他の機能は引き続き使用できます。",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "CELLxGENE Discover の公開コレクション、データセット、バージョン、ファイルのダウンロードリンク。",
     "Search public CELLxGENE Discover collections.": "CELLxGENE Discover の公開コレクションを検索します。",
     "Retrieve collection metadata and a page of datasets.": "コレクションのメタデータとデータセットを1ページ取得します。",
@@ -6689,6 +6690,13 @@
     "Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.": "準備をキャンセルしました。検証済みのダウンロードは保持されます。設定を再試行するか、保護を解除して標準実行に戻ってください。",
     "Could not download {{component}}. Check your connection and try again.": "{{component}} をダウンロードできませんでした。ネットワーク接続を確認して再試行してください。",
     "Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.": "{{component}} を準備できませんでした。設定を再試行するか、保護を解除して標準実行に戻ってください。",
-    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "不足しているコンポーネントのダウンロードは最大 {{size}} です。検証済みのコンポーネントは、別の会話やアプリ更新後も再利用されます。"
+    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "不足しているコンポーネントのダウンロードは最大 {{size}} です。検証済みのコンポーネントは、別の会話やアプリ更新後も再利用されます。",
+    "Help": "ヘルプ",
+    "Application menu": "アプリケーションメニュー",
+    "Redo": "やり直し",
+    "Cut": "切り取り",
+    "Paste": "貼り付け",
+    "Full screen": "全画面表示",
+    "Documentation": "ドキュメント"
   }
 }

@@ -36,6 +36,7 @@ import {
   WINDOW_FIND_READY_CHANNEL,
   WINDOW_FIND_SHOW_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
+  WINDOWS_TITLEBAR_HEIGHT,
   isCloseWindowChord,
   isFindInPageChord,
   isWindowFindAppearance,
@@ -222,8 +223,21 @@ const createMainWindow = (
     minWidth: 1100,
     minHeight: 720,
     title: 'Open-Science',
+    ...(process.platform === 'win32'
+      ? { titleBarStyle: 'hidden', titleBarOverlay: { height: WINDOWS_TITLEBAR_HEIGHT } }
+      : {}),
     webPreferences: { webviewTag: true }
   })
+  // The renderer owns the Windows menu row. Keep Alt from revealing a second native menu bar.
+  if (process.platform === 'win32') {
+    window.removeMenu()
+    window.on('enter-full-screen', () =>
+      window.webContents.send('window:full-screen-changed', true)
+    )
+    window.on('leave-full-screen', () =>
+      window.webContents.send('window:full-screen-changed', false)
+    )
+  }
   mainWindows.add(window)
   installSourcePreviewWebviews(window)
   if (opts) configureMainWindow(window, opts)

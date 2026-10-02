@@ -237,6 +237,7 @@ type SettingsPageProps = {
   hasCompleteSessionCatalog?: boolean
   catalogRecovery?: SessionCatalogRecovery
   onRetryCatalogRecovery?: () => void
+  sessionLoadError?: string
   undoHostRef?: React.Ref<HTMLDivElement>
 }
 
@@ -407,6 +408,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     hasCompleteSessionCatalog = true,
     catalogRecovery = { kind: 'ready' },
     onRetryCatalogRecovery,
+    sessionLoadError,
     undoHostRef
   },
   ref
@@ -2062,6 +2064,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         hasCompleteSessionCatalog={hasCompleteSessionCatalog}
                         catalogRecovery={catalogRecovery}
                         onRetryCatalogRecovery={onRetryCatalogRecovery}
+                        sessionLoadError={sessionLoadError}
                       />
                     ) : activePanel === 'runtimes' ? (
                       <RuntimesPanel

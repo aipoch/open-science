@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "要放弃未保存的更改吗？",
     "Export Session package": "导出会话包",
     "Import Session package": "导入会话包",
-    "Wait for all Session activity and pending approvals to finish before forking.": "请等待所有会话活动和待处理审批结束后再创建副本。"
+    "Wait for all Session activity and pending approvals to finish before forking.": "请等待所有会话活动和待处理审批结束后再创建副本。",
+    "Close window": "关闭窗口"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 系统凭据需要原来选定的 Secret Service 或 KWallet 后端以及 /usr/bin/busctl。请解锁原有的默认密钥环或钱包后重启。不要更改 password-store 后端或配置目录来绕过此检查。",
@@ -85,7 +86,6 @@
     "Move in progress": "正在迁移",
     "Open-Science is still moving your data.": "Open-Science 仍在迁移你的数据。",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "无论如何你的数据都是安全的，但现在退出会使迁移未完成，你可能需要重新开始。请保持应用打开，直到迁移完成。",
-    "Close window": "关闭窗口",
     "The app window stopped responding repeatedly.": "应用窗口多次停止响应。",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "自动恢复已暂停。重新加载会使此窗口返回主页；后台工作可能仍在运行。",
     "Save file": "保存文件",
@@ -133,6 +133,7 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "The Notebook environment needs attention. You can continue using other features.": "Notebook 环境需要处理，您可以继续使用其他功能。",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "来自 CELLxGENE Discover 的公开集合、数据集、版本和文件下载链接。",
     "Search public CELLxGENE Discover collections.": "搜索 CELLxGENE Discover 公开集合。",
     "Retrieve collection metadata and a page of datasets.": "获取集合元数据和一页数据集。",
@@ -6689,6 +6690,13 @@
     "Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.": "准备已取消，已验证的下载内容会保留。请重试设置，或移除保护以返回标准执行模式。",
     "Could not download {{component}}. Check your connection and try again.": "无法下载 {{component}}。请检查网络连接后重试。",
     "Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.": "无法准备 {{component}}。请重试设置，或移除保护以返回标准执行模式。",
-    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "缺失组件最多需下载 {{size}}。已验证的组件可在不同会话和应用更新后复用。"
+    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "缺失组件最多需下载 {{size}}。已验证的组件可在不同会话和应用更新后复用。",
+    "Help": "帮助",
+    "Application menu": "应用菜单",
+    "Redo": "重做",
+    "Cut": "剪切",
+    "Paste": "粘贴",
+    "Full screen": "全屏",
+    "Documentation": "文档"
   }
 }

@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "Ignorer les modifications non enregistrées ?",
     "Export Session package": "Exporter un paquet de session",
     "Import Session package": "Importer un paquet de session",
-    "Wait for all Session activity and pending approvals to finish before forking.": "Attendez la fin de toutes les activités de la session et des approbations en attente avant de dupliquer."
+    "Wait for all Session activity and pending approvals to finish before forking.": "Attendez la fin de toutes les activités de la session et des approbations en attente avant de dupliquer.",
+    "Close window": "Fermer la fenêtre"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Les identifiants système Linux nécessitent le backend Secret Service ou KWallet sélectionné à l’origine et /usr/bin/busctl. Déverrouillez le trousseau ou le portefeuille par défaut d’origine et redémarrez. Ne changez pas le backend password-store ni le profil pour contourner cette vérification.",
@@ -85,7 +86,6 @@
     "Move in progress": "Déplacement en cours",
     "Open-Science is still moving your data.": "Open-Science déplace encore vos données.",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "Vos données restent en sécurité, mais quitter maintenant laissera le déplacement inachevé et vous devrez peut-être le recommencer. Gardez l'application ouverte jusqu'à la fin.",
-    "Close window": "Fermer la fenêtre",
     "The app window stopped responding repeatedly.": "La fenêtre de l'application a cessé de répondre à plusieurs reprises.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "La récupération automatique a été suspendue. Le rechargement ramène cette fenêtre à l'écran d'accueil ; des tâches peuvent encore s'exécuter en arrière-plan.",
     "Save file": "Enregistrer le fichier",
@@ -135,6 +135,7 @@
     "More items": "Plus de sessions"
   },
   "renderer": {
+    "The Notebook environment needs attention. You can continue using other features.": "L’environnement Notebook nécessite votre attention. Vous pouvez continuer à utiliser les autres fonctionnalités.",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Collections publiques, jeux de données, versions et liens de téléchargement de fichiers de CELLxGENE Discover.",
     "Search public CELLxGENE Discover collections.": "Rechercher des collections publiques de CELLxGENE Discover.",
     "Retrieve collection metadata and a page of datasets.": "Récupérer les métadonnées d’une collection et une page de jeux de données.",
@@ -7017,6 +7018,13 @@
     "Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.": "Préparation annulée. Les téléchargements vérifiés sont conservés. Réessayez la configuration ou supprimez la protection pour revenir à l’exécution standard.",
     "Could not download {{component}}. Check your connection and try again.": "Impossible de télécharger {{component}}. Vérifiez votre connexion et réessayez.",
     "Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.": "Impossible de préparer {{component}}. Réessayez la configuration ou supprimez la protection pour revenir à l’exécution standard.",
-    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "Les composants manquants peuvent nécessiter jusqu’à {{size}} de téléchargement. Les composants vérifiés sont réutilisés entre les conversations et après les mises à jour de l’application."
+    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "Les composants manquants peuvent nécessiter jusqu’à {{size}} de téléchargement. Les composants vérifiés sont réutilisés entre les conversations et après les mises à jour de l’application.",
+    "Help": "Aide",
+    "Application menu": "Menu de l’application",
+    "Redo": "Rétablir",
+    "Cut": "Couper",
+    "Paste": "Coller",
+    "Full screen": "Plein écran",
+    "Documentation": "Documentation"
   }
 }

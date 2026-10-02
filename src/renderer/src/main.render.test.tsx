@@ -22,7 +22,11 @@ vi.mock('@/lib/locale-preference', () => ({
   applyHtmlLang: vi.fn(),
   resolveInitialLocale: () => 'en'
 }))
-vi.mock('@/lib/theme', () => ({ applyTheme: vi.fn(), resolveInitialTheme: () => 'light' }))
+vi.mock('@/lib/theme', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/theme')>()),
+  applyTheme: vi.fn(),
+  resolveInitialTheme: () => 'light'
+}))
 vi.mock('@/stores/network-store', () => ({ startNetworkMonitor: vi.fn() }))
 vi.mock('./renderer-diagnostics', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./renderer-diagnostics')>()),

@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "¿Descartar los cambios no guardados?",
     "Export Session package": "Exportar paquete de sesión",
     "Import Session package": "Importar paquete de sesión",
-    "Wait for all Session activity and pending approvals to finish before forking.": "Espere a que terminen todas las actividades de la sesión y las aprobaciones pendientes antes de bifurcar."
+    "Wait for all Session activity and pending approvals to finish before forking.": "Espere a que terminen todas las actividades de la sesión y las aprobaciones pendientes antes de bifurcar.",
+    "Close window": "Cerrar ventana"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Las credenciales del sistema Linux requieren el backend Secret Service o KWallet seleccionado originalmente y /usr/bin/busctl. Desbloquee el llavero o la cartera predeterminados originales y reinicie. No cambie el backend password-store ni el perfil para omitir esta comprobación.",
@@ -85,7 +86,6 @@
     "Move in progress": "Traslado en curso",
     "Open-Science is still moving your data.": "Open-Science sigue trasladando sus datos.",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "Sus datos están seguros en cualquier caso, pero salir ahora dejará el traslado sin terminar; quizá tenga que iniciarlo de nuevo. Mantenga la aplicación abierta hasta que finalice.",
-    "Close window": "Cerrar ventana",
     "The app window stopped responding repeatedly.": "La ventana de la aplicación dejó de responder repetidamente.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "La recuperación automática está en pausa. Al volver a cargar, esta ventana regresará a la pantalla de inicio; es posible que aún haya trabajo en ejecución en segundo plano.",
     "Save file": "Guardar archivo",
@@ -135,6 +135,7 @@
     "More items": "Más sesiones"
   },
   "renderer": {
+    "The Notebook environment needs attention. You can continue using other features.": "El entorno de Notebook requiere atención. Puede seguir utilizando las demás funciones.",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Colecciones públicas, conjuntos de datos, versiones y enlaces de descarga de archivos de CELLxGENE Discover.",
     "Search public CELLxGENE Discover collections.": "Buscar colecciones públicas de CELLxGENE Discover.",
     "Retrieve collection metadata and a page of datasets.": "Obtener los metadatos de una colección y una página de conjuntos de datos.",
@@ -7017,6 +7018,13 @@
     "Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.": "Preparación cancelada. Se conservan las descargas verificadas. Vuelva a intentar la configuración o quite la protección para volver a la ejecución estándar.",
     "Could not download {{component}}. Check your connection and try again.": "No se pudo descargar {{component}}. Compruebe la conexión e inténtelo de nuevo.",
     "Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.": "No se pudo preparar {{component}}. Vuelva a intentar la configuración o quite la protección para volver a la ejecución estándar.",
-    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "Los componentes que faltan pueden requerir una descarga de hasta {{size}}. Los componentes verificados se reutilizan entre conversaciones y después de actualizar la aplicación."
+    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "Los componentes que faltan pueden requerir una descarga de hasta {{size}}. Los componentes verificados se reutilizan entre conversaciones y después de actualizar la aplicación.",
+    "Help": "Ayuda",
+    "Application menu": "Menú de la aplicación",
+    "Redo": "Rehacer",
+    "Cut": "Cortar",
+    "Paste": "Pegar",
+    "Full screen": "Pantalla completa",
+    "Documentation": "Documentación"
   }
 }
