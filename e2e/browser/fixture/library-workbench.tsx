@@ -1,4 +1,5 @@
 import '@/assets/main.css'
+import { WorkspaceToolSummaryCard } from '@/pages/workspace/WorkspaceToolSummaryCard'
 import { WorkspaceLiteratureToolCard } from '@/pages/workspace/WorkspaceLiteratureToolCard'
 import { buildLiteratureLibraryToolSummary } from '@/pages/workspace/literature-tool-presentation'
 import {
@@ -225,6 +226,67 @@ export function Fixture(): React.JSX.Element {
   })
   const [added, setAdded] = useState('')
   const [active, setActive] = useState(true)
+  if (params.has('density')) {
+    return (
+      <main className="mx-auto max-w-2xl space-y-3 bg-bg-10 p-4">
+        <div className="space-y-2 rounded-xl bg-bg-100 p-2" data-testid="reading-stack">
+          {[0, 1, 2].map((index) => (
+            <WorkspaceLiteratureToolCard
+              key={index}
+              summary={{ action: 'read', documentNames: [], documentCount: 1 }}
+            />
+          ))}
+        </div>
+        <WorkspaceLiteratureToolCard
+          summary={{
+            action: 'read',
+            documentNames: ['long-reference-name-for-a-randomized-controlled-trial.pdf'],
+            documentCount: 1,
+            pageStart: 10,
+            pageEnd: 12,
+            passageCount: 3,
+            retrievalMode: 'bm25',
+            query: 'Primary outcome and limitations of the study',
+            pdfElements: {
+              incomplete: true,
+              caption: 'Evidence requires checking the original PDF.'
+            }
+          }}
+        />
+        <WorkspaceLiteratureToolCard
+          summary={{
+            action: 'save',
+            libraryScope: 'project',
+            documentNames: [],
+            documentCount: 0,
+            savedCount: 4
+          }}
+        />
+        <WorkspaceLiteratureToolCard
+          isApproval
+          summary={{
+            action: 'format',
+            libraryScope: 'items',
+            documentNames: [],
+            documentCount: 0,
+            itemCount: 12,
+            styleId: 'apa',
+            locale: 'en-US',
+            error: 'Fixture error: reference metadata is incomplete.'
+          }}
+        />
+        <WorkspaceToolSummaryCard
+          summary={{
+            title: 'Notebook runtime',
+            subtitle: 'Python',
+            fields: [{ label: 'Runtime', value: '/example/runtime/python', expandable: true }],
+            rows: [{ title: 'Analysis', status: 'Completed', detail: 'Output is available.' }],
+            note: 'Existing variables and history remain available.'
+          }}
+        />
+      </main>
+    )
+  }
   return (
     <LibraryReferenceActionsContext.Provider
       value={{

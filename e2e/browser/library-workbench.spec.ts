@@ -311,3 +311,43 @@ test('Inbox batch icon reveals checkboxes and accepts only selected candidates',
   await page.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(inbox.getByRole('checkbox')).toHaveCount(0)
 })
+
+for (const width of [320, 375, 414, 768]) {
+  for (const dark of [false, true]) {
+    test(`Message tool cards stay compact at ${width}px in ${dark ? 'dark' : 'light'} mode`, async ({
+      page
+    }, testInfo) => {
+      await page.setViewportSize({ width, height: 1100 })
+      await page.goto(
+        `/library-workbench.html?density&${dark ? 'dark&' : ''}${width === 375 ? 'zh' : ''}`
+      )
+      const cards = page.getByTestId('literature-tool-card')
+      await expect(cards).toHaveCount(6)
+      const stack = page.getByTestId('reading-stack')
+      const bounds = await stack.boundingBox()
+      // Three minimal reading cards should leave room for the answer, including on narrow panels.
+      expect(bounds!.height).toBeLessThan(270)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true
+      )
+      expect(
+        await cards.evaluateAll((elements) =>
+          elements.every((element) => element.scrollWidth <= element.clientWidth)
+        )
+      ).toBe(true)
+      await expect(cards.nth(3).getByText(/long-reference-name/)).toBeVisible()
+      await expect(cards.nth(3).getByText(/Evidence requires/)).toBeVisible()
+      const openInbox = cards.nth(4).getByRole('button')
+      await openInbox.focus()
+      await expect(openInbox).toBeFocused()
+      const path = page.getByTestId('tool-summary-card').locator('summary')
+      await path.focus()
+      await page.keyboard.press('Enter')
+      await expect(page.getByText('/example/runtime/python', { exact: true })).toBeVisible()
+      await page.screenshot({
+        path: testInfo.outputPath(`message-cards-${width}-${dark ? 'dark' : 'light'}.png`),
+        fullPage: true
+      })
+    })
+  }
+}

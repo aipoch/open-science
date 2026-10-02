@@ -661,6 +661,13 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 ### Activity Stream
 
+- Message tool cards use compact, flat surfaces: `rounded-lg border border-border-200 bg-bg-000`,
+  10px horizontal insets, 8px section gaps, and 28px icon tiles with 16px glyphs. Literature cards
+  use 10px padding; structured Notebook/Artifact summaries use 8px vertical section padding.
+  Keep document counts in the header metadata row instead of a separate footer. Use 13px
+  medium-weight titles, readable metadata, wrapping badges and small action buttons;
+  preserve all sources, warnings, approval details and existing disclosures.
+
 - Notebook tool details use compact summary cards for runtime discovery, runtime binding/switching, restart,
   and state inspection; Artifact writes show file name, type and size without loading file bytes.
   Keep the existing tool-row disclosure and put raw Notebook input/output behind collapsed detail
