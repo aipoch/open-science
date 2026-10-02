@@ -136,6 +136,9 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Связи заболеваний и генов с фенотипами и источники доказательств через Monarch Initiative.",
+    "Retrieve disease–phenotype associations with evidence sources and relation types.": "Получить связи заболеваний с фенотипами, источники доказательств и типы отношений.",
+    "Retrieve gene–phenotype associations with evidence sources and relation types.": "Получить связи генов с фенотипами, источники доказательств и типы отношений.",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Общедоступные коллекции, наборы данных, версии и ссылки на скачивание файлов из CELLxGENE Discover.",
     "Search public CELLxGENE Discover collections.": "Поиск общедоступных коллекций CELLxGENE Discover.",
     "Retrieve collection metadata and a page of datasets.": "Получение метаданных коллекции и одной страницы наборов данных.",

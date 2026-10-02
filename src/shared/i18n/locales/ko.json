@@ -133,6 +133,9 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Monarch Initiative를 통한 질병 및 유전자와 표현형의 연관성과 근거 출처.",
+    "Retrieve disease–phenotype associations with evidence sources and relation types.": "질병과 표현형의 연관성, 근거 출처 및 관계 유형을 조회합니다.",
+    "Retrieve gene–phenotype associations with evidence sources and relation types.": "유전자와 표현형의 연관성, 근거 출처 및 관계 유형을 조회합니다.",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "CELLxGENE Discover의 공개 컬렉션, 데이터셋, 버전 및 파일 다운로드 링크입니다.",
     "Search public CELLxGENE Discover collections.": "CELLxGENE Discover 공개 컬렉션을 검색합니다.",
     "Retrieve collection metadata and a page of datasets.": "컬렉션 메타데이터와 데이터셋 한 페이지를 가져옵니다.",

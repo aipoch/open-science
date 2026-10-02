@@ -133,6 +133,9 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Monarch Initiative による疾患・遺伝子と表現型の関連およびエビデンスの出典。",
+    "Retrieve disease–phenotype associations with evidence sources and relation types.": "疾患と表現型の関連を、エビデンスの出典と関係の種類とともに取得します。",
+    "Retrieve gene–phenotype associations with evidence sources and relation types.": "遺伝子と表現型の関連を、エビデンスの出典と関係の種類とともに取得します。",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "CELLxGENE Discover の公開コレクション、データセット、バージョン、ファイルのダウンロードリンク。",
     "Search public CELLxGENE Discover collections.": "CELLxGENE Discover の公開コレクションを検索します。",
     "Retrieve collection metadata and a page of datasets.": "コレクションのメタデータとデータセットを1ページ取得します。",

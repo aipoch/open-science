@@ -134,6 +134,9 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
+    "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Krankheits- und Gen-Phänotyp-Assoziationen mit Evidenzquellen über Monarch Initiative.",
+    "Retrieve disease–phenotype associations with evidence sources and relation types.": "Krankheits-Phänotyp-Assoziationen mit Evidenzquellen und Beziehungstypen abrufen.",
+    "Retrieve gene–phenotype associations with evidence sources and relation types.": "Gen-Phänotyp-Assoziationen mit Evidenzquellen und Beziehungstypen abrufen.",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "Öffentliche Sammlungen, Datensätze, Versionen und Datei-Downloadlinks von CELLxGENE Discover.",
     "Search public CELLxGENE Discover collections.": "Öffentliche Sammlungen in CELLxGENE Discover suchen.",
     "Retrieve collection metadata and a page of datasets.": "Sammlungsmetadaten und eine Seite mit Datensätzen abrufen.",

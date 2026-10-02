@@ -20,6 +20,19 @@ export type ConnectorMeta = {
 // Static connector metadata for the settings UI (tool lists come from the registry).
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
+    id: 'monarch',
+    displayName: 'Monarch Initiative',
+    aliases: ['Monarch', 'phenotype evidence', 'disease phenotype associations'],
+    description:
+      'Disease and gene phenotype associations with evidence sources via Monarch Initiative.',
+    useWhen:
+      'Use to query disease–phenotype or gene–phenotype associations for Monarch canonical CURIEs and inspect relation types, evidence codes, publications, provenance, negation and qualifiers. Source database IDs and aliases are not automatically converted; a zero total means no match for the supplied identifier and filters, not absence of phenotype evidence. Direct identifier matching is the default, not a claim of experimental evidence; inspect knowledge_level and agent_type. Resolve ontology terms with OLS in Genes & Ontologies and use Alliance for model-organism gene summaries, orthology and annotations. This read-only public API requires no authentication.',
+    sources: ['Monarch Initiative'],
+    termsUrl: 'https://monarch-app.monarchinitiative.org/Licensing/',
+    requiresNcbi: false,
+    group: 'directory'
+  },
+  {
     id: 'alliance',
     displayName: 'Alliance Genome Resources',
     aliases: ['Alliance', 'AGR', 'model organism genes', 'model organism genomics'],

@@ -5,6 +5,11 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'monarch') {
+    return t(
+      'Disease and gene phenotype associations with evidence sources via Monarch Initiative.'
+    )
+  }
   if (connector.id === 'cellxgene-discover') {
     return t(
       'Public collections, datasets, versions and file download links from CELLxGENE Discover.'
@@ -53,6 +58,10 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'monarch/monarch_get_disease_phenotypes':
+      return t('Retrieve disease–phenotype associations with evidence sources and relation types.')
+    case 'monarch/monarch_get_gene_phenotypes':
+      return t('Retrieve gene–phenotype associations with evidence sources and relation types.')
     case 'cellxgene-discover/list_collections':
       return t('Search public CELLxGENE Discover collections.')
     case 'cellxgene-discover/get_collection':

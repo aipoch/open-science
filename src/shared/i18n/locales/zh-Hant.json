@@ -133,6 +133,9 @@
     "More items": "更多會話"
   },
   "renderer": {
+    "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "透過 Monarch Initiative 查詢疾病和基因的表型關聯及證據來源。",
+    "Retrieve disease–phenotype associations with evidence sources and relation types.": "查詢疾病—表型關聯及其證據來源和關係類型。",
+    "Retrieve gene–phenotype associations with evidence sources and relation types.": "查詢基因—表型關聯及其證據來源和關係類型。",
     "Public collections, datasets, versions and file download links from CELLxGENE Discover.": "來自 CELLxGENE Discover 的公開集合、資料集、版本與檔案下載連結。",
     "Search public CELLxGENE Discover collections.": "搜尋 CELLxGENE Discover 公開集合。",
     "Retrieve collection metadata and a page of datasets.": "取得集合中繼資料與一頁資料集。",
