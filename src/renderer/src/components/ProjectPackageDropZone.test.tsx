@@ -32,10 +32,17 @@ const drop = (target: Element, names: string[]): void => {
     }
   })
 }
-const mount = (canImport = true): ReturnType<typeof vi.fn> => {
+const mount = (canImport = true, canAttach = true): ReturnType<typeof vi.fn> => {
   const attach = vi.fn()
   render(
-    <ProjectPackageDropZone projectId="target" projectName="Research" canImport={canImport}>
+    <ProjectPackageDropZone
+      projectId="target"
+      projectName="Research"
+      canImport={canImport}
+      canAttach={canAttach}
+      onFiles={attach}
+      data-testid="workspace"
+    >
       <div data-testid="composer" onDrop={attach} />
     </ProjectPackageDropZone>
   )
@@ -48,10 +55,10 @@ it('routes a package dropped on the composer to the current Project, without att
   expect(attach).not.toHaveBeenCalled()
   await vi.waitFor(() => expect(importPackage).toHaveBeenCalledTimes(1))
 })
-it('leaves ordinary file drops to their attachment target', () => {
+it('stages ordinary file drops exactly once before nested targets', () => {
   const attach = mount()
   drop(screen.getByTestId('composer'), ['data.csv'])
-  expect(attach).toHaveBeenCalledOnce()
+  expect(attach).toHaveBeenCalledExactlyOnceWith([expect.objectContaining({ name: 'data.csv' })])
   expect(importPackage).not.toHaveBeenCalled()
 })
 it.each([
@@ -100,17 +107,18 @@ it('does not advertise desktop import in Web', () => {
   document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
   mount()
   fireEvent.dragEnter(screen.getByTestId('composer'), { dataTransfer: { types: ['Files'] } })
-  expect(screen.queryByRole('status')).toBeNull()
+  expect(screen.getByText('Drop files to attach')).toBeTruthy()
+  expect(screen.queryByText(/import a .science/)).toBeNull()
   drop(screen.getByTestId('composer'), ['study.science'])
   expect(importPackage).not.toHaveBeenCalled()
 })
-it('shows the destination only during a file drag and clears on drop', () => {
+it('uses neutral hover feedback when protected drag data has no filenames', () => {
   mount()
   const target = screen.getByTestId('composer')
   fireEvent.dragEnter(target, { dataTransfer: { types: ['text/plain'] } })
   expect(screen.queryByRole('status')).toBeNull()
   fireEvent.dragEnter(target, { dataTransfer: { types: ['Files'] } })
-  expect(screen.getByRole('status').textContent).toContain('“Research”')
+  expect(screen.getByText('Drop files to attach or import a .science package')).toBeTruthy()
   drop(target, ['data.csv'])
   expect(screen.queryByRole('status')).toBeNull()
 })
@@ -133,4 +141,76 @@ it('clears a nested attachment overlay when the Project captures its drop', asyn
   expect(composer.getAttribute('data-dragging')).toBe('false')
   expect(attach).not.toHaveBeenCalled()
   await vi.waitFor(() => expect(importPackage).toHaveBeenCalledOnce())
+})
+
+it.each(['data.csv', 'paper.pdf', 'image.png'])(
+  'accepts %s on conversation blank space',
+  (name) => {
+    const attach = mount()
+    drop(screen.getByTestId('workspace'), [name])
+    expect(attach).toHaveBeenCalledExactlyOnceWith([expect.objectContaining({ name })])
+    expect(importPackage).not.toHaveBeenCalled()
+  }
+)
+
+it('rejects ordinary files when attachments are unavailable while retaining package import', () => {
+  const attach = mount(true, false)
+  drop(screen.getByTestId('workspace'), ['data.csv'])
+  expect(attach).not.toHaveBeenCalled()
+  expect(screen.getByRole('status').textContent).toContain('Files cannot be attached right now.')
+  drop(screen.getByTestId('workspace'), ['research.science'])
+  expect(importPackage).toHaveBeenCalledOnce()
+  expect(screen.queryByRole('status')).toBeNull()
+})
+
+it('prevents native navigation on an unavailable drop without claiming an accepted action', () => {
+  const attach = mount(false, false)
+  const target = screen.getByTestId('workspace')
+  const dataTransfer = { types: ['Files'], files: [new File([''], 'data.csv')], dropEffect: 'copy' }
+  fireEvent.dragOver(target, { dataTransfer })
+  expect(dataTransfer.dropEffect).toBe('none')
+  expect(screen.queryByText('Drop files to attach')).toBeNull()
+  expect(fireEvent.drop(target, { dataTransfer })).toBe(false)
+  expect(attach).not.toHaveBeenCalled()
+})
+
+it.each(['blur', 'dragend', 'drop'])('clears the overlay on window %s', (type) => {
+  mount()
+  fireEvent.dragEnter(screen.getByTestId('workspace'), { dataTransfer: { types: ['Files'] } })
+  expect(screen.getByText('Drop files to attach or import a .science package')).toBeTruthy()
+  fireEvent(type === 'blur' ? window : document, new Event(type, { bubbles: true }))
+  expect(screen.queryByText('Drop files to attach or import a .science package')).toBeNull()
+})
+
+it('keeps the overlay across children and clears when leaving the conversation', () => {
+  mount()
+  const dataTransfer = { types: ['Files'] }
+  const workspace = screen.getByTestId('workspace')
+  const composer = screen.getByTestId('composer')
+  fireEvent.dragEnter(workspace, { dataTransfer })
+  fireEvent.dragEnter(composer, { dataTransfer })
+  fireEvent.dragLeave(composer, { dataTransfer })
+  expect(screen.getByText('Drop files to attach or import a .science package')).toBeTruthy()
+  fireEvent.dragLeave(workspace, { dataTransfer })
+  expect(screen.queryByText('Drop files to attach or import a .science package')).toBeNull()
+})
+
+it('ignores ordinary file drags and drops in portal dialogs', () => {
+  const attach = vi.fn()
+  render(
+    <ProjectPackageDropZone
+      projectId="target"
+      projectName="Research"
+      canImport
+      canAttach
+      onFiles={attach}
+    >
+      {createPortal(<div data-testid="portal" />, document.body)}
+    </ProjectPackageDropZone>
+  )
+  const portal = screen.getByTestId('portal')
+  fireEvent.dragEnter(portal, { dataTransfer: { types: ['Files'] } })
+  expect(screen.queryByText('Drop files to attach or import a .science package')).toBeNull()
+  drop(portal, ['data.csv'])
+  expect(attach).not.toHaveBeenCalled()
 })

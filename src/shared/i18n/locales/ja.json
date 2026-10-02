@@ -5684,7 +5684,6 @@
     "read-only history": "読み取り専用の履歴を読む",
     "continue research": "研究を続ける",
     "Choose a .science file": ".science ファイルを選択",
-    "Drop files": "ファイルをドロップ",
     "Models": "モデル",
     "Model source": "モデルの提供元",
     "Local parsing models": "ローカル解析モデル",
@@ -6807,6 +6806,8 @@
     "Full screen": "全画面表示",
     "Documentation": "ドキュメント",
     "Load earlier messages": "以前のメッセージを読み込む",
-    "Return to current step": "現在のステップに戻る"
+    "Return to current step": "現在のステップに戻る",
+    "Drop files to attach or import a .science package": "ファイルをドロップして添付するか、.science パッケージをインポート",
+    "Files cannot be attached right now.": "現在ファイルを添付できません。"
   }
 }

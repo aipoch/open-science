@@ -5684,7 +5684,6 @@
     "read-only history": "读取只读历史记录",
     "continue research": "继续研究",
     "Choose a .science file": "选择 .science 文件",
-    "Drop files": "拖入文件",
     "Models": "模型",
     "Model source": "模型来源",
     "Local parsing models": "本地解析模型",
@@ -6807,6 +6806,8 @@
     "Full screen": "全屏",
     "Documentation": "文档",
     "Load earlier messages": "加载更早的消息",
-    "Return to current step": "回到当前步骤"
+    "Return to current step": "回到当前步骤",
+    "Drop files to attach or import a .science package": "拖放文件以添加附件，或导入 .science 研究包",
+    "Files cannot be attached right now.": "当前无法添加附件。"
   }
 }

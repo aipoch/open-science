@@ -5682,7 +5682,6 @@
     "read-only history": "읽기 전용 기록 읽기",
     "continue research": "연구 계속하기",
     "Choose a .science file": ".science 파일 선택",
-    "Drop files": "파일 놓기",
     "Models": "모델",
     "Model source": "모델 출처",
     "Local parsing models": "로컬 분석 모델",
@@ -6805,6 +6804,8 @@
     "Full screen": "전체 화면",
     "Documentation": "문서",
     "Load earlier messages": "이전 메시지 불러오기",
-    "Return to current step": "현재 단계로 돌아가기"
+    "Return to current step": "현재 단계로 돌아가기",
+    "Drop files to attach or import a .science package": "파일을 놓아 첨부하거나 .science 패키지 가져오기",
+    "Files cannot be attached right now.": "지금은 파일을 첨부할 수 없습니다."
   }
 }

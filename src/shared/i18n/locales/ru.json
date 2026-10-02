@@ -6133,7 +6133,6 @@
     "read-only history": "прочитать историю только для чтения",
     "continue research": "продолжить исследование",
     "Choose a .science file": "Выбрать файл .science",
-    "Drop files": "Перетащите файлы",
     "Models": "Модели",
     "Model source": "Источник модели",
     "Local parsing models": "Локальные модели разбора",
@@ -7274,6 +7273,8 @@
     "Full screen": "Полный экран",
     "Documentation": "Документация",
     "Load earlier messages": "Загрузить предыдущие сообщения",
-    "Return to current step": "Вернуться к текущему шагу"
+    "Return to current step": "Вернуться к текущему шагу",
+    "Drop files to attach or import a .science package": "Перетащите файлы для прикрепления или пакет .science для импорта",
+    "Files cannot be attached right now.": "Сейчас невозможно прикрепить файлы."
   }
 }

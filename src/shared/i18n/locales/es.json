@@ -6000,7 +6000,6 @@
     "read-only history": "leer el historial de solo lectura",
     "continue research": "continuar la investigación",
     "Choose a .science file": "Elegir un archivo .science",
-    "Drop files": "Arrastrar archivos",
     "Models": "Modelos",
     "Model source": "Fuente del modelo",
     "Local parsing models": "Modelos de análisis locales",
@@ -7135,6 +7134,8 @@
     "Full screen": "Pantalla completa",
     "Documentation": "Documentación",
     "Load earlier messages": "Cargar mensajes anteriores",
-    "Return to current step": "Volver al paso actual"
+    "Return to current step": "Volver al paso actual",
+    "Drop files to attach or import a .science package": "Soltar archivos para adjuntarlos o un paquete .science para importarlo",
+    "Files cannot be attached right now.": "No se pueden adjuntar archivos en este momento."
   }
 }

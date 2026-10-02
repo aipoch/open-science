@@ -5838,7 +5838,6 @@
     "read-only history": "schreibgeschützten Verlauf lesen",
     "continue research": "Forschung fortsetzen",
     "Choose a .science file": "Eine .science-Datei auswählen",
-    "Drop files": "Dateien ablegen",
     "Models": "Modelle",
     "Model source": "Modellquelle",
     "Local parsing models": "Lokale Analysemodelle",
@@ -6967,6 +6966,8 @@
     "Full screen": "Vollbild",
     "Documentation": "Dokumentation",
     "Load earlier messages": "Frühere Nachrichten laden",
-    "Return to current step": "Zum aktuellen Schritt zurückkehren"
+    "Return to current step": "Zum aktuellen Schritt zurückkehren",
+    "Drop files to attach or import a .science package": "Dateien zum Anhängen oder ein .science-Paket zum Importieren ablegen",
+    "Files cannot be attached right now.": "Dateien können derzeit nicht angehängt werden."
   }
 }
