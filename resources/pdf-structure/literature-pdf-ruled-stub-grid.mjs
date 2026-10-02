@@ -1,12 +1,21 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { clusterTableRulePositions, classifyTableRuleEdge } from './literature-pdf-table-rules.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
-import { tableSourceItems } from './literature-pdf-source-records.mjs'
+import {
+  tableSourceItems,
+  readSourceRow,
+  groupSourceRowsWithScripts,
+  hasUniqueRecordTokens,
+  recoverRuledHeaderBands
+} from './literature-pdf-source-records.mjs'
+import { union } from './literature-pdf-table-geometry.mjs'
 
 // A closed two-tier header supplies its own columns, including parent spans.
 // Reuse the same face traversal as ruled stubs; require individually enclosed
 // numeric body cells before overriding a detector's extra or missing column.
 export function recoverRuledHeaderGrid(table, items, captions, rules) {
+  const underlined = recoverUnboxedUnderlinedGrid(table, items, captions, rules)
+  if (underlined) return underlined
   const samples = recoverClosedSampleGrid(table, items, captions, rules)
   if (samples) return samples
   const cohort = recoverClosedCohortGrid(table, items, captions, rules)
@@ -684,5 +693,102 @@ function recoverClosedSampleGrid(table, items, captions, rules) {
     spans: grid.cells.filter((c) => c.rowSpan > 1),
     completeSpans: true,
     ownedTokens: new Set(source)
+  }
+}
+
+// Independent parent underlines can describe a complete header without a full
+// divider. Complete native leaf bands and source-disjoint numeric records
+// corroborate their topology; a partial title alone cannot override the model.
+function recoverUnboxedUnderlinedGrid(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const crop = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length < 9 || columns.length > 14) return
+  const source = tableSourceItems(items, crop)
+  if (!source.length) return
+  const heights = source.map((i) => i.height).sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  const parents = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] > crop[1] &&
+        r[1] < crop[1] + height * 5 &&
+        r[0] >= crop[0] &&
+        r[2] <= crop[2] &&
+        r[2] - r[0] > height * 6 &&
+        r[2] - r[0] < (crop[2] - crop[0]) * 0.5
+    )
+    .sort((a, b) => a[0] - b[0])
+  if (
+    parents.length < 2 ||
+    parents.some(
+      (r, n) => Math.abs(r[1] - parents[0][1]) > height * 0.1 || (n && r[0] < parents[n - 1][2])
+    )
+  )
+    return
+  const split = parents[0][1]
+  const cuts = [
+    crop[0],
+    ...columns.slice(1).map((c, n) => crop[0] + (columns[n].rect[2] + c.rect[0]) / 2),
+    crop[2]
+  ]
+  const lower = groupSourceRowsWithScripts(
+    source.filter((i) => i.rect[1] > split),
+    height,
+    0.35
+  )
+  if (!lower) return
+  const leaf = lower.find((g) => {
+    const values = readSourceRow(g, cuts)
+    return (
+      values &&
+      values.slice(1).every(Boolean) &&
+      values.slice(1).filter((v) => /\p{L}/u.test(v)).length >= (columns.length - 1) / 2
+    )
+  })
+  if (!leaf || union(leaf)[3] - split > height * 3) return
+  const leafBottom = union(leaf)[3]
+  const body = lower.filter((g) => union(g)[1] > leafBottom)
+  if (body.length < 4) return
+  let records = 0
+  const sections = []
+  for (const g of body) {
+    const values = readSourceRow(g, cuts)
+    if (!values || !/\p{L}/u.test(values[0])) return
+    if (values.slice(1).every((v) => !v)) sections.push(g)
+    else if (values.slice(1).every((v) => /\d/.test(v) && !/\p{L}/u.test(v.replace(/to/g, ''))))
+      records++
+    else return
+  }
+  if (records < 4) return
+  const header = source.filter((i) => i.rect[3] <= leafBottom)
+  if (!hasUniqueRecordTokens(source, [header, ...body])) return
+  const bounds = body.map(union)
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  const headerBottom = (leafBottom + bounds[0][1]) / 2
+  const bands = recoverRuledHeaderBands(header, cuts, parents, crop[1], headerBottom)
+  if (
+    bands?.rows.length !== 2 ||
+    bands.spans.filter((s) => s.colSpan >= 2).length !== parents.length
+  )
+    return
+  const ys = [headerBottom, ...bounds.slice(1).map((r, n) => (bounds[n][3] + r[1]) / 2), crop[3]]
+  return {
+    rows: [...bands.rows, ...body.map((_, n) => [crop[0], ys[n], crop[2], ys[n + 1]])],
+    columns: cuts.slice(1).map((x, n) => [cuts[n], crop[1], x, crop[3]]),
+    headerRows: [0, 1],
+    spans: [
+      ...bands.spans,
+      ...sections.map((g) => ({
+        row: 2 + body.indexOf(g),
+        column: 0,
+        rowSpan: 1,
+        colSpan: columns.length
+      }))
+    ],
+    completeSpans: true
   }
 }

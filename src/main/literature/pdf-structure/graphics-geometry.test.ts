@@ -592,3 +592,186 @@ it.each([1, 1.5, 3])('recognizes filled rules with short mitered ends at scale %
   expect(rule[1]).toBe(rule[3])
   expect(input).toEqual(original)
 })
+type Rect = [number, number, number, number]
+type Operators = { fnArray: number[]; argsArray: unknown[][] }
+const stroke = (path = [0, 20, 40, 1, 120, 40]): unknown[] => [
+  OPS.stroke,
+  [new Float32Array(path)],
+  [20, 40, 120, 40]
+]
+const collect = (
+  args: unknown[][],
+  fnArray: number[],
+  transform = [1.5, 0, 0, -1.5, 0, 150]
+): { rules: Rect[]; paint: Map<string, Rect>; operators: Operators } => {
+  const operators = { fnArray, argsArray: args }
+  const paint = new Map<string, Rect>()
+  const rules = collectTableRules(operators, { transform }, paint)
+  expect(rules).toEqual(collectTableRules(operators, { transform }))
+  return { rules, paint, operators }
+}
+
+it('retains exact rule centers and separately proves transformed native stroke thickness', () => {
+  const { rules, paint } = collect([[0.8], stroke()], [OPS.setLineWidth, OPS.constructPath])
+  expect(rules).toEqual([[30, 90, 180, 90]])
+  expect(paint.get(rules[0].join(','))).toEqual([30, 89.4, 180, 90.6])
+})
+
+it.each([0, 1, 2])('proves native cap %s without assuming a butt cap', (cap) => {
+  const { rules, paint } = collect(
+    [[2], [cap], stroke()],
+    [OPS.setLineWidth, OPS.setLineCap, OPS.constructPath]
+  )
+  const end = cap === 0 ? 0 : 1.5
+  expect(paint.get(rules[0].join(','))).toEqual([30 - end, 88.5, 180 + end, 91.5])
+})
+
+it('restores line width, cap and transform together across native save/restore', () => {
+  const { rules, paint } = collect(
+    [[2], [2], [], [8], [1], [1, 0, 0, 1, 10, 0], [], stroke()],
+    [
+      OPS.setLineWidth,
+      OPS.setLineCap,
+      OPS.save,
+      OPS.setLineWidth,
+      OPS.setLineCap,
+      OPS.transform,
+      OPS.restore,
+      OPS.constructPath
+    ]
+  )
+  expect(paint.get(rules[0].join(','))).toEqual([28.5, 88.5, 181.5, 91.5])
+})
+
+it('proves default width and rotated axis strokes with nonuniform scale', () => {
+  const { rules, paint } = collect([stroke()], [OPS.constructPath], [0, 2, -3, 0, 200, 0])
+  expect(rules).toEqual([[80, 40, 80, 240]])
+  expect(paint.get(rules[0].join(','))).toEqual([78.5, 40, 81.5, 240])
+})
+
+it('retains separate painted segments in compound rules and a connected polyline', () => {
+  for (const path of [
+    [0, 20, 40, 1, 120, 40, 0, 20, 60, 1, 120, 60],
+    [0, 20, 40, 1, 60, 40, 1, 120, 40]
+  ]) {
+    const { rules, paint } = collect([stroke(path)], [OPS.constructPath])
+    expect(paint.size).toBe(2)
+    for (const r of rules)
+      expect(paint.get(r.join(','))).toEqual([r[0], r[1] - 0.75, r[2], r[3] + 0.75])
+  }
+})
+
+it('preserves actual painted filled edges while retaining the same collapsed rule', () => {
+  const path = [0, 20, 40, 1, 120, 40, 1, 120, 40.5, 1, 20, 40.5, 4]
+  const { rules, paint } = collect(
+    [[OPS.fill, [new Float32Array(path)], [20, 40, 120, 40.5]]],
+    [OPS.constructPath]
+  )
+  expect(rules).toEqual([[30, 89.625, 180, 89.625]])
+  expect(paint.get(rules[0].join(','))).toEqual([30, 89.25, 180, 90])
+})
+
+it.each([NaN, Infinity, -1, 0])(
+  'declines unproved native width %s without changing rules',
+  (width) => {
+    const { rules, paint } = collect([[width], stroke()], [OPS.setLineWidth, OPS.constructPath])
+    expect(rules).toHaveLength(1)
+    expect(paint.size).toBe(0)
+  }
+)
+
+it('declines shear, unknown caps and fill-stroke joins without inventing paint extents', () => {
+  expect(collect([stroke()], [OPS.constructPath], [1, 0, 0.5, 1, 0, 0]).paint.size).toBe(0)
+  expect(collect([[9], stroke()], [OPS.setLineCap, OPS.constructPath]).paint.size).toBe(0)
+  const path = [0, 20, 40, 1, 120, 40, 1, 120, 40.5, 1, 20, 40.5, 4]
+  expect(
+    collect([[OPS.fillStroke, [new Float32Array(path)], [20, 40, 120, 40.5]]], [OPS.constructPath])
+      .paint.size
+  ).toBe(0)
+})
+
+it('unions distinct real paint widths on one center without losing either stroke', () => {
+  const { rules, paint } = collect(
+    [[2], stroke(), [4], stroke()],
+    [OPS.setLineWidth, OPS.constructPath, OPS.setLineWidth, OPS.constructPath]
+  )
+  expect(rules).toHaveLength(2)
+  expect(paint.size).toBe(1)
+  expect(paint.get(rules[0].join(','))).toEqual([30, 87, 180, 93])
+})
+
+it('keeps unknown width or cap unknown after nested native save and restore', () => {
+  for (const op of [OPS.setLineWidth, OPS.setLineCap]) {
+    const { paint } = collect(
+      [[undefined], [], [], [2], [], [], stroke()],
+      [op, OPS.save, OPS.save, op, OPS.restore, OPS.restore, OPS.constructPath]
+    )
+    expect(paint.size).toBe(0)
+  }
+})
+
+it('honors native extended line state and declines dashed or malformed state', () => {
+  const { rules, paint } = collect(
+    [
+      [
+        [
+          ['LW', 2],
+          ['LC', 2]
+        ]
+      ],
+      stroke()
+    ],
+    [OPS.setGState, OPS.constructPath]
+  )
+  expect(paint.get(rules[0].join(','))).toEqual([28.5, 88.5, 181.5, 91.5])
+  expect(
+    collect([[[['D', [[2, 2], 0]]]], stroke()], [OPS.setGState, OPS.constructPath]).paint.size
+  ).toBe(0)
+  expect(collect([[null], stroke()], [OPS.setGState, OPS.constructPath]).paint.size).toBe(0)
+  expect(collect([[[2, 2], 0], stroke()], [OPS.setDash, OPS.constructPath]).paint.size).toBe(0)
+})
+
+it('does not invent end caps at the interior point of one connected stroke', () => {
+  const { rules, paint } = collect(
+    [[2], [2], stroke([0, 20, 40, 1, 60, 40, 1, 120, 40])],
+    [OPS.setLineWidth, OPS.setLineCap, OPS.constructPath]
+  )
+  expect(paint.get(rules[0].join(','))).toEqual([28.5, 88.5, 90, 91.5])
+  expect(paint.get(rules[1].join(','))).toEqual([90, 88.5, 181.5, 91.5])
+})
+
+it('removes a repeated rule paint proof when another identical rule has unknown width', () => {
+  const { rules, paint } = collect(
+    [stroke(), [NaN], stroke()],
+    [OPS.constructPath, OPS.setLineWidth, OPS.constructPath]
+  )
+  expect(rules).toHaveLength(2)
+  expect(paint.size).toBe(0)
+})
+
+it('declines unproved actual stroke endpoints even when the legacy box is finite', () => {
+  for (const path of [
+    [0, NaN, 40, 1, 120, 40],
+    [0, 21, 40, 1, 120, 40]
+  ]) {
+    const { rules, paint } = collect([stroke(path)], [OPS.constructPath])
+    expect(rules).toEqual([[30, 90, 180, 90]])
+    expect(paint.size).toBe(0)
+  }
+})
+
+it('declines unknown clips and paint outside a known page without changing native rules', () => {
+  expect(collect([[], stroke()], [OPS.clip, OPS.constructPath]).paint.size).toBe(0)
+  const restored = collect(
+    [[], [], [], stroke()],
+    [OPS.save, OPS.clip, OPS.restore, OPS.constructPath]
+  )
+  expect(restored.paint.size).toBe(1)
+  const paint = new Map<string, Rect>(),
+    operators = { fnArray: [OPS.setLineWidth, OPS.constructPath], argsArray: [[200], stroke()] },
+    viewport = { transform: [1.5, 0, 0, -1.5, 0, 150], width: 200, height: 200 }
+  expect(collectTableRules(operators, viewport, paint)).toEqual(
+    collectTableRules(operators, viewport)
+  )
+  expect(paint.size).toBe(0)
+})

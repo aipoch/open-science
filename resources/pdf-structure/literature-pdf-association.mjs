@@ -3,10 +3,38 @@
 import assert from 'node:assert/strict'
 import {
   connectFigureGraphics,
-  enclosedFigureFrame
+  enclosedFigureFrame,
+  closedCaptionFigureFrame,
+  topCaptionedNativeFlow,
+  nativeFramedPanelArray,
+  collapsedNativeAxisLeft,
+  nativeClosedRuleFrames
 } from './literature-pdf-figure-connectivity.mjs'
-import { captionKind, groupPageLines } from './literature-pdf-caption-group.mjs'
+import {
+  captionKind,
+  groupPageLines,
+  groupNativeCaptionFragments
+} from './literature-pdf-caption-group.mjs'
 
+import {
+  nativeOwnedFigureLabels,
+  nativePanelTopHeading,
+  nativeOwnedFigureGlyphTails,
+  nativeTableDividerGraphic
+} from './literature-pdf-native-owned-figure-labels.mjs'
+import { nativeRasterCaptionColumn } from './literature-pdf-native-raster-column.mjs'
+import { nativeOpenAxisArray } from './literature-pdf-native-open-axis-array.mjs'
+import { nativeCompleteAxisFigure } from './literature-pdf-figure-complete-axis-ownership.mjs'
+import { nativeConnectedKeyedLegend } from './literature-pdf-figure-connected-keyed-legend.mjs'
+import {
+  nativeCaptionedPlotBand,
+  nativeDisjointPlotColumn,
+  nativeFigureRunningHead,
+  nativeAlignedNodeFigure,
+  nativeClosedCategoryLabels,
+  nativeTopParagraphTail
+} from './literature-pdf-figure-native-plot-bands.mjs'
+import { ownedRasterKeyBand, pairedVectorTopTitles } from './literature-pdf-native-panel-labels.mjs'
 import { union, area, intersection, lineRect } from './literature-pdf-page-geometry.mjs'
 import { associateTableNotes } from './literature-pdf-table-notes.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
@@ -46,7 +74,9 @@ export function deduplicateFigureCaptions(figures, auxiliaryOwners = []) {
   )
 }
 
-export function resolveFigureCaption(caption, candidates) {
+export function resolveFigureCaption(caption, candidates, pages = []) {
+  const hanging = resolveNativeHangingCaption(caption, candidates, pages)
+  if (hanging) return hanging
   // A sentence can continue on the next page even when extraction jobs split
   // there. Require both printed ownership markers and one matching fragment;
   // keep page-local rectangles rather than spanning unrelated page content.
@@ -146,6 +176,108 @@ export function resolveFigureCaption(caption, candidates) {
   return adjacent.length === 1 ? adjacent[0] : caption
 }
 
+// An unfinished page-end caption can own a short native paragraph before the
+// following plate. Preserve its mixed-font fragments without interpreting them.
+function resolveNativeHangingCaption(caption, candidates, pages) {
+  const page = pages.find((p) => p.pageNumber === caption?.page)
+  const next = pages.find((p) => p.pageNumber === caption?.page + 1)
+  if (
+    !page ||
+    !next ||
+    caption.regions ||
+    !caption.lines?.length ||
+    caption.rect[3] < page.height * 0.8 ||
+    !/\p{L}$/u.test(caption.lines.join(' ').trim())
+  )
+    return
+  const owned = page.lines.filter((line) => intersection(lineRect(line), caption.rect) > 0)
+  const font = owned
+    .filter((line) => line.fontSize > 0)
+    .sort((a, b) => b.text.length - a.text.length)[0]?.fontSize
+  const printedPageNumber = (line, owner) =>
+    /^\d+$/.test(line.text.trim()) &&
+    line.y > owner.height * 0.88 &&
+    Math.abs(line.x + line.width / 2 - owner.width / 2) < font
+  if (
+    !font ||
+    candidates.some(
+      (other) =>
+        other !== caption && other.page === caption.page && other.rect[1] >= caption.rect[1]
+    ) ||
+    page.lines.some((line) => line.y >= caption.rect[3] && !printedPageNumber(line, page))
+  )
+    return
+  const plates = next.graphicsBounds
+    .map((g) => g.normalizedRect.map((v, n) => v * (n % 2 ? next.height : next.width)))
+    .filter(
+      (rect) => rect[2] - rect[0] > next.width * 0.25 && rect[3] - rect[1] > next.height * 0.1
+    )
+  if (
+    !plates.length &&
+    (!page.graphicsBounds.some(
+      (g) =>
+        (g.normalizedRect[2] - g.normalizedRect[0]) * (g.normalizedRect[3] - g.normalizedRect[1]) >
+        0.05
+    ) ||
+      next.lines.some((line) => line.y >= next.height * 0.18 && !printedPageNumber(line, next)))
+  )
+    return
+  const limit = plates.length
+    ? Math.min(...plates.map((rect) => rect[1])) - font * 3
+    : next.height * 0.18
+  const fragments = next.lines.filter((line) => line.y < limit && !printedPageNumber(line, next))
+  if (
+    !fragments.length ||
+    fragments.some(
+      (line) =>
+        line.x < caption.rect[0] - font * 0.1 ||
+        line.x + line.width > caption.rect[2] + font ||
+        line.y < font * 3 ||
+        line.y + line.height > next.height * 0.18
+    )
+  )
+    return
+  const rows = groupNativeCaptionFragments(fragments, font)
+  if (
+    !rows ||
+    rows.length !== 2 ||
+    !/^\p{Ll}/u.test(rows[0].text.trim()) ||
+    Math.abs(rows[0].x - caption.rect[0]) > font * 0.1 ||
+    Math.abs(rows[1].x - caption.rect[0]) > font * 0.2 ||
+    rows[1].y - rows[0].bottom > font * 1.5 ||
+    !/\)\.$/.test(rows[1].text.trim()) ||
+    candidates.some(
+      (other) =>
+        other.page === next.pageNumber &&
+        intersection(other.rect, [rows[0].x, rows[0].y, rows[0].right, rows[1].bottom]) > 0
+    )
+  )
+    return
+  const text = [...caption.lines, ...rows.map((row) => row.text)].join(' ')
+  let balance = 0
+  for (const character of text) {
+    if (character === '(') balance++
+    if (character === ')' && --balance < 0) return
+  }
+  if (balance || new Set(rows.flatMap((row) => row.parts)).size !== fragments.length) return
+  return {
+    ...caption,
+    lines: [...caption.lines, ...rows.map((row) => row.text)],
+    regions: [
+      { page: caption.page, rect: caption.rect },
+      {
+        page: next.pageNumber,
+        rect: [
+          Math.min(...rows.map((row) => row.x)),
+          rows[0].y,
+          Math.max(...rows.map((row) => row.right)),
+          rows[1].bottom
+        ]
+      }
+    ]
+  }
+}
+
 // Nearby text may be the last/first line of body prose, not a chart label.
 // Require three aligned prose lines outside the graphic, extending beyond the
 // label search margin. Internal text and short/multiline chart titles stay intact.
@@ -205,7 +337,7 @@ const continuesExternalParagraph = (line, bounds, lines, minimumLineLength = 40)
     if (paragraph && continuesExternalParagraph(paragraph, bounds, lines, minimumLineLength))
       return true
   }
-  if ((!above && !below) || line.text.length < 20) return false
+  if ((!above && !below) || line.text.length < (above ? 3 : 20)) return false
   let current = line
   for (let step = 0; step < 2; step++) {
     const next = lines.find((other) => {
@@ -252,6 +384,74 @@ const boundByExternalParagraphs = (rect, bounds, lines) => {
 // paths, so the generic nearest-graphic matcher sees only disconnected strokes.
 // An explicit flowchart caption supplies enough evidence to join nearby boxes
 // and connectors into one crop.
+function associateConnectedFlowchart(page, captions, tableRects) {
+  const dy = page.height / 128
+  for (const caption of captions.filter(
+    (c) =>
+      captionKind(c.lines[0]) === 'figure' &&
+      /\b(?:flow\s*chart|flow diagram|CONSORT)\b/i.test(c.lines.join(' '))
+  )) {
+    // A marginal caption can sit beside the root rather than below the tree.
+    // Prove ownership using populated node frames and connected branches before
+    // the standalone-plate shortcut chooses the nearest individual box.
+    const nextCaption = Math.min(
+      page.height * 0.9,
+      ...captions.filter((c) => c !== caption && c.rect[1] > caption.rect[3]).map((c) => c.rect[1])
+    )
+    const paths = page.graphicsBounds
+      .filter((g) => g.kind === 'path')
+      .map((g) => ({
+        rect: g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
+      }))
+      .filter(
+        ({ rect: r }) =>
+          r[1] >= caption.rect[1] - dy &&
+          r[3] < nextCaption &&
+          area(r) > 0 &&
+          !tableRects.some((t) => intersection(t, r) > 0)
+      )
+    const nodes = paths.filter(
+      ({ rect: r }) =>
+        r[2] - r[0] > page.width * 0.1 &&
+        r[3] - r[1] > dy * 3 &&
+        r[3] - r[1] < page.height * 0.15 &&
+        (paths.filter(
+          ({ rect: p }) =>
+            area(p) < area(r) * 0.4 &&
+            p[2] - p[0] > dy &&
+            p[3] - p[1] > dy &&
+            intersection(r, p) / area(p) > 0.99
+        ).length >= 2 ||
+          page.lines.filter((l) => intersection(r, lineRect(l)) / area(lineRect(l)) > 0.99)
+            .length >= 2)
+    )
+    const roots = nodes.filter(
+      ({ rect: r }) =>
+        Math.abs(r[1] - caption.rect[1]) < dy &&
+        (r[0] >= caption.rect[2] || r[2] <= caption.rect[0])
+    )
+    if (roots.length !== 1 || nodes.length < 4) continue
+    const connected = [roots[0]],
+      pending = new Set(paths.filter((p) => p !== roots[0]))
+    connectFigureGraphics(connected, pending)
+    const ownedNodes = nodes.filter((n) => connected.includes(n))
+    const connectors = connected.filter(
+      ({ rect: r }) =>
+        Math.min(r[2] - r[0], r[3] - r[1]) < dy * 2 && Math.max(r[2] - r[0], r[3] - r[1]) > dy * 3
+    )
+    if (ownedNodes.length < 4 || connectors.length < ownedNodes.length - 1) continue
+    const rect = union(connected.map((p) => p.rect))
+    if (
+      captions.some((c) => c !== caption && intersection(c.rect, rect) > 0) ||
+      page.lines.some(
+        (l) => l.text.length > 80 && intersection(lineRect(l), rect) / area(lineRect(l)) > 0.5
+      )
+    )
+      continue
+    return [{ caption, rect, graphicsCount: connected.length }]
+  }
+}
+
 function associateFlowchart(page, captions, tableRects) {
   for (const caption of captions.filter(
     (candidate) =>
@@ -306,6 +506,21 @@ function associateFlowchart(page, captions, tableRects) {
       paths.push(...upstream)
     }
     const bounds = union(paths)
+    // Some diagrams paint the enclosing border in a raster, then overlay native
+    // node paths. The path-only shortcut cannot own that border; the general
+    // raster matcher below retains the original image and its adjacent labels.
+    if (
+      (page.graphicsBounds ?? []).some((g) => {
+        if (g.kind !== 'image' || area(g.normalizedRect) < 0.03) return false
+        const r = g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
+        return (
+          intersection(r, bounds) / area(bounds) > 0.95 &&
+          r[3] <= caption.rect[1] &&
+          !tableRects.some((t) => intersection(t, r) > 0)
+        )
+      })
+    )
+      continue
     // A marginal legend can lie beside the final nodes. The shortcut above
     // the legend must not crop away a connected continuation below it.
     if (
@@ -335,6 +550,25 @@ function associateFlowchart(page, captions, tableRects) {
         line.text.length < 80 && intersection(lineRect(line), bounds) / area(lineRect(line)) > 0.5
     )
     const rect = union([bounds, ...labels.map(lineRect)])
+    const definitions = page.lines.filter((line) => {
+      const keys = [...line.text.matchAll(/(?:^|[,;]\s*)([A-Z]{2,5}):\s+[^,;]+/g)]
+      return (
+        keys.length >= 2 &&
+        keys.every((match) => labels.some((l) => new RegExp(`\\b${match[1]}\\b`).test(l.text))) &&
+        line.fontSize > 0 &&
+        line.fontSize <= 8 &&
+        line.height <= line.fontSize * 1.2 &&
+        line.y >= rect[3] &&
+        line.y - rect[3] <= line.fontSize * 2 &&
+        line.y + line.height < caption.rect[1] - 2 &&
+        line.x >= rect[0] &&
+        line.x + line.width <= rect[2] &&
+        !page.lines.some(
+          (other) => other !== line && intersection(lineRect(other), lineRect(line)) > 0
+        )
+      )
+    })
+    if (definitions.length === 1) rect[3] = definitions[0].y + definitions[0].height
     rect[3] = Math.min(rect[3], caption.rect[1] - 2)
     return [
       {
@@ -347,10 +581,31 @@ function associateFlowchart(page, captions, tableRects) {
   return undefined
 }
 
-export function associateFigures(page, candidates, tableRects = [], rules = []) {
+export function associateFigures(
+  page,
+  candidates,
+  tableRects = [],
+  rules = [],
+  closedFrames = [],
+  nativeTokens = []
+) {
+  const originalLines = page.lines
   // Zero-advance PDF tagging tokens have no painted extent.
   page = {
     ...page,
+    graphicsBounds: page.graphicsBounds?.map((g) =>
+      g.kind === 'image' &&
+      g.paintedNormalizedRect?.length === 4 &&
+      g.paintedNormalizedRect.every(Number.isFinite) &&
+      g.paintedNormalizedRect[2] > g.paintedNormalizedRect[0] &&
+      g.paintedNormalizedRect[3] > g.paintedNormalizedRect[1] &&
+      g.paintedNormalizedRect[0] >= g.normalizedRect[0] &&
+      g.paintedNormalizedRect[1] >= g.normalizedRect[1] &&
+      g.paintedNormalizedRect[2] <= g.normalizedRect[2] &&
+      g.paintedNormalizedRect[3] <= g.normalizedRect[3]
+        ? { ...g, normalizedRect: g.paintedNormalizedRect }
+        : g
+    ),
     lines: page.lines.filter(
       (l) =>
         l.width > 0 &&
@@ -401,6 +656,14 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
   const captions = pageCaptions.filter(
     (c) => captionKind(c.lines[0]) === 'figure' && !/\(facing page\)/i.test(c.lines.join(' '))
   )
+  const legendHeading = page.lines.find((l) => /^(?:Figure )?legends$/i.test(l.text.trim()))
+  if (
+    legendHeading &&
+    captions.length >= 2 &&
+    captions.every((c) => c.rect[1] > legendHeading.y + legendHeading.height) &&
+    !(page.graphicsBounds ?? []).some((g) => g.kind === 'image' && area(g.normalizedRect) > 0.03)
+  )
+    return captions.map((caption) => ({ caption, reason: 'no-unambiguous-adjacent-graphics' }))
   // A page-sized raster overlay can surround a separate, directly captioned
   // image. Its extent includes native running heads and the legend, and must
   // not replace the independent figure image. Keep the original painted PDF.
@@ -434,12 +697,66 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     }
   if (!page.graphicsBounds)
     return captions.map((caption) => ({ caption, reason: 'graphics-not-recorded' }))
+  const nativeHead = nativeFigureRunningHead(page, pageCaptions, nativeTokens, rules)
+  if (nativeHead)
+    page = {
+      ...page,
+      lines: page.lines.filter((l) => !nativeHead.lines.includes(l)),
+      graphicsBounds: page.graphicsBounds.filter((g) => g !== nativeHead.bar)
+    }
   assert(
     Number.isSafeInteger(page.invalidGraphicsBounds) && page.invalidGraphicsBounds >= 0,
     'Rerun the structure probe to record invalid graphics bounds explicitly.'
   )
+  // Two small facing masthead images flank the journal title and homepage.
+  // Native directory/homepage anchors distinguish this band from plot panels.
+  const masthead = page.graphicsBounds.filter(
+    (g) =>
+      g.kind === 'image' &&
+      g.normalizedRect[1] > 0.04 &&
+      g.normalizedRect[3] < 0.2 &&
+      area(g.normalizedRect) < 0.02
+  )
+  if (
+    masthead.length === 2 &&
+    masthead.some((g) => g.normalizedRect[2] < 0.2) &&
+    masthead.some((g) => g.normalizedRect[0] > 0.8) &&
+    Math.abs(masthead[0].normalizedRect[3] - masthead[1].normalizedRect[3]) < 0.01 &&
+    page.lines.some(
+      (l) => l.y < page.height * 0.12 && /^Contents lists available at\b/i.test(l.text)
+    ) &&
+    page.lines.some(
+      (l) =>
+        l.y < page.height * 0.2 &&
+        /^journalhomepage:(?:https?:\/\/)?www\./i.test(l.text.replace(/\s/g, ''))
+    ) &&
+    captions.every((c) => c.rect[1] > page.height * 0.2) &&
+    page.graphicsBounds.some(
+      (g) => g.kind === 'image' && area(g.normalizedRect) > 0.03 && g.normalizedRect[1] > 0.2
+    )
+  )
+    page = {
+      ...page,
+      graphicsBounds: page.graphicsBounds.filter(
+        (g) => !masthead.includes(g) && !(g.kind === 'path' && g.normalizedRect[3] <= 0.2)
+      ),
+      lines: page.lines.filter((l) => l.y + l.height > page.height * 0.2)
+    }
   const marginal = associateMarginalFigurePlates(page, captions, tableRects, rules)
   if (marginal) return marginal
+  const openArray = nativeOpenAxisArray(page, captions, tableRects, rules)
+  if (openArray) return [openArray]
+  const nativeArray = nativeFramedPanelArray(page, captions, tableRects, rules)
+  if (nativeArray) {
+    const labels = nativeOwnedFigureLabels(
+      page,
+      nativeArray.caption,
+      captions,
+      tableRects,
+      nativeArray.rect
+    )
+    return [{ ...nativeArray, rect: union([nativeArray.rect, ...labels.map(lineRect)]) }]
+  }
   // Some plates include a blank caption strip in the raster's bounds. A
   // native frame and an overlaid caption establish ownership independently
   // of the ordinary non-overlapping graphic/caption distance heuristic.
@@ -535,12 +852,41 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
         ]
     }
   }
+  const connectedFlowchart =
+    captions.length === 1 && associateConnectedFlowchart(page, pageCaptions, tableRects)
+  if (connectedFlowchart) return connectedFlowchart
+  const nativeTopFlow =
+    captions.length === 1 &&
+    topCaptionedNativeFlow(page, captions[0], pageCaptions, tableRects, closedFrames)
+  if (nativeTopFlow) return [nativeTopFlow]
   const standalone =
     associateRuledFigurePlate(page, pageCaptions, tableRects, rules) ??
     associateStandaloneFigurePlate(page, pageCaptions, tableRects)
   if (standalone) return [standalone]
   const flowchart = captions.length === 1 && associateFlowchart(page, captions, tableRects)
   if (flowchart) return flowchart
+  // Repeated margin removal keeps native publisher rules as evidence. A small
+  // raster wholly above that rule is page furniture when an independent plate
+  // starts below it; figure legends and inset keys inside the plate stay intact.
+  const marginHeaders = (page.marginRuleBounds ?? []).filter(
+    (r) => r[1] > 0.03 && r[3] < 0.09 && r[2] - r[0] > 0.8 && r[3] - r[1] < 0.02
+  )
+  if (marginHeaders.length === 1) {
+    const band = marginHeaders[0]
+    if (
+      page.graphicsBounds.some(
+        (g) => g.kind === 'image' && area(g.normalizedRect) < 0.02 && g.normalizedRect[3] <= band[3]
+      ) &&
+      page.graphicsBounds.some(
+        (g) => g.kind === 'image' && area(g.normalizedRect) > 0.08 && g.normalizedRect[1] > band[3]
+      ) &&
+      captions.every((c) => c.rect[1] > band[3] * page.height)
+    )
+      page = {
+        ...page,
+        graphicsBounds: page.graphicsBounds.filter((g) => g.normalizedRect[3] > band[3])
+      }
+  }
   // A small logo above several joined header strokes forms page furniture
   // when a separate substantial raster starts below the complete header band.
   const headerPaths = page.graphicsBounds.filter(
@@ -697,6 +1043,83 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
           (line === splitHeader || line.x > page.width * 0.6) &&
           Math.abs(line.y - splitHeader.y) < Math.max(line.height, splitHeader.height) * 0.25))
   )
+  for (const number of page.lines.filter(
+    (line) =>
+      line.text.trim() === String(page.pageNumber) &&
+      line.y < page.height * 0.08 &&
+      (line.x < page.width * 0.15 || line.x > page.width * 0.85)
+  )) {
+    const titles = page.lines.filter(
+      (line) =>
+        line !== number &&
+        line.text.length >= 40 &&
+        line.width > page.width * 0.3 &&
+        line.fontSize > 0 &&
+        line.fontSize <= number.fontSize &&
+        Math.abs(line.y + line.height - number.y - number.height) < line.fontSize * 0.1 &&
+        !pageCaptions.some((c) => intersection(c.rect, lineRect(line)) > 0) &&
+        page.graphicsBounds.some(
+          (g) =>
+            area(g.normalizedRect) > 0.02 &&
+            g.normalizedRect[1] * page.height > line.y + line.height + line.fontSize * 2
+        ) &&
+        !page.graphicsBounds.some(
+          (g) =>
+            area(g.normalizedRect) > 0.02 &&
+            intersection(
+              lineRect(line),
+              g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+            ) > 0
+        )
+    )
+    if (titles.length === 1) runningHeaders.push(number, ...titles)
+  }
+  for (const line of page.lines) {
+    // Repeated-margin cleanup can remove a quantized path while retaining its
+    // native closing rule. Require one complete rule and a separate raster;
+    // text over image ink remains a figure label.
+    const nativeClosings = rules.filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[0] <= page.width * 0.1 &&
+        r[2] >= page.width * 0.9 &&
+        r[1] >= line.y + line.height &&
+        r[1] - line.y - line.height < line.height * 0.25
+    )
+    const nativeHeader =
+      nativeClosings.length === 1 &&
+      page.graphicsBounds.some(
+        (g) =>
+          g.kind === 'image' &&
+          area(g.normalizedRect) > 0.1 &&
+          g.normalizedRect[1] * page.height > nativeClosings[0][1] + line.height * 0.5 &&
+          g.normalizedRect[1] * page.height < nativeClosings[0][1] + line.height * 2
+      )
+    if (
+      line.y < page.height * 0.04 &&
+      line.height < page.height * 0.015 &&
+      !pageCaptions.some((c) => intersection(c.rect, lineRect(line)) > 0) &&
+      (nativeHeader ||
+        page.graphicsBounds.some(
+          (g) =>
+            g.kind === 'path' &&
+            g.normalizedRect[2] - g.normalizedRect[0] > 0.6 &&
+            g.normalizedRect[3] - g.normalizedRect[1] < 0.02 &&
+            g.normalizedRect[3] < 0.07 &&
+            g.normalizedRect[3] * page.height >= line.y + line.height &&
+            g.normalizedRect[3] * page.height - line.y - line.height < line.height * 2
+        )) &&
+      !page.graphicsBounds.some(
+        (g) =>
+          g.kind === 'image' &&
+          intersection(
+            lineRect(line),
+            g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
+          ) > 0
+      )
+    )
+      runningHeaders.push(line)
+  }
   const datedHeader = page.lines.find(
     (line) =>
       line.y < page.height * 0.12 &&
@@ -922,13 +1345,66 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
         Math.abs(tick.width - row.width) <= tick.fontSize * 6
       )
         riskRows.add(tick)
+  // Long panel titles can look like prose. Repeated tall native axis titles and
+  // the caption's explicit panel keys establish their ownership before barriers
+  // are built; an unlabelled chart or an ordinary paragraph cannot qualify.
+  const multiPanelCaptions = captions.filter(
+    (c) => new Set([...c.lines.join(' ').matchAll(/\(([a-z])\)/g)].map((m) => m[1])).size >= 4
+  )
+  const verticalAxes = page.lines.filter(
+    (l) =>
+      l.fontSize > 0 &&
+      l.fontSize <= 8 &&
+      Math.abs(l.width - l.fontSize) < l.fontSize * 0.2 &&
+      l.height > l.fontSize * 8
+  )
+  const panelTitle = (line) =>
+    multiPanelCaptions.some((caption) => {
+      const axes = verticalAxes.filter(
+        (axis) =>
+          axis.y > line.y + line.height &&
+          axis.y - line.y - line.height < line.fontSize * 4 &&
+          axis.x < line.x &&
+          line.x - axis.x < line.fontSize * 6 &&
+          axis.y + axis.height < caption.rect[1] &&
+          verticalAxes.filter(
+            (other) => other.text === axis.text && Math.abs(other.fontSize - axis.fontSize) < 0.2
+          ).length >= 4
+      )
+      return (
+        line.fontSize <= 8 &&
+        line.height < line.fontSize * 1.2 &&
+        line.width < page.width * 0.4 &&
+        axes.length === 1 &&
+        page.lines.some(
+          (label) =>
+            /^[a-z](?:\s+[a-z])*$/.test(label.text.trim()) &&
+            label.text
+              .trim()
+              .split(/\s+/)
+              .every((key) => caption.lines.join(' ').includes(`(${key})`)) &&
+            label.y + label.height <= line.y + 1 &&
+            line.y - label.y - label.height <= line.fontSize * 2 &&
+            label.x < line.x + line.width &&
+            label.x + label.width > line.x - line.fontSize
+        )
+      )
+    })
   const barriers = page.lines.filter(
-    (l) => l.text.length > 80 && !axisTitle(l) && !figureNotes.has(l) && !riskRows.has(l)
+    (l) =>
+      l.text.length > 80 &&
+      !axisTitle(l) &&
+      !panelTitle(l) &&
+      !ownedRasterKeyBand(l, page, pageCaptions) &&
+      !figureNotes.has(l) &&
+      !riskRows.has(l)
   )
   const pathBarriers = page.lines.filter(
     (l) =>
       l.text.length > 60 &&
       !axisTitle(l) &&
+      !panelTitle(l) &&
+      !ownedRasterKeyBand(l, page, pageCaptions) &&
       !figureNotes.has(l) &&
       !riskRows.has(l) &&
       !framedDiagramText(l)
@@ -1037,6 +1513,13 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     }
   }
   // Match both caption directions; intervening prose/captions block association.
+  const fullHeightPublisherStrips = page.graphicsBounds.filter(
+    (strip) =>
+      strip.kind === 'path' &&
+      strip.normalizedRect[1] <= 0.01 &&
+      strip.normalizedRect[3] >= 0.99 &&
+      (strip.normalizedRect[2] <= 0.06 || strip.normalizedRect[0] >= 0.94)
+  )
   for (const graphic of page.graphicsBounds) {
     assert(
       graphic.normalizedRect.every(Number.isFinite),
@@ -1126,12 +1609,8 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     // Full-height publisher strips at the outer edge are page furniture, even
     // when a rotated page makes them appear beside a figure caption.
     if (
-      page.graphicsBounds.some(
+      fullHeightPublisherStrips.some(
         (strip) =>
-          strip.kind === 'path' &&
-          strip.normalizedRect[1] <= 0.01 &&
-          strip.normalizedRect[3] >= 0.99 &&
-          (strip.normalizedRect[2] <= 0.06 || strip.normalizedRect[0] >= 0.94) &&
           graphic.normalizedRect[0] >= strip.normalizedRect[0] &&
           graphic.normalizedRect[2] <= strip.normalizedRect[2]
       )
@@ -1217,15 +1696,7 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     // A shaded prose column can contain only short lines, so character count
     // alone does not distinguish it from a panel. Require a dense aligned text
     // block and no interior drawing evidence before discarding its background.
-    if (
-      graphic.kind === 'path' &&
-      !pageCaptions.some((c) => intersection(c.rect, rect) > 0) &&
-      !page.graphicsBounds.some((other) => {
-        if (other === graphic) return false
-        const r = other.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
-        return area(r) < area(rect) * 0.9 && intersection(r, rect) / area(r) > 0.95
-      })
-    ) {
+    if (graphic.kind === 'path' && !pageCaptions.some((c) => intersection(c.rect, rect) > 0)) {
       const prose = page.lines.filter(
         (line) =>
           line.text.split(/\s+/).length >= 5 &&
@@ -1233,13 +1704,20 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
           intersection(lineRect(line), rect) / area(lineRect(line)) > 0.95
       )
       if (
+        // Dense point marks cannot enclose six prose lines. Establish that
+        // inexpensive condition before scanning the whole page for interior ink.
         prose.some(
           (line) =>
             prose.filter(
               (other) =>
                 Math.abs(other.x - line.x) < 2 && Math.abs(other.fontSize - line.fontSize) < 0.5
             ).length >= 6
-        )
+        ) &&
+        !page.graphicsBounds.some((other) => {
+          if (other === graphic) return false
+          const r = other.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+          return area(r) < area(rect) * 0.9 && intersection(r, rect) / area(r) > 0.95
+        })
       )
         continue
     }
@@ -1353,6 +1831,8 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     // Filtering them individually prevents distant rules from forming a tall
     // fictitious graphic below the caption when their bounds are unioned.
     if (separators.some((r) => r.every((v, i) => v === rect[i]))) continue
+    if (graphic.kind === 'path' && nativeTableDividerGraphic(page, rect, tableRects, rules))
+      continue
     // Table rules belong to the recognized table, even when a figure caption is closer.
     if (
       tableRects.some(
@@ -1461,7 +1941,7 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
           )
         const legendPointer = /see legend on (?:previous|next) page/i.test(caption.lines.join(' '))
         const centeredContinuation =
-          /\bContinued\.?$/i.test(caption.lines.join(' ')) &&
+          /\bContinued?\.?$/i.test(caption.lines.join(' ')) &&
           rect[3] <= c[1] + edgeTolerance &&
           Math.abs((c[0] + c[2]) / 2 - page.width / 2) <= page.width * 0.1
         const unrestrictedCaption =
@@ -1638,8 +2118,100 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       }
     }
   }
+  // A separately captioned native panel establishes its own column even when
+  // small curves near its top are closer to the neighbouring side legend.
+  for (const [index, items] of assigned.entries()) {
+    for (const item of [...items]) {
+      const owners = assigned.flatMap((others, owner) =>
+        owner === index
+          ? []
+          : others
+              .filter(
+                (other) =>
+                  other.kind === 'path' &&
+                  area(other.rect) > page.width * page.height * 0.05 &&
+                  captions[owner].rect[1] >= other.rect[3] &&
+                  captions[owner].rect[1] - other.rect[3] < 24 &&
+                  captions[owner].rect[0] >= other.rect[0] - 8 &&
+                  captions[owner].rect[2] <= other.rect[2] + 8 &&
+                  captionKind(captions[index].lines[0]) === 'figure' &&
+                  intersection(captions[index].rect, [
+                    other.rect[0],
+                    0,
+                    other.rect[2],
+                    page.height
+                  ]) === 0 &&
+                  intersection(other.rect, item.rect) / area(item.rect) > 0.95
+              )
+              .map(() => owner)
+      )
+      if (owners.length && new Set(owners).size === 1) {
+        items.splice(items.indexOf(item), 1)
+        assigned[owners[0]].push(item)
+      }
+    }
+  }
   return captions.map((caption, index) => {
-    const enclosed = () => enclosedFigureFrame(page, caption, pageCaptions, tableRects)
+    const closedPlots = nativeCaptionedPlotBand(page, caption, pageCaptions, tableRects, rules)
+    const assignedBounds = assigned[index].length
+      ? union(assigned[index].map((item) => item.rect))
+      : undefined
+    if (
+      closedPlots &&
+      (!assignedBounds ||
+        closedPlots.rect.some((v, i) =>
+          i < 2 ? v < assignedBounds[i] - edgeTolerance : v > assignedBounds[i] + edgeTolerance
+        ))
+    )
+      return closedPlots
+    const columnPlots = nativeDisjointPlotColumn(
+      page,
+      caption,
+      pageCaptions,
+      tableRects,
+      nativeTokens
+    )
+    if (columnPlots) return columnPlots
+    const nodes = nativeAlignedNodeFigure(
+      page,
+      caption,
+      pageCaptions,
+      tableRects,
+      rules,
+      nativeTokens
+    )
+    if (nodes) return nodes
+    const rasterColumn = nativeRasterCaptionColumn(
+      page,
+      caption,
+      page.graphicsBounds.some((g) => g.kind === 'image' && g.paintedNormalizedRect)
+        ? pageCaptions
+        : captions,
+      tableRects
+    )
+    if (rasterColumn) return rasterColumn
+    // Label recovery must respect a substantial panel already assigned to a
+    // different caption. Small outlined glyphs are otherwise reconsidered from
+    // the whole page and can drag a neighbouring column into this crop.
+    const foreignPanelOwns = (rect) =>
+      assigned.some(
+        (items, owner) =>
+          owner !== index &&
+          items.some(
+            (item) =>
+              area(item.rect) > page.width * page.height * 0.02 &&
+              intersection(item.rect, rect) / area(rect) > 0.95 &&
+              !assigned[index].some(
+                (own) =>
+                  area(own.rect) > page.width * page.height * 0.02 &&
+                  intersection(own.rect, rect) / area(rect) > 0.95
+              )
+          )
+      )
+    const closed = closedCaptionFigureFrame(page, caption, pageCaptions, tableRects, closedFrames)
+    if (closed) return closed
+    const enclosed = () =>
+      enclosedFigureFrame(page, caption, pageCaptions, tableRects) ?? closedPlots
     // Composite raster panels can wrap around a legend in the lower-left corner.
     // Preserve the original plate rather than dropping it because it intersects
     // its own caption; other captions and recognized tables remain barriers.
@@ -1650,6 +2222,12 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
         area(g.normalizedRect) > 0.2 &&
         // Quantized image bounds can graze an external legend by a few points.
         r[3] > caption.rect[1] + edgeTolerance &&
+        // A bare external number grazing the final quantized raster row is
+        // distinct from a legend embedded materially inside a composite plate.
+        !(
+          /^(?:Fig\.?|Figure)\s+\d+\.?$/i.test(caption.lines.join(' ')) &&
+          r[3] - caption.rect[1] <= caption.rect[3] - caption.rect[1]
+        ) &&
         (intersection(r, caption.rect) > area(caption.rect) * 0.2 ||
           (caption.lines.join(' ').length > 100 && intersection(r, caption.rect) > 0)) &&
         caption.rect[1] > r[1] + (r[3] - r[1]) * 0.5 &&
@@ -1905,6 +2483,32 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     }
     // Border rules below a caption are not a second figure. Evaluate extent per direction,
     // retaining thin axes when they belong to a larger figure on that same side.
+    if (
+      pageCaptions.length === 1 &&
+      diagramFrames.length >= 3 &&
+      connected.length &&
+      connected.every((g) => g.kind === 'path')
+    ) {
+      const lateral =
+        caption.rect[2] < page.width * 0.35 && connected.every((g) => g.rect[0] > caption.rect[2])
+          ? 'right'
+          : caption.rect[0] > page.width * 0.65 &&
+              connected.every((g) => g.rect[2] < caption.rect[0])
+            ? 'left'
+            : undefined
+      if (lateral) {
+        const component = [connected[0]],
+          pending = new Set(connected.slice(1))
+        connectFigureGraphics(component, pending)
+        if (
+          !pending.size &&
+          diagramFrames.filter((r) =>
+            component.some((g) => intersection(g.rect, r) / area(r) > 0.95)
+          ).length >= 3
+        )
+          for (const item of connected) item.side = lateral
+      }
+    }
     const directions = Map.groupBy(
       excludeDetachedDiagramDecorations(connected, diagramFrames, page),
       (item) => item.side ?? (item.rect[1] < caption.rect[1] ? 'above' : 'below')
@@ -2078,6 +2682,7 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
                   ? r[1] >= caption.rect[3]
                   : true)) &&
             !pageCaptions.some((c) => intersection(c.rect, r) > 0) &&
+            !foreignPanelOwns(r) &&
             !barriers.some((l) => intersection(lineRect(l), r) > 0) &&
             !tableRects.some((t) => intersection(t, r) > 0)
         )
@@ -2183,14 +2788,22 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       )
     )
     if (repeatedAxes.length >= 2) bounds[0] = Math.min(bounds[0], ...repeatedAxes.map((l) => l.x))
-    const paragraphRuns =
-      plates.length &&
-      page.lines.every((l) => [l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite))
-        ? groupPageLines(page)
-        : []
+    const paragraphRuns = page.lines.every((l) =>
+      [l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite)
+    )
+      ? groupPageLines(page)
+      : []
     const nearby = page.lines.filter(
       (l) =>
         !runningHeaders.includes(l) &&
+        !foreignPanelOwns(lineRect(l)) &&
+        !(
+          l.text.trim() === String(page.pageNumber) &&
+          l.y < page.height * 0.07 &&
+          (l.x > page.width * 0.85 || l.x < page.width * 0.15) &&
+          l.y + l.height <= bounds[1] - l.fontSize * 0.5 &&
+          !graphics.some((r) => intersection(r, lineRect(l)) > 0)
+        ) &&
         !(/^(?:FIGURE )?LEGENDS$/i.test(l.text.trim()) && l.y + l.height < bounds[1]) &&
         // A manuscript wrapper can repeat the printed page number below a plate.
         // Require its independent "Page N of M" witness before dropping a number.
@@ -2252,6 +2865,92 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
         !continuesExternalParagraph(l, bounds, page.lines) &&
         !continuesSideParagraph(l, bounds, paragraphRuns)
     )
+    // Two stacked panels can repeat a short outside key beyond ordinary tick
+    // padding. Distinct native panel letters and two repeated key lines prove
+    // that column; an isolated label or prose neighbour supplies no such proof.
+    // Paired repeated native vector grids can own a small title beyond the fixed label pad.
+    if (meaningful.every((g) => g.kind === 'path'))
+      nearby.push(...pairedVectorTopTitles(page, caption, tableRects, graphics, bounds, nearby))
+    const outsideKeys = page.lines.filter(
+      (line) =>
+        line.fontSize > 0 &&
+        line.fontSize <= 12 &&
+        line.height <= line.fontSize * 1.2 &&
+        line.text.length >= 2 &&
+        line.text.length <= 30 &&
+        /\p{L}/u.test(line.text) &&
+        !/[.!?]$/.test(line.text.trim()) &&
+        line.x < bounds[0] - 24 &&
+        line.x >= bounds[0] - line.fontSize * 5 &&
+        line.x + line.width <= bounds[0] + line.fontSize * 0.2 &&
+        bounds[0] - line.x - line.width <= line.fontSize * 2 &&
+        line.y >= bounds[1] &&
+        line.y + line.height <= bounds[3] &&
+        !foreignPanelOwns(lineRect(line)) &&
+        !pageCaptions.some((c) => intersection(c.rect, lineRect(line)) > 0) &&
+        !tableRects.some((r) => intersection(r, lineRect(line)) > 0) &&
+        !continuesExternalParagraph(line, bounds, page.lines) &&
+        !page.lines.some(
+          (other) =>
+            other.text.length > 60 &&
+            Math.abs(other.x - line.x) < line.fontSize * 2 &&
+            Math.abs(other.y - line.y) < line.fontSize * 3
+        )
+    )
+    const keyPairs = outsideKeys.flatMap((line, n) =>
+      outsideKeys
+        .slice(n + 1)
+        .flatMap((other) =>
+          other.text === line.text &&
+          Math.abs(other.x - line.x) < line.fontSize * 0.05 &&
+          Math.abs(other.fontSize - line.fontSize) < 0.2 &&
+          other.y - line.y > line.fontSize * 6
+            ? [[line, other]]
+            : []
+        )
+    )
+    const panelKeys = keyPairs.flatMap((pair) => {
+      const marks = pair.map((key) =>
+        page.lines.filter(
+          (line) =>
+            /^\([a-z]\)$/.test(line.text.trim()) &&
+            line.fontSize >= key.fontSize &&
+            line.fontSize <= key.fontSize * 1.3 &&
+            line.x >= key.x - key.fontSize &&
+            line.x <= key.x + key.fontSize * 2 &&
+            line.y < key.y &&
+            key.y - line.y <= key.fontSize * 7 &&
+            (() => {
+              const strokes = graphics.filter(
+                (r) =>
+                  r[0] >= bounds[0] &&
+                  r[2] - r[0] > key.fontSize * 4 &&
+                  r[3] - r[1] > key.fontSize &&
+                  r[1] >= line.y - line.fontSize &&
+                  r[3] <= key.y + key.fontSize * 6
+              )
+              if (!strokes.length) return false
+              const panel = union(strokes)
+              return (
+                panel[3] - panel[1] > key.fontSize * 5 &&
+                Math.abs(panel[1] - line.y) < line.fontSize &&
+                key.y >= panel[1] &&
+                key.y + key.height <= panel[3]
+              )
+            })() &&
+            !foreignPanelOwns(lineRect(line)) &&
+            !pageCaptions.some((c) => intersection(c.rect, lineRect(line)) > 0) &&
+            !tableRects.some((r) => intersection(r, lineRect(line)) > 0)
+        )
+      )
+      return marks.every((items) => items.length === 1) &&
+        marks[0][0].text !== marks[1][0].text &&
+        Math.abs(pair[0].y - marks[0][0].y - pair[1].y + marks[1][0].y) < pair[0].fontSize
+        ? [{ pair, marks: marks.flat() }]
+        : []
+    })
+    if (new Set(panelKeys.map(({ pair }) => pair[0].text)).size >= 2)
+      nearby.push(...new Set(panelKeys.flatMap(({ pair, marks }) => [...pair, ...marks])))
     // A forest/bar comparison prints its confidence interval to the right of
     // the axis. Adjacent statistical headings or P values independently own
     // the entire native run, including the interval's otherwise clipped end.
@@ -2295,6 +2994,7 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       const widthLimit = line.fontSize * (aligned.length >= 2 ? 14 : 7)
       if (
         nearby.includes(line) ||
+        foreignPanelOwns(lineRect(line)) ||
         line.text.length > 30 ||
         line.width > widthLimit ||
         line.y < bounds[1] ||
@@ -2303,7 +3003,8 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
         line.x + line.width > bounds[2] + widthLimit ||
         pageCaptions.some((c) => intersection(c.rect, lineRect(line)) > 0) ||
         tableRects.some((r) => intersection(r, lineRect(line)) > 0) ||
-        continuesExternalParagraph(line, bounds, page.lines)
+        continuesExternalParagraph(line, bounds, page.lines) ||
+        continuesSideParagraph(line, bounds, paragraphRuns)
       )
         continue
       if (aligned.some((other) => other.x >= bounds[2] - 24)) nearby.push(line)
@@ -2533,6 +3234,65 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       )
         nearby.push(line)
     }
+    // Forty-five-degree PDF text has a square painted box, rather than the
+    // font-width box of a vertical label. Require at least four top-aligned
+    // peers before retaining their complete glyphs and the unique axis title.
+    const diagonal = page.lines.filter(
+      (line) =>
+        line.fontSize > 0 &&
+        line.fontSize <= 8 &&
+        Math.abs(line.width - line.height) < line.fontSize * 0.05 &&
+        line.height >= line.fontSize * 2 &&
+        line.height < page.height * 0.1 &&
+        line.x >= bounds[0] - line.width &&
+        line.x + line.width > bounds[0] &&
+        line.x + line.width <= bounds[2] &&
+        Math.abs(line.y - bounds[3]) < 24 &&
+        line.y + line.height < caption.rect[1] - 2 &&
+        !pageCaptions.some((c) => intersection(c.rect, lineRect(line)) > 0) &&
+        !tableRects.some((r) => intersection(r, lineRect(line)) > 0)
+    )
+    const diagonalPeers = diagonal.filter(
+      (line) =>
+        diagonal.filter(
+          (other) =>
+            Math.abs(other.y - line.y) < line.fontSize &&
+            Math.abs(other.fontSize - line.fontSize) < 0.2
+        ).length >= 4
+    )
+    if (below && diagonalPeers.length >= 4) {
+      nearby.push(...diagonalPeers)
+      const cluster = union(diagonalPeers.map(lineRect)),
+        font = diagonalPeers[0].fontSize
+      nearby.push(
+        ...page.lines.filter(
+          (line) =>
+            line.fontSize > 0 &&
+            Math.abs(line.fontSize - font) < 0.2 &&
+            Math.abs(line.width - line.height) < font * 0.05 &&
+            line.x >= cluster[0] - font &&
+            line.x + line.width <= cluster[2] + font &&
+            line.y >= cluster[1] &&
+            line.y + line.height <= cluster[3] + font &&
+            !pageCaptions.some((c) => intersection(c.rect, lineRect(line)) > 0)
+        )
+      )
+      const titles = page.lines.filter(
+        (line) =>
+          line.text.length >= 3 &&
+          line.text.length <= 40 &&
+          line.fontSize >= font &&
+          line.fontSize <= font * 1.5 &&
+          Math.abs(line.height - line.fontSize) < 0.2 &&
+          line.y >= cluster[3] &&
+          line.y - cluster[3] <= font * 2 &&
+          Math.abs(line.x + line.width / 2 - (cluster[0] + cluster[2]) / 2) <= font * 4 &&
+          line.y + line.height < caption.rect[1] - 2 &&
+          !tableRects.some((r) => intersection(r, lineRect(line)) > 0)
+      )
+      if (titles.length === 1 && !continuesExternalParagraph(titles[0], bounds, page.lines))
+        nearby.push(titles[0])
+    }
     // Vertical axis titles can sit beyond the fixed padding, outside the tick labels.
     // Require a tall, font-width box beside at least two already-owned numeric ticks;
     // ordinary prose and page-margin watermarks cannot expand the crop this way.
@@ -2585,8 +3345,56 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       )
       nearby.push(...preceding.filter((l) => !nearby.includes(l)))
     }
-    const rect = boundByExternalParagraphs(
+    nearby.push(
+      ...nativeOwnedFigureLabels(
+        page,
+        caption,
+        pageCaptions,
+        tableRects,
+        union([bounds, ...nearby.map(lineRect)]),
+        foreignPanelOwns
+      )
+    )
+    nearby.push(...nativePanelTopHeading(page, pageCaptions, tableRects, bounds, rules))
+    const glyphTails = nativeOwnedFigureGlyphTails(
+      page,
+      caption,
+      pageCaptions,
+      tableRects,
       union([bounds, ...nearby.map(lineRect)]),
+      nativeTokens
+    )
+    nearby.push(...glyphTails)
+    const proseRows = page.lines.every((l) =>
+      [l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite)
+    )
+      ? groupPageLines(page).map((l) => ({
+          ...l,
+          width: l.right - l.x,
+          height: l.bottom - l.y
+        }))
+      : page.lines
+    const topProse = proseRows.filter((l) => nativeTopParagraphTail(l, bounds, proseRows))
+    const excludedProse = new Set(
+      page.lines.filter((l) =>
+        topProse.some((p) => intersection(lineRect(l), lineRect(p)) / area(lineRect(l)) > 0.8)
+      )
+    )
+    for (const l of page.lines)
+      if (
+        l.y + l.height <= bounds[1] &&
+        /^(?:Figure|Fig\.)\s*\d+\b/i.test(l.text) &&
+        !captionKind(l.text)
+      )
+        excludedProse.add(l)
+    const rect = boundByExternalParagraphs(
+      union([
+        bounds,
+        ...nearby
+          .filter((line) => !foreignPanelOwns(lineRect(line)) && !excludedProse.has(line))
+          .map(lineRect),
+        ...glyphTails.map((l) => l.cropRect)
+      ]),
       bounds,
       // Native superscripts/font changes can split one prose baseline into
       // short runs. Use the same reconstructed lines as side-paragraph checks.
@@ -2597,6 +3405,22 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
           : page.lines
       ).map((l) => ({ ...l, width: l.width ?? l.right - l.x, height: l.height ?? l.bottom - l.y }))
     )
+    const collapsedAxis = collapsedNativeAxisLeft(
+      { ...page, lines: originalLines },
+      caption,
+      tableRects,
+      rules,
+      bounds
+    )
+    if (
+      collapsedAxis !== undefined &&
+      !pageCaptions.some(
+        (c) =>
+          c !== caption &&
+          intersection(c.rect, [collapsedAxis, bounds[1], bounds[0], bounds[3]]) > 0
+      )
+    )
+      rect[0] = Math.min(rect[0], collapsedAxis)
     // On a single-figure page, several retained labels inside one raster
     // establish that panel's full painted extent, even when its distance
     // from the caption exceeded the initial association window.
@@ -2726,7 +3550,39 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
         }
       }
     }
-    return { caption, rect, graphicsCount: graphics.length }
+    const categories = nativeClosedCategoryLabels(
+      page,
+      caption,
+      pageCaptions,
+      tableRects,
+      rect,
+      rules,
+      nativeTokens
+    )
+    const completeAxis = nativeCompleteAxisFigure(
+      page,
+      caption,
+      pageCaptions,
+      tableRects,
+      rules,
+      nativeTokens,
+      categories.length ? union([rect, ...categories]) : rect
+    )
+    if (completeAxis) return completeAxis
+    const connectedLegend = nativeConnectedKeyedLegend(
+      page,
+      caption,
+      pageCaptions,
+      tableRects,
+      nativeTokens,
+      categories.length ? union([rect, ...categories]) : rect
+    )
+    if (connectedLegend) return connectedLegend
+    return {
+      caption,
+      rect: categories.length ? union([rect, ...categories]) : rect,
+      graphicsCount: graphics.length
+    }
   })
 }
 
@@ -2837,10 +3693,102 @@ export function associateRasterTables(page, detections, occupiedRects = []) {
 }
 
 // Conservative adjacent-page fallback for one large recorded graphic.
-export function associateAdjacentFigure(page, pages, candidates) {
+function associateSplitNativePanel(page, pages, candidates, rules, closedFrames) {
+  const marks = page.lines.filter((l) => l.text.trim() === '(a)'),
+    letterFrames = closedFrames.filter(
+      (r) =>
+        marks.length === 1 && intersection(r, lineRect(marks[0])) / area(lineRect(marks[0])) > 0.95
+    )
+  if (marks.length !== 1 || letterFrames.length !== 1) return
+  const mark = marks[0],
+    // Independently stroked plot edges can finish a quarter point apart at
+    // their caps. This tolerance applies only with the boxed panel-pair proof.
+    frames = nativeClosedRuleFrames(rules, 0.25).filter(
+      (r) =>
+        r[0] > mark.x + mark.width &&
+        r[0] - mark.x - mark.width < mark.fontSize * 6 &&
+        Math.abs(r[1] - mark.y) < mark.fontSize * 2 &&
+        r[2] - r[0] > mark.fontSize * 10 &&
+        r[3] - r[1] > mark.fontSize * 10
+    )
+  if (frames.length !== 1) return
+  const plot = frames[0],
+    drawn = page.graphicsBounds
+      .filter((g) => g.kind === 'path')
+      .map((g) => g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))),
+    enclosing = drawn
+      .filter(
+        (r) =>
+          intersection(r, plot) / area(plot) > 0.95 &&
+          area(r) < area(plot) * 2 &&
+          r[0] >= plot[0] - mark.fontSize * 4 &&
+          r[1] >= plot[1] - mark.fontSize * 3 &&
+          r[3] <= plot[3] + mark.fontSize * 3
+      )
+      .sort((a, b) => area(b) - area(a))
+  if (
+    !enclosing.length ||
+    enclosing.some((r) => intersection(r, enclosing[0]) / area(r) < 0.95) ||
+    drawn.filter((r) => area(r) > 1 && intersection(r, plot) / area(r) > 0.95).length < 20
+  )
+    return
+  const previous = pages.find((p) => p.pageNumber === page.pageNumber - 1)
+  if (previous) {
+    const prior = associateFigures(previous, candidates)
+    if (
+      prior.some(
+        (f) =>
+          f.caption.lines.some((l) => /\(a\)/.test(l)) &&
+          (!f.rect ||
+            !['(a)', '(b)'].every((text) =>
+              previous.lines.some(
+                (l) =>
+                  l.text.trim() === text &&
+                  intersection(lineRect(l), f.rect) / area(lineRect(l)) > 0.95
+              )
+            ))
+      )
+    )
+      return
+  }
+  const next = pages.find((p) => p.pageNumber === page.pageNumber + 1)
+  if (!next) return
+  const matches = associateFigures(next, candidates).filter(
+    (f) =>
+      f.rect &&
+      /\(a\)/.test(f.caption.lines.join(' ')) &&
+      /\(b\)/.test(f.caption.lines.join(' ')) &&
+      next.lines.filter(
+        (l) =>
+          l.text.trim() === '(b)' && intersection(lineRect(l), f.rect) / area(lineRect(l)) > 0.95
+      ).length === 1 &&
+      !next.lines.some((l) => l.text.trim() === '(a)' && intersection(lineRect(l), f.rect) > 0)
+  )
+  if (matches.length !== 1) return
+  const bounds = union([enclosing[0], letterFrames[0]]),
+    labels = page.lines.filter(
+      (l) =>
+        l.x >= bounds[0] - 12 &&
+        l.x + l.width <= bounds[2] + 12 &&
+        l.y >= bounds[1] - 12 &&
+        l.y + l.height <= bounds[3] + 12 &&
+        !continuesExternalParagraph(l, bounds, page.lines)
+    ),
+    rect = union([bounds, ...labels.map(lineRect)])
+  if (candidates.some((c) => c.page === page.pageNumber && intersection(c.rect, rect) > 0)) return
+  return {
+    caption: matches[0].caption,
+    rect,
+    graphicsCount: drawn.filter((r) => intersection(r, rect) / area(r) > 0.95).length
+  }
+}
+
+export function associateAdjacentFigure(page, pages, candidates, rules = [], closedFrames = []) {
   // Only a caption-free, figure-dominated page can consume a neighboring caption.
   // Smaller or multiple unlabelled figures need a layout model; do not guess their ownership.
   if (page.rotation !== 0 || candidates.some((c) => c.page === page.pageNumber)) return []
+  const split = associateSplitNativePanel(page, pages, candidates, rules, closedFrames)
+  if (split) return [split]
   const graphics = (page.graphicsBounds ?? [])
     .map((g) => g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)))
     .filter((r) => r[1] >= page.height * 0.055 && r[3] <= page.height * 0.95 && area(r) >= 12 * 12)
@@ -2964,60 +3912,29 @@ export function associateUnnumberedFigure(page, candidates, tableRects = []) {
   ]
 }
 
-// Labelled pseudocode uses rules and indentation, not a rectangular cell grid.
-// Keep its original image until a symbolic parser can preserve the mathematics.
-export function findAlgorithmCandidates(page) {
-  const lines = groupPageLines(page)
-  const titles = lines.filter((line) => /^Algorithm\s+\d+\b/i.test(line.text))
-  const rules = (page.graphicsBounds ?? [])
-    .filter((graphic) => graphic.kind === 'path')
-    .map((graphic) => graphic.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)))
-    .filter((r) => r[3] - r[1] <= page.height / 64 && r[2] - r[0] > (r[3] - r[1]) * 15)
-  return titles.flatMap((title) => {
-    const aligned = rules.filter((r) => Math.abs(r[0] - title.x) <= 8 && r[2] >= title.right - 4)
-    const top = aligned
-      .filter((r) => Math.abs(r[1] - title.y) <= title.fontSize)
-      .sort((a, b) => Math.abs(a[1] - title.y) - Math.abs(b[1] - title.y))[0]
-    if (!top) return []
-    const nextTitle = titles.find((line) => line.y > title.y && Math.abs(line.x - title.x) <= 8)
-    const bottom = aligned
-      .filter(
-        (r) =>
-          r[1] > title.bottom + title.fontSize * 4 &&
-          r[1] < (nextTitle?.y ?? page.height) &&
-          Math.abs(r[2] - top[2]) <= 8
-      )
-      .sort((a, b) => a[1] - b[1])[0]
-    if (!bottom) return []
-    const content = lines.filter(
-      (line) =>
-        line.y > title.y &&
-        line.bottom <= bottom[3] &&
-        line.x >= top[0] - 4 &&
-        line.right <= top[2] + 4
+// A single isolated embedded plate on a native-text page is useful without an
+// invented number. Its image operation supplies the complete bounds; outlined
+// watermarks outside it do not expand ownership.
+export function associateUncaptionedRasterFigure(page, candidates, tableRects = []) {
+  if (candidates.some((c) => c.page === page.pageNumber) || tableRects.length) return []
+  const images = (page.graphicsBounds ?? []).filter(
+    (g) => g.kind === 'image' && g.imageHash && area(g.normalizedRect) > 0.12
+  )
+  if (images.length !== 1) return []
+  const r = images[0].normalizedRect
+  if (r[0] < 0.04 || r[2] > 0.96 || r[1] < 0.06 || r[3] > 0.9 || area(r) > 0.65) return []
+  const rect = r.map((v, n) => v * (n % 2 ? page.height : page.width))
+  if (
+    page.lines.some(
+      (l) =>
+        l.text.trim().length > 30 && l.y > page.height * 0.08 && l.y + l.height < page.height * 0.9
     )
-    if (
-      !content.some((line) => /^(?:Require|Ensure|Input|Output)\s*:/i.test(line.text)) ||
-      content.filter((line) => /^\d+\s*:/.test(line.text)).length < 2
-    )
-      return []
-    return [
-      {
-        caption: {
-          page: page.pageNumber,
-          lines: [title.text],
-          rect: [title.x, title.y, title.right, title.bottom]
-        },
-        rect: [
-          Math.max(0, top[0] - 2),
-          Math.max(0, Math.min(top[1], title.y) - 2),
-          Math.min(page.width, top[2] + 2),
-          Math.min(page.height, bottom[3] + 2)
-        ]
-      }
-    ]
-  })
+  )
+    return []
+  return [{ rect, graphicsCount: 1 }]
 }
+
+export { findAlgorithmCandidates } from './literature-pdf-numbered-native-procedure.mjs'
 
 // An unfinished caption can wrap definitions or a paired-panel explanation
 // across widely spaced lines. Matching native leading and typography plus
@@ -3212,7 +4129,332 @@ function associateCaptionSheet(page, tables, candidates, rules, pages) {
 }
 
 // Local table-caption matching in the same scale-1 displayed viewport. Keep uncertain ownership absent.
+// A captionless count/percent table can continue through one complete table-only
+// page. Repeated denominators, typography and native record extents prove the
+// chain; nearby titles alone never establish cross-page ownership.
+function associateCountContinuationCaption(page, tables, candidates, pages, distance = 2) {
+  if (tables.length !== 1) return
+  const origin = pages.find((p) => p.pageNumber === page.pageNumber - distance)
+  const middle =
+    distance === 2 ? pages.find((p) => p.pageNumber === page.pageNumber - 1) : undefined
+  if (
+    !origin ||
+    (distance === 2 && !middle) ||
+    [origin, middle].filter(Boolean).some((p) => p.width !== page.width || p.height !== page.height)
+  )
+    return
+  const captions = candidates.filter(
+    (c) => c.page === origin.pageNumber && captionKind(c.lines[0]) === 'table'
+  )
+  if (captions.length !== 1 || (middle && candidates.some((c) => c.page === middle.pageNumber)))
+    return
+  const title = captions[0],
+    rect = tables[0].rect
+  if (rect[1] > page.height * 0.15 || Math.abs(title.rect[0] - rect[0]) > 12) return
+  const content = (p) =>
+    groupPageLines(p).filter(
+      (l) =>
+        !(
+          /^\d+$/.test(l.text) &&
+          l.y > p.height * 0.85 &&
+          l.right - l.x < p.width * 0.04 &&
+          Math.abs((l.x + l.right) / 2 - p.width / 2) < p.width * 0.03
+        )
+    )
+  const original = content(origin).filter((l) => l.y >= title.rect[3])
+  const headings = original.filter(
+    (l) => (l.text.match(/\(n\s*=\s*\d{2,6}\)/gi) ?? []).length === 2
+  )
+  const totals = headings.flatMap((l) =>
+    [...l.text.matchAll(/\(n\s*=\s*(\d{2,6})\)/gi)].map((m) => Number(m[1]))
+  )
+  if (
+    totals.length !== 2 ||
+    !original.some((l) => /^No\.\s*%\s+No\.\s*%$/.test(l.text)) ||
+    !original.some((l) => /^p[- ]?value$/i.test(l.text))
+  )
+    return
+  const record = (l) =>
+    /^(.*?)\s+(\d+)\s+(\d+\.\d{1,2})\s+(\d+)\s+(\d+\.\d{1,2})(?:\s+(0?\.\d{1,4}|1(?:\.0+)?))?$/.exec(
+      l.text
+    )
+  const streams = [
+    original,
+    ...(middle ? [content(middle)] : []),
+    content(page).filter(
+      (l) =>
+        l.x >= rect[0] - 1 &&
+        l.right <= rect[2] + 1 &&
+        l.y >= rect[1] - 1 &&
+        l.bottom <= rect[3] + 1
+    )
+  ]
+  const rows = streams.map((ls) =>
+    ls.map((l) => ({ line: l, match: record(l) })).filter((r) => r.match)
+  )
+  if (
+    rows.some((rs) => rs.length < 3) ||
+    rows[0].at(-1).line.bottom < origin.height * 0.8 ||
+    (middle &&
+      (streams[1][0]?.y > middle.height * 0.15 || streams[1].at(-1)?.bottom < middle.height * 0.8))
+  )
+    return
+  const anchor = rows[0].find((r) => !r.match[6])?.line
+  if (!anchor) return
+  const height = anchor.fontSize
+  if (
+    height <= 0 ||
+    rows.some(
+      (rs) =>
+        rs.filter(
+          ({ match: m }) =>
+            Math.abs((Number(m[2]) / totals[0]) * 100 - Number(m[3])) <= 0.011 &&
+            Math.abs((Number(m[4]) / totals[1]) * 100 - Number(m[5])) <= 0.011
+        ).length < 3
+    ) ||
+    rows
+      .flat()
+      .some(
+        ({ line: l, match: m }) =>
+          !/\p{L}/u.test(m[1]) ||
+          Math.abs(l.fontSize - height) > 0.5 ||
+          Math.abs(l.x - anchor.x) > height * 2.2 ||
+          (m[6]
+            ? Math.abs(l.right - rect[2]) > height
+            : Math.abs(l.right - anchor.right) > height * 0.8)
+      )
+  )
+    return
+  // The bridge must contain only these records, short section/test labels or
+  // their aligned wrapped stub and detached count tail. Ordinary prose breaks it.
+  if (
+    streams[1].some((l) => {
+      if (record(l)) return false
+      if (Math.abs(l.fontSize - height) > 0.5 || l.x < rect[0] - 1 || l.right > rect[2] + 1)
+        return true
+      if (/^\d+\s+\d+\.\d{1,2}\s+\d+\s+\d+\.\d{1,2}$/.test(l.text))
+        return l.x < anchor.x + height * 4
+      return !(
+        /^[\p{L}][\p{L}\p{N} ()/–-]{0,49}(?:\s+0?\.\d{1,4})?$/u.test(l.text) &&
+        l.x <= anchor.x + 1 &&
+        !/^(?:Discussion|Results|Methods|Conclusion|References)\b/i.test(l.text)
+      )
+    })
+  )
+    return
+  return title
+}
+
+function associatePairedCountContinuation(page, tables, candidates, rules, pages) {
+  if (tables.length !== 1 || tables[0].rect[1] > page.height * 0.15) return
+  const origin = pages.find((p) => p.pageNumber === page.pageNumber - 1)
+  if (!origin || origin.width !== page.width || origin.height !== page.height) return
+  const titles = candidates.filter(
+    (c) => c.page === origin.pageNumber && captionKind(c.lines[0]) === 'table'
+  )
+  if (
+    titles.length !== 1 ||
+    candidates.some((c) => c.page === page.pageNumber && c.rect[3] <= tables[0].rect[1])
+  )
+    return
+  const title = titles[0],
+    rect = tables[0].rect
+  const record = (l) =>
+    /^(.+?)\s+(\d+)\s*\((\d+(?:\.\d+)?)\)\s+(\d+)\s*\((\d+(?:\.\d+)?)\)$/.exec(l.text.trim())
+  const prior = groupPageLines(origin)
+    .filter((l) => l.y >= title.rect[3])
+    .map((l) => ({ line: l, match: record(l) }))
+    .filter((r) => r.match)
+  const current = groupPageLines(page)
+    .filter((l) => l.y >= rect[1] - 1 && l.bottom <= rect[3] + 1)
+    .map((l) => ({ line: l, match: record(l) }))
+    .filter((r) => r.match)
+  if (prior.length < 3 || current.length < 3 || prior.at(-1).line.bottom < origin.height * 0.8)
+    return
+  const anchor = prior.at(-1).line,
+    font = anchor.fontSize
+  if (
+    origin.lines.some(
+      (l) => l.text.length > 80 && l.y >= title.rect[3] && l.y + l.height <= anchor.bottom
+    )
+  )
+    return
+  const samples = origin.lines
+    .filter(
+      (l) =>
+        /^n\s*=\s*\d{2,6}$/i.test(l.text.trim()) && l.y > title.rect[3] && l.y < prior[0].line.y
+    )
+    .map((l) => Number(/\d+/.exec(l.text)[0]))
+  if (
+    samples.length !== 2 ||
+    Math.abs(title.rect[0] - rect[0]) > font * 3 ||
+    [...prior, ...current].some(
+      ({ line: l }) =>
+        Math.abs(l.fontSize - font) > 0.2 ||
+        Math.abs(l.x - anchor.x) > font * 1.5 ||
+        Math.abs(l.right - anchor.right) > font * 2
+    )
+  )
+    return
+  const fits = (rows) =>
+    rows.filter(
+      ({ match: m }) =>
+        Math.abs((Number(m[2]) / samples[0]) * 100 - Number(m[3])) < 0.15 &&
+        Math.abs((Number(m[4]) / samples[1]) * 100 - Number(m[5])) < 0.15
+    ).length >= 3
+  if (!fits(prior) || !fits(current)) return
+  const closing = joinHorizontalTableRules(rules, 0.75).filter(
+    (r) =>
+      r[1] >= rect[3] &&
+      r[1] - rect[3] <= font * 2 &&
+      r[0] <= Math.min(...current.map(({ line: l }) => l.x)) &&
+      r[2] >= Math.max(...current.map(({ line: l }) => l.right)) &&
+      (rect[2] - rect[0]) / (r[2] - r[0]) >= 0.8
+  )
+  if (
+    closing.length !== 1 ||
+    candidates.some(
+      (c) =>
+        c.page === page.pageNumber &&
+        c.rect[1] >= rect[3] &&
+        c.rect[1] - closing[0][1] <= (c.rect[3] - c.rect[1]) * 2
+    ) ||
+    page.lines.some((l) => l.text.length > 80 && intersection(lineRect(l), rect) > 0)
+  )
+    return
+  return title
+}
+
+function associateTerminalStatisticalCaption(page, tables, candidates, rules, pages) {
+  if (tables.length !== 1 || candidates.some((c) => c.page === page.pageNumber)) return
+  const rect = tables[0].rect
+  if (rect[1] > page.height * 0.16) return
+  const record = (l) =>
+    /^(?:Estimate|Error|Effect Size)\s+(?:[−-]?\d+(?:\.\d+)?[*†‡§]?\s+){2,}[−-]?\d+(?:\.\d+)?[*†‡§]?$/.test(
+      l.text.trim()
+    )
+  const rows = groupPageLines(page).filter(
+    (l) => l.y >= rect[1] - 1 && l.bottom <= rect[3] + 1 && record(l)
+  )
+  if (rows.length < 3) return
+  const anchor = rows[0],
+    font = anchor.fontSize
+  if (rows.some((l) => Math.abs(l.fontSize - font) > 0.2 || Math.abs(l.x - anchor.x) > font * 0.25))
+    return
+  const horizontal = joinHorizontalTableRules(rules, 0.75).filter(
+    (r) =>
+      r[2] - r[0] > page.width * 0.55 &&
+      r[0] <= anchor.x &&
+      r[2] >= Math.max(...rows.map((l) => l.right))
+  )
+  const openings = horizontal.filter(
+    (r) => r[1] <= rect[1] + font * 0.05 && rect[1] - r[1] < font * 4
+  )
+  const closings = horizontal.filter((r) => r[1] >= rect[3] && r[1] - rect[3] < font * 2)
+  if (
+    openings.length !== 1 ||
+    closings.length !== 1 ||
+    Math.abs(openings[0][0] - closings[0][0]) > font * 0.2 ||
+    Math.abs(openings[0][2] - closings[0][2]) > font * 0.2
+  )
+    return
+  // A native section stub may have a full-em box just above its opening rule.
+  // Its baseline and almost all ink remain below the unique stroke; an extra
+  // run, different font, foreign glyph or substantive overlap is not evidence.
+  if (openings[0][1] > rect[1]) {
+    const crossing = page.lines.filter(
+      (l) =>
+        l.y < openings[0][1] && l.y + l.height > rect[1] && l.x < rect[2] && l.x + l.width > rect[0]
+    )
+    const first = crossing[0]
+    if (
+      crossing.length !== 1 ||
+      !/^\p{L}[\p{L} -]{0,49}$/u.test(first.text.trim()) ||
+      Math.abs(first.fontSize - font) > 0.2 ||
+      Math.abs(first.height - font) > font * 0.1 ||
+      first.y < openings[0][1] - font * 0.05 ||
+      first.y + first.height <= openings[0][1] + font * 0.5 ||
+      first.x < openings[0][0] ||
+      first.x > anchor.x ||
+      first.x + first.width > openings[0][2]
+    )
+      return
+  }
+  const frame = [openings[0][0], openings[0][1], openings[0][2], closings[0][1]]
+  const possible = []
+  for (const distance of [1, 2]) {
+    const origin = pages.find((p) => p.pageNumber === page.pageNumber - distance)
+    if (!origin || origin.width !== page.width || origin.height !== page.height) continue
+    const body = groupPageLines(origin).filter(
+      (l) => l.y > origin.height * 0.05 && l.bottom < origin.height * 0.9
+    )
+    const titles = candidates.filter(
+      (c) =>
+        c.page === origin.pageNumber &&
+        captionKind(c.lines[0]) === 'table' &&
+        /^Table\s+\d+[.:]\s+\S.{15}/i.test(c.lines.join(' ')) &&
+        c.rect[3] === body.at(-1)?.bottom &&
+        c.lines.at(-1) === body.at(-1)?.text &&
+        Math.abs(c.rect[0] - frame[0]) < font
+    )
+    if (titles.length !== 1) continue
+    if (distance === 2) {
+      const middle = pages.find((p) => p.pageNumber === page.pageNumber - 1)
+      if (
+        !middle ||
+        middle.width !== page.width ||
+        middle.height !== page.height ||
+        candidates.some((c) => c.page === middle.pageNumber)
+      )
+        continue
+      const previousRows = groupPageLines(middle).filter(record)
+      if (
+        previousRows.length < 6 ||
+        previousRows.at(-1).bottom < middle.height * 0.8 ||
+        previousRows.some(
+          (l) => Math.abs(l.fontSize - font) > 0.2 || Math.abs(l.x - anchor.x) > font * 0.25
+        )
+      )
+        continue
+      const edges = (middle.graphicsBounds ?? [])
+        .filter((g) => g.kind === 'path')
+        .map((g) => g.normalizedRect.map((v, n) => v * (n % 2 ? middle.height : middle.width)))
+        .filter((r) => r[3] - r[1] < middle.height / 64)
+        .map((r) => [r[0], (r[1] + r[3]) / 2, r[2], (r[1] + r[3]) / 2])
+      const bars = joinHorizontalTableRules(edges, font * 0.2).filter(
+        (r) => Math.abs(r[0] - frame[0]) < font && Math.abs(r[2] - frame[2]) < font
+      )
+      if (
+        !bars.some((r) => r[1] < middle.height * 0.16) ||
+        !bars.some((r) => r[1] > middle.height * 0.8) ||
+        middle.lines.some(
+          (l) => l.text.length > 80 && l.y > middle.height * 0.05 && l.y < middle.height * 0.9
+        )
+      )
+        continue
+    }
+    possible.push(titles[0])
+  }
+  return possible.length === 1 ? possible[0] : undefined
+}
+
 export function associateTableCaptions(page, tables, candidates, rules = [], pages = []) {
+  const pairedContinuation = associatePairedCountContinuation(
+    page,
+    tables,
+    candidates,
+    rules,
+    pages
+  )
+  if (pairedContinuation) return [{ caption: pairedContinuation }]
+  const terminalStatisticalCaption = associateTerminalStatisticalCaption(
+    page,
+    tables,
+    candidates,
+    rules,
+    pages
+  )
+  if (terminalStatisticalCaption) return [{ caption: terminalStatisticalCaption }]
   const captions = candidates.filter(
     (c) => c.page === page.pageNumber && captionKind(c.lines[0]) === 'table'
   )
@@ -3348,6 +4590,40 @@ export function associateTableCaptions(page, tables, candidates, rules = [], pag
           overlap / Math.min(rect[2] - rect[0], caption.rect[2] - caption.rect[0]) >= 0.5
       )
       .filter((match, _, matches) => {
+        // A same-number "continues" footer is a forward page marker when a
+        // unique full title already owns the native opening rule above this
+        // table. Do not let their nearly equal distances erase that title.
+        const marker = /^Table\s+(\d+[A-Z]?)\s*\(continues\)\s*$/i.exec(
+          match.caption.lines.join(' ').trim()
+        )
+        if (!marker || matches.length !== 2 || match.caption.rect[1] < rect[3]) return true
+        const title = matches.find((m) => m !== match)
+        const description = /^Table\s+(\d+[A-Z]?)\s*:\s*(.{20,})$/i.exec(
+          title.caption.lines.join(' ').trim()
+        )
+        if (
+          !description ||
+          description[1].toLowerCase() !== marker[1].toLowerCase() ||
+          title.caption.rect[3] > rect[1] ||
+          title.gap > Math.min(18, (title.caption.rect[3] - title.caption.rect[1]) * 2) ||
+          match.gap > Math.min(18, (match.caption.rect[3] - match.caption.rect[1]) * 2)
+        )
+          return true
+        const tolerance = Math.max(4, (rect[2] - rect[0]) * 0.02)
+        const opening = rules.filter(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] >= title.caption.rect[3] &&
+            r[1] <= rect[1] + Math.min(4, (title.caption.rect[3] - title.caption.rect[1]) * 0.25) &&
+            Math.abs(r[0] - rect[0]) <= tolerance &&
+            Math.abs(r[2] - rect[2]) <= tolerance &&
+            Math.abs(r[0] - title.caption.rect[0]) <= 4 &&
+            title.caption.rect[2] <= r[2] + 4 &&
+            Math.abs(match.caption.rect[2] - r[2]) <= 4
+        )
+        return opening.length !== 1
+      })
+      .filter((match, _, matches) => {
         // Some layouts print only a table number above and repeat that same
         // number with the description below. Two close eligible matches prove
         // the description's ownership without treating their distance as a tie.
@@ -3392,9 +4668,62 @@ export function associateTableCaptions(page, tables, candidates, rules = [], pag
             )))
     )
   )
+  const completeNativeStack =
+    tables.length >= 2 &&
+    tables.length <= 6 &&
+    above.every((matches, i) => {
+      if (matches.length !== 1) return false
+      const caption = matches[0].caption,
+        rect = tables[i].rect,
+        em = Math.max(
+          ...page.lines
+            .filter((l) => intersection(lineRect(l), caption.rect) > 0)
+            .map((l) => l.fontSize)
+            .filter((h) => h > 0)
+        )
+      if (!Number.isFinite(em) || !/^Table\s+\d+[.:]\s/i.test(caption.lines[0])) return false
+      const edgeTolerance = (rect[2] - rect[0]) * 0.08
+      const opening = rules.filter(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] >= caption.rect[3] &&
+          r[1] <= rect[1] &&
+          r[1] - caption.rect[3] <= em * 1.2 &&
+          rect[1] - r[1] <= em &&
+          Math.abs(r[0] - rect[0]) <= edgeTolerance &&
+          Math.abs(r[2] - rect[2]) <= edgeTolerance &&
+          Math.abs((r[0] + r[2] - caption.rect[0] - caption.rect[2]) / 2) <= em
+      )
+      if (opening.length !== 1) return false
+      const first = opening[0],
+        closing = rules.filter(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] >= rect[3] &&
+            r[1] - rect[3] <= em &&
+            Math.abs(r[0] - first[0]) <= 0.1 &&
+            Math.abs(r[2] - first[2]) <= 0.1
+        )
+      if (
+        closing.length !== 1 ||
+        tables.some(
+          (t, n) =>
+            n !== i && intersection(t.rect, [first[0], first[1], first[2], closing[0][1]]) > 0
+        )
+      )
+        return false
+      const source = page.lines.filter(
+        (l) =>
+          l.y >= first[1] &&
+          l.y + l.height <= closing[0][1] &&
+          l.x >= first[0] - 0.1 &&
+          l.x + l.width <= first[2] + 0.1
+      )
+      return source.filter((l) => (l.text.match(/\d+(?:\.\d+)?/g) ?? []).length >= 3).length >= 3
+    })
   if (
     tables.length > 1 &&
-    captions.length === tables.length &&
+    (captions.length === tables.length || completeNativeStack) &&
     above.every((matches) => matches.length === 1) &&
     new Set(above.map((matches) => matches[0].caption)).size === tables.length &&
     !choices.some((matches) => matches.some((m) => m.ruledFooter)) &&
@@ -3408,7 +4737,10 @@ export function associateTableCaptions(page, tables, candidates, rules = [], pag
     return above.map((matches) => ({ caption: matches[0].caption }))
   return choices.map((matches, index) => {
     if (!matches.length) {
-      const caption = associateCaptionSheet(page, tables, candidates, rules, pages)
+      const caption =
+        associateCaptionSheet(page, tables, candidates, rules, pages) ??
+        associateCountContinuationCaption(page, tables, candidates, pages, 1) ??
+        associateCountContinuationCaption(page, tables, candidates, pages)
       return caption ? { caption } : { reason: 'no-adjacent-table-caption' }
     }
     if (

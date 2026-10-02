@@ -113,6 +113,13 @@ it('joins explicitly marked same-page column continuations and keeps their capti
   expect(joined.cells.at(-1)).toMatchObject({ row: 2, text: 'R0' })
   expect(joined.caption).toEqual(next.caption)
   expect(joined.notes).toEqual(next.notes)
+  const clipped = { text: 'Variable', rect: [314, 16, 350, 28] }
+  const diagnosed = groupTableParts(
+    [first, { ...next, clipped: [clipped], issues: ['text-crosses-crop-boundary'] }],
+    page
+  )[0]
+  expect(diagnosed.clipped).toEqual([clipped])
+  expect(diagnosed.issues).toContain('text-crosses-crop-boundary')
   expect(groupTableParts([first, next], { lines: [] })).toHaveLength(2)
   expect(
     groupTableParts(
@@ -157,6 +164,17 @@ it('joins explicitly labelled column continuations in source reading order', () 
   expect(result[0].notes).toEqual(next.notes)
   expect(result[0].caption).toEqual(first.caption)
   expect(result[0].cropRects).toEqual([first.cropRect, next.cropRect])
+  const headerClip = { text: 'Characteristic', rect: [338, 103, 380, 115] }
+  const bodyClip = { text: 'Statin', rect: [341, 130, 370, 142] }
+  const diagnosedNext = {
+    ...next,
+    clipped: [headerClip, bodyClip],
+    issues: ['text-crosses-crop-boundary']
+  }
+  expect(groupTableParts([first, diagnosedNext], { lines: [] })[0].clipped).toEqual([
+    headerClip,
+    bodyClip
+  ])
   const marker = { text: '(Continued )', x: 180, y: 606, width: 28, height: 10 }
   const withFooter = {
     ...first,
@@ -172,6 +190,9 @@ it('joins explicitly labelled column continuations in source reading order', () 
   expect(joined.cropRect[3]).toBeLessThan(909)
   expect(joined.cropRects[0][3]).toBeLessThan(909)
   expect(joined.grid).toEqual(result[0].grid)
+  const diagnosed = groupTableParts([withFooter, diagnosedNext], { lines: [marker] })[0]
+  expect(diagnosed.clipped).toEqual([headerClip, bodyClip])
+  expect(diagnosed.issues).toEqual(['text-crosses-crop-boundary'])
   for (const lines of [[], [{ ...marker, y: 300 }]]) {
     expect(groupTableParts([withFooter, next], { lines })[0].unassigned).toEqual(
       withFooter.unassigned

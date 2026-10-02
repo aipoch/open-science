@@ -14,6 +14,10 @@ import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 // unused leading columns while time/interaction statistics stay in their own
 // columns. A new section or an incomplete cycle cannot be silently swallowed.
 export function recoverRepeatedVisitGrid(table, items, captions, rules) {
+  const paired = recoverNativePairedVisitStatistics(table, items, captions, rules)
+  if (paired) return paired
+  const effects = recoverTimeEffectVisitCycles(table, items, captions, rules)
+  if (effects) return effects
   const summaries = recoverSummaryCycles(table, items, captions, rules)
   if (summaries) return summaries
   const wrapped = recoverWrappedVisitCycles(table, items, captions, rules)
@@ -289,6 +293,124 @@ export function recoverRepeatedVisitGrid(table, items, captions, rules) {
   }
 }
 
+// Three explicitly indexed visits and a sparse within-cohort probability row
+// repeat per outcome. Their source sequence proves both the missing time-effect
+// records and the two statistics printed once beside each complete visit set.
+function recoverTimeEffectVisitCycles(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const predicted = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length !== 7) return
+  const [left, top, right, bottom] = table.cropRect,
+    cuts = [
+      left,
+      ...predicted.slice(1).map((c, n) => left + (predicted[n].rect[2] + c.rect[0]) / 2),
+      right
+    ]
+  const source = tableSourceItems(items, table.cropRect),
+    h = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  if (!(h > 0)) return
+  const groups = groupSourceRowsWithScripts(source, h, 0.35)
+  if (!groups) return
+  const compact = (s) => s.replace(/\s/g, ''),
+    values = groups.map((g) => readSourceRow(g, cuts)),
+    times = values.map((v) => v && /^T[123]$/i.test(compact(v[0])))
+  const first = times.findIndex(Boolean)
+  if (first < 2) return
+  const header = groups.slice(0, first - 1).flat(),
+    body = groups.slice(first - 1),
+    heads = readSourceRow(header, cuts, { multiline: true })
+  if (
+    !heads ||
+    !/dependent\s*variable/i.test(heads[0]) ||
+    !heads.slice(1, 3).every((s) => /mean\s*\(SD\)/i.test(s)) ||
+    !/mean\s*difference\s*\(CI\)/i.test(heads[3]) ||
+    !/intervention\s*effect/i.test(heads[4]) ||
+    !/interaction\s*effect/i.test(heads[5]) ||
+    !/BIC\s*\(AIC\)/i.test(heads[6])
+  )
+    return
+  if (body.length < 15 || body.length % 5) return
+  const closing = joinHorizontalTableRules(rules).filter(
+    (r) =>
+      Math.abs(r[0] - left) < h &&
+      Math.abs(r[2] - right) < h &&
+      r[1] >= union(body.at(-1))[3] &&
+      r[1] - union(body.at(-1))[3] < h &&
+      r[1] <= bottom
+  )
+  if (closing.length !== 1) return
+  const number = (s) => /^[<>˂≤≥−–+-]?(?:\d|\.\d)[\d.,()%–−+\s/-]*$/.test(compact(s)),
+    measured = (s) => /^\d+(?:\.\d+)?\([\d.,]+\)$/.test(compact(s))
+  const spans = [],
+    bounds = [],
+    owned = [...header]
+  for (let n = 0; n < body.length; n += 5) {
+    const cycle = body.slice(n, n + 5),
+      v = cycle.map((g) => readSourceRow(g, cuts))
+    if (
+      v.some((s) => !s) ||
+      !/^\p{L}[\p{L}\s-]*$/u.test(v[0][0]) ||
+      v[0].slice(1).some(Boolean) ||
+      !/^p[- ]?value\s*for\s*time\s*effect$/i.test(v[4][0]) ||
+      !v[4].slice(1, 3).every(number) ||
+      v[4].slice(3).some(Boolean)
+    )
+      return
+    for (let t = 1; t <= 3; t++)
+      if (
+        compact(v[t][0]).toUpperCase() !== 'T' + t ||
+        !v[t].slice(1, 3).every(measured) ||
+        !number(v[t][3]) ||
+        !number(v[t][4]) ||
+        v[t].slice(5).some((s) => (t === 1 ? !number(s) : !!s))
+      )
+        return
+    const label = cycle[0][0],
+      stub = cycle[1].filter((i) => i.rect[0] < cuts[1])[0]
+    if (
+      !stub ||
+      stub.rect[0] - label.rect[0] < h * 0.5 ||
+      stub.rect[0] - label.rect[0] > h * 1.5 ||
+      cycle.some((g, t) => t && g[0].baseline - cycle[t - 1][0].baseline < h * 1.5) ||
+      cycle.some((g, t) => t && g[0].baseline - cycle[t - 1][0].baseline > h * 2.2)
+    )
+      return
+    const row = 1 + n
+    spans.push(
+      { row, column: 0, rowSpan: 1, colSpan: 7 },
+      { row: row + 1, column: 5, rowSpan: 3, colSpan: 1 },
+      { row: row + 1, column: 6, rowSpan: 3, colSpan: 1 }
+    )
+    bounds.push(...cycle.map(union))
+    owned.push(...cycle.flat())
+  }
+  if (!hasUniqueRecordTokens(source, [owned])) return
+  const firstTop = (union(header)[3] + bounds[0][1]) / 2,
+    rows = [
+      [left, top, right, firstTop],
+      ...bounds.map((r, n) => [
+        left,
+        n ? (bounds[n - 1][3] + r[1]) / 2 : firstTop,
+        right,
+        n + 1 < bounds.length ? (r[3] + bounds[n + 1][1]) / 2 : closing[0][1]
+      ])
+    ]
+  if (body.some((g, n) => g.some((i) => i.rect[1] < rows[n + 1][1] || i.rect[3] > rows[n + 1][3])))
+    return
+  return {
+    cropRect: [...table.cropRect],
+    rows,
+    columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
+    headerRows: [0],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    repair: 'native-body-records-recovered'
+  }
+}
+
 // Repeated baseline/visit/change/test cycles independently establish row
 // boundaries when the detector merges or drops whole statistical records.
 // Require complete cycles, complete paired measurements, a native header rule
@@ -519,5 +641,168 @@ function recoverWrappedVisitCycles(table, items, captions, rules) {
     spans,
     headerRows: headings.rows.map((_, n) => n),
     completeSpans: true
+  }
+}
+
+// A closed segmented statistics frame and repeated complete T1/T2 pairs locate
+// both numeric lanes and otherwise empty, wide labels without semantic guesses.
+function recoverNativePairedVisitStatistics(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const [left, top, right, bottom] = table.cropRect
+  const source = tableSourceItems(items, table.cropRect),
+    h = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  if (!(h > 0)) return
+  const bands = []
+  for (const r of rules.filter((r) => r[1] === r[3] && r[1] >= top && r[1] <= bottom)) {
+    let b = bands.find((b) => Math.abs(b[0][1] - r[1]) < 0.01)
+    if (!b) {
+      b = []
+      bands.push(b)
+    }
+    b.push(r)
+  }
+  const full = bands
+    .filter((b) => {
+      b.sort((a, b) => a[0] - b[0])
+      return (
+        b.length === 14 &&
+        Math.abs(b[0][0] - left) < h &&
+        Math.abs(b.at(-1)[2] - right) < h &&
+        b.every((r, n) => r[2] - r[0] > h * 2 && (!n || Math.abs(r[0] - b[n - 1][2]) < 0.01))
+      )
+    })
+    .sort((a, b) => a[0][1] - b[0][1])
+  if (full.length < 3) return
+  const same = (a, b) =>
+    a.every((r, n) => Math.abs(r[0] - b[n][0]) < 0.01 && Math.abs(r[2] - b[n][2]) < 0.01)
+  const closing = full.at(-1),
+    cuts = [left, ...closing.slice(1).map((r, n) => (r[0] + closing[n][2]) / 2), right]
+  if (full.some((b) => !same(b, closing))) return
+  const groups = groupSourceRowsWithScripts(source, h, 0.35)
+  if (!groups || full.filter((b) => b[0][1] > union(groups.at(-1))[3]).length !== 1) return
+  // Native horizontal lane endpoints can precede ink by a tiny font-box overhang.
+  // Recognition may clamp at most .1em; exported glyph rectangles stay unchanged.
+  const read = (g) => {
+    const bounded = []
+    for (const i of g) {
+      const c = cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+      if (c < 0 || i.rect[0] < cuts[c] - h * 0.1 || i.rect[2] > cuts[c + 1] + h * 0.1) return
+      bounded.push({
+        ...i,
+        rect: [Math.max(i.rect[0], cuts[c]), i.rect[1], Math.min(i.rect[2], cuts[c + 1]), i.rect[3]]
+      })
+    }
+    return readSourceRow(bounded, cuts)
+  }
+  const values = groups.map(read),
+    compact = (s) => s.replace(/\s/g, ''),
+    number = (s) => /^[−+-]?(?:\d|\.\d)[\d.,()%−–+*†‡-]*$/.test(compact(s))
+  const first = values.findIndex(
+    (v) => v && /^t1$/i.test(compact(v[0])) && v.slice(1).every(number)
+  )
+  if (first < 2) return
+  const divider = full.filter((b) => b[0][1] < union(groups[first])[1]).at(-1)
+  if (!divider || divider === closing || divider[0][1] <= full[0][0][1]) return
+  const header = source.filter((i) => i.rect[3] <= divider[0][1]),
+    body = source.filter((i) => !header.includes(i))
+  if (body.some((i) => i.rect[1] < divider[0][1] || i.rect[3] > closing[0][1])) return
+  const units = header
+      .filter((i) => /^(?:M|SD)$/.test(i.text))
+      .sort((a, b) => a.rect[0] - b.rect[0]),
+    role = (c) =>
+      header
+        .filter((i) => i.rect[0] >= cuts[c] && i.rect[2] <= cuts[c + 1])
+        .sort((a, b) => a.rect[0] - b.rect[0])
+        .map((i) => i.text)
+        .join('')
+  if (
+    units.length !== 6 ||
+    !units.every(
+      (i, n) =>
+        i.rect[0] >= cuts[n + 1] &&
+        i.rect[2] <= cuts[n + 2] &&
+        i.text.toUpperCase() === (n % 2 ? 'SD' : 'M')
+    ) ||
+    !/^variable$/i.test(compact(role(0))) ||
+    !/F.*time/i.test(role(7)) ||
+    !header.some((i) => /^Omnibus$/i.test(i.text))
+  )
+    return
+  const heading = recoverRuledHeaderBands(header, cuts, rules, full[0][0][1], divider[0][1])
+  if (!heading || heading.rows.length !== 2) return
+  const records = groupSourceRowsWithScripts(body, h, 0.35)
+  if (!records) return
+  const spans = [...heading.spans],
+    bounds = records.map(union)
+  let pairs = 0
+  for (let n = 0; n < records.length; n++) {
+    const g = records[n]
+    if (g.every((i) => /\p{L}/u.test(i.text))) {
+      if (!records[n + 1]) return
+      spans.push({ row: heading.rows.length + n, column: 0, rowSpan: 1, colSpan: 14 })
+      continue
+    }
+    const v = read(g)
+    if (!v) return
+    if (/^t1$/i.test(compact(v[0]))) {
+      const after = records[n + 1],
+        next = after && read(after)
+      if (
+        !next ||
+        !/^t2$/i.test(compact(next[0])) ||
+        !v.slice(1).every(number) ||
+        !next.slice(1, 8).every(number) ||
+        next.slice(8).some(Boolean)
+      )
+        return
+      const stub = g.filter((i) => i.rect[2] <= cuts[1]),
+        other = after.filter((i) => i.rect[2] <= cuts[1])
+      if (
+        !stub.length ||
+        !other.length ||
+        Math.abs(union(stub)[0] - union(other)[0]) > h * 0.1 ||
+        after[0].baseline - g[0].baseline < h * 0.9 ||
+        after[0].baseline - g[0].baseline > h * 1.6
+      )
+        return
+      for (const list of [g, after])
+        if (
+          list.some(
+            (i) =>
+              Math.abs(i.baseline - list[0].baseline) > h * 0.15 ||
+              Math.abs(i.height - h) > h * 0.05
+          )
+        )
+          return
+      pairs++
+      n++
+      continue
+    }
+    if (g.some((i) => !/\p{L}/u.test(i.text)) || !records[n + 1]) return
+    spans.push({ row: heading.rows.length + n, column: 0, rowSpan: 1, colSpan: 14 })
+  }
+  if (pairs < 3 || !hasUniqueRecordTokens(source, [header, ...records])) return
+  const rows = [
+    ...heading.rows,
+    ...bounds.map((r, n) => [
+      left,
+      n ? (bounds[n - 1][3] + r[1]) / 2 : divider[0][1],
+      right,
+      n + 1 < bounds.length ? (r[3] + bounds[n + 1][1]) / 2 : closing[0][1]
+    ])
+  ]
+  if (
+    records.some((g, n) => g.some((i) => i.rect[1] < rows[n + 2][1] || i.rect[3] > rows[n + 2][3]))
+  )
+    return
+  return {
+    cropRect: [...table.cropRect],
+    rows,
+    columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
+    headerRows: [0, 1],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    repair: 'native-body-records-recovered'
   }
 }

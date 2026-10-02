@@ -151,26 +151,232 @@ export function findCaptionedNumericTableRegions(items, rules, detectedRects = [
 
 // Single-axis strokes and thin rectangular fills establish table borders.
 // Bounding boxes of backgrounds, compound grids and curves are not cell edges.
-export function collectTableRules(operators, viewport) {
+// Keep closed stroke rectangles separate from table-rule discovery: a path's
+// bounding box does not prove four edges. Only explicit four-corner polygons
+// with a closePath and axis-aligned transformed edges establish a figure frame.
+export function collectClosedFigureFrames(operators, viewport) {
+  let transform = [1, 0, 0, 1, 0, 0]
+  const stack = [],
+    frames = []
+  for (const [i, op] of operators.fnArray.entries()) {
+    const args = operators.argsArray[i]
+    if (op === OPS.save) stack.push([...transform])
+    else if (op === OPS.restore) transform = stack.pop() ?? [1, 0, 0, 1, 0, 0]
+    else if (op === OPS.transform) transform = Util.transform(transform, args)
+    else if (op === OPS.constructPath && args[0] === OPS.stroke && args[1]?.length === 1) {
+      const nativePath = args[1][0]
+      if (
+        !Array.isArray(nativePath) &&
+        !(ArrayBuffer.isView(nativePath) && typeof nativePath.length === 'number')
+      )
+        continue
+      const path = Array.from(nativePath)
+      const polygon = path.slice(-13),
+        prefix = path.slice(0, -13)
+      if (
+        polygon.length !== 13 ||
+        polygon[12] !== 4 ||
+        polygon[0] !== 0 ||
+        ![3, 6, 9].every((n) => polygon[n] === 1) ||
+        prefix.length % 3 !== 0 ||
+        prefix.some((v, n) => n % 3 === 0 && v !== 0) ||
+        !path.every(Number.isFinite)
+      )
+        continue
+      const points = [0, 3, 6, 9].map((n) => [polygon[n + 1], polygon[n + 2]])
+      const matrix = Util.transform(viewport.transform, transform)
+      for (const point of points) Util.applyTransform(point, matrix)
+      if (
+        new Set(points.map((p) => p.join(','))).size !== 4 ||
+        points.some((p, n) => {
+          const q = points[(n + 1) % 4]
+          return (
+            Math.min(Math.abs(p[0] - q[0]), Math.abs(p[1] - q[1])) > 0.01 ||
+            Math.max(Math.abs(p[0] - q[0]), Math.abs(p[1] - q[1])) < 4
+          )
+        })
+      )
+        continue
+      frames.push([
+        Math.min(...points.map((p) => p[0])),
+        Math.min(...points.map((p) => p[1])),
+        Math.max(...points.map((p) => p[0])),
+        Math.max(...points.map((p) => p[1]))
+      ])
+    }
+  }
+  return frames
+}
+
+export function collectTableRules(operators, viewport, rulePaintBounds) {
   const fillThickness =
     1.1 *
     Math.max(
       Math.hypot(viewport.transform[0], viewport.transform[1]),
       Math.hypot(viewport.transform[2], viewport.transform[3])
     )
-  let transform = [1, 0, 0, 1, 0, 0]
+  let transform = [1, 0, 0, 1, 0, 0],
+    lineWidth = 1,
+    lineCap = 0,
+    solidStroke = true,
+    unprovedClip = false
   const stack = [],
-    rules = []
+    rules = [],
+    unknownPaint = new Set()
+  // The public rules retain their original center lines. This optional private
+  // map records only paint proved by native state and an axis-aligned transform.
+  const rememberPaint = (rule, bounds) => {
+    if (!rulePaintBounds) return
+    const key = rule.join(',')
+    if (
+      !bounds ||
+      unprovedClip ||
+      !bounds.every(Number.isFinite) ||
+      ((viewport.width !== undefined || viewport.height !== undefined) &&
+        (!Number.isFinite(viewport.width) ||
+          !Number.isFinite(viewport.height) ||
+          viewport.width <= 0 ||
+          viewport.height <= 0 ||
+          bounds[0] < 0 ||
+          bounds[1] < 0 ||
+          bounds[2] > viewport.width ||
+          bounds[3] > viewport.height))
+    ) {
+      rulePaintBounds.delete(key)
+      unknownPaint.add(key)
+      return
+    }
+    if (unknownPaint.has(key)) return
+    const previous = rulePaintBounds.get(key)
+    rulePaintBounds.set(
+      key,
+      previous
+        ? [
+            Math.min(previous[0], bounds[0]),
+            Math.min(previous[1], bounds[1]),
+            Math.max(previous[2], bounds[2]),
+            Math.max(previous[3], bounds[3])
+          ]
+        : bounds
+    )
+  }
+  const strokePaint = (rule, matrix, startCap = true, endCap = true) => {
+    if (
+      !solidStroke ||
+      !Number.isFinite(lineWidth) ||
+      lineWidth <= 0 ||
+      ![0, 1, 2].includes(lineCap) ||
+      !matrix.every(Number.isFinite) ||
+      !rule.every(Number.isFinite)
+    )
+      return
+    const aligned = matrix[1] === 0 && matrix[2] === 0,
+      quarterTurn = matrix[0] === 0 && matrix[3] === 0
+    if (!aligned && !quarterTurn) return
+    const scaleX = Math.hypot(matrix[0], matrix[2]),
+      scaleY = Math.hypot(matrix[1], matrix[3]),
+      horizontal = rule[1] === rule[3],
+      vertical = rule[0] === rule[2]
+    if (!scaleX || !scaleY || horizontal === vertical) return
+    const radiusX = (lineWidth * scaleX) / 2,
+      radiusY = (lineWidth * scaleY) / 2,
+      cap = lineCap !== 0
+    return [
+      rule[0] - (vertical || (cap && startCap) ? radiusX : 0),
+      rule[1] - (horizontal || (cap && startCap) ? radiusY : 0),
+      rule[2] + (vertical || (cap && endCap) ? radiusX : 0),
+      rule[3] + (horizontal || (cap && endCap) ? radiusY : 0)
+    ]
+  }
   for (const [i, op] of operators.fnArray.entries()) {
     const args = operators.argsArray[i]
-    if (op === OPS.save) stack.push([...transform])
-    else if (op === OPS.restore) transform = stack.pop() ?? [1, 0, 0, 1, 0, 0]
-    else if (op === OPS.transform) transform = Util.transform(transform, args)
-    else if (op === OPS.constructPath) {
+    if (op === OPS.save)
+      stack.push({ transform: [...transform], lineWidth, lineCap, solidStroke, unprovedClip })
+    else if (op === OPS.restore) {
+      const state = stack.pop()
+      transform = state?.transform ?? [1, 0, 0, 1, 0, 0]
+      lineWidth = state ? state.lineWidth : 1
+      lineCap = state ? state.lineCap : 0
+      solidStroke = state ? state.solidStroke : true
+      unprovedClip = state ? state.unprovedClip : false
+    } else if (op === OPS.transform) transform = Util.transform(transform, args)
+    else if (op === OPS.setLineWidth) lineWidth = args[0]
+    else if (op === OPS.setLineCap) lineCap = args[0]
+    else if (op === OPS.setDash) solidStroke = Array.isArray(args[0]) && args[0].length === 0
+    else if (op === OPS.clip || op === OPS.eoClip) unprovedClip = true
+    else if (op === OPS.setGState) {
+      if (!Array.isArray(args[0])) {
+        lineWidth = NaN
+        lineCap = NaN
+        solidStroke = false
+      } else {
+        for (const entry of args[0]) {
+          if (!Array.isArray(entry)) {
+            lineWidth = NaN
+            lineCap = NaN
+            solidStroke = false
+          } else if (entry[0] === 'LW') lineWidth = entry[1]
+          else if (entry[0] === 'LC') lineCap = entry[1]
+          else if (entry[0] === 'D')
+            solidStroke = Array.isArray(entry[1]?.[0]) && entry[1][0].length === 0
+        }
+      }
+    } else if (op === OPS.constructPath) {
+      if (args[0] === OPS.clip || args[0] === OPS.eoClip) unprovedClip = true
       // PDF.js DrawOPS: exactly moveTo(x, y), lineTo(x, y); a compound path
       // can have gaps even when its bounding box looks like one continuous rule.
       const path = args[1]?.[0]
       if (args[1]?.length !== 1 || !path) continue
+      // A continuous same-axis polyline retains each painted segment. Prove
+      // one move, only line commands, monotonic transformed points and no
+      // repeated point; compound boxes, branches and curves stay ineligible.
+      if (
+        args[0] === OPS.stroke &&
+        path.length >= 9 &&
+        path.length % 3 === 0 &&
+        Array.from(path).every((v, n) => Number.isFinite(v) && (n % 3 !== 0 || v === (n ? 1 : 0)))
+      ) {
+        const matrix = Util.transform(viewport.transform, transform)
+        const points = Array.from({ length: path.length / 3 }, (_, n) => [
+          path[n * 3 + 1],
+          path[n * 3 + 2]
+        ])
+        for (const point of points) Util.applyTransform(point, matrix)
+        const axis = points.every((p) => Math.abs(p[1] - points[0][1]) <= 0.01)
+          ? 0
+          : points.every((p) => Math.abs(p[0] - points[0][0]) <= 0.01)
+            ? 1
+            : undefined
+        if (axis !== undefined) {
+          const direction = Math.sign(points.at(-1)[axis] - points[0][axis])
+          if (
+            direction &&
+            points.slice(1).every((p, n) => (p[axis] - points[n][axis]) * direction >= 4)
+          ) {
+            for (const [n, p] of points.slice(1).entries()) {
+              const a = points[n]
+              const rule = [
+                Math.min(a[0], p[0]),
+                Math.min(a[1], p[1]),
+                Math.max(a[0], p[0]),
+                Math.max(a[1], p[1])
+              ]
+              rules.push(rule)
+              const forward = direction > 0
+              rememberPaint(
+                rule,
+                strokePaint(
+                  rule,
+                  matrix,
+                  forward ? n === 0 : n === points.length - 2,
+                  forward ? n === points.length - 2 : n === 0
+                )
+              )
+            }
+          }
+        }
+        continue
+      }
       // Publishers can batch disconnected rules into one stroke. Keep each
       // explicit move/line pair; the overall bounds must never bridge a gap.
       if (
@@ -191,13 +397,16 @@ export function collectTableRules(operators, viewport) {
           Util.applyTransform(b, matrix)
           const width = Math.abs(a[0] - b[0]),
             height = Math.abs(a[1] - b[1])
-          if (Math.min(width, height) <= 0.01 && Math.max(width, height) >= 4)
-            rules.push([
+          if (Math.min(width, height) <= 0.01 && Math.max(width, height) >= 4) {
+            const rule = [
               Math.min(a[0], b[0]),
               Math.min(a[1], b[1]),
               Math.max(a[0], b[0]),
               Math.max(a[1], b[1])
-            ])
+            ]
+            rules.push(rule)
+            rememberPaint(rule, strokePaint(rule, matrix))
+          }
         }
         continue
       }
@@ -245,11 +454,35 @@ export function collectTableRules(operators, viewport) {
         Math.min(rect[2] - rect[0], rect[3] - rect[1]) <= (filled ? fillThickness : 0.01) &&
         Math.max(rect[2] - rect[0], rect[3] - rect[1]) >= 4
       ) {
+        const strokePoints = stroke
+          ? [
+              [path[1], path[2]],
+              [path[4], path[5]]
+            ]
+          : []
+        for (const point of strokePoints) Util.applyTransform(point, matrix)
+        const ownsStroke =
+          stroke &&
+          Array.from(path).every(Number.isFinite) &&
+          [
+            Math.min(...strokePoints.map((p) => p[0])),
+            Math.min(...strokePoints.map((p) => p[1])),
+            Math.max(...strokePoints.map((p) => p[0])),
+            Math.max(...strokePoints.map((p) => p[1]))
+          ].every((value, index) => value === rect[index])
+        const paint = filled
+          ? [OPS.fill, OPS.eoFill].includes(args[0])
+            ? [...rect]
+            : undefined
+          : ownsStroke
+            ? strokePaint(rect, matrix)
+            : undefined
         if (filled) {
           const axis = rect[2] - rect[0] > rect[3] - rect[1] ? 1 : 0
           rect[axis] = rect[axis + 2] = (rect[axis] + rect[axis + 2]) / 2
         }
         rules.push(rect)
+        rememberPaint(rect, paint)
       }
     }
   }
@@ -877,6 +1110,82 @@ export function excludeRemovedMarginTokens(tokens, originalPage, contentPage, sc
   )
 }
 
+// Only exact white or fully transparent pixels establish an unpainted border.
+// Keep a source pixel around all other ink for interpolation; dark frames and
+// off-white backgrounds are content, regardless of what the image depicts.
+function decodedWhiteBorderRect(decoded, matrix, viewport) {
+  const { width, height, kind, data } = decoded ?? {},
+    channels = kind === 2 ? 3 : kind === 3 ? 4 : 0
+  if (
+    !channels ||
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    !Number.isSafeInteger(width * height) ||
+    data?.length !== width * height * channels ||
+    !matrix?.every(Number.isFinite) ||
+    matrix[1] !== 0 ||
+    matrix[2] !== 0 ||
+    !matrix[0] ||
+    !matrix[3] ||
+    !(viewport?.width > 0 && viewport?.height > 0)
+  )
+    return
+  // The decoded buffer already exists. Bound the work of proving complete
+  // white edge strips, rather than rejecting a large image whose margins are
+  // cheap to inspect. An unfinished row/column never establishes blank ink.
+  let inspected = 0,
+    inkSeen = false
+  const unpainted = (x, y) => {
+    if (inspected >= 16_000_000) return false
+    inspected++
+    const i = (y * width + x) * channels
+    const blank =
+      (channels === 4 && data[i + 3] === 0) ||
+      (data[i] === 255 &&
+        data[i + 1] === 255 &&
+        data[i + 2] === 255 &&
+        (channels === 3 || data[i + 3] === 255))
+    if (!blank) inkSeen = true
+    return blank
+  }
+  const emptyRow = (y) => {
+    for (let x = 0; x < width; x++) if (!unpainted(x, y)) return false
+    return true
+  }
+  let top = 0,
+    bottom = height - 1,
+    left = 0,
+    right = width - 1
+  while (top <= bottom && emptyRow(top)) top++
+  if (top > bottom) return
+  while (emptyRow(bottom)) bottom--
+  const emptyColumn = (x) => {
+    for (let y = top; y <= bottom; y++) if (!unpainted(x, y)) return false
+    return true
+  }
+  while (emptyColumn(left)) left++
+  while (emptyColumn(right)) right--
+  if (!inkSeen) return
+  left = Math.max(0, left - 1)
+  right = Math.min(width, right + 2)
+  top = Math.max(0, top - 1)
+  bottom = Math.min(height, bottom + 2)
+  if (left === 0 && right === width && top === 0 && bottom === height) return
+  const points = [
+    [left / width, 1 - top / height],
+    [right / width, 1 - bottom / height]
+  ]
+  for (const point of points) Util.applyTransform(point, matrix)
+  return [
+    Math.min(...points.map((p) => p[0])) / viewport.width,
+    Math.min(...points.map((p) => p[1])) / viewport.height,
+    Math.max(...points.map((p) => p[0])) / viewport.width,
+    Math.max(...points.map((p) => p[1])) / viewport.height
+  ]
+}
+
 export function collectGraphicsBounds(renderTask, boxes) {
   // PDF.js 5.4.624 getOperatorList() sets the OPLIST intent, disabling queue optimization.
   // recordedBBoxes uses the render stream, so indices from getOperatorList() are NOT compatible.
@@ -885,8 +1194,15 @@ export function collectGraphicsBounds(renderTask, boxes) {
   assert(Array.isArray(operators?.fnArray) && boxes, 'PDF render geometry is unavailable.')
   const graphicsBounds = []
   const imageMasks = new Set()
+  let transform = [1, 0, 0, 1, 0, 0]
+  const transforms = [],
+    viewport = renderTask._internalRenderTask.params?.viewport
   let invalidGraphicsBounds = 0
   for (const [index, operation] of operators.fnArray.entries()) {
+    const args = operators.argsArray[index]
+    if (operation === OPS.save) transforms.push([...transform])
+    else if (operation === OPS.restore) transform = transforms.pop() ?? [1, 0, 0, 1, 0, 0]
+    else if (operation === OPS.transform) transform = Util.transform(transform, args)
     const image = [
       OPS.paintImageXObject,
       OPS.paintImageXObjectRepeat,
@@ -916,7 +1232,7 @@ export function collectGraphicsBounds(renderTask, boxes) {
     }
     // Compare decoded pixels, not per-page object IDs or bounding boxes. Hash
     // decoded images within a bounded budget, including manuscript watermarks.
-    let imageHash
+    let imageHash, paintedNormalizedRect
     if (image) {
       const source = operators.argsArray[index]?.[0]
       const task = renderTask._internalRenderTask
@@ -933,12 +1249,35 @@ export function collectGraphicsBounds(renderTask, boxes) {
           .update(decoded.data)
           .digest('hex')
       }
+      if (
+        (decoded?.data instanceof Uint8Array || decoded?.data instanceof Uint8ClampedArray) &&
+        operation === OPS.paintImageXObject &&
+        Array.isArray(viewport?.transform) &&
+        !task.params?.transform
+      ) {
+        const painted = decodedWhiteBorderRect(
+          decoded,
+          Util.transform(viewport.transform, transform),
+          viewport
+        )
+        if (
+          painted?.every(Number.isFinite) &&
+          painted[2] > painted[0] &&
+          painted[3] > painted[1] &&
+          painted[0] >= normalizedRect[0] &&
+          painted[1] >= normalizedRect[1] &&
+          painted[2] <= normalizedRect[2] &&
+          painted[3] <= normalizedRect[3]
+        )
+          paintedNormalizedRect = painted
+      }
     }
     const graphic = {
       operationIndex: index,
       kind: image ? 'image' : 'path',
       normalizedRect,
-      ...(imageHash ? { imageHash } : {})
+      ...(imageHash ? { imageHash } : {}),
+      ...(paintedNormalizedRect ? { paintedNormalizedRect } : {})
     }
     graphicsBounds.push(graphic)
     if (

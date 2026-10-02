@@ -12,6 +12,7 @@ import {
   captionKind,
   excludePdfLineNumbers,
   findCaptionCandidates,
+  recoverAuxiliaryTableCaptions,
   joinCaptionLines,
   sourceWordSpellings
 } from './literature-pdf-caption-group.mjs'
@@ -19,6 +20,7 @@ import {
   associateFigures,
   deduplicateFigureCaptions,
   associateUnnumberedFigure,
+  associateUncaptionedRasterFigure,
   associateGraphicalTables,
   associateRasterTables,
   resolveFigureCaption,
@@ -27,7 +29,15 @@ import {
   associateTableCaptions,
   associateGraphicalAbstract
 } from './literature-pdf-association.mjs'
-import { associateTableNotes, associateContinuedTableNotes } from './literature-pdf-table-notes.mjs'
+import {
+  associateTableNotes,
+  tableNoteOwnershipRect,
+  associateContinuedTableNotes,
+  recoverRuledDoseNoteCrop,
+  recoverRuledDefinitionNoteCrop,
+  recoverRepeatedRecordFooterNotes
+} from './literature-pdf-table-notes.mjs'
+import { rebaseTableCrop, selectResultGeometryPages } from './literature-pdf-table-geometry.mjs'
 import {
   hasTableEvidence,
   refineTable,
@@ -36,28 +46,83 @@ import {
   recoverCaptionedRuledTables
 } from './literature-pdf-table-refine.mjs'
 import { deduplicateTableRegions } from './literature-pdf-table-regions.mjs'
+import {
+  splitRuledComparisonSections,
+  groupRuledComparisonSections
+} from './literature-pdf-ruled-narrative-grid.mjs'
 import { isFigureRiskTable } from './literature-pdf-table-evidence.mjs'
+import { recoverNativeMixedSectionParts } from './literature-pdf-native-mixed-section-parts.mjs'
+import {
+  proveNativeCaptionRaisedGlyphOwnership,
+  recoverNativeRaisedCaptionFragments
+} from './literature-pdf-native-caption-raised-glyphs.mjs'
+import { recoverNativeCaptionOverlayAccentLines } from './literature-pdf-native-caption-overlay-accents.mjs'
 import {
   recoverOwnedTableCrop,
   trimTableCaptionCrop,
+  trimTableNoteCrop,
   tableMarginCropTop
 } from './literature-pdf-table-geometry.mjs'
 import { recoverWrappedCountTable } from './literature-pdf-wrapped-count-grid.mjs'
-import { groupTableParts } from './literature-pdf-table-group.mjs'
+import { groupTableParts, recoverPriorPageTableCaption } from './literature-pdf-table-group.mjs'
+import {
+  recoverRepeatedRecordBlocks,
+  groupRepeatedRecordBlocks
+} from './literature-pdf-repeated-record-blocks.mjs'
+import {
+  proveDescriptiveRecordBlock,
+  provePairedStatisticGutters,
+  recoverDescriptiveRecordBlock,
+  groupDescriptiveRecordBlocks
+} from './literature-pdf-descriptive-record-block.mjs'
+import {
+  findClosedDefinitionTailFrame,
+  recoverClosedDefinitionTail
+} from './literature-pdf-closed-definition-tail.mjs'
+import {
+  recoverMixedQuestionSections,
+  groupMixedQuestionSections
+} from './literature-pdf-long-question-record-grid.mjs'
+import { recoverNativeQuestionContinuationCaption } from './literature-pdf-native-question-continuation.mjs'
 import { renderPdfCrop, recoverScannedFigures } from './literature-pdf-crop.mjs'
 import {
   collectTableRules,
+  collectClosedFigureFrames,
   excludeRepeatedMarginContent,
   excludeRemovedMarginTokens
 } from './literature-pdf-graphics.mjs'
-import { repairPdfSymbolText, splitPdfNumericRuns } from './literature-pdf-symbol-text.mjs'
+import {
+  repairPdfSymbolText,
+  splitPdfNumericRuns,
+  nativeWhitespaceGaps
+} from './literature-pdf-symbol-text.mjs'
+import {
+  proveNativeScientificLeafGutters,
+  recoverNativeScientificLeafRecordGrid
+} from './literature-pdf-native-scientific-leaf-gutters.mjs'
+import { recoverNativeMeanDeviationRecords } from './literature-pdf-native-mean-deviation-records.mjs'
 import {
   isUprightText,
   originalRect,
   rotatedTextRect,
   restoreCaptionCoordinates
 } from './literature-pdf-orientation.mjs'
-import { readFigureSequence } from './literature-pdf-figure-sequence.mjs'
+import { readFigureSequence, rasterPlateRect } from './literature-pdf-figure-sequence.mjs'
+import { nativeRepeatedMatrixCandidate } from './literature-pdf-native-repeated-matrix-candidate.mjs'
+import {
+  getNativePairedTextContextDirection,
+  recoverNativePairedTextCaption
+} from './literature-pdf-native-bounded-text-record-grid.mjs'
+import { recoverNativeRepeatedMatrixParts } from './literature-pdf-native-repeated-matrix-grid.mjs'
+import {
+  recoverPriorCohortContinuation,
+  recoverNativeCountContinuationCaption,
+  isNativeAuthorAffiliationRegion,
+  recoverAdjacentStatisticalSections,
+  groupNativeStatisticalSections,
+  recoverEnclosedTableDescriptionCaption,
+  isExternalAttachmentTableRegion
+} from './literature-pdf-native-table-candidates.mjs'
 
 const [pdfArgument, assetArgument, runtimeArgument, pageArgument, outputArgument] =
   process.argv.slice(2)
@@ -121,7 +186,11 @@ assert.deepEqual(
 const bytes = await readFile(pdfPath)
 const checksum = createHash('sha256').update(bytes).digest('hex')
 assert.equal(checksum, inference.sourceSha256)
-const captions = findCaptionCandidates(geometry.pages)
+const captions = recoverAuxiliaryTableCaptions(
+  geometry.pages,
+  findCaptionCandidates(geometry.pages),
+  requestedPages
+)
 const figures = [],
   algorithms = [],
   tables = []
@@ -139,6 +208,23 @@ const task = getDocument({
   cMapPacked: true
 })
 const normalize = (rect, width, height) => rect.map((v, i) => v / (i % 2 ? height : width))
+const nativeTextTokens = (content, viewport, rotation) =>
+  content.items
+    .filter((i) => 'str' in i && i.str.trim())
+    .map((i) => {
+      const [x, baseline] = viewport.convertToViewportPoint(i.transform[4], i.transform[5])
+      const horizontal = isUprightText(i, rotation)
+      return {
+        text: i.str,
+        inlineSymbol: i.inlineSymbol === true,
+        baseline,
+        height: i.height * 1.5,
+        rect: horizontal
+          ? [x, baseline - i.height * 1.5, x + i.width * 1.5, baseline]
+          : rotatedTextRect(i, viewport),
+        horizontal
+      }
+    })
 const pageWords = new Map(
   geometry.pages.map((page) => [
     page.pageNumber,
@@ -165,7 +251,7 @@ const captionValue = (c) =>
 // publish the auxiliary figure as a newly processed page.
 const auxiliaryCaptionOwners = captions.flatMap((caption) => {
   if (requestedPages.includes(caption.page)) return []
-  const combined = resolveFigureCaption(caption, captions)
+  const combined = resolveFigureCaption(caption, captions, geometry.pages)
   if (!combined.regions) return []
   const page = geometry.pages.find((p) => p.pageNumber === caption.page)
   if (!page) return []
@@ -232,7 +318,10 @@ try {
         )
         return relativePath
       }
-      const pageAlgorithms = findAlgorithmCandidates(pageGeometry)
+      // A numbered algorithm's opening rule can occupy the running-head band.
+      // The algorithm proof checks its complete frame and numbered steps; retain
+      // that native frame while ordinary figure/table inputs still omit headers.
+      const pageAlgorithms = findAlgorithmCandidates(originalPages.get(pageNumber) ?? pageGeometry)
       for (const [index, algorithm] of pageAlgorithms.entries()) {
         const id = `p${pageNumber}-algorithm-${index + 1}`
         algorithms.push({
@@ -255,35 +344,39 @@ try {
           })
       )
       const viewport = page.getViewport({ scale: 1.5, rotation: pageGeometry.renderRotation })
-      const content = splitPdfNumericRuns(
-        excludePdfLineNumbers(
-          await repairPdfSymbolText(page, await page.getTextContent()),
-          page.getViewport({ scale: 1, rotation: pageGeometry.renderRotation })
-        ),
-        await page.getOperatorList()
-      )
-      const tokens = excludeRemovedMarginTokens(
-        content.items
-          .filter((i) => 'str' in i && i.str.trim())
-          .map((i) => {
-            const [x, baseline] = viewport.convertToViewportPoint(i.transform[4], i.transform[5])
-            const horizontal = isUprightText(i, pageGeometry.renderRotation)
-            return {
-              text: i.str,
-              inlineSymbol: i.inlineSymbol === true,
-              baseline,
-              height: i.height * 1.5,
-              rect: horizontal
-                ? [x, baseline - i.height * 1.5, x + i.width * 1.5, baseline]
-                : rotatedTextRect(i, viewport),
-              horizontal
-            }
-          }),
+      const nativeViewport = page.getViewport({ scale: 1, rotation: pageGeometry.renderRotation })
+      const operators = await page.getOperatorList()
+      const sourceContent = await page.getTextContent()
+      // Figure labels retain original native glyph items. Symbol repair can
+      // replace or suppress an item while reconstructing table/formula text;
+      // its original measured label bounds still belong to the rendered figure.
+      const sourceFigureTokens = excludeRemovedMarginTokens(
+        nativeTextTokens(sourceContent, viewport, pageGeometry.renderRotation),
         originalPages.get(pageNumber),
         pageGeometry,
         1.5
       )
-      const rules = collectTableRules(await page.getOperatorList(), viewport)
+      const content = splitPdfNumericRuns(
+        excludePdfLineNumbers(await repairPdfSymbolText(page, sourceContent), nativeViewport, {
+          tableRects: pageInference.tables.map((t) => t.cropRect.map((v) => v / 1.5)),
+          captions: captions.filter((c) => c.page === pageNumber),
+          rules: collectTableRules(operators, nativeViewport)
+        }),
+        operators,
+        { viewport: nativeViewport, rules: collectTableRules(operators, nativeViewport) }
+      )
+      let tokens = excludeRemovedMarginTokens(
+        nativeTextTokens(content, viewport, pageGeometry.renderRotation),
+        originalPages.get(pageNumber),
+        pageGeometry,
+        1.5
+      )
+      const rulePaintBounds = new Map()
+      const rules = collectTableRules(operators, viewport, rulePaintBounds)
+      const closedFrames = collectClosedFigureFrames(
+        operators,
+        page.getViewport({ scale: 1, rotation: pageGeometry.renderRotation })
+      )
       // Native table rules disambiguate headers styled like the caption above.
       // Refine only existing table candidates; figure associations keep their input.
       const ruledCaptions = findCaptionCandidates(
@@ -295,16 +388,172 @@ try {
       )) {
         const bounded = ruledCaptions.find(
           (c) =>
-            c.lines[0] === candidate.lines[0] &&
+            (c.lines[0] === candidate.lines[0] ||
+              (c.lines[0].replaceAll('ˆ', '') === candidate.lines[0].replaceAll('ˆ', '') &&
+                recoverNativeRaisedCaptionFragments(
+                  pageGeometry,
+                  c,
+                  rules.map((rect) => rect.map((v) => v / 1.5))
+                ))) &&
             c.rect[1] === candidate.rect[1] &&
             (Math.abs(c.rect[0] - candidate.rect[0]) < 0.01 ||
               (c.rect[0] <= candidate.rect[0] + 0.01 && c.rect[2] >= candidate.rect[2] - 0.01))
         )
         if (bounded) Object.assign(candidate, bounded)
       }
+      // Use original native single-glyph items after ruled caption recovery.
+      // Preserve the canonical caption object; serialization joins its new lines.
+      for (const caption of captions.filter((c) => c.page === pageNumber)) {
+        const accentLines = recoverNativeCaptionOverlayAccentLines(
+          pageGeometry,
+          caption,
+          sourceFigureTokens,
+          1.5
+        )
+        if (accentLines) caption.lines = accentLines
+      }
       const pageCaptions = captions
         .filter((c) => c.page === pageNumber)
         .map((c) => ({ ...c, rect: c.rect.map((v) => v * 1.5) }))
+      const continuationCaptions = new Map()
+      const nativeDefinitionTails = new Set()
+      const scientificGutters = []
+      if (
+        pageInference.tables.some((table) =>
+          [8, 9].includes(
+            table.structure.objects.filter((object) => object.label === 'table column').length
+          )
+        )
+      ) {
+        const nativeRuns = nativeWhitespaceGaps(content, operators, viewport)
+        for (const table of pageInference.tables) {
+          const proof = proveNativeScientificLeafGutters(
+            table,
+            tokens,
+            pageCaptions,
+            rules,
+            nativeRuns
+          )
+          if (!proof) continue
+          const frame = {
+            rect: proof.rect.map((v) => v / 1.5),
+            cuts: proof.cuts.map((v) => v / 1.5),
+            gutterBands: proof.gutterBands.map((band) => band.map((v) => v / 1.5))
+          }
+          const revised = excludeRemovedMarginTokens(
+            nativeTextTokens(
+              splitPdfNumericRuns(content, operators, {
+                viewport: nativeViewport,
+                rules: rules.map((rule) => rule.map((v) => v / 1.5)),
+                provenFrames: [...scientificGutters, frame]
+              }),
+              viewport,
+              pageGeometry.renderRotation
+            ),
+            originalPages.get(pageNumber),
+            pageGeometry,
+            1.5
+          )
+          if (recoverNativeScientificLeafRecordGrid(table, revised, pageCaptions, rules, proof)) {
+            tokens = revised
+            scientificGutters.push(frame)
+          }
+        }
+      }
+      const statisticGutters = provePairedStatisticGutters(tokens, rules)
+      if (statisticGutters.length) {
+        tokens = excludeRemovedMarginTokens(
+          nativeTextTokens(
+            splitPdfNumericRuns(content, operators, {
+              viewport: nativeViewport,
+              rules: rules.map((rule) => rule.map((v) => v / 1.5)),
+              provenFrames: [
+                ...scientificGutters,
+                ...statisticGutters.map((frame) => ({
+                  ...frame,
+                  rect: frame.rect.map((v) => v / 1.5),
+                  cuts: frame.cuts.map((v) => v / 1.5),
+                  gutterBands: frame.gutterBands.map((b) => b.map((v) => v / 1.5))
+                }))
+              ]
+            }),
+            viewport,
+            pageGeometry.renderRotation
+          ),
+          originalPages.get(pageNumber),
+          pageGeometry,
+          1.5
+        )
+      }
+      let descriptiveRecordBlock = proveDescriptiveRecordBlock(
+        pageInference.tables,
+        tokens,
+        pageCaptions,
+        rules
+      )
+      if (descriptiveRecordBlock) {
+        const proof = descriptiveRecordBlock
+        const revised = excludeRemovedMarginTokens(
+          nativeTextTokens(
+            splitPdfNumericRuns(content, operators, {
+              viewport: nativeViewport,
+              rules: rules.map((rule) => rule.map((v) => v / 1.5)),
+              provenFrames: [
+                ...scientificGutters,
+                ...statisticGutters.map((frame) => ({
+                  ...frame,
+                  rect: frame.rect.map((v) => v / 1.5),
+                  cuts: frame.cuts.map((v) => v / 1.5),
+                  gutterBands: frame.gutterBands.map((b) => b.map((v) => v / 1.5))
+                })),
+                {
+                  rect: proof.rect.map((v) => v / 1.5),
+                  cuts: proof.cuts.slice(1, -1).map((v) => v / 1.5),
+                  gutterBands: proof.gutterBands.map((b) => b.map((v) => v / 1.5))
+                }
+              ]
+            }),
+            viewport,
+            pageGeometry.renderRotation
+          ),
+          originalPages.get(pageNumber),
+          pageGeometry,
+          1.5
+        )
+        const recovered = recoverDescriptiveRecordBlock(proof, revised, pageNumber)
+        if (recovered) {
+          tokens = revised
+          proof.tables = [
+            recovered,
+            ...proof.sections.slice(1).map((section) =>
+              pageInference.tables.find((table) => {
+                const y = (table.cropRect[1] + table.cropRect[3]) / 2
+                return y > section.band[0][1] && y < section.band.at(-1)[1]
+              })
+            )
+          ]
+          pageInference.tables.push(recovered)
+          const caption = captions.find(
+            (c) => c.page === pageNumber && c.lines === proof.caption.lines
+          )
+          for (const table of proof.tables.filter(Boolean))
+            continuationCaptions.set(table.id, caption)
+        } else descriptiveRecordBlock = undefined
+      }
+      const questionSections = recoverMixedQuestionSections(
+        pageInference.tables,
+        tokens,
+        pageCaptions,
+        rules,
+        pageNumber
+      )
+      if (questionSections) {
+        pageInference.tables = [
+          ...pageInference.tables.filter((t) => !questionSections.replaced.includes(t)),
+          ...questionSections.tables
+        ]
+        continuationCaptions.set(questionSections.tables[1].id, undefined)
+      }
       pageInference.tables = pageInference.tables.flatMap((table) =>
         splitCaptionedTableRegions(table, pageCaptions, rules)
       )
@@ -317,6 +566,143 @@ try {
           pageInference.tables
         )
       )
+      const meanDeviationRecords = recoverNativeMeanDeviationRecords(
+        pageInference.tables,
+        tokens,
+        pageCaptions,
+        rules
+      )
+      if (meanDeviationRecords) {
+        pageInference.tables = pageInference.tables.map(
+          (table) =>
+            meanDeviationRecords.replacements.find((replacement) => replacement.original === table)
+              ?.table ?? table
+        )
+        for (const { table, caption } of meanDeviationRecords.replacements)
+          continuationCaptions.set(
+            table.id,
+            captions.find((c) => c.page === pageNumber && c.lines === caption.lines)
+          )
+      }
+      const repeatedRecordBlocks = recoverRepeatedRecordBlocks(
+        pageInference.tables,
+        tokens,
+        pageCaptions,
+        rules,
+        pageNumber
+      )
+      if (repeatedRecordBlocks) {
+        pageInference.tables = [
+          ...pageInference.tables.filter((table) => !repeatedRecordBlocks.replaced.includes(table)),
+          ...repeatedRecordBlocks.tables
+        ]
+        for (const table of repeatedRecordBlocks.tables)
+          continuationCaptions.set(
+            table.id,
+            captions.find(
+              (c) => c.page === pageNumber && c.lines === repeatedRecordBlocks.caption.lines
+            )
+          )
+      }
+      const continuation = recoverPriorCohortContinuation(
+        tokens,
+        rules,
+        pageNumber,
+        geometry.pages.find((p) => p.pageNumber === pageNumber - 1),
+        captions,
+        pageInference.tables
+      )
+      if (continuation) {
+        pageInference.tables.push(continuation.table)
+        continuationCaptions.set(continuation.table.id, continuation.caption)
+      }
+      const previousGeometry = geometry.pages.find((p) => p.pageNumber === pageNumber - 1)
+      const definitionTailFrame = findClosedDefinitionTailFrame(tokens, rules, viewport.height)
+      if (
+        previousGeometry &&
+        (definitionTailFrame ||
+          (!pageCaptions.some((c) => captionKind(c.lines[0]) === 'table') &&
+            pageInference.tables.some((table) =>
+              [3, 7].includes(
+                table.structure.objects.filter((o) => o.label === 'table column').length
+              )
+            )))
+      ) {
+        const previousNativePage = await document.getPage(pageNumber - 1)
+        const previousOperators = await previousNativePage.getOperatorList()
+        const previousViewport = previousNativePage.getViewport({
+          scale: 1.5,
+          rotation: previousGeometry.renderRotation
+        })
+        const previousRules = collectTableRules(previousOperators, previousViewport)
+        const previousTokens = excludeRemovedMarginTokens(
+          nativeTextTokens(
+            splitPdfNumericRuns(
+              await repairPdfSymbolText(
+                previousNativePage,
+                await previousNativePage.getTextContent()
+              ),
+              previousOperators,
+              {
+                viewport: previousNativePage.getViewport({
+                  scale: 1,
+                  rotation: previousGeometry.renderRotation
+                }),
+                rules: previousRules.map((rule) => rule.map((v) => v / 1.5))
+              }
+            ),
+            previousViewport,
+            previousGeometry.renderRotation
+          ),
+          originalPages.get(pageNumber - 1),
+          previousGeometry,
+          1.5
+        )
+        if (
+          definitionTailFrame &&
+          !pageInference.tables.some((table) => {
+            const r = definitionTailFrame.rect,
+              c = table.cropRect
+            return c[0] < r[2] && c[2] > r[0] && c[1] < r[3] && c[3] > r[1]
+          })
+        ) {
+          const tail = recoverClosedDefinitionTail(
+            definitionTailFrame,
+            previousTokens,
+            previousRules,
+            pageNumber,
+            previousViewport.height
+          )
+          if (tail) {
+            pageInference.tables.push(tail)
+            nativeDefinitionTails.add(tail.id)
+            continuationCaptions.set(tail.id, undefined)
+          }
+        }
+        for (const table of pageInference.tables) {
+          const caption =
+            recoverNativeQuestionContinuationCaption(
+              table,
+              tokens,
+              rules,
+              pageNumber,
+              previousTokens,
+              previousRules,
+              captions
+            ) ??
+            recoverNativeCountContinuationCaption(
+              table,
+              tokens,
+              rules,
+              pageNumber,
+              previousGeometry,
+              captions,
+              previousRules
+            )
+          if (caption) continuationCaptions.set(table.id, caption)
+        }
+        previousNativePage.cleanup()
+      }
       {
         const remainingRules = rules.filter(
           (r) =>
@@ -364,9 +750,147 @@ try {
           }
         }
       }
+      const statisticalSections = recoverAdjacentStatisticalSections(
+        pageInference.tables,
+        tokens,
+        pageCaptions,
+        rules,
+        pageNumber
+      )
+      if (statisticalSections) {
+        pageInference.tables = [
+          ...pageInference.tables.filter((t) => !statisticalSections.replaced.includes(t)),
+          ...statisticalSections.tables
+        ]
+        continuationCaptions.set(
+          statisticalSections.tables[0].id,
+          captions.find(
+            (caption) =>
+              caption.page === statisticalSections.caption.page &&
+              caption.lines === statisticalSections.caption.lines
+          )
+        )
+        continuationCaptions.set(statisticalSections.tables[1].id, undefined)
+      }
+      pageInference.tables = pageInference.tables.flatMap((table) =>
+        splitRuledComparisonSections(table, tokens, pageCaptions, rules)
+      )
       pageInference.tables = deduplicateTableRegions(pageInference.tables, tokens, pageCaptions)
+      const measuredRuns = nativeWhitespaceGaps(content, operators, viewport)
+      const adjacentNativeContexts = new Map()
+      const pairedTextContexts = new Map()
+      for (const raw of pageInference.tables) {
+        const direction = getNativePairedTextContextDirection(
+          raw,
+          tokens,
+          pageCaptions,
+          rules,
+          viewport.height
+        )
+        if (direction !== -1 && direction !== 1) continue
+        const adjacentNumber = pageNumber + direction
+        const adjacentGeometry = geometry.pages.find((p) => p.pageNumber === adjacentNumber)
+        if (!adjacentGeometry) continue
+        if (!adjacentNativeContexts.has(adjacentNumber)) {
+          let adjacentPage
+          let context
+          try {
+            adjacentPage = await document.getPage(adjacentNumber)
+            const adjacentOperators = await adjacentPage.getOperatorList()
+            const adjacentViewport = adjacentPage.getViewport({
+              scale: 1.5,
+              rotation: adjacentGeometry.renderRotation
+            })
+            const adjacentNativeViewport = adjacentPage.getViewport({
+              scale: 1,
+              rotation: adjacentGeometry.renderRotation
+            })
+            const adjacentRules = collectTableRules(adjacentOperators, adjacentViewport)
+            const adjacentContent = splitPdfNumericRuns(
+              excludePdfLineNumbers(
+                await repairPdfSymbolText(
+                  adjacentPage,
+                  await adjacentPage.getTextContent(),
+                  adjacentOperators
+                ),
+                adjacentNativeViewport,
+                {
+                  captions: captions.filter((c) => c.page === adjacentNumber),
+                  rules: collectTableRules(adjacentOperators, adjacentNativeViewport)
+                }
+              ),
+              adjacentOperators,
+              {
+                viewport: adjacentNativeViewport,
+                rules: collectTableRules(adjacentOperators, adjacentNativeViewport)
+              }
+            )
+            context = {
+              pageNumber: adjacentNumber,
+              tokens: excludeRemovedMarginTokens(
+                nativeTextTokens(
+                  adjacentContent,
+                  adjacentViewport,
+                  adjacentGeometry.renderRotation
+                ),
+                originalPages.get(adjacentNumber),
+                adjacentGeometry,
+                1.5
+              ),
+              rules: adjacentRules,
+              captions: captions
+                .filter((c) => c.page === adjacentNumber)
+                .map((c) => ({ ...c, rect: c.rect.map((v) => v * 1.5) })),
+              height: adjacentViewport.height,
+              currentHeight: viewport.height
+            }
+          } catch (error) {
+            // Neighbor evidence is optional; a failed auxiliary read cannot
+            // replace the existing current-page result or publish another page.
+            console.warn(
+              JSON.stringify({
+                phase: 'native-paired-table-context',
+                page: adjacentNumber,
+                error: String(error)
+              })
+            )
+          } finally {
+            adjacentPage?.cleanup()
+          }
+          adjacentNativeContexts.set(adjacentNumber, context)
+        }
+        const context = adjacentNativeContexts.get(adjacentNumber)
+        if (context) {
+          pairedTextContexts.set(raw.id, context)
+          const provedCaption = recoverNativePairedTextCaption(
+            raw,
+            tokens,
+            pageCaptions,
+            rules,
+            context
+          )
+          const originalCaption =
+            provedCaption &&
+            captions.find((c) => c.page === provedCaption.page && c.lines === provedCaption.lines)
+          if (originalCaption) continuationCaptions.set(raw.id, originalCaption)
+        }
+      }
+      const nativeFigureTokens = sourceFigureTokens.map((token) => ({
+        ...token,
+        rect: token.rect.map((value) => value / 1.5),
+        baseline: token.baseline / 1.5,
+        height: token.height / 1.5
+      }))
       const refined = pageInference.tables.map((raw) =>
-        refineTable(raw, tokens, pageCaptions, [], rules)
+        refineTable(
+          raw,
+          tokens,
+          pageCaptions,
+          [],
+          rules,
+          measuredRuns,
+          pairedTextContexts.get(raw.id)
+        )
       )
       // Use recovered row extents, not the padded inference crop, for caption distance.
       const contentRects = refined.map((table) =>
@@ -385,20 +909,66 @@ try {
         captions,
         rules.map((rect) => rect.map((v) => v / 1.5)),
         geometry.pages
-      )
+      ).map((association, index) => {
+        let owned = continuationCaptions.has(refined[index].id)
+          ? { caption: continuationCaptions.get(refined[index].id) }
+          : association
+        const priorTitle = recoverPriorPageTableCaption(
+          refined[index],
+          tokens,
+          rules,
+          pageGeometry,
+          geometry.pages,
+          captions,
+          owned.caption
+        )
+        if (priorTitle) owned = { ...owned, caption: priorTitle }
+        const enclosed = recoverEnclosedTableDescriptionCaption(
+          refined[index],
+          tokens,
+          rules,
+          owned.caption
+        )
+        return enclosed ? { ...owned, caption: enclosed } : owned
+      })
       const notes = associateTableNotes(
         pageGeometry,
-        contentRects.map((rect) => ({ rect })),
+        contentRects.map((rect, index) => ({
+          rect: tableNoteOwnershipRect(refined[index], rect, 1.5, tokens, measuredRuns)
+        })),
+        rules.map((rect) => rect.map((v) => v / 1.5))
+      ).map((assigned, index) => (nativeDefinitionTails.has(refined[index].id) ? [] : assigned))
+      const repeatedFooter = recoverRepeatedRecordFooterNotes(
+        pageGeometry,
+        repeatedRecordBlocks,
         rules.map((rect) => rect.map((v) => v / 1.5))
       )
+      if (repeatedFooter) {
+        const owners = repeatedRecordBlocks.tables.map((table) =>
+          refined.findIndex((candidate) => candidate.id === table.id)
+        )
+        if (owners.every((index) => index >= 0) && owners.every((index) => !notes[index].length))
+          notes[owners[0]] = repeatedFooter
+      }
       for (const [index, tableNotes] of notes.entries()) {
         if (!tableNotes.length) continue
+        const scaledNotes = tableNotes.map((note) => ({
+          ...note,
+          rect: note.rect.map((v) => v * 1.5)
+        }))
+        const noteCrop =
+          recoverRuledDoseNoteCrop(refined[index], scaledNotes, rules) ??
+          recoverRuledDefinitionNoteCrop(refined[index], scaledNotes, rules)
         refined[index] = refineTable(
-          pageInference.tables[index],
+          noteCrop
+            ? rebaseTableCrop(pageInference.tables[index], noteCrop)
+            : pageInference.tables[index],
           tokens,
           pageCaptions,
-          tableNotes.map((note) => ({ ...note, rect: note.rect.map((v) => v * 1.5) })),
-          rules
+          scaledNotes,
+          rules,
+          measuredRuns,
+          pairedTextContexts.get(refined[index].id)
         )
       }
       // Cell row extents omit border rules; the full detected crop owns those rules too.
@@ -407,18 +977,34 @@ try {
         pageNumber <= Math.max(...[...separatedFigures.values()].map((c) => c.endPage ?? c.page))
       // A confirmed separated legend section includes short continuation pages
       // where line numbers alone can look like a two-column table.
-      const adjacentFigures = associateAdjacentFigure(pageGeometry, geometry.pages, captions)
+      const adjacentFigures = associateAdjacentFigure(
+        pageGeometry,
+        geometry.pages,
+        captions,
+        rules.map((r) => r.map((v) => v / 1.5)),
+        closedFrames
+      )
       const captionedFigureRegions = [
         ...adjacentFigures,
         ...associateFigures(
           pageGeometry,
           captions,
           [],
-          rules.map((r) => r.map((v) => v / 1.5))
+          rules.map((r) => r.map((v) => v / 1.5)),
+          closedFrames,
+          nativeFigureTokens
         )
       ].filter((f) => f.rect)
       const acceptedTables = refined.map(
         (table, index) =>
+          !isExternalAttachmentTableRegion(table, tokens, rules, associations[index].caption) &&
+          !isNativeAuthorAffiliationRegion(
+            table,
+            tokens,
+            pageNumber,
+            associations[index].caption,
+            rules
+          ) &&
           (!legendPage || Boolean(associations[index].caption)) &&
           (Boolean(associations[index].caption) ||
             !isFigureRiskTable(table, captionedFigureRegions, pageGeometry)) &&
@@ -460,7 +1046,8 @@ try {
                 r[3] <= f.rect[3] + 12
               )
             })) &&
-          hasTableEvidence(table, associations[index].caption, tokens)
+          (nativeDefinitionTails.has(table.id) ||
+            hasTableEvidence(table, associations[index].caption, tokens, rules))
       )
       const recognizedTableRects = refined
         .filter((_, index) => acceptedTables[index])
@@ -473,6 +1060,27 @@ try {
           .filter((t) => !t.grid.flat().some((s) => s.trim()))
           .map((t) => t.cropRect.map((v) => v / 1.5))
       )
+      // Complete native matrix panels prove the table image even when their
+      // overprinted headers cannot prove a cell grid. Preserve that existing
+      // image-only table surface, with its explicit no-source-cell-grid issue.
+      const nativeMatrix = nativeRepeatedMatrixCandidate(
+        nativeFigureTokens,
+        rules.map((rect) => rect.map((v) => v / 1.5)),
+        captions.filter((caption) => caption.page === pageNumber),
+        pageGeometry.width,
+        pageGeometry.height
+      )
+      if (
+        nativeMatrix &&
+        ![...recognizedTableRects, ...graphicalTables.map((table) => table.rect)].some(
+          (rect) =>
+            rect[0] < nativeMatrix.rect[2] &&
+            rect[2] > nativeMatrix.rect[0] &&
+            rect[1] < nativeMatrix.rect[3] &&
+            rect[3] > nativeMatrix.rect[1]
+        )
+      )
+        graphicalTables.push(nativeMatrix)
       graphicalTables.push(
         ...associateRasterTables(
           pageGeometry,
@@ -489,15 +1097,25 @@ try {
       for (const [index, table] of graphicalTables.entries()) {
         const id = `p${pageNumber}-graphical-table-${index + 1}`
         recognizedTableRects.push(table.rect)
+        const matrix = table === nativeMatrix && recoverNativeRepeatedMatrixParts(table, 1.5)
         tables.push({
           id,
           page: pageNumber,
           caption: captionValue(table.caption),
-          sourceViewport: { width: viewport.width, height: viewport.height, scale: 1.5 },
-          grid: [],
-          cells: [],
-          unassigned: [],
-          issues: ['no-source-cell-grid'],
+          ...(matrix
+            ? {
+                parts: matrix.parts.map((part) => ({
+                  ...part,
+                  sourceViewport: { width: viewport.width, height: viewport.height, scale: 1.5 }
+                }))
+              }
+            : {
+                sourceViewport: { width: viewport.width, height: viewport.height, scale: 1.5 },
+                grid: [],
+                cells: [],
+                unassigned: [],
+                issues: ['no-source-cell-grid']
+              }),
           region: normalize(table.rect, pageGeometry.width, pageGeometry.height),
           thumbnail: await crop(table.rect, id)
         })
@@ -512,15 +1130,25 @@ try {
           ),
           ...pageAlgorithms.map((a) => a.rect)
         ],
-        rules.map((r) => r.map((v) => v / 1.5))
+        rules.map((r) => r.map((v) => v / 1.5)),
+        closedFrames,
+        nativeFigureTokens
       )
       let pageFigures =
         localFigures.length || recognizedTableRects.length
           ? localFigures
-          : associateAdjacentFigure(pageGeometry, geometry.pages, captions)
+          : associateAdjacentFigure(
+              pageGeometry,
+              geometry.pages,
+              captions,
+              rules.map((r) => r.map((v) => v / 1.5)),
+              closedFrames
+            )
       if (!pageFigures.length && !recognizedTableRects.length && !legendPage)
         pageFigures = await recoverScannedFigures(page, pageGeometry)
       if (legendPage) pageFigures = []
+      if (!legendPage && !pageFigures.length && !recognizedTableRects.length)
+        pageFigures = associateUncaptionedRasterFigure(pageGeometry, captions, recognizedTableRects)
       if (
         !legendPage &&
         !pageFigures.length &&
@@ -588,7 +1216,7 @@ try {
           ...plateLabels,
           ...(numberedPlate ? [pageFigures[0].rect] : [])
         ]
-        const plateRect = [
+        const plateRect = rasterPlateRect(pageGeometry) ?? [
           Math.min(...parts.map((r) => r[0])),
           Math.max(0, Math.min(...parts.map((r) => r[1]))),
           Math.max(...parts.map((r) => r[2])),
@@ -673,7 +1301,7 @@ try {
         figures.push({
           id,
           page: pageNumber,
-          caption: captionValue(resolveFigureCaption(candidate.caption, captions)),
+          caption: captionValue(resolveFigureCaption(candidate.caption, captions, geometry.pages)),
           region: rect ? normalize(rect, pageGeometry.width, pageGeometry.height) : undefined,
           thumbnail: rect ? await crop(rect, id) : undefined,
           issue: candidate.reason,
@@ -690,6 +1318,13 @@ try {
         const cropRect = [...table.cropRect]
         const caption = association.caption
         if (!acceptedTables[index]) continue
+        const captionGlyphOwner = proveNativeCaptionRaisedGlyphOwnership(
+          table,
+          tokens,
+          pageCaptions,
+          rules
+        )
+        const ownedBottom = cropRect[3]
         cropRect[1] = tableMarginCropTop(
           table,
           originalPages.get(pageNumber),
@@ -704,12 +1339,30 @@ try {
           contentRect: contentRects[index],
           rules,
           pageNumber,
-          scale: 1.5
+          scale: 1.5,
+          pageItems: tokens,
+          rulePaintBounds
         })
-        for (const note of notes[index]) {
-          if (note.rect[1] >= contentRects[index][3])
-            cropRect[3] = Math.min(cropRect[3], note.rect[1] * 1.5 - 1)
-        }
+        trimTableNoteCrop({
+          cropRect,
+          table,
+          notes: notes[index],
+          contentRect: contentRects[index],
+          scale: 1.5,
+          sourceRules: rules
+        })
+        // Caption padding cannot remove a uniquely proved native table footer.
+        // Its raised caption glyphs remain outside table source ownership.
+        const footerBottom = captionGlyphOwner && captionGlyphOwner.closing[1] + 0.5
+        if (
+          captionGlyphOwner &&
+          Number.isFinite(footerBottom) &&
+          footerBottom <= ownedBottom &&
+          caption?.page === pageNumber &&
+          captionGlyphOwner.caption.lines === caption.lines &&
+          footerBottom < caption.rect[1] * 1.5
+        )
+          cropRect[3] = Math.max(cropRect[3], footerBottom)
         pageTables.push({
           ...table,
           cropRect,
@@ -720,16 +1373,50 @@ try {
           sourceViewport: { width: viewport.width, height: viewport.height, scale: 1.5 }
         })
       }
-      for (const table of groupTableParts(pageTables, pageGeometry)) {
+      for (let table of groupRuledComparisonSections(
+        groupNativeStatisticalSections(
+          groupMixedQuestionSections(
+            groupDescriptiveRecordBlocks(
+              groupRepeatedRecordBlocks(
+                groupTableParts(pageTables, pageGeometry),
+                repeatedRecordBlocks
+              ),
+              descriptiveRecordBlock
+            )
+          )
+        )
+      )) {
+        const mixedSections =
+          !table.parts &&
+          recoverNativeMixedSectionParts(table, tokens, pageCaptions, rules, measuredRuns)
+        if (mixedSections)
+          table = {
+            id: table.id,
+            page: table.page,
+            caption: table.caption,
+            notes: table.notes,
+            cropRect: mixedSections.cropRect,
+            parts: mixedSections.parts.map((part) => ({
+              title: part.title,
+              grid: part.grid,
+              cells: part.cells,
+              unassigned: part.unassigned,
+              issues: part.issues,
+              notes: part.notes,
+              sourceViewport: table.sourceViewport
+            }))
+          }
         // Rendering-only regions must not enter the persisted worker transport.
         const { cropRects, ...result } = table
         table.notes = [
           ...(table.notes ?? []),
-          ...associateContinuedTableNotes(
-            table,
-            pageGeometry,
-            geometry.pages.find((p) => p.pageNumber === pageNumber + 1)
-          )
+          ...(nativeDefinitionTails.has(table.id)
+            ? []
+            : associateContinuedTableNotes(
+                table,
+                pageGeometry,
+                geometry.pages.find((p) => p.pageNumber === pageNumber + 1)
+              ))
         ]
         tables.push({
           ...result,
@@ -806,6 +1493,11 @@ try {
       (key, value) => (['loadMs'].includes(key) ? undefined : value)
     )
   )
+  const resultGeometryPages = selectResultGeometryPages(geometry.pages, requestedPages, [
+    ...figures,
+    ...tables,
+    ...algorithms
+  ])
   const result = {
     schemaVersion: 1,
     warning: 'Experimental candidates; not a production cache, copy gate, or accuracy guarantee.',
@@ -814,7 +1506,7 @@ try {
     pageCount: document.numPages,
     requestedPages,
     processedPages: requestedPages,
-    auxiliaryPages: geometry.pages
+    auxiliaryPages: resultGeometryPages
       .map((p) => p.pageNumber)
       .filter((p) => !requestedPages.includes(p)),
     coordinates: {
@@ -822,7 +1514,7 @@ try {
       captionRects: 'scale-1 displayed viewport',
       tableRects: 'sourceViewport pixels'
     },
-    pages: geometry.pages.map((p) => ({
+    pages: resultGeometryPages.map((p) => ({
       page: p.pageNumber,
       width: (p.renderRotation - p.rotation + 360) % 180 ? p.height : p.width,
       height: (p.renderRotation - p.rotation + 360) % 180 ? p.width : p.height,

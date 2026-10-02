@@ -8,6 +8,23 @@ const moduleUrl = pathToFileURL(
 ).href
 const { hasTableEvidence } = await import(moduleUrl)
 
+it('rejects an article-history and keyword sidebar crossing into an abstract without requiring a DOI', () => {
+  const table = {
+    grid: [
+      [
+        'Received 2 January 2015 Accepted 5 March 2015 Available online xxxx',
+        'Background: An ordinary narrative abstract.'
+      ],
+      ['Keywords:', 'Methods: An ordinary narrative paragraph.'],
+      ['Clinical trial', 'Results: A further prose paragraph.']
+    ],
+    unassigned: ['Article history:'],
+    issues: []
+  }
+  expect(hasTableEvidence(table)).toBe(false)
+  expect(hasTableEvidence(table, { lines: ['Table 1. Publication metadata.'] })).toBe(true)
+})
+
 it('retains a bulleted table continuation without a repeated caption or numeric values', () => {
   const table = readPdfFixture(
     resolve('src/main/literature/pdf-structure/fixtures/ruled-bulleted-table-continuation.jsonl')

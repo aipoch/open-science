@@ -885,6 +885,209 @@ function recoverSegmentedCellBands(table, items, captions, rules) {
 // components are ambiguous and must not authorize a merge.
 export function recoverClosedCellGrid(table, items, captions, rules) {
   const crop = table.cropRect
+  // Definition matrices use closed physical faces, including references whose
+  // years occupy separate baselines. Require every individual edge and owner;
+  // their prose is not an independent numeric record within a merged face.
+  const narrative = (() => {
+    const horizontal = joinHorizontalTableRules(rules, 1)
+    const full = horizontal.filter(
+      (r) =>
+        Math.abs(r[0] - crop[0]) < 24 &&
+        Math.abs(r[2] - crop[2]) < (crop[2] - crop[0]) * 0.18 &&
+        r[1] >= crop[1] - 24 &&
+        r[1] <= crop[3] + 24
+    )
+    if (full.length < 5 || full.length > 25) return
+    const first = full[0],
+      last = full.at(-1)
+    if (full.some((r) => Math.abs(r[0] - first[0]) > 1 || Math.abs(r[2] - first[2]) > 1)) return
+    const frame = [first[0], first[1], first[2], last[1]]
+    const vertical = rules.filter(
+      (r) =>
+        r[0] === r[2] &&
+        r[0] >= frame[0] - 1 &&
+        r[0] <= frame[2] + 1 &&
+        r[1] >= frame[1] - 1 &&
+        r[3] <= frame[3] + 1
+    )
+    const xs = clusterTableRulePositions(vertical.map((r) => r[0])),
+      ys = clusterTableRulePositions(full.map((r) => r[1]))
+    if (
+      ![4, 7].includes(xs.length) ||
+      Math.abs(xs[0] - frame[0]) > 1 ||
+      Math.abs(xs.at(-1) - frame[2]) > 1
+    )
+      return
+    const width = xs.length - 1
+    for (let r = 0; r < ys.length - 1; r++)
+      for (let c = 0; c < width; c++)
+        if (
+          [xs[c], xs[c + 1]].some(
+            (x) => classifyTableRuleEdge(vertical, 0, x, ys[r], ys[r + 1]) !== 1
+          ) ||
+          [ys[r], ys[r + 1]].some(
+            (y) => classifyTableRuleEdge(horizontal, 1, y, xs[c], xs[c + 1]) !== 1
+          )
+        )
+          return
+    const candidates = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.text.trim() &&
+        i.rect[0] >= xs[0] - 0.1 &&
+        i.rect[2] <= xs.at(-1) + 0.1 &&
+        i.rect[1] < frame[3] &&
+        i.rect[3] > frame[1]
+    )
+    if (!candidates.length) return
+    if (
+      items.some(
+        (i) =>
+          i.horizontal &&
+          i.text.trim() &&
+          i.rect[1] < frame[3] &&
+          i.rect[3] > frame[1] &&
+          i.rect[0] < frame[2] &&
+          i.rect[2] > frame[0] &&
+          !candidates.includes(i)
+      )
+    )
+      return
+    const headerInk = candidates.filter((i) => (i.rect[1] + i.rect[3]) / 2 < ys[1])
+    const headings = readSourceRow(headerInk, xs, { multiline: true })
+    const headed =
+      headings?.[0] === 'Symbol' &&
+      headings[1] === 'Definition' &&
+      headings[2] === 'Units' &&
+      headings.every(Boolean)
+    if (!headed && headings?.[0] === 'Symbol') return
+    const attachedScript = (i, own) =>
+      own.some(
+        (a) =>
+          a !== i &&
+          a.height > i.height * 1.2 &&
+          Math.abs(a.baseline - i.baseline) < a.height * 0.8 &&
+          i.rect[0] >= a.rect[0] - a.height * 0.2 &&
+          i.rect[0] <= a.rect[2] + a.height * 0.7
+      )
+    const overhang = candidates.filter((i) => i.rect[1] < frame[1])
+    if (
+      overhang.some(
+        (i) =>
+          !(frame[1] - i.rect[1] <= i.height * 0.1 && headerInk.includes(i)) &&
+          !(frame[1] - i.rect[1] <= i.height * 0.2 && attachedScript(i, headerInk))
+      )
+    )
+      return
+    if (
+      items.some(
+        (i) =>
+          i.horizontal &&
+          i.text.trim() &&
+          i.rect[0] >= frame[0] &&
+          i.rect[2] <= frame[2] &&
+          i.rect[1] >= crop[1] &&
+          i.rect[3] < frame[1] &&
+          !captions.some((c) => i.rect[1] < c.rect[3] && i.rect[3] > c.rect[1])
+      )
+    )
+      return
+    const groups = [],
+      faces = []
+    for (let r = 0; r < ys.length - 1; r++) {
+      const row = []
+      for (let c = 0; c < width; c++) {
+        const own = candidates.filter(
+          (i) =>
+            i.rect[0] >= xs[c] - 0.1 &&
+            i.rect[2] <= xs[c + 1] + 0.1 &&
+            (i.rect[1] + i.rect[3]) / 2 >= ys[r] &&
+            (i.rect[1] + i.rect[3]) / 2 < ys[r + 1]
+        )
+        if (
+          own.some(
+            (i) =>
+              (i.rect[1] < ys[r] - i.height * 0.1 || i.rect[3] > ys[r + 1] + i.height * 0.1) &&
+              !(
+                i.rect[1] >= ys[r] - i.height * 0.2 &&
+                i.rect[3] <= ys[r + 1] + i.height * 0.2 &&
+                attachedScript(i, own)
+              )
+          )
+        )
+          return
+        groups.push(own)
+        row.push(own)
+      }
+      faces.push(row)
+    }
+    if (faces.some((row) => row.every((g) => g.length === 0))) return
+    if (
+      !hasUniqueRecordTokens(
+        candidates,
+        groups.filter((g) => g.length)
+      )
+    )
+      return
+    const body = faces.slice(headed ? 1 : 0)
+    if (
+      body.some((row) => {
+        const height = Math.max(...row[0].map((i) => i.height)),
+          anchors = row[0].filter((i) => i.height >= height * 0.7)
+        return (
+          anchors.length > 1 &&
+          Math.max(...anchors.map((i) => i.baseline)) -
+            Math.min(...anchors.map((i) => i.baseline)) >
+            height * 0.35
+        )
+      })
+    )
+      return
+    const complete = body.filter((row) => {
+      const values = row.map((g) => g.map((i) => i.text).join(' '))
+      const prose = row[1]
+      if (
+        !values[0] ||
+        values[0].length > 60 ||
+        !/[\p{L}]/u.test(values[0]) ||
+        values[1].length < 35 ||
+        new Set(prose.map((i) => Math.round(i.baseline))).size < 2 ||
+        (width === 3 && !values[2])
+      )
+        return false
+      return (
+        width === 3 ||
+        (/\d/.test(values[3]) && /\d/.test(values[5]) && /\([^)]*\b(?:19|20)\d{2}/.test(values[4]))
+      )
+    })
+    if (complete.length < 3 || (!headed && width !== 6)) return
+    // Headerless continuation faces remain body rows. Their repeated six-lane
+    // technical records prove the layout without inventing a repeated header.
+    return {
+      cropRect: [
+        Math.min(crop[0], frame[0] - 0.5),
+        Math.min(crop[1], ...candidates.map((i) => i.rect[1])),
+        Math.max(crop[2], frame[2] + 0.5),
+        Math.max(frame[3] + 0.5, ...candidates.map((i) => i.rect[3]))
+      ],
+      rows: ys
+        .slice(1)
+        .map((y, r) => [
+          frame[0],
+          r === 0 ? Math.min(frame[1], ...headerInk.map((i) => i.rect[1])) : ys[r],
+          frame[2],
+          y
+        ]),
+      columns: xs.slice(1).map((x, c) => [xs[c], frame[1], x, frame[3]]),
+      headerRows: headed ? [0] : [],
+      spans: [],
+      completeSpans: true,
+      ownedTokens: new Set(candidates),
+      preservePhysicalRows: true,
+      repair: 'native-body-records-recovered'
+    }
+  })()
+  if (narrative) return narrative
   const captioned = captions.some((c) => captionKind(c.lines[0]) === 'table')
   const horizontal = joinHorizontalTableRules(rules, 1)
   let borders = horizontal.filter(
@@ -917,6 +1120,74 @@ export function recoverClosedCellGrid(table, items, captions, rules) {
   let source = tableSourceItems(items, [frame[0] - 0.1, frame[1], frame[2] + 0.1, frame[3]])
   if (!source.length) return
   let xs = clusterTableRulePositions(vertical.map((r) => r[0]))
+  // Font boxes can start slightly above a painted opening border. A complete
+  // set of short leaf titles inside the first closed native band proves that
+  // small overhang; unrelated prose above an underline still rejects the grid.
+  let closedHeaderOverhang = false
+  const overhang = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.rect[0] >= frame[0] &&
+      i.rect[2] <= frame[2] &&
+      i.rect[1] < frame[1] - 0.1 &&
+      i.rect[3] > frame[1] &&
+      i.rect[3] < borders[1][1]
+  )
+  if (
+    captioned &&
+    xs.length >= 5 &&
+    xs.length <= 10 &&
+    borders.length >= 8 &&
+    overhang.length === xs.length - 2 &&
+    overhang.every(
+      (i) => /\p{L}/u.test(i.text) && i.text.length < 30 && frame[1] - i.rect[1] <= i.height * 0.1
+    ) &&
+    [xs[0], xs.at(-1)].every(
+      (x) => classifyTableRuleEdge(vertical, 0, x, frame[1], frame[3]) === 1
+    ) &&
+    xs
+      .slice(2)
+      .every(
+        (end, n) => overhang.filter((i) => i.rect[0] >= xs[n + 1] && i.rect[2] <= end).length === 1
+      )
+  ) {
+    frame[1] = Math.min(...overhang.map((i) => i.rect[1]))
+    source = tableSourceItems(items, [frame[0] - 0.1, frame[1], frame[2] + 0.1, frame[3]])
+    closedHeaderOverhang = true
+  }
+  // Some statistical matrices leave both outer sides open. Complete native
+  // top/bottom endpoints still bound the table; paired F, p and effect-size
+  // triples independently prove its final two lanes. Inner faces must retain
+  // the same exact native edge and unique-token checks as a closed frame.
+  let openStatistics = false
+  if (
+    captioned &&
+    xs.length >= 6 &&
+    xs.length <= 10 &&
+    xs[0] > frame[0] &&
+    xs.at(-1) < frame[2] &&
+    borders.length >= 5 &&
+    borders.every((r) => Math.abs(r[0] - frame[0]) < 1 && Math.abs(r[2] - frame[2]) < 1)
+  ) {
+    const height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)]
+    const statCuts = [...xs.slice(-2), frame[2]]
+    const stats = source.filter((i) => i.rect[0] >= statCuts[0] && i.rect[2] <= statCuts[2])
+    const groups = groupSourceRowsWithScripts(stats, height, 0.35)
+    const values = groups?.map((g) => readSourceRow(g, statCuts)) ?? []
+    let triples = 0
+    for (let n = 0; n < values.length - 2; n++) {
+      if (
+        values[n]?.every((s) => /^F=[−–+-]?\d+(?:\.\d+)?[a-z*†‡]*$/i.test(s)) &&
+        values[n + 1]?.every((s) => /^p[=<>≤≥]\d+(?:\.\d+)?[*†‡]*$/i.test(s)) &&
+        values[n + 2]?.every((s) => /^[ηƞ]p2[=<>≤≥]\d+(?:\.\d+)?$/u.test(s))
+      )
+        triples++
+    }
+    if (triples >= 3 && hasUniqueRecordTokens(stats, groups)) {
+      openStatistics = true
+      xs = [frame[0], ...xs, frame[2]]
+    }
+  }
   const predicted = table.structure.objects.filter((o) => o.label === 'table column')
   const singleColumn =
     !vertical.length &&
@@ -977,6 +1248,7 @@ export function recoverClosedCellGrid(table, items, captions, rules) {
   if (ys.length < 3 || ys.length > 81) return
   if (
     !singleColumn &&
+    !openStatistics &&
     [xs[0], xs.at(-1)].some((x) => classifyTableRuleEdge(vertical, 0, x, ys[0], ys.at(-1)) !== 1)
   )
     return
@@ -1092,7 +1364,8 @@ export function recoverClosedCellGrid(table, items, captions, rules) {
     headerRows,
     spans,
     completeSpans: true,
-    ownedTokens: new Set(source)
+    ownedTokens: new Set(source),
+    ...(closedHeaderOverhang ? { repair: 'native-body-records-recovered' } : {})
   }
 }
 
@@ -1291,7 +1564,7 @@ function recoverHeaderSegmentColumns(table, items, captions, rules, abuttingOnly
           .map((i) => i.text)
           .join('')
           .replace(/\s/g, '')
-        return c === 0 ? /\p{L}/u.test(text) : /^[<>≤≥−+]?\d[\d.,()–−+%/]*$/.test(text)
+        return c === 0 ? /\p{L}/u.test(text) : /^[<>≤≥−+]?\d[\d.,()–−+±%/]*$/.test(text)
       })
     )
   ) {
@@ -1415,8 +1688,49 @@ function recoverHeaderSegmentColumns(table, items, captions, rules, abuttingOnly
       spans.push({ row: n + 2, column: 0, rowSpan: 2, colSpan: 1 })
   }
   const ys = [divider.y, ...bounds.slice(1).map((r, n) => (bounds[n][3] + r[1]) / 2), bottom]
+  // The proven upper header can have a font box barely above its painted
+  // opening stroke. Preserve that owned box in the image crop, while keeping
+  // every internal cell boundary on the original native rules.
+  const overhang = items.filter(
+    (i) => i.rect[0] >= left && i.rect[2] <= right && i.rect[1] < top && i.rect[3] > top
+  )
+  const paddedTop = Math.min(top, ...overhang.map((i) => i.rect[1])) - 0.1
+  const openingRules = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      Math.abs(r[0] - left) < 0.1 &&
+      Math.abs(r[2] - right) < 0.1 &&
+      Math.abs(r[1] - top) < height * 0.1
+  )
+  const preserveHeaderBox =
+    overhang.length > 0 &&
+    openingRules.length === 1 &&
+    overhang.every(
+      (i) =>
+        i.horizontal &&
+        /\p{L}/u.test(i.text) &&
+        top - i.rect[1] <= i.height * 0.05 &&
+        i.baseline - top >= i.height * 0.5 &&
+        i.rect[3] <= parent.y &&
+        parent.parts.filter((r) => i.rect[0] >= r[0] && i.rect[2] <= r[2]).length === 1 &&
+        !captions.some(
+          (c) =>
+            i.rect[0] < c.rect[2] &&
+            i.rect[2] > c.rect[0] &&
+            i.rect[1] < c.rect[3] &&
+            i.rect[3] > c.rect[1]
+        )
+    ) &&
+    !items.some(
+      (i) =>
+        !overhang.includes(i) &&
+        i.rect[0] < right &&
+        i.rect[2] > left &&
+        i.rect[1] < top &&
+        i.rect[3] > paddedTop
+    )
   return {
-    cropRect: [left, top, right, bottom],
+    cropRect: [left, preserveHeaderBox ? paddedTop : top, right, bottom],
     rows: [
       [left, top, right, parent.y],
       [left, parent.y, right, divider.y],
@@ -1540,7 +1854,7 @@ function recoverFullyRuledRecords(table, items, captions, rules) {
       r[1] <= bottom + 12
   )
   if (
-    borders.length < 8 ||
+    borders.length < 4 ||
     Math.abs(borders[0][1] - top) > 16 ||
     Math.abs(borders.at(-1)[1] - bottom) > 16 ||
     borders.some((r) => Math.abs(r[0] - borders[0][0]) > 1 || Math.abs(r[2] - borders[0][2]) > 1)
@@ -1588,7 +1902,8 @@ function recoverFullyRuledRecords(table, items, captions, rules) {
           g,
           cells.filter((c) => c.length)
         ) ||
-        (!(n < 2 && leaves) && !cells[0].some((i) => /\p{L}/u.test(i.text))) ||
+        (!(n < 2 && leaves) &&
+          !cells[0].some((i) => /\p{L}/u.test(i.text) || /^\d+$/u.test(i.text))) ||
         (n === 0 && cells.slice(1).some((c) => !c.some((i) => /\p{L}/u.test(i.text))))
       )
     })

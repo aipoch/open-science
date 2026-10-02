@@ -2,6 +2,9 @@
 import { area, intersection as intersect, union } from './literature-pdf-page-geometry.mjs'
 import { inside, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
 import { hasWitnessedLineEndHyphen, sourceWordSpellings } from './literature-pdf-caption-group.mjs'
+import { recoverNativeStackedUncertainty } from './literature-pdf-native-stacked-uncertainty.mjs'
+import { recoverNativeStackedRecordRuns } from './literature-pdf-native-stacked-records.mjs'
+import { recoverNativeClosedMathRuns } from './literature-pdf-native-closed-math-order.mjs'
 
 const BACKSPACE = String.fromCharCode(8)
 
@@ -18,6 +21,7 @@ export function populateTableCellText({
   bottom,
   recordGrid,
   scheduleGrid,
+  nativeMathOrder,
   rotatedContinuation = false,
   issues,
   repairs
@@ -365,9 +369,39 @@ export function populateTableCellText({
   // A model column cut may bisect a single sample-size expression. Source
   // adjacency and the closing parenthesis identify its owner; a real vertical
   // rule or any intervening text prevents moving the header boundary.
-  for (const suffix of items.filter((item) => /^\d+\)$/.test(item.text.trim()))) {
+  const sampleHeaderRows = new Set(headerRows)
+  const openingCells = cells.filter((cell) => cell.row === 0)
+  const openingItems = items
+    .filter((item) => assignments.get(item)?.row === 0)
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  const openingHeight = Math.max(...openingItems.map((item) => item.height))
+  if (
+    openingCells.length >= 3 &&
+    openingCells.every(
+      (cell) =>
+        cell.colSpan === 1 &&
+        cell.rowSpan === 1 &&
+        openingItems.some((item) => assignments.get(item) === cell && /\p{L}/u.test(item.text))
+    ) &&
+    [
+      ...openingItems
+        .map((item) => item.text)
+        .join('')
+        .matchAll(/\([Nn]\s*=\s*\d+\)/g)
+    ].length >= 2 &&
+    rules.some(
+      (rule) =>
+        rule[1] === rule[3] &&
+        rule[0] <= Math.min(...openingItems.map((item) => item.rect[0])) + 1 &&
+        rule[2] >= Math.max(...openingItems.map((item) => item.rect[2])) - 1 &&
+        rule[1] > Math.max(...openingItems.map((item) => item.rect[3])) &&
+        rule[1] - Math.max(...openingItems.map((item) => item.rect[3])) < openingHeight * 0.9
+    )
+  )
+    sampleHeaderRows.add(0)
+  for (const suffix of items.filter((item) => /^(?:=\s*)?\d+\)$/.test(item.text.trim()))) {
     const right = assignments.get(suffix)
-    if (!right || right.colSpan !== 1 || right.rowSpan !== 1 || !headerRows.includes(right.row))
+    if (!right || right.colSpan !== 1 || right.rowSpan !== 1 || !sampleHeaderRows.has(right.row))
       continue
     const left = cells.find(
       (cell) =>
@@ -385,14 +419,27 @@ export function populateTableCellText({
           item.rect[2] <= suffix.rect[0] + 1
       )
       .sort((a, b) => a.rect[0] - b.rect[0])
+    const tail = items
+      .filter(
+        (item) =>
+          assignments.get(item) === right &&
+          Math.abs(item.baseline - suffix.baseline) < suffix.height * 0.2 &&
+          item.rect[2] <= suffix.rect[2] &&
+          /^[=\d)\s]+$/.test(item.text)
+      )
+      .sort((a, b) => a.rect[0] - b.rect[0])
     if (
       !prefix.length ||
-      !/\p{L}.*\([Nn]\s*=\s*$/u.test(prefix.map((item) => item.text).join('')) ||
+      !tail.includes(suffix) ||
+      !/\p{L}.*\([Nn]\s*=\s*\d+\)$/u.test([...prefix, ...tail].map((item) => item.text).join('')) ||
       prefix.some((item, i) => i && item.rect[0] - prefix[i - 1].rect[2] > item.height * 0.4) ||
-      suffix.rect[0] - prefix.at(-1).rect[2] > suffix.height * 0.4
+      tail.some((item, i) => i && item.rect[0] - tail[i - 1].rect[2] > item.height * 0.4) ||
+      tail[0].rect[0] - prefix.at(-1).rect[2] > suffix.height * 0.4
     )
       continue
-    const remainder = items.filter((item) => assignments.get(item) === right && item !== suffix)
+    const remainder = items.filter(
+      (item) => assignments.get(item) === right && !tail.includes(item)
+    )
     if (
       !remainder.some((item) => /\p{L}/u.test(item.text)) ||
       remainder.some((item) => item.rect[0] <= suffix.rect[2]) ||
@@ -408,10 +455,69 @@ export function populateTableCellText({
       continue
     const split = (suffix.rect[2] + Math.min(...remainder.map((item) => item.rect[0]))) / 2
     if (items.some((item) => assignments.get(item) === left && item.rect[2] > split)) continue
-    assignments.set(suffix, left)
+    for (const item of tail) assignments.set(item, left)
     left.rect[2] = split
     right.rect[0] = split
     repairs.push('split-header-sample-size-recovered')
+  }
+  // An opening parenthesis can land just left of the next sample heading.
+  // Its same-baseline n=... tail and aligned title above witness ownership;
+  // the preceding P heading stays independent, including in repeated groups.
+  for (const opening of items.filter((item) => item.text === '(')) {
+    const owner = assignments.get(opening)
+    if (!owner || owner.colSpan !== 1 || owner.rowSpan !== 1 || !headerRows.includes(owner.row))
+      continue
+    const target = cells.find(
+      (cell) =>
+        cell.row === owner.row &&
+        cell.column === owner.column + 1 &&
+        cell.colSpan === 1 &&
+        cell.rowSpan === 1
+    )
+    if (!target) continue
+    const previous = items.filter((item) => assignments.get(item) === owner && item !== opening)
+    const tail = items
+      .filter(
+        (item) =>
+          assignments.get(item) === target &&
+          Math.abs(item.baseline - opening.baseline) < opening.height * 0.2
+      )
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    const title = items.filter(
+      (item) =>
+        assignments.get(item) === target &&
+        item.rect[3] < opening.rect[1] &&
+        Math.abs(item.rect[0] - opening.rect[0]) < opening.height * 0.1
+    )
+    if (
+      !/^P(?:[- ]?Value)?$/i.test(
+        previous
+          .map((item) => item.text)
+          .join('')
+          .trim()
+      ) ||
+      !/^n\s*=\s*\d+\)$/i.test(tail.map((item) => item.text).join('')) ||
+      title.length !== 1 ||
+      !/\p{L}/u.test(title[0].text) ||
+      !tail.length ||
+      tail[0].rect[0] - opening.rect[2] > opening.height * 0.2 ||
+      tail.some((item, n) => n && item.rect[0] - tail[n - 1].rect[2] > item.height * 0.4) ||
+      opening.rect[0] - Math.max(...previous.map((item) => item.rect[2])) < opening.height * 0.5 ||
+      rules.some(
+        (rule) =>
+          rule[0] === rule[2] &&
+          rule[0] > opening.rect[0] &&
+          rule[0] < tail[0].rect[2] &&
+          rule[1] < opening.baseline &&
+          rule[3] > opening.rect[1]
+      )
+    )
+      continue
+    const split = (Math.max(...previous.map((item) => item.rect[2])) + opening.rect[0]) / 2
+    owner.rect[2] = split
+    target.rect[0] = split
+    assignments.set(opening, target)
+    repairs.push('sample-opening-header-recovered')
   }
   // A treatment or count-label prefix belongs to the following lowercase line.
   // Require separate numeric records on both sides before correcting a model
@@ -716,6 +822,23 @@ export function populateTableCellText({
     assignments.set(item, assignments.get(anchor))
     anchors.set(item, anchor)
   }
+  // A bounded native record recognizer can prove raised full-em stars whose
+  // font boxes do not satisfy the generic small-script predicate. Retain its
+  // exact source pair only when both tokens already own the same final cell.
+  for (const [item, anchor] of recordGrid?.scriptAnchors ?? []) {
+    const cell = assignments.get(anchor)
+    if (
+      cell &&
+      assignments.get(item) === cell &&
+      recordGrid.ownedTokens?.has(item) &&
+      recordGrid.ownedTokens.has(anchor) &&
+      items.includes(item) &&
+      items.includes(anchor) &&
+      /^\*{1,3}$/.test(item.text) &&
+      /^[−–-]?\d+\.\d+$/.test(anchor.text)
+    )
+      anchors.set(item, anchor)
+  }
   // A multi-glyph exponent can be split across fonts (for example − and 1).
   // Continue an already anchored small script on the same baseline.
   for (const item of items
@@ -724,7 +847,8 @@ export function populateTableCellText({
     const previous = items.filter(
       (i) =>
         anchors.has(i) &&
-        i.rect[2] <= item.rect[0] + 0.1 &&
+        i.rect[2] <=
+          item.rect[0] + (recordGrid?.nativeSymbolicRecords ? item.height * 0.05 : 0.1) &&
         item.rect[0] - i.rect[2] < item.height * 0.6 &&
         Math.abs(i.height - item.height) < item.height * 0.1 &&
         Math.abs(i.baseline - item.baseline) < item.height * 0.2 &&
@@ -1114,6 +1238,16 @@ export function populateTableCellText({
         repairs.push('multi-glyph-script-recovered')
       }
     }
+    const stacked = recoverNativeStackedUncertainty(cell.items, rules, recordGrid?.equalFontStacks)
+    if (stacked) runs.splice(0, runs.length, ...stacked.runs)
+    const nativeMathRuns = recoverNativeClosedMathRuns(cell.items, runs, nativeMathOrder)
+    if (nativeMathRuns) runs.splice(0, runs.length, ...nativeMathRuns)
+    const nativeStackedRuns = recoverNativeStackedRecordRuns(
+      cell.items,
+      recordGrid?.nativeStackedRecordRuns,
+      runs
+    )
+    if (nativeStackedRuns) runs.splice(0, runs.length, ...nativeStackedRuns)
     cell.text = runs.map((run) => run.text).join('')
     if (runs.some((run) => run.position !== 'normal')) cell.textRuns = runs
     cell.sourceTokens = lines

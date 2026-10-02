@@ -578,7 +578,7 @@ export function resolveTableCellMerges({
         rows[r].origin === 'source-text' &&
         baseCells.filter((s) => s.row === r).every((s) => items.some((i) => inside(s.rect, i)))
     )
-  const numericRecord = (row) => {
+  const numericRecord = (row, numericCategory = false) => {
     if (headerRows.includes(row)) return false
     const slots = baseCells.filter((c) => c.row === row),
       rect = union(slots)
@@ -591,7 +591,16 @@ export function resolveTableCellMerges({
     if (
       populated.length < 2 ||
       (words.some((g) => !g.length) && populated.length < 3) ||
-      !/\p{L}/u.test(populated[0].map((i) => i.text).join(''))
+      (numericCategory
+        ? slots.length < 4 ||
+          words.some((g) => !g.length) ||
+          !/^[<>≤≥]?\d+(?:[.–−-]\d+)?$/.test(
+            words[0]
+              .map((i) => i.text)
+              .join('')
+              .replace(/\s/g, '')
+          )
+        : !/\p{L}/u.test(populated[0].map((i) => i.text).join('')))
     )
       return false
     if (
@@ -616,10 +625,112 @@ export function resolveTableCellMerges({
     )
   }
   const numericRows = rows.flatMap((_, r) => (numericRecord(r) ? [r] : []))
+  // A numeric category is not a section heading when every native field is
+  // complete and at least three independent labelled peers prove the same lanes.
+  // Keep incomplete categories on the ordinary diagnostic path.
+  const completeCategoryRecord = (row) => {
+    if (!numericRecord(row, true)) return false
+    const slots = baseCells.filter((c) => c.row === row)
+    const owned = (cells) => items.filter((i) => i.horizontal && inside(union(cells), i))
+    const source = owned(slots),
+      font = Math.max(...source.map((i) => i.height))
+    const complete = (cells) => {
+      const text = owned(cells)
+      return (
+        cells.every((c) => text.some((i) => inside(c.rect, i))) &&
+        text.every(
+          (i) =>
+            baseCells.filter((c) => inside(c.rect, i)).length === 1 &&
+            cells.some(
+              (c) => inside(c.rect, i) && i.rect[0] >= c.rect[0] && i.rect[2] <= c.rect[2]
+            ) &&
+            Math.abs(i.height - font) < font * 0.2 &&
+            Math.abs(i.baseline - text[0].baseline) < font * 0.35
+        ) &&
+        new Set(text.map((i) => JSON.stringify(i.rect))).size === text.length
+      )
+    }
+    if (!complete(slots)) return false
+    return (
+      numericRows.filter((r) => {
+        const peer = baseCells.filter((c) => c.row === r)
+        return (
+          peer.length === slots.length &&
+          peer.every(
+            (c, n) =>
+              c.column === slots[n].column &&
+              c.rect[0] === slots[n].rect[0] &&
+              c.rect[2] === slots[n].rect[2]
+          ) &&
+          complete(peer)
+        )
+      }).length >= 3
+    )
+  }
   const sourceNumericRecord = (slots) =>
     new Set(slots.map((s) => s.row)).size === 1 &&
-    numericRows.length >= 4 &&
-    numericRows.includes(slots[0].row)
+    ((numericRows.length >= 4 && numericRows.includes(slots[0].row)) ||
+      completeCategoryRecord(slots[0].row))
+  // This proves only that a model span crosses an independent native boundary.
+  // It neither assigns a statistical parent nor authorizes a replacement span.
+  const nativeHeaderBodySeparation = (p) => {
+    if (p.origin !== 'model-span' || p.slots.length !== 2) return false
+    const [upper, lower] = p.slots.slice().sort((a, b) => a.row - b.row)
+    if (
+      upper.column !== lower.column ||
+      lower.row !== upper.row + 1 ||
+      !headerRows.includes(upper.row) ||
+      headerRows.includes(lower.row)
+    )
+      return false
+    const groups = [upper, lower].map((c) => items.filter((i) => i.horizontal && inside(c.rect, i)))
+    if (
+      groups.some((g) => !g.length) ||
+      !groups[0].some((i) => /\p{L}/u.test(i.text)) ||
+      !/^[<>≤≥−+-]?\d[\d.,%]*$/.test(
+        groups[1]
+          .sort((a, b) => a.rect[0] - b.rect[0])
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+      )
+    )
+      return false
+    if (
+      groups.some((g, n) =>
+        g.some(
+          (i) =>
+            baseCells.filter((c) => inside(c.rect, i)).length !== 1 ||
+            i.rect[0] < [upper, lower][n].rect[0] ||
+            i.rect[2] > [upper, lower][n].rect[2]
+        )
+      )
+    )
+      return false
+    if (groups[1].some((i) => Math.abs(i.baseline - groups[1][0].baseline) >= i.height * 0.35))
+      return false
+    const top = Math.max(...groups[0].map((i) => i.rect[3])),
+      bottom = Math.min(...groups[1].map((i) => i.rect[1])),
+      frame = union(baseCells.filter((c) => c.row === upper.row)),
+      font = Math.max(...groups.flat().map((i) => i.height))
+    if (
+      bottom <= top ||
+      new Set(groups.flat().map((i) => JSON.stringify(i.rect))).size !== groups.flat().length
+    )
+      return false
+    const dividers = joinHorizontalTableRules(rules).filter(
+      (r) =>
+        r[1] > top &&
+        r[1] < bottom &&
+        Math.abs(r[0] - frame[0]) <= font * 0.25 &&
+        Math.abs(r[2] - frame[2]) <= font * 0.25
+    )
+    if (dividers.length !== 1) return false
+    const y = dividers[0][1]
+    return !items.some(
+      (i) => i.rect[0] < frame[2] && i.rect[2] > frame[0] && i.rect[1] < y && i.rect[3] > y
+    )
+  }
   const center = (item) => (item.rect[0] + item.rect[2]) / 2
   const unique = proposals.filter(
     (p, i) =>
@@ -1144,6 +1255,7 @@ export function resolveTableCellMerges({
       if (
         p.origin === 'model-span' &&
         (independentlyRebuilt(p.slots) ||
+          nativeHeaderBodySeparation(p) ||
           (colSpan === resourceColumns.length &&
             rows
               .slice(row + 1, row + rowSpan)

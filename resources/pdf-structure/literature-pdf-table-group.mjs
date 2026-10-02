@@ -11,6 +11,139 @@ const bounds = (table) => {
 }
 const lineRect = (line) => [line.x, line.y, line.x + line.width, line.y + line.height]
 
+// A page-end title can introduce a closed native table at the next page's
+// opening. Prove the header faces independently of detector/caption proximity;
+// a second page-end title remains reserved for the subsequent native table.
+export function recoverPriorPageTableCaption(
+  table,
+  tokens,
+  rules,
+  pageGeometry,
+  pages,
+  captions,
+  currentCaption
+) {
+  const previous = pages.find((p) => p.pageNumber === pageGeometry.pageNumber - 1)
+  if (!previous || !table.structure?.objects || !table.cropRect) return
+  const prior = captions.filter(
+    (c) =>
+      c.page === previous.pageNumber && /^Table\s+(?:[AS]?\d+|[A-Z]\.\d+)[.:]/i.test(c.lines[0])
+  )
+  if (prior.length !== 1) return
+  const caption = prior[0]
+  const isTerminal = (c, page) =>
+    c.rect[1] > page.height * 0.75 &&
+    page.lines.every(
+      (l) =>
+        l.y + l.height <= c.rect[3] + 0.5 ||
+        l.y > page.height * 0.93 ||
+        c.lines.includes(l.text) ||
+        (l.text.trim() === String(page.pageNumber) &&
+          l.y > page.height * 0.85 &&
+          Math.abs(l.x + l.width / 2 - page.width / 2) < l.fontSize * 2)
+    )
+  if (!isTerminal(caption, previous)) return
+  if (
+    currentCaption &&
+    (currentCaption.page !== pageGeometry.pageNumber || !isTerminal(currentCaption, pageGeometry))
+  )
+    return
+  const columns = table.structure.objects.filter((o) => o.label === 'table column').length
+  if (columns < 2 || columns > 8 || table.cropRect[1] > pageGeometry.height * 1.5 * 0.15) return
+  const horizontal = []
+  for (const r of rules
+    .filter((r) => Math.abs(r[1] - r[3]) < 0.01)
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0])) {
+    const prior = horizontal.at(-1)
+    if (prior && Math.abs(prior[1] - r[1]) < 0.75 && r[0] <= prior[2] + 0.75)
+      prior[2] = Math.max(prior[2], r[2])
+    else horizontal.push([...r])
+  }
+  const em = tokens
+    .filter((i) => i.horizontal && i.height > 0)
+    .map((i) => i.height)
+    .sort((a, b) => a - b)
+  const height = em[em.length >> 1]
+  if (!(height > 0)) return
+  const openings = horizontal.filter(
+    (r) =>
+      r[2] - r[0] > pageGeometry.width * 1.5 * 0.5 &&
+      Math.abs(r[0] - table.cropRect[0]) < height &&
+      Math.abs(r[1] - table.cropRect[1]) < height * 1.5
+  )
+  const proofs = []
+  for (const opening of openings) {
+    if (
+      captions.some(
+        (c) =>
+          c.page === pageGeometry.pageNumber &&
+          c.rect[3] * 1.5 <= opening[1] &&
+          opening[1] - c.rect[3] * 1.5 < height * 4
+      )
+    )
+      continue
+    const closings = horizontal.filter(
+      (r) =>
+        r[1] > opening[1] + height &&
+        r[1] - opening[1] < height * 5 &&
+        Math.abs(r[0] - opening[0]) < 0.75 &&
+        Math.abs(r[2] - opening[2]) < 0.75
+    )
+    for (const closing of closings) {
+      const cuts = [
+        ...new Set(
+          rules
+            .filter(
+              (r) =>
+                Math.abs(r[0] - r[2]) < 0.01 &&
+                r[1] <= opening[1] + 0.75 &&
+                r[3] >= closing[1] - 0.75 &&
+                r[0] >= opening[0] - 0.75 &&
+                r[0] <= opening[2] + 0.75
+            )
+            .map((r) => Math.round(r[0] * 10) / 10)
+        )
+      ].sort((a, b) => a - b)
+      if (cuts.length !== columns + 1) continue
+      const source = tokens.filter(
+        (i) =>
+          i.horizontal &&
+          i.rect[1] >= opening[1] - height * 0.1 &&
+          i.rect[3] > opening[1] &&
+          i.rect[3] <= closing[1] + 0.1 &&
+          i.rect[0] >= opening[0] - 0.1 &&
+          i.rect[2] <= opening[2] + 0.1
+      )
+      if (
+        source.length < columns ||
+        source.some(
+          (i) =>
+            !cuts
+              .slice(0, -1)
+              .some((x, n) => i.rect[0] >= x - 0.75 && i.rect[2] <= cuts[n + 1] + 0.75)
+        )
+      )
+        continue
+      if (
+        cuts
+          .slice(0, -1)
+          .some(
+            (x, n) =>
+              !source.some(
+                (i) =>
+                  /\p{L}/u.test(i.text) && i.rect[0] >= x - 0.75 && i.rect[2] <= cuts[n + 1] + 0.75
+              )
+          )
+      )
+        continue
+      if (currentCaption && currentCaption.rect[1] * 1.5 <= closing[1]) continue
+      proofs.push({ opening, closing })
+    }
+  }
+  if (proofs.length !== 1) return
+  return caption
+}
+
 // Group only explicit, consecutive A/B/... sections on one page with a shared
 // table caption. Column counts may differ: each part retains its own grid.
 export function groupTableParts(tables, page) {
@@ -57,6 +190,7 @@ export function groupTableParts(tables, page) {
       rows: [...first.rows, ...next.rows.slice(2)],
       notes: [...(first.notes ?? []), ...(next.notes ?? [])],
       unassigned: [...first.unassigned, ...next.unassigned],
+      clipped: [...(first.clipped ?? []), ...(next.clipped ?? [])],
       issues: [...new Set([...first.issues, ...next.issues])]
     })
     continued.splice(continued.indexOf(next), 1)
@@ -108,7 +242,7 @@ export function groupTableParts(tables, page) {
             item.rect[3] > rect[3] + 1
           )
         })
-      : first.clipped
+      : (first.clipped ?? [])
     continued.splice(continued.indexOf(first), 1, {
       ...first,
       cropRects: [
@@ -136,7 +270,7 @@ export function groupTableParts(tables, page) {
       rows: [...first.rows, ...next.rows.slice(1)],
       notes: [...(first.notes ?? []), ...(next.notes ?? [])],
       unassigned: [...(footer ? [] : first.unassigned), ...next.unassigned],
-      ...(footer ? { clipped: [...clipped, ...(next.clipped ?? [])] } : {}),
+      clipped: [...clipped, ...(next.clipped ?? [])],
       issues: [
         ...new Set([
           ...first.issues.filter(

@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { captionKind } from './literature-pdf-caption-group.mjs'
 
 export const isUprightText = (item, rotation) => {
   const angle = (rotation * Math.PI) / 180
@@ -115,12 +116,11 @@ export const readingRotation = (page, content) => {
   const items = content.items.filter((item) => 'str' in item && item.str.trim())
   const weight = (item) => item.str.replace(/\s/gu, '').length
   const total = items.reduce((sum, item) => sum + weight(item), 0)
-  const caption = (item) =>
-    /^(?:Table|Tab\.|Figure|Fig\.)\s+(?:\d+[A-Z]?|[IVXLCDM]+)(?:[.:\s]|$)/i.test(item.str)
+  const caption = (item) => captionKind(item.str) !== undefined
   // A bold caption label and its number can be separate PDF text runs.
   // Require adjacency along the same baseline, not merely a nearby digit.
   const splitCaption = (item, rotation) => {
-    if (!/^(?:Table|Tab\.|Figure|Fig\.)$/i.test(item.str.trim())) return false
+    if (!/^(?:Table|Tableau|Tab\.|Figure|Fig\.)$/i.test(item.str.replace(/\s/g, ''))) return false
     const angle = (rotation * Math.PI) / 180
     return items.some((next) => {
       if (!/^\d+[.:]?$/.test(next.str.trim()) || !isUprightText(next, rotation)) return false
@@ -146,8 +146,9 @@ export const readingRotation = (page, content) => {
     const tableCaption = items.some(
       (item) =>
         isUprightText(item, rotation) &&
-        (/^Table\s+(?:\d+|[IVXLCDM]+)(?:[.:\s]|$)/i.test(item.str) ||
-          (/^Table$/i.test(item.str.trim()) && splitCaption(item, rotation)))
+        (captionKind(item.str) === 'table' ||
+          (/^(?:Table|Tableau|Tab\.)$/i.test(item.str.replace(/\s/g, '')) &&
+            splitCaption(item, rotation)))
     )
     if (
       aligned >= 100 &&

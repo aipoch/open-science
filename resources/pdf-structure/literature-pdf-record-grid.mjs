@@ -4,9 +4,162 @@ import {
   tableSourceItems,
   readSourceRow,
   groupSourceRowsWithScripts,
-  hasUniqueRecordTokens
+  hasUniqueRecordTokens,
+  recoverRuledHeaderBands
 } from './literature-pdf-source-records.mjs'
 import { union } from './literature-pdf-table-geometry.mjs'
+
+// Two ruled cohorts repeat complete categorical count/percentage records.
+// Sparse summaries retain their independent native baselines and the minimum
+// literal ink span; a centered total does not imply a statistical hierarchy.
+export function recoverRuledSparseSummaryRecords(table, items, captions, rules) {
+  const crop = table.cropRect,
+    cols = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+  if (cols.length !== 5) return
+  const cuts = [
+    crop[0],
+    ...cols.slice(1).map((c, n) => crop[0] + (cols[n].rect[2] + c.rect[0]) / 2),
+    crop[2]
+  ]
+  const source = tableSourceItems(items, crop).sort(
+    (a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]
+  )
+  if (!source.length) return
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)]
+  const edges = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= crop[1] &&
+        r[1] <= crop[3] &&
+        Math.abs(r[0] - crop[0]) < height &&
+        Math.abs(r[2] - crop[2]) < height
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    edges.length !== 4 ||
+    edges.some((r) => Math.abs(r[0] - edges[0][0]) > 0.1 || Math.abs(r[2] - edges[0][2]) > 0.1)
+  )
+    return
+  const caption = captions.filter(
+    (c) =>
+      /^Table\s/i.test(c.lines[0]) &&
+      c.rect[3] <= edges[0][1] &&
+      edges[0][1] - c.rect[3] < height * 3 &&
+      c.rect[0] < crop[2] &&
+      c.rect[2] > crop[0]
+  )
+  if (caption.length !== 1) return
+  const header = source.filter((i) => i.rect[1] >= edges[0][1] && i.rect[3] <= edges[1][1]),
+    body = source.filter((i) => i.rect[1] >= edges[1][1] && i.rect[3] <= edges[3][1])
+  const heading = recoverRuledHeaderBands(header, cuts, rules, edges[0][1], edges[1][1])
+  if (
+    !heading ||
+    heading.rows.length !== 2 ||
+    !heading.spans.some((s) => s.row === 0 && s.column === 3 && s.colSpan === 2)
+  )
+    return
+  const parentLines = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      r[1] > edges[0][1] &&
+      r[1] < edges[1][1] &&
+      r[0] >= cuts[3] &&
+      r[2] <= cuts[5] &&
+      r[0] < cuts[4] &&
+      r[2] > cuts[4]
+  )
+  if (parentLines.length !== 1) return
+  const records = groupSourceRowsWithScripts(body, height, 0.25)
+  if (!records || !hasUniqueRecordTokens(source, [header, ...records])) return
+  const spans = [...heading.spans],
+    count = [0, 0],
+    fractions = [0, 0],
+    total = [0, 0],
+    sectionStarts = []
+  const firstStub = Math.min(...body.filter((i) => i.rect[2] <= cuts[1]).map((i) => i.rect[0]))
+  for (let n = 0; n < records.length; n++) {
+    const g = records[n],
+      row = n + heading.rows.length,
+      v = readSourceRow(g, cuts),
+      middle = (g[0].rect[1] + g[0].rect[3]) / 2,
+      section = middle < edges[2][1] ? 0 : 1
+    const countPair =
+      v &&
+      v.slice(0, 3).every(Boolean) &&
+      v.slice(3).every((s) => /^\d+(?:\.\d+)?\(\d+(?:\.\d+)?%\)$/.test(s))
+    if (countPair) {
+      count[section]++
+      continue
+    }
+    const labels = g.filter((i) => i.rect[2] <= cuts[3]),
+      values = g.filter((i) => !labels.includes(i))
+    if (
+      !labels.length ||
+      Math.abs(labels[0].rect[0] - firstStub) > height * 0.1 ||
+      labels.some((i) => !/[\p{L}]/u.test(i.text)) ||
+      labels.slice(1).some((i, k) => i.rect[0] - labels[k].rect[2] > height * 0.6)
+    )
+      return
+    const lastColumn = cuts.slice(1).findIndex((x) => union(labels)[2] <= x)
+    if (lastColumn < 0 || lastColumn > 2) return
+    if (lastColumn > 0) spans.push({ row, column: 0, rowSpan: 1, colSpan: lastColumn + 1 })
+    if (!values.length) {
+      if (
+        !sectionStarts.includes(section) &&
+        middle > edges[section + 1][1] &&
+        middle - edges[section + 1][1] < height * 2
+      )
+        sectionStarts.push(section)
+      continue
+    }
+    if (
+      values.length === 2 &&
+      values.every(
+        (i, c) =>
+          i.rect[0] >= cuts[c + 3] &&
+          i.rect[2] <= cuts[c + 4] &&
+          /^\d+\/\d+\s*\(\d+(?:\.\d+)?%\)$/.test(i.text)
+      )
+    ) {
+      fractions[section]++
+      continue
+    }
+    if (
+      values.length !== 1 ||
+      !/^\d+$/.test(values[0].text) ||
+      values[0].rect[0] < cuts[3] ||
+      values[0].rect[2] > cuts[5] ||
+      values[0].rect[0] >= cuts[4] ||
+      values[0].rect[2] <= cuts[4] ||
+      Math.abs(
+        (values[0].rect[0] + values[0].rect[2] - parentLines[0][0] - parentLines[0][2]) / 2
+      ) >
+        height * 0.15
+    )
+      return
+    spans.push({ row, column: 3, rowSpan: 1, colSpan: 2 })
+    total[section]++
+  }
+  if (
+    sectionStarts.length !== 2 ||
+    count.some((n) => n < 4) ||
+    fractions.some((n) => n < 2) ||
+    total.some((n) => n !== 1)
+  )
+    return
+  return {
+    cropRect: [...crop],
+    rows: [...heading.rows, ...records.map((g) => [crop[0], union(g)[1], crop[2], union(g)[3]])],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], crop[1], x, crop[3]]),
+    headerRows: [0, 1],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    preservePhysicalRows: true
+  }
+}
 
 // Treatment schedules have two columns, with full-width regimen/cycle notes.
 // Recover only when repeated dose lines establish one clear gutter; retain the

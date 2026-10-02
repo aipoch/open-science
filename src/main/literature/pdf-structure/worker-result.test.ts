@@ -270,6 +270,54 @@ describe('worker result boundary', () => {
     })
     await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow('caption page')
   })
+  it('normalizes a table continuation through an intermediate source page and preserves its caption in cache', async () => {
+    const continuedIdentity = { ...identity, requestedPages: [3] }
+    const value = {
+      ...raw(),
+      pageCount: 3,
+      requestedPages: [3],
+      processedPages: [3],
+      auxiliaryPages: [1, 2],
+      pages: [1, 2, 3].map((page) => ({ page, width: 600, height: 800, rotation: 0 })),
+      figures: [],
+      tables: [
+        {
+          id: 'p1-figure-1',
+          page: 3,
+          region: [0.1, 0.1, 0.5, 0.5],
+          thumbnail: 'thumbnails/p1-figure-1.png',
+          caption: { text: 'Table 1. Sample data.', page: 1, rect: [60, 80, 300, 90] },
+          sourceViewport: { width: 900, height: 1200 },
+          grid: [['Value']],
+          cells: [
+            {
+              row: 0,
+              column: 0,
+              rowSpan: 1,
+              colSpan: 1,
+              text: 'Value',
+              sourceRects: [[90, 120, 450, 600]]
+            }
+          ],
+          unassigned: [],
+          issues: []
+        }
+      ]
+    }
+    await save(value)
+    const images = new Map<string, Uint8Array>()
+    const result = await readWorkerResult(root, continuedIdentity, images)
+    expect(result.elements[0].caption?.regions[0].page).toBe(1)
+    expect(result.elements[0].table?.cells[0].regions[0].page).toBe(3)
+    const cache = new PdfStructureCache({ dataRoot: () => join(root, 'cache') })
+    await mkdir(join(root, 'cache'))
+    await cache.publish(result, images, new AbortController().signal)
+    await expect(cache.read(continuedIdentity)).resolves.toEqual(result)
+    value.auxiliaryPages = [1]
+    value.pages = value.pages.filter(({ page }) => page !== 2)
+    await save(value)
+    await expect(readWorkerResult(root, continuedIdentity, new Map())).rejects.toThrow('coverage')
+  })
   it('normalizes a continued caption across different page sizes and preserves it through cache', async () => {
     const value = raw() as ReturnType<typeof JSON.parse>
     value.pageCount = 2
@@ -409,16 +457,30 @@ describe('worker result boundary', () => {
     expect(images.get('p1-figure-1')).toEqual(png)
     expect(result.issues[0].code).toBe('candidate-results')
   })
-  it('rejects manifest and thumbnail-directory links before reading contents', async () => {
+  it('rejects manifest file links before reading contents', async ({ skip }) => {
     const outside = join(root, 'outside.json')
     await writeFile(outside, 'this would fail JSON decoding')
     await unlink(join(root, 'structure.json'))
-    await symlink(outside, join(root, 'structure.json'))
+    try {
+      await symlink(outside, join(root, 'structure.json'))
+    } catch (error) {
+      if (
+        process.platform === 'win32' &&
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'EPERM'
+      ) {
+        skip(
+          'This Windows account cannot create file symlinks; the rejection runs where supported.'
+        )
+      }
+      throw error
+    }
     await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow(
       'Unsafe PDF output manifest'
     )
-    await unlink(join(root, 'structure.json'))
-    await save(raw())
+  })
+  it('rejects thumbnail-directory links before reading image contents', async () => {
     await rm(join(root, 'thumbnails'), { recursive: true })
     await mkdir(join(root, 'outside'))
     await symlink(

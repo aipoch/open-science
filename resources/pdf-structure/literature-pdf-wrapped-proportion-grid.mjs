@@ -2,10 +2,11 @@
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import {
   tableSourceItems,
+  groupSourceRowsWithScripts,
   readSourceRow,
   hasUniqueRecordTokens
 } from './literature-pdf-source-records.mjs'
-import { union } from './literature-pdf-table-geometry.mjs'
+import { union, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
 
 // A complete count/count/P baseline anchors a record whose description and
 // parenthesized percentage can wrap. Native horizontal rules bound the table;
@@ -17,6 +18,7 @@ export function recoverWrappedProportionGrid(table, items, captions, rules) {
     .filter((o) => o.label === 'table column')
     .sort((a, b) => a.rect[0] - b.rect[0])
   if (predicted.length === 6) return recoverCountPercentagePairs(table, items, predicted, rules)
+  if (predicted.length === 3) return recoverWrappedCountPairsGrid(table, items, captions, rules)
   if (predicted.length !== 4) return
   const cuts = [
     left,
@@ -101,6 +103,123 @@ export function recoverWrappedProportionGrid(table, items, captions, rules) {
     columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
     spans: sections.map((s) => ({ row: bands.indexOf(s) + 1, column: 0, rowSpan: 1, colSpan: 4 })),
     completeSpans: true
+  }
+}
+
+// Repeated paired count/percentage baselines delimit records in a native
+// three-rule frame. Uniform, aligned description lines belong to the preceding
+// complete pair, including a capitalized continuation of an open parenthesis.
+export function recoverWrappedCountPairsGrid(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const predicted = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length !== 3) return
+  const [left, top, right, bottom] = table.cropRect
+  const cuts = [
+    left,
+    ...predicted.slice(1).map((c, n) => left + (predicted[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const source = tableSourceItems(items, table.cropRect)
+  const font = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  if (!(font > 0)) return
+  const frames = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[0] >= left &&
+        r[0] < left + font &&
+        r[2] <= right &&
+        r[2] > right - font &&
+        r[1] >= top &&
+        r[1] <= bottom
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    frames.length !== 3 ||
+    frames.some(
+      (r) =>
+        Math.abs(r[0] - frames[0][0]) > font * 0.05 || Math.abs(r[2] - frames[0][2]) > font * 0.05
+    )
+  )
+    return
+  const header = source.filter((i) => i.rect[1] >= frames[0][1] && i.rect[3] <= frames[1][1])
+  const body = source.filter((i) => i.rect[1] >= frames[1][1] && i.rect[3] <= frames[2][1])
+  if (
+    !hasUniqueRecordTokens(source, [header, body]) ||
+    !readSourceRow(header, cuts)?.every((s) => /\p{L}/u.test(s))
+  )
+    return
+  const bands = groupSourceRowsWithScripts(body, font, 0.3)
+  if (!bands) return
+  const values = bands.map((g) => readSourceRow(g, cuts))
+  const count = /^\d+\(\d+(?:\.\d+)?%\)$/
+  const anchors = values.flatMap((v, n) =>
+    v && /\p{L}/u.test(v[0]) && v.slice(1).every((s) => count.test(s)) ? [n] : []
+  )
+  if (anchors.length < 6 || anchors[0] !== 0) return
+  const groups = anchors.map((n, k) => bands.slice(n, anchors[k + 1] ?? bands.length).flat())
+  if (!hasUniqueRecordTokens(body, groups)) return
+  const leading = [],
+    wrapped = []
+  for (let n = 0; n < anchors.length; n++) {
+    const start = anchors[n],
+      end = anchors[n + 1] ?? bands.length
+    const labelBands = bands
+      .slice(start, end)
+      .map((g) =>
+        g.filter(
+          (i) => (i.rect[0] + i.rect[2]) / 2 < cuts[1] && Math.abs(i.height - font) < font * 0.1
+        )
+      )
+    if (labelBands.some((g) => !g.length)) return
+    if (values.slice(start + 1, end).some((v) => !v || v.slice(1).some(Boolean))) return
+    const indent = Math.min(...labelBands[0].map((i) => i.rect[0]))
+    if (
+      groups[n].some(
+        (i) =>
+          Math.abs(i.height - font) > font * 0.1 &&
+          !groups[n].some((j) => j !== i && isAdjacentTableScript(i, j))
+      ) ||
+      labelBands.some((g) => Math.abs(Math.min(...g.map((i) => i.rect[0])) - indent) > font * 0.1)
+    )
+      return
+    for (let k = 1; k < labelBands.length; k++) {
+      const gap =
+        Math.min(...labelBands[k].map((i) => i.baseline)) -
+        Math.min(...labelBands[k - 1].map((i) => i.baseline))
+      if (gap < font || gap > font * 1.5) return
+      leading.push(gap)
+    }
+    if (
+      labelBands.length > 1 &&
+      /[([]/.test(readSourceRow(groups[n], cuts, { multiline: true })[0])
+    )
+      wrapped.push(n)
+  }
+  if (
+    wrapped.length < 4 ||
+    !leading.length ||
+    Math.max(...leading) - Math.min(...leading) > font * 0.1
+  )
+    return
+  const rects = [union(header), ...groups.map(union)]
+  const ys = [
+    frames[0][1],
+    frames[1][1],
+    ...rects.slice(2).map((r, n) => (rects[n + 1][3] + r[1]) / 2),
+    frames[2][1]
+  ]
+  return {
+    cropRect: [left, frames[0][1], right, frames[2][1]],
+    rows: ys.slice(1).map((y, n) => [left, ys[n], right, y]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], frames[0][1], x, frames[2][1]]),
+    spans: [],
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    repair: 'native-body-records-recovered'
   }
 }
 

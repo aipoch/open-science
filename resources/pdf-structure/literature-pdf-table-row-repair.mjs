@@ -12,6 +12,99 @@ import {
 import { area, intersection } from './literature-pdf-page-geometry.mjs'
 import { inside, union, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
 
+// An N/mean/median/range block has its own explicit native start. A predicted
+// ancestor span can begin one category too early; do not move genuinely
+// centered group labels, or infer a statistic block from ordinary prose.
+export function reconcileStatisticStubStarts({ cells, baseCells, rows, rules, repairs }) {
+  for (const cell of [...cells]) {
+    if (
+      cell.origin === 'model-span' &&
+      cell.column === 0 &&
+      cell.colSpan === 1 &&
+      cell.rowSpan === 2 &&
+      cell.sourceRects.length === 1
+    ) {
+      const headings = [1, 2, 3, 4].map((column) =>
+        cells.find(
+          (c) => c.row === cell.row && c.column === column && c.rowSpan === 1 && c.colSpan === 1
+        )
+      )
+      const measured = [1, 2, 3, 4].map((column) =>
+        cells.find(
+          (c) => c.row === cell.row + 1 && c.column === column && c.rowSpan === 1 && c.colSpan === 1
+        )
+      )
+      const native = cell.sourceRects[0],
+        h = native[3] - native[1]
+      const first = baseCells.find((c) => c.row === cell.row && c.column === 0)
+      if (
+        first &&
+        h > 0 &&
+        headings.every(Boolean) &&
+        measured.every(Boolean) &&
+        headings.map((c) => c.text.replace(/\s/g, '')).join('|') === 'M(SD)|M(SD)|t|p' &&
+        measured.every(
+          (c) =>
+            /^[−–+-]?(?:\d|\.\d)[\d\s.,()%*−–+-]*$/.test(c.text) &&
+            c.sourceRects.length &&
+            c.sourceRects.every((r) => Math.abs(r[3] - native[3]) < h * 0.1)
+        ) &&
+        headings.every(
+          (c) => c.sourceRects.length === 1 && native[3] - c.sourceRects[0][3] > h * 0.8
+        ) &&
+        !hasHorizontalTableRuleBetween(rules, native[1], native[3])
+      ) {
+        cells.push({ ...first, text: '', sourceRects: [], sourceTokens: [] })
+        cell.row++
+        cell.rowSpan = 1
+        cell.rect = [cell.rect[0], rows[cell.row].rect[1], cell.rect[2], cell.rect[3]]
+        repairs.push('source-stub-span-inferred')
+      }
+      continue
+    }
+    if (
+      cell.origin !== 'model-span' ||
+      cell.column !== 0 ||
+      cell.colSpan !== 1 ||
+      cell.rowSpan !== 5 ||
+      cell.sourceRects.length !== 1
+    )
+      continue
+    const leaves = [0, 1, 2, 3, 4].map((n) =>
+      cells.find(
+        (c) => c.row === cell.row + n && c.column === 1 && c.rowSpan === 1 && c.colSpan === 1
+      )
+    )
+    if (
+      leaves.some((c) => !c) ||
+      /^N$/i.test(leaves[0].text) ||
+      !/^N$/i.test(leaves[1].text) ||
+      !/^Mean\s*\((?:SD|SE)\)$/i.test(leaves[2].text) ||
+      !/^Median$/i.test(leaves[3].text) ||
+      !/^(?:Range|Min\s*-\s*Max)$/i.test(leaves[4].text)
+    )
+      continue
+    const native = cell.sourceRects[0],
+      n = leaves[1].sourceRects
+    const h = native[3] - native[1]
+    if (
+      n.length !== 1 ||
+      h <= 0 ||
+      Math.abs(native[3] - n[0][3]) > h * 0.1 ||
+      leaves[0].sourceRects.some((r) => n[0][3] - r[3] < h * 0.8) ||
+      hasHorizontalTableRuleBetween(rules, native[1], native[3])
+    )
+      continue
+    const first = baseCells.find((c) => c.row === cell.row && c.column === 0)
+    if (!first || !rows[cell.row + 1]) continue
+    cells.push({ ...first, text: '', sourceRects: [], sourceTokens: [] })
+    cell.row++
+    cell.rowSpan--
+    cell.rect = [cell.rect[0], rows[cell.row].rect[1], cell.rect[2], cell.rect[3]]
+    repairs.push('source-stub-span-inferred')
+  }
+}
+
 // A wrapped author/year record can retain its final citation below a short
 // model row. The citation and repeated neighboring reference records bound a
 // narrow tail, including multiline bullet results in independent columns.
@@ -448,6 +541,7 @@ export function repairWrappedTableRows({
       0.35
     ) ?? []
   const sourceCuts = [columnRects[0]?.[0], ...columnRects.map((r) => r[2])]
+  repairCountedIntervalTails({ rows, items, columnRects, rules, repairs, sourceRows })
   // A single wrapped measurement can split the cohort values from its
   // probability. Require complementary numeric columns and an unfinished
   // grammatical stub, or a hanging unit witnessed in another measured label.
@@ -1616,14 +1710,74 @@ export function repairWrappedTableRows({
     repairs.push('overlapping-wrapped-summary-recovered')
   }
   recoverLeadingSampleSection({ rows, groups, items, columnRects, rules, repairs })
-  // A numeric interval can wrap into the next predicted row. Its explicit
-  // opening and closing parentheses establish ownership before the next label.
+  // Short unit tails inside an unfinished stub belong to a complete dense
+  // numeric record, including its final line on a continuation page.
+  if (columnRects.length >= 9)
+    for (let n = 1; n < sourceRows.length; n++) {
+      const head = sourceRows[n - 1],
+        tail = sourceRows[n],
+        next = sourceRows[n + 1]
+      const stub = head.filter((i) => columnOf(i) === 0)
+      const compact = (g) =>
+        [...g]
+          .sort((a, b) => a.rect[0] - b.rect[0])
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+      const text = compact(stub),
+        suffix = compact(tail)
+      if (
+        !stub.length ||
+        !tail.every((i) => columnOf(i) === 0) ||
+        !/\((?:\p{L}+\/|n)$/u.test(text) ||
+        !/^\p{L}{1,8}[²³23]?\)$/u.test(suffix) ||
+        (text.match(/\(/g)?.length ?? 0) !== (text.match(/\)/g)?.length ?? 0) + 1 ||
+        new Set(head.map(columnOf).filter((c) => c > 0)).size < 8
+      )
+        continue
+      const h = Math.max(...stub.map((i) => i.height)),
+        a = union(stub),
+        b = union(tail)
+      if (
+        b[1] < union(head)[3] ||
+        tail[0].baseline - head[0].baseline > h * 1.8 ||
+        b[0] < a[0] ||
+        b[0] - a[0] > h * 2 ||
+        b[2] > a[2] ||
+        !tail.some((i) => Math.abs(i.height - h) < 0.1) ||
+        rules.some(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] > union(head)[3] &&
+            r[1] < b[1] &&
+            r[0] <= columnRects[0][0] &&
+            r[2] >= columnRects[0][2]
+        )
+      )
+        continue
+      const previous = rows.find((r) => stub.some((i) => inside(r.rect, i)))
+      const trailing = rows.find((r) => tail.some((i) => inside(r.rect, i)))
+      if (!previous || previous === trailing) continue
+      const boundary = next ? (b[3] + union(next)[1]) / 2 : b[3] + 0.1
+      if (next && boundary <= b[3]) continue
+      previous.rect[3] = Math.max(previous.rect[3], boundary)
+      if (
+        trailing &&
+        trailing !== previous &&
+        items.filter((i) => inside(trailing.rect, i)).every((i) => tail.includes(i))
+      )
+        rows.splice(rows.indexOf(trailing), 1)
+      repairs.push('recovered-row-continuation-included')
+    }
+  // An interval or an unfinished parenthetical stub can wrap into the next
+  // predicted row. Matching delimiters and an otherwise empty native line
+  // establish ownership before the next complete source record.
   for (let n = 1; n < groups.length - 1; n++) {
     const head = groups[n - 1],
       tail = groups[n],
       next = groups[n + 1]
     const c = columnOf(tail[0])
-    if (c <= 0 || !tail.every((i) => columnOf(i) === c)) continue
+    if (c < 0 || !tail.every((i) => columnOf(i) === c)) continue
     const text = (g) =>
       g
         .filter((i) => columnOf(i) === c)
@@ -1631,9 +1785,18 @@ export function repairWrappedTableRows({
         .map((i) => i.text)
         .join('')
         .replace(/\s/g, '')
+    const numericTail =
+      c > 0 &&
+      /^\([−+-]?\d+(?:\.\d+)?,?$/.test(text(head)) &&
+      /^[−+-]?\d+(?:\.\d+)?\)$/.test(text(tail))
+    const stubTail =
+      c === 0 &&
+      /^[\p{Ll}][\p{L}\s-]*\)$/u.test(text(tail)) &&
+      (text(head).match(/\(/g)?.length ?? 0) === (text(head).match(/\)/g)?.length ?? 0) + 1 &&
+      Math.abs(tail[0].rect[0] - head.find((i) => columnOf(i) === 0).rect[0]) <= 1 &&
+      new Set(next.map(columnOf).filter((column) => column > 0)).size >= 3
     if (
-      !/^\([−+-]?\d+(?:\.\d+)?,?$/.test(text(head)) ||
-      !/^[−+-]?\d+(?:\.\d+)?\)$/.test(text(tail)) ||
+      !(numericTail || stubTail) ||
       !head.some((i) => columnOf(i) === 0 && /\p{L}/u.test(i.text)) ||
       !next.some((i) => columnOf(i) === 0 && /\p{L}/u.test(i.text)) ||
       new Set(head.map(columnOf).filter((c) => c > 0)).size < 3 ||
@@ -1661,7 +1824,9 @@ export function repairWrappedTableRows({
     const boundary = (union(tail)[3] + union(next)[1]) / 2
     previous.rect[3] = boundary
     following.rect[1] = boundary
-    repairs.push('wrapped-numeric-interval-owned')
+    repairs.push(
+      stubTail ? 'recovered-row-continuation-included' : 'wrapped-numeric-interval-owned'
+    )
   }
   // Some interval columns print their two endpoints on separate baselines.
   // Require repeated complete records followed only by CI endpoints; a blank
@@ -1742,6 +1907,7 @@ export function repairWrappedTableRows({
         .every((i) => Math.abs(i.rect[0] - stub[0].rect[0]) < i.height * 1.1)
     const joinedTreatment =
       stub.length &&
+      stub.some((i) => /\p{L}/u.test(i.text)) &&
       /\+$/.test(stub.at(-1).text) &&
       prior.filter((i) => columnOf(i) > 0 && /^\d/.test(i.text)).length >= 2 &&
       tail.every((i) => columnOf(i) === 0 && /^[A-Za-z]/.test(i.text))
@@ -2195,6 +2361,86 @@ export function repairWrappedTableRows({
   )
   rows.sort((a, b) => a.rect[1] - b.rect[1])
   repairs.push('paired-arm-outcomes-recovered')
+}
+
+// Additive total/child counts in both cohorts witness bracketed interval
+// tails. A tail may carry a wrapped stub, but cannot carry another count or P.
+function repairCountedIntervalTails({ rows, items, columnRects, rules, repairs, sourceRows }) {
+  if (columnRects.length !== 9) return
+  const cuts = [columnRects[0][0], ...columnRects.map((r) => r[2])]
+  const col = (i) => columnRects.findIndex((r) => i.rect[0] >= r[0] && i.rect[2] <= r[2])
+  const role = (i) => (i.rect[0] < cuts[1] && /\p{L}/u.test(i.text) ? 0 : col(i))
+  if (
+    ![4, 8].every((c) =>
+      sourceRows.some(
+        (g) =>
+          g
+            .filter((i) => role(i) === c)
+            .map((i) => i.text)
+            .join('')
+            .replace(/\s/g, '') === 'PValue'
+      )
+    )
+  )
+    return
+  const pairs = []
+  for (let n = 1; n < sourceRows.length; n++) {
+    const head = sourceRows[n - 1],
+      tail = sourceRows[n],
+      h = head[0].height
+    const values = readSourceRow(head, cuts)
+    if (!values || !values[0]) continue
+    const counts = [1, 2, 3, 5, 6, 7].map((c) => /^(\d+)\(\d+(?:\.\d+)?\)[*†‡§]*$/.exec(values[c]))
+    if (
+      counts.some((m) => !m) ||
+      Number(counts[0][1]) !== Number(counts[1][1]) + Number(counts[2][1]) ||
+      Number(counts[3][1]) !== Number(counts[4][1]) + Number(counts[5][1]) ||
+      ![4, 8].every((c) => /^(?:…|0?\.\d+|1(?:\.0+)?)$/.test(values[c]))
+    )
+      continue
+    const intervals = tail.filter((i) => role(i) > 0)
+    const labels = tail.filter((i) => role(i) === 0)
+    if (
+      intervals.length < 3 ||
+      !intervals.every(
+        (i) => [2, 3, 6, 7].includes(role(i)) && /^\[[\d.]+,\s*[\d.]+\]$/.test(i.text)
+      ) ||
+      new Set(intervals.map(role)).size !== intervals.length ||
+      tail.some((i) => role(i) < 0) ||
+      labels.some(
+        (i) =>
+          Math.abs(i.rect[0] - head.find((j) => role(j) === 0)?.rect[0]) > h * 0.1 ||
+          Math.abs(i.height - h) > h * 0.05
+      ) ||
+      union(tail)[1] < union(head)[3] ||
+      union(tail)[3] - union(head)[3] > h * 1.6 ||
+      hasHorizontalTableRuleBetween(rules, union(head)[3], union(tail)[1])
+    )
+      continue
+    pairs.push([...head, ...tail])
+  }
+  if (pairs.length < 3) return
+  for (const pair of pairs) {
+    const box = union(pair),
+      owners = rows.filter((r) => pair.some((i) => inside(r.rect, i)))
+    if (
+      owners.length < 2 ||
+      items.some(
+        (i) =>
+          !pair.includes(i) &&
+          owners.some((r) => inside(r.rect, i)) &&
+          !rows.some((r) => !owners.includes(r) && inside(r.rect, i))
+      )
+    )
+      continue
+    const start = rows.indexOf(owners[0])
+    if (owners.some((r, n) => rows.indexOf(r) !== start + n)) continue
+    rows.splice(start, owners.length, {
+      rect: [cuts[0], box[1], cuts.at(-1), box[3]],
+      origin: 'source-text'
+    })
+    repairs.push('wrapped-interval-record-recovered')
+  }
 }
 
 // A count/percentage table can start with a category total, whose percentage
@@ -3583,6 +3829,11 @@ function shareRuledRecordBorder(records, empty, band, items, rules) {
 // any text. Remove only that overlap, after assignment has proved ownership.
 // Blank ruled rows and rows covered by vertical spans must remain intact.
 export function removeEmptyOverlappingRows({ rows, cells, items, rules, repairs }) {
+  const unitMetricTable =
+    cells.some((c) => c.column === 1 && c.text === 'Dose parameters' && c.sourceRects.length) &&
+    cells.filter(
+      (c) => c.column === 1 && /^(?:D(?:mean|max)|V\d+)$/.test(c.text) && c.sourceRects.length
+    ).length >= 3
   for (let row = rows.length - 2; row > 0; row--) {
     const band = rows[row]
     const empty = cells.filter((cell) => cell.row === row)
@@ -3645,11 +3896,17 @@ export function removeEmptyOverlappingRows({ rows, cells, items, rules, repairs 
           cell.column === c &&
           cell.rowSpan === 1 &&
           cell.colSpan === 1 &&
-          (cell.text && cell.sourceRects.length
-            ? c
-              ? /^[<>≤≥]?[−+-]?\d[\d\s.,()%±–−+*/<>≤≥-]*$/.test(cell.text)
-              : /^(?:\p{L}|[<>≤≥]?\d)/u.test(cell.text)
-            : c === record.length - 1 && !cell.text && !cell.sourceRects.length)
+          (unitMetricTable && c === 0 && !cell.text && !cell.sourceRects.length
+            ? true
+            : cell.text && cell.sourceRects.length
+              ? c
+                ? unitMetricTable
+                  ? c === 1
+                    ? /^(?:D(?:mean|max)|V\d+)$/.test(cell.text)
+                    : /^[<>≤≥]?[−+-]?\d[\d\s.,()%±–−+*/<>≤≥-]*(?:\s*(?:Gy|cc))?$/.test(cell.text)
+                  : /^[<>≤≥]?[−+-]?\d[\d\s.,()%±–−+*/<>≤≥-]*$/.test(cell.text)
+                : /^(?:\p{L}|[<>≤≥]?\d)/u.test(cell.text)
+              : c === record.length - 1 && !cell.text && !cell.sourceRects.length)
       ) &&
       record.filter((cell) => cell.sourceRects.length).length >= 3
     // A wholly empty model span can be displaced below a real section title.
@@ -3702,7 +3959,12 @@ export function removeEmptyOverlappingRows({ rows, cells, items, rules, repairs 
       // A short duplicate band may lie wholly on one source baseline. It must
       // contain only glyphs already owned by that populated neighboring row.
       const neighbor = overlap[0] ? neighbors[0] : overlap[1] ? neighbors[1] : undefined
-      if (!neighbor || !complete(neighbor) || !/\p{L}/u.test(neighbor[0].text)) continue
+      if (
+        !neighbor ||
+        !complete(neighbor) ||
+        (!unitMetricTable && !/\p{L}/u.test(neighbor[0].text))
+      )
+        continue
       sources = [neighbor.flatMap((cell) => cell.sourceRects)]
     }
     // A raised unit exponent belongs to its adjacent anchor's baseline. Keep
@@ -4357,6 +4619,7 @@ export function recoverUnownedSourceRows({ rows, groups, items, columnRects, rep
   )
   if (!native) return
   groups = native
+  recoverSparseMeasuredSourceRows({ rows, groups, items, columnRects, repairs })
   const left = columnRects[0][0],
     right = columnRects.at(-1)[2]
   const columnOf = (item) => {
@@ -4601,6 +4864,126 @@ export function recoverUnownedSourceRows({ rows, groups, items, columnRects, rep
   }
 }
 
+// A complete measured baseline can omit a shared P value and its ancestor
+// stub. Require the same measurement columns on both neighboring baselines;
+// only explicitly labelled probability columns may be empty. This does not
+// turn a prose line or a partially populated scientific record into a row.
+function recoverSparseMeasuredSourceRows({ rows, groups, items, columnRects, repairs }) {
+  if (columnRects.length < 4 || columnRects.length > 12) return
+  const col = (i) => {
+    const owners = columnRects.flatMap((r, c) =>
+      i.rect[0] >= r[0] && i.rect[2] <= r[2] && inside(r, i) ? [c] : []
+    )
+    return owners.length === 1 ? owners[0] : -1
+  }
+  const value = (g, c) =>
+    g
+      .filter((i) => col(i) === c)
+      .map((i) => i.text)
+      .join('')
+  const numeric = (s) => /^(?:[<>≤≥−+–-]?(?:\d|\.\d)[\d\s.,()%±*†‡–−+\-/]*|[–—−-])$/u.test(s)
+  const probability = new Set(
+    columnRects.flatMap((_, c) => {
+      const labelled = groups
+        .slice(0, 8)
+        .some((g) => /^P(?:-?Value)?[*†‡]?$/i.test(value(g, c).replace(/\s/g, '')))
+      return labelled ? [c] : []
+    })
+  )
+  if (!probability.size) return
+  const sampleLeaves =
+    columnRects.length === 6 &&
+    groups.slice(0, 8).some((g) => [1, 2, 3, 4].map((c) => value(g, c)).join('|') === 'N|%|N|%')
+  for (let n = 1; n < groups.length - 1; n++) {
+    const g = groups[n],
+      v = columnRects.map((_, c) => value(g, c))
+    const first = v.findIndex(Boolean)
+    const stub = first === 1 && /^\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?$/.test(v[1]) ? 1 : 0
+    const qualifiedSample =
+      sampleLeaves &&
+      first === 0 &&
+      /\p{L}/u.test(v[0]) &&
+      [1, 3].every((c) => /^N\s*=\s*\d+$/.test(v[c])) &&
+      !v[2] &&
+      !v[4] &&
+      numeric(v[5])
+    if (
+      first !== stub ||
+      !(stub === 1 || /\p{L}/u.test(v[0])) ||
+      g.some((i) => !i.horizontal || col(i) < 0) ||
+      (!qualifiedSample &&
+        !v.slice(stub + 1).every((s, c) => numeric(s) || (!s && probability.has(c + stub + 1))))
+    )
+      continue
+    const measured = v.flatMap((s, c) => (c > stub && s && !probability.has(c) ? [c] : []))
+    if (measured.length < 2) continue
+    if (rows.filter((r) => g.every((i) => inside(r.rect, i))).length === 1) continue
+    const before = groups[n - 1],
+      after = groups[n + 1]
+    const intervalTail = before.every(
+      (i) => col(i) > stub && /^\[[\d.,+–−\s-]+\]$/.test(i.text.trim())
+    )
+    const previous = intervalTail && n > 1 ? groups[n - 2] : before
+    if (
+      ![previous, after].every(
+        (peer) =>
+          peer.every((i) => i.horizontal && col(i) >= 0) &&
+          peer.some((i) => col(i) <= stub && /\p{L}|\d/u.test(i.text)) &&
+          measured.every((c) => !value(peer, c) || numeric(value(peer, c))) &&
+          measured.some((c) => numeric(value(peer, c)))
+      ) ||
+      ![previous, after].some((peer) => measured.every((c) => numeric(value(peer, c))))
+    )
+      continue
+    const rect = union(g),
+      prev = union(before),
+      next = union(after)
+    const h = Math.max(...g.map((i) => i.height))
+    if (
+      prev[3] > rect[1] ||
+      next[1] < rect[3] ||
+      next[1] - prev[3] > h * 5 ||
+      [before, after].some((peer) =>
+        peer.some(
+          (i) =>
+            Math.abs(i.height - h) > h * 0.15 &&
+            !peer.some((anchor) => anchor !== i && isAdjacentTableScript(i, anchor))
+        )
+      )
+    )
+      continue
+    const start = (prev[3] + rect[1]) / 2,
+      end = (rect[3] + next[1]) / 2
+    const left = columnRects[0][0],
+      right = columnRects.at(-1)[2]
+    const band = [left, start, right, end],
+      members = new Set(g)
+    if (items.some((i) => inside(band, i) && !members.has(i))) continue
+    const affected = rows.filter((r) => r.rect[1] < end && r.rect[3] > start)
+    if (
+      affected.some((r) => {
+        const own = items.filter((i) => inside(r.rect, i) && !members.has(i))
+        return own.some((i) => i.rect[3] > start && i.rect[1] < end)
+      })
+    )
+      continue
+    for (const r of affected) {
+      const own = items.filter((i) => inside(r.rect, i) && !members.has(i))
+      const upper = own.some((i) => i.rect[3] <= start),
+        lower = own.some((i) => i.rect[1] >= end)
+      if (upper && lower) {
+        rows.push({ ...r, rect: [left, end, right, r.rect[3]] })
+        r.rect[3] = start
+      } else if (upper) r.rect[3] = start
+      else if (lower) r.rect[1] = end
+      else rows.splice(rows.indexOf(r), 1)
+    }
+    rows.push({ rect: band, origin: 'source-text' })
+    rows.sort((a, b) => a.rect[1] - b.rect[1])
+    repairs.push('text-supported-row-recovered')
+  }
+}
+
 // A stub-only tail may be a wrapped label rather than a new section. Require
 // lexical continuation or a repeated hanging-indent pattern, with shorter
 // native leading than records; ruled boundaries and numeric tails stop the join.
@@ -4787,6 +5170,7 @@ export function mergeWrappedStubTails({
   repairs,
   externalItems = []
 }) {
+  recoverRepeatedMeasuredHangingTails({ rows, items, columnRects, rules, repairs })
   mergeTerminalNarrativeRecord({ rows, items, columnRects, rules, repairs })
   repairRaisedMarkerRows({
     rows,
@@ -5042,10 +5426,19 @@ export function mergeWrappedStubTails({
           .filter((p) => p.labels === group.labels && Math.abs(p.indent - group.indent) < 0.1)
           .map((p) => p.head)
       ).size >= 3
+    const capitalCompoundTail =
+      /^\p{Lu}[\p{L}]+\/\p{Lu}[\p{L}]+$/u.test(a) &&
+      /^\p{Lu}[\p{Ll}]+$/u.test(b) &&
+      Math.abs(indent) < h * 0.1 &&
+      [...head, ...tail].every((i) => Math.abs(i.height - h) < h * 0.05) &&
+      columnRects.slice(1).every((c) => upper.some((i) => inside(c, i) && /\d/.test(i.text))) &&
+      rows[n + 1] &&
+      measuredRecord(groupOwned(rows[n + 1]))
     if (
       !/[\p{L}]/u.test(a) ||
       !(
         witnessedSection ||
+        capitalCompoundTail ||
         scriptedTail ||
         hangingTail ||
         /[/–-]$/.test(a) ||
@@ -5076,9 +5469,35 @@ export function mergeWrappedStubTails({
     // An unindented unit tail can use the same leading as the next record.
     // Two independently populated labels must already end with this exact
     // suffix; parentheses alone must not turn a subgroup into a continuation.
+    const alignedUnitTail =
+      Math.abs(indent) < h * 0.1 ||
+      (indent >= h * 0.5 &&
+        indent <= h * 1.5 &&
+        new Set(
+          rows
+            .filter((row, index) => {
+              if (index === n - 1 || index === n || !measuredRecord(groupOwned(row))) return false
+              const labels = stub(groupOwned(row))
+              if (labels.length < 2 || !text(labels).endsWith(' ' + b)) return false
+              const first = Math.min(...labels.map((i) => i.baseline)),
+                last = Math.max(...labels.map((i) => i.baseline)),
+                head = labels.filter((i) => Math.abs(i.baseline - first) < h * 0.1),
+                tail = labels.filter((i) => Math.abs(i.baseline - last) < h * 0.1)
+              return (
+                head.length + tail.length === labels.length &&
+                last - first >= h * 0.8 &&
+                last - first <= h * 1.6 &&
+                Math.abs(last - first - gap) < h * 0.1 &&
+                Math.abs(union(tail)[0] - union(head)[0] - indent) < h * 0.1 &&
+                labels.every((i) => i.horizontal && Math.abs(i.height - h) < h * 0.05) &&
+                !hasHorizontalTableRuleBetween(rules, union(head)[3], union(tail)[1])
+              )
+            })
+            .map((row) => text(stub(groupOwned(row))))
+        ).size >= 2)
     const parenthesizedUnit =
       /^\([\p{L}][\p{L}\d\s./^-]*\)$/u.test(b) &&
-      Math.abs(indent) < h * 0.1 &&
+      alignedUnitTail &&
       measuredRecord(groupOwned(rows[n - 1])) &&
       rows[n + 1] &&
       measuredRecord(groupOwned(rows[n + 1])) &&
@@ -5121,6 +5540,7 @@ export function mergeWrappedStubTails({
         !hangingTail &&
         !groupedTail &&
         !witnessedSection &&
+        !capitalCompoundTail &&
         !scriptedTail &&
         !measuredTail &&
         !witnessedUnit &&
@@ -5261,4 +5681,144 @@ export function remapSourceRowSpans(recordGrid, previousRows, rows) {
     recordGrid.headerRows = recordGrid.headerRows
       .map((n) => rows.indexOf(previousRows[n]))
       .filter((n) => n >= 0)
+}
+
+const measuredHangingBox = (xs) => [
+  Math.min(...xs.map((i) => i.rect[0])),
+  Math.min(...xs.map((i) => i.rect[1])),
+  Math.max(...xs.map((i) => i.rect[2])),
+  Math.max(...xs.map((i) => i.rect[3]))
+]
+const containsMeasuredHangingItem = (r, i) =>
+  i.rect[0] >= r[0] && i.rect[2] <= r[2] && i.rect[1] >= r[1] && i.rect[3] <= r[3]
+// Repeated complete numeric records establish a shared native hanging indent.
+// It learns the native hanging pattern without changing old gap tests.
+function recoverRepeatedMeasuredHangingTails({ rows, items, columnRects, rules, repairs }) {
+  if (columnRects.length < 4 || columnRects.length > 6) return
+  const heights = items
+      .filter((i) => i.horizontal)
+      .map((i) => i.height)
+      .sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const cuts = [columnRects[0][0], ...columnRects.map((c) => c[2])],
+    groups = groupSourceRowsWithScripts(
+      items.slice().sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+      h,
+      0.3
+    )
+  if (!groups) return
+  const values = groups.map((g) => readSourceRow(g, cuts)),
+    number = /^[−+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:\(\d+(?:\.\d+)?%?\))?[*†‡]?$/
+  const anchors = groups.flatMap((g, n) =>
+    values[n]?.[0] &&
+    values[n].slice(1, 4).every((v) => number.test(v)) &&
+    values[n].slice(4).every((v) => !v || number.test(v))
+      ? [{ g, n }]
+      : []
+  )
+  if (anchors.length < 3) return
+  const gutter = measuredHangingBox(anchors[0].g.filter((i) => i.rect[2] <= cuts[1]))[0]
+  if (
+    anchors.some(({ g }) => {
+      const stub = g.filter((i) => i.rect[2] <= cuts[1])
+      return (
+        !stub.length ||
+        Math.abs(measuredHangingBox(stub)[0] - gutter) > h * 0.1 ||
+        g.some(
+          (i) =>
+            Math.abs(i.height - h) > h * 0.05 || Math.abs(i.baseline - stub[0].baseline) > h * 0.1
+        )
+      )
+    })
+  )
+    return
+  const full = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      Math.abs(r[0] - gutter) < h * 0.1 &&
+      r[2] >= cuts.at(-1) - h &&
+      r[2] <= cuts.at(-1) + h
+  )
+  const closing = full.filter(
+    (r) =>
+      r[1] > measuredHangingBox(groups.at(-1))[3] && r[1] - measuredHangingBox(groups.at(-1))[3] < h
+  )
+  if (
+    closing.length !== 1 ||
+    !full.some(
+      (r) => r[1] < measuredHangingBox(anchors[0].g)[1] && Math.abs(r[2] - closing[0][2]) < h * 0.1
+    )
+  )
+    return
+  const peers = []
+  for (const { g, n } of anchors) {
+    const tail = groups[n + 1],
+      next = groups[n + 2]
+    if (!tail || !values[n + 1] || values[n + 1].slice(1).some(Boolean)) continue
+    const stub = g.filter((i) => i.rect[2] <= cuts[1]),
+      a = measuredHangingBox(stub),
+      b = measuredHangingBox(tail),
+      indent = b[0] - a[0],
+      gap = tail[0].baseline - stub[0].baseline
+    if (
+      tail.some(
+        (i) => !containsMeasuredHangingItem(columnRects[0], i) || Math.abs(i.height - h) > h * 0.05
+      ) ||
+      indent < h * 0.5 ||
+      indent > h * 0.75 ||
+      gap < h * 0.9 ||
+      gap > h * 1.6 ||
+      b[1] < measuredHangingBox(g)[3]
+    )
+      continue
+    if (
+      next &&
+      (Math.abs(measuredHangingBox(next)[0] - gutter) > h * 0.1 ||
+        measuredHangingBox(next)[1] <= b[3])
+    )
+      continue
+    if (
+      rules.some((r) => r[1] === r[3] && r[1] > a[3] && r[1] < b[1] && r[0] <= a[0] && r[2] >= a[2])
+    )
+      continue
+    peers.push({ head: g, tail, indent: indent / h, gap: gap / h })
+  }
+  const common = peers.find(
+    (p) =>
+      peers.filter((q) => Math.abs(q.indent - p.indent) < 0.05 && Math.abs(q.gap - p.gap) < 0.05)
+        .length >= 3
+  )
+  if (!common) return
+  for (const p of peers
+    .filter((q) => Math.abs(q.indent - common.indent) < 0.05 && Math.abs(q.gap - common.gap) < 0.05)
+    .reverse()) {
+    const upper = rows.filter((r) => p.head.every((i) => containsMeasuredHangingItem(r.rect, i))),
+      lower = rows.filter((r) => p.tail.every((i) => containsMeasuredHangingItem(r.rect, i)))
+    if (
+      upper.length !== 1 ||
+      lower.length !== 1 ||
+      upper[0] === lower[0] ||
+      rows.indexOf(lower[0]) !== rows.indexOf(upper[0]) + 1
+    )
+      continue
+    const ownedA = items.filter((i) => containsMeasuredHangingItem(upper[0].rect, i)),
+      ownedB = items.filter((i) => containsMeasuredHangingItem(lower[0].rect, i))
+    if (
+      ownedB.some((i) => !p.tail.includes(i)) ||
+      ownedA.some((i) => ownedB.includes(i)) ||
+      ownedA.some((i) => !p.head.includes(i))
+    )
+      continue
+    const frame = measuredHangingBox([...ownedA, ...ownedB])
+    if (
+      items.some(
+        (i) => containsMeasuredHangingItem(frame, i) && !ownedA.includes(i) && !ownedB.includes(i)
+      )
+    )
+      continue
+    upper[0].rect = [upper[0].rect[0], upper[0].rect[1], upper[0].rect[2], lower[0].rect[3]]
+    rows.splice(rows.indexOf(lower[0]), 1)
+    repairs.push('wrapped-comparison-record-recovered')
+  }
 }

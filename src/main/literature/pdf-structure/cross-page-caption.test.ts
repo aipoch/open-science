@@ -133,7 +133,7 @@ it('accepts explicit adjacent provenance and historical results without auxiliar
   value.elements[0].caption!.regions[0].page = 2
   expect(parsePdfStructureResult(value, value)).toEqual(value)
 })
-it('permits a declared distant figure legend but never a distant image or table caption', () => {
+it('permits a declared distant figure legend but never a distant image or unsupported table caption', () => {
   const value = result()
   value.auxiliaryPages = [1, 3, 4]
   value.pages.push({ page: 4, width: 600, height: 800, rotation: 0 })
@@ -144,6 +144,33 @@ it('permits a declared distant figure legend but never a distant image or table 
   value.elements[0].regions[0].page = 2
   value.elements[0].kind = 'table'
   expect(() => parsePdfStructureResult(value, value)).toThrow()
+})
+it('accepts a continued table caption two pages earlier only through declared source geometry', () => {
+  const value = result()
+  value.requestedPages = [3]
+  value.processedPages = [3]
+  value.auxiliaryPages = [1, 2]
+  value.elements[0].kind = 'table'
+  value.elements[0].regions[0].page = 3
+  value.elements[0].table = {
+    rowCount: 2,
+    columnCount: 1,
+    cells: [],
+    unassignedText: [],
+    issues: []
+  }
+  expect(parsePdfStructureResult(value, value)).toEqual(value)
+  for (const kind of ['missing-bridge', 'unreferenced', 'algorithm', 'distant-body'] as const) {
+    const invalid = structuredClone(value)
+    if (kind === 'missing-bridge') {
+      invalid.auxiliaryPages = [1]
+      invalid.pages = invalid.pages.filter(({ page }) => page !== 2)
+    }
+    if (kind === 'unreferenced') invalid.elements[0].caption!.regions[0].page = 3
+    if (kind === 'algorithm') invalid.elements[0].kind = 'algorithm'
+    if (kind === 'distant-body') invalid.elements[0].regions[0].page = 1
+    expect(() => parsePdfStructureResult(invalid, invalid)).toThrow()
+  }
 })
 it.each([
   'undeclared',

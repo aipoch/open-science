@@ -219,12 +219,24 @@ export const parsePdfStructureResult = (
     left.length === right.length && left.every((page, index) => page === right[index])
   const auxiliary = result.auxiliaryPages ?? []
   const requested = new Set(expected.requestedPages)
-  const figureCaptionPages = new Set(
-    result.elements
-      .filter((e) => e.kind === 'figure')
-      .flatMap((e) => e.caption?.regions.map((r) => r.page) ?? [])
-  )
   const coveredPages = [...result.requestedPages, ...auxiliary].sort((a, b) => a - b)
+  const isContinuedTableCaptionPage = (
+    element: PdfStructureResult['elements'][number],
+    page: number
+  ): boolean =>
+    element.kind === 'table' &&
+    coveredPages.includes(page + 1) &&
+    element.regions.some((region) => region.page === page + 2)
+  const captionPages = new Set(
+    result.elements.flatMap(
+      (element) =>
+        element.caption?.regions
+          .filter(
+            ({ page }) => element.kind === 'figure' || isContinuedTableCaptionPage(element, page)
+          )
+          .map(({ page }) => page) ?? []
+    )
+  )
   if (
     !samePages(result.requestedPages, expected.requestedPages) ||
     !samePages(result.processedPages, expected.requestedPages) ||
@@ -237,7 +249,7 @@ export const parsePdfStructureResult = (
         page > result.pageCount ||
         requested.has(page) ||
         (index > 0 && page <= auxiliary[index - 1]) ||
-        (!requested.has(page - 1) && !requested.has(page + 1) && !figureCaptionPages.has(page))
+        (!requested.has(page - 1) && !requested.has(page + 1) && !captionPages.has(page))
     ) ||
     result.requestedPages.some(
       (page, index, pages) => page > result.pageCount || (index > 0 && page <= pages[index - 1])
@@ -287,7 +299,9 @@ export const parsePdfStructureResult = (
       element.caption?.regions.some(
         ({ page }) =>
           !coveredPages.includes(page) ||
-          (element.kind !== 'figure' && !element.regions.some((r) => Math.abs(r.page - page) <= 1))
+          (element.kind !== 'figure' &&
+            !element.regions.some((r) => Math.abs(r.page - page) <= 1) &&
+            !isContinuedTableCaptionPage(element, page))
       )
     )
       throw new Error('PDF caption refers to an unread or unsupported source page.')
