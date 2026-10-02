@@ -19,7 +19,10 @@ test('PDF outline follows same-page sections and navigates native destinations a
       const heading = [...reader.querySelectorAll('.textLayer span')].find(
         (span) => span.textContent === text
       )!
-      return heading.getBoundingClientRect().top - reader.getBoundingClientRect().top
+      // Offscreen pages mount their text layer asynchronously after outline navigation.
+      return heading
+        ? heading.getBoundingClientRect().top - reader.getBoundingClientRect().top
+        : Infinity
     }, text)
   await expect.poll(() => destinationTop('Second heading')).toBeLessThan(100)
   await expect.poll(() => destinationTop('Second heading')).toBeGreaterThan(0)
