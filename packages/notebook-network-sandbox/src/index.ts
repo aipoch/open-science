@@ -272,7 +272,7 @@ class NotebookNetworkSandbox {
             }
           }
         : {}),
-      annotateStderr: (stderr) => this.#backend.annotateStderr(commandId, stderr),
+      annotateStderr: (stderr, stdout) => this.#backend.annotateStderr(commandId, stderr, stdout),
       setExecutionActive: (active) => {
         if (active) assertOpen()
         this.#backend.setCommandExecutionActive(commandId, active)

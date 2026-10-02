@@ -27,6 +27,7 @@ import { terminateProcessTree } from '../process-tree'
 import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
 import { shellNpmPaths } from './shell-npm-environment'
 import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
+import { ViolationLog } from '../../../packages/notebook-network-sandbox/runtime/src/gateway/violation-log'
 
 let portableRuntimeRoot: string
 
@@ -713,6 +714,55 @@ describe('notebook shell process behavior', () => {
       } finally {
         parser.mockRestore()
         await rm(runtimeRoot, { recursive: true, force: true })
+      }
+    })
+
+    it('annotates redirected JSON filesystem errors while preserving Shell stdout', async () => {
+      const parser = vi
+        .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
+        .mockResolvedValue([])
+      vi.stubEnv('SystemRoot', 'C:\\Windows')
+      const path = String.raw`C:\Users\fixture\.config\sample-tool\access-token.txt`
+      const stdout = `Access is denied.\n${JSON.stringify(
+        {
+          ok: false,
+          message: `EPERM: operation not permitted, open '${path}'`
+        },
+        null,
+        2
+      )}\n`
+      const log = new ViolationLog()
+      try {
+        const result = await runShellCommand({
+          command: 'sample-command 2>&1',
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot: portableRuntimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'win32',
+          runtimeBinding: { kind: 'powershell', version: '5.1' },
+          processSandbox: {
+            wrap: async (invocation) => ({
+              executable: process.execPath,
+              args: ['-e', `process.stdout.write(${JSON.stringify(stdout)})`],
+              env: invocation.env,
+              confirmProcessTreeTermination: async () => true,
+              annotateStderr: (stderr, output) => log.attach('command', stderr, undefined, output),
+              cleanup: async () => ({
+                processesTerminated: true,
+                networkClosed: true,
+                temporaryResourcesRemoved: true
+              })
+            })
+          },
+          terminateTree: async () => ({ reaped: true })
+        })
+        expect(result.stdout).toBe(stdout)
+        expect(result.stderr).toContain(`OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: ${path} `)
+        expect(result.stderr).not.toContain('"ok"')
+      } finally {
+        parser.mockRestore()
       }
     })
 

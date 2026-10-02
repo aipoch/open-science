@@ -520,6 +520,17 @@ describe('NotebookNetworkSandbox', () => {
       onNetworkAccessRequest: denyNetwork
     })
     expect(wrapped.annotateStderr('curl failed')).toBe('annotated stderr')
+    expect(backend.annotateStderr).toHaveBeenLastCalledWith(
+      expect.any(String),
+      'curl failed',
+      undefined
+    )
+    wrapped.annotateStderr('', 'redirected diagnostic')
+    expect(backend.annotateStderr).toHaveBeenLastCalledWith(
+      expect.any(String),
+      '',
+      'redirected diagnostic'
+    )
     wrapped.resetNetworkConnections()
     expect(backend.resetCommandConnections).toHaveBeenCalledWith(expect.any(String))
     const firstCleanup = wrapped.cleanup('timeout', { processesTerminated: false })

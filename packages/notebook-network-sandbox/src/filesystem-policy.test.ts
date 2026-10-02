@@ -153,6 +153,26 @@ describe('Notebook filesystem policy', () => {
     expect(result).toContain('request_network_access cannot grant filesystem access')
   })
 
+  it('identifies JSON-escaped filesystem errors redirected to stdout without rewriting output', () => {
+    const log = new ViolationLog()
+    const path = String.raw`C:\Users\fixture\.config\sample-tool\access-token.txt`
+    const stdout = `Access is denied.\n${JSON.stringify(
+      {
+        ok: false,
+        message: `EPERM: operation not permitted, open '${path}'`
+      },
+      null,
+      2
+    )}\n`
+    const result = log.attach('redirected', '', undefined, stdout)
+    expect(result).toContain(`OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: ${path} `)
+    expect(result).toContain('grant that specific folder and access mode in the Files view')
+    expect(result).not.toContain('"ok"')
+    expect(
+      log.attach('ordinary-json', '', undefined, '{"message":"socket: Operation not permitted"}')
+    ).toBe('')
+  })
+
   it('includes approval recovery in stderr even when curl discards the proxy body', () => {
     const log = new ViolationLog()
     log.record('command', 'deny network-outbound trialsearch.who.int:443 (not approved)')

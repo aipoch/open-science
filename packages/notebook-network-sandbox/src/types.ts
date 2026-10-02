@@ -105,7 +105,7 @@ export type NotebookSandboxedProcess = Readonly<{
   // Only launchers backed by a kill-on-close Job Object may provide this proof check.
   confirmProcessTreeTermination?: () => Promise<boolean>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
-  annotateStderr: (stderr: string) => string
+  annotateStderr: (stderr: string, stdout?: string) => string
   setExecutionActive: (active: boolean) => void
   resetNetworkConnections: () => void
   cleanup: (

@@ -784,7 +784,7 @@ const runShellCommand = (
           runtimeBinding.kind === 'powershell'
             ? normalizePowerShellStderr(result.stderr, runtimePlatform)
             : result.stderr
-        const stderr = sandboxed ? sandboxed.annotateStderr(normalized) : normalized
+        const stderr = sandboxed ? sandboxed.annotateStderr(normalized, result.stdout) : normalized
         let complete = false
         try {
           const processesTerminated = sandboxed?.confirmProcessTreeTermination

@@ -729,11 +729,16 @@ const NotebookNetworkRuntime = {
   initialize,
   wrap,
   updateConfig,
-  annotateStderr: (commandId: string, stderr: string): string =>
-    violations.attach(commandId, stderr, (path) => {
-      const filesystem = commandContexts.get(commandId)?.filesystem
-      return filesystem ? hiddenByFilesystemLayout(filesystem, path) : false
-    }),
+  annotateStderr: (commandId: string, stderr: string, stdout?: string): string =>
+    violations.attach(
+      commandId,
+      stderr,
+      (path) => {
+        const filesystem = commandContexts.get(commandId)?.filesystem
+        return filesystem ? hiddenByFilesystemLayout(filesystem, path) : false
+      },
+      stdout
+    ),
   setCommandExecutionActive: (commandId: string, active: boolean): void => {
     const context = commandContexts.get(commandId)
     if (!context) return
