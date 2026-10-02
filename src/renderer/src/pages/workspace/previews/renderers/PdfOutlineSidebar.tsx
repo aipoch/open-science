@@ -91,7 +91,10 @@ const activeOutlineId = (
           item.pageNumber < position.pageNumber ||
           (item.position?.top ?? 0) <= position.top) &&
         (item.pageNumber > activePage ||
-          (item.pageNumber === activePage && (!position || (item.position?.top ?? 0) > activeTop)))
+          (item.pageNumber === activePage &&
+            (!position ||
+              (item.position?.top ?? 0) > activeTop ||
+              (item.position === undefined && active?.position === undefined))))
       ) {
         active = item
         activePage = item.pageNumber

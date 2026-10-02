@@ -2206,7 +2206,9 @@ export const PdfPreviewContent = ({
   const [currentPage, setCurrentPage] = useState(1)
   const currentPageRef = useRef(1)
   const [outlinePosition, setOutlinePosition] = useState({ pageNumber: 1, top: 0 })
-  const [selectedOutlineId, setSelectedOutlineId] = useState<string>()
+  const [selectedOutline, setSelectedOutline] = useState<
+    Readonly<{ requestKey: string; id: string }> | undefined
+  >()
   const outlineClickRef = useRef<{ top: number; left: number } | undefined>(undefined)
   const [pageLabels, setPageLabels] = useState<
     Readonly<{ requestKey: string; labels: readonly string[] | null }> | undefined
@@ -2249,7 +2251,7 @@ export const PdfPreviewContent = ({
     setNotesWidth(320)
     setCurrentPage(1)
     setOutlinePosition({ pageNumber: 1, top: 0 })
-    setSelectedOutlineId(undefined)
+    setSelectedOutline(undefined)
     setSelectedEvidenceId(undefined)
     setSelectedBookmarkId(undefined)
     setSearchOpen(false)
@@ -2529,7 +2531,7 @@ export const PdfPreviewContent = ({
   const resolvedPageLabels = pageLabels?.requestKey === requestKey ? pageLabels.labels : null
   const scrollToPage = useCallback((pageNumber: number): void => {
     outlineClickRef.current = undefined
-    setSelectedOutlineId(undefined)
+    setSelectedOutline(undefined)
     scrollRef.current
       ?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)
       ?.scrollIntoView({ block: 'start', behavior: 'auto' })
@@ -2575,7 +2577,7 @@ export const PdfPreviewContent = ({
       }
     }
     outlineClickRef.current = { top: scroll.scrollTop, left: scroll.scrollLeft }
-    setSelectedOutlineId(item.id)
+    setSelectedOutline({ requestKey: resourceRequestKey, id: item.id })
   }
   useEffect(
     () =>
@@ -2806,7 +2808,7 @@ export const PdfPreviewContent = ({
         (Math.abs(click.top - scroll.scrollTop) > 1 || Math.abs(click.left - scroll.scrollLeft) > 1)
       ) {
         outlineClickRef.current = undefined
-        setSelectedOutlineId(undefined)
+        setSelectedOutline(undefined)
       }
       if (lastReportedPage === pageNumber) return
       lastReportedPage = pageNumber
@@ -3290,7 +3292,11 @@ export const PdfPreviewContent = ({
                   pageLabels={resolvedPageLabels}
                   currentPage={currentPage}
                   position={outlinePosition}
-                  selectedId={selectedOutlineId}
+                  selectedId={
+                    selectedOutline?.requestKey === resourceRequestKey
+                      ? selectedOutline.id
+                      : undefined
+                  }
                   floating={floatingNavigation}
                   width={
                     floatingNavigation

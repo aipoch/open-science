@@ -728,6 +728,16 @@ describe('PdfPreviewContent', () => {
           promise: Promise.resolve({
             numPages: 3,
             destroy: destroyDocument,
+            getOutline: async () =>
+              capability.id === 'resource-1'
+                ? [
+                    { title: 'Old section', dest: [0], items: [] },
+                    { title: 'Old later section', dest: [0], items: [] }
+                  ]
+                : [
+                    { title: 'New section', dest: [0], items: [] },
+                    { title: 'New later section', dest: [2], items: [] }
+                  ],
             getPage: async () => {
               await window.api.previewResources.readRange({
                 resourceId: capability.id,
@@ -770,6 +780,13 @@ describe('PdfPreviewContent', () => {
         )
       )
       await act(async () => phase('live'))
+      await act(async () => {
+        const navigation = await vi.waitFor(() =>
+          container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')
+        )
+        navigation?.click()
+      })
+      await act(async () => screen.getByRole('treeitem', { name: 'Old later section' }).click())
       await act(async () =>
         container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
       )
@@ -811,6 +828,12 @@ describe('PdfPreviewContent', () => {
       expect(container.querySelector('[data-pdf-text-layer]')?.textContent).toContain(
         'Text from resource-2'
       )
+      expect(
+        screen.getByRole('treeitem', { name: 'New section' }).getAttribute('aria-selected')
+      ).toBe('true')
+      expect(
+        screen.getByRole('treeitem', { name: 'New later section' }).getAttribute('aria-selected')
+      ).toBe('false')
       expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith({
         source: 'artifact',
         projectId: 'project-1',
@@ -2431,6 +2454,29 @@ describe('PdfPreviewContent', () => {
     await renderOutline(2)
     expect(chapter.getAttribute('aria-expanded')).toBe('true')
     expect(container.querySelector('[title="Section"]')?.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('keeps later same-page outline entries active when their destinations lack coordinates', async () => {
+    await act(async () =>
+      root.render(
+        <PdfOutlineSidebar
+          document={{ getPage } as never}
+          items={[
+            { id: 'first', title: 'First', pageNumber: 1, children: [] },
+            { id: 'second', title: 'Second', pageNumber: 1, children: [] }
+          ]}
+          pageCount={1}
+          currentPage={1}
+          position={{ pageNumber: 1, top: 0 }}
+          width={240}
+          onWidthChange={vi.fn()}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('[title="First"]')?.getAttribute('aria-selected')).toBe('false')
+    expect(container.querySelector('[title="Second"]')?.getAttribute('aria-selected')).toBe('true')
   })
 
   it('stops a stale full-document search before parsing the remaining pages', async () => {
