@@ -257,7 +257,8 @@
       "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
       "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
-      "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
+      "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
     ]
   },
   "capabilityOverlays": [],

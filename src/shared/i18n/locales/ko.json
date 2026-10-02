@@ -6805,6 +6805,9 @@
     "Full screen": "전체 화면",
     "Documentation": "문서",
     "Load earlier messages": "이전 메시지 불러오기",
-    "Return to current step": "현재 단계로 돌아가기"
+    "Return to current step": "현재 단계로 돌아가기",
+    "File access failed. System permissions or Notebook protection may be responsible.": "파일에 액세스하지 못했습니다. 시스템 권한 또는 Notebook 보호가 원인일 수 있습니다.",
+    "Folder access was updated. Run the command again when you are ready.": "폴더 액세스 권한이 업데이트되었습니다. 준비가 되면 명령을 다시 실행하세요.",
+    "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "이 폴더 권한은 파일에서 취소할 때까지 모든 세션에 적용됩니다. 명령은 자동으로 실행되지 않습니다."
   }
 }

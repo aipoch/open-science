@@ -481,7 +481,8 @@
       "src/renderer/src/pages/literature/journals/JournalAlignment.render.test.tsx",
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
       "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx",
-      "src/renderer/src/components/WindowsTitleBar.test.tsx"
+      "src/renderer/src/components/WindowsTitleBar.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
     ]
   },
   "capabilityOverlays": [],

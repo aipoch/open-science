@@ -7135,6 +7135,9 @@
     "Full screen": "Plein écran",
     "Documentation": "Documentation",
     "Load earlier messages": "Charger les messages précédents",
-    "Return to current step": "Revenir à l’étape actuelle"
+    "Return to current step": "Revenir à l’étape actuelle",
+    "File access failed. System permissions or Notebook protection may be responsible.": "L’accès au fichier a échoué. Cela peut être dû aux autorisations du système ou à la protection de Notebook.",
+    "Folder access was updated. Run the command again when you are ready.": "L’accès au dossier a été mis à jour. Relancez la commande lorsque vous le souhaitez.",
+    "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "Cette autorisation de dossier s’applique à toutes les sessions jusqu’à sa révocation dans Fichiers. Les commandes ne seront pas exécutées automatiquement."
   }
 }

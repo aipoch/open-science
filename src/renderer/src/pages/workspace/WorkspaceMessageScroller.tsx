@@ -2068,6 +2068,7 @@ const WorkspaceMessageScrollerImpl = ({
 
                 return (
                   <WorkspaceActivityGroup
+                    allowFolderAccess={Boolean(activeSession && !activeSession.packageOrigin)}
                     key={item.id}
                     group={item}
                     isExpanded={!collapsedActivityGroups.has(item.id)}

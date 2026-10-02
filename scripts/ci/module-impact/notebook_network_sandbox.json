@@ -587,7 +587,8 @@
       "scripts/check-windows-notebook-runtime.test.ts",
       "scripts/windows-runtime-cdn.test.ts",
       "src/main/notebook/windows-runtime-probe.windows.test.ts",
-      "scripts/windows-release-workflows.test.ts"
+      "scripts/windows-release-workflows.test.ts",
+      "src/main/local-fs/notebook-folder-access.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

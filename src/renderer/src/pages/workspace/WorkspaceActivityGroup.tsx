@@ -46,6 +46,7 @@ const isManagePackagesActivity = (
   isNotebookManagePackagesToolName(activity.title)
 
 type WorkspaceActivityGroupProps = {
+  allowFolderAccess?: boolean
   group: ConversationActivityGroupItem
   isExpanded: boolean
   onToggleGroup: (groupId: string) => void
@@ -93,6 +94,7 @@ const ActivityGroupElapsed = ({
 
 // Renders adjacent tool calls as one collapsible transcript row group.
 const WorkspaceActivityGroup = ({
+  allowFolderAccess = false,
   group,
   isExpanded,
   onToggleGroup,
@@ -225,6 +227,7 @@ const WorkspaceActivityGroup = ({
                   />
                 ) : toolDetails ? (
                   <WorkspaceToolDetailsRow
+                    allowFolderAccess={allowFolderAccess}
                     activity={activity}
                     phase={phase}
                     details={toolDetails}

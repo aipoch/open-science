@@ -139,15 +139,17 @@ const CurrentCrumb = ({
   </button>
 )
 
-// The dialog body. Rendered only while the dialog is open, so every open starts fresh at home
-// with the default access level and no leftover grant error.
+// Rendered only while open. Each open starts at home or the supplied failure path, with existing
+// rights preserved (otherwise read-only) and no leftover grant error.
 const GrantFolderAccessDialogContent = ({
   onOpenChange,
   onGranted,
+  initialPath,
   onGrantingChange
 }: {
   onOpenChange: (open: boolean) => void
   onGranted?: (root: GrantedLocalRoot) => void
+  initialPath?: string
   onGrantingChange: (granting: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -196,7 +198,11 @@ const GrantFolderAccessDialogContent = ({
       document.addEventListener('pointerdown', disarmDriveMenu, { capture: true, once: true })
     }
   }
-  const [access, setAccess] = useState<GrantedLocalRootAccess>('ro')
+  const [selectedAccess, setAccess] = useState<GrantedLocalRootAccess>()
+  const access =
+    selectedAccess ??
+    roots.find((root) => sameLocalDirectory(root.path, cwd, platform))?.access ??
+    'ro'
   const [grantFailed, setGrantFailed] = useState(false)
   const [grantConfirmationOpen, setGrantConfirmationOpen] = useState(false)
   const [isGranting, setIsGranting] = useState(false)
@@ -223,18 +229,37 @@ const GrantFolderAccessDialogContent = ({
         // A drive-enumeration failure must not take the whole dialog down with it.
         window.api.localFs.listDrives().catch(() => [])
       ])
+      // Prefilled recovery must know existing rights before enabling confirmation.
+      if (initialPath) await refresh()
+      let initialDirectory = fetchedRoots.home
+      if (initialPath && validateLocalPath(initialPath, platform) === undefined) {
+        initialDirectory = initialPath
+        try {
+          initialDirectory = (await window.api.localFs.listDir(initialPath)).resolvedPath
+        } catch (error) {
+          // Only a confirmed file chooses its immediate parent. Missing/unreadable paths stay
+          // visible as errors; never climb to a broader ancestor or guess from an extension.
+          const parent = parentLocalPath(initialPath, platform)
+          if (
+            /\bENOTDIR\b/.test((error as Error).message ?? '') &&
+            !isLocalPathRoot(parent, platform) &&
+            !sameLocalDirectory(parent, fetchedRoots.home, platform)
+          )
+            initialDirectory = parent
+        }
+      }
       if (cancelled) return
       setHome(fetchedRoots.home)
-      setCwd(fetchedRoots.home)
+      setCwd(initialDirectory)
       setDrives(fetchedDrives)
-      await refresh().catch(() => undefined)
+      if (!initialPath) await refresh().catch(() => undefined)
     })().catch((error: Error) => {
       if (!cancelled) setInitializationError(error.message)
     })
     return () => {
       cancelled = true
     }
-  }, [refresh, initializeNonce])
+  }, [refresh, initializeNonce, initialPath, platform])
 
   // List the current folder's subfolders. Browsing is not scope-confined ("Home start, full-disk
   // navigable"): any location the breadcrumb or path field points at gets listed.
@@ -275,6 +300,7 @@ const GrantFolderAccessDialogContent = ({
 
   const navigateTo = (path: string): void => {
     setGrantFailed(false)
+    setAccess(undefined)
     setCwd(path)
   }
 
@@ -606,6 +632,13 @@ const GrantFolderAccessDialogContent = ({
           data-testid="grant-access-footer"
           className={cn(dialogFooterClassName, 'flex-col items-stretch gap-2.5')}
         >
+          {initialPath ? (
+            <p className="text-xs text-text-200">
+              {t(
+                'This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.'
+              )}
+            </p>
+          ) : null}
           {isHome ? (
             <div className="flex items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs leading-[18px] text-text-100">
               <Info className="mt-px size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
@@ -677,12 +710,15 @@ const GrantFolderAccessDialogContent = ({
 export const GrantFolderAccessDialog = ({
   open,
   onOpenChange,
-  onGranted
+  onGranted,
+  initialPath
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   // Called with the granted root after a successful grant (the dialog has already closed).
   onGranted?: (root: GrantedLocalRoot) => void
+  // Untrusted failure path: directory validation happens only after this dialog is opened.
+  initialPath?: string
 }): React.JSX.Element => {
   const grantingRef = useRef(false)
   const handleGrantingChange = useCallback((granting: boolean): void => {
@@ -702,6 +738,7 @@ export const GrantFolderAccessDialog = ({
           <GrantFolderAccessDialogContent
             onOpenChange={onOpenChange}
             onGranted={onGranted}
+            initialPath={initialPath}
             onGrantingChange={handleGrantingChange}
           />
         ) : null}

@@ -47,6 +47,7 @@ const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
 type SessionNotebookContentProps = {
+  allowFolderAccess?: boolean
   sessionId: string
   projectId?: string
   runs: NotebookRunRecord[]
@@ -71,6 +72,7 @@ type SessionNotebookContentProps = {
 // and the .ipynb export footer. Kept free of data-loading hooks and Dialog context so it renders
 // standalone in tests; close is delegated through onClose.
 const SessionNotebookContent = ({
+  allowFolderAccess = false,
   sessionId,
   projectId,
   runs,
@@ -466,6 +468,7 @@ const SessionNotebookContent = ({
                   <div key={run.runId} data-notebook-run-id={run.runId}>
                     <NotebookDialogCell
                       run={run}
+                      allowFolderAccess={allowFolderAccess}
                       index={index}
                       showInputData={Boolean(projectId)}
                     />
@@ -753,6 +756,7 @@ const SessionNotebookDialog = ({
           <Dialog.Title className="sr-only">{t('Session notebook')}</Dialog.Title>
           {dialogSession ? (
             <SessionNotebookContent
+              allowFolderAccess={!dialogSession.packageOrigin}
               // Remount per session: the dialog is mounted once and the session prop swaps in
               // place, so per-session export state (a failure banner, an in-flight setState from
               // a superseded export) must be discarded rather than leak into the next session.

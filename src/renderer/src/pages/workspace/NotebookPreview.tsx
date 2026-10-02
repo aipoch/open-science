@@ -216,12 +216,14 @@ const NotebookRunCell = ({
   run,
   index,
   staleness,
-  causedByRunIndex
+  causedByRunIndex,
+  allowFolderAccess
 }: {
   run: NotebookRunRecord
   index: number
   staleness?: NotebookRunStaleness
   causedByRunIndex?: number
+  allowFolderAccess?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -275,7 +277,7 @@ const NotebookRunCell = ({
         language={kind === 'repl' ? 'javascript' : kind}
         highlightLine={errorLine}
       />
-      <NotebookRunOutputs run={run} />
+      <NotebookRunOutputs run={run} allowFolderAccess={allowFolderAccess} />
       <NotebookRunEvidence run={run} />
     </div>
   )
@@ -1103,6 +1105,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             <div key={run.runId} data-run-id={run.runId}>
               <NotebookRunCell
                 run={run}
+                allowFolderAccess={Boolean(session && !session.packageOrigin)}
                 index={index}
                 staleness={staleness}
                 causedByRunIndex={
