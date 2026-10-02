@@ -37,9 +37,11 @@ const diagnosticLines = (text: string): string[] => {
   return lines
 }
 
-const diagnosticPaths = (text: string, quotedOnly = false): string[] => {
+type DiagnosticPathMatch = { path: string; index: number; end: number }
+
+const diagnosticPathMatches = (text: string, quotedOnly = false): DiagnosticPathMatch[] => {
   const tokens = /"[^"\r\n]*"|'[^'\r\n]*'|`[^`\r\n]*`|(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`:]+/g
-  const paths: string[] = []
+  const paths: DiagnosticPathMatch[] = []
   for (const match of text.matchAll(tokens)) {
     const quoted = /^["'`]/.test(match[0])
     if (quotedOnly && !quoted) continue
@@ -51,21 +53,28 @@ const diagnosticPaths = (text: string, quotedOnly = false): string[] => {
     }
     // eslint-disable-next-line no-control-regex
     if (candidate.length > 1000 || /[\u0000-\u001f\u007f]/.test(candidate)) continue
-    paths.push(candidate)
+    paths.push({ path: candidate, index: match.index, end: match.index + match[0].length })
   }
   return paths
 }
 
-const rawPermissionPath = (text: string): string | undefined => {
-  const failurePattern = new RegExp(permissionFailure, 'i')
+const rawPermissionPaths = (text: string): string[] => {
+  const failurePattern = new RegExp(permissionFailure, 'gi')
+  const paths: string[] = []
   for (const line of diagnosticLines(text)) {
-    const failure = failurePattern.exec(line)
-    if (!failure) continue
-    const before = diagnosticPaths(line.slice(0, failure.index), true).at(-1)
-    const after = diagnosticPaths(line.slice(failure.index + failure[0].length), true)[0]
-    if (before ?? after) return before ?? after
+    const candidates = diagnosticPathMatches(line, true)
+    for (const failure of line.matchAll(failurePattern)) {
+      const start = failure.index ?? 0
+      const end = start + failure[0].length
+      const before = candidates.filter((candidate) => candidate.end <= start).at(-1)
+      const after = candidates.find((candidate) => candidate.index >= end)
+      const beforeDistance = before ? start - before.end : Number.POSITIVE_INFINITY
+      const afterDistance = after ? after.index - end : Number.POSITIVE_INFINITY
+      const candidate = beforeDistance <= afterDistance ? before : after
+      if (candidate) paths.push(candidate.path)
+    }
   }
-  return undefined
+  return paths
 }
 
 // A diagnostic is a navigation suggestion, never proof of a sandbox denial or authority to grant.
@@ -114,9 +123,7 @@ export const notebookFolderAccessPath = (
   }
   if (paths.size > 0) return paths.size === 1 ? [...paths][0] : undefined
 
-  const rawPaths = new Set(
-    diagnostics.map(rawPermissionPath).filter((path): path is string => path !== undefined)
-  )
+  const rawPaths = new Set(diagnostics.flatMap(rawPermissionPaths))
   for (const path of rawPaths) {
     if (validateLocalPath(path, platform) !== undefined || isLocalPathRoot(path, platform)) {
       return undefined

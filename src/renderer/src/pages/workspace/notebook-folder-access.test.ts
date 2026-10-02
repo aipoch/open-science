@@ -118,6 +118,15 @@ describe('Notebook folder recovery candidate', () => {
     }
   )
 
+  it('suppresses recovery when raw permission output names multiple paths', () => {
+    const base = run()
+    const stderr =
+      "EPERM: operation not permitted, open '/fixture/one/access-token.txt': permission denied; " +
+      "EPERM: operation not permitted, open '/fixture/two/access-token.txt': permission denied"
+    const record = run({ text: { ...base.text, stderr } })
+    expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
+  })
+
   it.each(['relative/config', '/', '/fixture/..', '/fixture/\u0000config'])(
     'rejects an unsafe or broad path: %s',
     (path) => {
