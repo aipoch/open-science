@@ -164,3 +164,59 @@ describe('PDF reading authority', () => {
     })
   })
 })
+
+it.each(['upload-version', 'artifact-version'] as const)(
+  'routes %s parse, cache and thumbnail requests without a message binding',
+  async (sourceKind) => {
+    const source = {
+      kind: 'managed' as const,
+      projectId: 'project',
+      sourceKind,
+      sourceFileId: 'file',
+      sourceVersionId: 'version'
+    }
+    const release = vi.fn()
+    const owner: PdfStructureOwner = {
+      acquire: vi.fn(() => ({ result: Promise.resolve({} as PdfStructureResult), release })),
+      readCached: vi.fn(async () => undefined),
+      readThumbnail: vi.fn(async () => Buffer.from('png')),
+      close: vi.fn(),
+      clearCache: vi.fn()
+    }
+    const reader = new PdfStructureReader(owner)
+    const caller = createWebCallerContext('reader')
+    const lease = new ApplicationCallerLeaseRegistry().acquire({
+      leaseId: 'reader',
+      surface: 'web'
+    }).lease
+    const input = { source, page: 1, requestId: request.requestId }
+    await reader.parse(input, caller, lease)
+    expect(owner.acquire).toHaveBeenCalledWith(source, [1], { signal: lease.signal })
+    expect(release).toHaveBeenCalledOnce()
+    await reader.readCached({ source, page: 1 }, caller, lease)
+    expect(owner.readCached).toHaveBeenCalledWith(source, [1], lease.signal)
+    const thumbnail = { source, page: 1, extractionId: request.requestId, thumbnailId: 'image' }
+    expect(await reader.readThumbnail(thumbnail, caller, lease)).toBe('data:image/png;base64,cG5n')
+    expect(owner.readThumbnail).toHaveBeenCalledWith(
+      source,
+      [1],
+      request.requestId,
+      'image',
+      lease.signal
+    )
+    for (const extra of [
+      { attachmentVersionId: 'other' },
+      { source: { ...source, path: '/private/source.pdf' } },
+      { source: { ...source, projectId: '' } },
+      { source: { ...source, sourceKind: 'local' } }
+    ]) {
+      await expect(
+        reader.parse({ ...input, ...extra } as typeof input, caller, lease)
+      ).rejects.toThrow()
+    }
+    await expect(
+      reader.parse(input, createWebCallerContext('remote', { location: 'remote' }), lease)
+    ).rejects.toThrow('Local PDF access')
+    expect(owner.acquire).toHaveBeenCalledOnce()
+  }
+)

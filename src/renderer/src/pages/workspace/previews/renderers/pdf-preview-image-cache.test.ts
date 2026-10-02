@@ -85,3 +85,31 @@ it('does not retain a URL exceeding the memory budget', async () => {
   await cache.load(request)
   expect(cache.peek(request)).toBeUndefined()
 })
+
+it('isolates managed thumbnail requests by project, file, kind and immutable version', async () => {
+  const { cache, read } = setup()
+  const thumbnail = {
+    extractionId: request.extractionId,
+    page: request.page,
+    thumbnailId: request.thumbnailId
+  }
+  const source = {
+    kind: 'managed' as const,
+    projectId: 'project',
+    sourceKind: 'upload-version' as const,
+    sourceFileId: 'file',
+    sourceVersionId: 'version'
+  }
+  await cache.load({ ...thumbnail, source })
+  await cache.load({ ...thumbnail, source: { ...source } })
+  expect(read).toHaveBeenCalledOnce()
+  for (const change of [
+    { projectId: 'other' },
+    { sourceFileId: 'other' },
+    { sourceVersionId: 'other' },
+    { sourceKind: 'artifact-version' as const }
+  ])
+    await cache.load({ ...thumbnail, source: { ...source, ...change } })
+  await cache.load(request)
+  expect(read).toHaveBeenCalledTimes(6)
+})

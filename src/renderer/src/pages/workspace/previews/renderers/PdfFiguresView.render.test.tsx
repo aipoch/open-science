@@ -89,7 +89,11 @@ it('groups adjacent figure pages with shared caption provenance and renders both
   api.pdfStructure.readCached.mockResolvedValueOnce(batches[0]).mockResolvedValueOnce(batches[1])
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version" pageCount={2} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version' }}
+        pageCount={2}
+        onNavigate={navigate}
+      />
     )
   )
   expect(container.querySelectorAll('[data-pdf-image-frame]')).toHaveLength(2)
@@ -185,7 +189,11 @@ const showFigures = async (count = 1, firstNumber = 1): Promise<void> => {
   })
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -198,7 +206,7 @@ it('restores persisted results automatically when the tab opens and the preview 
       <PdfFiguresView
         key={key}
         active={active}
-        attachmentVersionId="version-1"
+        source={{ attachmentVersionId: 'version-1' }}
         pageCount={1}
         onNavigate={navigate}
       />
@@ -219,7 +227,11 @@ it('restores a completed empty result without offering the initial analysis acti
   api.pdfStructure.readCached.mockResolvedValue({ ...result, elements: [] })
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   expect(container.textContent).toContain('Analysis complete')
@@ -262,7 +274,7 @@ it('shows one cached table with independently copyable parts, shared notes and o
     root.render(
       <PdfFiguresView
         key={key}
-        attachmentVersionId="version-1"
+        source={{ attachmentVersionId: 'version-1' }}
         pageCount={1}
         onNavigate={navigate}
       />
@@ -327,7 +339,11 @@ it('renders a small P-value marker as superscript while allele stars stay full s
   })
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   const cell = container.querySelector('td')!
@@ -340,7 +356,11 @@ it('shows partial cached results without automatically parsing the missing page'
   api.pdfStructure.readCached.mockResolvedValueOnce(result).mockResolvedValueOnce(undefined)
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={2} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={2}
+        onNavigate={navigate}
+      />
     )
   )
   expect(container.textContent).toContain('Merged header')
@@ -359,7 +379,11 @@ it('keeps the loading state until cache lookup finishes, then offers analysis on
   )
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   expect(container.textContent).not.toContain('Analyze PDF')
@@ -382,7 +406,7 @@ it('ignores a late cache restore from before the tab was hidden', async () => {
     root.render(
       <PdfFiguresView
         active={active}
-        attachmentVersionId="version-1"
+        source={{ attachmentVersionId: 'version-1' }}
         pageCount={1}
         onNavigate={navigate}
       />
@@ -409,7 +433,11 @@ it('bounds cache read concurrency and preserves page order after out-of-order re
   }
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={5} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={5}
+        onNavigate={navigate}
+      />
     )
   )
   expect(api.pdfStructure.readCached).toHaveBeenCalledTimes(4)
@@ -443,7 +471,7 @@ it('stops model polling while the figures tab is hidden', async () => {
     root.render(
       <PdfFiguresView
         active={active}
-        attachmentVersionId="version-1"
+        source={{ attachmentVersionId: 'version-1' }}
         pageCount={1}
         onNavigate={navigate}
       />
@@ -474,7 +502,7 @@ it('shows the first cached figures before the remaining pages finish and stops w
     root.render(
       <PdfFiguresView
         active={active}
-        attachmentVersionId="version-1"
+        source={{ attachmentVersionId: 'version-1' }}
         pageCount={12}
         onNavigate={navigate}
       />
@@ -499,7 +527,11 @@ it('does not overlap slow model snapshot requests', async () => {
   api.localModels.getSnapshot.mockImplementationOnce(() => new Promise(() => {}))
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   await act(async () => vi.advanceTimersByTimeAsync(3000))
@@ -514,7 +546,11 @@ it('does not commit table rerenders for unchanged model snapshots', async () => 
   await act(async () =>
     root.render(
       <Profiler id="figures" onRender={render}>
-        <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+        <PdfFiguresView
+          source={{ attachmentVersionId: 'version-1' }}
+          pageCount={1}
+          onNavigate={navigate}
+        />
       </Profiler>
     )
   )
@@ -529,7 +565,11 @@ it('loads table images only when their image tab is opened', async () => {
   api.pdfStructure.readCached.mockResolvedValue(result)
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   expect(api.pdfStructure.readThumbnail).not.toHaveBeenCalled()
@@ -554,7 +594,11 @@ it('shows algorithms as original images with titles and source navigation', asyn
   })
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   expect(container.querySelector('[data-pdf-caption]')?.textContent).toBe('Algorithm 1 Search')
@@ -749,7 +793,11 @@ it('offers original-page navigation without an endless skeleton when no crop exi
   })
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -776,7 +824,11 @@ it.each(['notInstalled', 'installing'] as const)(
       .mockResolvedValue(result)
     await act(async () =>
       root.render(
-        <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+        <PdfFiguresView
+          source={{ attachmentVersionId: 'version-1' }}
+          pageCount={1}
+          onNavigate={navigate}
+        />
       )
     )
     await click('Download and continue')
@@ -793,7 +845,11 @@ it('opens cached results without reinstalling a removed model package', async ()
   api.pdfStructure.parse.mockResolvedValue(result)
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Download and continue')
@@ -817,7 +873,11 @@ it('shows download activity and byte progress, then switches to PDF processing',
     .mockImplementationOnce(() => new Promise(() => {}))
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={2} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={2}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Download and continue')
@@ -841,7 +901,11 @@ it('does not download a model after an unrelated source failure', async () => {
   api.pdfStructure.parse.mockRejectedValue(new Error('Source permission denied'))
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Download and continue')
@@ -867,7 +931,11 @@ it('joins cancellation of an install that returns after Cancel before starting a
   )
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Download and continue')
@@ -893,12 +961,19 @@ it('does not cancel the global download when an old document unmounts during ins
       })
   )
   await act(async () =>
-    root.render(<PdfFiguresView attachmentVersionId="old" pageCount={1} onNavigate={navigate} />)
+    root.render(
+      <PdfFiguresView source={{ attachmentVersionId: 'old' }} pageCount={1} onNavigate={navigate} />
+    )
   )
   await click('Download and continue')
   await act(async () =>
     root.render(
-      <PdfFiguresView key="new" attachmentVersionId="new" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        key="new"
+        source={{ attachmentVersionId: 'new' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   api.pdfStructure.parse.mockResolvedValue(result)
@@ -914,7 +989,11 @@ it('shows partial coverage, original caption, merged cells and review-gated copy
     .mockRejectedValueOnce(new Error('unsupported page'))
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={2} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={2}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -975,7 +1054,11 @@ it('aligns numeric values without changing source text or merged cells', async (
   })
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   expect(
@@ -1013,7 +1096,11 @@ it('downloads the selected format with notes and handles cancellation, failure a
   })
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Download')
@@ -1090,7 +1177,11 @@ it('copies an HTML table and plain text together with separate notes after revie
   })
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -1133,7 +1224,11 @@ it('processes a document longer than 100 pages through sequential bounded reques
   }))
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={101} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={101}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -1156,7 +1251,11 @@ it('explains unplaced text and excludes it from copying without repeating the wa
   })
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={1}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -1184,7 +1283,11 @@ it('cancels an active source request and ignores its late result', async () => {
   )
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={2} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={2}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -1199,7 +1302,11 @@ it('presents an empty successful analysis as complete without an initial analysi
   api.pdfStructure.parse.mockResolvedValue({ ...result, elements: [] })
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={2} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={2}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -1224,7 +1331,11 @@ it('does not label an empty analysis complete when one of the pages failed', asy
     .mockRejectedValueOnce(new Error('unsupported page'))
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={2} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={2}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -1246,7 +1357,11 @@ it('keeps empty in-progress and cancelled runs distinct from successful completi
   )
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={2} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={2}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -1316,7 +1431,11 @@ it('renders and copies one continued table while retaining the next page image a
     )
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version" pageCount={5} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version' }}
+        pageCount={5}
+        onNavigate={navigate}
+      />
     )
   )
   const originalReview = container.querySelector('input[type="checkbox"]') as HTMLInputElement
@@ -1363,7 +1482,7 @@ it('estimates remaining time from completed pages and reports work across tab sw
   const render = (active: boolean): void =>
     root.render(
       <PdfFiguresView
-        attachmentVersionId="version-1"
+        source={{ attachmentVersionId: 'version-1' }}
         pageCount={5}
         active={active}
         onBusyChange={onBusyChange}
@@ -1405,7 +1524,11 @@ it('stops at a shared cleanup failure and offers a retry without claiming unatte
   )
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={12} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={12}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -1427,7 +1550,11 @@ it.each([LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED])(
     api.pdfStructure.parse.mockRejectedValue(new Error(message))
     await act(async () =>
       root.render(
-        <PdfFiguresView attachmentVersionId="version-1" pageCount={12} onNavigate={navigate} />
+        <PdfFiguresView
+          source={{ attachmentVersionId: 'version-1' }}
+          pageCount={12}
+          onNavigate={navigate}
+        />
       )
     )
     await click('Analyze PDF')
@@ -1445,7 +1572,11 @@ it('preserves successful results and counts when cleanup blocks a later page', a
     .mockRejectedValue(new Error('PDF worker cleanup must finish before more parsing can start.'))
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={12} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={12}
+        onNavigate={navigate}
+      />
     )
   )
   await click('Analyze PDF')
@@ -1467,7 +1598,11 @@ it('offers recovery when another document encounters blocked cache restoration',
   )
   await act(async () =>
     root.render(
-      <PdfFiguresView attachmentVersionId="another-version" pageCount={12} onNavigate={navigate} />
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'another-version' }}
+        pageCount={12}
+        onNavigate={navigate}
+      />
     )
   )
   expect(api.pdfStructure.parse).not.toHaveBeenCalled()
@@ -1478,4 +1613,118 @@ it('offers recovery when another document encounters blocked cache restoration',
   expect(api.pdfStructure.parse).toHaveBeenCalledTimes(12)
   expect(container.textContent).toContain('Analysis complete')
   expect(container.textContent).not.toContain('PDF analysis is blocked')
+})
+
+const managedSource = {
+  source: {
+    kind: 'managed' as const,
+    projectId: 'project',
+    sourceKind: 'upload-version' as const,
+    sourceFileId: 'file',
+    sourceVersionId: 'version'
+  }
+}
+
+it('automatically extracts an uploaded PDF once while Original PDF is visible, then reuses its results', async () => {
+  api.pdfStructure.parse.mockResolvedValue(result)
+  const render = (active: boolean): void =>
+    root.render(
+      <PdfFiguresView
+        source={managedSource}
+        pageCount={1}
+        active={active}
+        autoStart
+        onNavigate={navigate}
+      />
+    )
+  await act(async () => render(false))
+  expect(api.pdfStructure.parse).toHaveBeenCalledOnce()
+  expect(api.pdfStructure.parse).toHaveBeenCalledWith({
+    ...managedSource,
+    page: 1,
+    requestId: expect.any(String)
+  })
+  await act(async () => render(true))
+  expect(container.textContent).toContain('Merged header')
+  await click('Image')
+  expect(api.pdfStructure.readThumbnail).toHaveBeenCalledWith(
+    expect.objectContaining(managedSource)
+  )
+  await act(async () => render(false))
+  await act(async () => render(true))
+  expect(api.pdfStructure.parse).toHaveBeenCalledOnce()
+})
+
+it('does not analyze an uploaded PDF again when every page is cached, even without model assets', async () => {
+  model = { ...model, installedRevision: undefined, availability: 'notInstalled' }
+  api.pdfStructure.readCached.mockResolvedValue(result)
+  await act(async () =>
+    root.render(
+      <PdfFiguresView source={managedSource} pageCount={1} autoStart onNavigate={navigate} />
+    )
+  )
+  expect(container.textContent).toContain('Merged header')
+  expect(api.pdfStructure.parse).not.toHaveBeenCalled()
+  expect(api.localModels.install).not.toHaveBeenCalled()
+})
+
+it('keeps model download explicit before automatic uploaded-PDF analysis', async () => {
+  model = { ...model, installedRevision: undefined, availability: 'notInstalled' }
+  await act(async () =>
+    root.render(
+      <PdfFiguresView source={managedSource} pageCount={1} autoStart onNavigate={navigate} />
+    )
+  )
+  expect(container.textContent).toContain('Download and continue')
+  expect(api.pdfStructure.parse).not.toHaveBeenCalled()
+  expect(api.localModels.install).not.toHaveBeenCalled()
+})
+
+it('does not download if the model disappears between automatic admission and parsing', async () => {
+  api.localModels.getSnapshot.mockResolvedValueOnce(model)
+  model = { ...model, installedRevision: undefined, availability: 'notInstalled' }
+  api.pdfStructure.parse.mockRejectedValue(new Error(LOCAL_MODEL_NOT_INSTALLED))
+  await act(async () =>
+    root.render(
+      <PdfFiguresView source={managedSource} pageCount={1} autoStart onNavigate={navigate} />
+    )
+  )
+  expect(api.pdfStructure.parse).toHaveBeenCalledOnce()
+  expect(api.localModels.install).not.toHaveBeenCalled()
+})
+
+it('does not automatically restart a cancelled or failed uploaded-PDF request after tab switches', async () => {
+  let finish!: (value: PdfStructureResult) => void
+  api.pdfStructure.parse.mockImplementation(
+    () =>
+      new Promise<PdfStructureResult>((resolve) => {
+        finish = resolve
+      })
+  )
+  const render = (active: boolean): void =>
+    root.render(
+      <PdfFiguresView
+        source={managedSource}
+        pageCount={1}
+        active={active}
+        autoStart
+        onNavigate={navigate}
+      />
+    )
+  await act(async () => render(true))
+  await click('Cancel')
+  expect(api.pdfStructure.cancel).toHaveBeenCalledOnce()
+  await act(async () => {
+    finish(result)
+  })
+  await act(async () => render(false))
+  await act(async () => render(true))
+  expect(api.pdfStructure.parse).toHaveBeenCalledOnce()
+  expect(container.textContent).not.toContain('Merged header')
+  api.pdfStructure.parse.mockRejectedValue(new Error('source removed'))
+  await click('Analyze PDF')
+  await act(async () => render(false))
+  await act(async () => render(true))
+  expect(api.pdfStructure.parse).toHaveBeenCalledTimes(2)
+  expect(container.textContent).toContain('Could not extract pages: 1')
 })
