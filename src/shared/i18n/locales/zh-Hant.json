@@ -5725,7 +5725,7 @@
     "Manage optional local capabilities. Download their resources when needed.": "管理可選的本機功能，按需下載所需資源。",
     "PDF figures and tables": "PDF 圖表",
     "Parallel pages": "並行頁數",
-    "Maximum pages analyzed at once. Higher values use more memory.": "同時分析的最大頁數。數值越大，記憶體用量越高。",
+    "1x, 2x, or 4x analyzes 1, 2, or 4 pages at a time. Higher settings can be faster but use more memory. Results stay in page order.": "1x、2x 或 4x 表示同時分析 1、2 或 4 頁。提高並行數可能加快分析，但會增加記憶體用量。結果仍按頁碼排列。",
     "Display limit reached. Some analyzed pages are not shown.": "已達到顯示上限，部分已分析的頁面未顯示。",
     "PDF parsing results": "PDF 解析結果",
     "PDF reading mode": "PDF 閱讀模式",

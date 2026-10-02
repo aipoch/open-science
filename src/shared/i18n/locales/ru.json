@@ -6174,7 +6174,7 @@
     "Manage optional local capabilities. Download their resources when needed.": "Управление дополнительными локальными возможностями. Скачивайте ресурсы по мере необходимости.",
     "PDF figures and tables": "Рисунки и таблицы PDF",
     "Parallel pages": "Параллельные страницы",
-    "Maximum pages analyzed at once. Higher values use more memory.": "Максимальное число страниц, анализируемых одновременно. Чем выше значение, тем больше требуется памяти.",
+    "1x, 2x, or 4x analyzes 1, 2, or 4 pages at a time. Higher settings can be faster but use more memory. Results stay in page order.": "1x, 2x или 4x означает анализ 1, 2 или 4 страниц одновременно. Более высокие значения могут ускорить анализ, но требуют больше памяти. Результаты сохраняют порядок страниц.",
     "Display limit reached. Some analyzed pages are not shown.": "Достигнут предел отображения. Некоторые проанализированные страницы не показаны.",
     "PDF parsing results": "Результаты разбора PDF",
     "PDF reading mode": "Режим чтения PDF",

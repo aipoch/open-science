@@ -1329,8 +1329,8 @@ it('presents an empty successful analysis as complete without an initial analysi
   expect(container.textContent).not.toContain('Scanned and rotated pages')
   expect(container.textContent).not.toContain('Download size')
   expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
-    '1x',
-    'Analyze again'
+    'Analyze again',
+    '1x'
   ])
   await click('Analyze again')
   expect(api.pdfStructure.parse).toHaveBeenCalledTimes(4)
@@ -1354,8 +1354,8 @@ it('does not label an empty analysis complete when one of the pages failed', asy
   expect(container.querySelector('h3')?.textContent).toBe('Analysis incomplete')
   expect(container.textContent).not.toContain('No figures or tables detected')
   expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
-    '1x',
-    'Analyze again'
+    'Analyze again',
+    '1x'
   ])
 })
 
@@ -1380,8 +1380,8 @@ it('keeps empty in-progress and cancelled runs distinct from successful completi
   expect(container.textContent).toContain('Analyzing PDF…')
   expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('50')
   expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
-    '1x',
-    'Cancel'
+    'Cancel',
+    '1x'
   ])
   await click('Cancel')
   await act(async () => finish({ ...result, elements: [] }))

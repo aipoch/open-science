@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ErrorNotice } from '@/components/error-notice'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import {
@@ -690,6 +691,7 @@ export const PdfFiguresView = ({
   const [imageCache] = useState(() => new PdfPreviewImageCache())
   const [restoring, setRestoring] = useState(true)
   const [cacheChecked, setCacheChecked] = useState(false)
+  const returningSelectFocus = useRef(false)
   const generation = useRef(0)
   const requestIds = useRef(new Set<string>())
   const installation = useRef<Promise<void> | undefined>(undefined)
@@ -982,27 +984,47 @@ export const PdfFiguresView = ({
           )
         })
   const concurrencySelect = (
-    <Select
-      value={String(concurrency)}
-      onValueChange={(value) => {
-        if (value === '1' || value === '2' || value === '4')
-          setConcurrency(Number(value) as 1 | 2 | 4)
-      }}
-      disabled={busy || restoring}
-    >
-      <SelectTrigger
-        className="w-20 shrink-0"
-        aria-label={t('Parallel pages')}
-        title={t('Maximum pages analyzed at once. Higher values use more memory.')}
+    <TooltipProvider>
+      <Select
+        value={String(concurrency)}
+        onValueChange={(value) => {
+          if (value === '1' || value === '2' || value === '4')
+            setConcurrency(Number(value) as 1 | 2 | 4)
+        }}
+        disabled={busy || restoring}
       >
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {[1, 2, 4].map((value) => (
-          <SelectItem key={value} value={String(value)}>{`${value}x`}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (returningSelectFocus.current || !event.currentTarget.matches(':focus-visible'))
+                event.preventDefault()
+              returningSelectFocus.current = false
+            }}
+          >
+            <SelectTrigger className="w-20 shrink-0" aria-label={t('Parallel pages')}>
+              <SelectValue />
+            </SelectTrigger>
+          </TooltipTrigger>
+          <TooltipContent>
+            {t(
+              '1x, 2x, or 4x analyzes 1, 2, or 4 pages at a time. Higher settings can be faster but use more memory. Results stay in page order.'
+            )}
+          </TooltipContent>
+        </Tooltip>
+        <SelectContent
+          onCloseAutoFocus={() => {
+            // Select can retain :focus-visible after pointer selection. Keep its focus return,
+            // but do not reopen the tooltip until the user next hovers or tabs to the control.
+            returningSelectFocus.current = true
+          }}
+        >
+          {[1, 2, 4].map((value) => (
+            <SelectItem key={value} value={String(value)}>{`${value}x`}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </TooltipProvider>
   )
   const progressTrack = (
     <div
@@ -1081,7 +1103,6 @@ export const PdfFiguresView = ({
               </span>
             </p>
             <div className="flex shrink-0 items-center gap-2">
-              {concurrencySelect}
               {busy ? (
                 <Button size="sm" variant="outline" onClick={cancel}>
                   {model?.availability === 'installing' ? t('Cancel download') : t('Cancel')}
@@ -1100,6 +1121,7 @@ export const PdfFiguresView = ({
                   <span className="hidden @min-[640px]:inline">{t('Analyze again')}</span>
                 </Button>
               ) : null}
+              {concurrencySelect}
             </div>
           </div>
           {busy && !restoring ? progress : null}
@@ -1353,10 +1375,10 @@ export const PdfFiguresView = ({
             </h3>
             {progress}
             <div className="flex items-center justify-center gap-2">
-              {concurrencySelect}
               <Button size="sm" variant="outline" onClick={cancel}>
                 {downloading ? t('Cancel download') : t('Cancel')}
               </Button>
+              {concurrencySelect}
             </div>
           </div>
         </div>
@@ -1387,7 +1409,6 @@ export const PdfFiguresView = ({
             </p>
             {!busy ? (
               <div className="flex items-center justify-center gap-2">
-                {concurrencySelect}
                 <Button disabled={!model} onClick={() => void extract()}>
                   {needsDownload
                     ? t('Download and continue')
@@ -1395,6 +1416,7 @@ export const PdfFiguresView = ({
                       ? t('Analyze again')
                       : t('Analyze PDF')}
                 </Button>
+                {concurrencySelect}
               </div>
             ) : null}
             {needsDownload ? (

@@ -6041,7 +6041,7 @@
     "Manage optional local capabilities. Download their resources when needed.": "Administrar funciones locales opcionales. Descargar sus recursos cuando se necesiten.",
     "PDF figures and tables": "Figuras y tablas de PDF",
     "Parallel pages": "Páginas en paralelo",
-    "Maximum pages analyzed at once. Higher values use more memory.": "Número máximo de páginas analizadas a la vez. Los valores más altos utilizan más memoria.",
+    "1x, 2x, or 4x analyzes 1, 2, or 4 pages at a time. Higher settings can be faster but use more memory. Results stay in page order.": "1x, 2x o 4x analiza 1, 2 o 4 páginas a la vez. Los valores más altos pueden acelerar el análisis, pero utilizan más memoria. Los resultados conservan el orden de las páginas.",
     "Display limit reached. Some analyzed pages are not shown.": "Se alcanzó el límite de visualización. Algunas páginas analizadas no se muestran.",
     "PDF parsing results": "Resultados del análisis de PDF",
     "PDF reading mode": "Modo de lectura PDF",

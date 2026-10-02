@@ -5723,7 +5723,7 @@
     "Manage optional local capabilities. Download their resources when needed.": "선택적 로컬 기능을 관리하고 필요할 때 리소스를 다운로드하세요.",
     "PDF figures and tables": "PDF 그림 및 표",
     "Parallel pages": "병렬 페이지 수",
-    "Maximum pages analyzed at once. Higher values use more memory.": "동시에 분석할 최대 페이지 수입니다. 값이 클수록 메모리 사용량이 늘어납니다.",
+    "1x, 2x, or 4x analyzes 1, 2, or 4 pages at a time. Higher settings can be faster but use more memory. Results stay in page order.": "1x, 2x, 4x는 한 번에 각각 1, 2, 4페이지를 분석합니다. 설정 값을 높이면 속도가 빨라질 수 있지만 메모리 사용량도 늘어납니다. 결과는 페이지 순서대로 표시됩니다.",
     "Display limit reached. Some analyzed pages are not shown.": "표시 한도에 도달했습니다. 분석된 일부 페이지가 표시되지 않습니다.",
     "PDF parsing results": "PDF 분석 결과",
     "PDF reading mode": "PDF 읽기 모드",
