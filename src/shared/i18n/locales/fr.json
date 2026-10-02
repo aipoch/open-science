@@ -7127,6 +7127,8 @@
     "Cut": "Couper",
     "Paste": "Coller",
     "Full screen": "Plein écran",
-    "Documentation": "Documentation"
+    "Documentation": "Documentation",
+    "Load earlier messages": "Charger les messages précédents",
+    "Return to current step": "Revenir à l’étape actuelle"
   }
 }

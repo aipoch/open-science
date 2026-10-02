@@ -6799,6 +6799,8 @@
     "Cut": "剪下",
     "Paste": "貼上",
     "Full screen": "全螢幕",
-    "Documentation": "文件"
+    "Documentation": "文件",
+    "Load earlier messages": "載入更早的訊息",
+    "Return to current step": "回到目前步驟"
   }
 }

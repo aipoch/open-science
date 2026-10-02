@@ -6799,6 +6799,8 @@
     "Cut": "剪切",
     "Paste": "粘贴",
     "Full screen": "全屏",
-    "Documentation": "文档"
+    "Documentation": "文档",
+    "Load earlier messages": "加载更早的消息",
+    "Return to current step": "回到当前步骤"
   }
 }

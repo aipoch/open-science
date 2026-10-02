@@ -21,7 +21,8 @@ import {
   Library,
   ChevronDown,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  ChevronUp
 } from 'lucide-react'
 import type {
   ReplayDocument,
@@ -177,6 +178,7 @@ const ReplayPanelContent = ({
   const materialsTrigger = useRef<HTMLButtonElement>(null)
   const [notebookLimit, setNotebookLimit] = useState<number>()
   const [notebookFollowing, setNotebookFollowing] = useState(true)
+  const [conversationFocusRequest, setConversationFocusRequest] = useState(0)
   const [filePage, setFilePage] = useState(0)
   const informationTitleId = useId()
   const panel = useRef<HTMLDivElement>(null)
@@ -439,6 +441,7 @@ const ReplayPanelContent = ({
       setPlaying(false)
       setSelectedResourceId(undefined)
       setPositionMs(position)
+      setConversationFocusRequest((request) => request + 1)
       setNotebookFollowing(true)
 
       setNotebookLimit(undefined)
@@ -510,6 +513,7 @@ const ReplayPanelContent = ({
   const toggle = (): void => {
     if (!branch?.steps.length) return
     setSelectedResourceId(undefined)
+    setConversationFocusRequest((request) => request + 1)
     setNotebookFollowing(true)
 
     setNotebookLimit(undefined)
@@ -898,11 +902,10 @@ const ReplayPanelContent = ({
           fileResources={pageFiles}
           notebookHistoryControl={
             notebookStart > 0 ? (
-              <div className="px-3 py-2">
+              <div className="flex justify-center px-3 py-2 [overflow-anchor:none]">
                 <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-xs text-muted-foreground"
+                  variant="secondary"
+                  className="max-w-full gap-1.5"
                   onClick={() => {
                     pause()
                     setNotebookFollowing(false)
@@ -911,6 +914,7 @@ const ReplayPanelContent = ({
                     )
                   }}
                 >
+                  <ChevronUp size={14} aria-hidden="true" />
                   {t('Load earlier runs')}
                 </Button>
               </div>
@@ -924,6 +928,7 @@ const ReplayPanelContent = ({
           preparationId={preparationId}
           runDetails={runDetails}
           followNotebook={notebookFollowing && notebookLimit === undefined}
+          conversationFocusRequest={conversationFocusRequest}
           onInspect={() => {
             setNotebookFollowing(false)
             pause()

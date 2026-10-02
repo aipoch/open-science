@@ -1331,3 +1331,59 @@ test('Notebook and Files header toggles preserve the advancing replay clock', as
     .poll(async () => Number(await panel.getByRole('slider').getAttribute('aria-valuenow')))
     .toBeGreaterThan(before)
 })
+
+test('interactive history reaches the first message and preserves conversation and Notebook anchors', async ({
+  page
+}) => {
+  await page.goto(`${url}?panel=1&history=1`)
+  const panel = page.getByTestId('replay-panel')
+  const slider = panel.getByRole('slider')
+  await slider.focus()
+  await page.keyboard.press('End')
+  const conversation = panel.getByRole('region', { name: 'Historical conversation' })
+  await expect(conversation.locator('[data-replay-step]')).toHaveCount(12)
+  await conversation.hover()
+  await page.mouse.wheel(0, -100000)
+  await expect.poll(() => conversation.evaluate((element) => element.scrollTop)).toBe(0)
+  const historyButton = await conversation
+    .getByRole('button', { name: 'Load earlier messages' })
+    .boundingBox()
+  const conversationBox = (await conversation.boundingBox())!
+  expect(historyButton!.x + historyButton!.width / 2).toBeCloseTo(
+    conversationBox.x + conversationBox.width / 2,
+    0
+  )
+  const anchor = conversation.locator('[data-replay-step="history-18"]')
+  const top = (await anchor.boundingBox())!.y
+  await conversation.getByRole('button', { name: 'Load earlier messages' }).click()
+  await expect(conversation.locator('[data-replay-step]')).toHaveCount(24)
+  await expect.poll(async () => (await anchor.boundingBox())!.y).toBeCloseTo(top, 0)
+  await conversation.hover()
+  await page.mouse.wheel(0, -100000)
+  await expect.poll(() => conversation.evaluate((element) => element.scrollTop)).toBe(0)
+  await conversation.getByRole('button', { name: 'Load earlier messages' }).click()
+  await expect(conversation.locator('[data-replay-step]')).toHaveCount(30)
+  await conversation.hover()
+  await page.mouse.wheel(0, -100000)
+  await expect.poll(() => conversation.evaluate((element) => element.scrollTop)).toBe(0)
+  await expect(conversation.locator('[data-replay-step="history-0"]')).toBeInViewport()
+  await conversation.getByRole('button', { name: 'Return to current step' }).click()
+  await expect(conversation.locator('[data-replay-step]')).toHaveCount(12)
+  await expect(conversation.locator('[data-replay-active]')).toBeInViewport()
+
+  await panel.getByRole('button', { name: 'Notebook', exact: true }).click()
+  await expect(panel.locator('[data-replay-notebook-heading]').locator('..')).toHaveCSS(
+    'height',
+    '36px'
+  )
+  const notebook = panel.locator('[data-replay-notebook-scroll]')
+  await expect(notebook.locator('[data-replay-notebook-run]')).toHaveCount(4)
+  await notebook.hover()
+  await page.mouse.wheel(0, -100000)
+  await expect.poll(() => notebook.evaluate((element) => element.scrollTop)).toBe(0)
+  const runAnchor = notebook.locator('[data-replay-run-item="run-18"]')
+  const runTop = (await runAnchor.boundingBox())!.y
+  await notebook.getByRole('button', { name: 'Load earlier runs' }).click()
+  await expect(notebook.locator('[data-replay-notebook-run]')).toHaveCount(8)
+  await expect.poll(async () => (await runAnchor.boundingBox())!.y).toBeCloseTo(runTop, 0)
+})

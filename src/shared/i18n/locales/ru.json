@@ -7266,6 +7266,8 @@
     "Cut": "Вырезать",
     "Paste": "Вставить",
     "Full screen": "Полный экран",
-    "Documentation": "Документация"
+    "Documentation": "Документация",
+    "Load earlier messages": "Загрузить предыдущие сообщения",
+    "Return to current step": "Вернуться к текущему шагу"
   }
 }

@@ -176,6 +176,36 @@ if (params.has('artifacts')) {
   )
   document.branches[0].durationMs = 11000
 }
+if (params.has('history')) {
+  document.branches[0].steps = Array.from({ length: 30 }, (_, index) =>
+    step(`history-${index}`, 'message', index * 1000, 1000, {
+      message: {
+        id: `history-${index}`,
+        role: index === 0 ? 'user' : 'agent',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1700000000000,
+        content:
+          `Recorded observation ${index}. ` + 'Inspect the archived measurements. '.repeat(12)
+      },
+      runs:
+        index % 3 === 0
+          ? [
+              {
+                runId: `run-${index}`,
+                cellId: `cell-${index}`,
+                source: run.source,
+                kernelKind: run.kernelKind,
+                status: run.status,
+                startedAt: run.startedAt,
+                endedAt: run.endedAt
+              }
+            ]
+          : []
+    })
+  )
+  document.branches[0].durationMs = 30000
+}
 if (params.has('large')) {
   const longText = 'Archived observation **with uncertainty**.\n\n'.repeat(24000)
   const activities = (index) => [
@@ -572,7 +602,13 @@ function PanelFixture() {
                 truncated: false,
                 content: freezeReplaySvg(svg)
               })}
-              readNotebookRun={async () => ({ status: 'ready', run, bytes: 1000 })}
+              readNotebookRun={async (_source, index) => ({
+                status: 'ready',
+                run: params.has('history')
+                  ? { ...run, runId: index.runId, cellId: index.cellId }
+                  : run,
+                bytes: 1000
+              })}
             />
           </div>
           {evidenceStep ? (

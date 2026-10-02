@@ -1448,3 +1448,73 @@ it.each(['artifact', 'upload'] as const)(
     expect(screen.queryByTestId('workspace-file-preview')).toBeNull()
   }
 )
+
+it('pages back to the first conversation record without exposing future steps and resets on seek/branch', async () => {
+  const source = makeDocument()
+  source.branches[0].steps = Array.from({ length: 30 }, (_, index) =>
+    step(`history-${index}`, index * 1000, `Observation ${index}`)
+  )
+  source.branches[0].durationMs = 30000
+  render(<ReplayPanel document={source} {...callbacks()} />)
+  seekProgress(19500)
+  const conversation = screen.getByRole('region', { name: 'Historical conversation' })
+  const records = (): HTMLElement[] => [
+    ...conversation.querySelectorAll<HTMLElement>('[data-replay-step]')
+  ]
+  expect(records()).toHaveLength(12)
+  expect(records()[0].dataset.replayStep).toBe('history-8')
+  expect(conversation.textContent).not.toContain('Observation 20')
+  fireEvent.click(within(conversation).getByRole('button', { name: 'Load earlier messages' }))
+  expect(records()).toHaveLength(20)
+  expect(records()[0].dataset.replayStep).toBe('history-0')
+  expect(within(conversation).queryByRole('button', { name: 'Load earlier messages' })).toBeNull()
+  fireEvent.click(within(conversation).getByRole('button', { name: 'Return to current step' }))
+  expect(records()).toHaveLength(12)
+  fireEvent.click(within(conversation).getByRole('button', { name: 'Load earlier messages' }))
+  seekProgress(25000)
+  expect(records()).toHaveLength(12)
+  expect(records()[0].dataset.replayStep).toBe('history-14')
+  expect(within(conversation).queryByRole('button', { name: 'Return to current step' })).toBeNull()
+  fireEvent.click(within(conversation).getByRole('button', { name: 'Load earlier messages' }))
+  chooseBranch('Other branch')
+  expect(records()).toHaveLength(1)
+  expect(records()[0].dataset.replayStep).toBe('other-step')
+  expect(conversation.textContent).not.toContain('Observation')
+})
+
+it('preserves the visible conversation record when earlier steps are prepended at the top', () => {
+  const source = makeDocument()
+  source.branches[0].steps = Array.from({ length: 30 }, (_, index) =>
+    step(`history-${index}`, index * 1000, `Observation ${index}`)
+  )
+  source.branches[0].durationMs = 30000
+  render(<ReplayPanel document={source} {...callbacks()} />)
+  seekProgress(29500)
+  const conversation = screen.getByRole('region', { name: 'Historical conversation' })
+  conversation.scrollTop = 0
+  const visible = conversation.querySelector<HTMLElement>('[data-replay-step]')!
+  // The same DOM record moves down by the inserted history batch.
+  vi.spyOn(visible, 'getBoundingClientRect')
+    .mockReturnValueOnce(new DOMRect(0, 40, 300, 100))
+    .mockReturnValueOnce(new DOMRect(0, 40, 300, 100))
+    .mockReturnValue(new DOMRect(0, 1240, 300, 100))
+  fireEvent.click(within(conversation).getByRole('button', { name: 'Load earlier messages' }))
+  expect(conversation.scrollTop).toBe(1200)
+  expect(visible.isConnected).toBe(true)
+  expect(conversation.querySelectorAll('[data-replay-step]')).toHaveLength(24)
+  fireEvent.click(within(conversation).getByRole('button', { name: 'Load earlier messages' }))
+  expect(conversation.querySelectorAll('[data-replay-step]')).toHaveLength(30)
+})
+
+it('keeps standalone capture bounded when the interactive history is expanded', () => {
+  const source = makeDocument()
+  source.branches[0].steps = Array.from({ length: 30 }, (_, index) =>
+    step(`history-${index}`, index * 1000, `Observation ${index}`)
+  )
+  source.branches[0].durationMs = 30000
+  const { container } = render(
+    <ReplayStage document={source} scene={projectReplayScene(source, 'main', 29500)} />
+  )
+  expect(container.querySelectorAll('[data-replay-step]')).toHaveLength(12)
+  expect(screen.queryByRole('button', { name: 'Load earlier messages' })).toBeNull()
+})

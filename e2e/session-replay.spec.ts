@@ -598,6 +598,8 @@ test('previews recorded DOCX inside replay and routes its iframe menu at non-def
   })
   const office = replay.frameLocator('iframe[data-office-preview-frame]')
   await expect(office.locator('.docx-review-counter')).toHaveText('1 / 1')
+  await expect(office.locator('.docx-review-toolbar')).toHaveCSS('font-size', '14px')
+  await expect(office.locator('.docx-review-toolbar')).toHaveCSS('height', '36px')
   await app.setMainWindowZoomFactor(1.25)
   await office.locator('body').click({ button: 'right', position: { x: 40, y: 40 } })
   const menu = page.getByTestId('replay-preview-context-menu')

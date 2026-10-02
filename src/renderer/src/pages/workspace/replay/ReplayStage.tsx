@@ -26,7 +26,7 @@ import type {
   ReplayNotebookRunDetails
 } from '../../../../../shared/replay'
 import type { NotebookRunRecord } from '../../../../../shared/notebook'
-import { ArrowLeft, X, BookOpen, Files as FilesIcon } from 'lucide-react'
+import { ArrowLeft, ChevronUp, ChevronDown, X, BookOpen, Files as FilesIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { getPreviewFormatForFile } from '../preview-support'
@@ -76,6 +76,8 @@ export type ReplayStageProps = {
   fitContainer?: boolean
   wide?: boolean
   followNotebook?: boolean
+  // Explicit play/seek restores the current conversation without persisting reader state.
+  conversationFocusRequest?: number
   materialsOpen?: boolean
   materialsId?: string
   filesOpen?: boolean
@@ -382,6 +384,7 @@ const StepConversation = memo(function StepConversation({
     <article
       data-replay-step={step.id}
       data-replay-active={active || undefined}
+      tabIndex={interactive ? -1 : undefined}
       className={
         interactive
           ? 'min-w-0 py-2'
@@ -521,6 +524,47 @@ const StepConversation = memo(function StepConversation({
   )
 })
 
+// Keep the visible record stable through prepending and asynchronous run/figure layout.
+// Release the anchor as soon as the reader starts another interaction.
+const usePrependAnchor = (
+  getViewport: () => HTMLDivElement | null,
+  selector: string,
+  resetKey: string
+): readonly [() => void, () => void] => {
+  const anchor = useRef<{ element: HTMLElement; top: number }>(undefined)
+  useLayoutEffect(() => {
+    anchor.current = undefined
+  }, [resetKey])
+  useLayoutEffect(() => {
+    const restore = (): void => {
+      const saved = anchor.current
+      const viewport = getViewport()
+      if (saved?.element.isConnected && viewport)
+        viewport.scrollTop += saved.element.getBoundingClientRect().top - saved.top
+    }
+    restore()
+    if (!anchor.current) return
+    const content = getViewport()?.firstElementChild
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(restore)
+    if (content) observer?.observe(content)
+    return () => observer?.disconnect()
+  })
+  return [
+    () => {
+      const container = getViewport()
+      if (!container) return
+      const top = container.getBoundingClientRect().top
+      const element = Array.from(container.querySelectorAll<HTMLElement>(selector)).find(
+        (record) => record.getBoundingClientRect().bottom > top
+      )
+      if (element) anchor.current = { element, top: element.getBoundingClientRect().top }
+    },
+    () => {
+      anchor.current = undefined
+    }
+  ]
+}
+
 const ReplayStageContent = ({
   document: replayDocument,
   fitContainer = false,
@@ -534,6 +578,7 @@ const ReplayStageContent = ({
   selectedResource,
   wide = false,
   followNotebook = false,
+  conversationFocusRequest = 0,
   materialsOpen = false,
   materialsId,
   filesOpen = false,
@@ -574,8 +619,37 @@ const ReplayStageContent = ({
   useLayoutEffect(() => {
     readyCallback.current = onReady
   }, [onReady])
-  const followingTranscript = useFollowScrollBottom(fitContainer && (wide || !materialsOpen))
+  const [historyStart, setHistoryStart] = useState<number>()
+  const [browsingConversation, setBrowsingConversation] = useState(false)
+  const [returnRequest, setReturnRequest] = useState(0)
+  const focusKey = `${scene.branchId}:${conversationFocusRequest}`
+  const [previousFocusKey, setPreviousFocusKey] = useState(focusKey)
+  if (previousFocusKey !== focusKey) {
+    setPreviousFocusKey(focusKey)
+    setHistoryStart(undefined)
+    setBrowsingConversation(false)
+  }
+  const followingTranscript = useFollowScrollBottom(
+    fitContainer && (wide || !materialsOpen) && !browsingConversation
+  )
   const transcript = fitContainer ? followingTranscript : captureTranscript
+  const [rememberConversationAnchor, releaseConversationAnchor] = usePrependAnchor(
+    () => transcript.current,
+    '[data-replay-step]',
+    `${focusKey}:${returnRequest}`
+  )
+  const [rememberNotebookAnchor, releaseNotebookAnchor] = usePrependAnchor(
+    () => notebookViewport.current,
+    '[data-replay-run-item]',
+    focusKey
+  )
+  const transcriptStart = fitContainer
+    ? (historyStart ?? Math.max(0, scene.visibleSteps.length - REPLAY_TRANSCRIPT_STEP_LIMIT))
+    : Math.max(0, scene.visibleSteps.length - REPLAY_TRANSCRIPT_STEP_LIMIT)
+  useLayoutEffect(() => {
+    if (!fitContainer || !transcript.current) return
+    transcript.current.scrollTop = transcript.current.scrollHeight
+  }, [fitContainer, transcript, focusKey, returnRequest])
   const notebookIndices = useMemo(() => {
     const indices = new Map<string, number>()
     for (const branch of replayDocument.branches)
@@ -605,7 +679,7 @@ const ReplayStageContent = ({
       !step.runs.length &&
       !step.issues.length &&
       (step.id !== scene.step?.id || scene.showResults)
-    for (const step of scene.visibleSteps.slice(-REPLAY_TRANSCRIPT_STEP_LIMIT)) {
+    for (const step of scene.visibleSteps.slice(transcriptStart)) {
       const previous = rows.at(-1)
       if (previous && isGallery(previous) && isGallery(step)) {
         // A view-only grouping, preserving the active step's identity and reveal boundary.
@@ -616,7 +690,7 @@ const ReplayStageContent = ({
       } else rows.push(step)
     }
     return rows
-  }, [fitContainer, scene.visibleSteps, scene.step?.id, scene.showResults])
+  }, [fitContainer, transcriptStart, scene.visibleSteps, scene.step?.id, scene.showResults])
   const materialStep = [...scene.visibleSteps]
     .reverse()
     .find((step) => step.runs.length || step.resourceIds.length)
@@ -888,13 +962,21 @@ const ReplayStageContent = ({
       data-replay-position={scene.positionMs}
       data-replay-branch={scene.branchId}
       className="@container/replay flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden bg-bg-000 text-text-100"
-      onWheelCapture={onInspect}
+      onWheelCapture={() => {
+        releaseConversationAnchor()
+        releaseNotebookAnchor()
+        onInspect?.()
+      }}
       onPointerDownCapture={(event) => {
+        releaseConversationAnchor()
+        releaseNotebookAnchor()
         onInspect?.()
         if (filesOpen && !wide && !filesPane.current?.contains(event.target as Node))
           onCloseFiles?.()
       }}
       onKeyDownCapture={(event) => {
+        releaseConversationAnchor()
+        releaseNotebookAnchor()
         if (event.key === 'Escape' && inspecting) {
           event.preventDefault()
           event.stopPropagation()
@@ -936,12 +1018,46 @@ const ReplayStageContent = ({
           tabIndex={0}
           className={
             fitContainer
-              ? `relative min-h-0 min-w-0 overflow-auto [overflow-anchor:none] border-border-200 bg-bg-000 px-4 py-3 ${(showMaterialPane && !wide) || inspecting ? 'hidden' : 'block'}`
+              ? `relative min-h-0 min-w-0 overflow-auto border-border-200 bg-bg-000 px-4 py-3 ${(showMaterialPane && !wide) || inspecting ? 'hidden' : 'block'}`
               : 'relative space-y-3 overflow-auto border-r border-border-200 bg-bg-10 p-5'
           }
           style={{ scrollbarWidth: fitContainer ? undefined : 'none' }}
+          onScroll={
+            fitContainer
+              ? (event) => {
+                  const viewport = event.currentTarget
+                  if (viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 4)
+                    setBrowsingConversation(true)
+                }
+              : undefined
+          }
         >
           <div className={fitContainer ? 'space-y-1' : 'space-y-3'}>
+            {fitContainer && transcriptStart > 0 ? (
+              <div className="flex justify-center py-2 [overflow-anchor:none]">
+                <Button
+                  variant="secondary"
+                  data-replay-load-messages
+                  className="max-w-full gap-1.5"
+                  onClick={() => {
+                    rememberConversationAnchor()
+                    onInspect?.()
+                    setBrowsingConversation(true)
+                    setHistoryStart(Math.max(0, transcriptStart - REPLAY_TRANSCRIPT_STEP_LIMIT))
+                    requestAnimationFrame(() => {
+                      const viewport = transcript.current
+                      ;(
+                        viewport?.querySelector<HTMLElement>('[data-replay-load-messages]') ??
+                        viewport?.querySelector<HTMLElement>('[data-replay-step]')
+                      )?.focus({ preventScroll: true })
+                    })
+                  }}
+                >
+                  <ChevronUp size={14} aria-hidden="true" />
+                  {t('Load earlier messages')}
+                </Button>
+              </div>
+            ) : null}
             {transcriptSteps.map((step) => (
               <StepConversation
                 interactive={fitContainer}
@@ -956,6 +1072,27 @@ const ReplayStageContent = ({
                 showResults={step.id !== active?.id || scene.showResults}
               />
             ))}
+            {fitContainer && browsingConversation ? (
+              <div className="sticky bottom-0 flex justify-center py-2 [overflow-anchor:none]">
+                <Button
+                  variant="secondary"
+                  className="max-w-full gap-1.5 shadow-sm"
+                  onClick={() => {
+                    setHistoryStart(undefined)
+                    setBrowsingConversation(false)
+                    setReturnRequest((request) => request + 1)
+                    requestAnimationFrame(() => {
+                      transcript.current
+                        ?.querySelector<HTMLElement>('[data-replay-active]')
+                        ?.focus({ preventScroll: true })
+                    })
+                  }}
+                >
+                  <ChevronDown size={14} aria-hidden="true" />
+                  {t('Return to current step')}
+                </Button>
+              </div>
+            ) : null}
             {!scene.visibleSteps.length ? (
               <p className="p-4 text-text-300">{t('No recorded steps are available.')}</p>
             ) : null}
@@ -974,7 +1111,7 @@ const ReplayStageContent = ({
           style={{ scrollbarWidth: fitContainer ? undefined : 'none' }}
         >
           {fitContainer && !inspecting ? (
-            <div className="flex min-w-0 shrink-0 items-center justify-between gap-2 border-b border-border-200 px-3 py-2">
+            <div className="flex h-9 min-w-0 shrink-0 items-center justify-between gap-2 border-b border-border-200 px-3">
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -994,7 +1131,7 @@ const ReplayStageContent = ({
               </TooltipProvider>
               <Button
                 variant="ghost"
-                size="icon"
+                size="icon-sm"
                 aria-label={t('Close research materials')}
                 onClick={onCloseMaterials}
               >
@@ -1053,12 +1190,12 @@ const ReplayStageContent = ({
             ref={notebookViewport}
             data-replay-notebook-scroll
             hidden={fitContainer && (inspecting || noMaterials)}
-            className={
-              fitContainer ? 'min-h-0 flex-1 overflow-auto [overflow-anchor:none]' : 'contents'
-            }
+            className={fitContainer ? 'min-h-0 flex-1 overflow-auto' : 'contents'}
           >
             <div className={fitContainer ? undefined : 'space-y-5'}>
-              {fitContainer ? notebookHistoryControl : null}
+              {fitContainer ? (
+                <div onClickCapture={rememberNotebookAnchor}>{notebookHistoryControl}</div>
+              ) : null}
               {materialRuns.map((index, runOffset) => {
                 const detail = runDetails[index.runId]
                 const content =
@@ -1091,7 +1228,13 @@ const ReplayStageContent = ({
                         : t('Preparing recorded material…')}
                     </p>
                   )
-                return content
+                return fitContainer ? (
+                  <div key={index.runId} data-replay-run-item={index.runId}>
+                    {content}
+                  </div>
+                ) : (
+                  content
+                )
               })}
               {fitContainer && !materialRuns.length ? (
                 <p className="p-4 text-sm text-text-300">
@@ -1115,7 +1258,7 @@ const ReplayStageContent = ({
                 <div
                   className={
                     fitContainer
-                      ? 'sticky top-0 z-10 flex min-h-12 min-w-0 items-center gap-2 border-b border-border-200 bg-bg-000 px-3 py-2 text-sm font-medium'
+                      ? 'sticky top-0 z-10 flex h-9 min-w-0 shrink-0 items-center gap-2 border-b border-border-200 bg-bg-000 px-3 text-sm font-medium'
                       : 'flex min-w-0 items-center gap-2 text-sm font-medium'
                   }
                 >
@@ -1125,7 +1268,7 @@ const ReplayStageContent = ({
                         <TooltipTrigger asChild>
                           <Button
                             variant="ghost"
-                            size="icon"
+                            size="icon-sm"
                             onClick={returnToOrigin}
                             aria-label={
                               resourceOrigin?.kind === 'conversation'
@@ -1171,7 +1314,7 @@ const ReplayStageContent = ({
                         <TooltipTrigger asChild>
                           <Button
                             variant="ghost"
-                            size="icon"
+                            size="icon-sm"
                             aria-label={t('Close preview')}
                             onClick={returnToOrigin}
                           >
@@ -1278,7 +1421,7 @@ const ReplayStageContent = ({
                 : 'absolute inset-y-2 right-2 z-20 flex w-80 max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-lg border border-border-200 bg-bg-000 shadow-lg'
             }
           >
-            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border-200 px-3 py-2">
+            <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border-200 px-3">
               <h2
                 tabIndex={-1}
                 data-replay-files-heading
@@ -1289,7 +1432,7 @@ const ReplayStageContent = ({
               </h2>
               <Button
                 variant="ghost"
-                size="icon"
+                size="icon-sm"
                 aria-label={t('Close files')}
                 onClick={onCloseFiles}
               >

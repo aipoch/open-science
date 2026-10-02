@@ -6797,6 +6797,8 @@
     "Cut": "잘라내기",
     "Paste": "붙여넣기",
     "Full screen": "전체 화면",
-    "Documentation": "문서"
+    "Documentation": "문서",
+    "Load earlier messages": "이전 메시지 불러오기",
+    "Return to current step": "현재 단계로 돌아가기"
   }
 }

@@ -6799,6 +6799,8 @@
     "Cut": "切り取り",
     "Paste": "貼り付け",
     "Full screen": "全画面表示",
-    "Documentation": "ドキュメント"
+    "Documentation": "ドキュメント",
+    "Load earlier messages": "以前のメッセージを読み込む",
+    "Return to current step": "現在のステップに戻る"
   }
 }

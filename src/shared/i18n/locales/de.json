@@ -6959,6 +6959,8 @@
     "Cut": "Ausschneiden",
     "Paste": "Einfügen",
     "Full screen": "Vollbild",
-    "Documentation": "Dokumentation"
+    "Documentation": "Dokumentation",
+    "Load earlier messages": "Frühere Nachrichten laden",
+    "Return to current step": "Zum aktuellen Schritt zurückkehren"
   }
 }
