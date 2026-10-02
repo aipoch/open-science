@@ -14,6 +14,7 @@ import {
 import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import type { RuntimeSessionTurnScope } from '../session-persistence/runtime-session-owner'
 import type { NotebookWorkingFile } from './artifact-publication-continuation'
 
 type AcpRuntimePromptReloadHost = Readonly<{
@@ -26,6 +27,7 @@ type AcpRuntimePromptHost = Readonly<{
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
+  onProviderContextAccepted?: (sessionId: string, session: acp.ActiveSession) => void
   requestArtifactPublicationContinuation?: (input: {
     permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
@@ -78,6 +80,24 @@ const composeAcpRuntimePromptOwners = (
   const currentFramework = () => base.backendGeneration.current.framework
   const projectId = (sessionId: string): string => session.sessionEnvironment.projectId(sessionId)
   const emitState = (): void => session.publication.emitState()
+  const runtimeScope = (
+    request: AcpPromptRequest,
+    executionId: string
+  ): RuntimeSessionTurnScope => {
+    const provenance = request.provenanceContext
+    if (!provenance?.agentFrameId || !provenance.messageBranchId || !provenance.runtimeSegmentId)
+      throw new Error('Runtime Session admission requires a durable conversation path.')
+    return {
+      projectId: projectId(request.sessionId),
+      sessionId: request.sessionId,
+      promptMessageId: provenance.promptMessageId,
+      agentFrameId: provenance.agentFrameId,
+      messageBranchId: provenance.messageBranchId,
+      runtimeSegmentId: provenance.runtimeSegmentId,
+      executionId
+    }
+  }
+
   const diagnosticContext = () => ({
     framework: currentFramework().id,
     generation: base.connectionResources.epoch,
@@ -307,6 +327,7 @@ const composeAcpRuntimePromptOwners = (
         : {}),
       emitSkillActivities,
       onSkillImportAttachmentEligible: callbacks.onSkillImportAttachmentEligible,
+      onProviderContextAccepted: host.onProviderContextAccepted,
       onProviderPromptAccepted: callbacks.onProviderPromptAccepted,
       ...(options.runtimeSessions
         ? {
@@ -402,6 +423,23 @@ const composeAcpRuntimePromptOwners = (
     recordAdmittedPrompt: (request) => base.handoffContinuity.recordAdmittedPrompt(request),
     ...(options.runtimeSessions
       ? {
+          settlementLifecycle: {
+            markDispatch: async (request, executionId) => {
+              await options.runtimeSessions!.markSettlementDispatch(
+                runtimeScope(request, executionId)
+              )
+            },
+            markAccepted: async (request, executionId) => {
+              await options.runtimeSessions!.markSettlementAccepted(
+                runtimeScope(request, executionId)
+              )
+            },
+            finishNotDispatched: async (request, executionId) => {
+              await options.runtimeSessions!.finishSettlementNotDispatched(
+                runtimeScope(request, executionId)
+              )
+            }
+          },
           beginRuntimeSessionTurn: async (
             request,
             executionId,
@@ -409,47 +447,31 @@ const composeAcpRuntimePromptOwners = (
             planDeliveryCommandId,
             delegatedMessageId,
             applicationPrompt,
+            settlementAdmission,
             approvedHandoffContinuation
           ) => {
-            const provenance = request.provenanceContext
-            if (
-              !provenance?.agentFrameId ||
-              !provenance.messageBranchId ||
-              !provenance.runtimeSegmentId
-            ) {
-              throw new Error('Runtime Session admission requires a durable conversation path.')
-            }
+            const scope = runtimeScope(request, executionId)
             const aggregate = session.sessionRegistry
               .lookup(request.sessionId)
               ?.aggregate.snapshot()
             const backend = base.backendGeneration.current
-            await options.runtimeSessions!.begin(
-              {
-                projectId: projectId(request.sessionId),
-                sessionId: request.sessionId,
-                promptMessageId: provenance.promptMessageId,
-                agentFrameId: provenance.agentFrameId,
-                messageBranchId: provenance.messageBranchId,
-                runtimeSegmentId: provenance.runtimeSegmentId,
-                executionId
-              },
-              {
-                ...(aggregate?.providerSessionId
-                  ? { providerSessionId: aggregate.providerSessionId }
-                  : {}),
-                ...(backend.providerContinuityToken
-                  ? { providerContinuityToken: backend.providerContinuityToken }
-                  : {}),
-                agentFrameworkId: backend.framework.id,
-                ...(backend.backendId ? { agentBackendId: backend.backendId } : {}),
-                ...(backend.session.model ? { agentModel: backend.session.model } : {}),
-                reviewOwner,
-                ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
-                ...(delegatedMessageId ? { delegatedMessageId } : {}),
-                ...(applicationPrompt ? { applicationPrompt } : {}),
-                ...(approvedHandoffContinuation ? { approvedHandoffContinuation } : {})
-              }
-            )
+            await options.runtimeSessions!.begin(scope, {
+              ...(aggregate?.providerSessionId
+                ? { providerSessionId: aggregate.providerSessionId }
+                : {}),
+              ...(backend.providerContinuityToken
+                ? { providerContinuityToken: backend.providerContinuityToken }
+                : {}),
+              agentFrameworkId: backend.framework.id,
+              ...(backend.backendId ? { agentBackendId: backend.backendId } : {}),
+              ...(backend.session.model ? { agentModel: backend.session.model } : {}),
+              reviewOwner,
+              ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
+              ...(delegatedMessageId ? { delegatedMessageId } : {}),
+              ...(applicationPrompt ? { applicationPrompt } : {}),
+              ...(settlementAdmission ? { settlementAdmission } : {}),
+              ...(approvedHandoffContinuation ? { approvedHandoffContinuation } : {})
+            })
           },
           assertRuntimeSessionAdmissionAvailable: (sessionId: string) =>
             options.runtimeSessions!.assertAdmissionAvailable(sessionId)

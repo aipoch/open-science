@@ -42,6 +42,30 @@ export type RuntimeSessionScope = {
   runtimeSegmentId: string
 }
 
+const createScopedRuntimeAgentMessageId = (
+  session: PersistedChatSession,
+  scope: RuntimeSessionScope,
+  streamId: string
+): string => {
+  const settlement =
+    session.runtimeTranscriptOwner === 'main' &&
+    session.runtimeSessionAdmissions?.some(
+      (entry) =>
+        entry.settlement &&
+        entry.promptMessageId === scope.promptMessageId &&
+        entry.agentFrameId === scope.agentFrameId &&
+        entry.messageBranchId === scope.messageBranchId &&
+        entry.runtimeSegmentId === scope.runtimeSegmentId
+    )
+  return createRuntimeAgentMessageId(
+    session.id,
+    streamId,
+    settlement
+      ? JSON.stringify([scope.promptMessageId, scope.runtimeSegmentId])
+      : scope.promptMessageId
+  )
+}
+
 const scopedPath = (
   session: PersistedChatSession,
   scope: RuntimeSessionScope
@@ -188,7 +212,8 @@ const terminalize = (
       message.agentFrameId === scope.agentFrameId &&
       message.introducedOnBranchId === scope.messageBranchId &&
       message.role === 'agent' &&
-      message.responseToMessageId === scope.promptMessageId
+      message.responseToMessageId === scope.promptMessageId &&
+      message.runtimeSegmentId === scope.runtimeSegmentId
   )
   const usageOwner = responses.at(-1)
   for (const message of responses) {
@@ -355,7 +380,7 @@ export const attachRuntimeSessionArtifacts = (
       (message.streamId === input.runId || !input.messageId)
   )
   if (!owner) {
-    const id = createRuntimeAgentMessageId(session.id, input.runId, scope.promptMessageId)
+    const id = createScopedRuntimeAgentMessageId(session, scope, input.runId)
     owner = {
       id,
       role: 'agent',
@@ -460,7 +485,7 @@ export const applyRuntimeSessionEvents = (
       if (!text && !image) continue
       completeGroups(graph.activityGroups, scope, event.timestamp)
       const streamId = event.messageId ?? event.id
-      const id = createRuntimeAgentMessageId(session.id, streamId, scope.promptMessageId)
+      const id = createScopedRuntimeAgentMessageId(session, scope, streamId)
       let message = graph.messages.find(({ id: candidate }) => candidate === id)
       if (message?.eventIds.includes(event.id)) continue
       if (message?.status === 'complete' && event.timestamp <= message.updatedAt) {

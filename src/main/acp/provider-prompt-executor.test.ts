@@ -137,6 +137,49 @@ const setup = (
   }
 }
 
+it('persists the provider boundary before invoking a synchronously throwing provider', async () => {
+  const { executor, input, session } = setup()
+  const failure = new Error('sync provider failure')
+  const journal: string[] = []
+  const fence = vi.fn(async () => {
+    journal.push('fence')
+  })
+  vi.mocked(session.prompt).mockImplementation(() => {
+    journal.push('provider')
+    throw failure
+  })
+  await expect(executor.execute({ ...input, beforeProviderCall: fence })).rejects.toBe(failure)
+  expect(journal).toEqual(['fence', 'provider'])
+})
+
+it('does not invoke the provider when its durable dispatch fence fails', async () => {
+  const { executor, input, session } = setup()
+  const failure = new Error('fence persistence failed')
+  await expect(
+    executor.execute({
+      ...input,
+      beforeProviderCall: async () => {
+        throw failure
+      }
+    })
+  ).rejects.toBe(failure)
+  expect(session.prompt).not.toHaveBeenCalled()
+})
+
+it('rechecks turn ownership after waiting for the durable provider fence', async () => {
+  const { executor, input, session } = setup([stop({ stopReason: 'end_turn' })])
+  let current = true
+  const outcome = await executor.execute({
+    ...input,
+    isCurrent: () => current,
+    beforeProviderCall: async () => {
+      current = false
+    }
+  })
+  expect(outcome.kind).toBe('not-dispatched')
+  expect(session.prompt).not.toHaveBeenCalled()
+})
+
 describe('AcpProviderPromptExecutor', () => {
   it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
     'P03 does not requeue accepted output after a receipt revision conflict on %s',

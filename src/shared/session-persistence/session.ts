@@ -161,6 +161,11 @@ export type PersistedRuntimeSessionAdmission = {
   agentFrameId: string
   messageBranchId: string
   runtimeSegmentId: string
+  settlement?: {
+    admission: import('../runtime-session-admission').SettlementAdmission
+    stage: 'admitted' | 'not-dispatched' | 'dispatching' | 'accepted' | 'terminal'
+    runStartedAt: number
+  }
 }
 
 export type PersistedChatSession = {
@@ -271,6 +276,8 @@ export type PersistedChatSession = {
   runtimeTranscriptLastRun?: PersistedActiveRun
   runtimeConversationCommandIds?: string[]
   runtimeSessionAdmissions?: PersistedRuntimeSessionAdmission[]
+  // Opaque malformed settlement authority blocks automatic replay without discarding other owners.
+  runtimeSessionAdmissionsQuarantine?: unknown
   // Survives renderer/app restarts so a failed Resume remains retryable without reconstructing the
   // state from an error string or re-sending the interrupted prompt.
   resumeRecovery?: PersistedSessionResumeRecovery

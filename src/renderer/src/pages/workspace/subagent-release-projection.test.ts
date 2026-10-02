@@ -9,8 +9,14 @@ import type {
 import {
   projectDelegatedQuestionQueue,
   projectSessionSubagents,
+  projectSubagentCompletions,
   selectSubagentFrame
 } from './subagent-release-projection'
+import {
+  createConversationItems,
+  hidesBehindPresentationBarrier
+} from './workspace-conversation-items'
+import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 
 const createSession = (count = 3): PersistedChatSession => {
   const now = 1_700_000_000_000
@@ -141,6 +147,161 @@ const createSession = (count = 3): PersistedChatSession => {
 }
 
 describe('release-gate Subagent projection', () => {
+  const withCompletions = (): PersistedChatSession => {
+    const session = createSession(4)
+    session.status = 'running'
+    session.messages = [session.conversationGraph!.messages[0]]
+    session.activeRun = { promptMessageId: 'root-prompt', startedAt: session.createdAt }
+    Object.assign(session.runtimeContext!.delegatedWork!, {
+      records: session.runtimeContext!.delegatedWork!.records.map((record) => ({
+        ...record,
+        attempts: record.attempts.map((attempt) => ({
+          ...attempt,
+          initiatingTurnMessageId: 'root-prompt',
+          ...(attempt.status === 'running' ? {} : { endedAt: attempt.startedAt + 100 })
+        }))
+      }))
+    })
+    return session
+  }
+
+  it('shows every durable completion while Main and a sibling are still running, and survives reload', () => {
+    const session = withCompletions()
+    const completions = projectSubagentCompletions(session)
+    expect(completions.map(({ frameId, status }) => ({ frameId, status }))).toEqual([
+      { frameId: 'child-1', status: 'completed' },
+      { frameId: 'child-2', status: 'cancelled' },
+      { frameId: 'child-3', status: 'error' }
+    ])
+    expect(projectSubagentCompletions(JSON.parse(JSON.stringify(session)))).toEqual(completions)
+    const timeline = createWorkspaceConversationTimeline({ ...session, activities: undefined })
+    expect(timeline.filter(({ type }) => type === 'subagent-completion')).toHaveLength(3)
+    expect(timeline.some(({ type }) => type === 'turn-completion')).toBe(false)
+    expect(hidesBehindPresentationBarrier('subagent-completion')).toBe(false)
+    expect(
+      createConversationItems({ ...session, activities: undefined }).map(
+        ({ createdAt }) => createdAt
+      )
+    ).toEqual([
+      session.createdAt,
+      session.createdAt + 101,
+      session.createdAt + 102,
+      session.createdAt + 103
+    ])
+  })
+
+  it('retains each historical Attempt once when a child starts a followup', () => {
+    const session = withCompletions()
+    const owner = session.runtimeContext!.delegatedWork!
+    const record = owner.records[1]
+    Object.assign(owner, {
+      records: [
+        {
+          ...record,
+          attempts: [
+            ...record.attempts,
+            { ...record.attempts[0], id: 'followup', status: 'running', endedAt: undefined }
+          ]
+        },
+        record
+      ]
+    })
+    expect(projectSubagentCompletions(session)).toMatchObject([
+      { attemptId: 'attempt-1', status: 'completed' }
+    ])
+    expect(projectSubagentCompletions(session)).toHaveLength(1)
+    Object.assign(owner, {
+      records: [
+        {
+          ...record,
+          attempts: [
+            ...record.attempts,
+            { ...record.attempts[0], id: 'followup', endedAt: session.createdAt + 200 }
+          ]
+        }
+      ]
+    })
+    expect(projectSubagentCompletions(session).map(({ attemptId }) => attemptId)).toEqual([
+      'attempt-1',
+      'followup'
+    ])
+  })
+
+  it('adds one progress row per terminal update without waiting for the whole batch', () => {
+    const session = withCompletions()
+    const owner = session.runtimeContext!.delegatedWork!
+    const terminalRecords = owner.records.slice(1)
+    Object.assign(owner, {
+      records: terminalRecords.map((record) => ({
+        ...record,
+        attempts: [{ ...record.attempts[0], status: 'running', endedAt: undefined }]
+      }))
+    })
+    expect(projectSubagentCompletions(session)).toEqual([])
+    for (let index = 0; index < terminalRecords.length; index += 1) {
+      Object.assign(owner, {
+        records: owner.records.map((record, recordIndex) =>
+          recordIndex === index ? terminalRecords[index] : record
+        )
+      })
+      expect(projectSubagentCompletions(session)).toHaveLength(index + 1)
+      expect(session.status).toBe('running')
+      expect(session.activeRun?.promptMessageId).toBe('root-prompt')
+    }
+  })
+
+  it('excludes nested, unvalidated, inactive-origin and inactive-followup Attempts', () => {
+    const session = withCompletions()
+    const graph = session.conversationGraph!
+    graph.frames[2].originBindingState = 'legacy-unavailable'
+    graph.frames[3].parentFrameId = 'child-0'
+    graph.frames[4].originMessageId = 'inactive-prompt'
+    expect(projectSubagentCompletions(session)).toEqual([])
+    graph.frames[4].originMessageId = 'root-prompt'
+    const owner = session.runtimeContext!.delegatedWork!
+    Object.assign(owner, {
+      records: owner.records.map((record) => ({
+        ...record,
+        attempts: record.attempts.map((attempt) => ({
+          ...attempt,
+          initiatingTurnMessageId: 'inactive-followup'
+        }))
+      }))
+    })
+    expect(projectSubagentCompletions(session)).toEqual([])
+  })
+
+  it('does not leak root completion rows into a child transcript or an unrelated root branch', () => {
+    const session = withCompletions()
+    const graph = session.conversationGraph!
+    graph.activeFrameId = 'child-1'
+    expect(projectSubagentCompletions(session)).toEqual([])
+    graph.activeFrameId = graph.rootFrameId
+    graph.frames[0].activeBranchId = 'unrelated-branch'
+    graph.branches.push({
+      id: 'unrelated-branch',
+      agentFrameId: 'root',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    expect(projectSubagentCompletions(session)).toEqual([])
+  })
+
+  it('does not fabricate completion times or origins for legacy records', () => {
+    const session = withCompletions()
+    const owner = session.runtimeContext!.delegatedWork!
+    Object.assign(owner, {
+      records: owner.records.map((record, index) => ({
+        ...record,
+        attempts: record.attempts.map((attempt) => ({
+          ...attempt,
+          ...(index === 1 ? { initiatingTurnMessageId: undefined } : { endedAt: undefined })
+        }))
+      }))
+    })
+    expect(projectSubagentCompletions(session)).toEqual([])
+  })
+
   it('projects only active direct-child questions in durable admission order', () => {
     const session = createSession(2)
     Object.assign(session.runtimeContext!.delegatedWork!, {

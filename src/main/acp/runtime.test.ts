@@ -42,6 +42,7 @@ import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import {
   ACP_PROMPT_FAILED_EVENT_TITLE,
   type AcpContextUsage,
+  type AcpPromptRequest,
   type AcpPermissionResponse,
   type AcpPermissionRequest,
   type AcpRuntimeEvent,
@@ -91,6 +92,7 @@ import {
 } from '../../shared/session-persistence'
 import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { SessionRepository } from '../session-persistence/repository'
+import { assertSessionProjectionStorageShape } from '../session-persistence/projection'
 import { HeadlessTaskApi } from '../web-service/task-api'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { UploadRepository } from '../uploads/repository'
@@ -18822,6 +18824,310 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it.each(['none', 'mark-accepted', 'consume-replay'] as const)(
+    'passes an internal settlement descriptor through real owners despite %s persistence failure',
+    async (failure) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['settlement-session'])
+      let persisted = createRestoredContinuationSession(
+        'origin-1',
+        'settlement-session',
+        'project-1'
+      )
+      persisted.status = 'idle'
+      const graph = persisted.conversationGraph!
+      const context = getActiveConversationContext(graph, 'origin-1')
+      graph.frames.push({
+        id: 'child-1',
+        kind: 'delegate',
+        status: 'completed',
+        parentFrameId: context.agentFrameId,
+        originMessageId: context.promptMessageId,
+        originBindingState: 'validated',
+        activeBranchId: 'child-branch',
+        createdAt: 2
+      })
+      graph.branches.push({
+        id: 'child-branch',
+        agentFrameId: 'child-1',
+        createdAt: 2,
+        updatedAt: 3
+      })
+      persisted.runtimeContext = {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'child-1',
+              attempts: [
+                {
+                  id: 'attempt-1',
+                  initiatingTurnMessageId: context.promptMessageId,
+                  status: 'completed',
+                  resolvedAgent: { kind: 'main' },
+                  runtimeSegmentIds: [],
+                  startedAt: 2,
+                  endedAt: 3
+                }
+              ]
+            }
+          ]
+        }
+      }
+      const runtimeSessions = new RuntimeSessionOwner({
+        loadSession: async () => structuredClone(persisted),
+        mutateSession: async (_scope, mutate) => {
+          persisted = materializeSessionConversationGraph(mutate(structuredClone(persisted)))
+          return structuredClone(persisted)
+        },
+        finalizeArtifacts: async () => []
+      })
+      const begin = vi.spyOn(runtimeSessions, 'begin')
+      const dispatch = vi.spyOn(runtimeSessions, 'markSettlementDispatch')
+      const accepted = vi.spyOn(runtimeSessions, 'markSettlementAccepted')
+      if (failure === 'mark-accepted')
+        accepted.mockRejectedValueOnce(new Error('acceptance write failed'))
+      if (failure === 'consume-replay')
+        vi.spyOn(runtimeSessions, 'consumeReplay').mockRejectedValueOnce(
+          new Error('replay write failed')
+        )
+      const terminal = vi.spyOn(runtimeSessions, 'commitTerminal')
+      const cleanup = vi.spyOn(runtimeSessions, 'finishSettlementNotDispatched')
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        runtimeSessions,
+        callbacks: { onEvent: (event) => runtimeSessions.accept(event) }
+      })
+      const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+      const admission = {
+        batchId: 'batch-1',
+        projectId: 'project-1',
+        sessionId: session.sessionId,
+        rootFrameId: context.agentFrameId,
+        originatingPromptId: 'origin-1',
+        rootBranchId: context.messageBranchId,
+        rootBranchRevision: `${context.messageBranchId}:${graph.branches[0].createdAt}`,
+        promptRuntimeSegmentId: context.runtimeSegmentId,
+        items: [{ frameId: 'child-1', attemptId: 'attempt-1', status: 'completed' as const }]
+      }
+      await runtime.sendAppContinuation(
+        {
+          sessionId: session.sessionId,
+          text: 'settlement result available',
+          suppressUserMessage: true,
+          provenanceContext: context
+        },
+        'attempt-1',
+        undefined,
+        undefined,
+        undefined,
+        admission
+      )
+      const scope = begin.mock.calls[0][0]
+      expect(scope.runtimeSegmentId).toBe(`settlement-${scope.executionId}`)
+      expect(begin.mock.calls[0][1]).toMatchObject({ settlementAdmission: admission })
+      expect(dispatch).toHaveBeenCalledWith(scope)
+      expect(accepted).toHaveBeenCalledWith(scope)
+      expect(cleanup).not.toHaveBeenCalled()
+      expect(terminal).toHaveBeenCalledOnce()
+      expect(persisted.status).toBe('idle')
+      expect(persisted.runtimeSessionAdmissions?.at(-1)?.settlement?.stage).toBe('terminal')
+      await expect(
+        runtime.sendAppContinuation(
+          {
+            sessionId: session.sessionId,
+            text: 'same batch must not resend',
+            suppressUserMessage: true,
+            provenanceContext: context
+          },
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          admission
+        )
+      ).rejects.toMatchObject({ disposition: 'invalidated', reason: 'batch-already-consumed' })
+      expect(fakeAgent.prompts).toHaveLength(1)
+      expect(runtime.getSnapshot().events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'message',
+            role: 'assistant',
+            promptMessageId: 'origin-1',
+            runtimeSegmentId: scope.runtimeSegmentId
+          }),
+          expect.objectContaining({
+            kind: 'stop',
+            promptMessageId: 'origin-1',
+            runtimeSegmentId: scope.runtimeSegmentId
+          })
+        ])
+      )
+      expect(
+        runtime
+          .getSnapshot()
+          .events.filter((event) => event.kind === 'message' && event.role === 'user')
+      ).toHaveLength(0)
+    }
+  )
+
+  it('persists independent Main and settlement usage through the real finalizer and save boundary', async () => {
+    const root = await createTemporaryRoot()
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['settlement-usage-session'], {
+      replyForPrompt: (text) =>
+        text.includes('initial prompt') ? 'Original final answer' : 'Settlement notification'
+    })
+    let persisted = createRestoredContinuationSession(
+      'origin-usage',
+      'settlement-usage-session',
+      'project-1'
+    )
+    persisted.status = 'running'
+    persisted.activeRun = { promptMessageId: 'origin-usage', startedAt: 1 }
+    persisted.runtimeTranscriptOwner = 'main'
+    const repository = new SessionRepository(root)
+    persisted = await repository.saveSession(persisted)
+    const runtimeSessions = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone(persisted),
+      mutateSession: async (_scope, mutate) => {
+        const next = materializeSessionConversationGraph(mutate(structuredClone(persisted)))
+        if (persisted.activeRun && !next.activeRun)
+          next.runtimeTranscriptLastRun = persisted.activeRun
+        // prepareSave validates this unsanitized candidate before codec normalization can drop IDs.
+        assertSessionProjectionStorageShape(next)
+        persisted = await repository.saveSession(next, persisted.revision ?? 0)
+        return structuredClone(persisted)
+      },
+      finalizeArtifacts: async () => []
+    })
+    const steps = [
+      { info: { id: 'main-call', role: 'assistant', tokens: { input: 11, output: 5 } } },
+      { info: { id: 'settlement-call', role: 'assistant', tokens: { input: 17, output: 7 } } }
+    ]
+    const messageSnapshots = [[], [steps[0]], [steps[0]], steps]
+    const framework = { ...opencodeFramework, spawn: () => asAgentProcess(process) }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      framework,
+      resolveBackend: () => ({
+        framework,
+        executablePath: '/bin/opencode',
+        env: {},
+        opencodeUsageApi: { baseUrl: 'http://127.0.0.1:4242', authorization: 'Basic test' }
+      }),
+      opencodeUsageFetch: async () =>
+        new Response(JSON.stringify(messageSnapshots.shift() ?? []), {
+          headers: { 'content-type': 'application/json' }
+        }),
+      runtimeSessions,
+      callbacks: { onEvent: (event) => runtimeSessions.accept(event) }
+    })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+    const context = getActiveConversationContext(persisted.conversationGraph!, 'origin-usage')
+    const request = {
+      sessionId: persisted.id,
+      text: 'initial prompt',
+      suppressUserMessage: true,
+      provenanceContext: context
+    }
+    await runtime.sendPrompt(request)
+    const original = structuredClone(
+      persisted.conversationGraph!.messages.find(({ role }) => role === 'agent')!
+    )
+    expect(original.modelCallUsage).toHaveLength(1)
+    const graph = persisted.conversationGraph!
+    graph.frames.push({
+      id: 'usage-child',
+      kind: 'delegate',
+      status: 'completed',
+      parentFrameId: context.agentFrameId,
+      originMessageId: context.promptMessageId,
+      originBindingState: 'validated',
+      activeBranchId: 'usage-child-branch',
+      createdAt: 2
+    })
+    graph.branches.push({
+      id: 'usage-child-branch',
+      agentFrameId: 'usage-child',
+      createdAt: 2,
+      updatedAt: 3
+    })
+    persisted.runtimeContext = {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [
+          {
+            agentFrameId: 'usage-child',
+            attempts: [
+              {
+                id: 'usage-attempt',
+                initiatingTurnMessageId: context.promptMessageId,
+                status: 'completed',
+                resolvedAgent: { kind: 'main' },
+                runtimeSegmentIds: [],
+                startedAt: 2,
+                endedAt: 3
+              }
+            ]
+          }
+        ]
+      }
+    }
+    persisted = await repository.saveSession(persisted, persisted.revision ?? 0)
+    const admission = {
+      batchId: 'usage-batch',
+      projectId: persisted.projectId,
+      sessionId: persisted.id,
+      rootFrameId: context.agentFrameId,
+      originatingPromptId: context.promptMessageId,
+      rootBranchId: context.messageBranchId,
+      rootBranchRevision: `${context.messageBranchId}:${graph.branches[0].createdAt}`,
+      promptRuntimeSegmentId: context.runtimeSegmentId,
+      items: [{ frameId: 'usage-child', attemptId: 'usage-attempt', status: 'completed' as const }]
+    }
+    const continuationError = await runtime
+      .sendAppContinuation(
+        { ...request, text: 'settlement result available' },
+        'usage-attempt',
+        undefined,
+        undefined,
+        undefined,
+        admission
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      )
+    expect.soft(continuationError).toBeUndefined()
+    expect.soft(persisted.status).toBe('idle')
+    expect.soft(persisted.activeRun).toBeUndefined()
+    expect.soft(persisted.runtimeSessionAdmissions!.at(-1)!.settlement!.stage).toBe('terminal')
+    const saved = (await repository.loadSession(persisted.projectId, persisted.id))!
+    const outputs = saved.conversationGraph!.messages.filter(({ role }) => role === 'agent')
+    expect.soft(outputs.find(({ id }) => id === original.id)).toEqual(original)
+    expect
+      .soft(outputs[1]?.runtimeSegmentId)
+      .toBe(saved.runtimeSessionAdmissions!.at(-1)!.runtimeSegmentId)
+    expect.soft(outputs[1]?.runtimeSegmentId).not.toBe(original.runtimeSegmentId)
+    expect
+      .soft(outputs.map(({ content }) => content))
+      .toEqual(['Original final answer', 'Settlement notification'])
+    expect.soft(outputs.map(({ turnUsage }) => turnUsage?.inputTokens)).toEqual([11, 17])
+    expect.soft(outputs.map(({ turnUsage }) => turnUsage?.outputTokens)).toEqual([5, 7])
+    const calls = outputs.flatMap(({ modelCallUsage }) => modelCallUsage ?? [])
+    expect.soft(calls).toHaveLength(2)
+    expect.soft(new Set(calls.map(({ id }) => id)).size).toBe(2)
+    expect
+      .soft(calls.map(({ sourceInvocationId }) => sourceInvocationId))
+      .toEqual(['main-call', 'settlement-call'])
+  })
+
   it.each([undefined, 'none'] as const)(
     'preserves permission prompts %s when publishing generated Notebook files',
     async (permissionPrompts) => {
@@ -29315,3 +29621,134 @@ it('protects disposable OpenCode homes at the ACP read boundary while allowing w
     await rm(workspaceRoot, { recursive: true, force: true })
   }
 })
+
+it.each(['settlement', 'user', 'replacement', 'accepted-write', 'replay-write'] as const)(
+  'retains cold continuation replay until %s restores provider history',
+  async (recovery) => {
+    let process = new FakeAgentProcess()
+    let fakeAgent = startFakeAgent(process, ['replay-provider'], { supportsResume: false })
+    const persisted = createRestoredContinuationSession('origin-1', 'replay-session', 'project-1')
+    const graph = persisted.conversationGraph!
+    const origin = graph.messages.find(({ id }) => id === 'origin-1')!
+    const loadSessionForContinuation = vi.fn(async () => structuredClone(persisted))
+    const accepted = vi.fn()
+    const runtimeSessions = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone(persisted),
+      mutateSession: async (_scope, mutate) => mutate(structuredClone(persisted)),
+      finalizeArtifacts: async () => []
+    })
+    vi.spyOn(runtimeSessions, 'begin').mockResolvedValue(persisted)
+    vi.spyOn(runtimeSessions, 'markSettlementDispatch').mockResolvedValue(persisted)
+    const markAccepted = vi
+      .spyOn(runtimeSessions, 'markSettlementAccepted')
+      .mockResolvedValue(persisted)
+    vi.spyOn(runtimeSessions, 'finishSettlementNotDispatched').mockResolvedValue(persisted)
+    const consumeReplay = vi.spyOn(runtimeSessions, 'consumeReplay').mockResolvedValue(undefined)
+    vi.spyOn(runtimeSessions, 'accept').mockImplementation(() => undefined)
+    vi.spyOn(runtimeSessions, 'flush').mockResolvedValue(undefined)
+    vi.spyOn(runtimeSessions, 'commitTerminal').mockResolvedValue(undefined)
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      runtimeSessions,
+      callbacks: { onProviderPromptAccepted: accepted },
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(async () => ({ version: 1 as const, revision: 0 })),
+          patchSessionRuntimeContext: vi.fn(),
+          containsMessageOnActiveBranch: vi.fn(async () => true),
+          loadSessionForContinuation
+        }
+      }
+    })
+    const resume = { sessionId: persisted.id, projectId: persisted.projectId, cwd: persisted.cwd }
+    expect(await runtime.resumeSession(resume)).toMatchObject({ contextReset: true })
+    const admission = {
+      batchId: 'batch-1',
+      projectId: persisted.projectId,
+      sessionId: persisted.id,
+      rootFrameId: graph.rootFrameId,
+      originatingPromptId: origin.id,
+      rootBranchId: origin.introducedOnBranchId,
+      rootBranchRevision: 'revision-1',
+      promptRuntimeSegmentId: origin.runtimeSegmentId!,
+      items: [{ frameId: 'child-1', attemptId: 'attempt-1', status: 'completed' as const }]
+    }
+    const request: AcpPromptRequest = {
+      sessionId: persisted.id,
+      text: 'settlement result available',
+      suppressUserMessage: true,
+      provenanceContext: {
+        promptMessageId: origin.id,
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: origin.introducedOnBranchId,
+        runtimeSegmentId: origin.runtimeSegmentId!
+      }
+    }
+    loadSessionForContinuation.mockRejectedValueOnce(new Error('temporary transcript read failure'))
+    await expect(
+      runtime.sendAppContinuation(
+        { ...request, contextReset: true },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        admission
+      )
+    ).rejects.toMatchObject({ disposition: 'retry' })
+    expect(fakeAgent.prompts).toHaveLength(0)
+    const resumer = (
+      runtime as unknown as { providerSessionResumer: { resume: AcpRuntime['resumeSession'] } }
+    ).providerSessionResumer
+    vi.spyOn(resumer, 'resume').mockRejectedValueOnce(new Error('temporary resume failure'))
+    await expect(runtime.resumeSession(resume)).rejects.toThrow('temporary resume failure')
+    expect((await runtime.resumeSession(resume)).contextReset).not.toBe(true)
+    if (recovery === 'replacement') {
+      await runtime.disconnect()
+      process = new FakeAgentProcess()
+      fakeAgent = startFakeAgent(process, ['known-history-provider'])
+      expect(
+        (await runtime.resumeSession({ ...resume, providerSessionId: 'known-history-provider' }))
+          .contextReset
+      ).not.toBe(true)
+    }
+    const acceptanceWriteFails = recovery === 'accepted-write' || recovery === 'replay-write'
+    const replays = recovery !== 'user' && recovery !== 'replacement'
+    if (recovery === 'accepted-write')
+      markAccepted.mockRejectedValueOnce(new Error('acceptance write failed'))
+    if (recovery === 'replay-write')
+      consumeReplay.mockRejectedValueOnce(new Error('replay receipt write failed'))
+    if (recovery === 'user') {
+      await runtime.sendPrompt({
+        ...request,
+        suppressUserMessage: false,
+        historyPreamble: 'Continue the restored task.',
+        contextReset: true
+      })
+    } else {
+      await runtime.sendAppContinuation(
+        { ...request },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        admission
+      )
+    }
+    expect(fakeAgent.prompts).toHaveLength(1)
+    if (recovery === 'replacement')
+      expect(fakeAgent.prompts[0].text).not.toContain('Continue the restored task.')
+    else expect(fakeAgent.prompts[0].text).toContain('Continue the restored task.')
+    expect(loadSessionForContinuation).toHaveBeenCalledTimes(replays ? 2 : 1)
+    expect(accepted).toHaveBeenCalledTimes(acceptanceWriteFails ? 0 : 1)
+    await runtime.sendAppContinuation({ ...request }, undefined, undefined, undefined, undefined, {
+      ...admission,
+      batchId: 'batch-2'
+    })
+    expect(fakeAgent.prompts).toHaveLength(2)
+    expect(fakeAgent.prompts[1].text).not.toContain('Continue the restored task.')
+    expect(loadSessionForContinuation).toHaveBeenCalledTimes(replays ? 2 : 1)
+    expect(accepted).toHaveBeenCalledTimes(acceptanceWriteFails ? 1 : 2)
+  }
+)

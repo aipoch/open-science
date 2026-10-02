@@ -59,9 +59,17 @@ import { claudeCodeFramework } from '../agent-framework'
 import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
 import { preS6ReaderSave } from '../../shared/pre-s6-session-reader.fixture'
 import type { AcpPromptRequest, AcpStateSnapshot } from '../../shared/acp'
+import {
+  SettlementAdmissionError,
+  type SettlementAdmission
+} from '../../shared/runtime-session-admission'
 import { AcpRuntimeCoordinator } from '../acp/runtime-coordinator'
 import type { AcpRuntime, AcpRuntimeCallbacks } from '../acp/runtime'
 import { createDelegationSettlementContinuationDispatch } from './settlement-continuation-dispatch'
+import {
+  RuntimeSessionOwner,
+  type RuntimeSessionTurnScope
+} from '../session-persistence/runtime-session-owner'
 
 let root: string | undefined
 let server: NotebookLocalRpcServer | undefined
@@ -886,6 +894,113 @@ describe('production delegated-work composition', () => {
     vi.useRealTimers()
   })
 
+  it.each([
+    { observed: false, completion: 'before-end', duplicate: 'none' },
+    { observed: false, completion: 'after-end', duplicate: 'none' },
+    { observed: true, completion: 'before-end', duplicate: 'none' },
+    { observed: true, completion: 'before-end', duplicate: 'same-turn' },
+    { observed: true, completion: 'before-end', duplicate: 'next-turn' }
+  ])(
+    'tracks sendMessage settlement (observed=$observed, completion=$completion, duplicate=$duplicate)',
+    async ({ observed, completion, duplicate }) => {
+      vi.useFakeTimers()
+      root = await mkdtemp(join(tmpdir(), 'delegated-followup-settlement-'))
+      const dispatch = vi.fn(async (request: DelegationSettlementDispatch) => {
+        void request
+      })
+      const execution = createDeterministicDelegateExecution()
+      execution.plan({ status: 'completed', response: 'Original result' })
+      const harness = await createCompositionHarness(root, 'codex', execution, undefined, {
+        settlementContinuations: { dispatch }
+      })
+      const original = await harness.composition.host.delegate(harness.caller, {
+        task: 'Initial task',
+        name: 'Followup child'
+      })
+      let leaseId = await harness.composition.root.rootTurnStarted!({
+        sessionId: harness.session.id,
+        originatingPromptId: harness.caller.originMessageId
+      })
+      const continued = await harness.composition.host.sendMessage(
+        { ...harness.caller, toolInvocationId: 'followup' },
+        original.children[0].frameId,
+        'Continue this task',
+        { requestId: 'followup' }
+      )
+      expect(continued.disposition).toBe('continued')
+      if (continued.disposition !== 'continued') throw new Error('Expected a continued Attempt.')
+      await expect.poll(() => execution.controls()).toHaveLength(2)
+      const control = execution.control(continued.continuation_attempt_id)
+      control.accept()
+      if (completion === 'after-end') {
+        await harness.composition.root.rootTurnEnded!({
+          sessionId: harness.session.id,
+          originatingPromptId: harness.caller.originMessageId,
+          clean: true,
+          leaseId
+        })
+      }
+      control.complete('Fast followup result')
+      await expect
+        .poll(() => harness.composition.host.children(harness.caller))
+        .toMatchObject([{ status: 'completed' }])
+      if (observed) {
+        await harness.composition.host.collect(harness.caller, [
+          { frameId: continued.target_frame_id, attemptId: continued.continuation_attempt_id }
+        ])
+      }
+      if (duplicate === 'next-turn') {
+        await harness.composition.root.rootTurnEnded!({
+          sessionId: harness.session.id,
+          originatingPromptId: harness.caller.originMessageId,
+          clean: true,
+          leaseId
+        })
+        leaseId = await harness.composition.root.rootTurnStarted!({
+          sessionId: harness.session.id,
+          originatingPromptId: harness.caller.originMessageId
+        })
+      }
+      if (duplicate !== 'none') {
+        expect(
+          await harness.composition.host.sendMessage(
+            { ...harness.caller, toolInvocationId: 'followup' },
+            original.children[0].frameId,
+            'Continue this task',
+            { requestId: 'followup' }
+          )
+        ).toMatchObject({
+          disposition: 'continued',
+          message_id: continued.message_id,
+          target_frame_id: continued.target_frame_id,
+          continuation_attempt_id: continued.continuation_attempt_id
+        })
+      }
+      if (completion !== 'after-end') {
+        await harness.composition.root.rootTurnEnded!({
+          sessionId: harness.session.id,
+          originatingPromptId: harness.caller.originMessageId,
+          clean: true,
+          leaseId
+        })
+      }
+      await vi.advanceTimersByTimeAsync(100)
+      expect(dispatch).toHaveBeenCalledTimes(observed ? 0 : 1)
+      if (!observed) {
+        expect(dispatch.mock.calls[0][0].items).toEqual([
+          {
+            frameId: continued.target_frame_id,
+            attemptId: continued.continuation_attempt_id,
+            name: 'Followup child',
+            status: 'completed'
+          }
+        ])
+      }
+      await harness.composition.root.stopAll()
+      vi.useRealTimers()
+    }
+  )
+
   it('does not wake for terminal child results already returned in the originating root turn', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-observed-settlement-'))
     const dispatch = vi.fn(async (request: DelegationSettlementDispatch) => {
@@ -1434,6 +1549,284 @@ describe('production delegated-work composition', () => {
     expect(vi.getTimerCount()).toBe(0)
     vi.useRealTimers()
   })
+
+  it.each([
+    ...(['codex', 'claude-code', 'opencode'] as const).flatMap((frameworkId) =>
+      [false, true].map((guarded) => ({ frameworkId, guarded, preparationCleanupFailure: false }))
+    ),
+    { frameworkId: 'codex' as const, guarded: true, preparationCleanupFailure: true }
+  ])(
+    'admits and persists a $frameworkId settlement wake after durable root idle (guarded=$guarded, preparationCleanupFailure=$preparationCleanupFailure)',
+    async ({ frameworkId, guarded, preparationCleanupFailure }) => {
+      vi.useFakeTimers()
+      root = await mkdtemp(join(tmpdir(), 'delegated-settlement-durable-admission-'))
+      const productionDispatch: {
+        current?: (request: DelegationSettlementDispatch) => Promise<void>
+      } = {}
+      const dispatch = vi.fn((request: DelegationSettlementDispatch) =>
+        productionDispatch.current!(request)
+      )
+      const harness = await createCompositionHarness(
+        root,
+        frameworkId,
+        createDeterministicDelegateExecution(),
+        undefined,
+        { settlementContinuations: { dispatch } }
+      )
+      harness.replaceDurable({
+        ...harness.durable(),
+        status: 'running',
+        activeRun: { promptMessageId: harness.caller.originMessageId, startedAt: 1 }
+      })
+      let failCleanupMutation = false
+      let cleanupPersistenceFailures = 0
+      const durableOwner = new RuntimeSessionOwner({
+        loadSession: async () => structuredClone(harness.durable()),
+        mutateSession: async (_scope, mutate) => {
+          const next = mutate(structuredClone(harness.durable()))
+          if (
+            failCleanupMutation &&
+            next.runtimeSessionAdmissions?.some(
+              ({ settlement }) => settlement?.stage === 'not-dispatched'
+            )
+          ) {
+            failCleanupMutation = false
+            cleanupPersistenceFailures += 1
+            throw new Error('Transient settlement cleanup persistence failure')
+          }
+          harness.replaceDurable(next)
+          return next
+        },
+        finalizeArtifacts: async () => [],
+        scheduleFlush: () => () => undefined
+      })
+      const graph = harness.durable().conversationGraph!
+      const rootFrame = graph.frames.find(({ id }) => id === graph.rootFrameId)!
+      const scope: RuntimeSessionTurnScope = {
+        projectId: harness.session.projectId,
+        sessionId: harness.session.id,
+        promptMessageId: harness.caller.originMessageId,
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: rootFrame.activeBranchId,
+        runtimeSegmentId: graph.runtimeSegments[0].id,
+        executionId: 'root-execution'
+      }
+      let callbacks!: AcpRuntimeCallbacks
+      let receipt!: Awaited<ReturnType<typeof harness.composition.host.delegate>>
+      const providerContinuation = vi.fn()
+      let collected: Awaited<ReturnType<typeof harness.composition.host.collect>> | undefined
+      let settlementScope: RuntimeSessionTurnScope | undefined
+      let settlementExecutions = 0
+      const runtime = {
+        getSnapshot: () => ({
+          status: 'connected',
+          sessionIds: [scope.sessionId],
+          events: [],
+          pendingPermissions: [],
+          permissionProfiles: {},
+          permissionGrants: {},
+          contextUsageBySession: {},
+          promptInFlight: false,
+          promptInFlightSessionIds: []
+        }),
+        sendPrompt: async (request: AcpPromptRequest, promptAttemptId?: string) => {
+          await durableOwner.begin(scope)
+          callbacks.onPromptStarted?.(scope.sessionId, scope.executionId, promptAttemptId)
+          callbacks.onProviderPromptAccepted?.(scope.sessionId, promptAttemptId)
+          receipt = await harness.composition.host.delegate(
+            harness.caller,
+            { task: 'Finish after the root ends', name: 'Background child' },
+            { wait: false }
+          )
+          durableOwner.accept({
+            id: 'root-answer',
+            timestamp: Date.now(),
+            kind: 'message',
+            level: 'info',
+            sessionId: scope.sessionId,
+            promptMessageId: scope.promptMessageId,
+            messageId: 'original-main-answer',
+            role: 'assistant',
+            text: 'Main started the background child.'
+          })
+          durableOwner.accept({
+            id: 'root-stop',
+            timestamp: Date.now(),
+            kind: 'stop',
+            level: 'info',
+            sessionId: request.sessionId,
+            promptMessageId: scope.promptMessageId,
+            title: 'Prompt stopped',
+            text: 'end_turn'
+          })
+          await durableOwner.flush(scope.sessionId, scope.promptMessageId)
+          callbacks.onPromptEnded?.(scope.sessionId, scope.executionId)
+          return { stopReason: 'end_turn' as const }
+        },
+        sendAppContinuation: async (
+          request: AcpPromptRequest,
+          promptAttemptId?: string,
+          _onProviderPromptAccepted?: unknown,
+          _delegatedMessageId?: string,
+          _permissionContinuation?: unknown,
+          settlementAdmission?: SettlementAdmission
+        ) => {
+          const executionId = `settlement-execution-${++settlementExecutions}`
+          settlementScope = {
+            ...scope,
+            executionId,
+            runtimeSegmentId: `settlement-${executionId}`
+          }
+          await durableOwner.begin(settlementScope, { settlementAdmission })
+          if (preparationCleanupFailure && settlementExecutions === 1) {
+            // Preparation has failed before the dispatch fence; its cleanup commit also fails.
+            failCleanupMutation = true
+            await durableOwner.finishSettlementNotDispatched(settlementScope)
+            throw new SettlementAdmissionError('preparation-failed', 'retry')
+          }
+          callbacks.onPromptStarted?.(
+            request.sessionId,
+            settlementScope.executionId,
+            promptAttemptId
+          )
+          await durableOwner.markSettlementDispatch(settlementScope)
+          providerContinuation()
+          await durableOwner.markSettlementAccepted(settlementScope)
+          callbacks.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
+          collected = await harness.composition.host.collect(
+            { ...harness.caller, toolInvocationId: 'settlement-collect' },
+            receipt.children.map(({ frameId, attemptId }) => ({ frameId, attemptId }))
+          )
+          const result = collected[0]
+          if (result.status !== 'completed') throw new Error('Settlement child did not complete.')
+          durableOwner.accept({
+            id: 'settlement-answer',
+            timestamp: Date.now(),
+            kind: 'message',
+            level: 'info',
+            sessionId: scope.sessionId,
+            promptMessageId: scope.promptMessageId,
+            messageId: 'settlement-main-answer',
+            role: 'assistant',
+            text: `Main collected: ${result.response}`
+          })
+          durableOwner.accept({
+            id: 'settlement-stop',
+            timestamp: Date.now(),
+            kind: 'stop',
+            level: 'info',
+            sessionId: scope.sessionId,
+            promptMessageId: scope.promptMessageId,
+            title: 'Prompt stopped',
+            text: 'end_turn'
+          })
+          await durableOwner.flush(scope.sessionId, scope.promptMessageId)
+          callbacks.onPromptEnded?.(request.sessionId, settlementScope.executionId)
+          return { stopReason: 'end_turn' as const }
+        }
+      } as unknown as AcpRuntime
+      const coordinator = new AcpRuntimeCoordinator(
+        (runtimeCallbacks) => {
+          callbacks = runtimeCallbacks
+          return runtime
+        },
+        {},
+        '',
+        undefined,
+        undefined,
+        undefined,
+        {},
+        undefined,
+        harness.composition.root
+      )
+      const onPromptEnded = vi.fn((sessionId: string, promptId: string) =>
+        harness.composition.root.settlementPromptEnded?.(sessionId, promptId)
+      )
+      if (guarded) {
+        // Exercise the admission guard installed by production deletion handling.
+        coordinator.setPromptDispatchAdmissionGuard(async (_sessionId, dispatch) => dispatch())
+      }
+      productionDispatch.current = createDelegationSettlementContinuationDispatch({
+        sendAppContinuationObserved: (request, accepted, settlementAdmission) =>
+          coordinator.sendAppContinuationObserved(request, accepted, settlementAdmission),
+        onPromptEnded
+      })
+      await coordinator.sendPrompt({
+        sessionId: scope.sessionId,
+        text: 'Delegate asynchronously',
+        provenanceContext: { promptMessageId: scope.promptMessageId }
+      })
+      expect(harness.durable().status).toBe('idle')
+      expect(harness.durable().activeRun).toBeUndefined()
+      await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+      const child = harness.execution.control(receipt.children[0].attemptId)
+      child.accept()
+      child.complete('Completed evidence')
+      await expect
+        .poll(() => harness.composition.host.children(harness.caller))
+        .toMatchObject([{ status: 'completed' }])
+      await vi.advanceTimersByTimeAsync(100)
+
+      if (preparationCleanupFailure) {
+        expect(providerContinuation).not.toHaveBeenCalled()
+        expect(cleanupPersistenceFailures).toBe(1)
+        expect(harness.durable().activeRun).toBeDefined()
+        await vi.advanceTimersByTimeAsync(200)
+      }
+      await expect.poll(() => providerContinuation.mock.calls.length).toBe(1)
+      await expect.poll(() => onPromptEnded.mock.calls.length).toBe(1)
+      expect(dispatch).toHaveBeenCalledTimes(preparationCleanupFailure ? 2 : 1)
+      if (preparationCleanupFailure) {
+        expect(dispatch.mock.calls[1][0].batchId).toBe(dispatch.mock.calls[0][0].batchId)
+        expect(dispatch.mock.calls[1][0].items).toEqual(dispatch.mock.calls[0][0].items)
+        expect(
+          harness
+            .durable()
+            .runtimeSessionAdmissions?.find(
+              ({ executionId }) => executionId === 'settlement-execution-1'
+            )?.settlement?.stage
+        ).toBe('not-dispatched')
+      }
+      expect(collected).toMatchObject([{ status: 'completed', response: 'Completed evidence' }])
+      expect(harness.durable().status).toBe('idle')
+      expect(harness.durable().activeRun).toBeUndefined()
+      const persisted = harness.durable()
+      const rootMessages = persisted.conversationGraph!.messages.filter(
+        ({ agentFrameId }) => agentFrameId === scope.agentFrameId
+      )
+      expect(rootMessages.filter(({ role }) => role === 'user')).toHaveLength(1)
+      expect(rootMessages.find(({ id }) => id === scope.promptMessageId)?.runtimeSegmentId).toBe(
+        scope.runtimeSegmentId
+      )
+      expect(rootMessages.filter(({ role }) => role === 'agent')).toMatchObject([
+        {
+          content: 'Main started the background child.',
+          status: 'complete',
+          runtimeSegmentId: scope.runtimeSegmentId
+        },
+        {
+          content: 'Main collected: Completed evidence',
+          status: 'complete',
+          runtimeSegmentId: settlementScope!.runtimeSegmentId
+        }
+      ])
+      expect(
+        persisted.runtimeSessionAdmissions?.find(
+          ({ executionId }) => executionId === settlementScope!.executionId
+        )
+      ).toMatchObject({
+        promptRuntimeSegmentId: scope.runtimeSegmentId,
+        runtimeSegmentId: settlementScope!.runtimeSegmentId,
+        settlement: { admission: { batchId: dispatch.mock.calls[0][0].batchId }, stage: 'terminal' }
+      })
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(dispatch).toHaveBeenCalledTimes(preparationCleanupFailure ? 2 : 1)
+      expect(providerContinuation).toHaveBeenCalledOnce()
+      expect(onPromptEnded).toHaveBeenCalledOnce()
+      await harness.composition.root.stopAll()
+      vi.useRealTimers()
+    }
+  )
 
   it('collects a background child to completion within the originating root turn', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-same-turn-collect-'))

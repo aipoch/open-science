@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import type { SettlementAdmission } from '../../shared/runtime-session-admission'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { opencodeFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
@@ -133,8 +134,32 @@ const planProjection = (): ActivePlanProjection => ({
   counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
 })
 
+const settlement = (): SettlementAdmission => ({
+  batchId: 'batch-1',
+  projectId: 'project-1',
+  sessionId: 's1',
+  rootFrameId: 'root-1',
+  originatingPromptId: 'prompt-1',
+  rootBranchId: 'branch-1',
+  rootBranchRevision: 'revision-1',
+  promptRuntimeSegmentId: 'origin-segment',
+  items: [{ frameId: 'child-1', attemptId: 'attempt-1', status: 'completed' as const }]
+})
+
+type SettlementLifecycle = NonNullable<AcpPromptTurnWorkflowOptions['settlementLifecycle']>
+
+const createSettlementLifecycle = (): {
+  [Key in keyof SettlementLifecycle]: Mock<SettlementLifecycle[Key]>
+} => ({
+  markDispatch: vi.fn(async () => undefined),
+  markAccepted: vi.fn(async () => undefined),
+  finishNotDispatched: vi.fn(async () => undefined)
+})
+
 const createHarness = (
   input: {
+    attached?: boolean
+    onProviderContextAccepted?: AcpPromptTurnWorkflowOptions['environment']['onProviderContextAccepted']
     serialization?: AcpPromptTurnWorkflowOptions['serialization']
     planPause?: Partial<AcpPromptTurnWorkflowOptions['plan']>
     admitPlan?: AcpPromptTurnWorkflowOptions['plan']['admit']
@@ -145,6 +170,7 @@ const createHarness = (
     execute?: AcpPromptTurnWorkflowOptions['executor']['execute']
     finalize?: AcpPromptOutcomeFinalizer['finalize']
     beginRuntimeSessionTurn?: AcpPromptTurnWorkflowOptions['beginRuntimeSessionTurn']
+    settlementLifecycle?: AcpPromptTurnWorkflowOptions['settlementLifecycle']
     onPromptStarted?: () => void
     preflightPlan?: AcpPromptTurnWorkflowOptions['plan']['preflight']
     preemptCompaction?: AcpPromptTurnWorkflowOptions['finalization']['preemptCompaction']
@@ -182,12 +208,15 @@ const createHarness = (
     appSessionId: 'app-1',
     generation: 1,
     aggregate,
-    attachment: {
-      appSessionId: 'app-1',
-      providerSessionId: session.sessionId,
-      generation: 1,
-      session
-    }
+    attachment:
+      input.attached === false
+        ? undefined
+        : {
+            appSessionId: 'app-1',
+            providerSessionId: session.sessionId,
+            generation: 1,
+            session
+          }
   }))
   const interactions: Harness['interactions'] = {
     current: vi.fn((sessionId: string) => owner.current(sessionId)),
@@ -343,6 +372,7 @@ const createHarness = (
         ? { resolveComputeExecutionTargetIds: input.resolveComputeExecutionTargetIds }
         : {}),
       emitSkillActivities,
+      onProviderContextAccepted: input.onProviderContextAccepted,
       onProviderPromptAccepted,
       ...(input.sideChatClaim ? { sideChatRelays: { claim: input.sideChatClaim } } : {}),
       routeNotification,
@@ -364,6 +394,7 @@ const createHarness = (
     resumeAfterReload,
     recordAdmittedPrompt: vi.fn(() => journal.push('handoff')),
     beginRuntimeSessionTurn: input.beginRuntimeSessionTurn,
+    settlementLifecycle: input.settlementLifecycle,
     onPromptStarted: vi.fn(() => {
       journal.push('start')
       input.onPromptStarted?.()
@@ -873,6 +904,7 @@ describe('AcpPromptTurnWorkflow', () => {
       undefined,
       undefined,
       { text: request().text, attribution },
+      undefined,
       false
     )
     expect(begin.mock.invocationCallOrder[0]).toBeLessThan(
@@ -898,10 +930,144 @@ describe('AcpPromptTurnWorkflow', () => {
       undefined,
       'message-1',
       undefined,
+      undefined,
       true
     )
     expect(harness.executor).not.toHaveBeenCalled()
     expect(harness.owner.current('s1')).toBeUndefined()
+  })
+
+  it.each(['artifact', 'preparation', 'before-dispatch', 'fence'] as const)(
+    'safely releases a committed settlement %s failure before retry',
+    async (phase) => {
+      const failure = new Error(`${phase} failed`)
+      const begin = vi.fn<NonNullable<AcpPromptTurnWorkflowOptions['beginRuntimeSessionTurn']>>(
+        async () => undefined
+      )
+      const lifecycle = createSettlementLifecycle()
+      if (phase === 'fence') lifecycle.markDispatch.mockRejectedValue(failure)
+      const harness = createHarness({
+        beginRuntimeSessionTurn: begin,
+        settlementLifecycle: lifecycle,
+        ...(phase === 'preparation'
+          ? {
+              prepare: async () => {
+                throw failure
+              }
+            }
+          : {}),
+        ...(phase === 'before-dispatch'
+          ? {
+              beforePromptDispatch: async () => {
+                throw failure
+              }
+            }
+          : {}),
+        execute: async (input) => {
+          await input.beforeDispatch()
+          await input.beforeProviderCall?.()
+          throw new Error('unexpected provider call')
+        }
+      })
+      if (phase === 'artifact') harness.artifacts.open.mockRejectedValueOnce(failure)
+      const settlementAdmission = settlement()
+      await expect(
+        harness.workflow.run(request(), { kind: 'app-continuation', settlementAdmission })
+      ).rejects.toMatchObject({ name: 'SettlementAdmissionError', disposition: 'retry' })
+      expect(lifecycle.finishNotDispatched).toHaveBeenCalledOnce()
+      const executionId = begin.mock.calls[0][1]
+      expect(begin.mock.calls[0][0].provenanceContext?.runtimeSegmentId).toBe(
+        `settlement-${executionId}`
+      )
+      expect(begin.mock.calls[0][6]).toBe(settlementAdmission)
+      expect(lifecycle.markAccepted).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['throw', 'reject'] as const)(
+    'never classifies a settlement provider %s as safe to replay',
+    async (providerFailure) => {
+      const failure = new Error('provider outcome unknown')
+      const lifecycle = createSettlementLifecycle()
+      const harness = createHarness({
+        beginRuntimeSessionTurn: vi.fn(async () => undefined),
+        settlementLifecycle: lifecycle,
+        execute: async (input) => {
+          await input.beforeProviderCall?.()
+          if (providerFailure === 'throw') throw failure
+          return Promise.reject(failure)
+        }
+      })
+      await expect(
+        harness.workflow.run(request(), {
+          kind: 'app-continuation',
+          settlementAdmission: settlement()
+        })
+      ).rejects.toBe(failure)
+      expect(lifecycle.markDispatch).toHaveBeenCalledOnce()
+      expect(lifecycle.finishNotDispatched).not.toHaveBeenCalled()
+    }
+  )
+
+  it('does not permit replay after settlement cleanup persistence fails', async () => {
+    const cleanup = new Error('cleanup uncertain')
+    const lifecycle = createSettlementLifecycle()
+    lifecycle.finishNotDispatched.mockRejectedValue(cleanup)
+    const harness = createHarness({
+      beginRuntimeSessionTurn: vi.fn(async () => undefined),
+      settlementLifecycle: lifecycle,
+      prepare: async () => {
+        throw new Error('prepare failed')
+      }
+    })
+    await expect(
+      harness.workflow.run(request(), {
+        kind: 'app-continuation',
+        settlementAdmission: settlement()
+      })
+    ).rejects.toBe(cleanup)
+    expect(lifecycle.markDispatch).not.toHaveBeenCalled()
+  })
+
+  it('retains one settlement fence across a human-approved Plan provider resume', async () => {
+    let paused = false
+    let providerCalls = 0
+    let fenced = false
+    const lifecycle = createSettlementLifecycle()
+    lifecycle.markDispatch.mockImplementation(async () => {
+      if (fenced) throw new Error('Settlement provider dispatch may already have started.')
+      fenced = true
+    })
+    const accepted = vi.fn(async () => undefined)
+    const harness = createHarness({
+      beginRuntimeSessionTurn: vi.fn(async () => undefined),
+      settlementLifecycle: lifecycle,
+      planPause: {
+        isProviderPaused: () => paused,
+        resumeAfterProviderStop: async () => {
+          paused = false
+          return { content: 'Approved Plan continuation', accepted }
+        }
+      },
+      execute: async (input) => {
+        await input.beforeDispatch()
+        await input.beforeProviderCall?.()
+        providerCalls += 1
+        await input.onAccepted()
+        paused = providerCalls === 1
+        return { kind: 'stopped', response: { stopReason: 'end_turn' }, facts: {} }
+      }
+    })
+    await expect(
+      harness.workflow.run(request(), {
+        kind: 'app-continuation',
+        settlementAdmission: settlement()
+      })
+    ).resolves.toEqual({ stopReason: 'end_turn' })
+    expect(providerCalls).toBe(2)
+    expect(lifecycle.markDispatch).toHaveBeenCalledOnce()
+    expect(accepted).toHaveBeenCalledOnce()
+    expect(lifecycle.finishNotDispatched).not.toHaveBeenCalled()
   })
 
   it('propagates app-continuation identity without publishing its synthetic text', async () => {
@@ -1524,3 +1690,57 @@ it('does not dispatch after cancellation is accepted during framework preparatio
     harness.owner.supersedeAll()
   }
 })
+
+it('replays durable history when settlement admission restores a fresh provider context', async () => {
+  const harness = createHarness({
+    beginRuntimeSessionTurn: vi.fn(async () => undefined),
+    settlementLifecycle: createSettlementLifecycle()
+  })
+  const turn = { ...request(), contextReset: true }
+  await harness.workflow.run(turn, { kind: 'app-continuation', settlementAdmission: settlement() })
+  expect(harness.prepareContinuationReplay).toHaveBeenCalledOnce()
+  expect(harness.preparation.mock.calls[0][0].request).toMatchObject({
+    contextReset: true,
+    historyPreamble: 'durable history'
+  })
+  expect(harness.disconnectForReload).not.toHaveBeenCalled()
+  expect(harness.executor).toHaveBeenCalledOnce()
+})
+
+it('classifies a missing settlement provider Session before dispatch as safe to retry', async () => {
+  const harness = createHarness({ attached: false })
+  await expect(
+    harness.workflow.run(request(), { kind: 'app-continuation', settlementAdmission: settlement() })
+  ).rejects.toMatchObject({ reason: 'session-not-attached', disposition: 'retry' })
+  expect(harness.executor).not.toHaveBeenCalled()
+})
+
+it('defers settlement while an existing prompt still owns the Session', async () => {
+  const harness = createHarness()
+  const active = harness.owner.activatePrompt(
+    harness.owner.reservePrompt({ sessionId: 's1', kind: 'prompt' })
+  )
+  await expect(
+    harness.workflow.run(request(), { kind: 'app-continuation', settlementAdmission: settlement() })
+  ).rejects.toMatchObject({ reason: 'session-busy', disposition: 'deferred' })
+  expect(harness.owner.current('s1')).toBe(active)
+  expect(harness.executor).not.toHaveBeenCalled()
+})
+
+it.each(['interaction', 'attachment'] as const)(
+  'ignores delayed provider context acceptance after %s replacement',
+  async (replacement) => {
+    const accepted = vi.fn()
+    const harness = createHarness({
+      onProviderContextAccepted: accepted,
+      execute: async (input) => {
+        if (replacement === 'interaction') harness.owner.supersedeAll()
+        else harness.setSession({ sessionId: 'provider-1' } as ActiveSession)
+        await input.onAccepted()
+        return { kind: 'stopped', response: { stopReason: 'end_turn' }, facts: {} }
+      }
+    })
+    await harness.workflow.run(request(), { kind: 'user' })
+    expect(accepted).not.toHaveBeenCalled()
+  }
+)

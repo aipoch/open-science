@@ -53,6 +53,62 @@ type InlineParentMessageProjection = Readonly<{
   queuedAt: number
 }>
 
+type SubagentCompletionProjection = Readonly<{
+  frameId: string
+  attemptId: string
+  promptMessageId: string
+  name?: string
+  status: 'completed' | 'error' | 'cancelled'
+  endedAt: number
+}>
+
+// Completion progress is derived from durable Attempts, independently of whether Main is still
+// waiting in host.delegate. Keep prior Attempts visible when the same child is continued.
+const projectSubagentCompletions = (
+  session: PersistedChatSession | undefined
+): readonly SubagentCompletionProjection[] => {
+  const graph = session?.conversationGraph
+  if (!session || !graph || graph.activeFrameId !== graph.rootFrameId) return []
+  const activeRootMessageIds = resolveActiveRootMessageIds(graph)
+  if (!activeRootMessageIds) return []
+  const frames = new Map(
+    projectActiveRootDelegatedFrames(session)
+      .filter((frame) => frame.originBindingState === 'validated')
+      .map((frame) => [frame.id, frame])
+  )
+  const completions = new Map<string, SubagentCompletionProjection>()
+  for (const record of session.runtimeContext?.delegatedWork?.records ?? []) {
+    const frame = frames.get(record.agentFrameId)
+    if (!frame) continue
+    for (const attempt of record.attempts) {
+      if (
+        (attempt.status !== 'completed' &&
+          attempt.status !== 'error' &&
+          attempt.status !== 'cancelled') ||
+        attempt.endedAt === undefined ||
+        !Number.isFinite(attempt.endedAt) ||
+        !attempt.initiatingTurnMessageId ||
+        !activeRootMessageIds.has(attempt.initiatingTurnMessageId)
+      )
+        continue
+      completions.set(JSON.stringify([frame.id, attempt.id]), {
+        frameId: frame.id,
+        attemptId: attempt.id,
+        promptMessageId: attempt.initiatingTurnMessageId,
+        name: readableNameForFrame(frame),
+        status: attempt.status,
+        endedAt: attempt.endedAt
+      })
+    }
+  }
+  return [...completions.values()].sort(
+    (left, right) =>
+      left.endedAt - right.endedAt ||
+      left.frameId.localeCompare(right.frameId) ||
+      left.attemptId.localeCompare(right.attemptId)
+  )
+}
+
 const latestAttempt = (
   session: PersistedChatSession,
   frameId: string
@@ -248,6 +304,7 @@ export {
   projectInlineParentMessages,
   projectDelegatedQuestionQueue,
   projectSessionSubagents,
+  projectSubagentCompletions,
   resolveActiveRootMessageIds,
   selectSubagentFrame
 }
@@ -256,5 +313,6 @@ export type {
   SessionSubagentChild,
   SessionSubagentProjection,
   SubagentFrameProjection,
+  SubagentCompletionProjection,
   SubagentRawStatus
 }

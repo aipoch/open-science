@@ -129,6 +129,40 @@ const stopped = (
   }
 })
 
+it.each(['stop', 'error'] as const)(
+  'commits %s against its captured settlement Segment before releasing the interaction',
+  async (kind) => {
+    const harness = createHarness()
+    harness.interactions.updatePromptProvenance(harness.interaction, {
+      promptMessageId: 'prompt-1',
+      runtimeSegmentId: 'settlement-execution-1'
+    })
+    harness.handles.commitTerminal = vi.fn(async (event) => {
+      expect(harness.interactions.current('s1')).toBe(harness.interaction)
+      harness.events.push(event)
+    })
+    harness.handles.emitArtifact = vi.fn(async (onPublished) => {
+      harness.interactions.updatePromptProvenance(harness.interaction, {
+        promptMessageId: 'prompt-1',
+        runtimeSegmentId: 'settlement-later-metadata'
+      })
+      onPublished()
+    })
+    const failure = new Error('provider failed')
+    const outcome = kind === 'stop' ? stopped() : { kind: 'failed' as const, error: failure }
+    if (kind === 'stop') harness.interactions.captureTerminal(harness.interaction, 'stop')
+    const completion = new AcpPromptOutcomeFinalizer().finalize(harness.handles, outcome)
+    if (kind === 'stop') await completion
+    else await expect(completion).rejects.toBe(failure)
+    expect(harness.events[0]).toMatchObject({
+      kind,
+      promptMessageId: 'prompt-1',
+      runtimeSegmentId: 'settlement-execution-1'
+    })
+    expect(harness.interactions.current('s1')).toBeUndefined()
+  }
+)
+
 describe('AcpPromptOutcomeFinalizer', () => {
   it('starts terminal retries only after releasing interaction and the admission callback', async () => {
     const h = createHarness()
@@ -226,6 +260,130 @@ describe('AcpPromptOutcomeFinalizer', () => {
       expect(harness.handles.skill.close).toHaveBeenCalledWith(fatal ? 'failed' : 'cancelled')
     }
   )
+
+  it('keeps settlement execution usage and model call identities separate from the source Main turn', async () => {
+    const finalizer = new AcpPromptOutcomeFinalizer()
+    const turns = [createHarness(), createHarness(), createHarness()]
+    const outcomes: AcpPromptFinalizationOutcome[] = [
+      stopped(),
+      {
+        kind: 'stopped',
+        response: { stopReason: 'end_turn' },
+        facts: {
+          turnUsage: { inputTokens: 6, cacheTokens: 3, outputTokens: 4 },
+          modelTurnCount: 1,
+          modelCalls: [
+            {
+              sourceInvocationId: 'settlement-call-1',
+              inputTokens: 6,
+              cacheTokens: 3,
+              outputTokens: 4
+            }
+          ]
+        }
+      },
+      {
+        kind: 'stopped',
+        response: { stopReason: 'end_turn' },
+        facts: {
+          turnUsage: { inputTokens: 7, cacheTokens: 2, outputTokens: 5 },
+          modelTurnCount: 1,
+          modelCalls: [
+            {
+              sourceInvocationId: 'settlement-call-2',
+              inputTokens: 7,
+              cacheTokens: 2,
+              outputTokens: 5
+            }
+          ]
+        }
+      }
+    ]
+    for (const [index, turn] of turns.entries()) {
+      if (index > 0) {
+        turn.interactions.updatePromptProvenance(turn.interaction, {
+          promptMessageId: 'prompt-1',
+          runtimeSegmentId: `settlement-execution-${index}`
+        })
+        turn.handles.emitArtifact = vi.fn(async (onPublished) => {
+          turn.interactions.updatePromptProvenance(turn.interaction, {
+            promptMessageId: 'prompt-1',
+            runtimeSegmentId: 'settlement-later-metadata'
+          })
+          onPublished()
+        })
+      }
+      expect(turn.interactions.captureTerminal(turn.interaction, 'stop')).toBe(true)
+      await finalizer.finalize(turn.handles, outcomes[index])
+    }
+    const events = turns.map(({ events }) => events[0])
+    expect.soft(events.map(({ turnUsage }) => turnUsage)).toEqual([
+      { inputTokens: 10, cacheTokens: 2, outputTokens: 3, turnCount: 4 },
+      { inputTokens: 6, cacheTokens: 3, outputTokens: 4, turnCount: 1 },
+      { inputTokens: 7, cacheTokens: 2, outputTokens: 5, turnCount: 1 }
+    ])
+    expect
+      .soft(events.map(({ modelCallUsage }) => modelCallUsage?.map(({ id }) => id)))
+      .toEqual([
+        [
+          'prompt-1:model-call:0',
+          'prompt-1:model-call:1',
+          'prompt-1:model-call:2',
+          'prompt-1:model-call:3'
+        ],
+        ['["prompt-1","settlement-execution-1"]:model-call:0'],
+        ['["prompt-1","settlement-execution-2"]:model-call:0']
+      ])
+    const ids = events.flatMap(({ modelCallUsage }) => modelCallUsage?.map(({ id }) => id) ?? [])
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('continues accumulating usage for ordinary detached ask-user and permission replies to the same prompt', async () => {
+    const finalizer = new AcpPromptOutcomeFinalizer()
+    const first = createHarness()
+    const continuation = createHarness()
+    continuation.interactions.updatePromptProvenance(continuation.interaction, {
+      promptMessageId: 'prompt-1',
+      runtimeSegmentId: 'ordinary-resumed-segment'
+    })
+    first.interactions.captureTerminal(first.interaction, 'stop')
+    continuation.interactions.captureTerminal(continuation.interaction, 'stop')
+    await finalizer.finalize(first.handles, stopped())
+    await finalizer.finalize(continuation.handles, {
+      kind: 'stopped',
+      response: { stopReason: 'end_turn' },
+      facts: {
+        turnUsage: { inputTokens: 6, cacheTokens: 3, outputTokens: 4 },
+        modelTurnCount: 1,
+        modelCalls: [
+          { sourceInvocationId: 'reply-call', inputTokens: 6, cacheTokens: 3, outputTokens: 4 }
+        ]
+      }
+    })
+    expect(continuation.events[0].turnUsage).toEqual({
+      inputTokens: 16,
+      cacheTokens: 5,
+      outputTokens: 7,
+      turnCount: 5
+    })
+    expect(continuation.events[0].modelCallUsage?.map(({ id }) => id)).toEqual([
+      'prompt-1:model-call:0',
+      'prompt-1:model-call:1',
+      'prompt-1:model-call:2',
+      'prompt-1:model-call:3',
+      'prompt-1:model-call:4'
+    ])
+    expect(continuation.events[0].modelCallUsage?.at(-1)).toMatchObject({
+      sourceInvocationId: 'reply-call',
+      index: 4
+    })
+    expect(first.events[0].turnUsage).toEqual({
+      inputTokens: 10,
+      cacheTokens: 2,
+      outputTokens: 3,
+      turnCount: 4
+    })
+  })
 
   it('sequences provider facts, context, Artifact, stop publication, and cleanup', async () => {
     const harness = createHarness({ now: () => 1234 })

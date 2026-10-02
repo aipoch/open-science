@@ -1,3 +1,4 @@
+import type { SettlementAdmission } from '../runtime-session-admission'
 import { sanitizePromptPreparation, resolvePreparationNoticeBaseline } from './prompt-preparation'
 import {
   type PersistedSessionStatus,
@@ -70,6 +71,73 @@ const asSessionStatus = (value: unknown): PersistedSessionStatus => {
   const status = asString(value) as PersistedSessionStatus | undefined
 
   return status && SESSION_STATUSES.has(status) ? status : 'idle'
+}
+
+const sanitizeSettlementWitness = (
+  value: unknown
+): PersistedRuntimeSessionAdmission['settlement'] | undefined => {
+  if (
+    !isRecord(value) ||
+    !hasOnlyFields(value, ['admission', 'stage', 'runStartedAt']) ||
+    !isRecord(value.admission) ||
+    typeof value.stage !== 'string' ||
+    !['admitted', 'not-dispatched', 'dispatching', 'accepted', 'terminal'].includes(value.stage) ||
+    typeof value.runStartedAt !== 'number' ||
+    !Number.isFinite(value.runStartedAt) ||
+    value.runStartedAt < 0
+  )
+    return undefined
+  const identityKeys = [
+    'batchId',
+    'projectId',
+    'sessionId',
+    'rootFrameId',
+    'originatingPromptId',
+    'rootBranchId',
+    'rootBranchRevision',
+    'promptRuntimeSegmentId'
+  ] as const
+  const raw = value.admission
+  if (
+    !hasOnlyFields(raw, [...identityKeys, 'items']) ||
+    !identityKeys.every(
+      (key) => typeof raw[key] === 'string' && raw[key].length > 0 && raw[key].length <= 512
+    ) ||
+    !Array.isArray(raw.items) ||
+    !raw.items.length
+  )
+    return undefined
+  const seen = new Set<string>()
+  for (const item of raw.items) {
+    if (
+      !isRecord(item) ||
+      !hasOnlyFields(item, ['frameId', 'attemptId', 'status']) ||
+      !['frameId', 'attemptId'].every(
+        (key) => typeof item[key] === 'string' && item[key].length > 0 && item[key].length <= 256
+      ) ||
+      typeof item.status !== 'string' ||
+      !['completed', 'cancelled', 'error'].includes(item.status)
+    )
+      return undefined
+    const key = `${item.frameId}\0${item.attemptId}`
+    if (seen.has(key)) return undefined
+    seen.add(key)
+  }
+  return {
+    admission: {
+      batchId: asString(raw.batchId)!,
+      projectId: asString(raw.projectId)!,
+      sessionId: asString(raw.sessionId)!,
+      rootFrameId: asString(raw.rootFrameId)!,
+      originatingPromptId: asString(raw.originatingPromptId)!,
+      rootBranchId: asString(raw.rootBranchId)!,
+      rootBranchRevision: asString(raw.rootBranchRevision)!,
+      promptRuntimeSegmentId: asString(raw.promptRuntimeSegmentId)!,
+      items: raw.items.map(({ frameId, attemptId, status }) => ({ frameId, attemptId, status }))
+    },
+    stage: value.stage as NonNullable<PersistedRuntimeSessionAdmission['settlement']>['stage'],
+    runStartedAt: value.runStartedAt
+  }
 }
 
 // Keeps the active run pointer only when both its message id and timestamp are valid.
@@ -293,9 +361,16 @@ export const sanitizeSession = (
       }
     }
     sanitized.runtimeTranscriptLastRun = sanitizeActiveRun(session.runtimeTranscriptLastRun)
+    if (session.runtimeSessionAdmissionsQuarantine !== undefined)
+      sanitized.runtimeSessionAdmissionsQuarantine = structuredClone(
+        session.runtimeSessionAdmissionsQuarantine
+      )
     if (Array.isArray(session.runtimeSessionAdmissions)) {
       const admissions = new Map<string, PersistedRuntimeSessionAdmission>()
       const conflicts = new Set<string>()
+      const malformedSettlements: unknown[] = []
+      const batchAdmissions = new Map<string, SettlementAdmission>()
+      const batchConflicts = new Set<string>()
       const keys = [
         'executionId',
         'promptMessageId',
@@ -312,20 +387,73 @@ export const sanitizeSession = (
             (key) =>
               typeof value[key] === 'string' && value[key].length > 0 && value[key].length <= 256
           )
-        )
+        ) {
+          if (isRecord(value) && value.settlement !== undefined)
+            malformedSettlements.push(structuredClone(value))
           continue
+        }
         const admission = Object.fromEntries(
           keys.map((key) => [key, value[key]])
         ) as PersistedRuntimeSessionAdmission
+        if (value.settlement !== undefined) {
+          const witness = sanitizeSettlementWitness(value.settlement)
+          if (
+            !witness ||
+            witness.admission.projectId !== sanitized.projectId ||
+            witness.admission.sessionId !== sanitized.id ||
+            witness.admission.rootFrameId !== admission.rootFrameId ||
+            admission.agentFrameId !== admission.rootFrameId ||
+            witness.admission.originatingPromptId !== admission.promptMessageId ||
+            witness.admission.rootBranchId !== admission.messageBranchId ||
+            witness.admission.promptRuntimeSegmentId !== admission.promptRuntimeSegmentId ||
+            admission.runtimeSegmentId !== `settlement-${admission.executionId}`
+          ) {
+            malformedSettlements.push(structuredClone(value))
+            continue
+          }
+          admission.settlement = witness
+          const previousBatch = batchAdmissions.get(witness.admission.batchId)
+          if (previousBatch && JSON.stringify(previousBatch) !== JSON.stringify(witness.admission))
+            batchConflicts.add(witness.admission.batchId)
+          batchAdmissions.set(witness.admission.batchId, witness.admission)
+        }
         const previous = admissions.get(admission.executionId)
-        if (previous && keys.some((key) => previous[key] !== admission[key]))
+        if (
+          previous &&
+          (keys.some((key) => previous[key] !== admission[key]) ||
+            JSON.stringify(previous.settlement) !== JSON.stringify(admission.settlement))
+        ) {
           conflicts.add(admission.executionId)
+          if (previous.settlement || admission.settlement)
+            malformedSettlements.push(structuredClone(value), previous)
+        }
         admissions.set(admission.executionId, admission)
       }
-      sanitized.runtimeSessionAdmissions = [...admissions.values()].filter(
-        ({ executionId }) => !conflicts.has(executionId)
-      )
+      sanitized.runtimeSessionAdmissions = [...admissions.values()].filter((entry) => {
+        if (entry.settlement && batchConflicts.has(entry.settlement.admission.batchId)) {
+          malformedSettlements.push(entry)
+          return false
+        }
+        return !conflicts.has(entry.executionId)
+      })
+      if (malformedSettlements.length)
+        sanitized.runtimeSessionAdmissionsQuarantine = {
+          ...(session.runtimeSessionAdmissionsQuarantine === undefined
+            ? {}
+            : { previous: structuredClone(session.runtimeSessionAdmissionsQuarantine) }),
+          entries: malformedSettlements
+        }
     }
+    if (
+      session.runtimeSessionAdmissions !== undefined &&
+      !Array.isArray(session.runtimeSessionAdmissions)
+    )
+      sanitized.runtimeSessionAdmissionsQuarantine = {
+        ...(session.runtimeSessionAdmissionsQuarantine === undefined
+          ? {}
+          : { previous: structuredClone(session.runtimeSessionAdmissionsQuarantine) }),
+        entries: structuredClone(session.runtimeSessionAdmissions)
+      }
     if (Array.isArray(session.runtimeConversationCommandIds)) {
       sanitized.runtimeConversationCommandIds = session.runtimeConversationCommandIds
         .filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 256)

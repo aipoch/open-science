@@ -24,6 +24,10 @@ import type {
   AcpStateUpdate
 } from '../../shared/acp'
 import type { AcpHandoffFailure } from '../../shared/acp'
+import {
+  SettlementAdmissionError,
+  type SettlementAdmission
+} from '../../shared/runtime-session-admission'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { MessageAttribution } from '../../shared/session-persistence'
@@ -129,6 +133,7 @@ type PendingResumeReconciliation = {
 }
 
 type RootAdmissionLease = {
+  cancelPending: () => void
   release: () => void
 }
 
@@ -1056,7 +1061,10 @@ class AcpRuntimeCoordinator {
 
   sendAppContinuationObserved(
     request: AcpPromptRequest,
-    onProviderPromptAccepted: () => void
+    onProviderPromptAccepted: () => void,
+    settlementAdmission?: SettlementAdmission,
+    validate?: () => void,
+    prepare?: () => Promise<void>
   ): ReturnType<AcpRuntime['sendAppContinuation']> {
     return this.linearizeRootAdmission(request.sessionId, (cancellation) =>
       this.dispatchPrompt(
@@ -1070,7 +1078,24 @@ class AcpRuntimeCoordinator {
         undefined,
         'renderer',
         undefined,
-        cancellation
+        cancellation,
+        settlementAdmission,
+        async () => {
+          validate?.()
+          cancellation.throwIfCancelled()
+          if (!prepare) return
+          try {
+            await prepare()
+          } catch (error) {
+            if (error instanceof SettlementAdmissionError) throw error
+            throw new DelegateMessagePreAcceptanceError(
+              'Continuation Session preparation failed.',
+              error
+            )
+          }
+          cancellation.throwIfCancelled()
+          validate?.()
+        }
       )
     )
   }
@@ -1105,6 +1130,11 @@ class AcpRuntimeCoordinator {
     })
     let released = false
     const lease: RootAdmissionLease = {
+      // Stop invalidates only this admission, leaving later queued user turns intact. Running
+      // provider calls still settle through their normal cancellation/terminal callbacks.
+      cancelPending: () => {
+        cancellation.cancelled = true
+      },
       release: () => {
         if (released) return
         released = true
@@ -1315,10 +1345,12 @@ class AcpRuntimeCoordinator {
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
     startAdmission?: PromptAcceptance,
-    cancellation?: RootAdmissionCancellation
+    cancellation?: RootAdmissionCancellation,
+    settlementAdmission?: SettlementAdmission,
+    beforeDispatch?: () => Promise<void>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     let dispatchStarted = false
-    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> => {
+    const start = (): ReturnType<AcpRuntime['sendPrompt']> => {
       cancellation?.throwIfCancelled()
       dispatchStarted = true
       return this.dispatchAdmittedPrompt(
@@ -1333,15 +1365,24 @@ class AcpRuntimeCoordinator {
         runtimeReviewOwner,
         startAdmission,
         undefined,
-        cancellation
+        cancellation,
+        settlementAdmission
       )
     }
+    // Session restoration participates in the same deletion guard as provider dispatch.
+    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
+      beforeDispatch ? beforeDispatch().then(start) : start()
     if (!this.promptDispatchAdmissionGuard) return dispatch()
-    const guarded = this.promptDispatchAdmissionGuard(
-      request.sessionId,
-      dispatch,
-      operation === 'sendPrompt'
-    )
+    let guarded: ReturnType<AcpRuntime['sendPrompt']>
+    try {
+      guarded = this.promptDispatchAdmissionGuard(
+        request.sessionId,
+        dispatch,
+        operation === 'sendPrompt'
+      )
+    } catch (error) {
+      guarded = Promise.reject(error)
+    }
     return Promise.race([
       guarded,
       cancellation?.promise ?? new Promise<never>(() => undefined)
@@ -1351,7 +1392,15 @@ class AcpRuntimeCoordinator {
           throw error
         })
       }
-      if (error instanceof DelegateMessagePreAcceptanceError) throw error
+      if (
+        dispatchStarted ||
+        error instanceof DelegateMessagePreAcceptanceError ||
+        error instanceof SettlementAdmissionError
+      )
+        throw error
+      if (settlementAdmission) {
+        throw new SettlementAdmissionError('dispatch-guard-rejected', 'retry', error)
+      }
       throw new DelegateMessagePreAcceptanceError(
         error instanceof Error ? error.message : String(error),
         error
@@ -1371,7 +1420,8 @@ class AcpRuntimeCoordinator {
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
     startAdmission?: PromptAcceptance,
     delegatedMessageId?: string,
-    cancellation?: RootAdmissionCancellation
+    cancellation?: RootAdmissionCancellation,
+    settlementAdmission?: SettlementAdmission
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const origin =
@@ -1383,7 +1433,9 @@ class AcpRuntimeCoordinator {
     }
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
     if (!pinnedRuntime && owner && this.retiredRuntimes.has(owner)) {
-      return Promise.reject(new Error('ACP session must resume before sending a prompt'))
+      return Promise.reject(
+        new DelegateMessagePreAcceptanceError('ACP session must resume before sending a prompt')
+      )
     }
 
     const runtime = owner ?? this.getActiveRuntime()
@@ -1467,6 +1519,16 @@ class AcpRuntimeCoordinator {
         return admitPrompt
           ? runtime.sendPrompt(taskRequest, attempt.id, admitPrompt)
           : runtime.sendPrompt(taskRequest, attempt.id)
+      }
+      if (settlementAdmission) {
+        return runtime.sendAppContinuation(
+          taskRequest,
+          attempt.id,
+          undefined,
+          undefined,
+          undefined,
+          settlementAdmission
+        )
       }
       return delegatedMessageId
         ? runtime.sendAppContinuation(taskRequest, attempt.id, undefined, delegatedMessageId)
@@ -1554,6 +1616,7 @@ class AcpRuntimeCoordinator {
     const initiatingTurnMessageId = this.activePromptRequests.get(request.sessionId)?.request
       .provenanceContext?.promptMessageId
     const cancelledAdmission = this.activeRootAdmissions.get(request.sessionId)
+    cancelledAdmission?.cancelPending()
     // Production delegated-work establishes its admission fence synchronously before this call
     // returns a Promise. Keep the pinned child stops in flight so a cleanup failure cannot prevent
     // the root Attempt from being invalidated and cancelled.
@@ -1576,6 +1639,7 @@ class AcpRuntimeCoordinator {
     // Supersede the old turn exactly like user cancellation, but do not emit the user-generation
     // cancellation callback: that callback marks the approved handoff itself cancelled.
     const cancelledAdmission = this.activeRootAdmissions.get(sessionId)
+    cancelledAdmission?.cancelPending()
     this.invalidateSessionTurn(sessionId, false)
     await this.runtimeForSession(sessionId).cancelPrompt({ sessionId })
     cancelledAdmission?.release()

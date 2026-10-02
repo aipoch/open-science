@@ -6,6 +6,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import JSZip from 'jszip'
 import { utils as spreadsheetUtils, write as writeSpreadsheet } from 'styled-exceljs'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
 import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
@@ -58,6 +59,13 @@ const createPreviewContextMenuXlsxBase64 = async () => {
   return archive.generateAsync({ type: 'base64', compression: 'DEFLATE' })
 }
 const DELEGATION_TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
+const DELEGATION_SETTLEMENT_PROMPT = 'Run the production idle Main settlement journey.'
+const DELEGATED_SETTLEMENT_TASK = 'Complete the file-gated settlement evidence.'
+const DELEGATED_SETTLEMENT_NAME = 'Idle Main settlement child'
+const DELEGATION_PROGRESS_PROMPT = 'Wait for three file-gated Subagents and report progress.'
+const DELEGATED_PROGRESS_TASK = 'Complete one file-gated progress task.'
+const SETTLEMENT_CONTROL_MARKER =
+  'Delegated work settlement update (application-owned context, not a user message).'
 const DELEGATION_ARTIFACT_VERSION_INPUT_PROMPT =
   'Run the production Artifact Version input delegation journey.'
 const DELEGATION_BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
@@ -509,12 +517,19 @@ const captureDelegatedHandoff = async (sessionId, task) => {
 const captureProviderPrompt = async (sessionId, prompt) => {
   const captureRoot = process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT
   if (!captureRoot) return
+  const route = sessionRoutes.get(sessionId)
+  const handoff = route?.artifactCurrentRunFile
+    ? await readFile(route.artifactCurrentRunFile, 'utf8').then((content) => JSON.parse(content))
+    : undefined
+  // Main settlement executions also use scoped handoffs. Frame identity determines the role.
+  const role =
+    handoff?.agentFrameId && handoff.agentFrameId !== handoff.rootFrameId ? 'delegate' : 'main'
   await mkdir(captureRoot, { recursive: true })
   await appendFile(
     join(captureRoot, 'provider-prompts.jsonl'),
     `${JSON.stringify({
       sessionId,
-      role: sessionRoutes.get(sessionId)?.artifactCurrentRunFile ? 'delegate' : 'main',
+      role,
       prompt
     })}\n`,
     'utf8'
@@ -1246,6 +1261,38 @@ if (process.argv.includes('--version')) {
   process.stdout.write(`${VERSION}\n`)
 } else {
   assertValidModelLimits()
+  const usageHistory = new Map()
+  const usagePortIndex = process.argv.indexOf('--port')
+  const usageHostIndex = process.argv.indexOf('--hostname')
+  const usageServer =
+    usagePortIndex < 0
+      ? undefined
+      : createServer((request, response) => {
+          const authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
+          if (request.headers.authorization !== authorization) {
+            response.writeHead(401).end()
+            return
+          }
+          const pathname = new URL(request.url, 'http://localhost').pathname
+          const sessionId = pathname.match(/^\/session\/([^/]+)\/message$/u)?.[1]
+          if (request.method !== 'GET' || !sessionId) {
+            response.writeHead(404).end()
+            return
+          }
+          response
+            .writeHead(200, { 'content-type': 'application/json' })
+            .end(JSON.stringify(usageHistory.get(decodeURIComponent(sessionId)) ?? []))
+        })
+  if (usageServer) {
+    await new Promise((resolve, reject) => {
+      usageServer.once('error', reject)
+      usageServer.listen(
+        Number(process.argv[usagePortIndex + 1]),
+        usageHostIndex < 0 ? '127.0.0.1' : process.argv[usageHostIndex + 1],
+        resolve
+      )
+    })
+  }
   // OpenCode Sessions can run in separate processes. Keep their Session, message, and tool-call
   // identities distinct across processes, including after the app restarts.
   const fixtureInstanceId = `${randomUUID()}-`
@@ -1297,6 +1344,7 @@ if (process.argv.includes('--version')) {
       // delegate task text wins the first matching branch and the continuation starts a duplicate
       // child instead of handling the delivered message.
       const controlStart = Math.max(
+        rawPrompt.lastIndexOf(SETTLEMENT_CONTROL_MARKER),
         ...RELIABLE_CONTROL_MARKERS.map((marker) => rawPrompt.lastIndexOf(marker))
       )
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
@@ -2315,6 +2363,71 @@ if (process.argv.includes('--version')) {
           reply = await createPreviewContextMenuArtifacts(context.params.sessionId)
         } else if (prompt.includes(SPREADSHEET_SEARCH_ARTIFACT_PROMPT)) {
           reply = await createSpreadsheetSearchArtifacts(context.params.sessionId)
+        } else if (
+          prompt.includes(SETTLEMENT_CONTROL_MARKER) &&
+          prompt.includes(DELEGATED_SETTLEMENT_NAME)
+        ) {
+          const handle = prompt.match(/frame=([^;\n]+); attempt=([^;\n]+); status=completed/u)
+          if (!handle) throw new Error('Settlement did not include the exact completed handle.')
+          const results = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `return await host.collect([{ frameId: ${JSON.stringify(handle[1])}, attemptId: ${JSON.stringify(handle[2])} }], { timeoutSeconds: 0 })`
+            )
+          )
+          if (
+            results.length !== 1 ||
+            results[0].status !== 'completed' ||
+            results[0].response !== 'File-gated child evidence completed.'
+          ) {
+            throw new Error(`Settlement collect failed: ${JSON.stringify(results)}`)
+          }
+          reply = 'Main collected the completed file-gated child evidence after its idle turn.'
+        } else if (prompt.includes(SETTLEMENT_CONTROL_MARKER)) {
+          // Other journeys collect on their own schedule. A settled child's display name can
+          // repeat a task-routing marker; acknowledge the update without executing that task.
+          reply = 'Delegated settlement observed.'
+        } else if (prompt.includes(DELEGATION_PROGRESS_PROMPT)) {
+          const releaseFiles = JSON.parse(prompt.split('Release files: ')[1])
+          const delegated = controlResultValue(
+            await runProductionDelegationRequest(
+              context.params.sessionId,
+              releaseFiles.map((releaseFile, index) => ({
+                task: `${DELEGATED_PROGRESS_TASK}\nRelease file: ${JSON.stringify(releaseFile)}`,
+                name: `Progress child ${index + 1}`
+              })),
+              true
+            )
+          )
+          if (
+            delegated.children?.length !== 3 ||
+            delegated.children.some(({ status }) => status !== 'completed')
+          ) {
+            throw new Error(`Progress delegation failed: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Main collected all three progress results.'
+        } else if (prompt.includes(DELEGATED_PROGRESS_TASK)) {
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]), 120_000)
+          reply = 'File-gated progress result.'
+        } else if (prompt.includes(DELEGATION_SETTLEMENT_PROMPT)) {
+          const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
+          const delegated = controlResultValue(
+            await runProductionDelegationRequest(
+              context.params.sessionId,
+              {
+                task: `${DELEGATED_SETTLEMENT_TASK}\nRelease file: ${JSON.stringify(releaseFile)}`,
+                name: DELEGATED_SETTLEMENT_NAME
+              },
+              false
+            )
+          )
+          if (delegated.kind !== 'receipts' || delegated.children?.[0]?.status !== 'running') {
+            throw new Error(`Async settlement delegation failed: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Main ended its turn while the file-gated child remained running.'
+        } else if (prompt.includes(DELEGATED_SETTLEMENT_TASK)) {
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]), 120_000)
+          reply = 'File-gated child evidence completed.'
         } else if (prompt.includes(DELEGATION_TERMINAL_PROMPT)) {
           const delegated = await runProductionDelegation(
             context.params.sessionId,
@@ -2916,6 +3029,25 @@ if (process.argv.includes('--version')) {
         }
       })
 
+      // Only this journey reports usage. Other fixture turns retain an empty snapshot delta.
+      const settlementUsage =
+        reply === 'Main ended its turn while the file-gated child remained running.'
+          ? { input: 11, output: 3 }
+          : reply === 'Main collected the completed file-gated child evidence after its idle turn.'
+            ? { input: 17, output: 5 }
+            : undefined
+      if (settlementUsage) {
+        const history = usageHistory.get(context.params.sessionId) ?? []
+        history.push({
+          info: {
+            id: replyMessageId,
+            role: 'assistant',
+            tokens: { ...settlementUsage, cache: { read: 0, write: 0 } }
+          }
+        })
+        usageHistory.set(context.params.sessionId, history)
+      }
+
       return { stopReason: 'end_turn' }
     })
     .onNotification(acp.methods.agent.session.cancel, (context) => {
@@ -2929,4 +3061,5 @@ if (process.argv.includes('--version')) {
     acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
   )
   await connection.closed
+  if (usageServer) await new Promise((resolve) => usageServer.close(resolve))
 }

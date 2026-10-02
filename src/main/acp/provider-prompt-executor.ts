@@ -31,6 +31,7 @@ type ProviderPromptExecutionInput = Readonly<{
   isCurrent: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
   captureStop: () => boolean
+  beforeProviderCall?: () => Promise<void | 'active' | 'cancelled'>
   onDispatched?: () => void
   onAccepted: () => void | Promise<void>
   routeNotification: (notification: SessionNotification) => void
@@ -256,6 +257,11 @@ class AcpProviderPromptExecutor {
         return Object.freeze({ kind: 'not-dispatched' })
       }
 
+      const providerBoundary = await input.beforeProviderCall?.()
+      if (providerBoundary === 'cancelled' || !input.isCurrent()) {
+        await cancelProbe()
+        return Object.freeze({ kind: 'not-dispatched' })
+      }
       let promptRequest: Promise<unknown>
       try {
         promptRequest = input.session.prompt(input.content)

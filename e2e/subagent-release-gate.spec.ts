@@ -5,6 +5,7 @@ import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { applySessionConversationCommands } from '../src/shared/session-conversation-command'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../src/shared/acp'
 
 import {
   createProject,
@@ -18,6 +19,12 @@ import { retrySessionRevisionConflict } from './fixtures/session-revision-retry'
 const ROOT_PROMPT = 'Coordinate the release-gate delegates.'
 const CHILD_COUNT = 24
 const TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
+const SETTLEMENT_PROMPT = 'Run the production idle Main settlement journey.'
+const SETTLEMENT_CHILD = 'Idle Main settlement child'
+const SETTLEMENT_INITIAL_ANSWER = 'Main ended its turn while the file-gated child remained running.'
+const SETTLEMENT_FINAL_ANSWER =
+  'Main collected the completed file-gated child evidence after its idle turn.'
+const PROGRESS_PROMPT = 'Wait for three file-gated Subagents and report progress.'
 const ARTIFACT_VERSION_INPUT_PROMPT =
   'Run the production Artifact Version input delegation journey.'
 const BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
@@ -690,6 +697,247 @@ test('resolves a bare Artifact version_id into a delegated read-only input', asy
   expect(evidence?.artifactVersions[0]).toMatch(/^[0-9a-f-]{36}$/)
 })
 
+test('wakes durable idle Main through production settlement admission and collects its child', async ({
+  app
+}) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  await createProject(page, 'Idle Main settlement release gate')
+  const releaseFile = join(await app.createTestDirectory('idle-main-settlement'), 'release')
+  const prompt = `${SETTLEMENT_PROMPT}\nRelease file: ${JSON.stringify(releaseFile)}`
+  try {
+    await sendPrompt(page, prompt, SETTLEMENT_INITIAL_ANSWER, 120_000)
+    await expectDurableChildStatus(page, SETTLEMENT_CHILD, 'running')
+    const readEvidence = async (): Promise<
+      | {
+          sessionId: string
+          status: PersistedChatSession['status']
+          activeRun: PersistedChatSession['activeRun']
+          frameId: string
+          attemptId: string | undefined
+          childStatus: string | undefined
+          originSegmentId: string | undefined
+          rootUsers: string[]
+          rootAnswers: {
+            content: string
+            status: string
+            segmentId: string | undefined
+            turnUsage: AcpTurnTokenUsage | undefined
+            modelCallUsage: AcpModelCallUsage[] | undefined
+          }[]
+        }
+      | undefined
+    > =>
+      page.evaluate(
+        async ({ childName, prompt }) => {
+          const session = (await window.api.sessions.loadAll()).sessions.find((candidate) =>
+            candidate.conversationGraph?.frames.some((frame) => frame.delegateName === childName)
+          )
+          if (!session) return undefined
+          const graph = session.conversationGraph!
+          const origin = graph.messages.find(
+            (message) => message.role === 'user' && message.content === prompt
+          )
+          const child = graph.frames.find((frame) => frame.delegateName === childName)!
+          const attempt = session.runtimeContext?.delegatedWork?.records
+            .find((record) => record.agentFrameId === child.id)
+            ?.attempts.at(-1)
+          return {
+            sessionId: session.id,
+            status: session.status,
+            activeRun: session.activeRun,
+            frameId: child.id,
+            attemptId: attempt?.id,
+            childStatus: attempt?.status,
+            originSegmentId: origin?.runtimeSegmentId,
+            rootUsers: graph.messages
+              .filter(
+                (message) => message.agentFrameId === graph.rootFrameId && message.role === 'user'
+              )
+              .map((message) => message.content),
+            rootAnswers: graph.messages
+              .filter(
+                (message) => message.agentFrameId === graph.rootFrameId && message.role === 'agent'
+              )
+              .map((message) => ({
+                content: message.content,
+                status: message.status,
+                segmentId: message.runtimeSegmentId,
+                turnUsage: message.turnUsage,
+                modelCallUsage: message.modelCallUsage
+              }))
+          }
+        },
+        { childName: SETTLEMENT_CHILD, prompt }
+      )
+    await expect.poll(readEvidence).toMatchObject({
+      status: 'idle',
+      activeRun: undefined,
+      childStatus: 'running',
+      rootAnswers: [{ content: SETTLEMENT_INITIAL_ANSWER, status: 'complete' }]
+    })
+    const idle = (await readEvidence())!
+    expect(idle.rootAnswers[0].turnUsage).toMatchObject({
+      inputTokens: 11,
+      cacheTokens: 0,
+      outputTokens: 3,
+      turnCount: 1
+    })
+    expect(idle.rootAnswers[0].modelCallUsage).toMatchObject([
+      { inputTokens: 11, cacheTokens: 0, outputTokens: 3 }
+    ])
+    expect(idle.originSegmentId).toBeDefined()
+    expect(
+      (await app.readFakeAgentPrompts()).filter(
+        ({ role, sessionId }) => role === 'main' && sessionId === idle.sessionId
+      )
+    ).toHaveLength(1)
+
+    await writeFile(releaseFile, '')
+    await expectDurableChildStatus(page, SETTLEMENT_CHILD, 'completed')
+    await expect
+      .poll(async () =>
+        (await app.readFakeAgentPrompts()).filter(
+          ({ role, sessionId, prompt }) =>
+            role === 'main' &&
+            sessionId === idle.sessionId &&
+            prompt.includes('Delegated work settlement update')
+        )
+      )
+      .toHaveLength(1)
+    const settlementPrompt = (await app.readFakeAgentPrompts()).find(
+      ({ role, sessionId, prompt }) =>
+        role === 'main' &&
+        sessionId === idle.sessionId &&
+        prompt.includes('Delegated work settlement update')
+    )!.prompt
+    expect(settlementPrompt).toContain(
+      `frame=${idle.frameId}; attempt=${idle.attemptId}; status=completed`
+    )
+    await expect.poll(readEvidence).toMatchObject({
+      status: 'idle',
+      activeRun: undefined,
+      originSegmentId: idle.originSegmentId,
+      rootUsers: [prompt],
+      rootAnswers: [
+        { content: SETTLEMENT_INITIAL_ANSWER, status: 'complete' },
+        { content: SETTLEMENT_FINAL_ANSWER, status: 'complete' }
+      ]
+    })
+    const finished = (await readEvidence())!
+    expect(finished.rootAnswers[1].turnUsage).toMatchObject({
+      inputTokens: 17,
+      cacheTokens: 0,
+      outputTokens: 5,
+      turnCount: 1
+    })
+    expect(finished.rootAnswers[1].modelCallUsage).toMatchObject([
+      { inputTokens: 17, cacheTokens: 0, outputTokens: 5 }
+    ])
+    const callIds = finished.rootAnswers.flatMap((answer) =>
+      answer.modelCallUsage!.map(({ id }) => id)
+    )
+    expect(callIds).toHaveLength(2)
+    expect(new Set(callIds).size).toBe(2)
+    await expect(
+      page.getByRole('log').getByText(SETTLEMENT_FINAL_ANSWER, { exact: true })
+    ).toBeVisible()
+    await expect(page.locator('[data-agent-running="true"]')).toHaveCount(0)
+    await page
+      .getByRole('textbox', { name: 'Ask anything' })
+      .fill('Main is ready for another prompt.')
+    await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+    await page.getByRole('textbox', { name: 'Ask anything' }).fill('')
+    await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
+    expect(finished.rootAnswers[1].segmentId).not.toBe(idle.originSegmentId)
+    expect(finished.rootAnswers[1].segmentId).toBeDefined()
+    page = await app.restart()
+    await expect.poll(readEvidence).toEqual(finished)
+    expect(
+      (await app.readFakeAgentPrompts()).filter(
+        ({ role, sessionId, prompt }) =>
+          role === 'main' &&
+          sessionId === idle.sessionId &&
+          prompt.includes('Delegated work settlement update')
+      )
+    ).toHaveLength(1)
+  } finally {
+    await writeFile(releaseFile, '')
+  }
+})
+
+test('shows each completed Subagent while Main is still waiting for all three', async ({ app }) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  await createProject(page, 'Per-Subagent completion progress')
+  const directory = await app.createTestDirectory('subagent-completion-progress')
+  const releaseFiles = [1, 2, 3].map((index) => join(directory, `release-${index}`))
+  const prompt = `${PROGRESS_PROMPT}\nRelease files: ${JSON.stringify(releaseFiles)}`
+  const finalAnswer = 'Main collected all three progress results.'
+  const readRoot = async (): Promise<{ id: string; status: string; active: boolean } | undefined> =>
+    page.evaluate(async () => {
+      const session = (await window.api.sessions.loadAll()).sessions.find((session) =>
+        session.conversationGraph?.frames.some((frame) => frame.delegateName === 'Progress child 1')
+      )
+      return (
+        session && { id: session.id, status: session.status, active: Boolean(session.activeRun) }
+      )
+    })
+  try {
+    await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
+    await page.getByRole('button', { name: 'Send message', exact: true }).click()
+    for (const index of [1, 2, 3]) {
+      await expectDurableChildStatus(page, `Progress child ${index}`, 'running')
+    }
+    const root = (await readRoot())!
+    await expect(page.getByTestId('subagent-completion')).toHaveCount(0)
+    // Release independently: the first two notifications must render before the blocking
+    // Host call returns, without admitting another Main prompt or manufacturing an answer.
+    for (const index of [1, 2]) {
+      await writeFile(releaseFiles[index - 1], '')
+      await expectDurableChildStatus(page, `Progress child ${index}`, 'completed')
+      await expect(page.getByTestId('subagent-completion')).toHaveCount(index)
+      await expect(page.getByTestId('subagent-completion').nth(index - 1)).toContainText(
+        `Progress child ${index}`
+      )
+      await expect(page.getByTestId('subagent-completion').nth(index - 1)).toBeVisible()
+      await expect.poll(readRoot).toMatchObject({ status: 'running', active: true })
+      await expect(page.getByRole('log').getByText(finalAnswer, { exact: true })).toHaveCount(0)
+      expect(
+        (await app.readFakeAgentPrompts()).filter(
+          ({ role, sessionId }) => role === 'main' && sessionId === root.id
+        )
+      ).toHaveLength(1)
+    }
+    await writeFile(releaseFiles[2], '')
+    await expect(page.getByTestId('subagent-completion')).toHaveCount(3)
+    await expect(page.getByRole('log').getByText(finalAnswer, { exact: true })).toBeVisible()
+    await expect.poll(readRoot).toMatchObject({ status: 'idle', active: false })
+    const attemptIds = await page
+      .getByTestId('subagent-completion')
+      .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-attempt-id')))
+    expect(attemptIds.every(Boolean)).toBe(true)
+    expect(new Set(attemptIds).size).toBe(3)
+    page = await app.restart()
+    await openRecentSession(page, PROGRESS_PROMPT)
+    await expect(page.getByTestId('subagent-completion')).toHaveCount(3)
+    expect(
+      await page
+        .getByTestId('subagent-completion')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-attempt-id')))
+    ).toEqual(attemptIds)
+    expect(
+      (await app.readFakeAgentPrompts()).filter(
+        ({ role, sessionId }) => role === 'main' && sessionId === root.id
+      )
+    ).toHaveLength(1)
+  } finally {
+    await Promise.all(releaseFiles.map((file) => writeFile(file, '')))
+  }
+})
+
 test('projects real production-composed delegation, permission, and Stop lifecycle', async ({
   app
 }) => {
@@ -844,7 +1092,7 @@ test('routes a delegated user question through one durable card and same-Frame c
   await expectDurableChildStatus(page, USER_QUESTION_CHILD, 'completed')
   await expectDurableChildStatus(page, USER_QUESTION_CHILD_TWO, 'completed')
   await page.getByRole('button', { name: /2 subagents/ }).click()
-  await page.getByRole('button', { name: USER_QUESTION_CHILD }).click()
+  await page.getByRole('button', { name: `${USER_QUESTION_CHILD}, completed`, exact: true }).click()
   await expect(page.getByRole('region', { name: 'Subagents' })).toContainText(
     'Delegated answer continuation completed.',
     { timeout: 120_000 }
@@ -1529,7 +1777,10 @@ test('inherits a real root Specialist when profile is omitted and preserves its 
     120_000
   )
   await expectDurableChildStatus(page, INHERITED_SPECIALIST_CHILD, 'completed')
-  const inheritedChildTrigger = page.getByRole('button', { name: INHERITED_SPECIALIST_CHILD })
+  const inheritedChildTrigger = page.getByRole('button', {
+    name: INHERITED_SPECIALIST_CHILD,
+    exact: true
+  })
   await inheritedChildTrigger.click()
   const inheritedPreview = page.getByRole('region', { name: 'Subagents' })
   await expect(inheritedPreview).toContainText('Release Specialist')
@@ -1538,7 +1789,7 @@ test('inherits a real root Specialist when profile is omitted and preserves its 
 
   page = await app.restart()
   await openRecentSession(page, INHERITED_SPECIALIST_PROMPT)
-  await page.getByRole('button', { name: INHERITED_SPECIALIST_CHILD }).click()
+  await page.getByRole('button', { name: INHERITED_SPECIALIST_CHILD, exact: true }).click()
   await expect(page.getByRole('region', { name: 'Subagents' })).toContainText('Release Specialist')
 })
 

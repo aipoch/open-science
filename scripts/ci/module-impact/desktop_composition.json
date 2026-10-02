@@ -11,6 +11,7 @@
     "src/main/composition/compute-recovery.ts",
     "src/main/composition/compute.ts",
     "src/main/composition/connectors.ts",
+    "src/main/composition/delegation.test.ts",
     "src/main/composition/delegation.ts",
     "src/main/composition/desktop-utilities.ts",
     "src/main/composition/document-reading.ts",
@@ -257,6 +258,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/composition/delegation.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/app-branding.test.ts",

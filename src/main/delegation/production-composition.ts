@@ -188,6 +188,7 @@ const settlementSnapshot = (
     sessionId: session.id,
     rootFrameId: graph.rootFrameId,
     rootBranchId: rootBranch.id,
+    rootBranchRevision: `${rootBranch.id}:${rootBranch.createdAt}`,
     activeRootPromptIds: activeRootMessages.map(({ id }) => id),
     rootPromptRuntimeSegments: Object.fromEntries(
       activeRootMessages.flatMap(({ id, runtimeSegmentId }) =>
@@ -486,12 +487,31 @@ const createProductionDelegatedWorkComposition = (
             ? options.resolvePermissionPrompts?.(caller.session.sessionId)
             : caller.permissionPrompts
       }
-      return (await workFor(caller.session)).work.sendMessage(
-        caller,
-        targetFrameId,
-        message,
-        messageOptions
-      )
+      const { work } = await workFor(caller.session)
+      const result = await work.sendMessage(caller, targetFrameId, message, messageOptions)
+      if (
+        caller.role === 'main' &&
+        result.disposition === 'continued' &&
+        (!caller.rootExecutionId ||
+          (rootExecutions.get(`${caller.session.sessionId}\u0000${caller.originMessageId}`) ===
+            caller.rootExecutionId &&
+            !cancelledExecutions.has(caller.rootExecutionId)))
+      ) {
+        // The receipt identifies new work, not a collected result. Register its exact handle
+        // synchronously; the existing end-of-turn snapshot supplies the display name.
+        settlementWake?.trackUnobservedAttempts({
+          sessionId: caller.session.sessionId,
+          originatingPromptId: caller.originMessageId,
+          onlyNewAttempts: true,
+          attempts: [
+            {
+              frameId: result.target_frame_id,
+              attemptId: result.continuation_attempt_id
+            }
+          ]
+        })
+      }
+      return result
     },
     async messageReceipt(caller, selector, receiptOptions) {
       return (await workFor(caller.session)).work.messageReceipt(caller, selector, receiptOptions)

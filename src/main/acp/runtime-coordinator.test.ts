@@ -17,6 +17,11 @@ import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
 import type { ConversationPermissionGrantStore } from './permission-broker'
 import type { AgentModelChangeTarget } from '../agent-framework'
 import type { AgentFrameworkId } from '../../shared/settings'
+import {
+  SettlementAdmissionError,
+  type SettlementAdmission
+} from '../../shared/runtime-session-admission'
+import { createDelegationSettlementContinuationDispatch } from '../delegation/settlement-continuation-dispatch'
 import { DelegateMessageParkedError } from '../delegation/execution-port'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import { createProjectHandlers } from '../projects/ipc'
@@ -2546,6 +2551,112 @@ describe('AcpRuntimeCoordinator', () => {
     })
     expect(created.sendAppContinuation).not.toHaveBeenCalled()
     expect(onProviderPromptAccepted).not.toHaveBeenCalled()
+  })
+
+  it.each(['user', 'continuation', 'parent-message'] as const)(
+    'preserves ordinary downstream %s provider failures under the admission guard',
+    async (kind) => {
+      const failure = new Error('provider rejected after dispatch')
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          skipProviderPromptAccepted: true,
+          prompt: async () => {
+            throw failure
+          }
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession()
+      coordinator.setPromptDispatchAdmissionGuard((_sessionId, dispatch) => dispatch())
+      const request = { sessionId: session.sessionId, text: 'provider input' }
+      const completion =
+        kind === 'user'
+          ? coordinator.sendPrompt(request)
+          : kind === 'parent-message'
+            ? coordinator.startContinuationWhenDispatchAdmitted(
+                request,
+                async () => undefined,
+                'message-1',
+                undefined,
+                (dispatch) => dispatch()
+              )
+            : coordinator.sendAppContinuationObserved(request, vi.fn())
+      await expect(completion).rejects.toBe(failure)
+      expect(
+        kind === 'user' ? created.sendPrompt : created.sendAppContinuation
+      ).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('classifies a synchronous settlement guard rejection before dispatch', async () => {
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    coordinator.setPromptDispatchAdmissionGuard(() => {
+      throw new Error('sync guard failed')
+    })
+    const admission = {
+      batchId: 'batch-1',
+      projectId: 'project-1',
+      sessionId: session.sessionId,
+      rootFrameId: 'root-1',
+      originatingPromptId: 'prompt-1',
+      rootBranchId: 'branch-1',
+      rootBranchRevision: 'revision-1',
+      promptRuntimeSegmentId: 'segment-1',
+      items: [{ frameId: 'child-1', attemptId: 'attempt-1', status: 'completed' as const }]
+    }
+    await expect(
+      coordinator.sendAppContinuationObserved(
+        { sessionId: session.sessionId, text: 'settlement' },
+        vi.fn(),
+        admission
+      )
+    ).rejects.toMatchObject({ name: 'SettlementAdmissionError', disposition: 'retry' })
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
+  })
+
+  it('rechecks live settlement eligibility after a queued user turn completes', async () => {
+    const user = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: () => user.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    const active = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'user turn' })
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+    const validation = vi.fn(() => {
+      throw new SettlementAdmissionError('collected during user turn', 'invalidated')
+    })
+    const queued = coordinator.sendAppContinuationObserved(
+      { sessionId: session.sessionId, text: 'settlement' },
+      vi.fn(),
+      undefined,
+      validation
+    )
+    const rejected = expect(queued).rejects.toMatchObject({
+      name: 'SettlementAdmissionError',
+      disposition: 'invalidated'
+    })
+    expect(validation).not.toHaveBeenCalled()
+    user.resolve({ stopReason: 'end_turn' })
+    await active
+    await rejected
+    expect(validation).toHaveBeenCalledOnce()
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
   })
 
   it('reports completed user and application-owned root turns to delegated settlement watching', async () => {
@@ -6366,4 +6477,168 @@ it('queries Side chat interaction authority on the session owner after framework
   expect(checks[1]).toHaveBeenCalledWith(current.sessionId)
   oldPrompt.resolve({ stopReason: 'end_turn' })
   await turn
+})
+
+describe('settlement continuation Session restoration', () => {
+  const admission: SettlementAdmission = {
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    originatingPromptId: 'origin-1',
+    rootFrameId: 'root-1',
+    rootBranchId: 'branch-1',
+    rootBranchRevision: 'branch-1:1',
+    promptRuntimeSegmentId: 'segment-1',
+    batchId: 'batch-1',
+    items: [{ frameId: 'child-1', attemptId: 'attempt-1', status: 'completed' }]
+  }
+  const setup = async (): Promise<{
+    coordinator: AcpRuntimeCoordinator
+    created: ReturnType<typeof createFakeRuntime>[]
+    targets: (AcpSessionAgentTarget | undefined)[]
+  }> => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const targets: (AcpSessionAgentTarget | undefined)[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _grants, target) => {
+      targets.push(target)
+      const fake = createFakeRuntime({
+        frameworkId: 'opencode',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    await coordinator.createSession({ projectId: 'project-1' })
+    return { coordinator, created, targets }
+  }
+
+  it.each([false, true])(
+    'retains a batch rejected by a retired runtime before provider dispatch (guard=%s)',
+    async (guard) => {
+      const { coordinator, created } = await setup()
+      if (guard) coordinator.setPromptDispatchAdmissionGuard((_sessionId, dispatch) => dispatch())
+      await coordinator.requestSkillsReload()
+      const onPromptEnded = vi.fn()
+      const dispatch = createDelegationSettlementContinuationDispatch({
+        sendAppContinuationObserved: (...args) => coordinator.sendAppContinuationObserved(...args),
+        onPromptEnded
+      })
+      await expect(
+        dispatch({
+          ...admission,
+          runtimeSegmentId: admission.promptRuntimeSegmentId,
+          promptId: 'wake-1',
+          text: 'settlement update',
+          items: admission.items.map((item) => ({ ...item, name: 'child' }))
+        })
+      ).rejects.toMatchObject({ name: 'DelegateMessagePreAcceptanceError' })
+      expect(created[0].sendAppContinuation).not.toHaveBeenCalled()
+      expect(onPromptEnded).not.toHaveBeenCalled()
+    }
+  )
+
+  it('restores a retired OpenCode Session before dispatch under the root admission lease', async () => {
+    const { coordinator, created, targets } = await setup()
+    await coordinator.requestSkillsReload()
+    const agentTarget: AcpSessionAgentTarget = {
+      frameworkId: 'opencode',
+      providerId: 'saved-provider',
+      model: 'saved-model',
+      reasoningEffort: 'high'
+    }
+    let guarded = false
+    coordinator.setPromptDispatchAdmissionGuard(async (_sessionId, dispatch) => {
+      guarded = true
+      try {
+        return await dispatch()
+      } finally {
+        guarded = false
+      }
+    })
+    const accepted = vi.fn()
+    const validate = vi.fn()
+    const prepare = vi.fn(async () => {
+      expect(guarded).toBe(true)
+      await coordinator.resumeSession({
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        cwd: '/workspace',
+        agentTarget
+      })
+    })
+    await coordinator.sendAppContinuationObserved(
+      { sessionId: 'session-1', text: 'settlement update' },
+      accepted,
+      admission,
+      validate,
+      prepare
+    )
+    expect(created[0].sendAppContinuation).not.toHaveBeenCalled()
+    expect(targets[1]).toEqual(agentTarget)
+    expect(created[1].resumeSession).toHaveBeenCalledWith(expect.objectContaining({ agentTarget }))
+    expect(created[1].sendAppContinuation).toHaveBeenCalledOnce()
+    expect(created[1].resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
+      created[1].sendAppContinuation.mock.invocationCallOrder[0]
+    )
+    expect(accepted).toHaveBeenCalledOnce()
+    expect(validate).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves a preparation failure as safe to retry without entering the provider', async () => {
+    const { coordinator, created } = await setup()
+    const failure = new Error('temporary Session load failure')
+    await expect(
+      coordinator.sendAppContinuationObserved(
+        { sessionId: 'session-1', text: 'settlement update' },
+        vi.fn(),
+        admission,
+        undefined,
+        async () => {
+          throw failure
+        }
+      )
+    ).rejects.toMatchObject({ name: 'DelegateMessagePreAcceptanceError', cause: failure })
+    expect(created[0].sendAppContinuation).not.toHaveBeenCalled()
+  })
+
+  it('rechecks batch invalidation after an awaited Session restore', async () => {
+    const { coordinator, created } = await setup()
+    let invalidated = false
+    await expect(
+      coordinator.sendAppContinuationObserved(
+        { sessionId: 'session-1', text: 'settlement update' },
+        vi.fn(),
+        admission,
+        () => {
+          if (invalidated)
+            throw new SettlementAdmissionError('live-batch-invalidated', 'invalidated')
+        },
+        async () => {
+          invalidated = true
+        }
+      )
+    ).rejects.toMatchObject({ disposition: 'invalidated' })
+    expect(created[0].sendAppContinuation).not.toHaveBeenCalled()
+  })
+  it('does not dispatch when Stop cancels a pending Session restore', async () => {
+    const { coordinator, created } = await setup()
+    const restoring = createDeferred<void>()
+    const prepare = vi.fn(() => restoring.promise)
+    const pending = coordinator.sendAppContinuationObserved(
+      { sessionId: 'session-1', text: 'settlement update' },
+      vi.fn(),
+      admission,
+      undefined,
+      prepare
+    )
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: 'DelegateMessagePreAcceptanceError'
+    })
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce())
+    await coordinator.cancelPrompt({ sessionId: 'session-1' })
+    restoring.resolve()
+    await rejected
+    await Promise.resolve()
+    expect(created[0].sendAppContinuation).not.toHaveBeenCalled()
+  })
 })

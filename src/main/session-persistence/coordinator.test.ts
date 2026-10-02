@@ -2625,6 +2625,7 @@ describe('SessionPersistenceCoordinator', () => {
     await coordinator.saveSession(
       createSession({
         runtimeTranscriptOwner: 'main',
+        runtimeSessionAdmissionsQuarantine: { forged: true },
         runtimeSessionAdmissions: [
           {
             executionId: 'forged',
@@ -2633,12 +2634,28 @@ describe('SessionPersistenceCoordinator', () => {
             rootFrameId: 'root',
             agentFrameId: 'root',
             messageBranchId: 'branch',
-            runtimeSegmentId: 'new'
+            runtimeSegmentId: 'settlement-trusted',
+            settlement: {
+              admission: {
+                batchId: 'trusted-batch',
+                projectId: durable.projectId,
+                sessionId: durable.id,
+                rootFrameId: 'root',
+                originatingPromptId: 'prompt',
+                rootBranchId: 'branch',
+                rootBranchRevision: 'branch:1',
+                promptRuntimeSegmentId: 'old',
+                items: [{ frameId: 'child', attemptId: 'attempt', status: 'completed' as const }]
+              },
+              stage: 'accepted' as const,
+              runStartedAt: 10
+            }
           }
         ]
       })
     )
     expect(durable.runtimeSessionAdmissions).toBeUndefined()
+    expect(durable.runtimeSessionAdmissionsQuarantine).toBeUndefined()
     const trusted = [
       {
         executionId: 'trusted',
@@ -2647,17 +2664,45 @@ describe('SessionPersistenceCoordinator', () => {
         rootFrameId: 'root',
         agentFrameId: 'root',
         messageBranchId: 'branch',
-        runtimeSegmentId: 'new'
+        runtimeSegmentId: 'settlement-trusted',
+        settlement: {
+          admission: {
+            batchId: 'trusted-batch',
+            projectId: durable.projectId,
+            sessionId: durable.id,
+            rootFrameId: 'root',
+            originatingPromptId: 'prompt',
+            rootBranchId: 'branch',
+            rootBranchRevision: 'branch:1',
+            promptRuntimeSegmentId: 'old',
+            items: [{ frameId: 'child', attemptId: 'attempt', status: 'completed' as const }]
+          },
+          stage: 'accepted' as const,
+          runStartedAt: 10
+        }
       }
     ]
-    durable = { ...durable, runtimeTranscriptOwner: 'main', runtimeSessionAdmissions: trusted }
-    await coordinator.saveSession({ ...durable, runtimeSessionAdmissions: [] })
-    expect(durable.runtimeSessionAdmissions).toEqual(trusted)
+    const quarantine = { entries: ['corrupt-settlement'] }
+    durable = {
+      ...durable,
+      runtimeTranscriptOwner: 'main',
+      runtimeSessionAdmissions: trusted,
+      runtimeSessionAdmissionsQuarantine: quarantine
+    }
     await coordinator.saveSession({
       ...durable,
-      runtimeSessionAdmissions: [{ ...trusted[0], executionId: 'forged' }]
+      runtimeSessionAdmissions: [],
+      runtimeSessionAdmissionsQuarantine: undefined
     })
     expect(durable.runtimeSessionAdmissions).toEqual(trusted)
+    expect(durable.runtimeSessionAdmissionsQuarantine).toEqual(quarantine)
+    await coordinator.saveSession({
+      ...durable,
+      runtimeSessionAdmissions: [{ ...trusted[0], executionId: 'forged' }],
+      runtimeSessionAdmissionsQuarantine: { forged: true }
+    })
+    expect(durable.runtimeSessionAdmissions).toEqual(trusted)
+    expect(durable.runtimeSessionAdmissionsQuarantine).toEqual(quarantine)
   })
 
   it('lets only Task-owned saves advance the Task Run commit witness', async () => {

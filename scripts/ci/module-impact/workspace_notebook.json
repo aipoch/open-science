@@ -174,7 +174,8 @@
       "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
       "src/renderer/src/components/SessionPackageOperation.test.tsx",
       "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
-      "src/renderer/src/pages/home/HomePage.render.test.tsx"
+      "src/renderer/src/pages/home/HomePage.render.test.tsx",
+      "src/renderer/src/pages/workspace/subagent-release-projection.test.ts"
     ]
   },
   "capabilityOverlays": [],

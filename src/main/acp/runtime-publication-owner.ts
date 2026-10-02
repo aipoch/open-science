@@ -118,9 +118,22 @@ class AcpRuntimePublicationOwner {
       ? this.options.interactions.current(event.sessionId)
       : undefined
     const promptMessageId = interaction?.kind === 'prompt' ? interaction.promptMessageId : undefined
+    const interactionSegmentId =
+      interaction?.kind === 'prompt' ? interaction.provenanceContext?.runtimeSegmentId : undefined
+    const runtimeSegmentId =
+      !event.runtimeSegmentId &&
+      interactionSegmentId?.startsWith('settlement-') &&
+      promptMessageId &&
+      (!event.promptMessageId || event.promptMessageId === promptMessageId)
+        ? interactionSegmentId
+        : undefined
     const scopedEvent =
-      promptMessageId && !event.promptMessageId
-        ? preservingFrozen(event, { ...event, promptMessageId })
+      (promptMessageId && !event.promptMessageId) || runtimeSegmentId
+        ? preservingFrozen(event, {
+            ...event,
+            ...(promptMessageId && !event.promptMessageId ? { promptMessageId } : {}),
+            ...(runtimeSegmentId ? { runtimeSegmentId } : {})
+          })
         : event
     const runtimeEvent = this.options.snapshotOwner.appendEvent(scopedEvent)
     onAppended?.()

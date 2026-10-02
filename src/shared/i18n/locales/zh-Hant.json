@@ -6829,6 +6829,12 @@
     "The run failed with no error message.": "執行失敗，未提供錯誤訊息。",
     "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "未傳送的訊息無法還原（{{failure}}）。請重新傳送，或停止執行後再試。",
     "The unsent Session could not be removed ({{failure}}).": "未傳送的工作階段無法移除（{{failure}}）。",
-    "Agent Session cleanup did not complete.": "智能體工作階段清理未完成。"
+    "Agent Session cleanup did not complete.": "智能體工作階段清理未完成。",
+    "Subagent {{name}} completed": "子智能體 {{name}} 已完成",
+    "Subagent {{name}} failed": "子智能體 {{name}} 失敗",
+    "Subagent {{name}} cancelled": "子智能體 {{name}} 已取消",
+    "Subagent completed": "子智能體已完成",
+    "Subagent failed": "子智能體失敗",
+    "Subagent cancelled": "子智能體已取消"
   }
 }

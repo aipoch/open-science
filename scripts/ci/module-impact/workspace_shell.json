@@ -518,7 +518,8 @@
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx"
+      "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSubagentCompletionRow.test.tsx"
     ]
   },
   "capabilityOverlays": [],
