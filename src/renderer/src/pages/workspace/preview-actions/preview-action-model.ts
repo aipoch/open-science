@@ -26,6 +26,9 @@ export type PreviewCapabilityId =
   | 'provenance'
   | 'view-in-context'
   | 'download'
+  | 'export-html'
+  | 'export-pdf'
+  | 'export-docx'
   | 'open-fullscreen'
   | 'close'
 
@@ -44,6 +47,9 @@ export const PREVIEW_CAPABILITY_CATALOG: Record<PreviewCapabilityId, ActionMenuD
   provenance: { labelKey: 'Provenance', icon: GitBranch },
   'view-in-context': { labelKey: 'View in context', icon: Eye },
   download: { labelKey: 'Download', icon: Download },
+  'export-html': { labelKey: 'Export manuscript as HTML', icon: Download },
+  'export-pdf': { labelKey: 'Export manuscript as PDF', icon: Download },
+  'export-docx': { labelKey: 'Export manuscript as DOCX', icon: Download },
   'open-fullscreen': { labelKey: 'Open full screen preview', icon: Maximize2 },
   close: { labelKey: 'Close', icon: X }
 }
@@ -65,6 +71,14 @@ export const MANAGED_PREVIEW_MENU_RECIPE: readonly PreviewMenuRecipeEntry[] = [
   { kind: 'action', action: 'open-fullscreen' },
   { kind: 'action', action: 'download' },
   { kind: 'action', action: 'close' }
+]
+
+export const MANUSCRIPT_PREVIEW_MENU_RECIPE: readonly PreviewMenuRecipeEntry[] = [
+  { kind: 'action', action: 'export-html' },
+  { kind: 'action', action: 'export-pdf' },
+  { kind: 'action', action: 'export-docx' },
+  { kind: 'separator' },
+  ...MANAGED_PREVIEW_MENU_RECIPE
 ]
 
 export const MANAGED_PDF_PREVIEW_MENU_RECIPE: readonly PreviewMenuRecipeEntry[] = [

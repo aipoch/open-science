@@ -8,6 +8,7 @@ import {
   LOCAL_PREVIEW_MENU_RECIPE,
   SOURCE_PREVIEW_MENU_RECIPE,
   MANAGED_PREVIEW_MENU_RECIPE,
+  MANUSCRIPT_PREVIEW_MENU_RECIPE,
   PREVIEW_CAPABILITY_CATALOG,
   shouldHandlePreviewContextMenu,
   type PreviewActionBindings,
@@ -24,7 +25,10 @@ describe('preview action model', () => {
     'view-in-context': { execute },
     download: { execute },
     'open-fullscreen': { execute },
-    close: { execute }
+    close: { execute },
+    'export-html': { execute },
+    'export-pdf': { execute },
+    'export-docx': { execute }
   }
 
   it('resolves source actions without exposing file-only capabilities', () => {
@@ -61,6 +65,30 @@ describe('preview action model', () => {
     expect(entries.map((entry) => (entry.kind === 'action' ? entry.action : entry.kind))).toEqual([
       'copy-path',
       'save-as-artifact',
+      'separator',
+      'provenance',
+      'view-in-context',
+      'open-fullscreen',
+      'download',
+      'close'
+    ])
+  })
+
+  it('adds manuscript export formats ahead of the shared managed preview actions', () => {
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'managed-manuscript',
+        catalog: PREVIEW_CAPABILITY_CATALOG,
+        recipe: MANUSCRIPT_PREVIEW_MENU_RECIPE,
+        bindings: allBindings
+      },
+      undefined
+    )
+
+    expect(entries.map((entry) => (entry.kind === 'action' ? entry.action : entry.kind))).toEqual([
+      'export-html',
+      'export-pdf',
+      'export-docx',
       'separator',
       'provenance',
       'view-in-context',

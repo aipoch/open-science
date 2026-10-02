@@ -13,6 +13,7 @@ import * as system from './renderer-contracts/system'
 import * as compute from './renderer-contracts/compute'
 import * as files from './renderer-contracts/files'
 import * as literature from './renderer-contracts/literature'
+import * as manuscripts from './renderer-contracts/manuscripts'
 import * as memory from './renderer-contracts/memory'
 import * as notebook from './renderer-contracts/notebook'
 import * as sessionReplay from './renderer-contracts/session-replay'
@@ -47,6 +48,7 @@ export const RENDERER_API_CONTRACT = composeRendererApiContract(
   files.localFsGetRootsContracts,
   system.logsGetStatusContracts,
   literature.contracts,
+  manuscripts.contracts,
   files.managedFileVersionsCancelDiffContracts,
   memory.contracts,
   system.networkCheckConnectivityContracts,
@@ -173,6 +175,7 @@ const RENDERER_CAPABILITY_ORDER = Object.freeze([
   'locale',
   'local-fs',
   'literature',
+  'manuscripts',
   'memory',
   'logs',
   'managed-file-versions',

@@ -37,6 +37,7 @@ import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { errorDetail } from '@/lib/error-detail'
+import type { ManuscriptExportFormat } from '../../../../shared/manuscripts'
 import type { PreviewFileItem, PreviewFileViewState } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -92,12 +93,14 @@ import {
   LOCAL_PREVIEW_MENU_RECIPE,
   MANAGED_PDF_PREVIEW_MENU_RECIPE,
   MANAGED_PREVIEW_MENU_RECIPE,
+  MANUSCRIPT_PREVIEW_MENU_RECIPE,
   PREVIEW_CAPABILITY_CATALOG,
   shouldHandlePreviewContextMenu,
   type PreviewActionBindings,
   type PreviewCapabilityId
 } from './preview-actions/preview-action-model'
 import { useManagedVersionWorkflow, type ManagedVersionMode } from './useManagedVersionWorkflow'
+import { exportManuscript } from './manuscript-export'
 
 type PreviewFileSurfaceProps = PreviewInteractionPort & {
   item: PreviewFileItem
@@ -702,6 +705,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const [copied, setCopied] = useState(false)
     const [saveAsArtifactState, setSaveAsArtifactState] = useState<SaveAsArtifactState>('idle')
     const [localActionFailure, setLocalActionFailure] = useState<LocalFileActionFailure>()
+    const [manuscriptExportFormat, setManuscriptExportFormat] = useState<ManuscriptExportFormat>()
+    const [manuscriptExportError, setManuscriptExportError] = useState<string>()
     const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
     const contextMenuComposerFocusRequestedRef = useRef(false)
     const [versionOverride, setVersionOverride] = useState<{
@@ -1417,6 +1422,19 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       })
     }
 
+    const exportManuscriptFile = async (format: ManuscriptExportFormat): Promise<void> => {
+      if (manuscriptExportFormat) return
+      setManuscriptExportFormat(format)
+      setManuscriptExportError(undefined)
+      try {
+        await exportManuscript(resolvedPreviewItem, format)
+      } catch (error) {
+        setManuscriptExportError(error instanceof Error ? error.message : String(error))
+      } finally {
+        setManuscriptExportFormat(undefined)
+      }
+    }
+
     const managedDownloadUnavailable =
       (resolvedPreviewItem.source === 'artifact' || resolvedPreviewItem.source === 'upload') &&
       (!resolvedPreviewItem.projectId || !resolvedPreviewItem.managedFileId)
@@ -1456,6 +1474,25 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   }
                 }
               : {}),
+            ...(resolvedPreviewItem.name.toLowerCase().endsWith('.qmd')
+              ? {
+                  'export-html': {
+                    execute: () => void exportManuscriptFile('html'),
+                    disabled: manuscriptExportFormat !== undefined,
+                    ...(manuscriptExportFormat === 'html' ? { labelKey: 'Exporting…' } : {})
+                  },
+                  'export-pdf': {
+                    execute: () => void exportManuscriptFile('pdf'),
+                    disabled: manuscriptExportFormat !== undefined,
+                    ...(manuscriptExportFormat === 'pdf' ? { labelKey: 'Exporting…' } : {})
+                  },
+                  'export-docx': {
+                    execute: () => void exportManuscriptFile('docx'),
+                    disabled: manuscriptExportFormat !== undefined,
+                    ...(manuscriptExportFormat === 'docx' ? { labelKey: 'Exporting…' } : {})
+                  }
+                }
+              : {}),
             ...(openProvenance ? { provenance: { execute: openProvenance } } : {}),
             ...(canViewInContext
               ? {
@@ -1480,11 +1517,14 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       resolvedPreviewItem.mtimeMs ?? null
     ])
     const previewActionRecipe =
-      resolvedPreviewItem.source === 'local'
-        ? LOCAL_PREVIEW_MENU_RECIPE
-        : resolvedPreviewItem.format === 'pdf'
-          ? MANAGED_PDF_PREVIEW_MENU_RECIPE
-          : MANAGED_PREVIEW_MENU_RECIPE
+      resolvedPreviewItem.source !== 'local' &&
+      resolvedPreviewItem.name.toLowerCase().endsWith('.qmd')
+        ? MANUSCRIPT_PREVIEW_MENU_RECIPE
+        : resolvedPreviewItem.source === 'local'
+          ? LOCAL_PREVIEW_MENU_RECIPE
+          : resolvedPreviewItem.format === 'pdf'
+            ? MANAGED_PDF_PREVIEW_MENU_RECIPE
+            : MANAGED_PREVIEW_MENU_RECIPE
     const previewActionTargetId = 'preview-file-content'
 
     return (
@@ -1645,6 +1685,23 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                     errorCode={managedWorkflow.inspectError.code}
                     primaryButton={{ label: t('Retry'), onClick: managedWorkflow.refreshInspect }}
                   />
+                </div>
+              ) : null}
+              {!provenanceFocused && manuscriptExportError ? (
+                <div
+                  role="alert"
+                  className="flex shrink-0 items-center justify-between gap-2 border-b border-border-300/50 bg-danger-900 px-3 py-1 text-[11px] leading-4 text-danger-000"
+                >
+                  <span>{manuscriptExportError}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setManuscriptExportError(undefined)}
+                    className="h-5 text-danger-000 hover:bg-danger-000/10 hover:text-danger-000"
+                  >
+                    {t('Close')}
+                  </Button>
                 </div>
               ) : null}
               {!provenanceFocused && lineageFailed ? (

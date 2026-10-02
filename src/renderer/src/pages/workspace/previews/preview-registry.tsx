@@ -5,6 +5,7 @@ import { CsvPreviewRenderer } from './renderers/CsvPreview'
 import { FastaPreviewRenderer } from './renderers/FastaPreview'
 import { HtmlPreviewRenderer } from './renderers/HtmlPreview'
 import { ImagePreviewRenderer } from './renderers/ImagePreview'
+import { ManuscriptPreviewRenderer } from './renderers/ManuscriptPreview'
 import { MarkdownPreviewRenderer } from './renderers/MarkdownPreview'
 import { PlanJsonPreview } from './renderers/PlanJsonPreview'
 import { TextPreviewRenderer } from './renderers/TextPreview'
@@ -89,6 +90,8 @@ export const renderPreviewFile = ({
       return <PlanJsonPreview item={item} readOnly={readOnly} />
     case 'markdown':
       return <MarkdownPreviewRenderer {...props} />
+    case 'qmd':
+      return <ManuscriptPreviewRenderer {...props} />
     case 'pdb':
       return <PdbPreviewRenderer item={item} />
     case 'molecule':

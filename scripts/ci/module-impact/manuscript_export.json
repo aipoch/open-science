@@ -1,0 +1,38 @@
+{
+  "ownerPaths": [
+    "src/main/manuscripts/application-commands.test.ts",
+    "src/main/manuscripts/application-commands.ts",
+    "src/main/manuscripts/artifact-references.test.ts",
+    "src/main/manuscripts/artifact-references.ts",
+    "src/main/manuscripts/command-owner.test.ts",
+    "src/main/manuscripts/command-owner.ts",
+    "src/main/manuscripts/quarto-discovery.test.ts",
+    "src/main/manuscripts/quarto-discovery.ts",
+    "src/renderer/src/pages/workspace/manuscript-export.test.ts",
+    "src/renderer/src/pages/workspace/manuscript-export.ts",
+    "src/shared/manuscripts.ts",
+    "src/shared/renderer-contracts/manuscripts.ts"
+  ],
+  "interfacePaths": [
+    "src/main/manuscripts/application-commands.ts",
+    "src/main/manuscripts/command-owner.ts",
+    "src/main/manuscripts/quarto-discovery.ts",
+    "src/shared/manuscripts.ts",
+    "src/shared/renderer-contracts/manuscripts.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/main/manuscripts/application-commands.test.ts",
+      "src/main/manuscripts/artifact-references.test.ts",
+      "src/main/manuscripts/command-owner.test.ts",
+      "src/main/manuscripts/quarto-discovery.test.ts",
+      "src/renderer/src/pages/workspace/manuscript-export.test.ts"
+    ],
+    "contract": [],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Manuscript rendering spans shared contracts, Electron command dispatch, renderer previews, and an optional external process."
+}

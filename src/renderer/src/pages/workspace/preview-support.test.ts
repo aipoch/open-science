@@ -100,6 +100,7 @@ describe('preview support format detection', () => {
 
   it('derives the preview format from source-neutral file metadata', () => {
     expect(getPreviewFormatForFile({ name: 'results.csv', mimeType: 'text/plain' })).toBe('csv')
+    expect(getPreviewFormatForFile({ name: 'paper.qmd' })).toBe('qmd')
     expect(getPreviewFormatForFile({ name: 'analysis.treefile' })).toBe('text')
     expect(getPreviewFormatForFile({ name: 'analysis.R' })).toBe('code')
   })

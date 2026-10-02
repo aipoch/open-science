@@ -37,6 +37,11 @@ import {
   type DataContentApplicationCommandDependencies
 } from './data-content-application-commands'
 import {
+  installManuscriptApplicationCommands,
+  manuscriptApplicationCommands
+} from './manuscripts/application-commands'
+import type { ManuscriptCommandOwner } from './manuscripts/command-owner'
+import {
   hostApplicationCommandGroups,
   registerHostApplicationCommands,
   type HostApplicationCommandDependencies
@@ -145,6 +150,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   memory: MemoryCommandOwner
   specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
+  manuscripts: ManuscriptCommandOwner
   bookmarks: BookmarkCommandOwner
   sessionReplay: SessionReplayCommandOwner
   pdfAnnotations: PdfAnnotationCommandOwner
@@ -267,6 +273,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([notebookApplicationCommands], (registrar) =>
       installNotebookApplicationCommands(registrar, dependencies.notebook)
+    ),
+    defineApplicationCommandModule([manuscriptApplicationCommands], (registrar) =>
+      installManuscriptApplicationCommands(registrar, dependencies.manuscripts)
     ),
     defineApplicationCommandModule([notebookEnvironmentApplicationCommands], (registrar) =>
       installNotebookEnvironmentApplicationCommands(registrar, dependencies.notebookEnvironment)

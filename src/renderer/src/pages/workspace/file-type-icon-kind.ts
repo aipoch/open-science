@@ -115,6 +115,7 @@ export const getFileIconKind = (name: string, mimeType?: string): FileIconKind =
     if (['csv', 'tsv', 'xls', 'xlsx'].includes(extension)) return 'spreadsheet'
     if (['ppt', 'pptx'].includes(extension)) return 'presentation'
     if (extension === 'ipynb') return 'notebook'
+    if (extension === 'qmd') return 'text'
     if (CONFIG_EXTENSIONS.has(extension)) return 'config'
     if (previewFormat === 'json') return 'data'
     if (['molecule', 'pdb'].includes(previewFormat) || MOLECULE_EXTENSIONS.has(extension)) {

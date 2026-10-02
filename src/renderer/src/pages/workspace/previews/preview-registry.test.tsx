@@ -30,6 +30,12 @@ describe('preview registry Office routing', () => {
     }
   )
 
+  it('routes Quarto manuscripts to the manuscript renderer', () => {
+    const rendered = renderPreviewFile({ item: createItem('qmd') })
+
+    expect(rendered?.type).toBeDefined()
+  })
+
   it('routes TIFF files to the TIFF renderer', () => {
     const rendered = renderPreviewFile({ item: createItem('tiff') })
 

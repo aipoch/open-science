@@ -1387,7 +1387,8 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx',
           'src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx',
           'src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx',
-          'src/renderer/src/pages/literature/literature-localization.render.test.tsx'
+          'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
+          'src/renderer/src/pages/workspace/manuscript-export.test.ts'
         ]
       },
       capabilityOverlays: ['renderer_state'],

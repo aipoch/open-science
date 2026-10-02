@@ -223,6 +223,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'reveal'
   ],
   logs: ['get-status', 'open-file', 'reveal-in-folder'],
+  manuscripts: ['detect-quarto', 'prepare', 'render', 'export'],
   'notebook-env': ['cancel', 'provision', 'repair'],
   notebook: ['export-ipynb', 'export-ipynb-all'],
   'remote-access': ['probe'],

@@ -30,6 +30,7 @@ describe('complete module ownership', () => {
     expect(result.missing).toEqual([])
     expect(result.owned).toBe(result.files)
     expect(result.fullModules.map(({ id }) => id)).toEqual([
+      'manuscript_export',
       'shared_application_contracts',
       'shared_conversation_contracts',
       'shared_workspace_contracts'

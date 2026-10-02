@@ -22,6 +22,7 @@ describe('getFileIconKind', () => {
     ['script.ts', undefined, 'code'],
     ['document.xml', undefined, 'code'],
     ['notes.md', undefined, 'text'],
+    ['paper.qmd', undefined, 'text'],
     ['report.txt', 'application/pdf', 'text'],
     ['table.csv', 'image/png', 'spreadsheet'],
     ['legacy.doc', undefined, 'document'],

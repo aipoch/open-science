@@ -23,6 +23,7 @@ export type PreviewPanelState = 'open' | 'collapsed'
 export type PreviewFileFormat =
   | 'code'
   | 'markdown'
+  | 'qmd'
   | 'text'
   | 'json'
   | 'csv'

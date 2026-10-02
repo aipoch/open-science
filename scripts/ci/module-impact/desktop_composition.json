@@ -346,7 +346,8 @@
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
-      "src/shared/renderer-contract-catalog.test.ts"
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/main/manuscripts/application-commands.test.ts"
     ],
     "consumer": [
       "src/main/storage/wsl-npm-migration.integration.test.ts",

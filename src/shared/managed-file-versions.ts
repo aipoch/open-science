@@ -13,6 +13,7 @@ const WINDOWS_RESERVED_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$
 const MANAGED_TEXT_EDIT_EXTENSIONS = new Set([
   'md',
   'markdown',
+  'qmd',
   'txt',
   'json',
   'yaml',

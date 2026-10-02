@@ -26,6 +26,7 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   ipynb: 'json',
   markdown: 'markdown',
   md: 'markdown',
+  qmd: 'qmd',
   pdb: 'pdb',
   mol: 'molecule',
   sdf: 'molecule',
@@ -170,6 +171,7 @@ export const getPreviewThumbnailReadEncoding = (format: PreviewFileFormat): 'utf
   // Binary document formats use dedicated full-byte readers and must not use truncated thumbnails.
   if (
     format === 'markdown' ||
+    format === 'qmd' ||
     format === 'code' ||
     format === 'text' ||
     format === 'json' ||

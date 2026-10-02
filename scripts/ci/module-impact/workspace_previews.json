@@ -125,7 +125,8 @@
     "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
     "src/renderer/src/pages/workspace/previews/library-reference-actions.ts",
     "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.tsx",
-    "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
+    "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/ManuscriptPreview.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",
@@ -289,7 +290,8 @@
       "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
       "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
-      "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
+      "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
+      "src/renderer/src/pages/workspace/manuscript-export.test.ts"
     ]
   },
   "capabilityOverlays": [],
