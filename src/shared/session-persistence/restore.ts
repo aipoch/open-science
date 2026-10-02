@@ -187,6 +187,7 @@ export const restorePendingElicitationWait = (
   const graph = session.conversationGraph
   if (
     !graph ||
+    (session.error !== undefined && session.error !== INTERRUPTED_SESSION_ERROR) ||
     session.runtimeContext?.permission ||
     session.runtimeContext?.plan?.approval === 'pending'
   ) {
@@ -201,7 +202,9 @@ export const restorePendingElicitationWait = (
     prompt.status !== 'complete' ||
     prompt.agentFrameId !== frame.id ||
     prompt.introducedOnBranchId !== frame.activeBranchId ||
-    !prompt.runtimeSegmentId
+    !prompt.runtimeSegmentId ||
+    (session.resumeRecovery?.promptMessageId !== undefined &&
+      session.resumeRecovery.promptMessageId !== prompt.id)
   )
     return session
   const pending = resolveActiveConversationActivities(graph).activities.filter(

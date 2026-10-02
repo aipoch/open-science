@@ -171,9 +171,16 @@ it('exports runtime mutation failure diagnostics without changing the missing Se
 })
 
 describe('durable restart recovery before runtime attachment', () => {
-  it.each([false, true])(
-    'persists a pending question before provider attachment (live=%s)',
-    async (live) => {
+  it.each([
+    { live: false, status: 'running' as const },
+    { live: false, status: 'idle' as const },
+    { live: false, status: 'error' as const },
+    { live: true, status: 'running' as const },
+    { live: true, status: 'idle' as const },
+    { live: true, status: 'error' as const }
+  ])(
+    'persists a pending question before provider attachment (live=$live, status=$status)',
+    async ({ live, status }) => {
       const h = await harness(live)
       const graph = h.initial.conversationGraph!
       const turn = {
@@ -207,6 +214,17 @@ describe('durable restart recovery before runtime attachment', () => {
           }
         ])
       )
+      if (status !== 'running') {
+        const saved = await h.raw()
+        if (saved.status !== 'found') throw new Error('Missing historical question')
+        await h.repository.saveSession({
+          ...saved.session,
+          status,
+          activeRun: undefined,
+          // The legacy interruption string also occurs without a resumeRecovery marker.
+          error: status === 'error' ? 'Session was interrupted before the app closed.' : undefined
+        })
+      }
       const before = await h.raw()
       await h.owner.prepareRuntimeResume(scope)
       if (live) {
@@ -218,7 +236,6 @@ describe('durable restart recovery before runtime attachment', () => {
         status: 'found',
         session: {
           status: 'waiting-for-user',
-          runtimeTranscriptLastRun: h.initial.activeRun,
           activities: [
             expect.objectContaining({ elicitation: expect.objectContaining({ state: 'pending' }) })
           ]
@@ -227,6 +244,10 @@ describe('durable restart recovery before runtime attachment', () => {
       if (committed.status !== 'found') throw new Error('Missing committed question')
       expect(committed.session.activeRun).toBeUndefined()
       expect(committed.session.resumeRecovery).toBeUndefined()
+      expect(committed.session.error).toBeUndefined()
+      if (status === 'running') {
+        expect(committed.session.runtimeTranscriptLastRun).toEqual(h.initial.activeRun)
+      }
       // Once the provider is attached, reads preserve runtime state. The wait must already be on disk.
       const attached = new SessionRepository(h.root, { hasLiveRuntimeSession: () => true })
       expect(await attached.loadSession(scope.projectId, scope.sessionId)).toEqual(

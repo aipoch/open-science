@@ -92,12 +92,14 @@ const setActivities = (
 
 describe('AcpDurableContinuationContextOwner', () => {
   it.each([
-    { providerStopped: false, approvedPlan: false },
-    { providerStopped: true, approvedPlan: false },
-    { providerStopped: false, approvedPlan: true }
+    { providerStopped: false, approvedPlan: false, previouslyRestored: false },
+    { providerStopped: true, approvedPlan: false, previouslyRestored: false },
+    { providerStopped: false, approvedPlan: true, previouslyRestored: false },
+    { providerStopped: false, approvedPlan: false, previouslyRestored: true },
+    { providerStopped: false, approvedPlan: true, previouslyRestored: true }
   ])(
-    'answers a persisted question after restart (stopped: $providerStopped, approved Plan: $approvedPlan)',
-    async ({ providerStopped, approvedPlan }) => {
+    'answers a persisted question after restart (stopped: $providerStopped, approved Plan: $approvedPlan, previously restored: $previouslyRestored)',
+    async ({ providerStopped, approvedPlan, previouslyRestored }) => {
       const initial = createSession([message('prompt-active', 'Choose the next step.')])
       initial.runtimeTranscriptOwner = 'main'
       initial.status = 'running'
@@ -152,6 +154,19 @@ describe('AcpDurableContinuationContextOwner', () => {
             ]
           : [])
       ])
+      // Older releases could save their interrupted/error or approved-Plan/idle projection.
+      if (previouslyRestored) {
+        projected.status = approvedPlan ? 'idle' : 'error'
+        projected.activeRun = undefined
+        if (!approvedPlan) {
+          projected.error = 'Session was interrupted before the app closed.'
+          projected.resumeRecovery = {
+            kind: 'resume-required',
+            cause: 'app-restart',
+            promptMessageId: 'prompt-active'
+          }
+        }
+      }
       let restored = normalizeSessionFile(JSON.parse(JSON.stringify(projected)))!
       expect(restored.activities?.[0].elicitation?.state).toBe('pending')
       const owner = new AcpDurableContinuationContextOwner({
@@ -190,7 +205,11 @@ describe('AcpDurableContinuationContextOwner', () => {
     'different-fields',
     'duplicate-request',
     'older-prompt',
-    'different-branch'
+    'different-branch',
+    'cancelled',
+    'answered',
+    'unrelated-error',
+    'unrelated-recovery'
   ])('does not restore an unsafe pending question (%s)', async (invalid) => {
     const session = createSession([message('prompt-active', 'Choose an approach.')])
     session.status = 'running'
@@ -219,6 +238,26 @@ describe('AcpDurableContinuationContextOwner', () => {
         updatedAt: 3
       })
       graph.frames[0].activeBranchId = 'empty-branch'
+    }
+    if (invalid === 'cancelled' || invalid === 'answered') {
+      const activity = pendingChoice()
+      activity.elicitation!.state = invalid
+      setActivities(session, [activity])
+      session.status = 'idle'
+      session.activeRun = undefined
+    }
+    if (invalid === 'unrelated-error' || invalid === 'unrelated-recovery') {
+      session.status = 'error'
+      session.activeRun = undefined
+      session.error =
+        invalid === 'unrelated-error'
+          ? 'Provider authentication failed'
+          : 'Session was interrupted before the app closed.'
+      session.resumeRecovery = {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: invalid === 'unrelated-recovery' ? 'another-prompt' : 'prompt-active'
+      }
     }
     const restored = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
     expect(restored.status).not.toBe('waiting-for-user')

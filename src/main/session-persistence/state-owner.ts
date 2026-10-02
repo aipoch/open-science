@@ -696,7 +696,13 @@ class SessionPersistenceStateOwner {
         scope.projectId,
         scope.sessionId
       )
-      if (authority.status !== 'found' || !authority.session.activeRun) return
+      if (authority.status !== 'found') return
+      // Older releases may already have persisted idle/error with the durable question intact.
+      // Commit the decoder's validated wait before attached reads start preserving runtime state.
+      const restoredQuestionWait =
+        restored.session.status === 'waiting-for-user' &&
+        (authority.session.status === 'idle' || authority.session.status === 'error')
+      if (!authority.session.activeRun && !restoredQuestionWait) return
     }
     await this.mutateRuntimeSession(scope, (latest) => {
       if (sessionRevision(latest) !== sessionRevision(restored.session)) {

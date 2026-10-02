@@ -8114,17 +8114,17 @@ describe('ACP runtime session management', () => {
 
   it.each(
     RESTORED_CONTINUATION_FRAMEWORKS.flatMap(([name, framework, modelRoute, backendId]) =>
-      [true, false].map((providerStopped) => ({
+      (['running', 'waiting-for-user', 'idle', 'error'] as const).map((status) => ({
         name,
         framework,
         modelRoute,
         backendId,
-        providerStopped
+        status
       }))
     )
   )(
-    'builds restored choice replay through $name after context reset (stopped: $providerStopped)',
-    async ({ framework, modelRoute, backendId, providerStopped }) => {
+    'builds restored choice replay through $name after context reset (status: $status)',
+    async ({ framework, modelRoute, backendId, status }) => {
       const process = new FakeAgentProcess()
       const receivedPrompts: ContentBlock[][] = []
       const fakeAgent = startFakeAgent(process, ['adopted-provider-session'], {
@@ -8195,8 +8195,11 @@ describe('ACP runtime session management', () => {
         updatedAt: 3
       }
       addPendingRestoredChoice(persistedSession)
-      if (!providerStopped) {
-        persistedSession.status = 'running'
+      persistedSession.status = status
+      if (status === 'error') {
+        persistedSession.error = 'Session was interrupted before the app closed.'
+      }
+      if (status === 'running') {
         persistedSession.activeRun = { promptMessageId: 'prompt-restored-1', startedAt: 3 }
       }
       const restored = normalizeSessionFile(JSON.parse(JSON.stringify(persistedSession)))!
