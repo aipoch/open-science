@@ -2541,6 +2541,7 @@
     "PDF interaction tools": "PDF 操作ツール",
     "PDF view controls": "PDF 表示コントロール",
     "Outline": "アウトライン",
+    "No readable outline is available for this PDF": "このPDFには読み取り可能なアウトラインがありません",
     "Pages": "ページ",
     "Volume": "巻",
     "Issue": "号",

@@ -11,13 +11,17 @@ import type {
 // Real PDF.js preview and production reader UI; extraction/IPC are controlled fixtures.
 const content =
   'BT /F1 22 Tf 50 740 Td (Uploaded PDF) Tj /F1 12 Tf 0 -40 Td (Sample    Value) Tj 0 -20 Td (A             42) Tj ET'
+const navigationFixture = new URLSearchParams(location.search).has('navigation')
 const objects = [
   '<< /Type /Catalog /Pages 2 0 R >>',
-  '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+  navigationFixture
+    ? '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>'
+    : '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
   '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
   `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
   '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
 ]
+if (navigationFixture) objects.push(objects[2])
 let pdf = '%PDF-1.4\n'
 const offsets = objects.map((object, index) => {
   const offset = pdf.length
@@ -25,7 +29,7 @@ const offsets = objects.map((object, index) => {
   return offset
 })
 const xref = pdf.length
-pdf += `xref\n0 6\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`
+pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`
 const bytes = new TextEncoder().encode(pdf)
 const result: PdfStructureResult = {
   schemaVersion: 1,
