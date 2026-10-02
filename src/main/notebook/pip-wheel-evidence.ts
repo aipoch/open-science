@@ -40,6 +40,11 @@ def generated_scripts(dist, site, payload):
     # Reuse the bound pip's generator in memory. A changed installer template fails closed.
     import configparser
     from pip._internal.operations.install.wheel import PipScriptMaker
+    try:
+        from pip._internal.operations.install.wheel import get_console_script_specs
+    except ImportError:
+        def get_console_script_specs(console):
+            return [name + " = " + value for name, value in console.items()]
     from pip._vendor.distlib.util import get_export_entry
     generated = {}
     scripts = prefix / ("Scripts" if os.name == "nt" else "bin")
@@ -72,15 +77,22 @@ def generated_scripts(dist, site, payload):
     config.read_string((dist / "entry_points.txt").read_text())
     maker = EvidenceScriptMaker(None, str(scripts))
     maker.variants = {""}
-    for group in ("console_scripts", "gui_scripts"):
-        for name, value in (config.items(group) if config.has_section(group) else []):
+    maker.clobber = True
+    maker.set_mode = True
+    console = dict(config.items("console_scripts")) if config.has_section("console_scripts") else {}
+    gui = dict(config.items("gui_scripts")) if config.has_section("gui_scripts") else {}
+    for group, entries in (("console_scripts", console), ("gui_scripts", gui)):
+        for name, value in entries.items():
             if not name or name in (".", "..") or "/" in name or "\\" in name or len(generated) >= 128:
                 raise ValueError("unsupported entry point name")
             specification = name + " = " + value
             entry = get_export_entry(specification)
             if entry is None or not entry.suffix:
                 raise ValueError("invalid generated entry point")
-            maker.make(specification, {"gui": group == "gui_scripts"})
+    for specification in get_console_script_specs(console):
+        maker.make(specification)
+    for name, value in gui.items():
+        maker.make(name + " = " + value, {"gui": True})
     paths = set()
     for name, expected in generated.items():
         target = scripts / name

@@ -71,7 +71,7 @@ describe('legacy pip wheel evidence', () => {
             'Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n'
           ),
           [dist + '/entry_points.txt']: Buffer.from(
-            '[console_scripts]\nentry-probe = entry_probe:main\n[gui_scripts]\nentry-probe-gui = entry_probe:main\n'
+            '[console_scripts]\npip = entry_probe:main\neasy_install = entry_probe:main\nentry-probe = entry_probe:main\n[gui_scripts]\nentry-probe-gui = entry_probe:main\n'
           )
         }
         payload[dist + '/RECORD'] = Buffer.from(
