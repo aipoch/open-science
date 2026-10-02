@@ -87,6 +87,7 @@
     "src/renderer/src/pages/settings/TagsPanel.tsx",
     "src/renderer/src/pages/settings/TokenUsagePanel.render.test.tsx",
     "src/renderer/src/pages/settings/TokenUsagePanel.tsx",
+    "src/renderer/src/pages/settings/TokenUsageBars.tsx",
     "src/renderer/src/pages/settings/ToolPermissionControl.render.test.tsx",
     "src/renderer/src/pages/settings/ToolPermissionControl.tsx",
     "src/renderer/src/pages/settings/UninstallRuntimeDialog.render.test.tsx",
