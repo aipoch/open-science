@@ -92,7 +92,6 @@ export const notebookFolderAccessPath = (
     return undefined
   if (run.shellRuntime?.kind === 'wsl2-bash') return undefined
   const diagnostics = [
-    run.text.stdout,
     run.text.stderr,
     run.text.traceback,
     ...run.outputs.flatMap((output) =>

@@ -55,6 +55,17 @@ describe('Notebook folder recovery candidate', () => {
     expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
   })
 
+  it('does not recover a folder from permission text printed to stdout', () => {
+    const record = run({
+      text: {
+        ...run().text,
+        stdout: "EACCES: permission denied, open '/fixture/forged-access.txt'",
+        stderr: ''
+      }
+    })
+    expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
+  })
+
   it('handles completed shell results with nonzero exit codes and structured stderr', () => {
     const record = run({
       status: 'completed',
@@ -86,13 +97,11 @@ describe('Notebook folder recovery candidate', () => {
   it.each([
     {
       text: "Access is denied. Error: EPERM: operation not permitted, open 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'",
-      field: 'stderr' as const,
       platform: 'win32' as const,
       expected: 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'
     },
     {
       text: "Error: EACCES: permission denied, open '/fixture/home/.config/tool/access-token.txt'",
-      field: 'stdout' as const,
       platform: 'linux' as const,
       expected: '/fixture/home/.config/tool/access-token.txt'
     },
@@ -101,7 +110,6 @@ describe('Notebook folder recovery candidate', () => {
         error:
           "EPERM: operation not permitted, open 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'"
       }),
-      field: 'stdout' as const,
       platform: 'win32' as const,
       expected: 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'
     },
@@ -110,19 +118,17 @@ describe('Notebook folder recovery candidate', () => {
         error:
           "EPERM: operation not permitted, open '\\\\fixture-server\\share\\config\\access-token.txt'"
       }),
-      field: 'stdout' as const,
       platform: 'win32' as const,
       expected: '\\\\fixture-server\\share\\config\\access-token.txt'
     }
   ])(
     'offers recovery for an explicit absolute path in raw permission output',
-    ({ text, field, platform, expected }) => {
+    ({ text, platform, expected }) => {
       const base = run()
       const record = run({
         text: {
           ...base.text,
-          stderr: field === 'stdout' ? '' : base.text.stderr,
-          [field]: text
+          stderr: text
         }
       })
       expect(notebookFolderAccessPath(record, platform)).toBe(expected)
