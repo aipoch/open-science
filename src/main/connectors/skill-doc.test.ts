@@ -90,6 +90,29 @@ describe('renderSkillDoc', () => {
     expect(md).toContain('A CRAM may require its matching reference')
   })
 
+  it('documents the GEO matrix acquisition and preflight workflow', () => {
+    const md = renderSkillDoc('omics-archives')
+    expect(md).toContain('### geo_get_matrix_files')
+    expect(md).toContain('### geo_preflight_matrix')
+    expect(md).toContain('NCBI-generated RNA-seq count files')
+    expect(md).toContain('A preview cannot establish total dimensions')
+    expect(md).toContain('never by position')
+    expect(md).toContain('Only plain TSV supports unique exact title matching')
+    expect(md).toContain('Series Matrix requires exactly one !Sample_geo_accession header')
+    expect(md).toContain('valid GSM accessions matching the sample column count and order')
+    expect(md).toContain('and never falls back to title matching')
+    expect(md).toContain('For plain TSV previews, pass the table header plus complete preview rows')
+    expect(md).toContain(
+      'For Series Matrix previews, also preserve the preceding metadata, including !Sample_geo_accession and any !Sample_platform_id header, and !series_matrix_table_begin'
+    )
+    expect(md).toContain('do not submit only the table or fabricate !series_matrix_table_end')
+    expect(md).toContain('not an analysis-readiness guarantee')
+    expect(md).toContain('manual download by the user')
+    expect(md).toContain('completeness is caller-declared')
+    expect(md).toContain('If both sources are unavailable, the call throws')
+    expect(md).toContain('multiple platforms alone are advisory warnings')
+  })
+
   it('exposes the PRIDE paged file contract in the generated connector skill', () => {
     const md = renderSkillDoc('omics-archives')
     expect(md).toContain('### pride_get_project_files')

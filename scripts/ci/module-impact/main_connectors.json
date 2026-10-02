@@ -326,7 +326,8 @@
       "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
       "src/main/acp/library-auto-policy.test.ts",
       "src/main/connectors/descriptors/pathway-commons.test.ts",
-      "src/main/connectors/descriptors/monarch.test.ts"
+      "src/main/connectors/descriptors/monarch.test.ts",
+      "src/main/connectors/descriptors/omics-geo-matrix.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

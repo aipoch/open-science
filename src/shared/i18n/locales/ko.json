@@ -133,6 +133,9 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "GEO 시리즈의 메타데이터, 샘플 및 보충 파일 링크를 가져옵니다.",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "수동 다운로드를 위한 GEO Series Matrix 및 NCBI RNA-seq 카운트 파일 링크를 찾습니다.",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "분석 전에 압축 해제된 GEO 행렬의 구조, 차원 및 샘플 대응 관계를 확인합니다.",
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Monarch Initiative를 통한 질병 및 유전자와 표현형의 연관성과 근거 출처.",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "질병과 표현형의 연관성, 근거 출처 및 관계 유형을 조회합니다.",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "유전자와 표현형의 연관성, 근거 출처 및 관계 유형을 조회합니다.",

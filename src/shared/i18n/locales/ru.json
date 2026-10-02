@@ -136,6 +136,9 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "Получить метаданные серии GEO, образцы и ссылки на дополнительные файлы.",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "Найти ссылки на файлы GEO Series Matrix и файлы счётчиков RNA-seq от NCBI для скачивания вручную.",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "Проверить структуру, размерность и соответствие образцов распакованной матрицы GEO перед анализом.",
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Связи заболеваний и генов с фенотипами и источники доказательств через Monarch Initiative.",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "Получить связи заболеваний с фенотипами, источники доказательств и типы отношений.",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "Получить связи генов с фенотипами, источники доказательств и типы отношений.",

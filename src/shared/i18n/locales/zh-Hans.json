@@ -133,6 +133,9 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "获取 GEO 系列的元数据、样本和补充文件链接。",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "查找 GEO Series Matrix 和 NCBI RNA-seq 计数文件的链接，以便手动下载。",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "在分析前检查解压后的 GEO 矩阵结构、维度和样本对应关系。",
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "通过 Monarch Initiative 查询疾病和基因的表型关联及证据来源。",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "查询疾病—表型关联及其证据来源和关系类型。",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "查询基因—表型关联及其证据来源和关系类型。",

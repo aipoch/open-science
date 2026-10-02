@@ -201,6 +201,14 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('List Enrichr gene-set libraries and their coverage statistics for an organism.')
     case 'genes/enrich_gene_set_enrichr':
       return t('Run Enrichr enrichment for gene symbols or identifiers.')
+    case 'omics-archives/geo_get_series':
+      return t('Retrieve GEO series metadata, samples and supplementary-file links.')
+    case 'omics-archives/geo_get_matrix_files':
+      return t('Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.')
+    case 'omics-archives/geo_preflight_matrix':
+      return t(
+        'Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.'
+      )
     case 'omics-archives/workbench_search_compounds':
       return t('Look up Metabolomics Workbench compound structures and cross-references.')
     case 'omics-archives/workbench_search_studies':
