@@ -172,15 +172,17 @@ it('exports runtime mutation failure diagnostics without changing the missing Se
 
 describe('durable restart recovery before runtime attachment', () => {
   it.each([
-    { live: false, status: 'running' as const },
+    { live: false, status: 'running' as const, activeRun: true },
+    { live: false, status: 'running' as const, activeRun: false },
     { live: false, status: 'idle' as const },
     { live: false, status: 'error' as const },
-    { live: true, status: 'running' as const },
+    { live: true, status: 'running' as const, activeRun: true },
+    { live: true, status: 'running' as const, activeRun: false },
     { live: true, status: 'idle' as const },
     { live: true, status: 'error' as const }
   ])(
-    'persists a pending question before provider attachment (live=$live, status=$status)',
-    async ({ live, status }) => {
+    'persists a pending question before provider attachment (live=$live, status=$status, activeRun=$activeRun)',
+    async ({ live, status, activeRun }) => {
       const h = await harness(live)
       const graph = h.initial.conversationGraph!
       const turn = {
@@ -214,7 +216,7 @@ describe('durable restart recovery before runtime attachment', () => {
           }
         ])
       )
-      if (status !== 'running') {
+      if (status !== 'running' || !activeRun) {
         const saved = await h.raw()
         if (saved.status !== 'found') throw new Error('Missing historical question')
         await h.repository.saveSession({
@@ -245,7 +247,7 @@ describe('durable restart recovery before runtime attachment', () => {
       expect(committed.session.activeRun).toBeUndefined()
       expect(committed.session.resumeRecovery).toBeUndefined()
       expect(committed.session.error).toBeUndefined()
-      if (status === 'running') {
+      if (activeRun) {
         expect(committed.session.runtimeTranscriptLastRun).toEqual(h.initial.activeRun)
       }
       // Once the provider is attached, reads preserve runtime state. The wait must already be on disk.

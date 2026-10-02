@@ -697,11 +697,11 @@ class SessionPersistenceStateOwner {
         scope.sessionId
       )
       if (authority.status !== 'found') return
-      // Older releases may already have persisted idle/error with the durable question intact.
-      // Commit the decoder's validated wait before attached reads start preserving runtime state.
+      // Persist the decoder's validated wait even when the old run marker is already absent.
+      // Attached reads preserve runtime state, so the question must be waiting on disk first.
       const restoredQuestionWait =
         restored.session.status === 'waiting-for-user' &&
-        (authority.session.status === 'idle' || authority.session.status === 'error')
+        authority.session.status !== 'waiting-for-user'
       if (!authority.session.activeRun && !restoredQuestionWait) return
     }
     await this.mutateRuntimeSession(scope, (latest) => {
