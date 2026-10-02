@@ -326,3 +326,78 @@ describe('SessionMentionPopup', () => {
     })
   })
 })
+
+it('reads only ten candidate details per page, reuses checks, and resets the page for searches', async () => {
+  const rows = Array.from({ length: 25 }, (_, index) =>
+    session(`candidate-${index}`, 'project-current', `Candidate ${index}`, 1000 - index, {
+      contentLoaded: false,
+      number: index + 1
+    })
+  )
+  useSessionStore.setState({ sessions: rows })
+  const loadOne = vi.fn(async ({ sessionId }: { sessionId: string }) =>
+    rows.find((row) => row.id === sessionId)
+  )
+  vi.stubGlobal('api', { sessions: { loadOne } })
+  const renderQuery = async (query: string): Promise<void> => {
+    await act(async () =>
+      root.render(
+        <SessionMentionPopup
+          inline
+          writableOnly
+          query={query}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
+    )
+  }
+  await renderQuery('')
+  expect(loadOne).toHaveBeenCalledTimes(10)
+  expect(options()).toHaveLength(10)
+  await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+  expect(loadOne).toHaveBeenCalledTimes(20)
+  expect(options()).toHaveLength(20)
+  await renderQuery('#25')
+  expect(loadOne).toHaveBeenCalledTimes(21)
+  expect(options()).toHaveLength(1)
+  expect(options()[0].title).toBe('Candidate 24')
+  await renderQuery('')
+  expect(loadOne).toHaveBeenCalledTimes(21)
+  expect(options()).toHaveLength(10)
+  vi.unstubAllGlobals()
+})
+
+it('stops stale candidate reads when the search changes', async () => {
+  const rows = Array.from({ length: 25 }, (_, index) =>
+    session(`candidate-${index}`, 'project-current', `Candidate ${index}`, 1000 - index, {
+      contentLoaded: false,
+      number: index + 1
+    })
+  )
+  useSessionStore.setState({ sessions: rows })
+  let resolveFirst!: (row: ChatSession) => void
+  const first = new Promise<ChatSession>((resolve) => {
+    resolveFirst = resolve
+  })
+  const loadOne = vi.fn(async ({ sessionId }: { sessionId: string }) =>
+    sessionId === rows[0].id ? first : rows.find((row) => row.id === sessionId)
+  )
+  vi.stubGlobal('api', { sessions: { loadOne } })
+  await act(async () =>
+    root.render(
+      <SessionMentionPopup inline writableOnly query="" onSelect={vi.fn()} onClose={vi.fn()} />
+    )
+  )
+  expect(loadOne).toHaveBeenCalledTimes(1)
+  await act(async () =>
+    root.render(
+      <SessionMentionPopup inline writableOnly query="#25" onSelect={vi.fn()} onClose={vi.fn()} />
+    )
+  )
+  await act(async () => resolveFirst(rows[0]))
+  expect(loadOne).toHaveBeenCalledTimes(2)
+  expect(options()).toHaveLength(1)
+  expect(options()[0].title).toBe('Candidate 24')
+  vi.unstubAllGlobals()
+})

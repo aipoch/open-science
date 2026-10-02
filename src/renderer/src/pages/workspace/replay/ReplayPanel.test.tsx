@@ -13,6 +13,25 @@ import type { SessionDiscussionCapture } from './replay-context'
 import { requestReplaySeek } from './replay-context'
 import type { ReplayPreparedResource } from './replay-resources'
 
+vi.mock('../previews/PreviewFileContent', () => ({
+  PreviewFileContent: ({
+    item,
+    readOnly
+  }: {
+    item: { selectedVersionId?: string; managedFileId?: string; source?: string; format: string }
+    readOnly?: boolean
+  }) => (
+    <div
+      data-testid="workspace-file-preview"
+      data-version={item.selectedVersionId}
+      data-file={item.managedFileId}
+      data-source={item.source}
+      data-format={item.format}
+      data-read-only={readOnly}
+    />
+  )
+}))
+
 const step = (id: string, startMs: number, content: string): ReplayStep => ({
   id,
   branchId: 'main',
@@ -1356,3 +1375,76 @@ it('keeps the pause action stable through material preparation and allows pausin
     screen.getByRole('button', { name: 'Play replay' }).querySelector('.lucide-play')
   ).not.toBeNull()
 })
+
+it('groups adjacent generated files in one gallery without changing timeline steps or reveal order', async () => {
+  const source = makeDocument()
+  source.branches[0].steps = [
+    step('message', 0, 'Result'),
+    ...['v1', 'v2'].map((id, index) => ({
+      ...step(id, (index + 1) * 1000, ''),
+      kind: 'artifact' as const,
+      message: undefined,
+      resourceIds: [id]
+    }))
+  ]
+  render(<ReplayPanel document={source} {...callbacks()} expanded />)
+  seekProgress(3000)
+  expect(screen.getAllByText('GENERATED · 2')).toHaveLength(1)
+  const cards = screen.getAllByRole('button', { name: /Preview generated file/ })
+  expect(cards).toHaveLength(2)
+  expect(cards[0].parentElement).toBe(cards[1].parentElement)
+  expect(source.branches[0].steps).toHaveLength(3)
+  seekProgress(2000)
+  expect(
+    screen.getByRole('button', { name: 'Preview generated file v1.txt' }).hasAttribute('disabled')
+  ).toBe(false)
+  expect(
+    screen.getByRole('button', { name: 'Preview generated file v2.txt' }).hasAttribute('disabled')
+  ).toBe(true)
+  seekProgress(0)
+  expect(screen.queryByRole('button', { name: /Preview generated file/ })).toBeNull()
+  await act(async () => {})
+})
+
+it.each([false, true])(
+  'keeps playback running when toggling Notebook and Files (expanded: %s)',
+  async (expanded) => {
+    render(<ReplayPanel document={makeDocument()} {...callbacks()} expanded={expanded} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+    for (const name of ['Notebook', 'View files', 'Notebook', 'View files']) {
+      fireEvent.click(screen.getByRole('button', { name }))
+      expect(screen.getByRole('button', { name: 'Pause replay' })).toBeTruthy()
+    }
+    await act(async () => {})
+  }
+)
+
+it.each(['artifact', 'upload'] as const)(
+  'opens a recorded DOCX through the workspace renderer with an exact %s version',
+  async (sourceKind) => {
+    vi.stubGlobal('api', {})
+    const source = makeDocument()
+    source.resources[0] = {
+      ...source.resources[0],
+      source: sourceKind,
+      fileId: 'upload-file',
+      name: 'report.docx'
+    }
+    const props = callbacks()
+    props.readResource.mockResolvedValue({ status: 'unsupported' })
+    render(<ReplayPanel document={source} {...props} expanded />)
+    expect(screen.queryByTestId('workspace-file-preview')).toBeNull()
+    seekProgress(3000)
+    fireEvent.click(screen.getByRole('button', { name: 'report.docx' }))
+    const preview = await screen.findByTestId('workspace-file-preview')
+    expect(preview.dataset).toMatchObject({
+      version: 'v1',
+      file: sourceKind === 'upload' ? 'upload-file' : 'file',
+      source: sourceKind,
+      format: 'word',
+      readOnly: 'true'
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Back to files' }))
+    expect(screen.queryByTestId('workspace-file-preview')).toBeNull()
+  }
+)

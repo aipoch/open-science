@@ -50,7 +50,8 @@
     "src/renderer/src/pages/workspace/replay/replay-navigation.test.ts",
     "src/renderer/src/pages/workspace/SessionDiscussionButton.tsx",
     "src/renderer/src/pages/workspace/discussion-send-context.ts",
-    "src/renderer/src/pages/workspace/discussion-send-context.test.ts"
+    "src/renderer/src/pages/workspace/discussion-send-context.test.ts",
+    "src/renderer/src/pages/workspace/replay/ReplayFilePreview.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/replay/index.ts",

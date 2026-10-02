@@ -3814,6 +3814,13 @@ const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.E
 
 export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => {
   const parentAnnotations = usePdfAnnotations()
+  if (props.readOnly) {
+    return (
+      <PdfAnnotationsProvider writable={false} loadAnnotations={false}>
+        <PdfPreviewContent {...props.item} source={props.item.source ?? 'artifact'} />
+      </PdfAnnotationsProvider>
+    )
+  }
   const target = resolvePdfContextTarget(props.item)
   if (!target || parentAnnotations.document?.versionId === target.sourceVersionId)
     return <PdfPreviewRendererContent {...props} />

@@ -1,6 +1,7 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SearchX } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 import type { SessionReference } from '../../../../../shared/session-persistence'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
@@ -143,6 +144,14 @@ export const SessionMentionPopup = ({
     excludedSessionId
   ])
 
+  const [page, setPage] = useState({ query, count: 10 })
+  if (page.query !== query) setPage({ query, count: 10 })
+  const pageSize = page.query === query ? page.count : 10
+  const visibleCandidates = useMemo(
+    () => (inline ? candidates.slice(0, pageSize) : candidates),
+    [candidates, inline, pageSize]
+  )
+  const checked = useRef(new Map<string, boolean>())
   const [writeChecks, setWriteChecks] = useState<Record<string, boolean>>({})
   useEffect(() => {
     if (!writableOnly) return
@@ -150,9 +159,9 @@ export const SessionMentionPopup = ({
     // Startup summaries omit packageOrigin. Never offer an unknown candidate as writable;
     // verify via the existing authority read without hydrating or selecting that conversation.
     void (async () => {
-      for (const candidate of candidates) {
+      for (const candidate of visibleCandidates) {
         if (cancelled) return
-        if (!candidate.writeCheckKey) continue
+        if (!candidate.writeCheckKey || checked.current.has(candidate.writeCheckKey)) continue
         let writable = false
         try {
           const session = await window.api.sessions.loadOne({
@@ -165,17 +174,18 @@ export const SessionMentionPopup = ({
         }
         if (cancelled) return
         const key = candidate.writeCheckKey
+        checked.current.set(key, writable)
         setWriteChecks((current) => ({ ...current, [key]: writable }))
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [candidates, writableOnly])
-  const matches = candidates.filter(
+  }, [visibleCandidates, writableOnly])
+  const matches = visibleCandidates.filter(
     (candidate) => !candidate.writeCheckKey || writeChecks[candidate.writeCheckKey] === true
   )
-  const checking = candidates.some(
+  const checking = visibleCandidates.some(
     (candidate) => candidate.writeCheckKey && writeChecks[candidate.writeCheckKey] === undefined
   )
 
@@ -316,6 +326,17 @@ export const SessionMentionPopup = ({
           )
         })}
       </ul>
+      {inline && candidates.length > pageSize && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-1 shrink-0"
+          disabled={checking}
+          onClick={() => setPage({ query, count: pageSize + 10 })}
+        >
+          {checking ? t('Loading…') : t('Load more')}
+        </Button>
+      )}
       {!inline && (
         <div className="mt-1 -mx-1.5 -mb-1.5 flex shrink-0 items-center justify-end gap-3 border-t border-border-200 bg-bg-200/40 px-3 py-1.5 text-[11px] text-text-100 select-none">
           {matches.length > 0 && (

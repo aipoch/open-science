@@ -827,6 +827,53 @@ describe('PdfPreviewContent', () => {
     expect(window.api.previewResources.release).not.toHaveBeenCalled()
   })
 
+  it.each([undefined, 'artifact'] as const)(
+    'opens read-only replay PDF versions without writable annotation/bookmark access (source: %s)',
+    async (source) => {
+      const list = vi.fn()
+      const resolveSource = vi.fn()
+      window.api.pdfAnnotations = { list } as never
+      window.api.bookmarks = { resolveSource } as never
+      useSessionStore.setState({
+        selectedSessionId: 'discussion',
+        sessions: [{ id: 'discussion', projectId: 'project-1' }] as never
+      })
+      await act(async () => {
+        root.render(
+          <PdfPreviewRenderer
+            readOnly
+            item={{
+              id: 'recorded-pdf',
+              projectId: 'project-1',
+              sessionId: 'creator',
+              title: 'report.pdf',
+              name: 'report.pdf',
+              type: 'file',
+              format: 'pdf',
+              source,
+              path: 'artifact-version:historical',
+              managedFileId: 'artifact-1',
+              selectedVersionId: 'historical'
+            }}
+          />
+        )
+        await flush()
+      })
+      await vi.waitFor(() =>
+        expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+          source: 'artifact',
+          projectId: 'project-1',
+          fileId: 'artifact-1',
+          versionId: 'historical'
+        })
+      )
+      expect(list).not.toHaveBeenCalled()
+      expect(resolveSource).not.toHaveBeenCalled()
+      await act(async () => root.render(null))
+      expect(window.api.previewResources.release).toHaveBeenCalled()
+    }
+  )
+
   it('acquires the exact managed Artifact version selected by the preview item', async () => {
     await act(async () => {
       root.render(

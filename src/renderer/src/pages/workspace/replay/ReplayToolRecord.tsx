@@ -208,7 +208,10 @@ export const ReplayRecordedText = ({
       <pre
         className={
           scrollable
-            ? cn(notebookOutputTextClassName, 'overflow-auto whitespace-pre text-text-200')
+            ? cn(
+                notebookOutputTextClassName,
+                'overflow-auto whitespace-pre text-text-200 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
+              )
             : 'whitespace-pre-wrap break-words rounded bg-bg-200 p-2 font-mono text-xs leading-5'
         }
       >

@@ -768,7 +768,6 @@ const ReplayPanelContent = ({
                 aria-expanded={materialsOpen}
                 aria-controls={materialsId}
                 onClick={() => {
-                  pause()
                   setMaterialsOverride(!materialsOpen)
                   if (!materialsOpen)
                     requestAnimationFrame(() =>
@@ -806,7 +805,6 @@ const ReplayPanelContent = ({
                 aria-expanded={filesOpen}
                 aria-controls={filesId}
                 onClick={() => {
-                  pause()
                   setFilesOverride(!filesOpen)
                   if (!filesOpen)
                     requestAnimationFrame(() =>

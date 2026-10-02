@@ -464,9 +464,20 @@ test('generated files reuse type icons and return to the archived Files list at 
   await page.keyboard.press('End')
   const conversation = panel.getByRole('region', { name: 'Historical conversation' })
   const material = panel.getByRole('region', { name: 'Research materials' })
-  const original = conversation
-    .locator('[data-replay-step="file-v1"]')
-    .getByRole('button', { name: /^Preview generated file observations\.svg/ })
+  const original = conversation.getByRole('button', {
+    name: 'Preview generated file observations.svg (Version 1)',
+    exact: true
+  })
+  await expect(conversation.getByText('GENERATED · 2', { exact: true })).toHaveCount(1)
+  const generated = conversation.getByRole('button', { name: /^Preview generated file/ })
+  const bounds = await generated.evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      top: node.getBoundingClientRect().top,
+      left: node.getBoundingClientRect().left
+    }))
+  )
+  expect(bounds[0].top).toBe(bounds[1].top)
+  expect(bounds[1].left).toBeGreaterThan(bounds[0].left)
   await expect(original.locator('img')).toBeVisible()
   await expect(original.locator('[data-slot="generated-artifact-open-icon"]')).toHaveCount(1)
   await expect(original.getByTestId('file-name-extension')).toHaveText('.svg')
@@ -1124,12 +1135,16 @@ test('archived output reuses Notebook collapse and keeps long console tables ins
     height: node.clientHeight,
     vertical: node.scrollHeight > node.clientHeight,
     horizontal: node.scrollWidth > node.clientWidth,
-    whiteSpace: getComputedStyle(node).whiteSpace
+    whiteSpace: getComputedStyle(node).whiteSpace,
+    scrollbarWidth: getComputedStyle(node).scrollbarWidth
   }))
   expect(bounds.height).toBeLessThanOrEqual(256)
   expect(bounds.vertical).toBe(true)
   expect(bounds.horizontal).toBe(true)
   expect(bounds.whiteSpace).toBe('pre')
+  expect(bounds.scrollbarWidth).toBe('none')
+  const code = material.locator('[data-testid="session-notebook-cell"] .overflow-auto').first()
+  expect(await code.evaluate((node) => getComputedStyle(node).scrollbarWidth)).toBe('none')
   await pre.evaluate((node) => {
     node.scrollLeft = 100
     node.scrollTop = 100
@@ -1301,4 +1316,18 @@ test('expanded replay keeps menus, tooltips and Ask above the modal and dismisse
   await page.keyboard.press('Escape')
   await expect(ask).not.toBeVisible()
   await expect(panel.getByRole('button', { name: 'Exit full screen', exact: true })).toBeVisible()
+})
+
+test('Notebook and Files header toggles preserve the advancing replay clock', async ({ page }) => {
+  await page.goto(`${url}?panel=1&artifacts=1`)
+  const panel = page.getByTestId('replay-panel')
+  await panel.getByRole('button', { name: 'Play replay', exact: true }).click()
+  for (const name of ['Notebook', 'View files', 'Notebook', 'View files']) {
+    await panel.getByRole('button', { name, exact: true }).click()
+    await expect(panel.getByRole('button', { name: 'Pause replay', exact: true })).toBeVisible()
+  }
+  const before = Number(await panel.getByRole('slider').getAttribute('aria-valuenow'))
+  await expect
+    .poll(async () => Number(await panel.getByRole('slider').getAttribute('aria-valuenow')))
+    .toBeGreaterThan(before)
 })

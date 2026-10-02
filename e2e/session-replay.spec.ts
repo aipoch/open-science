@@ -566,3 +566,55 @@ test('opens imported research, asks about a recorded step and restores the ordin
   expect(learning!.runtimeContext!.sessionContext!.bindings[0].scope).toBe('step')
   expect(learning!.runtimeContext!.sessionContext!.bindings[0].positions).toHaveLength(1)
 })
+
+test('previews recorded DOCX inside replay and routes its iframe menu at non-default zoom', async ({
+  app
+}) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  const create = page.getByRole('dialog', { name: 'New project' })
+  await create.getByLabel('Name').fill('Replay Office preview')
+  await create.getByRole('button', { name: 'Create project' }).click()
+  await page
+    .getByRole('textbox', { name: 'Ask anything' })
+    .fill('Create preview context menu artifacts.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(
+    page.getByText('Preview context menu artifacts created.', { exact: true })
+  ).toBeVisible({ timeout: 90_000 })
+  const row = page.locator('[data-session-preview][data-session-id]').first()
+  await row.click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'View replay', exact: true }).click()
+  const replay = page.getByTestId('replay-panel')
+  await expect(replay).toBeVisible()
+  await replay.getByRole('button', { name: 'Enter full screen', exact: true }).click()
+  await replay.getByRole('slider', { name: 'Replay progress' }).focus()
+  await page.keyboard.press('End')
+  const files = replay.getByRole('complementary', { name: 'Files' })
+  await files.getByRole('button', { name: /context-menu.docx/ }).click()
+  await expect(replay.locator('[data-office-preview-state="ready"]')).toBeVisible({
+    timeout: 90_000
+  })
+  const office = replay.frameLocator('iframe[data-office-preview-frame]')
+  await expect(office.locator('.docx-review-counter')).toHaveText('1 / 1')
+  await app.setMainWindowZoomFactor(1.25)
+  await office.locator('body').click({ button: 'right', position: { x: 40, y: 40 } })
+  const menu = page.getByTestId('replay-preview-context-menu')
+  await expect(menu).toBeVisible()
+  await expect(menu.getByText('Close', { exact: true })).toBeVisible()
+  await expect(menu.getByText('Edit', { exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await office.locator('body').evaluate((body) => {
+    const target = document.createElement('div')
+    target.dataset.previewContextMenuPassthrough = ''
+    target.textContent = 'Replay native context area'
+    body.prepend(target)
+  })
+  await office.getByText('Replay native context area', { exact: true }).click({ button: 'right' })
+  await expect(menu).toBeHidden()
+  await page.keyboard.press('Escape')
+  await replay.getByRole('button', { name: 'Back to files', exact: true }).click()
+  await expect(replay.locator('iframe[data-office-preview-frame]')).toHaveCount(0)
+  await expect(files).toBeVisible()
+})

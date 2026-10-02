@@ -3,7 +3,17 @@ import { GeneratedFileCard, artifactGalleryClassName } from '../GeneratedFileCar
 import { formatByteSize } from '@/lib/utils'
 import { isReviewerCorrectionAttribution } from '../../../../../shared/session-persistence'
 import { ReplayReviewRecord } from './ReplayReviewRecord'
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { parse } from 'papaparse'
@@ -19,6 +29,7 @@ import type { NotebookRunRecord } from '../../../../../shared/notebook'
 import { ArrowLeft, X, BookOpen, Files as FilesIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { getPreviewFormatForFile } from '../preview-support'
 import { FileTypeIcon } from '../file-type-icon'
 import { ExtensionPreservingFileName } from '../ExtensionPreservingFileName'
 import {
@@ -49,6 +60,8 @@ import {
   useReplayTranslation,
   type ReplayPresentationConfig
 } from './replay-presentation'
+
+const ReplayFilePreview = lazy(() => import('./ReplayFilePreview'))
 
 export const REPLAY_VIEWPORT = { width: 1280, height: 720 } as const
 export type ReplayStageReadiness = ReplayFrameReadiness & {
@@ -87,6 +100,10 @@ export type ReplayStageProps = {
   onReady?: (readiness: ReplayStageReadiness) => void
   readinessTimeoutMs?: number
 }
+
+// Keep simple frozen image/text/table inspection; use workspace renderers for richer formats.
+const usesRichPreview = (resource: ReplayResource): boolean =>
+  !['image', 'text', 'code', 'csv'].includes(getPreviewFormatForFile(resource))
 
 const archivedTime = (value: number | undefined): string | undefined => {
   if (value === undefined || !Number.isFinite(value)) return undefined
@@ -254,7 +271,10 @@ const ReplayNotebook = memo(function ReplayNotebook({
     </>
   ) : null
   return (
-    <article className="space-y-3" data-replay-notebook-run={run.runId}>
+    <article
+      className="space-y-3 [&_.overflow-auto]:[scrollbar-width:none] [&_.overflow-auto::-webkit-scrollbar]:hidden"
+      data-replay-notebook-run={run.runId}
+    >
       {interactive ? (
         <NotebookRecordCell
           run={run}
@@ -346,8 +366,13 @@ const StepConversation = memo(function StepConversation({
     () =>
       artifactResources
         .filter((resource) => step.resourceIds.includes(resource.id))
-        .slice(0, REPLAY_MATERIAL_RESOURCE_LIMIT),
-    [artifactResources, step.resourceIds]
+        .slice(
+          0,
+          interactive
+            ? REPLAY_TRANSCRIPT_STEP_LIMIT * REPLAY_MATERIAL_RESOURCE_LIMIT
+            : REPLAY_MATERIAL_RESOURCE_LIMIT
+        ),
+    [artifactResources, step.resourceIds, interactive]
   )
   const message = step.message
   const content = message?.content ?? ''
@@ -569,6 +594,29 @@ const ReplayStageContent = ({
     }
   }, [replayDocument, scene.branchId])
   const active = scene.step
+  const transcriptSteps = useMemo(() => {
+    const rows: ReplayStep[] = []
+    const isGallery = (step: ReplayStep): boolean =>
+      fitContainer &&
+      step.kind === 'artifact' &&
+      !step.message &&
+      !step.review &&
+      !step.activities.length &&
+      !step.runs.length &&
+      !step.issues.length &&
+      (step.id !== scene.step?.id || scene.showResults)
+    for (const step of scene.visibleSteps.slice(-REPLAY_TRANSCRIPT_STEP_LIMIT)) {
+      const previous = rows.at(-1)
+      if (previous && isGallery(previous) && isGallery(step)) {
+        // A view-only grouping, preserving the active step's identity and reveal boundary.
+        rows[rows.length - 1] = {
+          ...step,
+          resourceIds: [...new Set([...previous.resourceIds, ...step.resourceIds])]
+        }
+      } else rows.push(step)
+    }
+    return rows
+  }, [fitContainer, scene.visibleSteps, scene.step?.id, scene.showResults])
   const materialStep = [...scene.visibleSteps]
     .reverse()
     .find((step) => step.runs.length || step.resourceIds.length)
@@ -597,7 +645,10 @@ const ReplayStageContent = ({
     : fitContainer
       ? []
       : replayDocument.resources.filter((resource) => resourceIds.includes(resource.id))
-  const resourcesSettled = selectedResources.every(
+  const readinessResources = selectedResources.filter(
+    (resource) => !fitContainer || !usesRichPreview(resource)
+  )
+  const resourcesSettled = readinessResources.every(
     (resource) => resources[resource.id] !== undefined
   )
   const runsSettled = materialRuns.every((run) => runDetails[run.runId] !== undefined)
@@ -647,7 +698,7 @@ const ReplayStageContent = ({
         if (imageFailures.length)
           setFailedImages((existing) => new Set([...existing, ...imageFailures]))
         const missing = [
-          ...selectedResources
+          ...readinessResources
             .filter((resource) => resources[resource.id]?.status !== 'ready')
             .map((resource) => `material:${resource.id}`),
           ...materialRuns
@@ -891,7 +942,7 @@ const ReplayStageContent = ({
           style={{ scrollbarWidth: fitContainer ? undefined : 'none' }}
         >
           <div className={fitContainer ? 'space-y-1' : 'space-y-3'}>
-            {scene.visibleSteps.slice(-REPLAY_TRANSCRIPT_STEP_LIMIT).map((step) => (
+            {transcriptSteps.map((step) => (
               <StepConversation
                 interactive={fitContainer}
                 artifactResources={replayDocument.resources}
@@ -917,7 +968,7 @@ const ReplayStageContent = ({
           tabIndex={0}
           className={
             fitContainer
-              ? `min-h-0 min-w-0 ${inspecting ? 'overflow-auto' : 'flex-col overflow-hidden'} ${wide ? 'border-l border-border-200' : ''} ${showMaterialPane ? (inspecting ? 'block' : 'flex') : 'hidden'}`
+              ? `min-h-0 min-w-0 flex-col overflow-hidden ${wide ? 'border-l border-border-200' : ''} ${showMaterialPane ? 'flex' : 'hidden'}`
               : 'space-y-5 overflow-auto p-6'
           }
           style={{ scrollbarWidth: fitContainer ? undefined : 'none' }}
@@ -1058,7 +1109,7 @@ const ReplayStageContent = ({
             return (
               <article
                 key={resource.id}
-                className={fitContainer ? 'flex min-h-full flex-col' : 'space-y-3'}
+                className={fitContainer ? 'flex min-h-0 flex-1 flex-col' : 'space-y-3'}
                 data-replay-artifact-version={resource.versionId}
               >
                 <div
@@ -1137,11 +1188,28 @@ const ReplayStageContent = ({
                 <div
                   className={
                     fitContainer
-                      ? 'flex-1 space-y-3 overflow-auto p-4 [&>img]:mx-auto [&>img]:max-h-none'
+                      ? usesRichPreview(resource)
+                        ? 'relative min-h-0 flex-1 overflow-hidden'
+                        : 'min-h-0 flex-1 space-y-3 overflow-auto p-4 [&>img]:mx-auto [&>img]:max-h-none'
                       : 'contents'
                   }
                 >
-                  {prepared?.status === 'ready' ? (
+                  {fitContainer &&
+                  inspecting &&
+                  usesRichPreview(resource) &&
+                  resource.availability === 'recorded' &&
+                  resource.versionId &&
+                  resource.locator ? (
+                    <Suspense
+                      fallback={
+                        <p className="p-4 text-sm text-text-300">
+                          {t('Preparing recorded material…')}
+                        </p>
+                      }
+                    >
+                      <ReplayFilePreview resource={resource} onClose={returnToOrigin} />
+                    </Suspense>
+                  ) : prepared?.status === 'ready' ? (
                     <>
                       {prepared.kind === 'image' ? (
                         <FrozenImage
