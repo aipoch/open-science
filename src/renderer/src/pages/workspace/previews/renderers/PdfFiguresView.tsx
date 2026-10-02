@@ -877,7 +877,10 @@ export const PdfFiguresView = ({
               ![LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED].some((code) => message.endsWith(code))
             )
               throw error
-            modelReady ??= install()
+            modelReady ??= install().catch(() => {
+              // A shared prerequisite failure must stop every page, not become a page error.
+              throw new Error(LOCAL_MODEL_NOT_INSTALLED)
+            })
             await modelReady
             if (own !== generation.current || stopped) throw error
             return window.api.pdfStructure.parse(request)

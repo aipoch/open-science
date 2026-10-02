@@ -1911,6 +1911,39 @@ it('shares one model installation across parallel misses, including a late miss'
   expect(container.textContent).toContain('Analysis complete')
 })
 
+it.each(['rejected', 'unavailable'] as const)(
+  'stops parallel extraction when shared model installation is %s and allows retry',
+  async (failure) => {
+    model = { ...model, availability: 'notInstalled', installedRevision: undefined }
+    if (failure === 'rejected')
+      api.localModels.install.mockRejectedValueOnce(new Error('checksum mismatch'))
+    else api.localModels.install.mockResolvedValueOnce(model)
+    const pending = pendingPages()
+    await startParallel(4, 6)
+    const requests = api.pdfStructure.parse.mock.calls.map(([request]) => request)
+    await act(async () => {
+      pending.get(2)!.reject(new Error(LOCAL_MODEL_NOT_INSTALLED))
+      pending.get(3)!.reject(new Error(LOCAL_MODEL_NOT_INSTALLED))
+    })
+    expect(api.localModels.install).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('PDF extraction is unavailable')
+    expect(container.textContent).not.toContain('Could not extract pages:')
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(4)
+    for (const request of [requests[0], requests[3]])
+      expect(api.pdfStructure.cancel).toHaveBeenCalledWith(request.requestId)
+    await act(async () => {
+      pending.get(1)!.resolve(emptyPage(1))
+      pending.get(4)!.resolve(emptyPage(4))
+    })
+    expect(container.textContent).not.toContain('Analysis complete')
+    model = { ...model, availability: 'ready', installedRevision: 'v1' }
+    api.pdfStructure.parse.mockImplementation(async ({ page }: { page: number }) => emptyPage(page))
+    await click('Analyze again')
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(10)
+    expect(container.textContent).toContain('Analysis complete')
+  }
+)
+
 it('applies the display limit in page order and cancels outstanding pages', async () => {
   const pending = pendingPages()
   await startParallel(4)
