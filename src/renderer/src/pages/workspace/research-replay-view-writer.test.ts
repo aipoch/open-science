@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   ReplayViewState,
   SaveResearchReplayViewResult
-} from '../../../../shared/research-workspace'
+} from '../../../../shared/session-replay'
 import { ResearchReplayViewWriter } from './research-replay-view-writer'
 const state: ReplayViewState = {
   fingerprint: 'recorded',
@@ -66,8 +66,61 @@ describe('source-scoped Replay checkpoint writer', () => {
     await vi.waitFor(() => expect(report).toHaveBeenCalledWith('conflict'))
     expect(save).toHaveBeenCalledTimes(1)
     writer.enqueue({ ...state, timeMs: 3 })
+    expect(save).toHaveBeenCalledTimes(1)
+    writer.retry()
     expect(save.mock.calls[1][0].expectedRevision).toBe(9)
   })
+  it('retries the newest failed checkpoint explicitly and avoids duplicate saved writes', async () => {
+    const first = deferred()
+    const save = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue({ status: 'saved', revision: 2 })
+    const report = vi.fn()
+    const writer = new ResearchReplayViewWriter(
+      { projectId: 'p', sourceSessionId: 's' },
+      1,
+      save,
+      report
+    )
+    writer.enqueue(state)
+    writer.enqueue({ ...state, timeMs: 5 })
+    first.reject(new Error('Unavailable'))
+    await vi.waitFor(() => expect(report).toHaveBeenCalledWith(expect.any(Error)))
+    expect(save).toHaveBeenCalledTimes(1)
+    writer.retry()
+    await vi.waitFor(() => expect(report).toHaveBeenCalledWith('saved'))
+    expect(save.mock.calls[1][0]).toMatchObject({ expectedRevision: 1, state: { timeMs: 5 } })
+    writer.enqueue({ ...state, timeMs: 5 })
+    expect(save).toHaveBeenCalledTimes(2)
+    writer.dispose()
+    writer.retry()
+    expect(save).toHaveBeenCalledTimes(2)
+  })
+
+  it('revalidates an earlier position after a potentially committed failed write', async () => {
+    const save = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'saved', revision: 1 })
+      .mockRejectedValueOnce(new Error('Acknowledgement lost'))
+      .mockResolvedValueOnce({ status: 'conflict', snapshot: { state, revision: 2 } })
+    const report = vi.fn()
+    const writer = new ResearchReplayViewWriter(
+      { projectId: 'p', sourceSessionId: 's' },
+      0,
+      save,
+      report
+    )
+    writer.enqueue(state)
+    await vi.waitFor(() => expect(report).toHaveBeenCalledWith('saved'))
+    writer.enqueue({ ...state, timeMs: 2 })
+    await vi.waitFor(() => expect(report).toHaveBeenCalledWith(expect.any(Error)))
+    writer.enqueue(state)
+    writer.retry()
+    await vi.waitFor(() => expect(report).toHaveBeenCalledWith('conflict'))
+    expect(save).toHaveBeenCalledTimes(3)
+  })
+
   it.each(['saved', 'conflict', 'error'] as const)(
     'discards old %s replies and queued writes after disposal',
     async (result) => {

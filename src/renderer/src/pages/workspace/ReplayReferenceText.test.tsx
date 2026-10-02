@@ -8,7 +8,7 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { ReplayReferenceText } from './ReplayReferenceText'
-import { replayReferenceText } from './replay-reference-text'
+import { replayReferenceText, splitReplayReferenceText } from './replay-reference-text'
 import { consumeReplaySeek } from './replay/replay-context'
 
 const translate = (text: string): string => text
@@ -35,7 +35,7 @@ beforeEach(() => {
   usePreviewWorkbenchStore.getState().activateProject('p')
   consumeReplaySeek('p', 'source')
   get = vi.fn().mockResolvedValue(context)
-  window.api = { researchWorkspaces: { getQuestionContext: get } } as unknown as typeof window.api
+  window.api = { sessionReplay: { getSelectionSnapshot: get } } as unknown as typeof window.api
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
@@ -55,13 +55,41 @@ const render = async (): Promise<void> => {
   )
 }
 describe('saved replay reference navigation', () => {
-  it('opens the exact saved source and step without changing the left discussion', async () => {
+  it('opens the exact saved source and step without changing the current conversation', async () => {
     await render()
     await act(async () => container.querySelector('button')!.click())
     expect(get).toHaveBeenCalledWith({ projectId: 'p', id })
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('tool:source:replay')
     expect(consumeReplaySeek('p', 'source')).toMatchObject(context)
     expect(useNavigationStore.getState().explicitNavigationRevision).toBe(1)
+  })
+  it('opens a source from another Project while retaining the destination workspace', async () => {
+    const source = { ...context, projectId: 'source-project' }
+    get.mockResolvedValue(source)
+    await act(async () =>
+      root.render(
+        createElement(ReplayReferenceText, {
+          projectId: 'p',
+          text: replayReferenceText(id, 'Recorded step', source.projectId)
+        })
+      )
+    )
+    await act(async () => container.querySelector('button')!.click())
+    expect(get).toHaveBeenCalledWith({ projectId: source.projectId, id })
+    expect(useNavigationStore.getState().activeProjectId).toBe('p')
+    expect(usePreviewWorkbenchStore.getState().items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ projectId: 'p', replaySourceProjectId: source.projectId })
+      ])
+    )
+    expect(consumeReplaySeek(source.projectId, 'source')).toMatchObject(source)
+  })
+  it('preserves malformed references as readable text and decodes valid Project identities', () => {
+    const invalid = '[Recorded step](#research-replay:%ZZ:context)'
+    expect(splitReplayReferenceText(invalid)).toEqual([{ kind: 'text', text: invalid }])
+    expect(
+      splitReplayReferenceText(replayReferenceText(id, 'Recorded step', 'source:project'))
+    ).toEqual([expect.objectContaining({ kind: 'reference', id, projectId: 'source:project' })])
   })
   it('does not steal navigation when an asynchronous lookup completes after leaving', async () => {
     let resolve!: (value: typeof context) => void

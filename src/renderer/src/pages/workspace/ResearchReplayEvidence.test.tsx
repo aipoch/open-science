@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
-import type { ReplaySourceIdentity, ReplayStep } from '../../../../shared/replay'
+import type { ReplayResource, ReplaySourceIdentity, ReplayStep } from '../../../../shared/replay'
 import { indexReplayRun } from '@/lib/replay/run-index'
 import { ResearchReplayEvidence } from './ResearchReplayEvidence'
 vi.mock('react-i18next', () => createI18nTestStub())
@@ -53,8 +53,83 @@ beforeEach(() => {
   notebook.state.mockResolvedValue({ runs: [run] })
   Object.defineProperty(window, 'api', { configurable: true, value: { notebook } })
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 describe('static original evidence reader', () => {
+  it('loads an archived file only when approached and retains it while scrolling away', async () => {
+    let notify: IntersectionObserverCallback
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          notify = callback
+        }
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    const intersect = async (isIntersecting: boolean): Promise<void> => {
+      await act(async () =>
+        notify([{ isIntersecting } as IntersectionObserverEntry], {} as IntersectionObserver)
+      )
+    }
+
+    const resource: ReplayResource = {
+      id: 'figure-v2',
+      source: 'artifact',
+      name: 'sin_plot_r.png',
+      projectId: 'project',
+      sessionId: 'source',
+      artifactId: 'figure',
+      versionId: 'v2',
+      versionNumber: 2,
+      locator: '/archive/figure-v2.png',
+      availability: 'recorded',
+      mimeType: 'image/png'
+    }
+    const readPreview = vi.fn().mockResolvedValue({
+      content: 'iVBORw0KGgo=',
+      encoding: 'base64',
+      truncated: false
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { notebook, artifacts: { readPreview } }
+    })
+    const onOpenResource = vi.fn()
+    render(
+      <ResearchReplayEvidence
+        source={source}
+        step={{ ...step, kind: 'artifact', runs: [], resourceIds: [resource.id] }}
+        resources={[resource]}
+        onBack={vi.fn()}
+        onOpenResource={onOpenResource}
+      />
+    )
+    expect(readPreview).not.toHaveBeenCalled()
+    await intersect(true)
+    const image = await screen.findByRole('img', { name: resource.name })
+    await intersect(false)
+    await intersect(true)
+    expect(readPreview).toHaveBeenCalledTimes(1)
+    expect(image.getAttribute('src')).toBe('data:image/png;base64,iVBORw0KGgo=')
+    expect(readPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project',
+        sessionId: 'source',
+        fileId: 'figure',
+        versionId: 'v2'
+      })
+    )
+    expect(screen.queryByText('Recorded data')).toBeNull()
+    expect(document.body.textContent).not.toContain('fingerprint')
+    fireEvent.click(screen.getByRole('button', { name: 'sin_plot_r.png Version 2' }))
+    expect(onOpenResource).toHaveBeenCalledWith(resource)
+  })
+
   it.each(['', undefined])(
     'reads imported Notebook evidence without a live workspace (%s)',
     async (workspaceCwd) => {

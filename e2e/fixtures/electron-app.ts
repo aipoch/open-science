@@ -311,7 +311,6 @@ type ElectronApp = {
 
   readonly page: Page
   openAdditionalRenderer: () => Promise<Page>
-  interruptResearchSubmissionAcknowledgement: () => Promise<void>
   readNotebookFixtureRuns: (projectId: string, sessionId: string) => Promise<NotebookRunRecord[]>
   authenticatedWebUrl: () => Promise<string>
   allowRendererConsoleError: (text: string) => void
@@ -843,17 +842,6 @@ class ElectronAppHarness implements ElectronApp {
       async () => (await window.api.storage.getInfo()).dataRoot
     )
     return new NotebookRunRepository(dataRoot).readSessionRuns(projectId, sessionId)
-  }
-
-  async interruptResearchSubmissionAcknowledgement(): Promise<void> {
-    await this.runningApplication.evaluate(({ ipcMain }) => {
-      // Fault injection only: the normal renderer still appends and invokes the real fake ACP
-      // provider. Losing this acknowledgement must never cause another prompt after restart.
-      ipcMain.removeHandler('research-submissions:finish')
-      ipcMain.handle('research-submissions:finish', () => {
-        throw new Error('E2E interrupted research submission acknowledgement')
-      })
-    })
   }
 
   async authenticatedWebUrl(): Promise<string> {

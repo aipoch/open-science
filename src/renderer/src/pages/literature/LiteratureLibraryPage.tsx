@@ -60,9 +60,10 @@ import { useLiteratureSmartReevaluation } from './useLiteratureSmartReevaluation
 import { useLiteratureTable } from './useLiteratureTable'
 import { useSmartDecisionBatch } from './useSmartDecisionBatch'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import * as Dialog from '@/components/ui/dialog'
 import { ArrowLeft, BookOpenText, Check, Inbox, LoaderCircle, Pencil, X } from 'lucide-react'
-import { AlertDialog, Checkbox, Tabs } from 'radix-ui'
+import { Checkbox, Tabs } from 'radix-ui'
 import {
   lazy,
   memo,

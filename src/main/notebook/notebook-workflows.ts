@@ -1,3 +1,4 @@
+import type { ReplayRunIndex } from '../../shared/replay'
 import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
@@ -49,6 +50,7 @@ type FinishNotebookCodeCellResult = {
 type NotebookShutdownResult = { sessionId: string; status: 'shutdown' }
 
 type NotebookCommandRuntime = {
+  runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   getProjectActivity(request: NotebookProjectActivityRequest): NotebookProjectActivity
   inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot>
@@ -72,6 +74,7 @@ type NotebookCommandRuntime = {
 }
 
 type NotebookCommandWorkflows = {
+  runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   projectActivity(request: NotebookProjectActivityRequest): Promise<NotebookProjectActivity>
   inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot>
@@ -122,6 +125,7 @@ const createNotebookCommandWorkflows = (
 ): NotebookCommandWorkflows => ({
   // These projections can initialize a previously unseen Notebook session and persist run.json,
   // so they share the same data-root admission as explicit mutation commands.
+  runIndex: (request) => runtime.runIndex(request),
   state: (request) => withDataRootWrite(() => runtime.state(request)),
   projectActivity: async (request) => runtime.getProjectActivity(request),
   inspectNamespace: (request) =>

@@ -4,13 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
-import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
+import { useSessionReplayStore } from '@/stores/session-replay-store'
 import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
 import type { ReplayDocument, ReplayResource, ReplayStep } from '../../../../shared/replay'
-import type {
-  ReplayViewState,
-  ResearchWorkspaceSnapshot
-} from '../../../../shared/research-workspace'
+import type { ReplayViewState, SessionReplaySnapshot } from '../../../../shared/session-replay'
 import { ResearchReplayPreview } from './ResearchReplayPreview'
 import type { ReplayPanelProps } from './replay/ReplayPanel'
 
@@ -24,6 +21,7 @@ vi.mock('./replay/ReplayPanel', () => ({
     return (
       <div data-testid="replay-panel" data-active={String(props.active)}>
         {props.document.source.title}
+        <button data-replay-browse-steps>Browse steps</button>
       </div>
     )
   }
@@ -51,7 +49,7 @@ const step: ReplayStep = {
   endMs: 1000
 }
 const doc = (id = 'source'): ReplayDocument => ({
-  generatorVersion: 2,
+  generatorVersion: 3,
   presentationVersion: 2,
   source: { projectId: 'project', sessionId: id, title: id, fingerprint: id },
   defaultBranchId: 'main',
@@ -70,17 +68,15 @@ const item = (id = 'source'): PreviewToolItem => ({
 })
 const view: ReplayViewState = {
   fingerprint: 'source',
-  generatorVersion: 2,
+  generatorVersion: 3,
   branchId: 'main',
   timeMs: 1,
   rate: 1
 }
-const snapshot = (sourceSessionId: string, revision = 0): ResearchWorkspaceSnapshot => ({
+const snapshot = (sourceSessionId: string, revision = 0): SessionReplaySnapshot => ({
   projectId: 'project',
   sourceSessionId,
   sourceStatus: 'available',
-  discussionStatus: 'none',
-  linkRevision: 0,
   ...(revision ? { view: { state: view, revision } } : {})
 })
 const props = (): ReplayPanelProps => mocks.panel.mock.lastCall![0]
@@ -97,7 +93,7 @@ const session = (id: string): ChatSession => ({
 beforeEach(() => {
   vi.clearAllMocks()
   useSessionStore.setState({ sessions: [session('source'), session('other')] })
-  useResearchWorkspaceStore.setState({ snapshots: {}, pendingQuestion: undefined })
+  useSessionReplayStore.setState({ snapshots: {}, pendingQuestion: undefined })
   usePreviewWorkbenchStore.setState({ expandedToolItemId: null })
   mocks.load.mockImplementation(async (_api, request) => doc(request.sessionId))
   mocks.get.mockImplementation(async (request) =>
@@ -106,61 +102,46 @@ beforeEach(() => {
   mocks.save.mockResolvedValue({ status: 'saved', revision: 2 })
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { researchWorkspaces: { get: mocks.get, saveView: mocks.save } }
+    value: { sessionReplay: { get: mocks.get, saveView: mocks.save } }
   })
 })
 afterEach(cleanup)
 
 describe('ResearchReplayPreview lifecycle', () => {
-  it('uses shared preview expansion and returns Ask to the discussion without losing its context', async () => {
-    useNavigationStore.setState({
-      activeProjectId: 'project',
-      researchWorkspace: { projectId: 'project', sourceSessionId: 'source', sourceTitle: 'source' }
-    })
-    render(<ResearchReplayPreview item={item()} />)
+  it('defers restored background archives until activation and retains them across tab switches', async () => {
+    const mounted = render(<ResearchReplayPreview item={item()} isActive={false} />)
+    await act(async () => {})
+    expect(mocks.load).not.toHaveBeenCalled()
+    expect(mocks.get).not.toHaveBeenCalled()
+    mounted.rerender(<ResearchReplayPreview item={item()} isActive />)
     await screen.findByTestId('replay-panel')
-    expect(props().expanded).toBe(false)
-    act(() => props().onToggleExpanded?.())
-    expect(props().expanded).toBe(true)
-    const context = {
-      projectId: 'project',
-      sourceSessionId: 'source',
-      sourceTitle: 'source',
-      fingerprint: 'source',
-      branchId: 'main',
-      stepId: step.id,
-      stepOffsetMs: 30,
-      evidence: [],
-      excerpt: 'question at recorded step'
-    }
-    act(() => props().onAskStep?.(context))
-    expect(props().expanded).toBe(false)
-    expect(useResearchWorkspaceStore.getState().pendingQuestion).toEqual(context)
-  })
-  it('keeps pending Ask context if cross-source navigation fails', async () => {
-    const openSession = vi
-      .spyOn(useNavigationStore.getState(), 'openSession')
-      .mockReturnValue(false)
-    useNavigationStore.setState({ activeProjectId: 'project', researchWorkspace: undefined })
-    render(<ResearchReplayPreview item={item()} />)
-    await screen.findByTestId('replay-panel')
-    const context = {
-      projectId: 'project',
-      sourceSessionId: 'source',
-      sourceTitle: 'source',
-      fingerprint: 'source',
-      branchId: 'main',
-      stepId: step.id,
-      stepOffsetMs: 0,
-      evidence: [],
-      excerpt: 'saved pending question'
-    }
-    act(() => props().onAskStep?.(context))
-    expect(useResearchWorkspaceStore.getState().pendingQuestion).toEqual(context)
-    expect(screen.getByText('The source research is unavailable.')).toBeTruthy()
-    openSession.mockRestore()
+    mounted.rerender(<ResearchReplayPreview item={item()} isActive={false} />)
+    mounted.rerender(<ResearchReplayPreview item={item()} isActive />)
+    expect(mocks.load).toHaveBeenCalledTimes(1)
+    expect(mocks.get).toHaveBeenCalledTimes(1)
+    expect(props().active).toBe(true)
   })
 
+  it('opens the ordinary conversation chooser without staging or sending the question', async () => {
+    useNavigationStore.setState({ activeProjectId: 'project' })
+    render(<ResearchReplayPreview item={item()} />)
+    await screen.findByTestId('replay-panel')
+    act(() =>
+      props().onAskStep?.({
+        projectId: 'project',
+        sourceSessionId: 'source',
+        sourceTitle: 'Study',
+        fingerprint: 'hash',
+        branchId: 'main',
+        stepId: step.id,
+        stepOffsetMs: 0,
+        evidence: [],
+        excerpt: 'Question'
+      })
+    )
+    expect(await screen.findByRole('dialog', { name: 'Ask in a conversation' })).toBeTruthy()
+    expect(useSessionReplayStore.getState().pendingQuestion).toBeUndefined()
+  })
   it('loads paused history and forwards active visibility changes', async () => {
     const mounted = render(<ResearchReplayPreview item={item()} />)
     await screen.findByTestId('replay-panel')
@@ -168,6 +149,19 @@ describe('ResearchReplayPreview lifecycle', () => {
     expect(props().active).toBe(true)
     mounted.rerender(<ResearchReplayPreview item={item()} isActive={false} />)
     expect(props().active).toBe(false)
+  })
+
+  it('offers an explicit retry for a failed checkpoint without reloading the replay', async () => {
+    mocks.save.mockRejectedValueOnce(new Error('Storage unavailable'))
+    render(<ResearchReplayPreview item={item()} />)
+    await screen.findByTestId('replay-panel')
+    act(() => props().onViewChange?.(view))
+    await screen.findByText('Storage unavailable')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(screen.queryByText('Storage unavailable')).toBeNull())
+    expect(mocks.load).toHaveBeenCalledTimes(1)
+    expect(mocks.save).toHaveBeenCalledTimes(2)
+    expect(mocks.save.mock.calls[1][0]).toMatchObject({ state: view, expectedRevision: 1 })
   })
 
   it('isolates old save replies from a newly selected source', async () => {
@@ -243,7 +237,12 @@ describe('ResearchReplayPreview lifecycle', () => {
     act(() => props().onOpenEvidence(undefined, step))
     expect(screen.getByText('Complete original recorded question')).toBeTruthy()
     expect(props().active).toBe(false)
-    fireEvent.click(screen.getByRole('button', { name: 'Back to replay' }))
+    const back = screen.getByRole('button', { name: 'Back to replay' })
+    await waitFor(() => expect(document.activeElement).toBe(back))
+    fireEvent.keyDown(back, { key: 'Escape' })
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Browse steps' }))
+    )
     expect(screen.queryByText('Complete original recorded question')).toBeNull()
     expect(props().active).toBe(true)
   })
@@ -324,7 +323,7 @@ describe('ResearchReplayPreview lifecycle', () => {
       )
       // The static evidence view uses the same archive-scoped upload action as the material drawer.
       act(() => props().onOpenEvidence(undefined, resourceStep))
-      fireEvent.click(screen.getByRole('button', { name }))
+      fireEvent.click(screen.getByRole('button', { name: `${name} Version 2` }))
       expect(open).toHaveBeenCalledTimes(2)
       expect(open.mock.calls[1][0]).toEqual(open.mock.calls[0][0])
       expect(screen.queryByText('The recorded evidence is unavailable.')).toBeNull()
@@ -382,4 +381,16 @@ describe('ResearchReplayPreview lifecycle', () => {
     expect(screen.getByText('The recorded evidence is unavailable.')).toBeTruthy()
     open.mockRestore()
   })
+})
+
+it('keeps available history visible with a retryable Notebook error without saving an incomplete timeline', async () => {
+  mocks.load.mockResolvedValueOnce({ ...doc(), issues: [{ code: 'notebook-unavailable' }] })
+  render(<ResearchReplayPreview item={item()} />)
+  expect(await screen.findByText('Recorded Notebook details are unavailable.')).toBeTruthy()
+  expect(screen.getByTestId('replay-panel')).toBeTruthy()
+  expect(mocks.panel.mock.lastCall?.[0].onViewChange).toBeUndefined()
+  fireEvent.click(screen.getByRole('button', { name: /^Retry$/ }))
+  await screen.findByTestId('replay-panel')
+  expect(mocks.panel.mock.lastCall?.[0].onViewChange).toEqual(expect.any(Function))
+  expect(mocks.load).toHaveBeenCalledTimes(2)
 })

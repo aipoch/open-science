@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
+import { useSessionStore } from '@/stores/session-store'
+import { useProjectStore } from '@/stores/project-store'
+import { useSessionReplayStore } from '@/stores/session-replay-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import type { ComposerDoc } from './composer/composer-doc'
 import type { Annotation, AnnotationValidationError } from '../../../../shared/annotations'
@@ -10,19 +12,10 @@ import {
   subscribeAnnotationReveal,
   subscribeAnnotationRevealPreparation
 } from './annotations/annotation-reveal'
-import {
-  createReplayStepAnnotation,
-  replayQuestionQuote,
-  referenceReplaySource,
-  replayAnnotationTarget
-} from './research-replay-context'
+import { createReplayStepAnnotation, replayAnnotationTarget } from './research-replay-context'
 import { requestReplaySeek } from './replay/replay-context'
-import {
-  createResearchReplayItem,
-  type ResearchWorkspaceController
-} from './workspace-research-controller'
+import { createResearchReplayItem } from './workspace-research-controller'
 import { requestComposerFocus } from './composer-focus-events'
-import { replayReferenceText } from './replay-reference-text'
 
 type ResearchComposer = {
   view: { doc: ComposerDoc; annotations: Annotation[] }
@@ -34,77 +27,104 @@ type ResearchComposer = {
 }
 
 export const useWorkspaceResearchContext = ({
-  controller,
   composer,
   draftKey,
   editable
 }: {
-  controller: ResearchWorkspaceController
   composer: ResearchComposer
   draftKey: string
   editable: boolean
 }): void => {
   const { t } = useTranslation()
-  const pending = useResearchWorkspaceStore((state) => state.pendingQuestion)
-  const initialized = useRef(new Set<string>())
+  const pending = useSessionReplayStore((state) => state.pendingQuestion)
+  const destination = useSessionReplayStore((state) => state.questionDestination)
+  const targetSession = useSessionStore((state) =>
+    state.sessions.find((row) => row.id === destination?.sessionId)
+  )
+  const mounted = useRef(true)
+  useLayoutEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const handled = useRef<typeof pending>(undefined)
   const savedContextIds = useRef(new WeakMap<object, string>())
-  const { research } = controller
-  const latest = useRef({ composer, draftKey, editable, research })
+  const latest = useRef({ composer, draftKey, editable })
   useLayoutEffect(() => {
-    latest.current = { composer, draftKey, editable, research }
+    latest.current = { composer, draftKey, editable }
   })
-
-  useEffect(() => {
-    if (!editable || !research) return
-    const key = JSON.stringify([research.projectId, research.sourceSessionId, draftKey])
-    if (initialized.current.has(key)) return
-    initialized.current.add(key)
-    try {
-      composer.actions.changeDoc(referenceReplaySource(composer.view.doc, research))
-    } catch {
-      composer.actions.setError(t('Remove a session reference before adding this research.'))
-    }
-  }, [composer.actions, composer.view.doc, draftKey, editable, research, t])
 
   useEffect(() => {
     if (
       !editable ||
-      !research ||
       !pending ||
+      !destination ||
       handled.current === pending ||
-      pending.projectId !== research.projectId ||
-      pending.sourceSessionId !== research.sourceSessionId
+      targetSession?.contentLoaded === false
     )
       return
+    const targetKey = destination.sessionId ?? `new:${destination.projectId}`
+    if (draftKey !== targetKey) return
+    const selectedFrame = (): string => {
+      const graph = useSessionStore
+        .getState()
+        .sessions.find((row) => row.id === destination.sessionId)?.conversationGraph
+      const frame = graph?.frames.find((row) => row.id === graph.activeFrameId)
+      return JSON.stringify([frame?.id, frame?.activeBranchId])
+    }
+    const frameAtStart = selectedFrame()
+    const destinationCurrent = (): boolean => {
+      const navigation = useNavigationStore.getState()
+      const sessions = useSessionStore.getState()
+      const session = sessions.sessions.find((row) => row.id === destination.sessionId)
+      const project = useProjectStore
+        .getState()
+        .projects.find((row) => row.id === destination.projectId)
+      return (
+        navigation.view === 'workspace' &&
+        navigation.activeProjectId === destination.projectId &&
+        navigation.explicitNavigationRevision === destination.navigationRevision &&
+        sessions.selectedSessionId === destination.sessionId &&
+        destination.sessionId !== pending.sourceSessionId &&
+        Boolean(project && project.archivedAt === undefined) &&
+        (!destination.sessionId ||
+          Boolean(session && !session.packageOrigin && session.archivedAt === undefined)) &&
+        selectedFrame() === frameAtStart &&
+        (!destination.frameId ||
+          frameAtStart === JSON.stringify([destination.frameId, destination.branchId]))
+      )
+    }
+    if (!destinationCurrent()) {
+      useSessionReplayStore.getState().ask(undefined)
+      return
+    }
     handled.current = pending
-    const revision = useNavigationStore.getState().explicitNavigationRevision
+    // Focus at admission, not after IPC: users may navigate the replay while storage finishes.
+    requestComposerFocus()
     const id = savedContextIds.current.get(pending) ?? crypto.randomUUID()
     savedContextIds.current.set(pending, id)
-    void window.api.researchWorkspaces
-      .saveQuestionContext({
+    void window.api.sessionReplay
+      .saveSelectionSnapshot({
         projectId: pending.projectId,
         sourceSessionId: pending.sourceSessionId,
         context: { ...structuredClone(pending), id }
       })
       .then(() => {
         const current = latest.current
-        const navigation = useNavigationStore.getState()
         if (
-          useResearchWorkspaceStore.getState().pendingQuestion !== pending ||
+          useSessionReplayStore.getState().pendingQuestion !== pending ||
+          !mounted.current ||
           !current.editable ||
           current.draftKey !== draftKey ||
-          navigation.explicitNavigationRevision !== revision ||
-          navigation.view !== 'workspace' ||
-          navigation.activeProjectId !== pending.projectId ||
-          current.research?.projectId !== pending.projectId ||
-          current.research.sourceSessionId !== pending.sourceSessionId
+          !destinationCurrent()
         ) {
-          if (handled.current === pending) handled.current = undefined
+          if (useSessionReplayStore.getState().pendingQuestion === pending)
+            useSessionReplayStore.getState().ask(undefined)
           return
         }
         // Build on the latest draft after storage finishes. Typing during IPC must be retained.
-        const doc = referenceReplaySource(current.composer.view.doc, pending)
+        const doc = current.composer.view.doc
         const annotation = createReplayStepAnnotation(pending, id)
         if (annotation) {
           const error = current.composer.actions.addAnnotation(annotation)
@@ -114,30 +134,32 @@ export const useWorkspaceResearchContext = ({
           }
           current.composer.actions.changeDoc(doc)
         } else {
-          current.composer.actions.changeDoc({
-            nodes: [
-              ...doc.nodes,
-              {
-                type: 'text',
-                text: `\n${replayReferenceText(id, t('Replay step reference'))}\n${replayQuestionQuote(pending, 12_000)}\n`
-              }
-            ]
-          })
+          current.composer.actions.setError(t('The recorded evidence is unavailable.'))
+          useSessionReplayStore.getState().ask(undefined)
+          return
         }
-        useResearchWorkspaceStore.getState().ask(undefined)
-        requestComposerFocus()
+        useSessionReplayStore.getState().ask(undefined)
       })
       .catch((reason: unknown) => {
         if (
           latest.current.draftKey === draftKey &&
-          useResearchWorkspaceStore.getState().pendingQuestion === pending
+          useSessionReplayStore.getState().pendingQuestion === pending
         )
           latest.current.composer.actions.setError(
             reason instanceof Error ? reason.message : String(reason)
           )
         if (handled.current === pending) handled.current = undefined
       })
-  }, [composer.actions, composer.view.doc, draftKey, editable, pending, research, t])
+  }, [
+    composer.actions,
+    composer.view.doc,
+    draftKey,
+    editable,
+    pending,
+    destination,
+    targetSession,
+    t
+  ])
 
   useEffect(() => {
     let claimed: string | undefined
@@ -146,12 +168,7 @@ export const useWorkspaceResearchContext = ({
     const prepare = subscribeAnnotationRevealPreparation((annotation) => {
       const target = replayAnnotationTarget(annotation)
       const navigation = useNavigationStore.getState()
-      if (
-        !target ||
-        target.projectId !== navigation.activeProjectId ||
-        navigation.view !== 'workspace'
-      )
-        return
+      if (!target || !navigation.activeProjectId || navigation.view !== 'workspace') return
       claimed = annotation.id
       const request = ++generation
       const revision = navigation.explicitNavigationRevision
@@ -161,7 +178,7 @@ export const useWorkspaceResearchContext = ({
           !disposed &&
           generation === request &&
           current.view === 'workspace' &&
-          current.activeProjectId === target.projectId &&
+          current.activeProjectId === navigation.activeProjectId &&
           current.explicitNavigationRevision === revision
         )
       }
@@ -172,7 +189,8 @@ export const useWorkspaceResearchContext = ({
             createResearchReplayItem(
               position.projectId,
               position.sourceSessionId,
-              t('Research replay')
+              t('Research replay'),
+              navigation.activeProjectId
             )
           )
         requestReplaySeek(position)
@@ -181,8 +199,8 @@ export const useWorkspaceResearchContext = ({
         revealTarget(target)
         return
       }
-      void window.api.researchWorkspaces
-        .getQuestionContext({ projectId: target.projectId, id: target.contextId })
+      void window.api.sessionReplay
+        .getSelectionSnapshot({ projectId: target.projectId, id: target.contextId })
         .then((snapshot) => {
           if (!stillCurrent()) return
           if (
@@ -218,5 +236,5 @@ export const useWorkspaceResearchContext = ({
       prepare()
       reveal()
     }
-  }, [research?.projectId, t])
+  }, [t])
 }

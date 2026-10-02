@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ErrorNotice } from '@/components/error-notice'
-import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
 import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
-import { researchWorkspaceKey, useResearchWorkspaceStore } from '@/stores/research-workspace-store'
+import { sessionReplayKey, useSessionReplayStore } from '@/stores/session-replay-store'
 import { loadReplayDocument } from '@/lib/replay'
-import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import type { ReplayDocument, ReplayResource, ReplayStep } from '../../../../shared/replay'
-import type { ReplayViewState } from '../../../../shared/research-workspace'
+import type { ReplayViewState } from '../../../../shared/session-replay'
 import { createArtifactVersionLocator } from '../../../../shared/artifact-provenance'
 import { createUploadVersionReference } from '../../../../shared/uploads'
 import { ReplayPanel } from './replay/ReplayPanel'
@@ -16,6 +14,7 @@ import type { ReplayStepContext } from './replay/replay-context'
 import { createPreviewFileItem } from './preview-file-item'
 import { ResearchReplayViewWriter } from './research-replay-view-writer'
 import { ResearchReplayEvidence } from './ResearchReplayEvidence'
+import { ReplayConversationDialog } from './ReplayConversationDialog'
 
 type Props = { item: PreviewToolItem; isActive?: boolean }
 type LoadedReplay = {
@@ -27,18 +26,37 @@ type LoadedReplay = {
 
 const ResearchReplaySession = ({ item, isActive = true }: Props): React.JSX.Element => {
   const { t } = useTranslation()
-  const projectId = item.projectId ?? ''
+  // Restored background tabs should not read entire archives before their first activation.
+  const [activated, setActivated] = useState(isActive)
+  if (isActive && !activated) setActivated(true)
+  const projectId = item.replaySourceProjectId ?? item.projectId ?? ''
+  const [question, setQuestion] = useState<ReplayStepContext>()
   const sourceSessionId = item.replaySourceSessionId ?? item.sessionId
   const expanded = usePreviewWorkbenchStore((state) => state.expandedToolItemId === item.id)
   const [loaded, setLoaded] = useState<LoadedReplay>()
   const [error, setError] = useState<string>()
+  const [checkpointFailed, setCheckpointFailed] = useState(false)
   const [saveError, setSaveError] = useState<string>()
   const [attempt, setAttempt] = useState(0)
   const [evidenceStep, setEvidenceStep] = useState<ReplayStep>()
+  const surface = useRef<HTMLDivElement>(null)
+  const returningFromEvidence = useRef(false)
+  useEffect(() => {
+    if (!isActive || (!evidenceStep && !returningFromEvidence.current)) return
+    returningFromEvidence.current = Boolean(evidenceStep)
+    const frame = requestAnimationFrame(() => {
+      surface.current
+        ?.querySelector<HTMLElement>(
+          evidenceStep ? '[data-replay-evidence-back]' : '[data-replay-browse-steps]'
+        )
+        ?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [evidenceStep, isActive])
   const loadAbort = useRef<AbortController | undefined>(undefined)
   const activeWriter = useRef<ResearchReplayViewWriter | undefined>(undefined)
-  const sourceStatus = useResearchWorkspaceStore(
-    (state) => state.snapshots[researchWorkspaceKey(projectId, sourceSessionId)]?.sourceStatus
+  const sourceStatus = useSessionReplayStore(
+    (state) => state.snapshots[sessionReplayKey(projectId, sourceSessionId)]?.sourceStatus
   )
   const sourcePresent = useSessionStore((state) =>
     state.sessions.some(
@@ -50,10 +68,10 @@ const ResearchReplaySession = ({ item, isActive = true }: Props): React.JSX.Elem
   const sourceUnavailable =
     (sourceObserved && !sourcePresent) ||
     sourceStatus === 'missing' ||
-    sourceStatus === 'unreadable' ||
-    sourceStatus === 'not-imported'
+    sourceStatus === 'unreadable'
 
   useEffect(() => {
+    if (!activated) return
     const abort = new AbortController()
     loadAbort.current = abort
     let writer: ResearchReplayViewWriter | undefined
@@ -63,25 +81,26 @@ const ResearchReplaySession = ({ item, isActive = true }: Props): React.JSX.Elem
         { projectId, sessionId: sourceSessionId },
         { signal: abort.signal }
       ),
-      window.api.researchWorkspaces.get({ projectId, sourceSessionId })
+      window.api.sessionReplay.get({ projectId, sourceSessionId })
     ])
       .then(([document, snapshot]) => {
         if (abort.signal.aborted) return
-        useResearchWorkspaceStore.getState().put(snapshot)
+        useSessionReplayStore.getState().put(snapshot)
         if (snapshot.sourceStatus !== 'available' && snapshot.sourceStatus !== 'archived')
           throw new Error(t('The source research is unavailable.'))
         writer = new ResearchReplayViewWriter(
           { projectId, sourceSessionId },
           snapshot.view?.revision ?? 0,
-          (request) => window.api.researchWorkspaces.saveView(request),
+          (request) => window.api.sessionReplay.saveView(request),
           (result) => {
             if (abort.signal.aborted) return
+            setCheckpointFailed(result !== 'saved')
             setSaveError(
               result === 'saved'
                 ? undefined
                 : result === 'conflict'
                   ? t(
-                      'The viewing position changed in another window. Pause again to save this position.'
+                      'The viewing position changed in another window. Retry to save this position.'
                     )
                   : result.message
             )
@@ -101,7 +120,7 @@ const ResearchReplaySession = ({ item, isActive = true }: Props): React.JSX.Elem
       writer?.dispose()
       if (activeWriter.current === writer) activeWriter.current = undefined
     }
-  }, [projectId, sourceSessionId, attempt, t])
+  }, [activated, projectId, sourceSessionId, attempt, t])
 
   useEffect(() => {
     if (sourceUnavailable) {
@@ -121,17 +140,7 @@ const ResearchReplaySession = ({ item, isActive = true }: Props): React.JSX.Elem
 
   const askStep = (context: ReplayStepContext): void => {
     if (sourceUnavailable) return
-    const navigation = useNavigationStore.getState()
-    useResearchWorkspaceStore.getState().ask(context)
-    usePreviewWorkbenchStore.getState().setToolItemExpanded(null)
-    if (
-      navigation.researchWorkspace?.sourceSessionId !== sourceSessionId ||
-      navigation.activeProjectId !== projectId
-    ) {
-      if (!navigation.openSession(projectId, sourceSessionId, 'user')) {
-        setSaveError(t('The source research is unavailable.'))
-      }
-    }
+    setQuestion(context)
   }
 
   const openEvidence = (resource: ReplayResource | undefined, step: ReplayStep): void => {
@@ -163,6 +172,7 @@ const ResearchReplaySession = ({ item, isActive = true }: Props): React.JSX.Elem
       recorded.projectId !== projectId ||
       (source === 'artifact' && recorded.sessionId !== sourceSessionId)
     ) {
+      setCheckpointFailed(false)
       setSaveError(t('The recorded evidence is unavailable.'))
       return
     }
@@ -210,12 +220,30 @@ const ResearchReplaySession = ({ item, isActive = true }: Props): React.JSX.Elem
         {t('Preparing research replay…')}
       </p>
     )
+  const notebookUnavailable = loaded.document.issues.some(
+    (issue) => issue.code === 'notebook-unavailable'
+  )
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div ref={surface} className="flex h-full min-h-0 flex-col">
+      {notebookUnavailable ? (
+        <ErrorNotice
+          inline
+          tone="amber"
+          description={t('Recorded Notebook details are unavailable.')}
+          primaryButton={{ label: t('Retry'), onClick: retry }}
+        />
+      ) : null}
+      {question ? (
+        <ReplayConversationDialog context={question} onClose={() => setQuestion(undefined)} />
+      ) : null}
       {saveError ? (
-        <p role="status" className="px-3 py-1 text-xs text-status-warning">
-          {saveError}
-        </p>
+        <ErrorNotice
+          tone="amber"
+          description={saveError}
+          primaryButton={
+            checkpointFailed ? { label: t('Retry'), onClick: loaded.writer.retry } : undefined
+          }
+        />
       ) : null}
       <div className={evidenceStep ? 'hidden' : 'min-h-0 flex-1'}>
         <ReplayPanel
@@ -226,16 +254,9 @@ const ResearchReplaySession = ({ item, isActive = true }: Props): React.JSX.Elem
           document={loaded.document}
           initialView={loaded.view}
           active={isActive && !evidenceStep}
-          onViewChange={loaded.writer.enqueue}
+          onViewChange={notebookUnavailable ? undefined : loaded.writer.enqueue}
           onAskStep={askStep}
           onOpenEvidence={openEvidence}
-          onContinueResearch={
-            sessionForkAvailable()
-              ? () => {
-                  void forkSession({ projectId, id: sourceSessionId })
-                }
-              : undefined
-          }
         />
       </div>
       {evidenceStep ? (
@@ -257,6 +278,7 @@ export const ResearchReplayPreview = (props: Props): React.JSX.Element => (
   <ResearchReplaySession
     key={JSON.stringify([
       props.item.projectId,
+      props.item.replaySourceProjectId,
       props.item.replaySourceSessionId ?? props.item.sessionId
     ])}
     {...props}

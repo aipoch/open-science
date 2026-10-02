@@ -1,3 +1,4 @@
+import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import { describe, expect, it, vi } from 'vitest'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import type {
@@ -606,4 +607,141 @@ describe('Replay deterministic time projection', () => {
       doc.branches[0].steps.find((step) => step.activities.length)?.recordedEndAt
     ).toBeUndefined()
   })
+})
+
+describe('historical reviews in replay', () => {
+  const review = (id: string, extra: Partial<ReviewWithChecks> = {}): ReviewWithChecks => ({
+    id,
+    projectId: 'project',
+    sessionId: 'source',
+    turnMessageId: 'q',
+    scope: { turnMessageId: 'q', blocks: [], artifactVersionIds: [] },
+    lifecycle: 'complete',
+    outcome: 'flagged',
+    model: 'archived-model',
+    reviewerLog: [],
+    createdAt: 6,
+    updatedAt: 8,
+    checks: [],
+    ...extra
+  })
+  it('keeps reviews on their recorded branch and puts ambiguous shared-turn reviews in related material', () => {
+    const original = session()
+    const graph = createLinearConversationGraph({
+      sessionId: original.id,
+      messages: original.messages,
+      createdAt: 1,
+      updatedAt: 8
+    })
+    const mainId = graph.branches[0].id
+    graph.messages.push({
+      ...message('alternative', 'agent', 6, { responseToMessageId: 'q' }),
+      agentFrameId: graph.rootFrameId,
+      introducedOnBranchId: 'alternate',
+      parentMessageId: 'q'
+    })
+    graph.branches.push({
+      id: 'alternate',
+      agentFrameId: graph.rootFrameId,
+      parentBranchId: mainId,
+      forkMessageId: 'q',
+      headMessageId: 'alternative',
+      createdAt: 6,
+      updatedAt: 7
+    })
+    original.conversationGraph = graph
+    const exact = review('exact', {
+      scope: {
+        turnMessageId: 'q',
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: mainId,
+        blocks: [
+          { id: 'answer', kind: 'message', sourceId: 'a', blockIndex: 0, contentHash: 'hash' }
+        ],
+        artifactVersionIds: []
+      }
+    })
+    const missing = review('missing', {
+      scope: { ...exact.scope, messageBranchId: 'deleted-branch' }
+    })
+    const doc = buildReplayDocument({
+      session: original,
+      runs: [],
+      resources: [],
+      issues: [],
+      reviews: [exact, review('legacy'), missing]
+    })
+    expect(
+      doc.branches
+        .find((branch) => branch.id === mainId)!
+        .steps.map((step) => step.review?.id)
+        .filter(Boolean)
+    ).toEqual(['exact'])
+    expect(
+      doc.branches.find((branch) => branch.id === 'alternate')!.steps.some((step) => step.review)
+    ).toBe(false)
+    expect(
+      doc.branches
+        .find((branch) => branch.kind === 'unattributed')!
+        .steps.map((step) => step.review?.id)
+    ).toEqual(['legacy', 'missing'])
+    const branch = doc.branches[0]
+    const step = branch.steps.find((step) => step.review)!
+    expect(branch.steps.indexOf(step)).toBeGreaterThan(
+      branch.steps.findIndex((step) => step.message?.id === 'a')
+    )
+    expect(
+      projectReplayScene(doc, branch.id, step.startMs).visibleEvidence.some(
+        (ref) => ref.kind === 'review'
+      )
+    ).toBe(false)
+    expect(
+      projectReplayScene(doc, branch.id, step.endMs).visibleEvidence.some(
+        (ref) => ref.kind === 'review'
+      )
+    ).toBe(true)
+  })
+  it('preserves separate review rounds and reports a failed reader without blocking the transcript', async () => {
+    const api: ReplayReaderApi = {
+      sessions: { loadOne: vi.fn().mockResolvedValue(session()) },
+      notebook: { getReference: vi.fn().mockResolvedValue(null), state: vi.fn() },
+      artifacts: { getLineage: vi.fn() },
+      reviewer: { getForSession: vi.fn().mockRejectedValue(new Error('missing')) }
+    }
+    const unavailable = await loadReplayDocument(api, { projectId: 'project', sessionId: 'source' })
+    expect(unavailable.issues).toContainEqual({ code: 'review-unavailable' })
+    expect(unavailable.branches[0].steps.some((step) => step.message?.id === 'a')).toBe(true)
+    const doc = buildReplayDocument({
+      session: session(),
+      runs: [],
+      resources: [],
+      issues: [],
+      reviews: [review('first'), review('second', { outcome: 'pass', createdAt: 9 })]
+    })
+    expect(
+      doc.branches[0].steps.filter((step) => step.review).map((step) => step.review?.outcome)
+    ).toEqual(['flagged', 'pass'])
+  })
+})
+
+it('loads large timelines through one compact index read without fetching output history pages', async () => {
+  const api = apiFor()
+  const rows = Array.from({ length: 10000 }, (_, i) => ({
+    runId: `run-${i}`,
+    cellId: `cell-${i}`,
+    source: 'agent' as const,
+    kernelKind: 'python' as const,
+    status: 'completed' as const,
+    startedAt: i,
+    endedAt: i + 1,
+    scriptCharacters: 100000,
+    hasOutput: true
+  }))
+  api.notebook.runIndex = vi.fn().mockResolvedValue(rows)
+  const loaded = await loadReplaySource(api, { projectId: 'project', sessionId: 'source' })
+  expect(loaded.runs).toHaveLength(10000)
+  expect(api.notebook.runIndex).toHaveBeenCalledTimes(1)
+  expect(api.notebook.state).not.toHaveBeenCalled()
+  expect(api.notebook.getReference).not.toHaveBeenCalled()
+  expect(JSON.stringify(loaded.runs)).not.toContain('stdout')
 })

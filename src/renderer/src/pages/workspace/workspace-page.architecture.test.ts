@@ -159,7 +159,6 @@ describe('workspace page architecture', () => {
     expect(importersOf(ownerPaths.composer)).toEqual([
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
-      'pages/workspace/research-draft-persistence.ts',
       'pages/workspace/workspace-conversation-controller.ts',
       'pages/workspace/workspace-message-queue-owner.ts'
     ])
@@ -204,7 +203,6 @@ describe('workspace page architecture', () => {
     ])
     expect(importersOf(ownerPaths.conversation)).toEqual([
       'pages/workspace/ConversationPanel.tsx',
-      'pages/workspace/ResearchSubmissionQueue.tsx',
       'pages/workspace/WorkspacePage.tsx'
     ])
     expect(importersOf(ownerPaths.sideChat)).toEqual([
@@ -249,7 +247,7 @@ describe('workspace page architecture', () => {
     const panelSource = readSource(conversationPanelPath)
 
     expect(conversationCommandCalls(ownerPaths.page)).toEqual([])
-    expect(pageSource).toContain('conversation={{ ...conversation, research: researchWorkspace }}')
+    expect(pageSource).toContain('conversation={conversation}')
     expect(pageSource).toContain('conversation.actions.submit.restoredPlan')
     expect(pageSource).toContain('conversation.actions.delete')
     expect(pageSource).not.toContain('conversation.actions.submit.draft')

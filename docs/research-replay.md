@@ -1,38 +1,36 @@
-# Watch and discuss an imported research package
+# Watch and discuss a Session
 
-Import a `.science` package into a project, then open its research entry. The **Research replay** tab opens on the right, paused. The conversation on the left is for your questions about that research.
+Open a Session’s sidebar menu and choose **View replay** or **Discuss**. Both ordinary Sessions and imported `.science` histories can be sources; typing a `#` mention is not required. Imported history also has a **Discuss** button beside **Fork to continue** and **View replay**. Replay opens on the right, paused. Discuss opens a destination picker, with the current writable conversation first and marked **Current**.
 
 ## Watch the recorded process
 
 Use Play, Pause, Previous/Next step, the progress slider, playback speed, and branch selection to explore the saved research. Expand the preview for a larger view. Inspecting a step, changing branches, or leaving the Replay tab pauses playback.
 
-The scene shows saved conversations, tool activity, recorded Notebook code and outputs, and exact artifact versions. **View step evidence** opens the underlying saved record. **View research materials** lists available recorded runs and files without advancing playback. Source details include the original project and Session, import time, fingerprint, and files excluded from the package.
+The scene shows saved conversations, tool activity, recorded Notebook code and outputs, and exact artifact versions. **View step evidence** opens the underlying saved record. The separate **Notebook** and **Files** panels list recorded runs and files without advancing playback. Imported-source details include the original project and Session, import time, fingerprint, and files excluded from the package.
 
-Replay reconstructs the presentation from archived records. Text reveal, panel changes and compressed waits are presentation effects. Missing or truncated records are identified. The player does not invent results, approval decisions, intermediate edits, or precise timings that were never saved. It does not call a model, start a Notebook kernel, or execute the recorded code.
+Replay reconstructs the presentation from saved records. A running Session is read as saved when the replay opens; playback does not follow live generation. A messages-only Session needs no Notebook or files. Empty histories have no playable steps. Text reveal, panel changes and compressed waits are presentation effects. Missing or truncated records are identified. The player does not invent results, approval decisions, intermediate edits, or precise timings that were never saved. It does not call a model, start a Notebook kernel, or execute the recorded code.
 
 ## Ask about what you see
 
-The first question creates a writable discussion associated with the research entry. Watching alone does not create an empty discussion. New messages and results belong to this discussion; the imported source remains read-only.
+Choose an existing writable conversation or **New conversation**. The source Session itself is excluded, including when it is the current conversation; self-discussion associations are rejected before persistence. The selection is added to its normal draft; nothing is sent automatically. Imported and archived records can be sources but cannot receive new questions. Watching alone does not create a conversation or change the source.
 
-Select **Ask about this step** to pause and attach a fixed reference to the current scene. You can edit the question or remove the reference before sending. Advancing the player does not change a reference already captured in a draft or sent message. Select a saved reference to return to its recorded position.
+Select **Ask about this step** to start a discussion. When sending a message, the composer captures the visible position of the same linked Session, including during playback. Timeline navigation does not save discussion snapshots or alter the draft. Queued messages retain the position captured when enqueued. If that source is not open, the existing selection remains in use. Earlier messages and an answer already running retain their original focus.
 
-If the left conversation and right Replay refer to different research entries, Ask switches to the Replay's discussion while retaining the previous draft. Opening a reference by itself only changes the right preview. Model selection, permissions, Stop, and new attachments apply to the current writable discussion.
+The Session menu’s **Discuss** and the replay header’s **Ask about this research** select the whole Session. The bottom **Ask about this step** selects a step. Sending while the same source is open captures its current position, including when the initial selection was the whole Session. Each receiving conversation has one discussion source; the assistant can read its saved records on demand through `host.sessions.read()`. Every turn names the selected branch, step number and title in the Agent context and asks the assistant to refresh its reading. Whole-Session scope has no selected step; it is not step zero or the first message. Opening a saved source card changes the right preview. Model selection, permissions, Stop, and new attachments apply to the receiving conversation.
 
 Questions use the normal model configured on this device. No account, credential, or running process from the package is restored. A source reference may let the assistant inspect later records too; a step reference captures what was visible, rather than enforcing a restriction on all other evidence the assistant can read.
 
 ## Return later or recover work
 
-Reopening the entry restores its associated discussion and saved playback position, paused. Closing the preview does not stop an answer being generated in the discussion.
+Reopening the replay restores its saved playback position, paused. Closing the preview does not stop an answer being generated in the conversation.
 
-Research drafts and submitted questions have separate local recovery records. Unsent drafts from different windows are kept separately. Use **Recover saved research drafts** to choose a saved draft; recovery does not automatically send it or replace newer input. An unfinished file transfer may require selecting the file again. Saved draft attachments remain private until a message publishes them. Explicitly discarding a recoverable draft releases private attachments only when the application can prove that no other draft, message or resource depends on them.
-
-The send queue distinguishes saved, sending, accepted, failed, and uncertain requests. An uncertain request is not automatically sent again: the model may already have received it. The recovery controls retain its text and attachments for inspection and an explicit next action.
+Discussion questions use ordinary conversation draft and send behavior. Draft recovery uses window-scoped `sessionStorage`; it is not a durable cross-restart draft journal. Sent questions retain their saved source selection. Source removal leaves the saved fragments available, but prevents reading missing history.
 
 Playback positions and some step locators are local to this installation. Exported discussion messages retain readable source information and excerpts, but another device may be unable to jump to a locally saved step. Reimporting the same package creates a distinct local source.
 
 ## Continue an experiment
 
-Use **Create a copy to continue research** to enter the existing Fork workflow. Forking and subsequent execution use the normal runtime setup and permission checks. The playhead does not represent a restorable process or environment snapshot.
+For imported read-only history, use **Fork to continue** to enter the existing Fork workflow. Forking and subsequent execution use the normal runtime setup and permission checks. The playhead does not represent a restorable process or environment snapshot.
 
 Archiving or deleting the original research does not implicitly delete its discussion. An available discussion remains accessible if its source is absent; unavailable references are identified. Deleting a discussion does not delete its source. Starting another discussion after deletion is an explicit action.
 

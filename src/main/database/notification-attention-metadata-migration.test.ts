@@ -106,10 +106,10 @@ describe('notification attention metadata migration', () => {
         '0044_literature_smart_collections',
         '0045_literature_smart_pause_run',
         '0046_journal_attributes',
-        '0047_research_workspaces'
+        '0047_session_replay'
       ],
       from: '0006_database_domain_constraints',
-      to: '0047_research_workspaces'
+      to: '0047_session_replay'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)

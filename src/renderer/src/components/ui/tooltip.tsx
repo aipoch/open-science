@@ -1,3 +1,4 @@
+import { useOverlayLayer } from './overlay-layer'
 import * as React from 'react'
 import { Tooltip as TooltipPrimitive } from 'radix-ui'
 
@@ -22,19 +23,22 @@ const TooltipTrigger = TooltipPrimitive.Trigger
 // Wraps Radix tooltip content with the app's compact visual treatment.
 function TooltipContent({
   className,
+  style,
   sideOffset = 4,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>): React.JSX.Element {
+  const layer = useOverlayLayer()
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          'hover-bubble origin-(--radix-tooltip-content-transform-origin) z-50 max-w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-md bg-text-000 px-2 py-1 text-xs whitespace-normal break-words text-bg-000 shadow-md',
+          '[[aria-hidden=true]_&]:hidden hover-bubble origin-(--radix-tooltip-content-transform-origin) z-50 max-w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-md bg-text-000 px-2 py-1 text-xs whitespace-normal break-words text-bg-000 shadow-md',
           className
         )}
         {...props}
+        style={layer > 40 ? { ...style, zIndex: layer + 10 } : style}
       />
     </TooltipPrimitive.Portal>
   )

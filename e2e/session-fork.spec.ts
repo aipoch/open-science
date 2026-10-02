@@ -56,13 +56,7 @@ test('forks local and imported research and immediately continues through the re
       const importing = page.getByRole('dialog', { name: 'Import Session package', exact: true })
       await importing.getByRole('button', { name: 'Import', exact: true }).click()
       await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
-      const replay = page.getByTestId('replay-panel')
-      await expect(replay).toBeVisible()
-      await replay.getByRole('slider', { name: 'Replay progress', exact: true }).focus()
-      await page.keyboard.press('End')
-      await replay
-        .getByRole('button', { name: 'Create a copy to continue research', exact: true })
-        .click()
+      await page.getByRole('button', { name: 'Fork to continue', exact: true }).click()
       await expect(
         page.getByRole('region', { name: 'Research discussion', exact: true })
       ).toHaveCount(0)

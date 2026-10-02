@@ -1,3 +1,4 @@
+import { replayAnnotationTarget, splitReplayReferenceText } from '../../shared/replay-reference'
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId
@@ -174,12 +175,50 @@ type PackageSnapshotOptions = PackageExportOptions & {
   consumeSnapshot?: (directory: string) => Promise<void>
 }
 
+// Session links refer to local snapshots, so portable history retains their readable labels only.
+const portableMessage = <T extends PersistedChatSession['messages'][number]>(message: T): T => {
+  const clean = (text: string): string =>
+    splitReplayReferenceText(text)
+      .map((part) =>
+        part.kind === 'text' ? part.text : `${part.label} (local Session link omitted)`
+      )
+      .join('')
+  const annotations = message.annotations?.filter(
+    (annotation) => !replayAnnotationTarget(annotation)
+  )
+  const quotes =
+    message.annotations
+      ?.filter((annotation) => replayAnnotationTarget(annotation))
+      .map((annotation) => (annotation.kind === 'text' ? annotation.quote : ''))
+      .filter(Boolean) ?? []
+  return {
+    ...message,
+    content: [clean(message.content), ...quotes].filter(Boolean).join('\n\n'),
+    annotations,
+    parts: message.parts
+      ? [
+          ...message.parts.map((part) =>
+            part.type === 'text' ? { ...part, text: clean(part.text) } : part
+          ),
+          ...(quotes.length ? [{ type: 'text' as const, text: `\n\n${quotes.join('\n\n')}` }] : [])
+        ]
+      : undefined
+  }
+}
+
 // Strip only known private or auxiliary runtime metadata. Delivered Side Chat relays already live
 // in the main conversation graph and remain exportable; the auxiliary transcripts and queue do not.
 // A similarly named key inside research evidence must still be inspected and rejected when
 // sensitive, never silently removed from the evidence.
 const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSession => ({
   ...session,
+  messages: session.messages.map(portableMessage),
+  conversationGraph: session.conversationGraph
+    ? {
+        ...session.conversationGraph,
+        messages: session.conversationGraph.messages.map(portableMessage)
+      }
+    : undefined,
   providerSessionId: undefined,
   providerContinuityToken: undefined,
   runtimeContext: session.runtimeContext
@@ -188,7 +227,9 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
         permission: undefined,
         sideChat: undefined,
         sideChats: undefined,
-        sideChatRelays: undefined
+        sideChatRelays: undefined,
+        // Local reading links are not part of a portable Session package.
+        sessionContext: undefined
       }
     : undefined
 })
@@ -206,10 +247,11 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
     Object.hasOwn(session, 'providerContinuityToken')
   )
     return true
+  if (JSON.stringify(session).includes('research-replay:')) return true
   const runtimeContext = session.runtimeContext
   return (
     isRecord(runtimeContext) &&
-    ['permission', 'sideChat', 'sideChats', 'sideChatRelays'].some((key) =>
+    ['permission', 'sideChat', 'sideChats', 'sideChatRelays', 'sessionContext'].some((key) =>
       Object.hasOwn(runtimeContext, key)
     )
   )
@@ -493,8 +535,9 @@ export class SessionPackageService {
       request.sessionId
     )
     if (loaded.status !== 'found') throw new Error('Session not found or unreadable.')
-    const session = loaded.session
-    assertSettledHistory(session)
+    assertSettledHistory(loaded.session)
+    // Remove local selectors before collecting annotation file dependencies as well.
+    const session = withoutPrivateAuthority(loaded.session)
     if (session.packageOrigin) {
       // Forward the retained source package, never relabel locally derived hashes as original.
       const origin = await this.readOrigin(request)
@@ -1233,6 +1276,8 @@ export class SessionPackageService {
           ? {
               ...mappedSession.runtimeContext,
               sideChatRelays: undefined,
+              // Local reading links are not part of a portable Session package.
+              sessionContext: undefined,
               plan: mappedSession.runtimeContext.plan
                 ? { ...mappedSession.runtimeContext.plan, delivery: undefined }
                 : undefined

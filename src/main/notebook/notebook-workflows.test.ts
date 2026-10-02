@@ -25,6 +25,7 @@ const unavailable = (operation: string): (() => Promise<never>) =>
 const createRuntime = (
   overrides: Partial<NotebookCommandRuntime> = {}
 ): NotebookCommandRuntime => ({
+  runIndex: unavailable('runIndex'),
   state: unavailable('state'),
   getProjectActivity: vi.fn(() => ({ kernels: [], backgroundRuns: [] })),
   inspectNamespace: unavailable('inspectNamespace'),

@@ -4,7 +4,6 @@ import { ANNOTATION_LIMITS } from '../../../../shared/annotations'
 import type { ReplayStepContext } from './replay/replay-context'
 import {
   createReplayStepAnnotation,
-  referenceReplaySource,
   replayAnnotationId,
   replayAnnotationTarget,
   replayQuestionQuote
@@ -26,6 +25,17 @@ const context: ReplayStepContext = {
   excerpt: 'print(result)'
 }
 describe('fixed replay question references', () => {
+  it('retains discussion scope without changing native source or snapshot identity', () => {
+    for (const contextId of [undefined, 'snapshot']) {
+      const annotation = createReplayStepAnnotation({ ...context, scope: 'session' }, contextId)!
+      expect(replayAnnotationTarget(annotation)).toMatchObject({
+        scope: 'session',
+        stepId: context.stepId
+      })
+      expect(replayAnnotationTarget(annotation)?.contextId).toBe(contextId)
+    }
+  })
+
   it('keeps an immutable step offset and source identity through ordinary annotations', () => {
     const annotation = createReplayStepAnnotation(context)!
     context.evidence[0] = { ...context.evidence[0], id: 'two' }
@@ -42,8 +52,8 @@ describe('fixed replay question references', () => {
       stepId: 'activity:one',
       stepOffsetMs: 142
     })
-    expect(annotation.quote).toContain('[input]')
-    expect(annotation.quote).toContain('checksum')
+    expect(annotation.quote).toContain('print(result)')
+    expect(annotation.quote).not.toContain('checksum')
     expect(annotation.quote).not.toContain('activity: two')
   })
   it('refuses forged source identities and malformed local locators', () => {
@@ -62,13 +72,13 @@ describe('fixed replay question references', () => {
       })
     ).toBeUndefined()
   })
-  it('does not fabricate a tool activity for a standalone Notebook run', () => {
+  it('uses the native Notebook run identity for the shared reading card', () => {
     expect(
       createReplayStepAnnotation({
         ...context,
         evidence: [{ kind: 'notebook-run', id: 'run', projectId: 'project', sessionId: 'source' }]
       })
-    ).toBeUndefined()
+    ).toMatchObject({ source: { kind: 'session-item', itemType: 'notebook-run', itemId: 'run' } })
   })
   it('binds historical artifacts to their exact version and bounds the quote', () => {
     const annotation = createReplayStepAnnotation({
@@ -91,24 +101,10 @@ describe('fixed replay question references', () => {
       versionId: 'version-old'
     })
     expect(annotation.quote.length).toBeLessThanOrEqual(ANNOTATION_LIMITS.quote)
-    expect(annotation.quote).toContain('version-old')
+    expect(annotation.quote).not.toContain('version-old')
+    expect(annotation.quote).toContain('incomplete or truncated')
   })
-  it('preserves current references and reports the existing limit instead of dropping one', () => {
-    const doc = referenceReplaySource({ nodes: [{ type: 'text', text: 'Why?' }] }, context)
-    expect(referenceReplaySource(doc, context)).toBe(doc)
-    expect(() =>
-      referenceReplaySource(
-        {
-          nodes: Array.from({ length: 5 }, (_, index) => ({
-            type: 'session' as const,
-            sessionId: `other-${index}`,
-            title: 'Other'
-          }))
-        },
-        context
-      )
-    ).toThrow('Remove a session reference')
-  })
+
   it('keeps dense-frame excerpts readable and resolves the new saved snapshot without breaking old locators', () => {
     const dense = {
       ...context,
@@ -123,8 +119,11 @@ describe('fixed replay question references', () => {
       contextId: 'saved-context',
       stepOffsetMs: 142
     })
-    expect(annotation.quote).toContain('Critical visible result')
-    expect(annotation.quote).toContain('Preview is truncated.')
+    expect(annotation.quote).toContain('Session: Research')
+    expect(annotation.quote).not.toContain('Critical visible result')
+    expect(annotation.quote).not.toContain('saved-context')
+    expect(annotation.quote).not.toContain('host.sessions')
+    expect(annotation.quote).not.toContain('Preview is truncated.')
     expect(annotation.quote.length).toBeLessThanOrEqual(ANNOTATION_LIMITS.quote)
     expect(replayQuestionQuote(dense, 12000).length).toBeLessThanOrEqual(12000)
     expect(

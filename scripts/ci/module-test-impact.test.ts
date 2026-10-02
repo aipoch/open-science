@@ -299,6 +299,7 @@ describe('module test impact commands', () => {
       expect([...plan.modules].sort()).toEqual([
         'artifact_provenance',
         'project_lifecycle',
+        'research_replay',
         'reviewer_orchestrator',
         'session_persistence',
         'workspace_page',
@@ -306,6 +307,7 @@ describe('module test impact commands', () => {
       ])
       expect(plan.reasonChains).toEqual(
         expect.arrayContaining([
+          'reviewer_orchestrator -> research_replay',
           'reviewer_orchestrator -> workspace_runtime',
           'reviewer_orchestrator -> workspace_page',
           'reviewer_orchestrator -> artifact_provenance',
@@ -330,6 +332,7 @@ describe('module test impact commands', () => {
         'artifact_provenance',
         'compute_service',
         'project_lifecycle',
+        'research_replay',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -346,6 +349,7 @@ describe('module test impact commands', () => {
         'artifact_provenance',
         'compute_service',
         'project_lifecycle',
+        'research_replay',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -361,6 +365,7 @@ describe('module test impact commands', () => {
       [
         'artifact_provenance',
         'project_lifecycle',
+        'research_replay',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -375,6 +380,7 @@ describe('module test impact commands', () => {
       [
         'artifact_provenance',
         'project_lifecycle',
+        'research_replay',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -388,6 +394,7 @@ describe('module test impact commands', () => {
       [
         'artifact_provenance',
         'project_lifecycle',
+        'research_replay',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -401,6 +408,7 @@ describe('module test impact commands', () => {
       [
         'artifact_provenance',
         'project_lifecycle',
+        'research_replay',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -414,6 +422,7 @@ describe('module test impact commands', () => {
       [
         'artifact_provenance',
         'project_lifecycle',
+        'research_replay',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',

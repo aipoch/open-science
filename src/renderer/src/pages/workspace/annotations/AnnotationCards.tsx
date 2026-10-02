@@ -18,6 +18,18 @@ import type {
 import { prepareImagePointAnnotations } from './image-annotation-payload'
 import { annotationValidationMessage } from './annotation-validation-message'
 import { SentAnnotationCards, type SentAnnotationCardView } from './SentAnnotationCards'
+import { replayAnnotationTarget } from '../research-replay-context'
+import { SessionDiscussionBar } from '../SessionDiscussionBar'
+
+// Keep the source shortcut compact while the quote carries the selected content.
+// Accept the old Research header on previously saved annotations.
+const replaySourceTitle = (annotation: Annotation, t: TFunction): string | undefined => {
+  if (!replayAnnotationTarget(annotation) || annotation.kind !== 'text') return undefined
+  return (
+    annotation.quote.match(/^(?:Session|Research): ([^\r\n]*)/)?.[1]?.slice(0, 240) ||
+    t('Replay step reference')
+  )
+}
 
 const sessionItemSourceLabel = (itemType: SessionTextAnnotationItemType, t: TFunction): string => {
   const labels: Record<SessionTextAnnotationItemType, string> = {
@@ -25,7 +37,9 @@ const sessionItemSourceLabel = (itemType: SessionTextAnnotationItemType, t: TFun
     plan: t('Execution plan'),
     elicitation: t('Question'),
     'delegated-elicitation': t('Delegated question'),
-    'subagent-message': t('Subagent message')
+    'subagent-message': t('Subagent message'),
+    'notebook-run': t('Notebook run'),
+    review: t('Session Reviewer')
   }
   return labels[itemType]
 }
@@ -52,6 +66,27 @@ const sentAnnotationViews = (
     prepareImagePointAnnotations(annotations).points.map((point) => [point.annotationId, point])
   )
   return annotations.map((annotation) => {
+    const replayTitle = replaySourceTitle(annotation, t)
+    if (replayTitle) {
+      const target = replayAnnotationTarget(annotation)
+      const selection =
+        target?.contextId && annotation.kind === 'text'
+          ? annotation.quote.split('\n')[1]
+          : undefined
+      const step = selection?.match(/^\[(\d+)\]\s*(.*)$/)
+      return {
+        id: annotation.id,
+        kind: 'replay',
+        content: replayTitle,
+        scopeLabel:
+          target?.scope === 'session'
+            ? t('Entire research')
+            : step
+              ? [t('Step {{step}}', { step: Number(step[1]) }), step[2]].filter(Boolean).join(' · ')
+              : selection,
+        note: annotation.note
+      }
+    }
     const imagePoint = imagePoints.get(annotation.id)
     if (imagePoint) {
       return {
@@ -94,7 +129,16 @@ const sentAnnotationViews = (
 }
 
 const annotationChipLabel = (annotation: Annotation, t: TFunction): string =>
-  annotation.note ??
+  (replaySourceTitle(annotation, t)
+    ? [
+        replaySourceTitle(annotation, t),
+        replayAnnotationTarget(annotation)?.contextId && annotation.kind === 'text'
+          ? annotation.quote.split('\n')[1]
+          : undefined
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : annotation.note) ??
   (annotation.kind === 'text'
     ? annotation.quote
     : annotation.kind === 'pdf'
@@ -148,6 +192,15 @@ const AnnotationDraftCards = ({
     setValidationError(undefined)
     setNote(annotation.note ?? '')
   }
+  const replayAnnotations = annotations.filter((annotation) => replayAnnotationTarget(annotation))
+  const latest = replayAnnotations.at(-1)
+  const target = latest && replayAnnotationTarget(latest)
+  const selectedSteps = replayAnnotations.filter((annotation) => {
+    const source = replayAnnotationTarget(annotation)
+    return (
+      source?.projectId === target?.projectId && source?.sourceSessionId === target?.sourceSessionId
+    )
+  })
   if (annotations.length === 0) return null
 
   return (
@@ -156,186 +209,218 @@ const AnnotationDraftCards = ({
         className="flex max-h-[132px] flex-wrap gap-1.5 overflow-y-auto border-b border-border-200 pb-2"
         aria-label={t('Annotations for Agent')}
       >
-        {annotations.map((annotation) => {
-          const imagePoint = imagePoints.get(annotation.id)
-          const hoverSourceLabel =
-            annotation.kind === 'text' && annotation.source.kind === 'agent-message'
-              ? t('Agent Message')
-              : annotationSourceLabel(annotation, t)
-          const hoverLabel = `${annotationChipLabel(annotation, t)} - ${hoverSourceLabel}`
-          const editing = editingId === annotation.id
-          return (
-            <Popover
-              key={annotation.id}
-              open={editing}
-              onOpenChange={(open) => {
-                if (open) {
-                  setHoveredId(undefined)
-                  setEditTooltipId(undefined)
-                  openEditor(annotation)
-                } else {
-                  closeEditor(annotation.id)
+        {latest ? (
+          <div className="w-full min-w-0" data-testid="session-discussion-draft">
+            <SessionDiscussionBar
+              scope={target?.scope}
+              title={replaySourceTitle(latest, t) ?? ''}
+              steps={selectedSteps.map((annotation) => {
+                const selection =
+                  annotation.kind === 'text' && replayAnnotationTarget(annotation)?.contextId
+                    ? annotation.quote.split('\n')[1] || replaySourceTitle(annotation, t) || ''
+                    : ''
+                const step = selection.match(/^\[(\d+)\]\s*(.*)$/)
+                return {
+                  id: annotation.id,
+                  title: step ? step[2] : selection,
+                  stepNumber: step ? Number(step[1]) : undefined
                 }
+              })}
+              disabled={disabled}
+              onReveal={(id) => {
+                const annotation = selectedSteps.find((step) => step.id === id)
+                if (annotation) onReveal?.(annotation)
               }}
-            >
-              <Tooltip
-                open={!editing && hoveredId === annotation.id}
-                onOpenChange={(open) => setHoveredId(open ? annotation.id : undefined)}
+              onRemove={() => replayAnnotations.forEach((annotation) => onRemove(annotation.id))}
+              removeLabel={t('Remove annotation')}
+            />
+          </div>
+        ) : null}
+        {annotations
+          .filter((annotation) => !replayAnnotationTarget(annotation))
+          .map((annotation) => {
+            const imagePoint = imagePoints.get(annotation.id)
+            const hoverSourceLabel =
+              annotation.kind === 'text' && annotation.source.kind === 'agent-message'
+                ? t('Agent Message')
+                : annotationSourceLabel(annotation, t)
+            const hoverLabel = `${annotationChipLabel(annotation, t)} - ${hoverSourceLabel}`
+            const editing = editingId === annotation.id
+            return (
+              <Popover
+                key={annotation.id}
+                open={editing}
+                onOpenChange={(open) => {
+                  if (open) {
+                    setHoveredId(undefined)
+                    setEditTooltipId(undefined)
+                    openEditor(annotation)
+                  } else {
+                    closeEditor(annotation.id)
+                  }
+                }}
               >
-                <TooltipTrigger asChild>
-                  <DraggableAnnotationCard
-                    annotation={annotation}
-                    data-annotation-draft-chip="true"
-                    data-annotation-hover-label={hoverLabel}
-                    className="group relative inline-flex h-7 min-w-0 max-w-[13rem] items-center rounded-md border border-border bg-background text-xs hover:bg-muted focus-within:bg-muted"
-                  >
-                    <button
-                      type="button"
-                      data-annotation-quote="true"
-                      className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch rounded-l-md px-2 text-left focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                      aria-label={t('Show annotation source')}
-                      onClick={() => onReveal?.(annotation)}
+                <Tooltip
+                  open={!editing && hoveredId === annotation.id}
+                  onOpenChange={(open) => setHoveredId(open ? annotation.id : undefined)}
+                >
+                  <TooltipTrigger asChild>
+                    <DraggableAnnotationCard
+                      annotation={annotation}
+                      data-annotation-draft-chip="true"
+                      data-annotation-hover-label={hoverLabel}
+                      className="group relative inline-flex h-7 min-w-0 max-w-[13rem] items-center rounded-md border border-border bg-background text-xs hover:bg-muted focus-within:bg-muted"
                     >
-                      {imagePoint ? (
-                        <Image
-                          className="size-3.5 shrink-0 text-muted-foreground"
-                          aria-hidden="true"
-                        />
-                      ) : annotation.kind === 'pdf' || annotation.source.kind === 'project-file' ? (
-                        <FileText
-                          className="size-3.5 shrink-0 text-muted-foreground"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Quote
-                          className="size-3.5 shrink-0 text-muted-foreground"
-                          aria-hidden="true"
-                        />
-                      )}
-                      <span className="truncate">{annotationChipLabel(annotation, t)}</span>
-                    </button>
-                    <div className="flex shrink-0 items-center pr-0.5">
-                      <Tooltip
-                        open={!editing && editTooltipId === annotation.id}
-                        onOpenChange={(open) => setEditTooltipId(open ? annotation.id : undefined)}
+                      <button
+                        type="button"
+                        data-annotation-quote="true"
+                        className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch rounded-l-md px-2 text-left focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                        aria-label={t('Show annotation source')}
+                        onClick={() => onReveal?.(annotation)}
                       >
-                        <TooltipTrigger
-                          asChild
-                          onFocus={(event) => {
-                            if (!event.currentTarget.matches(':focus-visible'))
-                              event.preventDefault()
-                          }}
+                        {imagePoint ? (
+                          <Image
+                            className="size-3.5 shrink-0 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                        ) : annotation.kind === 'pdf' ||
+                          annotation.source.kind === 'project-file' ? (
+                          <FileText
+                            className="size-3.5 shrink-0 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Quote
+                            className="size-3.5 shrink-0 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span className="truncate">{annotationChipLabel(annotation, t)}</span>
+                      </button>
+                      <div className="flex shrink-0 items-center pr-0.5">
+                        <Tooltip
+                          open={!editing && editTooltipId === annotation.id}
+                          onOpenChange={(open) =>
+                            setEditTooltipId(open ? annotation.id : undefined)
+                          }
                         >
-                          <PopoverTrigger asChild>
+                          <TooltipTrigger
+                            asChild
+                            onFocus={(event) => {
+                              if (!event.currentTarget.matches(':focus-visible'))
+                                event.preventDefault()
+                            }}
+                          >
+                            <PopoverTrigger asChild>
+                              <Button
+                                ref={(element) => {
+                                  if (element) editButtons.current.set(annotation.id, element)
+                                  else editButtons.current.delete(annotation.id)
+                                }}
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                disabled={disabled}
+                                aria-label={t('Edit annotation note')}
+                                className="bg-transparent"
+                              >
+                                <Pencil aria-hidden="true" />
+                              </Button>
+                            </PopoverTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('Edit')}</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
                             <Button
-                              ref={(element) => {
-                                if (element) editButtons.current.set(annotation.id, element)
-                                else editButtons.current.delete(annotation.id)
-                              }}
                               type="button"
                               variant="ghost"
                               size="icon-xs"
                               disabled={disabled}
-                              aria-label={t('Edit annotation note')}
+                              aria-label={t('Remove annotation')}
                               className="bg-transparent"
+                              onClick={() => onRemove(annotation.id)}
                             >
-                              <Pencil aria-hidden="true" />
+                              <Trash2 aria-hidden="true" />
                             </Button>
-                          </PopoverTrigger>
-                        </TooltipTrigger>
-                        <TooltipContent>{t('Edit')}</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-xs"
-                            disabled={disabled}
-                            aria-label={t('Remove annotation')}
-                            className="bg-transparent"
-                            onClick={() => onRemove(annotation.id)}
-                          >
-                            <Trash2 aria-hidden="true" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>{t('Remove annotation')}</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </DraggableAnnotationCard>
-                </TooltipTrigger>
-                <TooltipContent
-                  data-annotation-hover-note="true"
-                  className="max-w-72 truncate bg-muted text-foreground"
-                >
-                  {hoverLabel}
-                </TooltipContent>
-              </Tooltip>
-              <PopoverContent
-                data-annotation-note-editor="true"
-                side="top"
-                align="end"
-                sideOffset={8}
-                collisionPadding={12}
-                className="z-50 w-80 max-w-[calc(100vw-1.5rem)] space-y-2 border border-border bg-popover p-3 text-popover-foreground shadow-menu"
-                onCloseAutoFocus={(event) => {
-                  event.preventDefault()
-                }}
-              >
-                <label className="sr-only" htmlFor={`edit-annotation-${annotation.id}`}>
-                  {t('Annotation note')}
-                </label>
-                <Textarea
-                  id={`edit-annotation-${annotation.id}`}
-                  autoFocus
-                  value={note}
-                  maxLength={2_000}
-                  placeholder={t('Add context for the Agent')}
-                  aria-invalid={!!validationError}
-                  aria-describedby={
-                    validationError ? `annotation-error-${annotation.id}` : undefined
-                  }
-                  onChange={(event) => {
-                    setNote(event.target.value)
-                    setValidationError(undefined)
+                          </TooltipTrigger>
+                          <TooltipContent>{t('Remove annotation')}</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </DraggableAnnotationCard>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    data-annotation-hover-note="true"
+                    className="max-w-72 truncate bg-muted text-foreground"
+                  >
+                    <span className="block max-w-full truncate">{hoverLabel}</span>
+                  </TooltipContent>
+                </Tooltip>
+                <PopoverContent
+                  data-annotation-note-editor="true"
+                  side="top"
+                  align="end"
+                  sideOffset={8}
+                  collisionPadding={12}
+                  className="z-50 w-80 max-w-[calc(100vw-1.5rem)] space-y-2 border border-border bg-popover p-3 text-popover-foreground shadow-menu"
+                  onCloseAutoFocus={(event) => {
+                    event.preventDefault()
                   }}
-                />
-                {validationError ? (
-                  <p
-                    id={`annotation-error-${annotation.id}`}
-                    role="alert"
-                    className="text-xs text-destructive"
-                  >
-                    {annotation.kind === 'image-point' && !note.trim()
-                      ? t('Add a note for this image annotation')
-                      : annotationValidationMessage(validationError, t)}
-                  </p>
-                ) : null}
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => closeEditor(annotation.id)}
-                  >
-                    {t('Cancel')}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => {
-                      const error = onUpdateNote(annotation.id, note)
-                      setValidationError(error)
-                      if (!error) closeEditor(annotation.id)
+                >
+                  <label className="sr-only" htmlFor={`edit-annotation-${annotation.id}`}>
+                    {t('Annotation note')}
+                  </label>
+                  <Textarea
+                    id={`edit-annotation-${annotation.id}`}
+                    autoFocus
+                    value={note}
+                    maxLength={2_000}
+                    placeholder={t('Add context for the Agent')}
+                    aria-invalid={!!validationError}
+                    aria-describedby={
+                      validationError ? `annotation-error-${annotation.id}` : undefined
+                    }
+                    onChange={(event) => {
+                      setNote(event.target.value)
+                      setValidationError(undefined)
                     }}
-                  >
-                    {t('Save')}
-                  </Button>
-                </div>
-              </PopoverContent>
-            </Popover>
-          )
-        })}
+                  />
+                  {validationError ? (
+                    <p
+                      id={`annotation-error-${annotation.id}`}
+                      role="alert"
+                      className="text-xs text-destructive"
+                    >
+                      {annotation.kind === 'image-point' && !note.trim()
+                        ? t('Add a note for this image annotation')
+                        : annotationValidationMessage(validationError, t)}
+                    </p>
+                  ) : null}
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => closeEditor(annotation.id)}
+                    >
+                      {t('Cancel')}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        const error = onUpdateNote(annotation.id, note)
+                        setValidationError(error)
+                        if (!error) closeEditor(annotation.id)
+                      }}
+                    >
+                      {t('Save')}
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )
+          })}
       </section>
     </TooltipProvider>
   )

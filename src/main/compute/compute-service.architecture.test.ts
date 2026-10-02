@@ -1126,10 +1126,7 @@ describe('Compute service architecture', () => {
       'src/main/notebook/runtime-service.macos-isolation.integration.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts',
       'src/main/acp/library-auto-policy.test.ts',
-      'src/main/literature/journal-attributes.test.ts',
-      'src/main/research-submissions/service.test.ts',
-      'src/main/research-drafts/attachment-cleanup.test.ts',
-      'src/main/uploads/research-preview.test.ts'
+      'src/main/literature/journal-attributes.test.ts'
     ])
   })
 

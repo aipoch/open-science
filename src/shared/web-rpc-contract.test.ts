@@ -152,6 +152,7 @@ describe('Web RPC contract', () => {
       'notebook.readInputPreview',
       'notebook.restart',
       'notebook.runCell',
+      'notebook.runIndex',
       'notebook.shutdown',
       'notebook.state'
     ])

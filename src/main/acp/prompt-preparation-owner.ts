@@ -1,3 +1,4 @@
+import { prepareReplayReferences, type PrepareSessionReading } from './replay-reference-prompt'
 import type {
   ClassifyReadingRoute,
   ClassifySkills,
@@ -65,6 +66,7 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
     | 'usage'
     | 'refreshUsage'
   >
+  prepareSessionReading?: PrepareSessionReading
   classifySkills?: ClassifySkills
   classifyReadingRoute?: ClassifyReadingRoute
   recordClassificationUsage?: (
@@ -405,15 +407,25 @@ class AcpPromptPreparationOwner {
               return undefined
             })
       if (await cancelled()) return cancelPrepared()
+      const selectedContent = await prepareReplayReferences(
+        skillPreparation.text,
+        input.request.historyPreamble,
+        input.projectId,
+        this.options.prepareSessionReading,
+        input.request.sessionId,
+        input.request.provenanceContext?.promptMessageId ?? input.fallbackPromptMessageId
+      )
+      if (await cancelled()) return cancelPrepared()
       const promptText = [
         input.protectedContext,
-        input.request.historyPreamble,
+        selectedContent.history,
         notebookHandoff ? notebookHandoffPrompt(notebookHandoff) : undefined,
         promptPrefix,
         memoryEnabled() ? recalledMemory : undefined,
         buildSessionReferencePrompt(input.request.referencedSessions),
         buildLiteratureReferencePrompt(input.request.parts),
-        skillPreparation.text
+        selectedContent.context,
+        selectedContent.text
       ]
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n')

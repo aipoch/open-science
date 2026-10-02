@@ -1,8 +1,7 @@
 // Test-only architecture metadata. Runtime deletion must continue to flow through
 // ProjectDeletionCoordinator and the subsystem owners named below; this catalog never executes it.
 
-type ProjectOwnerFieldName =
-  'projectId' | 'sessionId' | 'sourceProjectId' | 'sourceSessionId' | 'discussionSessionId'
+type ProjectOwnerFieldName = 'projectId' | 'sessionId' | 'sourceProjectId' | 'sourceSessionId'
 
 type ProjectOwnerField = Readonly<{
   name: ProjectOwnerFieldName
@@ -229,49 +228,27 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
-    id: 'research-workspaces',
+    id: 'session-replay',
     medium: 'sqlite',
-    resources: [
-      'ResearchWorkspace',
-      'ReplayQuestionContext',
-      'ResearchSubmission',
-      'ResearchDraft'
-    ],
+    resources: ['SessionReplayProgress', 'SessionDiscussionSnapshot'],
     prismaModels: [
       {
-        name: 'ResearchSubmission',
-        ownerFields: [
-          requiredOwner('projectId'),
-          requiredOwner('sourceSessionId'),
-          optionalOwner('discussionSessionId')
-        ],
+        name: 'SessionReplayProgress',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')],
         relationContracts: [
           { field: 'project', target: 'Project', fromFields: ['projectId'], onDelete: 'Cascade' }
         ]
       },
       {
-        name: 'ResearchDraft',
-        ownerFields: [requiredOwner('projectId'), requiredOwner('sourceSessionId')],
+        name: 'SessionDiscussionSnapshot',
+        ownerFields: [requiredOwner('sourceProjectId'), requiredOwner('sourceSessionId')],
         relationContracts: [
-          { field: 'project', target: 'Project', fromFields: ['projectId'], onDelete: 'Cascade' }
-        ]
-      },
-      {
-        name: 'ResearchWorkspace',
-        ownerFields: [
-          requiredOwner('projectId'),
-          requiredOwner('sourceSessionId'),
-          optionalOwner('discussionSessionId')
-        ],
-        relationContracts: [
-          { field: 'project', target: 'Project', fromFields: ['projectId'], onDelete: 'Cascade' }
-        ]
-      },
-      {
-        name: 'ReplayQuestionContext',
-        ownerFields: [requiredOwner('projectId'), requiredOwner('sourceSessionId')],
-        relationContracts: [
-          { field: 'project', target: 'Project', fromFields: ['projectId'], onDelete: 'Cascade' }
+          {
+            field: 'sourceProject',
+            target: 'Project',
+            fromFields: ['sourceProjectId'],
+            onDelete: 'Cascade'
+          }
         ]
       }
     ],
@@ -280,7 +257,7 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       effect: 'hard-delete',
       path: 'project-metadata-soft-delete',
       operation: 'ProjectRepository.delete',
-      note: 'Local Discussion links and replay checkpoints are deleted with the Project; individual Sessions retain independent ownership.'
+      note: 'Discussion snapshots are owned by their source Project; replay progress is owned by the replayed Session’s Project. Both are removed with that Project.'
     }
   },
   {

@@ -151,6 +151,7 @@ type WorkspaceElicitationCardProps = {
   elicitation: ElicitationProjection
   request?: PendingElicitationRequest
   variant?: 'default' | 'pending-placeholder'
+  readOnly?: boolean
   embedded?: boolean
   onRespond?: (response: ElicitationResponse) => Promise<void>
   onDraftChange?: (answers: ElicitationAnswer[]) => void
@@ -205,6 +206,7 @@ const WorkspaceElicitationCard = ({
   elicitation,
   request,
   variant = 'default',
+  readOnly = false,
   embedded = false,
   onRespond,
   onDraftChange,
@@ -251,8 +253,18 @@ const WorkspaceElicitationCard = ({
   const fieldsById = new Map(elicitation.fields.map((field) => [field.id, field]))
   // Review selections come straight from the recorded answers — form state stays untouched.
   const reviewValues = useMemo(
-    () => initialValues(request?.fields ?? [], elicitation.answers ?? []),
-    [request, elicitation.answers]
+    () =>
+      initialValues(
+        readOnly
+          ? (request?.fields ?? []).map((field) => ({
+              ...field,
+              defaultValue: undefined,
+              required: false
+            }))
+          : (request?.fields ?? []),
+        elicitation.answers ?? []
+      ),
+    [request, elicitation.answers, readOnly]
   )
   const terminalLabel =
     elicitation.state === 'declined'
@@ -504,9 +516,9 @@ const WorkspaceElicitationCard = ({
   // change on store updates; only local input/navigation changes should publish another snapshot.
   // Requests can render before their activity is available to own the draft. Publish the current
   // local edits once that correlation arrives, without depending on the callback's identity.
-  const canSaveEditDraft = onEditDraftChange !== undefined
+  const canSaveEditDraft = !readOnly && onEditDraftChange !== undefined
   const publishEditDraft = useEffectEvent(() => {
-    if (request && choiceQuestions && elicitation.state === 'pending') {
+    if (!readOnly && request && choiceQuestions && elicitation.state === 'pending') {
       onEditDraftChange?.({
         requestId: request.requestId,
         values,
@@ -519,7 +531,7 @@ const WorkspaceElicitationCard = ({
   }, [values, activeChoiceIndex, canSaveEditDraft])
 
   const respond = async (response: ElicitationResponse): Promise<boolean> => {
-    if (!onRespond || isSubmitting) return false
+    if (readOnly || !onRespond || isSubmitting) return false
     setError(undefined)
     setIsSubmitting(true)
     try {
@@ -699,7 +711,31 @@ const WorkspaceElicitationCard = ({
         </div>
       )}
 
-      {isPendingPlaceholder ? (
+      {readOnly && elicitation.state === 'pending' ? (
+        <div className="mt-2 space-y-3" data-testid="elicitation-recorded-pending">
+          <p className="text-xs text-text-300">{t('No submitted answer recorded.')}</p>
+          {elicitation.fields.map((field) => (
+            <div key={field.id} className="text-sm">
+              <p className="font-medium">{field.description || field.label}</p>
+              {field.options?.map((option) => (
+                <p key={option.value} className="text-text-300">
+                  {option.label}
+                </p>
+              ))}
+            </div>
+          ))}
+          {elicitation.draftAnswers?.length ? (
+            <div className="text-sm">
+              <p className="text-xs text-text-300">{t('Saved draft answers')}</p>
+              {elicitation.draftAnswers.map((answer) => (
+                <p key={answer.fieldId}>
+                  {displayValue(answer.value, fieldsById.get(answer.fieldId), t)}
+                </p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : isPendingPlaceholder ? (
         <p
           data-testid="elicitation-pending-placeholder"
           className="mt-2 text-sm italic leading-5 text-text-300"

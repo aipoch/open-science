@@ -3,6 +3,8 @@ import {
   Archive,
   GitBranch,
   BookOpen,
+  MessageSquare,
+  Play,
   Download,
   Stethoscope,
   Pencil,
@@ -26,6 +28,8 @@ export type SessionActionId =
   | 'download-artifacts'
   | 'check-artifacts'
   | 'view-notebook'
+  | 'view-replay'
+  | 'discuss'
   | 'export'
   | 'export-package'
   | 'export-diagnostics'
@@ -44,6 +48,8 @@ export const SESSION_ACTION_CATALOG = {
   'download-artifacts': { labelKey: 'Download all artifacts', icon: Download },
   'check-artifacts': { labelKey: 'Check session artifacts', icon: PackageCheck },
   'view-notebook': { labelKey: 'View notebook', icon: BookOpen },
+  'view-replay': { labelKey: 'View replay', icon: Play },
+  discuss: { labelKey: 'Discuss', icon: MessageSquare },
   export: { labelKey: 'Export conversation…', icon: Download },
   'export-package': { labelKey: 'Export Session package', icon: Package },
   'export-diagnostics': { labelKey: 'Export diagnostics…', icon: Stethoscope },
@@ -56,6 +62,8 @@ export const SESSION_ACTION_RECIPE = [
   { kind: 'action', action: 'toggle-pin' },
   { kind: 'action', action: 'edit' },
   { kind: 'separator' },
+  { kind: 'action', action: 'discuss' },
+  { kind: 'action', action: 'view-replay' },
   { kind: 'action', action: 'download-artifacts' },
   { kind: 'action', action: 'check-artifacts' },
   { kind: 'action', action: 'view-notebook' },
@@ -81,6 +89,8 @@ type SessionActionOptions = {
   onDownloadArtifacts: (session: ChatSession) => void
   onCheckArtifacts?: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
+  onViewReplay?: (session: ChatSession) => void
+  onDiscussSession?: (session: ChatSession) => Promise<void>
   onExportSession?: (session: ChatSession) => void
   onForkSession?: (session: ChatSession) => Promise<void>
   onExportPackage?: (session: ChatSession) => Promise<void>
@@ -139,6 +149,16 @@ export const createSessionActionBindings = (
   },
   'view-notebook': {
     execute: ({ session }) => options.onViewNotebook(session)
+  },
+  'view-replay': {
+    execute: ({ session }) => options.onViewReplay?.(session),
+    hidden: !options.onViewReplay,
+    disabled: ({ session }) => Boolean(session.isPending)
+  },
+  discuss: {
+    execute: ({ session }) => options.onDiscussSession?.(session),
+    hidden: !options.onDiscussSession,
+    disabled: ({ session }) => Boolean(session.isPending)
   },
   export: {
     execute: ({ session }) => options.onExportSession?.(session),

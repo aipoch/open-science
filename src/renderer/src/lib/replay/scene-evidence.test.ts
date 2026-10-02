@@ -46,7 +46,7 @@ describe('visible replay evidence', () => {
       evidence: [{ kind: 'message', id: 'answer', projectId: 'p', sessionId: 's' }]
     }
     const document: ReplayDocument = {
-      generatorVersion: 2,
+      generatorVersion: 3,
       presentationVersion: 2,
       source: { projectId: 'p', sessionId: 's', title: 'study', fingerprint: 'hash' },
       defaultBranchId: 'main',
@@ -115,7 +115,7 @@ describe('visible replay evidence', () => {
       ]
     }))
     const document: ReplayDocument = {
-      generatorVersion: 2,
+      generatorVersion: 3,
       presentationVersion: 2,
       source: { projectId: 'p', sessionId: 's', title: 'study', fingerprint: 'hash' },
       defaultBranchId: 'main',

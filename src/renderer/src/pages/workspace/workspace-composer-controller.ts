@@ -1,13 +1,7 @@
-import type { ResearchWorkspaceRequest } from '../../../../shared/research-workspace'
-import {
-  researchDraftPersistence,
-  hasResearchDraftContent,
-  type ResearchDraftIdentity
-} from './research-draft-persistence'
-import {
-  useResearchDraftRecovery,
-  type ResearchDraftRecoveryProps
-} from './use-research-draft-recovery'
+import { captureDiscussionSendContext } from './discussion-send-context'
+import type { ReplayStepContext } from './replay/replay-context'
+import type { SessionReadingContext } from '../../../../shared/session-reading'
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { useTranslation } from 'react-i18next'
 import {
   composerDraftStorageFailed,
@@ -84,7 +78,11 @@ type ComposerHistoryNavigation = {
 type ComposerSessionContext = {
   id: string
   projectId: string
-  runtimeContext?: { revision: number; pdfContext?: SessionPdfContext }
+  runtimeContext?: {
+    revision: number
+    pdfContext?: SessionPdfContext
+    sessionContext?: SessionReadingContext
+  }
 }
 
 type ComposerReadingContextBinding =
@@ -106,13 +104,13 @@ const samePdfContextSources = (
   left.every((source, index) => pdfContextSourceKey(source) === pdfContextSourceKey(right[index]))
 
 export type ComposerSendSnapshot = {
-  researchDraft?: ResearchDraftIdentity
   setupSessionToken?: string
   queuedEdit?: ComposerDraft['queuedEdit']
   draftKey: string
   version: number
   doc: ComposerDoc
   annotations: Annotation[]
+  discussionFocus?: ReplayStepContext
   attachments: UploadedAttachment[]
   automaticReadingEnabled?: boolean
   pdfContext?: MessagePdfContextSnapshot
@@ -127,7 +125,6 @@ export type ComposerSendSnapshot = {
 }
 
 type WorkspaceComposerControllerInput = {
-  researchDraftScope?: ResearchWorkspaceRequest
   currentDraftKey: string
   newConversationDraftKey: string
   activeProjectId: string | undefined
@@ -155,7 +152,6 @@ type WorkspaceComposerControllerInput = {
 
 type WorkspaceComposerController = {
   view: {
-    researchDraftRecovery?: ResearchDraftRecoveryProps
     queuedEdit?: ComposerDraft['queuedEdit']
     doc: ComposerDoc
     annotations: Annotation[]
@@ -203,7 +199,6 @@ type WorkspaceComposerController = {
     dismissAutomaticReading: () => void
   }
   lifecycle: {
-    persistResearchDraft: (snapshot: ComposerSendSnapshot) => Promise<ComposerSendSnapshot>
     captureSend: (includeReadingContext?: boolean) => ComposerSendSnapshot
     captureRevision: (doc: ComposerDoc, annotations: Annotation[]) => ComposerSendSnapshot
     clearDraft: (draftKey: string, expectedVersion?: number) => boolean
@@ -246,7 +241,6 @@ const blank = (): ComposerDraft => ({
 })
 
 const useWorkspaceComposerController = ({
-  researchDraftScope,
   currentDraftKey,
   newConversationDraftKey,
   activeProjectId,
@@ -426,45 +420,6 @@ const useWorkspaceComposerController = ({
     beginSessionDeletion,
     settleSessionDeletion
   } = uploadController.lifecycle
-  const researchDraftRecovery = useResearchDraftRecovery({
-    scope: researchDraftScope,
-    draftKey: currentDraftKey,
-    version: () => versionsRef.current[activeDraftKeyRef.current] ?? 0,
-    apply: (draft, expectedVersion) => {
-      const key = activeDraftKeyRef.current
-      const uploads = captureDraftAttachments()
-      if (
-        deletedDraftKeysRef.current.has(key) ||
-        (versionsRef.current[key] ?? 0) !== expectedVersion ||
-        (researchDraftScope
-          ? hasResearchDraftContent(
-              {
-                doc: docRef.current,
-                annotations: annotationsRef.current,
-                ...uploads,
-                automaticReadingEnabled: automaticReadingEnabledRef.current
-              },
-              researchDraftScope
-            )
-          : !docIsEmpty(docRef.current)) ||
-        annotationsRef.current.length > 0 ||
-        uploads.attachments.length > 0 ||
-        uploads.attachmentTransfers.length > 0 ||
-        queuedEditRef.current
-      )
-        return false
-      clearHistory(key)
-      clearPastedTextUndo(key)
-      clearUndo(key)
-      markChanged(key)
-      setActiveDoc(draft.doc)
-      setActiveAnnotations(draft.annotations)
-      activateDraftAttachments(draft)
-      setActiveAutomaticReadingEnabled(draft.automaticReadingEnabled)
-      setError(null)
-      return true
-    }
-  })
   useLayoutEffect(() => {
     const drafts = draftsRef.current
     const deletedDraftKeys = deletedDraftKeysRef.current
@@ -515,11 +470,7 @@ const useWorkspaceComposerController = ({
     window.addEventListener('pagehide', persistDrafts)
     const beforeUnload = (event: BeforeUnloadEvent): void => {
       persistDrafts()
-      if (
-        composerDraftStorageFailed() ||
-        researchDraftPersistence().saving ||
-        researchDraftPersistence().error
-      ) {
+      if (composerDraftStorageFailed()) {
         event.preventDefault()
         event.returnValue = ''
       }
@@ -970,21 +921,6 @@ const useWorkspaceComposerController = ({
     setHistoryStatus('')
     setCaretRequest(undefined)
 
-    const previousResearch = researchDraftPersistence().scopeFor(
-      draftProjectsRef.current[previousDraftKey] ?? projectIdRef.current,
-      previousDraftKey
-    )
-    const sameResearch =
-      researchDraftScope &&
-      previousResearch?.projectId === researchDraftScope.projectId &&
-      previousResearch.sourceSessionId === researchDraftScope.sourceSessionId
-    // Creating the lazy Discussion changes the underlying Session key, not the user's editor.
-    // Move any newer input typed during submission along with its local revision and uploads.
-    if (sameResearch && outgoingDraft && !draftsRef.current[currentDraftKey]) {
-      draftsRef.current[currentDraftKey] = outgoingDraft
-      versionsRef.current[currentDraftKey] = versionsRef.current[previousDraftKey] ?? 0
-      delete draftsRef.current[previousDraftKey]
-    }
     const nextDraft =
       draftsRef.current[currentDraftKey] ??
       readComposerDraft(activeProjectId ?? 'default-project', currentDraftKey, retryMessage) ??
@@ -1002,8 +938,6 @@ const useWorkspaceComposerController = ({
     annotations,
     attachments,
     currentDraftKey,
-    researchDraftScope,
-    versionsRef,
     doc,
     deletedDraftKeysRef,
     draftsRef,
@@ -1279,12 +1213,19 @@ const useWorkspaceComposerController = ({
           return true
         })
         .slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - includedDurableBindings.length))
-      const snapshot: ComposerSendSnapshot = {
+      return {
         setupSessionToken: setupSessionTokenRef.current,
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
         doc: docRef.current,
         annotations: [...annotationsRef.current],
+        discussionFocus: captureDiscussionSendContext(
+          annotationsRef.current,
+          includeReadingContext
+            ? activeSession?.runtimeContext?.sessionContext?.bindings.at(-1)
+            : undefined,
+          activeSession?.id
+        ),
         attachments,
         queuedEdit: queuedEditRef.current,
         automaticReadingEnabled: automaticReadingEnabledRef.current,
@@ -1322,11 +1263,10 @@ const useWorkspaceComposerController = ({
         ...(pendingPdfContextAttachmentIds.length > 0 ? { pendingPdfContextAttachmentIds } : {}),
         ...(pendingPdfContextVersions.length > 0 ? { pendingPdfContextVersions } : {})
       }
-      snapshot.researchDraft = researchDraftPersistence().capture(projectIdRef.current, snapshot)
-      return snapshot
     },
     [
       attachments,
+      activeSession,
       activeReadingBinding,
       activePendingReading,
       automaticStagedReadingContexts,
@@ -1473,7 +1413,21 @@ const useWorkspaceComposerController = ({
   // receives, so an inline closure here would defeat that memo on every composer re-render.
   const addAnnotation = useCallback(
     (annotation: Annotation): AnnotationValidationError | undefined => {
-      const next = [...annotationsRef.current, annotation]
+      const source = replayAnnotationTarget(annotation)
+      const retained = source
+        ? annotationsRef.current.filter((item) => {
+            const previous = replayAnnotationTarget(item)
+            return (
+              !previous ||
+              (previous.projectId === source.projectId &&
+                previous.sourceSessionId === source.sourceSessionId &&
+                previous.scope !== 'session' &&
+                source.scope !== 'session' &&
+                (previous.branchId !== source.branchId || previous.stepId !== source.stepId))
+            )
+          })
+        : annotationsRef.current
+      const next = [...retained, annotation]
       const validation = validateAnnotations(next, docToText(docRef.current))
       if (validation) return validation
       clearPastedTextUndo()
@@ -1488,7 +1442,6 @@ const useWorkspaceComposerController = ({
 
   return {
     view: {
-      researchDraftRecovery,
       queuedEdit,
       doc,
       annotations,
@@ -1574,19 +1527,6 @@ const useWorkspaceComposerController = ({
       dismissAutomaticReading
     },
     lifecycle: {
-      persistResearchDraft: async (snapshot) => {
-        try {
-          return await researchDraftPersistence().persist(
-            draftProjectsRef.current[snapshot.draftKey] ?? projectIdRef.current,
-            snapshot
-          )
-        } catch (cause) {
-          throw new Error(
-            t('Draft storage is unavailable. Copy your draft before leaving this page.'),
-            { cause }
-          )
-        }
-      },
       captureSend,
       captureRevision,
       clearDraft,

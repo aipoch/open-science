@@ -495,7 +495,12 @@ describe('Reviewer orchestrator architecture', () => {
         'src/main/reviewer/stale-reviews.ts',
         'src/main/reviewer/turn-evidence.ts'
       ],
-      consumerModules: ['workspace_runtime', 'workspace_page', 'artifact_provenance'],
+      consumerModules: [
+        'workspace_runtime',
+        'workspace_page',
+        'artifact_provenance',
+        'research_replay'
+      ],
       testFiles: {
         owner: [
           'src/main/reviewer/reviewer-orchestrator.architecture.test.ts',
@@ -837,10 +842,7 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/literature/smart-collections.test.ts',
           'src/main/notebook/runtime-service.macos-isolation.integration.test.ts',
           'src/main/acp/library-auto-policy.test.ts',
-          'src/main/literature/journal-attributes.test.ts',
-          'src/main/research-submissions/service.test.ts',
-          'src/main/research-drafts/attachment-cleanup.test.ts',
-          'src/main/uploads/research-preview.test.ts'
+          'src/main/literature/journal-attributes.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

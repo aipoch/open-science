@@ -349,74 +349,6 @@ const waitForPreviewDwell = async (): Promise<void> => {
 }
 
 describe('WorkspaceSidebar accessible render', () => {
-  it('shows Discussion activity on the source entry while all row actions retain source identity and capability', async () => {
-    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
-    const source = createSession({
-      id: 'import-source',
-      title: 'Original research',
-      status: 'idle',
-      updatedAt: 1,
-      packageOrigin: {
-        importId: 'package',
-        sourceProjectId: 'foreign',
-        sourceSessionId: 'foreign-source',
-        importedAt: 1,
-        manifestChecksum: 'a'.repeat(64)
-      }
-    })
-    const discussion = createSession({ id: 'discussion', title: 'Discussion', status: 'running' })
-    const onOpenSession = vi.fn()
-    const onDeleteSession = vi.fn()
-    const onArchiveSession = vi.fn()
-    const tree = WorkspaceSidebarView({
-      now: Date.now(),
-      projectName: 'Example project',
-      sessions: [source],
-      activitySessionsByEntryId: new Map([[source.id, discussion]]),
-      activeSessionId: source.id,
-      canCreateConversation: true,
-      canMutateConversations: true,
-      canDeleteConversations: true,
-      onGoHome: vi.fn(),
-      onNewConversation: vi.fn(),
-      isFilesOpen: false,
-      onOpenFiles: vi.fn(),
-      onOpenSession,
-      onRenameSession: vi.fn(),
-      canDownloadArtifacts: true,
-      onDownloadArtifacts: vi.fn(),
-      onViewNotebook: vi.fn(),
-      onTogglePin: vi.fn(),
-      canArchiveSession: () => true,
-      onArchiveSession,
-      onDeleteSession,
-      onOpenSettings: vi.fn(),
-      onOpenProjectSettings: vi.fn(),
-      onNewProject: vi.fn()
-    })
-    const target = getSessionActionTargetProps(tree, source.id)
-    expect(target.invocation.session).toBe(source)
-    expect(target.invocation.presentedStatus).toBe('idle')
-    const row = collectElements(tree).find((element) => element.type === SessionRow)
-    expect(row?.props.sectionLabel).toBe('Active')
-    expect(row?.props.displayStatus).toBe('running')
-    const container = document.createElement('div')
-    container.innerHTML = renderToStaticMarkup(tree)
-    const button = container.querySelector('[data-slot="session-open-button"]')
-    expect(button?.textContent).toContain('Original research')
-    expect(button?.textContent).toContain('Running')
-    expect(button?.getAttribute('title')).toBe('Read-only')
-    expect(button?.getAttribute('aria-current')).toBe('page')
-    const open = collectElements(tree).find(
-      (element) => element.props['data-slot'] === 'session-open-button'
-    )
-    ;(open?.props.onClick as () => void)()
-    expect(onOpenSession).toHaveBeenCalledWith(source.id)
-    await target.bindings.archive?.execute(target.invocation)
-    await target.bindings.delete?.execute(target.invocation)
-    expect(onArchiveSession).toHaveBeenCalledWith(source)
-    expect(onDeleteSession).toHaveBeenCalledWith(source)
-  })
   it('renders only affected rows when fresh page callbacks accompany selection and Session updates', async () => {
     const rowComponent = SessionRow as unknown as {
       type: (props: Record<string, unknown>) => ReactElement
@@ -911,7 +843,16 @@ describe('WorkspaceSidebar accessible render', () => {
         Array.from(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
         )
-      ).toEqual(['toggle-pin', 'edit', 'download-artifacts', 'view-notebook', 'archive', 'delete'])
+      ).toEqual([
+        'toggle-pin',
+        'edit',
+        'discuss',
+        'view-replay',
+        'download-artifacts',
+        'view-notebook',
+        'archive',
+        'delete'
+      ])
       expect(menu?.querySelector('[data-slot="dropdown-menu-sub-trigger"]')?.textContent).toBe(
         'Export'
       )
@@ -933,7 +874,16 @@ describe('WorkspaceSidebar accessible render', () => {
         Array.from(dropdown?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
         )
-      ).toEqual(['toggle-pin', 'edit', 'download-artifacts', 'view-notebook', 'archive', 'delete'])
+      ).toEqual([
+        'toggle-pin',
+        'edit',
+        'discuss',
+        'view-replay',
+        'download-artifacts',
+        'view-notebook',
+        'archive',
+        'delete'
+      ])
       await clickRadixMenuItem(
         dropdown?.querySelector<HTMLElement>('[data-action-id="toggle-pin"]')
       )
@@ -996,6 +946,8 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(actions.map((item) => item.dataset.actionId)).toEqual([
         'toggle-pin',
         'edit',
+        'discuss',
+        'view-replay',
         'view-notebook',
         'archive',
         'delete'

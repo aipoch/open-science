@@ -302,6 +302,11 @@ type NotebookLocalRpcServerOptions = {
     ): Promise<unknown>
   }
   hostSessions?: {
+    read?(
+      sessionId: unknown,
+      options: unknown,
+      context: { projectId: string; sessionId: string; callerRole: 'main' }
+    ): Promise<unknown>
     list(
       options: unknown,
       context: { projectId: string; sessionId: string; callerRole: 'main' }
@@ -2662,6 +2667,8 @@ class NotebookLocalRpcServer {
       const context = { projectId, sessionId, callerRole: 'main' as const }
       if (params.op === 'list') return this.hostSessions.list(params.options, context)
       if (params.op === 'inspect') return this.hostSessions.inspect(params.session_id, context)
+      if (params.op === 'read' && this.hostSessions.read)
+        return this.hostSessions.read(params.session_id, params.options, context)
       throw new RpcHttpError(400, 'Unknown host Session operation.')
     }
 

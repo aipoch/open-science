@@ -1,3 +1,4 @@
+import type { ReviewWithChecks, ReviewSessionRequest } from '../../../../shared/reviewer'
 import type {
   ArtifactLineageProvenance,
   ArtifactVersionDescriptor,
@@ -30,10 +31,12 @@ import { indexReplayRun } from './run-index'
 
 // Deliberately excludes execution, mutation, event subscriptions and global renderer stores.
 export type ReplayReaderApi = {
+  reviewer?: { getForSession: (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]> }
   sessions: {
     loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   }
   notebook: {
+    runIndex?: (request: NotebookSessionRequest) => Promise<ReplayRunIndex[]>
     getReference: (request: NotebookSessionRequest) => Promise<NotebookSessionReference | null>
     state: (request: NotebookSessionStateRequest) => Promise<NotebookSessionState>
   }
@@ -47,6 +50,7 @@ export type ReplayReaderApi = {
 export type ReplaySourceData = {
   session: PersistedChatSession
   runs: ReplayRunIndex[]
+  reviews?: ReviewWithChecks[]
   resources: ReplayResource[]
   issues: ReplayIssue[]
 }
@@ -71,6 +75,11 @@ const readRuns = async (
   const issues: ReplayIssue[] = []
   try {
     checkAbort(signal)
+    if (api.runIndex) {
+      const runs = await api.runIndex(request)
+      checkAbort(signal)
+      return { runs, issues }
+    }
     const reference = await api.getReference(request)
     checkAbort(signal)
     if (!reference) return { runs: [], issues }
@@ -294,18 +303,31 @@ export const loadReplaySource = async (
   if (!session || session.id !== request.sessionId || session.projectId !== request.projectId) {
     throw new Error('Replay source session is unavailable.')
   }
-  const [notebook, artifacts] = await Promise.all([
+  let reviewUnavailable = false
+  const [notebook, artifacts, reviews] = await Promise.all([
     readRuns(api.notebook, { ...request, workspaceCwd: session.cwd }, signal),
-    readResources(api.artifacts, request, session.artifacts ?? [], signal)
+    readResources(api.artifacts, request, session.artifacts ?? [], signal),
+    api.reviewer
+      ? api.reviewer
+          .getForSession({ projectId: request.projectId, appSessionId: request.sessionId })
+          .catch(() => {
+            reviewUnavailable = true
+            return []
+          })
+      : Promise.resolve([])
   ])
   checkAbort(signal)
   const uploads = readUploadResources(session)
   return {
     session,
     runs: notebook.runs,
+    reviews: reviews.filter(
+      (review) => review.projectId === request.projectId && review.sessionId === request.sessionId
+    ),
     resources: [...artifacts.resources, ...uploads],
     issues: [
       ...notebook.issues,
+      ...(reviewUnavailable ? [{ code: 'review-unavailable' as const }] : []),
       ...artifacts.issues,
       ...uploads
         .filter((resource) => resource.availability === 'unavailable')

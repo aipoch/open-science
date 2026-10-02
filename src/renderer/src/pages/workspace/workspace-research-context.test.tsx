@@ -2,14 +2,17 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
+import { useSessionReplayStore } from '@/stores/session-replay-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { useWorkspaceResearchContext } from './workspace-research-context'
 import { createReplayStepAnnotation, replayAnnotationTarget } from './research-replay-context'
 import { consumeReplaySeek, type ReplayStepContext } from './replay/replay-context'
-import type { ResearchWorkspaceController } from './workspace-research-controller'
+import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
+import { useProjectStore } from '@/stores/project-store'
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import type { ComposerDoc } from './composer/composer-doc'
-import type { ReplayQuestionContext } from '../../../../shared/research-workspace'
+import type { SessionDiscussionSnapshot } from '../../../../shared/session-replay'
 
 const context: ReplayStepContext = {
   projectId: 'p',
@@ -28,16 +31,7 @@ const context: ReplayStepContext = {
     part: 'record'
   }))
 }
-const research = { projectId: 'p', sourceSessionId: 'source', sourceTitle: 'Study' }
-const controller: ResearchWorkspaceController = {
-  research,
-  loading: false,
-  blocked: false,
-  acceptDiscussion: vi.fn(),
-  recreateDiscussion: vi.fn(),
-  restoreDiscussion: vi.fn(),
-  retry: vi.fn()
-}
+const destination = { projectId: 'target-project', sessionId: 'target', navigationRevision: 1 }
 const doc = (text: string): ComposerDoc => ({
   nodes: [
     { type: 'session', sessionId: 'source', title: 'Study' },
@@ -54,11 +48,34 @@ const deferred = <T,>(): { promise: Promise<T>; resolve: (value: T) => void } =>
 beforeEach(() => {
   useNavigationStore.setState({
     view: 'workspace',
-    activeProjectId: 'p',
-    explicitNavigationRevision: 1,
-    researchWorkspace: research
+    activeProjectId: 'target-project',
+    explicitNavigationRevision: 1
   })
-  useResearchWorkspaceStore.setState({ pendingQuestion: undefined })
+  useSessionStore.setState(createInitialSessionState())
+  useSessionStore.getState().upsertPersistedSession({
+    id: 'target',
+    projectId: 'target-project',
+    title: 'Target',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  useSessionStore.getState().selectSession('target')
+  useProjectStore.setState({
+    projects: [
+      {
+        id: 'target-project',
+        name: 'Target',
+        description: '',
+        isExample: false,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+  })
+  useSessionReplayStore.setState({ pendingQuestion: undefined, questionDestination: undefined })
 })
 afterEach(() => {
   cleanup()
@@ -66,54 +83,85 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('durable whole-frame Ask snapshots', () => {
+describe('durable step-scoped Ask snapshots', () => {
   it('saves every visible reference before adding an annotation and retains typing during storage', async () => {
     const gate = deferred<void>()
-    const saveQuestionContext = vi.fn().mockReturnValue(gate.promise)
-    vi.stubGlobal('api', { researchWorkspaces: { saveQuestionContext } })
+    const saveSelectionSnapshot = vi.fn().mockReturnValue(gate.promise)
+    vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
     const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
     const { rerender } = renderHook(
       ({ text }) =>
         useWorkspaceResearchContext({
-          controller,
-          draftKey: 'source-draft',
+          draftKey: 'target',
           editable: true,
           composer: { view: { doc: doc(text), annotations: [] }, actions }
         }),
       { initialProps: { text: 'Why?' } }
     )
-    act(() => useResearchWorkspaceStore.getState().ask(context))
-    await waitFor(() => expect(saveQuestionContext).toHaveBeenCalledTimes(1))
-    expect(saveQuestionContext.mock.calls[0][0].context.evidence).toHaveLength(108)
+    act(() => useSessionReplayStore.getState().ask(context, destination))
+    await waitFor(() => expect(saveSelectionSnapshot).toHaveBeenCalledTimes(1))
+    expect(saveSelectionSnapshot.mock.calls[0][0].context.evidence).toHaveLength(108)
     expect(actions.addAnnotation).not.toHaveBeenCalled()
     rerender({ text: 'Why? Preserve my newer explanation.' })
     await act(async () => gate.resolve())
     await waitFor(() => expect(actions.addAnnotation).toHaveBeenCalledTimes(1))
     const annotation = actions.addAnnotation.mock.calls[0][0]
     expect(replayAnnotationTarget(annotation)?.contextId).toBe(
-      saveQuestionContext.mock.calls[0][0].context.id
+      saveSelectionSnapshot.mock.calls[0][0].context.id
     )
-    expect(annotation.quote).toContain(context.excerpt)
-    expect(annotation.quote).toContain('Preview is truncated.')
+    expect(annotation.quote).toContain(`Session: ${context.sourceTitle}`)
+    expect(annotation.quote).not.toContain(context.excerpt)
+    expect(annotation.quote).not.toContain('readReference')
+    expect(annotation.quote).not.toContain('Preview is truncated.')
     expect(annotation.quote.length).toBeLessThanOrEqual(4000)
     expect(actions.changeDoc.mock.lastCall?.[0]).toEqual(doc('Why? Preserve my newer explanation.'))
-    expect(useResearchWorkspaceStore.getState().pendingQuestion).toBeUndefined()
+    expect(useSessionReplayStore.getState().pendingQuestion).toBeUndefined()
   })
-  it('keeps a saved pending question without inserting into a different draft after navigation', async () => {
+  it('does not steal timeline focus when a delayed Ask finishes', async () => {
+    const gate = deferred<void>()
+    vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot: vi.fn(() => gate.promise) } })
+    const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+    const editor = document.createElement('input')
+    const timeline = document.createElement('button')
+    document.body.append(editor, timeline)
+    const focus = vi.fn(() => editor.focus())
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focus)
+    try {
+      renderHook(() =>
+        useWorkspaceResearchContext({
+          draftKey: 'target',
+          editable: true,
+          composer: { view: { doc: doc('Explain this'), annotations: [] }, actions }
+        })
+      )
+      act(() => useSessionReplayStore.getState().ask(context, destination))
+      expect(editor).toBe(document.activeElement)
+      timeline.focus()
+      await act(async () => gate.resolve())
+      expect(actions.addAnnotation).toHaveBeenCalledOnce()
+      expect(focus).toHaveBeenCalledOnce()
+      expect(timeline).toBe(document.activeElement)
+    } finally {
+      window.removeEventListener(FOCUS_COMPOSER_EVENT, focus)
+      editor.remove()
+      timeline.remove()
+    }
+  })
+
+  it('discards a stale insertion without writing into a different draft after navigation', async () => {
     const gate = deferred<void>()
     vi.stubGlobal('api', {
-      researchWorkspaces: { saveQuestionContext: vi.fn().mockReturnValue(gate.promise) }
+      sessionReplay: { saveSelectionSnapshot: vi.fn().mockReturnValue(gate.promise) }
     })
     const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
     renderHook(() =>
       useWorkspaceResearchContext({
-        controller,
-        draftKey: 'source-draft',
+        draftKey: 'target',
         editable: true,
         composer: { view: { doc: doc('Why?'), annotations: [] }, actions }
       })
     )
-    act(() => useResearchWorkspaceStore.getState().ask(context))
+    act(() => useSessionReplayStore.getState().ask(context, destination))
     actions.changeDoc.mockClear()
     act(() =>
       useNavigationStore.setState({ activeProjectId: 'elsewhere', explicitNavigationRevision: 2 })
@@ -121,18 +169,17 @@ describe('durable whole-frame Ask snapshots', () => {
     await act(async () => gate.resolve())
     expect(actions.addAnnotation).not.toHaveBeenCalled()
     expect(actions.changeDoc).not.toHaveBeenCalled()
-    expect(useResearchWorkspaceStore.getState().pendingQuestion).toBe(context)
+    expect(useSessionReplayStore.getState().pendingQuestion).toBeUndefined()
   })
   it('resolves new annotations through the immutable local snapshot and ignores a late reveal after navigation', async () => {
-    const gate = deferred<ReplayQuestionContext>()
-    const getQuestionContext = vi.fn().mockReturnValue(gate.promise)
-    vi.stubGlobal('api', { researchWorkspaces: { getQuestionContext } })
+    const gate = deferred<SessionDiscussionSnapshot>()
+    const getSelectionSnapshot = vi.fn().mockReturnValue(gate.promise)
+    vi.stubGlobal('api', { sessionReplay: { getSelectionSnapshot } })
     const open = vi.spyOn(usePreviewWorkbenchStore.getState(), 'upsertAndActivateItem')
     const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
     renderHook(() =>
       useWorkspaceResearchContext({
-        controller,
-        draftKey: 'source-draft',
+        draftKey: 'target',
         editable: true,
         composer: { view: { doc: doc('Why?'), annotations: [] }, actions }
       })
@@ -142,22 +189,21 @@ describe('durable whole-frame Ask snapshots', () => {
       document.dispatchEvent(new CustomEvent('annotation-reveal-prepare', { detail: annotation }))
       document.dispatchEvent(new CustomEvent('annotation-reveal', { detail: annotation.id }))
     })
-    expect(getQuestionContext).toHaveBeenCalledWith({ projectId: 'p', id: 'context-id' })
+    expect(getSelectionSnapshot).toHaveBeenCalledWith({ projectId: 'p', id: 'context-id' })
     act(() => useNavigationStore.setState({ explicitNavigationRevision: 2 }))
     await act(async () => gate.resolve({ ...context, id: 'context-id' }))
     expect(open).not.toHaveBeenCalled()
   })
-  it('reveals the saved position without switching the discussion and reports a missing local snapshot', async () => {
-    const getQuestionContext = vi.fn().mockResolvedValue({ ...context, id: 'context-id' })
-    vi.stubGlobal('api', { researchWorkspaces: { getQuestionContext } })
+  it('reveals the saved position in another project without switching the target conversation and reports a missing local snapshot', async () => {
+    const getSelectionSnapshot = vi.fn().mockResolvedValue({ ...context, id: 'context-id' })
+    vi.stubGlobal('api', { sessionReplay: { getSelectionSnapshot } })
     const open = vi
       .spyOn(usePreviewWorkbenchStore.getState(), 'upsertAndActivateItem')
       .mockImplementation(() => {})
     const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
     renderHook(() =>
       useWorkspaceResearchContext({
-        controller,
-        draftKey: 'source-draft',
+        draftKey: 'target',
         editable: true,
         composer: { view: { doc: doc('Why?'), annotations: [] }, actions }
       })
@@ -168,14 +214,18 @@ describe('durable whole-frame Ask snapshots', () => {
       document.dispatchEvent(new CustomEvent('annotation-reveal', { detail: annotation.id }))
     })
     expect(open).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: 'p', replaySourceSessionId: 'source' })
+      expect.objectContaining({
+        projectId: 'target-project',
+        replaySourceProjectId: 'p',
+        replaySourceSessionId: 'source'
+      })
     )
     expect(consumeReplaySeek('p', 'source')).toMatchObject({
       stepId: context.stepId,
       stepOffsetMs: 123
     })
-    expect(useNavigationStore.getState().researchWorkspace).toEqual(research)
-    getQuestionContext.mockResolvedValueOnce(undefined)
+    expect(useSessionStore.getState().selectedSessionId).toBe('target')
+    getSelectionSnapshot.mockResolvedValueOnce(undefined)
     await act(async () => {
       document.dispatchEvent(new CustomEvent('annotation-reveal-prepare', { detail: annotation }))
     })
@@ -183,5 +233,96 @@ describe('durable whole-frame Ask snapshots', () => {
       'This replay reference is unavailable on this device.'
     )
     expect(open).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not insert a captured reference after the target branch changes during storage', async () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'target',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((row) => ({ ...row, conversationGraph: graph }))
+    }))
+    const gate = deferred<void>()
+    const saveSelectionSnapshot = vi.fn().mockReturnValue(gate.promise)
+    vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
+    const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+    renderHook(() =>
+      useWorkspaceResearchContext({
+        draftKey: 'target',
+        editable: true,
+        composer: { view: { doc: doc('Keep my draft'), annotations: [] }, actions }
+      })
+    )
+    act(() => useSessionReplayStore.getState().ask(context, destination))
+    await waitFor(() => expect(saveSelectionSnapshot).toHaveBeenCalledTimes(1))
+    act(() =>
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((row) => ({
+          ...row,
+          conversationGraph: {
+            ...graph,
+            frames: graph.frames.map((frame) => ({ ...frame, activeBranchId: 'changed-branch' }))
+          }
+        }))
+      }))
+    )
+    await act(async () => gate.resolve())
+    expect(actions.changeDoc).not.toHaveBeenCalled()
+    expect(actions.addAnnotation).not.toHaveBeenCalled()
+    expect(useSessionReplayStore.getState().pendingQuestion).toBeUndefined()
+  })
+
+  it('stages a standalone Notebook reference in an ordinary new draft with its source project', async () => {
+    useSessionStore.getState().clearSelection()
+    const saveSelectionSnapshot = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
+    const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+    renderHook(() =>
+      useWorkspaceResearchContext({
+        draftKey: 'new:target-project',
+        editable: true,
+        composer: {
+          view: { doc: { nodes: [{ type: 'text', text: 'Already typing' }] }, annotations: [] },
+          actions
+        }
+      })
+    )
+    act(() =>
+      useSessionReplayStore.getState().ask(
+        {
+          ...context,
+          evidence: [
+            {
+              kind: 'notebook-run',
+              id: 'run-1',
+              projectId: 'p',
+              sessionId: 'source',
+              part: 'record'
+            }
+          ]
+        },
+        { ...destination, sessionId: undefined }
+      )
+    )
+    await waitFor(() => expect(actions.changeDoc).toHaveBeenCalledTimes(1))
+    const draft = actions.changeDoc.mock.calls[0][0] as ComposerDoc
+    expect(draft.nodes).toContainEqual({ type: 'text', text: 'Already typing' })
+    expect(draft.nodes.some((node) => node.type === 'session')).toBe(false)
+    expect(JSON.stringify(draft)).not.toContain('#research-replay:')
+    expect(actions.addAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: {
+          kind: 'session-item',
+          sessionId: 'source',
+          itemId: 'run-1',
+          itemType: 'notebook-run'
+        }
+      })
+    )
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
   })
 })

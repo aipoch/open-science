@@ -1,4 +1,22 @@
-import { useEffect, useState } from 'react'
+import { ArrowLeft } from 'lucide-react'
+import { NotebookRecordCell } from './NotebookRecordCell'
+import { NotebookRunTextOutputs } from './NotebookRunOutputs'
+import { ReplayToolRecord } from './replay/ReplayToolRecord'
+import { ReplayMarkdown, ResourceTable } from './replay/ReplayStage'
+import { useNearViewport } from './previews/useNearViewport'
+import { ReplayFileRow } from './replay/ReplayFileRow'
+import { readReplayResource, type ReplayPreparedResource } from './replay/replay-resources'
+import { SessionReviewerPanel } from './SessionReviewerPanel'
+import { ErrorNotice } from '@/components/error-notice'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type {
@@ -10,23 +28,81 @@ import type {
 import { resolveNotebookRunFigures } from './notebook-run-figures'
 import { replayImageSource } from './replay/replay-svg'
 
-const recordText = (value: unknown): string =>
-  typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? '')
 const textClass =
-  'whitespace-pre-wrap break-words rounded-lg bg-bg-200 p-3 font-mono text-xs leading-5'
-const buttonClass =
-  'rounded-md border border-border-200 px-3 py-1.5 text-sm hover:bg-bg-200 focus-visible:outline-2 focus-visible:outline-ring'
+  'max-h-96 overflow-auto whitespace-pre rounded-lg bg-bg-200 p-3 font-mono text-xs leading-5'
 
-const RecordedData = ({ value }: { value: unknown }): React.JSX.Element => {
+const RecordedFile = ({
+  resource,
+  onOpen
+}: {
+  resource: ReplayResource
+  onOpen: () => void
+}): React.JSX.Element => {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
+  const [prepared, setPrepared] = useState<ReplayPreparedResource>()
+  const [setElement, nearViewport] = useNearViewport<HTMLElement>()
+  // Keep the loaded preview and its height when scrolling away, just like message images.
+  const [requested, setRequested] = useState(false)
+  if (nearViewport && !requested) setRequested(true)
+  useEffect(() => {
+    if (!requested) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      cancelled = true
+      setPrepared({ status: 'timeout' })
+    }, 10_000)
+    void readReplayResource(resource)
+      .then((value) => {
+        if (!cancelled) setPrepared(value)
+      })
+      .catch(() => {
+        if (!cancelled) setPrepared({ status: 'unavailable' })
+      })
+      .finally(() => window.clearTimeout(timer))
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [resource, requested])
   return (
-    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="cursor-pointer text-xs text-muted-foreground">
-        {t('Recorded data')}
-      </summary>
-      {open ? <pre className={textClass}>{recordText(value)}</pre> : null}
-    </details>
+    <article ref={setElement} className="space-y-3">
+      <ReplayFileRow resource={resource} onSelect={onOpen} />
+      {!prepared ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t('Loading recorded evidence…')}
+        </p>
+      ) : prepared.status === 'ready' ? (
+        <>
+          {prepared.kind === 'image' ? (
+            <img
+              src={prepared.content}
+              alt={resource.name}
+              className="max-h-[60vh] max-w-full object-contain"
+            />
+          ) : prepared.kind === 'table' ? (
+            <ResourceTable
+              content={prepared.content}
+              delimiter={resource.name.endsWith('.tsv') ? '\t' : undefined}
+            />
+          ) : resource.name.endsWith('.md') ? (
+            <ReplayMarkdown content={prepared.content} complete />
+          ) : (
+            <pre className={textClass}>{prepared.content}</pre>
+          )}
+          {prepared.truncated ? (
+            <p className="text-xs text-muted-foreground">
+              {t('Preview is truncated. Open the evidence for the complete file.')}
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {prepared.status === 'unsupported'
+            ? t('Open the original evidence to inspect this format.')
+            : t('The recorded evidence is unavailable.')}
+        </p>
+      )}
+    </article>
   )
 }
 
@@ -88,20 +164,18 @@ const RecordedNotebook = ({
   }, [source.projectId, source.sessionId, source.workspaceCwd, source.fingerprint, index, attempt])
   if (error)
     return (
-      <div role="status" className="space-y-2">
-        <p>{t('The recorded evidence is unavailable.')}</p>
-        <button
-          type="button"
-          className={buttonClass}
-          onClick={() => {
+      <ErrorNotice
+        tone="amber"
+        description={t('The recorded evidence is unavailable.')}
+        primaryButton={{
+          label: t('Retry'),
+          onClick: () => {
             setRun(undefined)
             setError(false)
             setAttempt((value) => value + 1)
-          }}
-        >
-          {t('Retry')}
-        </button>
-      </div>
+          }
+        }}
+      />
     )
   if (!run) return <p role="status">{t('Loading recorded evidence…')}</p>
   return (
@@ -109,15 +183,9 @@ const RecordedNotebook = ({
       <p className="text-xs text-muted-foreground">
         {t('Recorded status: {{status}}', { status: run.status })}
       </p>
-      <pre className={textClass}>{run.script}</pre>
-      <h3 className="text-sm font-medium">{t('Saved output')}</h3>
-      {[run.text.stdout, run.text.stderr, run.text.traceback, ...run.text.plain]
-        .filter(Boolean)
-        .map((text, index) => (
-          <pre key={index} className={textClass}>
-            {text}
-          </pre>
-        ))}
+      <NotebookRecordCell run={run} index={0}>
+        <NotebookRunTextOutputs run={run} />
+      </NotebookRecordCell>
       {resolveNotebookRunFigures(run).map((figure) => {
         const image = replayImageSource(figure.mimeType, figure.payload)
         return image ? (
@@ -132,7 +200,6 @@ const RecordedNotebook = ({
       {run.truncated ? (
         <p className="text-xs text-muted-foreground">{t('Archived output is truncated.')}</p>
       ) : null}
-      <RecordedData value={run} />
     </article>
   )
 }
@@ -155,62 +222,66 @@ export const ResearchReplayEvidence = ({
   const { t } = useTranslation()
   const [selectedRunId, setSelectedRunId] = useState(step.runs[0]?.runId)
   const selectedRun = step.runs.find((run) => run.runId === selectedRunId)
+  const recordedResources = useMemo(() => {
+    const ids = new Set(step.resourceIds)
+    return resources.filter((resource) => ids.has(resource.id))
+  }, [resources, step.resourceIds])
   return (
     <section
       aria-label={t('Original recorded evidence')}
-      className="min-h-0 flex-1 overflow-auto p-4"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && !event.defaultPrevented) {
+          event.preventDefault()
+          event.stopPropagation()
+          onBack()
+        }
+      }}
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <header className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="font-medium">{t('Original recorded evidence')}</h2>
-        <button type="button" className={buttonClass} onClick={onBack}>
+      <header className="flex shrink-0 items-center gap-2 border-b border-border-200 px-3 py-2">
+        <Button
+          data-replay-evidence-back
+          variant="ghost"
+          size="sm"
+          className="shrink-0 gap-1.5"
+          onClick={onBack}
+        >
+          <ArrowLeft size={14} aria-hidden="true" />
           {t('Back to replay')}
-        </button>
+        </Button>
+        <h2 className="min-w-0 truncate text-sm font-medium">{t('Original recorded evidence')}</h2>
       </header>
-      <div className="space-y-5">
+      <div className="min-h-0 flex-1 space-y-5 overflow-auto p-4">
+        {step.review ? (
+          <SessionReviewerPanel review={step.review} activeFindingId={undefined} historical />
+        ) : null}
         {step.message ? (
           <article className="space-y-2">
             <h3 className="text-sm font-medium">
               {step.message.role === 'user' ? t('User') : t('Agent')}
             </h3>
-            <pre className="whitespace-pre-wrap break-words text-sm leading-6">
-              {step.message.content}
-            </pre>
-            <RecordedData value={step.message} />
+            <ReplayMarkdown content={step.message.content} complete />
           </article>
         ) : null}
         {step.activities.map((activity) => (
-          <article key={activity.id} className="space-y-2">
-            <h3 className="text-sm font-medium">{activity.title || t('Tool activity')}</h3>
-            <p className="text-xs text-muted-foreground">
-              {t('Recorded status: {{status}}', { status: activity.status })}
-            </p>
-            {activity.rawInput !== undefined ? (
-              <pre className={textClass}>{recordText(activity.rawInput)}</pre>
-            ) : null}
-            {activity.terminalOutput ? (
-              <pre className={textClass}>{activity.terminalOutput}</pre>
-            ) : null}
-            {activity.rawOutput !== undefined ? (
-              <pre className={textClass}>{recordText(activity.rawOutput)}</pre>
-            ) : null}
-            <RecordedData value={activity} />
-          </article>
+          <ReplayToolRecord key={activity.id} activity={activity} showResults interactive />
         ))}
         {step.runs.length ? (
           <section className="space-y-3">
             <h3 className="text-sm font-medium">{t('Notebook')}</h3>
             {step.runs.length > 1 ? (
-              <select
-                aria-label={t('Notebook')}
-                value={selectedRunId}
-                onChange={(event) => setSelectedRunId(event.target.value)}
-              >
-                {step.runs.map((run) => (
-                  <option key={run.runId} value={run.runId}>
-                    {run.runId}
-                  </option>
-                ))}
-              </select>
+              <Select value={selectedRunId} onValueChange={setSelectedRunId}>
+                <SelectTrigger aria-label={t('Notebook')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {step.runs.map((run) => (
+                    <SelectItem key={run.runId} value={run.runId}>
+                      {t('Notebook')} · {run.kernelKind} · {step.runs.indexOf(run) + 1}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : null}
             {selectedRun ? (
               <RecordedNotebook
@@ -226,19 +297,13 @@ export const ResearchReplayEvidence = ({
             ) : null}
           </section>
         ) : null}
-        {resources
-          .filter((resource) => step.resourceIds.includes(resource.id))
-          .map((resource) => (
-            <button
-              key={resource.id}
-              type="button"
-              className={buttonClass}
-              onClick={() => onOpenResource(resource)}
-            >
-              {resource.name}
-            </button>
-          ))}
-        <RecordedData value={{ source, step }} />
+        {recordedResources.map((resource) => (
+          <RecordedFile
+            key={resource.id}
+            resource={resource}
+            onOpen={() => onOpenResource(resource)}
+          />
+        ))}
       </div>
     </section>
   )

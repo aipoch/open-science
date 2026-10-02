@@ -1,3 +1,4 @@
+import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import {
   projectConversationMessage,
   resolveActiveConversationActivities,
@@ -267,6 +268,43 @@ export const buildReplayDocument = (source: ReplaySourceData): ReplayDocument =>
         durationMs: 0
       }))
     : [{ id: `session:${session.id}`, kind: 'conversation', steps: [], durationMs: 0 }]
+  const projectedSessions = new Map(
+    branches.map((branch) => [branch.id, sessionForBranch(session, branch)])
+  )
+  const assignedReviews = new Set<string>()
+  const reviews = [...(source.reviews ?? [])].sort(
+    (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)
+  )
+  const reviewFits = (review: ReviewWithChecks, branch: ReplayBranch): boolean => {
+    const scope = review.scope
+    if (scope.agentFrameId && scope.agentFrameId !== branch.agentFrameId) return false
+    if (scope.messageBranchId && scope.messageBranchId !== branch.id) return false
+    const projected = projectedSessions.get(branch.id)!
+    return (
+      projected.messages.some((message) => message.id === review.turnMessageId) &&
+      scope.blocks.every((block) =>
+        block.kind === 'message'
+          ? projected.messages.some((message) => message.id === block.sourceId)
+          : projected.activities?.some((activity) => activity.id === block.sourceId)
+      )
+    )
+  }
+  // Resolve each review once. Shared legacy prompts cannot identify the audited fork.
+  const reviewBranches = new Map(
+    reviews.map((review) => {
+      const candidates = branches.filter((branch) => reviewFits(review, branch))
+      return [review.id, candidates.length === 1 ? candidates[0].id : undefined]
+    })
+  )
+  const reviewStep = (review: ReviewWithChecks, branch: ReplayBranch): ReplayStep =>
+    makeStep(branch, {
+      id: stableId('review', review.id),
+      kind: 'review',
+      review,
+      promptMessageId: review.turnMessageId,
+      recordedAt: review.createdAt,
+      evidence: [evidence(session, branch, 'review', review.id)]
+    })
   const assignedRuns = new Set<string>()
   const assignedResources = new Set<string>()
   const resources = source.resources.map((resource) => {
@@ -295,7 +333,7 @@ export const buildReplayDocument = (source: ReplaySourceData): ReplayDocument =>
   }
 
   for (const branch of branches) {
-    const projected = sessionForBranch(session, branch)
+    const projected = projectedSessions.get(branch.id)!
     const branchRuns = indexedRuns.filter((run) => belongsToBranch(run, source, branch, projected))
     const mergedRuns = new Set<string>()
     const activityStep = (activities: PersistedToolActivity[], title?: string): ReplayStep => {
@@ -392,12 +430,31 @@ export const buildReplayDocument = (source: ReplaySourceData): ReplayDocument =>
       assignedResources.add(resource.id)
     }
     branch.steps = addAfterAnchors(branch.steps, additions)
+    const branchReviews = reviews.filter((review) => reviewBranches.get(review.id) === branch.id)
+    for (const review of branchReviews) assignedReviews.add(review.id)
+    branch.steps = addAfterAnchors(
+      branch.steps,
+      branchReviews.map((review) => {
+        const ids = new Set(review.scope.blocks.map((block) => block.sourceId))
+        const anchor =
+          branch.steps.findLast((step) => step.evidence.some((ref) => ids.has(ref.id))) ??
+          branch.steps.findLast(
+            (step) =>
+              (step.promptMessageId === review.turnMessageId ||
+                step.message?.id === review.turnMessageId) &&
+              step.recordedAt !== undefined &&
+              step.recordedAt <= review.createdAt
+          )
+        return { anchor: anchor?.id, step: reviewStep(review, branch) }
+      })
+    )
     setPresentationTimes(branch)
   }
 
   const unassignedRuns = indexedRuns.filter((run) => !assignedRuns.has(run.runId))
   const unassignedResources = resources.filter((resource) => !assignedResources.has(resource.id))
-  if (unassignedRuns.length || unassignedResources.length) {
+  const unassignedReviews = reviews.filter((review) => !assignedReviews.has(review.id))
+  if (unassignedRuns.length || unassignedResources.length || unassignedReviews.length) {
     const branch: ReplayBranch = {
       id: `unattributed:${session.id}`,
       kind: 'unattributed',
@@ -405,6 +462,7 @@ export const buildReplayDocument = (source: ReplaySourceData): ReplayDocument =>
       durationMs: 0
     }
     branch.steps = [
+      ...unassignedReviews.map((review) => reviewStep(review, branch)),
       ...unassignedRuns.map((run) => notebookStep(session, branch, run)),
       ...unassignedResources.map((resource) => resourceStep(session, branch, resource))
     ].map((step) => ({

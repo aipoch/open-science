@@ -285,7 +285,11 @@
       "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
-      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx"
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchReplayEvidence.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchReplayPreview.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ]
   },
   "capabilityOverlays": [],

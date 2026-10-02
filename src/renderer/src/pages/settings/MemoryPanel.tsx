@@ -1,6 +1,6 @@
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { ErrorNotice } from '@/components/error-notice'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import {
   ArrowUpRight,
   Bell,

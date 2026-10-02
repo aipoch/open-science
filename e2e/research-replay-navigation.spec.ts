@@ -52,7 +52,7 @@ const sessionRow = (page: Page, title: string): Locator =>
 const replayTab = (page: Page, sourceId: string): Locator =>
   page.locator(`[id="preview-tab-${encodeURIComponent(`tool:${sourceId}:replay`)}"]`)
 
-test('keeps research drafts and sent references scoped across navigation, archive, restore and source deletion', async ({
+test('replaces the discussion Session without replacing the draft or changing source records', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
@@ -61,6 +61,15 @@ test('keeps research drafts and sent references scoped across navigation, archiv
   const projectId = await createProject(page, projectName)
   const sourceA = sourceFixture(projectId, 'a')
   const sourceB = sourceFixture(projectId, 'b')
+  const target: PersistedChatSession = {
+    ...sourceA,
+    id: 'ordinary-target',
+    title: 'Existing conversation',
+    packageOrigin: undefined,
+    messages: [],
+    updatedAt: 2
+  }
+  await app.restartWithSessionFixture(target)
   await app.restartWithSessionFixture(sourceA)
   page = await app.restartWithSessionFixture(sourceB)
   await page
@@ -68,125 +77,164 @@ test('keeps research drafts and sent references scoped across navigation, archiv
     .getByRole('button', { name: projectName, exact: true })
     .click()
   const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
-  const notice = page.getByRole('region', { name: 'Research discussion', exact: true })
   const replay = page.locator('[data-testid="replay-panel"]:visible')
-  const conversation = page.getByRole('region', { name: 'Conversation', exact: true })
-  const originalPromptCount = (await app.readFakeAgentPrompts()).length
-  const draftA = 'Keep this unsent question in research A.'
-
-  await sessionRow(page, sourceA.title).click()
-  await expect(notice).toContainText(`Discussing ${sourceA.title}`)
-  await editor.fill(draftA)
-  await sessionRow(page, sourceB.title).click()
-  await expect(notice).toContainText(`Discussing ${sourceB.title}`)
-  await expect(editor).not.toContainText(draftA)
-  await sessionRow(page, sourceA.title).click()
-  await expect(editor).toHaveText(draftA)
-  // A preview tab is independent from left-side navigation. Ask intentionally joins them again.
-  await replayTab(page, sourceB.id).click()
-  await expect(notice).toContainText(`Discussing ${sourceA.title}`)
-  await expect(replay).toContainText(sourceB.title)
-  await replay.getByRole('slider', { name: 'Replay progress', exact: true }).focus()
-  await page.keyboard.press('End')
-  await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-  await expect(notice).toContainText(`Discussing ${sourceB.title}`)
-  await expect(editor).toContainText(sourceB.title)
-  await expect(
-    page.getByRole('button', { name: 'Show annotation source', exact: true })
-  ).toBeVisible()
-  await expect(editor).not.toContainText(draftA)
-  await sessionRow(page, sourceA.title).click()
-  await expect(editor).toHaveText(draftA)
-  await sessionRow(page, sourceB.title).click()
-  await expect(editor).toContainText(sourceB.title)
-  await expect(
-    page.getByRole('button', { name: 'Show annotation source', exact: true })
-  ).toBeVisible()
-  expect((await app.readFakeAgentPrompts()).length).toBe(originalPromptCount)
-
-  await editor.focus()
-  await page.keyboard.press('ControlOrMeta+End')
-  await page.keyboard.insertText('Explain the recorded result in B.')
+  await sessionRow(page, target.title).click()
+  await editor.fill('Preserve this existing draft. ')
+  const originals = await Promise.all(
+    [sourceA, sourceB].map((source) =>
+      page.evaluate((request) => window.api.sessions.loadOne(request), {
+        projectId,
+        sessionId: source.id
+      })
+    )
+  )
+  const baseline = await app.readFakeAgentPrompts()
+  for (const source of [sourceA, sourceB]) {
+    await sessionRow(page, source.title).click()
+    await expect(replayTab(page, source.id)).toHaveCount(0)
+    await page
+      .getByRole('region', { name: 'Imported research history', exact: true })
+      .getByRole('button', { name: 'View replay', exact: true })
+      .click()
+    await expect(replay).toBeVisible()
+    await replayTab(page, source.id).click()
+    await page
+      .getByRole('button', { name: `Close preview of ${source.title}`, exact: true })
+      .click()
+    await sessionRow(page, target.title).click()
+    await sessionRow(page, source.title).click()
+    await expect(replayTab(page, source.id)).toHaveCount(0)
+    await page
+      .getByRole('region', { name: 'Imported research history', exact: true })
+      .getByRole('button', { name: 'View replay', exact: true })
+      .click()
+    await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
+    const chooser = page.getByRole('dialog', { name: 'Ask in a conversation' })
+    if (source.id === sourceA.id) {
+      await expect(chooser.getByRole('combobox')).toBeFocused()
+      await expect(chooser.locator('kbd')).toHaveCount(0)
+      for (const width of [320, 375, 414, 512]) {
+        await chooser.evaluate((node, width) => {
+          ;(node as HTMLElement).style.width = `${width}px`
+        }, width)
+        const heading = chooser.getByRole('heading', { name: 'Ask in a conversation' })
+        const description = chooser.getByText('Add to a draft. Send when ready.')
+        expect(
+          await heading.evaluate((node) => parseFloat(getComputedStyle(node).fontSize))
+        ).toBeGreaterThan(
+          await description.evaluate((node) => parseFloat(getComputedStyle(node).fontSize))
+        )
+        expect(await chooser.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+        const footer = await chooser.evaluate((node) => {
+          const buttons = Array.from(node.querySelectorAll('button'))
+          const cancel = buttons
+            .find((button) => button.textContent === 'Cancel')!
+            .getBoundingClientRect()
+          const create = buttons
+            .find((button) => button.textContent === 'New conversation')!
+            .getBoundingClientRect()
+          return {
+            cancelY: cancel.y + cancel.height / 2,
+            createY: create.y + create.height / 2,
+            belowList:
+              create.y > node.querySelector('[role="listbox"]')!.getBoundingClientRect().bottom
+          }
+        })
+        expect(Math.abs(footer.cancelY - footer.createY)).toBeLessThan(1)
+        expect(footer.belowList).toBe(true)
+        if (width === 375 || width === 512)
+          await chooser.screenshot({
+            path: testInfo.outputPath(`replay-conversation-dialog-${width}.png`)
+          })
+      }
+    }
+    await expect(chooser.getByRole('option').filter({ hasText: sourceA.title })).toHaveCount(0)
+    await expect(chooser.getByRole('option').filter({ hasText: sourceB.title })).toHaveCount(0)
+    await chooser.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(chooser).not.toBeVisible()
+    await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
+    await chooser.getByRole('combobox').press('Escape')
+    await expect(chooser).not.toBeVisible()
+    await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
+    await chooser.getByRole('combobox').fill(target.title)
+    await chooser.getByRole('option').filter({ hasText: target.title }).click()
+    await expect(sessionRow(page, target.title)).toHaveAttribute('aria-current', 'page')
+    await expect(editor).toContainText('Preserve this existing draft.')
+    await expect(editor).not.toContainText(source.title)
+    const stepChip = page.locator('[data-session-discussion-source]').last()
+    await expect(stepChip).toContainText(source.title)
+    await expect(stepChip.locator('.lucide-messages-square')).toBeVisible()
+    await expect(page.locator('[data-session-discussion-source]')).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Discuss', exact: true })).toBeVisible()
+    await expect(stepChip).not.toContainText('Discuss')
+    const discussion = page.getByTestId('session-discussion-draft')
+    for (const width of [240, 320, 480]) {
+      await discussion.evaluate((node, width) => {
+        ;(node as HTMLElement).style.width = `${width}px`
+      }, width)
+      const actionBox = await discussion
+        .getByRole('button', { name: 'Discuss', exact: true })
+        .boundingBox()
+      const sourceBox = await stepChip.boundingBox()
+      expect(sourceBox!.x).toBeGreaterThan(actionBox!.x + actionBox!.width)
+      expect(await discussion.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+      const remove = stepChip.getByRole('button', { name: 'Remove annotation', exact: true })
+      await expect(remove).toBeVisible()
+      const removeBox = (await remove.boundingBox())!
+      const discussionBox = (await discussion.boundingBox())!
+      expect(removeBox.x + removeBox.width).toBeLessThanOrEqual(
+        discussionBox.x + discussionBox.width + 1
+      )
+      await remove.click({ trial: true })
+      await discussion.screenshot({
+        path: testInfo.outputPath(`discuss-source-${source.id}-${width}.png`)
+      })
+    }
+    await discussion.evaluate((node) => {
+      ;(node as HTMLElement).style.width = ''
+    })
+    // The width probes move the controls under the pointer; leave the tooltip's
+    // pointer-grace area before testing a fresh hover on the source.
+    await page.mouse.move(0, 0)
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
+    await stepChip.getByRole('button').first().hover()
+    const tip = page.locator('[data-session-discussion-tooltip]')
+    await expect(tip).toContainText(`View replay · ${source.title}`)
+    expect((await tip.boundingBox())!.height).toBeLessThan(72)
+    await page.screenshot({ path: testInfo.outputPath(`replay-reference-${source.id}.png`) })
+    await editor.hover()
+  }
+  expect(await app.readFakeAgentPrompts()).toEqual(baseline)
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
-  await expect(conversation).toContainText('Deterministic reply:')
-  await expect(page.getByRole('button', { name: 'Stop generating', exact: true })).toHaveCount(0)
-  const scope = { projectId, sourceSessionId: sourceB.id }
-  const linked = await page.evaluate((scope) => window.api.researchWorkspaces.get(scope), scope)
-  expect(linked.discussionSessionId).toBeTruthy()
-  const discussionId = linked.discussionSessionId!
-  const discussion = await page.evaluate((input) => window.api.sessions.loadOne(input), {
+  await expect(page.getByRole('region', { name: 'Conversation', exact: true })).toContainText(
+    'Deterministic reply:'
+  )
+  const saved = await page.evaluate((request) => window.api.sessions.loadOne(request), {
     projectId,
-    sessionId: discussionId
+    sessionId: target.id
   })
-  expect(discussion).toBeTruthy()
-  const sentReference = conversation.getByRole('button', {
-    name: 'Show annotation source',
-    exact: true
-  })
-  await expect(sentReference).toHaveCount(1)
-  await editor.fill('Another unsent thought in B.')
-  await replayTab(page, sourceA.id).click()
-  await expect(replay).toContainText(sourceA.title)
-  await sentReference.click()
-  await expect(replay).toContainText(sourceB.title)
-  await expect(replay.getByRole('slider', { name: 'Replay progress', exact: true })).toHaveValue(
-    '5000'
-  )
-  await expect(notice).toContainText(`Discussing ${sourceB.title}`)
-  await expect(editor).toHaveText('Another unsent thought in B.')
-  await expect(conversation).toContainText('Explain the recorded result in B.')
+  const user = saved!.messages.find((message) => message.role === 'user')!
+  expect(user.parts?.some((part) => part.type === 'session')).toBe(false)
+  expect(user.annotations).toHaveLength(1)
+  expect(saved!.runtimeContext!.sessionContext!.bindings).toHaveLength(1)
+  expect(saved!.runtimeContext!.sessionContext!.bindings[0].sessionId).toBe(sourceB.id)
+  expect(
+    user.annotations?.every(
+      (annotation) =>
+        annotation.kind === 'text' &&
+        annotation.quote.includes(sourceB.title) &&
+        !annotation.quote.includes('readReference')
+    )
+  ).toBe(true)
+  for (const source of [sourceA, sourceB]) {
+    const retained = await page.evaluate((request) => window.api.sessions.loadOne(request), {
+      projectId,
+      sessionId: source.id
+    })
+    expect(retained?.messages).toEqual(originals.find((row) => row?.id === source.id)?.messages)
+    expect(retained?.packageOrigin).toEqual(source.packageOrigin)
+  }
   await page.screenshot({
-    path: testInfo.outputPath('sent-reference-preserves-left-discussion.png')
+    path: testInfo.outputPath('discussion-session-replaced.png')
   })
-
-  await page.getByRole('button', { name: `Open actions for ${sourceB.title}`, exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
-  const undo = page.getByTestId('archive-undo-snackbar')
-  await expect(undo).toContainText('Archived session')
-  await expect(sessionRow(page, sourceB.title).filter({ hasText: discussion!.title })).toHaveCount(
-    1
-  )
-  await sessionRow(page, sourceA.title).click()
-  await expect(editor).toHaveText(draftA)
-  await sessionRow(page, discussion!.title).click()
-  await expect(sessionRow(page, discussion!.title)).toHaveAttribute('aria-current', 'page')
-  await expect(notice).toContainText(`Discussing ${sourceB.title}`)
-  await expect(editor).toBeEditable()
-  await editor.fill('Can I discuss B while its source is archived?')
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
-  await expect(conversation.getByText(/Deterministic reply:/)).toHaveCount(2)
-  await expect(page.getByRole('button', { name: 'Stop generating', exact: true })).toHaveCount(0)
-  await undo.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(sessionRow(page, discussion!.title)).toHaveCount(0)
-  await expect(sessionRow(page, sourceB.title)).toHaveCount(1)
-  await sessionRow(page, sourceB.title).click()
-  await expect(conversation).toContainText('Can I discuss B while its source is archived?')
-  const restored = await page.evaluate((scope) => window.api.researchWorkspaces.get(scope), scope)
-  expect(restored.sourceStatus).toBe('available')
-  expect(restored.discussionSessionId).toBe(discussionId)
-
-  await page.getByRole('button', { name: `Open actions for ${sourceB.title}`, exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
-  const confirmation = page.getByRole('alertdialog', { name: 'Delete Session?' })
-  await expect(confirmation).toContainText(sourceB.title)
-  await confirmation.getByRole('button', { name: 'Delete', exact: true }).click()
-  await expect(confirmation).toBeHidden()
-  await sessionRow(page, discussion!.title).click()
-  await expect(sessionRow(page, discussion!.title)).toHaveAttribute('aria-current', 'page')
-  await expect(notice).toContainText('The source research is unavailable.')
-  await expect(conversation).toContainText('Explain the recorded result in B.')
-  await expect(conversation).toContainText('Can I discuss B while its source is archived?')
-  await expect(sentReference).toHaveCount(1)
-  await sentReference.click()
-  await expect(page.getByText('The source research is unavailable.', { exact: true })).toHaveCount(
-    2
-  )
-  const missing = await page.evaluate((scope) => window.api.researchWorkspaces.get(scope), scope)
-  expect(missing.sourceStatus).toBe('missing')
-  expect(missing.discussionStatus).toBe('available')
-  expect(missing.discussionSessionId).toBe(discussionId)
-  expect((await app.readFakeAgentPrompts()).length).toBe(originalPromptCount + 2)
-  await page.screenshot({ path: testInfo.outputPath('deleted-source-retained-discussion.png') })
-  await sessionRow(page, sourceA.title).click()
-  await expect(editor).toHaveText(draftA)
 })

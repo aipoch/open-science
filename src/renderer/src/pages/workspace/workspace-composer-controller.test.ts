@@ -1,3 +1,5 @@
+import { useSessionReplayStore } from '@/stores/session-replay-store'
+import type { ReplayStepContext } from './replay/replay-context'
 // @vitest-environment jsdom
 import { configureComposerDraftStorage, revokeComposerDraftStorage } from './composer-draft-storage'
 import { literatureItemInputSchema } from '../../../../shared/literature'
@@ -29,6 +31,7 @@ import {
 } from './composer/composer-doc'
 import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
+import { createReplayStepAnnotation } from './research-replay-context'
 import type { ComposerHistoryEntry } from './composer/composer-history'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -109,8 +112,7 @@ const renderController = (
   historyPolicy: Partial<
     Parameters<typeof useWorkspaceComposerController>[0]['historyPolicy']
   > = {},
-  strictMode = false,
-  researchDraftScope?: Parameters<typeof useWorkspaceComposerController>[0]['researchDraftScope']
+  strictMode = false
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
   let selectedActiveSession = activeSession ?? undefined
@@ -124,7 +126,6 @@ const renderController = (
   const Harness = (): null => {
     result.current = useWorkspaceComposerController({
       currentDraftKey,
-      researchDraftScope,
       newConversationDraftKey: 'new:project',
       activeProjectId: 'project',
       pendingCustomizePrefill,
@@ -196,6 +197,7 @@ const mounted: Array<ReturnType<typeof renderController>> = []
 const originalApi = window.api
 
 afterEach(() => {
+  useSessionReplayStore.setState({ playhead: undefined })
   for (const hook of mounted.splice(0)) hook.unmount()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   window.api = originalApi
@@ -204,141 +206,142 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
-  it('recovers research drafts only on request and keeps newer typing during async recovery', async () => {
-    const recovered = {
-      id: 'recovery-test-draft',
-      projectId: 'project',
-      sourceSessionId: 'recovery-test-source',
-      editorId: 'previous-window',
-      revision: 1,
-      state: 'active' as const,
-      updatedAt: 1,
-      payload: {
-        doc: textDoc('recovered question'),
-        annotations: [],
-        attachments: [],
-        transfers: [],
-        automaticReadingEnabled: true,
-        editRevision: 1,
-        intentId: 'stable-recovered-intent'
-      }
-    }
-    const claim = deferred<{ status: 'saved'; draft: typeof recovered }>()
-    window.api = {
-      ...window.api,
-      researchDrafts: {
-        list: vi.fn(async () => [recovered]),
-        save: vi.fn(async (request) => ({
-          status: 'saved' as const,
-          draft: { ...recovered, ...request, revision: request.expectedRevision + 1 }
-        })),
-        act: vi.fn(() => claim.promise)
-      }
-    }
-    const hook = renderController(uploads(), undefined, [], null, undefined, {}, false, {
-      projectId: 'project',
-      sourceSessionId: recovered.sourceSessionId
-    })
+  it('replaces a discussion source atomically, preserves ordinary annotations, and allows undo', () => {
+    const hook = renderController(uploads(), undefined, [], null)
     mounted.push(hook)
-    await flushAsyncWork()
-    expect(docToText(hook.result.current.view.doc)).toBe('')
-    expect(hook.result.current.view.researchDraftRecovery?.drafts).toHaveLength(1)
-    let restoring!: Promise<void>
+    const selected = (sourceSessionId: string, stepId: string): TextAnnotation =>
+      createReplayStepAnnotation(
+        {
+          projectId: 'project',
+          sourceSessionId,
+          sourceTitle: sourceSessionId,
+          fingerprint: 'fp',
+          branchId: 'main',
+          stepId,
+          stepOffsetMs: 0,
+          excerpt: '',
+          evidence: [
+            { kind: 'message', id: stepId, projectId: 'project', sessionId: sourceSessionId }
+          ]
+        },
+        stepId
+      )!
+    const first = selected('source-a', 'first')
+    const second = selected('source-a', 'second')
+    const replacement = selected('source-b', 'replacement')
     act(() => {
-      restoring = hook.result.current.view.researchDraftRecovery!.onRestore(recovered)
+      hook.result.current.actions.addAnnotation(annotation())
+      hook.result.current.actions.addAnnotation(first)
+      hook.result.current.actions.addAnnotation(second)
     })
-    act(() => hook.result.current.actions.changeDoc(textDoc('newer local input')))
-    await act(async () => {
-      claim.resolve({ status: 'saved', draft: { ...recovered, revision: 2 } })
-      await restoring
-    })
-    expect(docToText(hook.result.current.view.doc)).toBe('newer local input')
-    expect(hook.result.current.view.researchDraftRecovery?.error).toContain('newer draft was kept')
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first, second])
+    act(() => hook.result.current.actions.addAnnotation(replacement))
+    expect(hook.result.current.view.annotations).toEqual([annotation(), replacement])
+    act(() => hook.result.current.actions.undo())
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first, second])
   })
 
-  it('restores a saved research question over the automatically injected source chip', async () => {
-    const sourceSessionId = 'empty-chip-recovery-source'
-    const recovered = {
-      id: 'empty-chip-recovery',
-      projectId: 'project',
-      sourceSessionId,
-      editorId: 'old-window',
-      revision: 1,
-      state: 'active' as const,
-      updatedAt: 1,
-      payload: {
-        doc: textDoc('restore this real question'),
-        annotations: [],
-        attachments: [],
-        transfers: [],
-        automaticReadingEnabled: true,
-        editRevision: 1,
-        intentId: 'empty-chip-send'
-      }
-    }
-    window.api = {
-      ...window.api,
-      researchDrafts: {
-        list: vi.fn(async () => [recovered]),
-        save: vi.fn(async (request) => ({
-          status: 'saved' as const,
-          draft: { ...recovered, ...request, revision: request.expectedRevision + 1 }
-        })),
-        act: vi.fn(async () => ({ status: 'saved' as const, draft: { ...recovered, revision: 2 } }))
-      }
-    }
-    const hook = renderController(uploads(), undefined, [], null, undefined, {}, false, {
-      projectId: 'project',
-      sourceSessionId
-    })
+  it('captures the linked replay only at Send without changing the draft or an earlier snapshot', () => {
+    const hook = renderController()
     mounted.push(hook)
-    act(() =>
-      hook.result.current.actions.changeDoc({
-        nodes: [
-          { type: 'session', sessionId: sourceSessionId, title: 'Source' },
-          { type: 'text', text: ' ' }
-        ]
-      })
-    )
-    await flushAsyncWork()
-    expect(window.api.researchDrafts.save).not.toHaveBeenCalled()
-    await act(async () => hook.result.current.view.researchDraftRecovery!.onRestore(recovered))
-    expect(docToText(hook.result.current.view.doc)).toBe('restore this real question')
-  })
-  it('moves newer research input and its send identity into the lazily created Discussion', async () => {
-    const sourceSessionId = 'migration-test-source'
-    window.api = {
-      ...window.api,
-      researchDrafts: {
-        list: vi.fn(async () => []),
-        save: vi.fn(async (request) => ({
-          status: 'saved' as const,
-          draft: {
-            ...request,
-            state: 'active' as const,
-            updatedAt: 1,
-            revision: request.expectedRevision + 1
+    const context: ReplayStepContext = {
+      projectId: 'project',
+      sourceSessionId: 'source',
+      sourceTitle: 'Study',
+      fingerprint: 'fp',
+      branchId: 'main',
+      stepId: 'one',
+      stepNumber: 1,
+      stepOffsetMs: 0,
+      excerpt: '',
+      evidence: [{ kind: 'message', id: 'one', projectId: 'project', sessionId: 'source' }]
+    }
+    const capture = vi.fn(() => context)
+    act(() => {
+      hook.selectSession({
+        id: 'session-a',
+        projectId: 'project',
+        runtimeContext: {
+          revision: 1,
+          sessionContext: {
+            version: 1,
+            bindings: [
+              {
+                projectId: 'project',
+                sessionId: 'source',
+                contextId: 'old',
+                title: 'Study',
+                branchId: 'main',
+                promptMessageId: 'previous'
+              }
+            ]
           }
-        })),
-        act: vi.fn()
-      }
-    }
-    const hook = renderController(uploads(), undefined, [], null, undefined, {}, false, {
-      projectId: 'project',
-      sourceSessionId
+        }
+      })
+      hook.result.current.actions.changeDoc(textDoc('Explain this step.'))
+      useSessionReplayStore.setState({ playhead: { ...context, capture } })
     })
+    context.stepId = 'two'
+    context.stepNumber = 2
+    expect(capture).not.toHaveBeenCalled()
+    const sent = hook.result.current.lifecycle.captureSend()
+    context.stepId = 'three'
+    context.stepNumber = 3
+    expect(sent.discussionFocus).toMatchObject({ stepId: 'two', stepNumber: 2 })
+    expect(hook.result.current.view.annotations).toEqual([])
+    expect(docToText(hook.result.current.view.doc)).toBe('Explain this step.')
+    expect(hook.result.current.lifecycle.captureSend().discussionFocus?.stepId).toBe('three')
+    expect(hook.result.current.lifecycle.captureSend(false).discussionFocus).toBeUndefined()
+  })
+
+  it('replaces repeated Ask snapshots by logical step and keeps whole-research scope singular', () => {
+    const hook = renderController(uploads(), undefined, [], null)
     mounted.push(hook)
-    act(() => hook.result.current.actions.changeDoc(textDoc('newer unsent question')))
-    const before = hook.result.current.lifecycle.captureSend()
-    hook.selectSession({ id: 'new-discussion', projectId: 'project' })
-    expect(docToText(hook.result.current.view.doc)).toBe('newer unsent question')
-    const after = hook.result.current.lifecycle.captureSend()
-    expect(after.researchDraft).toEqual(before.researchDraft)
-    expect(after.version).toBe(before.version)
-    await act(async () => {
-      await hook.result.current.lifecycle.persistResearchDraft(after)
+    const selected = (
+      stepId: string,
+      snapshotId: string,
+      scope?: 'session',
+      branchId = 'main'
+    ): TextAnnotation =>
+      createReplayStepAnnotation(
+        {
+          projectId: 'project',
+          sourceSessionId: 'source',
+          sourceTitle: 'Study',
+          fingerprint: 'fp',
+          branchId,
+          stepId,
+          stepOffsetMs: snapshotId.length,
+          scope,
+          excerpt: '',
+          evidence: [{ kind: 'message', id: stepId, projectId: 'project', sessionId: 'source' }]
+        },
+        snapshotId
+      )!
+    const first = selected('one', 'first')
+    const repeated = selected('one', 'new-snapshot')
+    const second = selected('two', 'second')
+    act(() => {
+      hook.result.current.actions.addAnnotation(annotation())
+      hook.result.current.actions.addAnnotation(first)
+      hook.result.current.actions.addAnnotation(repeated)
+      hook.result.current.actions.addAnnotation(second)
     })
-    expect(window.api.researchDrafts.save).toHaveBeenCalledTimes(1)
+    expect(hook.result.current.view.annotations).toEqual([annotation(), repeated, second])
+    const whole = selected('one', 'whole', 'session')
+    const wholeAgain = selected('one', 'whole-again', 'session')
+    act(() => {
+      hook.result.current.actions.addAnnotation(whole)
+      hook.result.current.actions.addAnnotation(wholeAgain)
+    })
+    expect(hook.result.current.view.annotations).toEqual([annotation(), wholeAgain])
+    act(() => hook.result.current.actions.addAnnotation(first))
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first])
+    const alternative = selected('one', 'alternative', undefined, 'other')
+    act(() => hook.result.current.actions.addAnnotation(alternative))
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first, alternative])
+    act(() => hook.result.current.actions.undo())
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first])
   })
 
   it('keeps first-message PDF evidence with its draft through undo, switching and failed-send recovery', () => {

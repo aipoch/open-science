@@ -77,11 +77,12 @@ const invocation = <Args extends readonly unknown[]>(
 })
 
 describe('Notebook application commands', () => {
-  it('owns exactly the 21 renderer-callable Notebook and Environment commands', () => {
+  it('owns exactly the 22 renderer-callable Notebook and Environment commands', () => {
     expect([
       ...notebookApplicationCommands.commands,
       ...notebookEnvironmentApplicationCommands.commands
     ]).toEqual([
+      expect.objectContaining({ name: 'notebook:run-index' }),
       expect.objectContaining({ name: 'notebook:state' }),
       expect.objectContaining({ name: 'notebook:project-activity' }),
       expect.objectContaining({ name: 'notebook:inspect-namespace' }),

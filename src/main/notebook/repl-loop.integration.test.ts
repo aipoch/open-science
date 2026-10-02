@@ -2510,6 +2510,27 @@ describe('repl_loop local RPC transport', () => {
         'TypeError: host.artifacts options unknown option: content_type'
       ])
       expect(requests).toHaveLength(3)
+      const selected = await send('return Object.isFrozen(await host.sessions.read())')
+      expect(selected.error).toBeNull()
+      expect(selected.result).toBe('true')
+      expect(requests.at(-1)).toEqual({
+        method: 'sessionsCall',
+        params: { op: 'read', options: {} }
+      })
+      const forgedSource = await send("return await host.sessions.read({ sessionId: 'other' })")
+      expect(forgedSource.error).toContain('unknown option: sessionId')
+      const read = await send(
+        "const linked = await host.sessions.read({branchId: 'branch-a', kind: 'message', id: 'message-a', offset: 4}); return Object.isFrozen(linked)"
+      )
+      expect(read.error).toBeNull()
+      expect(read.result).toBe('true')
+      expect(requests.at(-1)).toEqual({
+        method: 'sessionsCall',
+        params: {
+          op: 'read',
+          options: { branchId: 'branch-a', kind: 'message', id: 'message-a', offset: 4 }
+        }
+      })
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

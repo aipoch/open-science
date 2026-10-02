@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -426,10 +426,16 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageItemSource).toContain('data-slot="user-bubble-row"')
     expect(workspaceMessageItemSource).toContain('data-slot="user-message-actions"')
     expect(workspaceMessageItemSource).toContain('data-slot="user-message-footer"')
-    expect(workspaceMessageItemSource).toContain(
+    const transcriptSurfaceSource = readFileSync(
+      resolve(__dirname, 'WorkspaceTranscriptSurface.tsx'),
+      'utf8'
+    )
+    expect(workspaceMessageItemSource).toContain('<WorkspaceUserMessageBubble')
+    expect(workspaceMessageItemSource).toContain('<WorkspaceAssistantMessageSurface')
+    expect(transcriptSurfaceSource).toContain(
       "'max-w-[90%] break-words rounded-2xl bg-bg-300 px-3.5 py-2 text-sm text-message-user-text md:max-w-[min(85%,56rem)] md:px-4 md:py-2.5 md:text-[15px]'"
     )
-    expect(workspaceMessageItemSource).toContain(
+    expect(transcriptSurfaceSource).toContain(
       "'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'"
     )
     expect(workspaceMessageScrollerSource).toContain(
@@ -581,8 +587,13 @@ describe('conversation message scroller integration', () => {
       "import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'"
     )
     expect(workspaceActivityGroupSource).toContain('const WorkspaceActivityGroup')
-    expect(workspaceActivityGroupSource).toContain('data-testid="tool-group"')
-    expect(workspaceActivityGroupSource).toContain('data-testid="tool-group-header"')
+    const transcriptSurfaceSource = readFileSync(
+      resolve(__dirname, 'WorkspaceTranscriptSurface.tsx'),
+      'utf8'
+    )
+    expect(workspaceActivityGroupSource).toContain('<WorkspaceActivityGroupSurface')
+    expect(transcriptSurfaceSource).toContain('data-testid="tool-group"')
+    expect(transcriptSurfaceSource).toContain('data-testid="tool-group-header"')
     expect(workspaceActivityGroupSource).toContain('<WorkspaceWebSearchActivityRow')
     expect(workspaceActivityGroupSource).toMatch(
       /formatActivityGroupPresentationTitle\(\s*group\.activities,\s*group\.title,\s*permission,\s*notebookRunsById,\s*t\s*\)/
@@ -652,9 +663,14 @@ describe('conversation message scroller integration', () => {
 
     const workspaceMessageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')
 
-    expect(workspaceMessageItemSource).toContain('const artifactCardClassName')
-    expect(workspaceMessageItemSource).toContain('h-[82px] w-[128px]')
-    expect(workspaceMessageItemSource).toContain('grid-cols-[repeat(auto-fill,128px)]')
+    expect(workspaceMessageItemSource).toContain("from './GeneratedFileCard'")
+    const generatedFileCardSource = readFileSync(
+      resolve(dirname(workspaceMessageItemPath), 'GeneratedFileCard.tsx'),
+      'utf8'
+    )
+    expect(generatedFileCardSource).toContain('const artifactCardClassName')
+    expect(generatedFileCardSource).toContain('h-[82px] w-[128px]')
+    expect(generatedFileCardSource).toContain('grid-cols-[repeat(auto-fill,128px)]')
     expect(workspaceMessageItemSource).toContain('artifactGalleryClassName')
     expect(workspaceMessageItemSource).not.toContain('overflow-x-auto')
     expect(workspaceMessageItemSource).not.toContain("isGrid ? 'h-[132px] w-full'")

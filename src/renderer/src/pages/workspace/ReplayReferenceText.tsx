@@ -43,8 +43,8 @@ const ScopedReplayReferenceText = ({
       request.current += 1
     }
   }, [])
-  const open = async (id: string): Promise<void> => {
-    if (!projectId || !window.api?.researchWorkspaces?.getQuestionContext) {
+  const open = async (id: string, sourceProjectId = projectId): Promise<void> => {
+    if (!projectId || !window.api?.sessionReplay?.getSelectionSnapshot) {
       setError(t('This replay reference is unavailable on this device.'))
       return
     }
@@ -61,7 +61,10 @@ const ScopedReplayReferenceText = ({
       )
     }
     try {
-      const context = await window.api.researchWorkspaces.getQuestionContext({ projectId, id })
+      const context = await window.api.sessionReplay.getSelectionSnapshot({
+        projectId: sourceProjectId!,
+        id
+      })
       if (!isCurrent()) return
       if (!context) {
         setError(t('This replay reference is unavailable on this device.'))
@@ -70,7 +73,12 @@ const ScopedReplayReferenceText = ({
       usePreviewWorkbenchStore
         .getState()
         .upsertAndActivateItem(
-          createResearchReplayItem(projectId, context.sourceSessionId, t('Research replay'))
+          createResearchReplayItem(
+            context.projectId,
+            context.sourceSessionId,
+            t('Research replay'),
+            projectId
+          )
         )
       requestReplaySeek(context)
     } catch (reason) {
@@ -91,7 +99,7 @@ const ScopedReplayReferenceText = ({
             disabled={Boolean(pending)}
             className="inline-flex rounded-md border border-border bg-accent px-2 py-0.5 text-xs text-accent-foreground disabled:opacity-50"
             onClick={() => {
-              void open(part.id)
+              void open(part.id, part.projectId)
             }}
           >
             {part.label}

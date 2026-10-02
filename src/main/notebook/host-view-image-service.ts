@@ -54,11 +54,14 @@ type HostViewImageCatalog = Readonly<{
 }>
 
 type HostViewImageManagedFileReader = Readonly<{
-  openLatest(request: {
-    source: 'artifact' | 'upload'
-    projectId: string
-    fileId: string
-  }): Promise<{ path: string; close(): Promise<void> }>
+  openVersion(
+    request: {
+      source: 'artifact' | 'upload'
+      projectId: string
+      fileId: string
+    },
+    versionId: string
+  ): Promise<{ path: string; close(): Promise<void> }>
 }>
 
 type HostViewImageServiceOptions = Readonly<{
@@ -342,7 +345,7 @@ export class HostViewImageService {
       let sourceKind: HostViewImageResult['sourceKind']
       let expectedCanonicalPath: string | undefined
       let managedLease:
-        Awaited<ReturnType<HostViewImageManagedFileReader['openLatest']>> | undefined
+        Awaited<ReturnType<HostViewImageManagedFileReader['openVersion']>> | undefined
       if ('path' in source) {
         filePath = await resolveWorkspaceSource(context.executionCwd, source.path)
         expectedCanonicalPath = filePath
@@ -366,11 +369,14 @@ export class HostViewImageService {
         if (item.projectId !== context.projectId || item.versionId !== source.versionId) {
           throw new HostViewImageError('Version resolver returned an untrusted Project identity.')
         }
-        managedLease = await this.options.managedFileVersions.openLatest({
-          source: item.source,
-          projectId: context.projectId,
-          fileId: item.sourceFileId
-        })
+        managedLease = await this.options.managedFileVersions.openVersion(
+          {
+            source: item.source,
+            projectId: context.projectId,
+            fileId: item.sourceFileId
+          },
+          item.versionId
+        )
         filePath = managedLease.path
         sourceKind = item.source === 'artifact' ? 'artifactVersion' : 'uploadVersion'
       }

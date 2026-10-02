@@ -291,6 +291,14 @@ colors communicate a successful or failed probe/migration result.
 | `--z-index-toast`         | `z-toast`         | `40`  | Background notices and undo snackbars below modal backdrops          |
 | `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content   |
 
+Shared `Dialog` and `AlertDialog` own modal stacking through `overlay-layer.ts`.
+Their root advances the inherited layer by 20 (the first modal is 60); Select,
+DropdownMenu, Popover and Tooltip use the intermediate +10 layer. React context
+survives portals, so a child confirmation or menu remains above its owning modal.
+Expanded workbench previews provide the same scope without remounting their content.
+Use these shared primitives instead of importing Radix dialogs directly or adding
+surface-specific z-index overrides. Existing standalone floating styles remain unchanged.
+
 Background notices share `z-toast`: action toasts, the notification stack, persistent storage
 recovery alerts, live message notices and their error fallback. Modal backdrops must cover these
 notices while the background is blocked. Inline errors stay within their owning surface. Preserve

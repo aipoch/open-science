@@ -43,8 +43,8 @@
 | 位置                                                              | 职责                                                              |
 | ----------------------------------------------------------------- | ----------------------------------------------------------------- |
 | src/shared/replay.ts                                              | 回放文档、步骤、资源和播放位置契约；不加入 session-package schema |
-| src/shared/research-workspace.ts                                  | 本地来源/讨论关联与观看状态接口                                   |
-| src/main/research-workspaces/                                     | 关联仓库、创建协调、恢复、IPC 与生命周期清理                      |
+| src/shared/session-replay.ts                                      | 本地来源/讨论关联与观看状态接口                                   |
+| src/main/session-replay/                                          | 关联仓库、创建协调、恢复、IPC 与生命周期清理                      |
 | src/renderer/src/lib/replay/                                      | 只读数据加载、纯时间线生成、播放状态和资源准备                    |
 | src/renderer/src/pages/workspace/replay/                          | ReplayPanel、ReplayStage、控制条、证据详情与上下文连接            |
 | src/renderer/src/pages/workspace/workspace-research-controller.ts | 将导入入口映射为讨论目标和独立回放来源                            |
@@ -116,7 +116,7 @@
 
 ## 4. 工作区身份与本地持久化
 
-引入仅作用于导入研究的 ResearchWorkspaceController，明确三个身份：
+引入仅作用于导入研究的 SessionReplayController，明确三个身份：
 
 | 身份                | 负责内容                                                     |
 | ------------------- | ------------------------------------------------------------ |
@@ -146,7 +146,7 @@ entrySessionId 初期等于 sourceSessionId。保持现有 selectedSessionId 的
 - ResearchDiscussionLink：projectId、sourceSessionId、discussionSessionId、创建/恢复状态和修订号；以项目和来源为唯一键。
 - ReplayViewState：来源身份、生成器/展示配置版本、分支、稳定步骤 ID、步骤内位置、速度和修订号。不同窗口各自播放，暂停/退出等检查点保存；不以每帧写数据库或远程更新驱动另一窗口跳转。
 - 首次讨论草稿使用来源专属作用域，例如 research:<projectId>:<sourceSessionId>，并以独立 draftId、窗口编辑身份和修订号区分同一来源的多份草稿。复用现有编辑器结构，但不能将内存或 sessionStorage 视为应用重启后的持久保证；研究草稿需有应用本地恢复记录。
-- ReplayQuestionContext：以本地草稿标识或已保存消息 ID 关联固定步骤快照；用于既有引用类型无法覆盖的独立 Notebook 步骤及重启后定位，不改变消息或包协议。
+- SessionDiscussionSnapshot：以本地草稿标识或已保存消息 ID 关联固定步骤快照；用于既有引用类型无法覆盖的独立 Notebook 步骤及重启后定位，不改变消息或包协议。
 
 这些关系存应用数据库，通过主进程接口读取和更新，不写入 .science 或原始会话内容。新表使用项目归属与显式清理；Session 表是可重建投影，不应为关联添加依赖该投影存活的级联外键。
 
@@ -238,9 +238,9 @@ ReplayStep 至少包含：稳定 ID、类型、源会话/Frame/分支、原始�
 
 优先复用现有 SessionReference、消息/工具条目注释、文件版本引用和宿主读取接口。若恢复播放器需要额外映射，使用本地消息到步骤的关联记录，不向 .science 强加新字段。
 
-现有注释类型没有独立 notebook-run 来源，因此只在确有消息、工具条目或文件版本关系时复用相应注释。无对应条目的运行使用真实来源会话引用、有界摘录及 ReplayQuestionContext 本地映射；不能将 runId 假装成工具活动 ID。独立运行的“询问此步骤”仍需可用并能在重启后定位。会话引用与注释数量遵守现有限额，超限时给出可调整的提示，不静默截掉当前研究来源。
+现有注释类型没有独立 notebook-run 来源，因此只在确有消息、工具条目或文件版本关系时复用相应注释。无对应条目的运行使用真实来源会话引用、有界摘录及 SessionDiscussionSnapshot 本地映射；不能将 runId 假装成工具活动 ID。独立运行的“询问此步骤”仍需可用并能在重启后定位。会话引用与注释数量遵守现有限额，超限时给出可调整的提示，不静默截掉当前研究来源。
 
-问题消息本身保留可理解的来源名称、真实记录/运行/版本标识及有界摘录；本地 ReplayQuestionContext 补充精确定位能力，不是理解问题的唯一依据。讨论被单独导出或本地映射丢失后，保留可读内容并提示“此设备无法定位该回放”，不把本地定位保证当作跨设备能力。
+问题消息本身保留可理解的来源名称、真实记录/运行/版本标识及有界摘录；本地 SessionDiscussionSnapshot 补充精确定位能力，不是理解问题的唯一依据。讨论被单独导出或本地映射丢失后，保留可读内容并提示“此设备无法定位该回放”，不把本地定位保证当作跨设备能力。
 
 提问只读取问题所需证据，不把整个包无条件塞进上下文。读取失败应说明，不能用模拟展示推测原始结果。跨会话引用可读取整份来源，本期不宣称其自动构成“只能知道当前时刻之前”的硬隔离；回答引用后续记录时要明确来源。
 

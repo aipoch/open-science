@@ -1,3 +1,5 @@
+import * as AlertDialog from './alert-dialog'
+import { OverlayLayerProvider } from './overlay-layer'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -144,3 +146,59 @@ it.each([false, true])(
     }
   }
 )
+
+it('inherits expanded surface layers through portals and raises child menus above their dialog', async () => {
+  render(
+    <OverlayLayerProvider value={60}>
+      <Dialog.Root defaultOpen>
+        <Dialog.Portal>
+          <Dialog.Overlay data-testid="layer-overlay" />
+          <Dialog.Content data-testid="layer-dialog">
+            <Dialog.Title>Layered question</Dialog.Title>
+            <Dialog.Description>Choose an action</Dialog.Description>
+            <DropdownMenu>
+              <DropdownMenuTrigger>Layer actions</DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem>Layer item</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </OverlayLayerProvider>
+  )
+  expect(screen.getByTestId('layer-overlay').style.zIndex).toBe('80')
+  expect(screen.getByTestId('layer-dialog').style.zIndex).toBe('80')
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Layer actions' }), { key: 'Enter' })
+  await waitFor(() => expect(screen.getByRole('menu').style.zIndex).toBe('90'))
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+  expect(screen.getByRole('dialog', { name: 'Layered question' })).toBeTruthy()
+})
+
+it('raises a confirmation above the dialog that opened it', () => {
+  render(
+    <Dialog.Root defaultOpen>
+      <Dialog.Portal>
+        <Dialog.Content data-testid="parent-dialog">
+          <Dialog.Title>Parent</Dialog.Title>
+          <Dialog.Description>Parent description</Dialog.Description>
+          <AlertDialog.Root defaultOpen>
+            <AlertDialog.Portal>
+              <AlertDialog.Overlay data-testid="confirmation-overlay" />
+              <AlertDialog.Content data-testid="confirmation">
+                <AlertDialog.Title>Confirm</AlertDialog.Title>
+                <AlertDialog.Description>Confirm description</AlertDialog.Description>
+                <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+                <AlertDialog.Action>Confirm</AlertDialog.Action>
+              </AlertDialog.Content>
+            </AlertDialog.Portal>
+          </AlertDialog.Root>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+  expect(screen.getByTestId('parent-dialog').style.zIndex).toBe('60')
+  expect(screen.getByTestId('confirmation-overlay').style.zIndex).toBe('80')
+  expect(screen.getByTestId('confirmation').style.zIndex).toBe('80')
+})

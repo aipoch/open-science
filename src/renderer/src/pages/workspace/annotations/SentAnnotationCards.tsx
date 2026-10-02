@@ -1,6 +1,14 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useId, useLayoutEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, FileText, MapPin, Quote, ScanLine } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  MapPin,
+  MessagesSquare,
+  Quote,
+  ScanLine
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type { AcpMessageImage } from '../../../../../shared/acp'
@@ -8,8 +16,9 @@ import type { AcpMessageImage } from '../../../../../shared/acp'
 type SentAnnotationCardView =
   | Readonly<{
       id: string
-      kind: 'text'
+      kind: 'text' | 'replay'
       content: string
+      scopeLabel?: string
       source?: string
       note?: string
     }>
@@ -179,6 +188,47 @@ const SentAnnotationCard = ({
             )}
           </button>
         ) : null}
+      </article>
+    )
+  }
+  if (card.kind === 'replay') {
+    const content = (
+      <>
+        <span className="flex min-w-0 items-center gap-2 text-xs">
+          <MessagesSquare className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+          <span className="shrink-0 font-medium">{t('Discuss')}</span>
+          <span className="min-w-0 truncate text-muted-foreground">{card.content}</span>
+        </span>
+        {card.scopeLabel ? (
+          <span
+            className="mt-1 block truncate text-xs text-muted-foreground"
+            title={card.scopeLabel}
+          >
+            {card.scopeLabel}
+          </span>
+        ) : null}
+        {card.note ? (
+          <span className="mt-1 block whitespace-pre-wrap break-words text-xs">{card.note}</span>
+        ) : null}
+      </>
+    )
+    return (
+      <article
+        data-sent-annotation-kind="replay"
+        className="min-w-0 rounded-lg border border-border/70 bg-background/70"
+      >
+        {onActivate ? (
+          <button
+            type="button"
+            aria-label={t('Show annotation source')}
+            className="block w-full rounded-lg p-2 text-left hover:bg-muted/70 focus-visible:keyboard-focus"
+            onClick={() => onActivate(card.id)}
+          >
+            {content}
+          </button>
+        ) : (
+          <div className="p-2">{content}</div>
+        )}
       </article>
     )
   }

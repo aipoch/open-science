@@ -664,7 +664,6 @@ const createPanelDefaults = (): PanelProps => ({
     }
   },
   conversation: {
-    researchSubmissions: { items: [], retry: vi.fn(), cancel: vi.fn(), restore: vi.fn() },
     optimisticMessage: undefined,
     planProjectionRecoveryError: false,
     availability: {
@@ -7439,6 +7438,30 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
     button!.click()
   })
   expect(forkSessionMock).toHaveBeenCalledWith(activeSession)
+  expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  const replay = [...container.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('View replay')
+  )!
+  expect(replay).toBeDefined()
+  await act(async () => {
+    replay.click()
+  })
+  expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+  expect(usePreviewWorkbenchStore.getState().items).toContainEqual(
+    expect.objectContaining({
+      toolKind: 'replay',
+      replaySourceProjectId: 'project-a',
+      replaySourceSessionId: activeSession.id
+    })
+  )
+  await act(async () => {
+    replay.click()
+  })
+  expect(
+    usePreviewWorkbenchStore
+      .getState()
+      .items.filter((item) => item.type === 'tool' && item.toolKind === 'replay')
+  ).toHaveLength(1)
 })
 
 it('shows the branch source chat number and opens that source session', () => {

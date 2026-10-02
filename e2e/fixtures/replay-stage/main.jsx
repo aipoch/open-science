@@ -1,15 +1,20 @@
-import { useLayoutEffect, useState } from 'react'
+import { OverlayLayerProvider } from '../../../src/renderer/src/components/ui/overlay-layer'
+import { ReplayConversationDialog } from '../../../src/renderer/src/pages/workspace/ReplayConversationDialog'
+import { Profiler, useLayoutEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { ResearchReplayEvidence } from '../../../src/renderer/src/pages/workspace/ResearchReplayEvidence'
 import { ReplayPanel } from '../../../src/renderer/src/pages/workspace/replay/ReplayPanel'
 import { ReplayStage } from '../../../src/renderer/src/pages/workspace/replay/ReplayStage'
 import { createReplayPresentation } from '../../../src/renderer/src/pages/workspace/replay/replay-presentation'
 import { freezeReplaySvg } from '../../../src/renderer/src/pages/workspace/replay/replay-svg'
+import { buildReplayDocument } from '../../../src/renderer/src/lib/replay/timeline'
+import { createLinearConversationGraph } from '../../../src/shared/conversation-graph'
 import { projectReplayScene } from '../../../src/renderer/src/lib/replay/scene'
 import { initI18n, prepareI18nLocale } from '../../../src/renderer/src/i18n'
 import '../../../src/renderer/src/assets/main.css'
 
 const params = new URLSearchParams(location.search)
-const locale = params.get('locale') === 'de' ? 'de' : 'en'
+const locale = ['de', 'fr'].includes(params.get('locale')) ? params.get('locale') : 'en'
 await prepareI18nLocale(locale)
 initI18n(locale)
 export const svg =
@@ -52,7 +57,7 @@ const step = (id, kind, startMs, durationMs, fields) => ({
   ...fields
 })
 const document = {
-  generatorVersion: 2,
+  generatorVersion: 3,
   presentationVersion: 2,
   source: {
     projectId: 'fixture-project',
@@ -130,6 +135,47 @@ const document = {
   ],
   issues: []
 }
+if (params.has('transitions')) {
+  const analysis = document.branches[0].steps[1]
+  analysis.activities = [
+    {
+      id: 'analysis-tool',
+      kind: 'tool',
+      title: 'Notebook run',
+      status: 'completed',
+      sortIndex: 0,
+      eventIds: [],
+      createdAt: run.startedAt,
+      updatedAt: run.endedAt,
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: run.script, kernelKind: run.kernelKind },
+      rawOutput: { runId: run.runId, status: 'completed' },
+      toolContent: []
+    }
+  ]
+  document.branches[0].steps[2].message.content =
+    'Recorded result with **uncertainty**.\n\n'.repeat(70)
+}
+if (params.has('artifacts')) {
+  document.resources.push({
+    ...document.resources[0],
+    id: 'plot-v2',
+    versionId: 'version-2',
+    versionNumber: 2,
+    locator: 'artifact-version://version-2'
+  })
+  document.branches[0].steps.push(
+    step('file-v1', 'artifact', 9000, 1000, {
+      title: 'observations.svg',
+      resourceIds: ['plot-v1']
+    }),
+    step('file-v2', 'artifact', 10000, 1000, {
+      title: 'observations.svg',
+      resourceIds: ['plot-v2']
+    })
+  )
+  document.branches[0].durationMs = 11000
+}
 if (params.has('large')) {
   const longText = 'Archived observation **with uncertainty**.\n\n'.repeat(24000)
   const activities = (index) => [
@@ -203,6 +249,183 @@ if (params.has('large')) {
   document.branches[0].durationMs = 2001000
   window.replayFixtureSize = { steps: 2001, versions: 3000, outputCharacters: longText.length * 30 }
 }
+if (params.has('followNotebook')) {
+  run.script = Array.from({ length: 60 }, (_, index) => `observation_${index} = ${index}`).join(
+    '\n'
+  )
+  run.text.stdout = Array.from({ length: 40 }, (_, index) => `Recorded output ${index}`).join('\n')
+  run.outputs = [{ type: 'stream', name: 'stdout', text: run.text.stdout }]
+}
+if (params.has('longOutput')) {
+  run.outputs = [
+    {
+      type: 'stream',
+      name: 'stdout',
+      text: Array.from(
+        { length: 80 },
+        (_, index) => `│ ${index} │ ${'archived table column '.repeat(12)} │`
+      ).join('\n')
+    }
+  ]
+}
+if (params.has('longName')) {
+  document.resources = document.resources.map((resource) => ({
+    ...resource,
+    name: 'sin_plot_with_a_very_long_research_observation_filename_and_additional_details.png',
+    mimeType: 'image/png'
+  }))
+}
+if (params.has('detailIssue')) {
+  document.branches[0].steps.slice(0, 2).forEach((step) => {
+    step.issues = [{ code: 'incomplete-history' }]
+  })
+}
+if (params.has('branchesReview')) {
+  const message = (id, role, content, createdAt, extra = {}) => ({
+    id,
+    role,
+    content,
+    createdAt,
+    updatedAt: createdAt,
+    status: 'complete',
+    eventIds: [],
+    ...extra
+  })
+  const messages = [
+    message('question', 'user', 'Compare Python and R analysis.', 1),
+    message('answer', 'agent', 'The chosen R analysis used three samples.', 4, {
+      responseToMessageId: 'question'
+    }),
+    message('correction', 'user', 'Explain the sample-size limitation.', 6, {
+      attribution: {
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-original'
+      }
+    }),
+    message('corrected', 'agent', 'Three samples cannot support a general conclusion.', 7, {
+      responseToMessageId: 'correction'
+    })
+  ]
+  const graph = createLinearConversationGraph({
+    sessionId: 'fixture-session',
+    messages,
+    createdAt: 1,
+    updatedAt: 8
+  })
+  const main = graph.branches[0].id
+  graph.messages.push({
+    ...message('alternative', 'agent', 'Alternative branch uses Python.', 4, {
+      responseToMessageId: 'question'
+    }),
+    agentFrameId: graph.rootFrameId,
+    introducedOnBranchId: 'alternative-branch',
+    parentMessageId: 'question'
+  })
+  graph.branches.push({
+    id: 'alternative-branch',
+    forkActivityId: 'ask-method',
+    agentFrameId: graph.rootFrameId,
+    parentBranchId: main,
+    forkMessageId: 'question',
+    headMessageId: 'alternative',
+    createdAt: 4,
+    updatedAt: 4
+  })
+  const elicitation = {
+    message: 'Choose the analysis method',
+    fields: [
+      {
+        id: 'question_0',
+        kind: 'single-select',
+        label: 'Method',
+        options: [
+          { value: 'r', label: 'R analysis' },
+          { value: 'python', label: 'Python analysis' }
+        ]
+      },
+      { id: 'question_0_custom', kind: 'text', label: 'Other' }
+    ],
+    state: 'answered',
+    answers: [{ fieldId: 'question_0', value: 'r' }]
+  }
+  const activity = {
+    id: 'ask-method',
+    kind: 'tool',
+    title: 'ask_user',
+    status: 'completed',
+    createdAt: 2,
+    updatedAt: 3,
+    sortIndex: 2,
+    eventIds: [],
+    promptMessageId: 'question',
+    agentFrameId: graph.rootFrameId,
+    messageBranchId: main,
+    elicitation
+  }
+  graph.activities.push({ ...activity, runtimeSegmentId: 'recorded-segment' })
+  const review = {
+    id: 'review-original',
+    projectId: 'fixture-project',
+    sessionId: 'fixture-session',
+    turnMessageId: 'question',
+    scope: {
+      turnMessageId: 'question',
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: main,
+      blocks: [
+        {
+          id: 'answer-block',
+          kind: 'message',
+          sourceId: 'answer',
+          blockIndex: 0,
+          contentHash: 'hash'
+        }
+      ],
+      artifactVersionIds: []
+    },
+    lifecycle: 'complete',
+    outcome: 'flagged',
+    model: 'archived-reviewer',
+    reviewerLog: [],
+    createdAt: 5,
+    updatedAt: 5,
+    checks: [
+      {
+        id: 'sample-size',
+        reviewId: 'review-original',
+        status: 'warn',
+        claim: 'Sample size is limited',
+        evidence: 'Only three samples were recorded.',
+        resolution: 'open',
+        sortIndex: 0,
+        reflagCount: 0
+      }
+    ]
+  }
+  Object.assign(
+    document,
+    buildReplayDocument({
+      session: {
+        id: 'fixture-session',
+        projectId: 'fixture-project',
+        title: 'Branch and recorded decision study',
+        cwd: '',
+        status: 'idle',
+        messages,
+        activities: [activity],
+        conversationGraph: graph,
+        createdAt: 1,
+        updatedAt: 8
+      },
+      reviews: [review],
+      runs: [],
+      resources: [],
+      issues: []
+    })
+  )
+}
 const presentation = createReplayPresentation('en')
 if (new URLSearchParams(location.search).has('font')) {
   const font = new FontFace(
@@ -254,9 +477,22 @@ function Fixture() {
     />
   )
 }
+if (params.has('evidencePage')) {
+  window.api = {
+    artifacts: {
+      readPreview: async () => ({ content: btoa(svg), encoding: 'base64', truncated: false })
+    },
+    notebook: {
+      getReference: async () => ({ notebookSessionRoot: '/archive' }),
+      state: async () => ({ runs: [run] })
+    }
+  }
+}
 function PanelFixture() {
   const [expanded, setExpanded] = useState(false)
+  const [question, setQuestion] = useState()
   const [evidence, setEvidence] = useState('')
+  const [evidenceStep, setEvidenceStep] = useState()
   const source = {
     ...document.source,
     packageOrigin: {
@@ -287,43 +523,80 @@ function PanelFixture() {
         />
         <output data-selected-evidence={evidence}>{evidence}</output>
       </section>
-      <section
-        data-replay-container="true"
-        style={
-          expanded
-            ? {
-                position: 'fixed',
-                inset: '5vh 5vw',
-                zIndex: 10,
-                background: 'white',
-                boxShadow: '0 0 0 100vmax #0005'
-              }
-            : { minWidth: 0, borderLeft: '1px solid #ddd' }
-        }
-      >
-        <ReplayPanel
-          document={{ ...document, source }}
-          expanded={expanded}
-          onToggleExpanded={() => setExpanded((value) => !value)}
-          onAskStep={(context) => {
-            window.replayQuestion = context
-            setExpanded(false)
-            queueMicrotask(() => globalThis.document.getElementById('discussion').focus())
-          }}
-          onOpenEvidence={(resource, step) => setEvidence(resource?.versionId ?? step.id)}
-          readResource={async () => ({
-            status: 'ready',
-            kind: 'image',
-            mimeType: 'image/svg+xml',
-            truncated: false,
-            content: freezeReplaySvg(svg)
-          })}
-          readNotebookRun={async () => ({ status: 'ready', run, bytes: 1000 })}
-        />
-      </section>
+      <OverlayLayerProvider value={expanded ? 60 : 40}>
+        {question ? (
+          <ReplayConversationDialog context={question} onClose={() => setQuestion(undefined)} />
+        ) : null}
+        <section
+          data-replay-container="true"
+          className="flex flex-col"
+          style={
+            expanded
+              ? {
+                  position: 'fixed',
+                  inset: '5vh 5vw',
+                  zIndex: 56,
+                  background: 'white',
+                  boxShadow: '0 0 0 100vmax #0005'
+                }
+              : {
+                  minWidth: 0,
+                  minHeight: 0,
+                  borderLeft: '1px solid #ddd'
+                }
+          }
+        >
+          <div className={evidenceStep ? 'hidden' : 'min-h-0 flex-1'}>
+            <ReplayPanel
+              document={{ ...document, source }}
+              expanded={expanded}
+              onToggleExpanded={() => setExpanded((value) => !value)}
+              onAskStep={(context) => {
+                window.replayQuestion = context
+                if (params.has('modalLayers')) {
+                  setQuestion(context)
+                  return
+                }
+                setExpanded(false)
+                queueMicrotask(() => globalThis.document.getElementById('discussion').focus())
+              }}
+              active={!evidenceStep}
+              onOpenEvidence={(resource, step) => {
+                setEvidence(resource?.versionId ?? step.id)
+                if (params.has('evidencePage')) setEvidenceStep(step)
+              }}
+              readResource={async () => ({
+                status: 'ready',
+                kind: 'image',
+                mimeType: 'image/svg+xml',
+                truncated: false,
+                content: freezeReplaySvg(svg)
+              })}
+              readNotebookRun={async () => ({ status: 'ready', run, bytes: 1000 })}
+            />
+          </div>
+          {evidenceStep ? (
+            <ResearchReplayEvidence
+              source={source}
+              step={evidenceStep}
+              resources={document.resources}
+              onBack={() => setEvidenceStep(undefined)}
+              onOpenResource={(resource) => setEvidence(resource.versionId)}
+            />
+          ) : null}
+        </section>
+      </OverlayLayerProvider>
     </main>
   )
 }
+window.replayProfile = []
 createRoot(globalThis.document.getElementById('root')).render(
-  params.has('panel') ? <PanelFixture /> : <Fixture />
+  <Profiler
+    id="replay"
+    onRender={(_id, phase, actualDuration) => {
+      if (params.has('profile')) window.replayProfile.push({ phase, actualDuration })
+    }}
+  >
+    {params.has('panel') ? <PanelFixture /> : <Fixture />}
+  </Profiler>
 )

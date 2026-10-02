@@ -1,3 +1,4 @@
+import type { ReviewWithChecks } from './reviewer'
 import type { NotebookRunRecord } from './notebook'
 import type {
   PersistedChatMessage,
@@ -6,9 +7,9 @@ import type {
 } from './session-persistence'
 
 // Derived presentation only. These types are deliberately outside the .science contract.
-export const REPLAY_GENERATOR_VERSION = 2
+export const REPLAY_GENERATOR_VERSION = 3
 export const REPLAY_PRESENTATION_VERSION = 2
-export const REPLAY_SPEEDS = [0.5, 1, 1.5, 2] as const
+export const REPLAY_SPEEDS = [1, 2, 4] as const
 export type ReplaySpeed = (typeof REPLAY_SPEEDS)[number]
 
 export type ReplaySourceIdentity = {
@@ -21,7 +22,7 @@ export type ReplaySourceIdentity = {
 }
 
 export type ReplayEvidenceReference = {
-  kind: 'message' | 'activity' | 'notebook-run' | 'artifact-version' | 'upload-version'
+  kind: 'message' | 'activity' | 'notebook-run' | 'artifact-version' | 'upload-version' | 'review'
   id: string
   projectId: string
   sessionId: string
@@ -78,6 +79,7 @@ export type ReplayIssue = {
     | 'missing-environment'
     | 'unattributed-record'
     | 'excluded-files'
+    | 'review-unavailable'
   sourceId?: string
   detail?: string
 }
@@ -105,13 +107,14 @@ export type ReplayResource = {
 
 export type ReplayStep = {
   id: string
-  kind: 'message' | 'activity' | 'notebook' | 'artifact'
+  kind: 'message' | 'activity' | 'notebook' | 'artifact' | 'review'
   branchId: string
   agentFrameId?: string
   promptMessageId?: string
   title?: string
   status?: string
   evidence: ReplayEvidenceReference[]
+  review?: ReviewWithChecks
   message?: PersistedChatMessage
   activities: PersistedToolActivity[]
   runs: ReplayRunIndex[]
@@ -171,3 +174,61 @@ export type ReplayClock = {
   speed: ReplaySpeed
   playing: boolean
 }
+
+// Conservative resident-size estimate without allocating a second full JSON string.
+export const estimateReplayBytes = (value: unknown): number => {
+  const pending = [value]
+  const seen = new Set<object>()
+  let bytes = 0
+  while (pending.length) {
+    const current = pending.pop()
+    if (typeof current === 'string') bytes += current.length * 2
+    else if (current === null || current === undefined) bytes += 4
+    else if (typeof current !== 'object') bytes += 8
+    else if (!seen.has(current)) {
+      seen.add(current)
+      bytes += 32
+      for (const [key, entry] of Object.entries(current)) {
+        bytes += key.length * 2
+        pending.push(entry)
+      }
+    }
+  }
+  return bytes
+}
+
+export const indexReplayRun = (run: ReplayRunIndex | NotebookRunRecord): ReplayRunIndex => ({
+  runId: run.runId,
+  cellId: run.cellId,
+  source: run.source,
+  kernelKind: run.kernelKind,
+  status: run.status,
+  startedAt: run.startedAt,
+  endedAt: run.endedAt,
+  executionInvocationId: run.executionInvocationId,
+  rootFrameId: run.rootFrameId,
+  agentFrameId: run.agentFrameId,
+  messageBranchId: run.messageBranchId,
+  runtimeSegmentId: run.runtimeSegmentId,
+  promptMessageId: run.promptMessageId,
+  truncated: run.truncated,
+  ...('script' in run
+    ? {
+        scriptCharacters: run.script.length,
+        detailBytes: estimateReplayBytes(run),
+        environmentUnavailable: run.environmentCapture?.state === 'unavailable',
+        hasOutput: Boolean(
+          run.outputs.length ||
+          run.text.stdout ||
+          run.text.stderr ||
+          run.text.traceback ||
+          run.text.plain.length
+        )
+      }
+    : {
+        scriptCharacters: run.scriptCharacters,
+        detailBytes: run.detailBytes,
+        environmentUnavailable: run.environmentUnavailable,
+        hasOutput: run.hasOutput
+      })
+})

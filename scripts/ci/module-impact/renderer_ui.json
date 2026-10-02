@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/renderer/src/components/ui/alert-dialog.tsx",
     "src/renderer/src/components/ui/badge.tsx",
     "src/renderer/src/components/ui/button.tsx",
     "src/renderer/src/components/ui/card.tsx",
@@ -18,6 +19,7 @@
     "src/renderer/src/components/ui/message-scroller.test.tsx",
     "src/renderer/src/components/ui/message-scroller.tsx",
     "src/renderer/src/components/ui/notice-chrome.ts",
+    "src/renderer/src/components/ui/overlay-layer.ts",
     "src/renderer/src/components/ui/popover.render.test.tsx",
     "src/renderer/src/components/ui/popover.tsx",
     "src/renderer/src/components/ui/resizable.modal-isolation.test.tsx",
@@ -427,12 +429,12 @@
       "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureFilters.render.test.tsx",
       "src/renderer/src/pages/workspace/ReplayReferenceText.test.tsx",
-      "src/renderer/src/pages/workspace/ResearchDraftRecovery.test.tsx",
       "src/renderer/src/pages/workspace/ResearchReplayPreview.test.tsx",
-      "src/renderer/src/pages/workspace/ResearchSubmissionQueue.test.tsx",
-      "src/renderer/src/pages/workspace/research-draft-persistence.test.ts",
-      "src/renderer/src/lib/research-submissions/dispatcher.test.ts",
-      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchReplayEvidence.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReadingBar.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ]
   },
   "capabilityOverlays": [],

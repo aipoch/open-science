@@ -39,6 +39,40 @@ const invocation = (session: ChatSession): SessionActionInvocation => ({
 })
 
 describe('session action menu', () => {
+  it('offers discussion and replay for ordinary running Sessions and forwards the selected source', async () => {
+    const onViewReplay = vi.fn()
+    const onDiscussSession = vi.fn(async () => undefined)
+    const bindings = createSessionActionBindings({
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      canDownloadArtifacts: false,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onViewReplay,
+      onDiscussSession
+    })
+    const context = invocation(createSession({ status: 'running' }))
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'source',
+        catalog: SESSION_ACTION_CATALOG,
+        recipe: SESSION_ACTION_RECIPE,
+        bindings
+      },
+      context
+    )
+    for (const action of ['discuss', 'view-replay'] as const) {
+      expect(
+        entries.find((entry) => entry.kind === 'action' && entry.action === action)
+      ).toMatchObject({ disabled: false })
+      await bindings[action].execute(context)
+    }
+    expect(onViewReplay).toHaveBeenCalledWith(context.session)
+    expect(onDiscussSession).toHaveBeenCalledWith(context.session)
+  })
   it('preserves the existing action order and executes every action for the invocation session', async () => {
     const session = createSession()
     const handlers = {

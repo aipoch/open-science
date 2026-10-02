@@ -21,7 +21,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 

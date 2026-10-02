@@ -11,7 +11,7 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { LoaderCircle, X } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useTranslation } from 'react-i18next'
 import type { LiteratureCollectionView } from '../../../../shared/literature'
 import { useLiteratureCollectionDeletion } from './useLiteratureCollectionDeletion'

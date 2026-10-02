@@ -1,0 +1,112 @@
+import { SessionReadingOwner } from './session-reading'
+import {
+  unlinkSessionReadingRequestSchema,
+  type UnlinkSessionReadingRequest
+} from '../../shared/session-replay'
+import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  sessionReplayRequestSchema,
+  sessionReplayListRequestSchema,
+  saveResearchReplayViewRequestSchema,
+  saveSessionDiscussionSnapshotRequestSchema,
+  getSessionDiscussionSnapshotRequestSchema,
+  type SaveSessionDiscussionSnapshotRequest,
+  type GetSessionDiscussionSnapshotRequest,
+  type SessionDiscussionSnapshot,
+  type SessionReplayRequest,
+  type SessionReplayListRequest,
+  type SessionReplaySnapshot,
+  type SaveResearchReplayViewRequest,
+  type SaveResearchReplayViewResult
+} from '../../shared/session-replay'
+import { SessionReplayRepository, replayViewSnapshot } from './repository'
+
+type SessionRead =
+  { status: 'found'; session: PersistedChatSession } | { status: 'missing' | 'unreadable' }
+export type SessionReplaySessions = {
+  read(projectId: string, sessionId: string): Promise<SessionRead>
+}
+type DataRootAdmission = <T>(operation: () => Promise<T>) => Promise<T>
+
+export class SessionReplayService {
+  constructor(
+    private readonly repository: SessionReplayRepository,
+    private readonly sessions: SessionReplaySessions,
+    private readonly withDataRootWrite: DataRootAdmission = (operation) => operation(),
+    private readonly reading?: SessionReadingOwner
+  ) {}
+
+  async unlinkSession(input: UnlinkSessionReadingRequest): Promise<void> {
+    const request = unlinkSessionReadingRequestSchema.parse(input)
+    if (!this.reading) throw new Error('Session reading is unavailable.')
+    await this.withDataRootWrite(() => this.reading!.unlink(request))
+  }
+
+  async get(input: SessionReplayRequest): Promise<SessionReplaySnapshot> {
+    const request = sessionReplayRequestSchema.parse(input)
+    const client = await this.repository.getClient()
+    const [project, row, source] = await Promise.all([
+      client.project.findFirst({ where: { id: request.projectId, deletedAt: null } }),
+      this.repository.get(request),
+      this.sessions.read(request.projectId, request.sourceSessionId)
+    ])
+    const sourceStatus = !project
+      ? 'missing'
+      : source.status !== 'found'
+        ? source.status
+        : project.archivedAt || source.session.archivedAt !== undefined
+          ? 'archived'
+          : 'available'
+    return {
+      ...request,
+      sourceStatus,
+      ...(source.status === 'found' ? { sourceTitle: source.session.title } : {}),
+      ...(replayViewSnapshot(row) ? { view: replayViewSnapshot(row) } : {})
+    }
+  }
+
+  async list(input: SessionReplayListRequest): Promise<SessionReplaySnapshot[]> {
+    const { projectId } = sessionReplayListRequestSchema.parse(input)
+    const rows = await this.repository.list(projectId)
+    return Promise.all(
+      rows.map(({ sessionId }) => this.get({ projectId, sourceSessionId: sessionId }))
+    )
+  }
+
+  async saveView(input: SaveResearchReplayViewRequest): Promise<SaveResearchReplayViewResult> {
+    const request = saveResearchReplayViewRequestSchema.parse(input)
+    return this.withDataRootWrite(async () => {
+      const source = await this.sessions.read(request.projectId, request.sourceSessionId)
+      if (source.status !== 'found') throw new Error('The source Session cannot be read.')
+      return this.repository.saveView(request)
+    })
+  }
+
+  async saveSelectionSnapshot(input: SaveSessionDiscussionSnapshotRequest): Promise<void> {
+    const request = saveSessionDiscussionSnapshotRequestSchema.parse(input)
+    return this.withDataRootWrite(async () => {
+      const saved = await this.repository.getSelectionSnapshot({
+        projectId: request.projectId,
+        id: request.context.id
+      })
+      // Exact retries remain possible after source removal. A new reference always needs a readable source.
+      if (!saved) {
+        const source = await this.sessions.read(request.projectId, request.sourceSessionId)
+        if (source.status !== 'found') throw new Error('The source Session cannot be read.')
+      }
+      await this.repository.saveSelectionSnapshot(request.context)
+    })
+  }
+
+  getSelectionSnapshot(
+    input: GetSessionDiscussionSnapshotRequest
+  ): Promise<SessionDiscussionSnapshot | undefined> {
+    return this.repository.getSelectionSnapshot(
+      getSessionDiscussionSnapshotRequestSchema.parse(input)
+    )
+  }
+
+  listSelectionSnapshots(input: SessionReplayRequest): Promise<SessionDiscussionSnapshot[]> {
+    return this.repository.listSelectionSnapshots(sessionReplayRequestSchema.parse(input))
+  }
+}

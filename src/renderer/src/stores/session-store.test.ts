@@ -2960,6 +2960,50 @@ describe('session store', () => {
     )
   })
 
+  it('keeps linked Sessions after projections and respects durable unlink', () => {
+    const binding = {
+      projectId: 'source-project',
+      sessionId: 'source',
+      contextId: 'snapshot',
+      title: 'Analysis',
+      branchId: 'main',
+      promptMessageId: 'prompt'
+    }
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'receiving',
+        projectId: 'project',
+        title: 'Conversation',
+        cwd: '',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          sessionContext: { version: 1, bindings: [binding] }
+        }
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          sessionContext: { version: 1, bindings: [], lastPromptMessageId: 'prompt' }
+        }
+      },
+      mode: 'runtime-context-authority'
+    })
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.sessionContext?.bindings).toEqual(
+      []
+    )
+  })
+
   it('preserves PDF context when delegated authority advances', () => {
     const pdfContext = createPdfContext()
     useSessionStore.getState().hydrateSessions([
@@ -7421,7 +7465,6 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/deep-link.ts',
       'src/renderer/src/lib/preview-persistence/preview-persistence.ts',
       'src/renderer/src/lib/replay/timeline.ts',
-      'src/renderer/src/lib/research-submissions/use-research-submissions.ts',
       'src/renderer/src/lib/session-package-export.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.ts',
       'src/renderer/src/pages/home/HomePage.tsx',
@@ -7438,10 +7481,12 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
+      'src/renderer/src/pages/workspace/ReplayConversationDialog.tsx',
       'src/renderer/src/pages/workspace/ResearchReplayPreview.tsx',
       'src/renderer/src/pages/workspace/SessionInfoPopover.preview.tsx',
       'src/renderer/src/pages/workspace/SessionInfoPopover.tsx',
       'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
+      'src/renderer/src/pages/workspace/SessionReadingBar.tsx',
       'src/renderer/src/pages/workspace/SessionReproducibilityDialog.tsx',
       'src/renderer/src/pages/workspace/SideChatWorkbench.tsx',
       'src/renderer/src/pages/workspace/SubagentReleaseSurfaces.tsx',
@@ -7476,7 +7521,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
-      'src/renderer/src/pages/workspace/research-sidebar-projection.ts',
+      'src/renderer/src/pages/workspace/replay/ReplayToolRecord.tsx',
       'src/renderer/src/pages/workspace/session-action-menu.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
@@ -7500,7 +7545,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-message-queue-admission.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-owner.ts',
-      'src/renderer/src/pages/workspace/workspace-research-controller.ts',
+      'src/renderer/src/pages/workspace/workspace-research-context.ts',
       'src/renderer/src/pages/workspace/workspace-run-marks.ts',
       'src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',

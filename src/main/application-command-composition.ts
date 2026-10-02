@@ -1,14 +1,4 @@
 import {
-  researchDraftCommandGroup,
-  registerResearchDraftCommands,
-  type ResearchDraftCommandOwner
-} from './research-drafts/application-commands'
-import {
-  researchSubmissionCommandGroup,
-  registerResearchSubmissionCommands,
-  type ResearchSubmissionCommandDependencies
-} from './research-submissions/application-commands'
-import {
   bootstrapApplicationCommandGroup,
   registerBootstrapApplicationCommands
 } from './settings/bootstrap-application-commands'
@@ -112,10 +102,10 @@ import {
   type BookmarkCommandOwner
 } from './bookmarks/application-commands'
 import {
-  researchWorkspaceCommandGroup,
-  registerResearchWorkspaceCommands,
-  type ResearchWorkspaceCommandOwner
-} from './research-workspaces/application-commands'
+  sessionReplayCommandGroup,
+  registerSessionReplayCommands,
+  type SessionReplayCommandOwner
+} from './session-replay/application-commands'
 
 type AnyApplicationCommand = ApplicationCommand<string, readonly unknown[], unknown>
 type AnyApplicationCommandGroup = ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>
@@ -156,9 +146,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
   bookmarks: BookmarkCommandOwner
-  researchSubmissions: ResearchSubmissionCommandDependencies
-  researchDrafts: ResearchDraftCommandOwner
-  researchWorkspaces: ResearchWorkspaceCommandOwner
+  sessionReplay: SessionReplayCommandOwner
   pdfAnnotations: PdfAnnotationCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
@@ -322,14 +310,8 @@ const createApplicationCommandModules = (
     defineApplicationCommandModule([bookmarkApplicationCommandGroup], (registrar) =>
       registerBookmarkApplicationCommands(registrar, dependencies.bookmarks)
     ),
-    defineApplicationCommandModule([researchSubmissionCommandGroup], (registrar) =>
-      registerResearchSubmissionCommands(registrar, dependencies.researchSubmissions)
-    ),
-    defineApplicationCommandModule([researchDraftCommandGroup], (registrar) =>
-      registerResearchDraftCommands(registrar, dependencies.researchDrafts)
-    ),
-    defineApplicationCommandModule([researchWorkspaceCommandGroup], (registrar) =>
-      registerResearchWorkspaceCommands(registrar, dependencies.researchWorkspaces)
+    defineApplicationCommandModule([sessionReplayCommandGroup], (registrar) =>
+      registerSessionReplayCommands(registrar, dependencies.sessionReplay)
     ),
     defineApplicationCommandModule([pdfAnnotationApplicationCommandGroup], (registrar) =>
       registerPdfAnnotationApplicationCommands(registrar, dependencies.pdfAnnotations)

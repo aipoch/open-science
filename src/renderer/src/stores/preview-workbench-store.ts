@@ -86,6 +86,7 @@ export type PreviewToolItem = PreviewItemBase & {
     | 'side-chat'
     | 'replay'
   // A replay tab retains its source when the left-hand discussion selects another Session.
+  replaySourceProjectId?: string
   replaySourceSessionId?: string
   replayStepId?: string
   replayBranchId?: string

@@ -1,3 +1,4 @@
+import { presentReviewSubmission } from '@/lib/reviewer-submission-presentation'
 import type {
   ReplayDocument,
   ReplayEvidenceReference,
@@ -6,9 +7,22 @@ import type {
 } from '../../../../../shared/replay'
 import type { ReplayResourceMap } from './replay-resources'
 import { replayText, replayNotebookText, replayToolOutputs } from './replay-content'
-import { REPLAY_ACTIVITY_LIMIT, REPLAY_TRANSCRIPT_STEP_LIMIT } from '@/lib/replay/scene'
+import { REPLAY_ACTIVITY_LIMIT } from '@/lib/replay/scene'
+import { projectReplayScene } from '@/lib/replay/scene'
+
+import {
+  REPLAY_CAPTURE_RECORD_LIMIT,
+  REPLAY_CAPTURE_TOTAL_LIMIT,
+  type ReplayCapturedRecord
+} from '../../../../../shared/session-replay'
 
 export type ReplayStepContext = {
+  scope?: 'step' | 'session'
+  phase?: ReplayScene['phase']
+  stepTitle?: string
+  branchIndex?: number
+  stepNumber?: number
+  records?: ReplayCapturedRecord[]
   projectId: string
   sourceSessionId: string
   sourceTitle: string
@@ -21,6 +35,20 @@ export type ReplayStepContext = {
   excerpt: string
 }
 
+export const captureSessionDiscussionContext = (
+  document: ReplayDocument
+): ReplayStepContext | undefined => {
+  const branch =
+    document.branches.find((item) => item.id === document.defaultBranchId && item.steps.length) ??
+    document.branches.find((item) => item.steps.length)
+  if (!branch) return undefined
+  const context = captureReplayStepContext(
+    document,
+    projectReplayScene(document, branch.id, branch.steps[0].startMs)
+  )
+  return { ...context, scope: 'session', stepTitle: undefined, stepNumber: undefined }
+}
+
 export const captureReplayStepContext = (
   document: ReplayDocument,
   scene: ReplayScene,
@@ -29,82 +57,130 @@ export const captureReplayStepContext = (
 ): ReplayStepContext => {
   const step = scene.step
   if (!step) throw new Error('Replay step unavailable')
+  const records: ReplayCapturedRecord[] = []
+  let remaining = REPLAY_CAPTURE_TOTAL_LIMIT
+  const add = (
+    id: string,
+    scope: 'step' | 'background',
+    title: string,
+    text: string,
+    available = true,
+    sourceTruncated = false
+  ): void => {
+    const limit = Math.min(REPLAY_CAPTURE_RECORD_LIMIT, remaining)
+    const captured = text.slice(0, limit)
+    remaining -= captured.length
+    records.push({
+      id,
+      scope,
+      title: title.slice(0, 240),
+      text: captured,
+      status: available ? 'recorded' : 'unavailable',
+      truncated: sourceTruncated || text.length > captured.length
+    })
+  }
+  const activityText = (activity: (typeof step.activities)[number], results: boolean): string =>
+    [
+      activity.title,
+      replayText(activity.rawInput),
+      activity.elicitation?.message,
+      ...(results
+        ? [
+            ...replayToolOutputs(activity).map((output) => output.text),
+            replayText(activity.elicitation?.answers),
+            activity.elicitation?.draftAnswers?.length
+              ? `Unsubmitted draft: ${replayText(activity.elicitation.draftAnswers)}`
+              : '',
+            activity.toolDisposition,
+            activity.terminalExitCode === undefined ? '' : `Exit code: ${activity.terminalExitCode}`
+          ]
+        : [])
+    ]
+      .filter(Boolean)
+      .join('\n')
+  const stepText = [
+    step.message?.content.slice(0, scene.messageCharacters),
+    ...step.activities
+      .slice(0, REPLAY_ACTIVITY_LIMIT)
+      .map((activity) => activityText(activity, scene.showResults)),
+    ...(scene.showResults && step.review
+      ? [
+          step.review.lifecycle,
+          step.review.outcome,
+          ...presentReviewSubmission(step.review).map(
+            (check) => `${check.status}: ${check.claim} — ${check.evidence}`
+          )
+        ]
+      : [])
+  ]
+    .filter(Boolean)
+    .join('\n')
+  const stepTitle = (step.title || step.message?.content || step.kind)
+    .replace(/[\r\n]/g, ' ')
+    .slice(0, 240)
+  add('step', 'step', stepTitle, stepText)
+  // Quote only the selected step; material retained on screen from earlier steps is navigation state.
+  const belongsToStep = (reference: ReplayEvidenceReference): boolean =>
+    step.evidence.some((item) => item.kind === reference.kind && item.id === reference.id) ||
+    (reference.kind === 'notebook-run' && step.runs.some((run) => run.runId === reference.id)) ||
+    step.resourceIds.includes(reference.id)
+  const material = scene.visibleEvidence.filter((reference) =>
+    ['notebook-run', 'artifact-version', 'upload-version'].includes(reference.kind)
+  )
+  for (const reference of material.filter(belongsToStep)) {
+    const id = `${reference.kind}:${reference.id}`
+    if (records.some((record) => record.id === id)) continue
+    if (reference.kind === 'notebook-run') {
+      const detail = runDetails[reference.id]
+      const run = detail?.status === 'ready' ? detail.run : undefined
+      add(
+        id,
+        'step',
+        `Notebook · ${run?.kernelKind ?? reference.id}`,
+        run
+          ? [run.script, ...(reference.part === 'input' ? [] : replayNotebookText(run))].join('\n')
+          : '',
+        Boolean(run),
+        reference.part !== 'input' && Boolean(run?.truncated)
+      )
+    } else {
+      const resource = document.resources.find(
+        (candidate) =>
+          candidate.id === reference.id ||
+          (reference.versionId && candidate.versionId === reference.versionId)
+      )
+      const prepared = resource && resources[resource.id]
+      const text = prepared?.status === 'ready' && prepared.kind !== 'image' ? prepared.content : ''
+      add(
+        id,
+        'step',
+        resource?.name ?? reference.id,
+        [resource?.name, reference.versionId ? `Version: ${reference.versionId}` : '', text]
+          .filter(Boolean)
+          .join('\n'),
+        prepared?.status === 'ready' && prepared.kind !== 'image',
+        prepared?.status === 'ready' && prepared.truncated
+      )
+    }
+  }
   return {
     projectId: document.source.projectId,
     sourceSessionId: document.source.sessionId,
     sourceTitle: document.source.title,
     fingerprint: document.source.fingerprint,
     branchId: step.branchId,
+    branchIndex: document.branches.findIndex((branch) => branch.id === step.branchId),
     stepId: step.id,
     stepOffsetMs: Math.max(0, scene.positionMs - step.startMs),
     recordedAt: step.recordedAt,
-    evidence: structuredClone(scene.visibleEvidence),
-    excerpt: [
-      step.message?.content.slice(0, scene.messageCharacters).slice(0, 480),
-      ...step.activities
-        .slice(0, REPLAY_ACTIVITY_LIMIT)
-        .flatMap((activity) => [
-          activity.title,
-          replayText(activity.rawInput).slice(0, 240),
-          activity.elicitation?.message.slice(0, 240),
-          ...(scene.showResults
-            ? [
-                ...replayToolOutputs(activity).map((output) => output.text.slice(0, 240)),
-                replayText(
-                  activity.elicitation?.answers ?? activity.elicitation?.draftAnswers
-                ).slice(0, 240),
-                activity.toolDisposition,
-                activity.terminalExitCode === undefined ? '' : String(activity.terminalExitCode)
-              ]
-            : [])
-        ]),
-      ...scene.visibleEvidence
-        .filter((reference) => reference.kind === 'notebook-run')
-        .flatMap((reference) => {
-          const detail = runDetails[reference.id]
-          if (detail?.status !== 'ready') return []
-          return [
-            detail.run.script.slice(0, 360),
-            reference.part === 'input'
-              ? ''
-              : replayNotebookText(detail.run).join('\n').slice(0, 360)
-          ]
-        }),
-      ...scene.visibleEvidence
-        .filter(
-          (reference) =>
-            reference.kind === 'artifact-version' || reference.kind === 'upload-version'
-        )
-        .flatMap((reference) => {
-          const resource = document.resources.find(
-            (candidate) =>
-              candidate.id === reference.id ||
-              (reference.versionId && candidate.versionId === reference.versionId)
-          )
-          if (!resource) return []
-          const prepared = resources[resource.id]
-          return [
-            resource.name,
-            prepared?.status === 'ready' && prepared.kind !== 'image'
-              ? prepared.content.slice(0, 360)
-              : ''
-          ]
-        }),
-      ...scene.visibleSteps
-        .slice(-REPLAY_TRANSCRIPT_STEP_LIMIT)
-        .filter((previous) => previous.id !== step.id)
-        .flatMap((previous) => [
-          previous.message?.content.slice(0, 240),
-          ...previous.activities
-            .slice(0, REPLAY_ACTIVITY_LIMIT)
-            .flatMap((activity) => [
-              activity.title,
-              replayText(activity.rawInput).slice(0, 160),
-              ...replayToolOutputs(activity).map((output) => output.text.slice(0, 160))
-            ])
-        ])
-    ]
-      .filter(Boolean)
+    evidence: structuredClone(scene.visibleEvidence.filter(belongsToStep)),
+    stepTitle,
+    stepNumber: scene.stepIndex + 1,
+    phase: scene.phase,
+    records,
+    excerpt: records
+      .filter((record) => record.scope === 'step')
+      .map((record) => record.text)
       .join('\n')
       .slice(0, 1800)
   }

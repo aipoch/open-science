@@ -5,7 +5,7 @@ import type {
   ReplayNotebookRunDetails
 } from '../../../../../shared/replay'
 import { projectReplayScene } from '@/lib/replay'
-import { captureReplayStepContext } from './replay-context'
+import { captureReplayStepContext, captureSessionDiscussionContext } from './replay-context'
 
 const execution: ReplayStep = {
   id: 'execution',
@@ -58,7 +58,7 @@ const answer: ReplayStep = {
   evidence: [{ kind: 'message', id: 'answer', projectId: 'p', sessionId: 's' }]
 }
 const document: ReplayDocument = {
-  generatorVersion: 2,
+  generatorVersion: 3,
   presentationVersion: 2,
   source: { projectId: 'p', sessionId: 's', title: 'study', fingerprint: 'hash' },
   defaultBranchId: 'main',
@@ -75,6 +75,24 @@ const document: ReplayDocument = {
   ],
   issues: []
 }
+
+it('captures whole-session discussions without requiring imported history or a populated default branch', () => {
+  expect(captureSessionDiscussionContext(document)).toMatchObject({
+    scope: 'session',
+    sourceSessionId: 's',
+    branchId: 'main',
+    stepId: 'execution',
+    stepNumber: undefined
+  })
+  expect(captureSessionDiscussionContext({ ...document, branches: [] })).toBeUndefined()
+  expect(
+    captureSessionDiscussionContext({
+      ...document,
+      defaultBranchId: 'empty',
+      branches: [{ ...document.branches[0], id: 'empty', steps: [] }, ...document.branches]
+    })
+  ).toMatchObject({ branchId: 'main', scope: 'session' })
+})
 const details: Record<string, ReplayNotebookRunDetails> = {
   run: {
     status: 'ready',
@@ -102,7 +120,7 @@ const resources = {
     truncated: false
   }
 }
-describe('whole-frame question excerpts', () => {
+describe('step-scoped captured records', () => {
   it('keeps input-only questions free of unrevealed run results and file contents', () => {
     const context = captureReplayStepContext(
       document,
@@ -111,11 +129,11 @@ describe('whole-frame question excerpts', () => {
       resources
     )
     expect(context.excerpt).toContain('print(mean(values))')
-    expect(context.excerpt).not.toContain('Mean = 4.50')
-    expect(context.excerpt).not.toContain('observations.csv')
+    expect(JSON.stringify(context.records)).not.toContain('Mean = 4.50')
+    expect(JSON.stringify(context.records)).not.toContain('observations.csv')
     expect(context.stepOffsetMs).toBe(100)
   })
-  it('captures saved output and retained previous material alongside the current message', () => {
+  it('quotes only the current message without retaining earlier material as its source', () => {
     const context = captureReplayStepContext(
       document,
       projectReplayScene(document, 'main', 1750),
@@ -123,11 +141,51 @@ describe('whole-frame question excerpts', () => {
       resources
     )
     expect(context.excerpt).toContain('Recorded conclusion')
-    expect(context.excerpt).toContain('print(mean(values))')
-    expect(context.excerpt).toContain('Mean = 4.50')
-    expect(context.excerpt).toContain('observations.csv')
-    expect(context.excerpt).toContain('sample,value')
-    expect(context.evidence.map((reference) => reference.id)).toEqual(['answer', 'run', 'version'])
+    expect(context.excerpt).not.toContain('Mean = 4.50')
+    expect(context.records).toHaveLength(1)
+    expect(JSON.stringify(context.records)).not.toContain('Mean = 4.50')
+    expect(context.evidence.map((reference) => reference.id)).toEqual(['answer'])
     expect(context.excerpt.length).toBeLessThanOrEqual(1800)
+  })
+  it('keeps a partially revealed message frozen and reports unloaded material explicitly', () => {
+    const scene = projectReplayScene(document, 'main', 1500)
+    const captured = captureReplayStepContext(document, scene)
+    expect(captured.records?.find((record) => record.id === 'step')?.text).toBe(
+      scene.step!.message!.content.slice(0, scene.messageCharacters)
+    )
+    const unloaded = captureReplayStepContext(document, projectReplayScene(document, 'main', 100))
+    expect(unloaded.records?.find((record) => record.id === 'notebook-run:run')).toMatchObject({
+      scope: 'step',
+      status: 'unavailable',
+      text: ''
+    })
+  })
+  it('marks bounded text and prepared file truncation instead of presenting them as complete records', () => {
+    const modified = structuredClone(document)
+    modified.branches[0].steps[1].message!.content = 'x'.repeat(100_000)
+    modified.branches[0].steps[1].resourceIds = ['version']
+    modified.branches[0].steps[1].evidence.push(execution.evidence[1])
+    const captured = captureReplayStepContext(
+      modified,
+      projectReplayScene(modified, 'main', 2000),
+      details,
+      {
+        ...resources,
+        version: {
+          status: 'ready',
+          kind: 'text',
+          content: 'partial csv',
+          mimeType: 'text/csv',
+          truncated: true
+        }
+      }
+    )
+    expect(captured.records?.find((record) => record.id === 'step')).toMatchObject({
+      truncated: true
+    })
+    expect(captured.records?.find((record) => record.id === 'step')?.text.length).toBe(64 * 1024)
+    expect(
+      captured.records?.find((record) => record.id === 'artifact-version:version')
+    ).toMatchObject({ truncated: true })
   })
 })

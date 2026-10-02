@@ -2,7 +2,7 @@ import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · component: Connector OAuth sign-in · genre: modern-minimal · theme: project Settings tokens */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: project tokens · slop: pass */
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { LoaderCircle, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 

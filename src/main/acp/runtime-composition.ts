@@ -1,3 +1,5 @@
+import { SessionReadingOwner } from '../session-replay/session-reading'
+import { SessionReplayRepository } from '../session-replay/repository'
 import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
 import { homedir } from 'node:os'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -898,6 +900,13 @@ const createAcpRuntime = ({
           : {}),
         callbacks: runtimeCallbacks,
         sideChatRelays,
+        prepareSessionReading: sessionPersistenceCoordinator
+          ? (request) =>
+              new SessionReadingOwner(
+                new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
+                sessionPersistenceCoordinator
+              ).prepare(request)
+          : undefined,
         hasPendingCredentialRequest,
         ...(!delegatedNotebookConnection && memory ? { memory } : {}),
         permissionGrantStore,

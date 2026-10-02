@@ -76,6 +76,7 @@ export const projectReplayScene = (
     )
       return []
     if (step && !visibleMaterialReference(step, reference)) return []
+    if (reference.kind === 'review' && !showResults) return []
     if (
       (reference.kind === 'artifact-version' || reference.kind === 'upload-version') &&
       !showResults
@@ -96,7 +97,12 @@ export const projectReplayScene = (
   for (const previous of visibleSteps.slice(-REPLAY_TRANSCRIPT_STEP_LIMIT)) {
     if (previous.id === step?.id) continue
     for (const reference of previous.evidence) {
-      if (reference.kind !== 'message' && reference.kind !== 'activity') continue
+      if (
+        reference.kind !== 'message' &&
+        reference.kind !== 'activity' &&
+        reference.kind !== 'review'
+      )
+        continue
       if (
         reference.kind === 'activity' &&
         !previous.activities
@@ -158,7 +164,7 @@ export const projectReplayScene = (
 }
 
 export const normalizeReplaySpeed = (value: number): ReplaySpeed =>
-  REPLAY_SPEEDS.find((speed) => speed === value) ?? 1
+  REPLAY_SPEEDS.find((speed) => speed === value) ?? 2
 
 export const seekReplayClock = (
   clock: ReplayClock,

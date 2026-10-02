@@ -1,3 +1,7 @@
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
+import { SessionReadingBar } from './SessionReadingBar'
+import { SessionDiscussionButton } from './SessionDiscussionButton'
+import { createResearchReplayItem } from './workspace-research-controller'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import {
@@ -5,8 +9,6 @@ import {
   PackageOperationIndicator
 } from '@/components/SessionPackageOperation'
 import { SessionInfoPopover } from './SessionInfoPopover'
-import { ResearchDiscussionNotice } from './ResearchDiscussionNotice'
-import { ResearchSubmissionQueue } from './ResearchSubmissionQueue'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
@@ -63,6 +65,7 @@ import {
   MessageCircleMore,
   PanelRight,
   Plus,
+  Play,
   RotateCcw,
   ScanEye,
   Square,
@@ -142,7 +145,6 @@ import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
-import { ResearchDraftRecovery } from './ResearchDraftRecovery'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
@@ -443,9 +445,7 @@ type ConversationPanelSubagents = {
 type ConversationPanelProps = {
   view: ConversationPanelView
   composer: Pick<WorkspaceComposerController, 'view' | 'actions'>
-  conversation: WorkspaceConversationController & {
-    research?: import('./workspace-research-controller').ResearchWorkspaceController
-  }
+  conversation: WorkspaceConversationController
   sideChat: SideChatController
   specialist: ConversationPanelSpecialist
   layout: ConversationPanelLayout
@@ -501,7 +501,6 @@ const ConversationPanel = ({
   submissions
 }: ConversationPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const { research, researchSubmissions } = conversation
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const {
     activeSession,
@@ -1285,9 +1284,7 @@ const ConversationPanel = ({
                 onTogglePin={sessionTools.togglePin}
               />
             ) : (
-              <span className="block truncate">
-                {research?.research?.sourceTitle ?? t('New conversation')}
-              </span>
+              <span className="block truncate">{t('New conversation')}</span>
             )}
           </h1>
           {activeSession && sessionTools.exportDiagnostics && (
@@ -1343,25 +1340,12 @@ const ConversationPanel = ({
         </header>
         <PackageOperationIndicator />
 
-        {research ? (
-          <ResearchDiscussionNotice
-            key={`${research.research?.projectId}:${research.research?.sourceSessionId}`}
-            controller={research}
-          />
-        ) : null}
-
-        {researchSubmissions ? <ResearchSubmissionQueue controller={researchSubmissions} /> : null}
-        {composer.view.researchDraftRecovery ? (
-          <ResearchDraftRecovery {...composer.view.researchDraftRecovery} />
-        ) : null}
-
         {activeSession?.contentLoaded === false ? (
           <SessionSwitchSkeleton />
         ) : (
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
-              researchTitle={research?.research?.sourceTitle}
               sessionImport={sessionImport}
               onStartResearch={
                 canEditDraft &&
@@ -1851,19 +1835,44 @@ const ConversationPanel = ({
                             'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
                           )}
                         </p>
-                        {sessionForkAvailable() ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {sessionForkAvailable() ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                void forkSession(activeSession)
+                              }}
+                            >
+                              <GitBranch className="size-4" aria-hidden="true" />
+                              {t('Fork to continue')}
+                            </Button>
+                          ) : null}
                           <Button
                             variant="outline"
                             size="sm"
-                            className="mt-2"
+                            aria-controls="right-panel"
                             onClick={() => {
-                              void forkSession(activeSession)
+                              usePreviewWorkbenchStore
+                                .getState()
+                                .upsertAndActivateItem(
+                                  createResearchReplayItem(
+                                    activeSession.projectId,
+                                    activeSession.id,
+                                    activeSession.title
+                                  )
+                                )
                             }}
                           >
-                            <GitBranch className="size-4" aria-hidden="true" />
-                            {t('Fork to continue')}
+                            <Play className="size-4" aria-hidden="true" />
+                            {t('View replay')}
                           </Button>
-                        ) : null}
+                          <SessionDiscussionButton
+                            key={activeSession.id}
+                            projectId={activeSession.projectId}
+                            sessionId={activeSession.id}
+                          />
+                        </div>
                         <details className="mt-2 text-xs leading-5 text-muted-foreground">
                           <summary className="cursor-pointer">{t('Package source')}</summary>
                           <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
@@ -1944,6 +1953,15 @@ const ConversationPanel = ({
                                 : t('Drop files to attach')
                             }
                             className="rounded-2xl"
+                          />
+                        ) : null}
+                        {activeSession &&
+                        !annotations.some((annotation) => replayAnnotationTarget(annotation)) ? (
+                          <SessionReadingBar
+                            key={activeSession.id}
+                            projectId={activeSession.projectId}
+                            sessionId={activeSession.id}
+                            context={activeSession.runtimeContext}
                           />
                         ) : null}
                         {pdfContext.bindings.length > 0 ? (

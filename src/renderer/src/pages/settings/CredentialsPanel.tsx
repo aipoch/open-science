@@ -2,7 +2,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
