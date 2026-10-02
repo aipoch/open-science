@@ -176,6 +176,31 @@ describe('Notebook filesystem policy', () => {
     ).toBe('')
   })
 
+  it.each([
+    '/fixture/My  Folder/settings.json',
+    String.raw`C:\fixture\My Folder\settings.json`,
+    String.raw`\\fixture-server\share\My Folder\settings.json`
+  ])('preserves exact quoted paths in stderr, stdout, and JSON: %s', (path) => {
+    const message = `EPERM: operation not permitted, open '${path}'`
+    for (const [stderr, stdout] of [
+      [message, ''],
+      ['', message],
+      ['', JSON.stringify({ error: message })]
+    ]) {
+      const diagnostic = new ViolationLog().attach('fixture', stderr, undefined, stdout)
+      expect(diagnostic).toContain(`OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: ${path} Filesystem`)
+      expect(diagnostic.startsWith(stderr)).toBe(true)
+    }
+  })
+
+  it.each([
+    "cat: '/fixture/" + 'a'.repeat(1001) + "': Permission denied",
+    "cat: '/fixture/a\tb/settings.json': Permission denied",
+    'cat: /fixture/My Folder/settings.json: Permission denied'
+  ])('does not propose a truncated or normalized folder path: %s', (stderr) => {
+    expect(new ViolationLog().attach('fixture', stderr)).toBe(stderr)
+  })
+
   it('bounds diagnostic work for unterminated escaped quotes in captured output', () => {
     const root = mkdtempSync(join(tmpdir(), 'os-diagnostic-budget-'))
     try {

@@ -12,6 +12,9 @@ import {
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { NotebookFolderAccessNotice } from './NotebookFolderAccessNotice'
+import { ViolationLog } from '../../../../../packages/notebook-network-sandbox/runtime/src/gateway/violation-log'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenu: ({ children }: PropsWithChildren) => <div>{children}</div>,
@@ -102,6 +105,34 @@ afterEach(async () => {
 })
 
 describe('Notebook folder access recovery', () => {
+  it.each([
+    { platform: 'linux', file: '/fixture/My  Folder/settings.json', parent: '/fixture/My  Folder' },
+    {
+      platform: 'win32',
+      file: String.raw`\\fixture-server\share\My Folder\settings.json`,
+      parent: String.raw`\\fixture-server\share\My Folder`
+    }
+  ])(
+    'preserves the exact $platform diagnostic path through dialog confirmation',
+    async ({ platform, file, parent }) => {
+      window.api.platform = platform
+      listDir.mockImplementation(async (candidate: string) => {
+        if (candidate === file) throw new Error('ENOTDIR: not a directory')
+        return { entries: [], resolvedPath: candidate, truncated: false }
+      })
+      const stdout = JSON.stringify({ error: `EPERM: operation not permitted, open '${file}'` })
+      const stderr = new ViolationLog().attach('fixture', '', undefined, stdout)
+      await open({ ...record, text: { ...record.text, stderr, stdout } })
+      expect(listDir).toHaveBeenCalledWith(file)
+      expect(listDir).toHaveBeenCalledWith(parent)
+      expect(grantRoot).not.toHaveBeenCalled()
+      await click('[data-testid="grant-access-grant"]')
+      await click('[data-testid="grant-folder-access-confirmation"] button:last-of-type')
+      expect(grantRoot).toHaveBeenCalledExactlyOnceWith({ path: parent, access: 'ro' })
+      expect(execute).not.toHaveBeenCalled()
+    }
+  )
+
   it('prefills the immediate file parent and requires both explicit confirmations', async () => {
     await open()
     expect(listDir).toHaveBeenCalledWith(path)

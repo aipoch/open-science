@@ -756,7 +756,9 @@ const SessionNotebookDialog = ({
           <Dialog.Title className="sr-only">{t('Session notebook')}</Dialog.Title>
           {dialogSession ? (
             <SessionNotebookContent
-              allowFolderAccess={!dialogSession.packageOrigin}
+              allowFolderAccess={
+                dialogSession.contentLoaded !== false && !dialogSession.packageOrigin
+              }
               // Remount per session: the dialog is mounted once and the session prop swaps in
               // place, so per-session export state (a failure banner, an in-flight setState from
               // a superseded export) must be discarded rather than leak into the next session.

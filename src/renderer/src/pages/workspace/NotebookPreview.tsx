@@ -1105,7 +1105,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             <div key={run.runId} data-run-id={run.runId}>
               <NotebookRunCell
                 run={run}
-                allowFolderAccess={Boolean(session && !session.packageOrigin)}
+                allowFolderAccess={Boolean(
+                  session && session.contentLoaded !== false && !session.packageOrigin
+                )}
                 index={index}
                 staleness={staleness}
                 causedByRunIndex={
