@@ -85,6 +85,7 @@ import {
 } from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
+  normalizeSessionFile,
   type PersistedChatSession,
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
@@ -8111,9 +8112,19 @@ describe('ACP runtime session management', () => {
     )
   })
 
-  it.each(RESTORED_CONTINUATION_FRAMEWORKS)(
-    'builds restored choice replay through %s from Main-owned Session history after context reset',
-    async (_name, framework, modelRoute, backendId) => {
+  it.each(
+    RESTORED_CONTINUATION_FRAMEWORKS.flatMap(([name, framework, modelRoute, backendId]) =>
+      [true, false].map((providerStopped) => ({
+        name,
+        framework,
+        modelRoute,
+        backendId,
+        providerStopped
+      }))
+    )
+  )(
+    'builds restored choice replay through $name after context reset (stopped: $providerStopped)',
+    async ({ framework, modelRoute, backendId, providerStopped }) => {
       const process = new FakeAgentProcess()
       const receivedPrompts: ContentBlock[][] = []
       const fakeAgent = startFakeAgent(process, ['adopted-provider-session'], {
@@ -8184,7 +8195,12 @@ describe('ACP runtime session management', () => {
         updatedAt: 3
       }
       addPendingRestoredChoice(persistedSession)
-      const loadSessionForContinuation = vi.fn(async () => structuredClone(persistedSession))
+      if (!providerStopped) {
+        persistedSession.status = 'running'
+        persistedSession.activeRun = { promptMessageId: 'prompt-restored-1', startedAt: 3 }
+      }
+      const restored = normalizeSessionFile(JSON.parse(JSON.stringify(persistedSession)))!
+      const loadSessionForContinuation = vi.fn(async () => structuredClone(restored))
       const runtime = new AcpRuntime({
         appVersion: '0.1.0',
         defaultCwd: '/workspace',

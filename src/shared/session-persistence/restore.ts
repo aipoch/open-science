@@ -179,6 +179,70 @@ export const rearmUnacceptedElicitationContinuations = (
   }
 }
 
+// Run only after graph and flat activities have passed the same persisted-field sanitizers.
+// A durable question can outlive its provider before a stop event has classified the Session wait.
+export const restorePendingElicitationWait = (
+  session: PersistedChatSession
+): PersistedChatSession => {
+  const graph = session.conversationGraph
+  if (
+    !graph ||
+    session.runtimeContext?.permission ||
+    session.runtimeContext?.plan?.approval === 'pending'
+  ) {
+    return session
+  }
+  const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)
+  const messages = resolveActiveConversationMessages(graph)
+  const prompt = messages.findLast(({ role }) => role === 'user')
+  if (
+    !frame ||
+    !prompt ||
+    prompt.status !== 'complete' ||
+    prompt.agentFrameId !== frame.id ||
+    prompt.introducedOnBranchId !== frame.activeBranchId ||
+    !prompt.runtimeSegmentId
+  )
+    return session
+  const pending = resolveActiveConversationActivities(graph).activities.filter(
+    ({ elicitation }) =>
+      elicitation?.state === 'pending' && elicitation.durable?.kind === 'agent-user-choice'
+  )
+  const restorable = pending.some((activity) => {
+    const authority = graph.activities.find(({ id }) => id === activity.id)!
+    const durable = activity.elicitation!.durable!
+    const flat = (session.activities ?? []).filter(({ id }) => id === activity.id)
+    return (
+      authority.agentFrameId === frame.id &&
+      authority.messageBranchId === frame.activeBranchId &&
+      authority.promptMessageId === prompt.id &&
+      (!durable.promptMessageId || durable.promptMessageId === prompt.id) &&
+      pending.filter(({ elicitation }) => elicitation!.durable!.requestId === durable.requestId)
+        .length === 1 &&
+      flat.length === 1 &&
+      (!flat[0].promptMessageId || flat[0].promptMessageId === prompt.id) &&
+      flat[0].title === activity.title &&
+      flat[0].status === activity.status &&
+      flat[0].sortIndex === activity.sortIndex &&
+      // Sanitization fixes property order, so JSON equality checks the complete durable payload.
+      JSON.stringify(flat[0].elicitation) === JSON.stringify(activity.elicitation)
+    )
+  })
+  if (!restorable) return session
+  const clearInterrupted = <T extends PersistedChatMessage>(message: T): T =>
+    message.id === prompt.id ? { ...message, interrupted: undefined } : message
+  return {
+    ...session,
+    status: 'waiting-for-user',
+    activeRun: undefined,
+    resumeRecovery: undefined,
+    error: undefined,
+    errorReportable: undefined,
+    messages: session.messages.map(clearInterrupted),
+    conversationGraph: { ...graph, messages: graph.messages.map(clearInterrupted) }
+  }
+}
+
 // Rehydrates durable waits and converts runtime-only work into recoverable states after restart.
 const recoverInterruptedPermissionAfterRestore = (
   session: PersistedChatSession
