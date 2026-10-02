@@ -1,4 +1,6 @@
 import { RuntimeWriterOwner } from './runtime-writer'
+import { ELECTRON_APPLICATION_COMMAND_CHANNELS } from '../../shared/renderer-contract-catalog'
+import { registerApplicationCommandElectronAdapter } from '../application-command-electron-adapter'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import {
@@ -31,7 +33,8 @@ const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers, registration
     ipcHandlers: new Map<string, (...args: unknown[]) => unknown>(),
     registrationFailure: {
       channel: undefined as string | undefined,
-      error: undefined as Error | undefined
+      error: undefined as Error | undefined,
+      rejectDuplicates: false
     }
   }))
 
@@ -39,6 +42,8 @@ vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
       if (registrationFailure.channel === channel) throw registrationFailure.error
+      if (registrationFailure.rejectDuplicates && ipcHandlers.has(channel))
+        throw new Error(`Attempted to register a second handler for '${channel}'`)
       ipcHandlers.set(channel, handler)
     }
   }
@@ -70,6 +75,7 @@ beforeEach(() => {
   getLifecycleClientId.mockClear()
   registrationFailure.channel = undefined
   registrationFailure.error = undefined
+  registrationFailure.rejectDuplicates = false
 })
 afterEach(() => clearMigrationPending())
 
@@ -191,6 +197,61 @@ describe('session deletion finalizers', () => {
 })
 
 describe('session persistence IPC handlers', () => {
+  it('lists live terminal failures and validates the exact execution before retry', async () => {
+    const request = {
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      promptMessageId: 'prompt',
+      executionId: 'execution'
+    }
+    const retry = vi.fn(async () => undefined)
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn(),
+      listRuntimeTerminalFailures: vi.fn(() => []),
+      retryRuntimeTerminalCommit: retry
+    }
+    const handlers = createSessionPersistenceHandlers(repository, createMockReviewRepository())
+    await expect(handlers.listRuntimeTerminalFailures()).resolves.toEqual([])
+    await handlers.retryRuntimeTerminalCommit(request)
+    expect(retry).toHaveBeenCalledExactlyOnceWith(request)
+    await expect(
+      handlers.retryRuntimeTerminalCommit({ ...request, executionId: '' })
+    ).rejects.toThrow()
+    expect(retry).toHaveBeenCalledOnce()
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), handlers)
+    await expect(ipcHandlers.get('sessions:list-runtime-terminal-failures')?.()).resolves.toEqual(
+      []
+    )
+    expect(ipcHandlers.has('sessions:retry-runtime-terminal-commit')).toBe(false)
+    expect(retry).toHaveBeenCalledOnce()
+  })
+  it('installs persistence reads alongside the standard command adapter without duplicate terminal retry registration', () => {
+    registrationFailure.rejectDuplicates = true
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
+    const persistenceChannels = [...ipcHandlers.keys()]
+    expect(() =>
+      registerApplicationCommandElectronAdapter({
+        commandNames: () => ELECTRON_APPLICATION_COMMAND_CHANNELS,
+        invoke: vi.fn(async () => undefined)
+      })
+    ).not.toThrow()
+    expect(persistenceChannels).not.toContain('sessions:retry-runtime-terminal-commit')
+    expect(typeof ipcHandlers.get('sessions:retry-runtime-terminal-commit')).toBe('function')
+    expect(ipcHandlers.size).toBe(
+      persistenceChannels.length + ELECTRON_APPLICATION_COMMAND_CHANNELS.length
+    )
+  })
   it('saves a Session for Project B while Project A cleanup remains failed', async () => {
     const projects: ProjectDeletionRepository = {
       exists: vi.fn().mockResolvedValue(false),
@@ -571,6 +632,8 @@ describe('session persistence IPC handlers', () => {
     }
     const saveSession = vi.fn(async () => ({ created: false, session }))
     const handlers: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
@@ -619,6 +682,8 @@ describe('session persistence IPC handlers', () => {
     }
     const saveSession = vi.fn(async () => ({ created: false, session }))
     const handlers: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
@@ -647,6 +712,24 @@ describe('session persistence IPC handlers', () => {
 
     expect(saveSession).toHaveBeenCalledWith(session, {
       conversationCommands: [{ ...command, message }]
+    })
+
+    saveSession.mockClear()
+    await ipcHandlers.get('sessions:save-session')?.({ sender: { id: 7 } }, session, {
+      conversationCommands: [
+        {
+          kind: 'prepare-prompt',
+          id: 'prepare-1',
+          promptMessageId: message.id,
+          mode: 'rearm',
+          timestamp: 1710000000002
+        }
+      ]
+    })
+    // Only a prepare-prompt save hands Main the caller lease its receipt must follow.
+    expect(saveSession).toHaveBeenCalledWith(session, expect.anything(), {
+      taskRunCommit: false,
+      callerSignal: expect.any(AbortSignal)
     })
 
     saveSession.mockClear()
@@ -990,6 +1073,7 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-usage',
       'sessions:search-messages',
       'sessions:load-one',
+      'sessions:list-runtime-terminal-failures',
       'sessions:save-session',
       'sessions:save-manifest',
       'sessions:open-recovery-folder'
@@ -1038,6 +1122,8 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn().mockResolvedValue(loadResult),
       list: vi.fn(),
@@ -1068,6 +1154,8 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
@@ -1103,6 +1191,8 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       list: vi.fn(),
@@ -1172,6 +1262,8 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const handlers: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
@@ -1207,6 +1299,8 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const handlers: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),

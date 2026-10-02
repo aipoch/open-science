@@ -81,6 +81,7 @@ type AcpHandlerWorkflows = {
 type InterruptedTurnSessionSource = {
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   prepareRuntimeResume?(projectId: string, sessionId: string): Promise<void>
+  completeRuntimeAttachment?(projectId: string, sessionId: string): Promise<void>
 }
 
 type SaveAsSkillAdmission = (sessionId: string) => void | Promise<void>
@@ -309,7 +310,9 @@ const createAcpHandlerWorkflows = (
         ) {
           await interruptedTurnSessions.prepareRuntimeResume(projectId, request.sessionId)
         }
-        return runtime.resumeSession(bound)
+        const attached = await runtime.resumeSession(bound)
+        await interruptedTurnSessions?.completeRuntimeAttachment?.(projectId, request.sessionId)
+        return attached
       }
       const result = archiveAvailability
         ? await archiveAvailability.withSessionAvailableById(request.sessionId, resume)

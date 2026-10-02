@@ -6819,6 +6819,13 @@
     "Folder access was updated. Run the command again when you are ready.": "資料夾存取權限已更新。準備好後，請手動重新執行命令。",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "此資料夾權限適用於各個工作階段，直到您在「檔案」中撤銷。命令不會自動執行。",
     "Drop files to attach or import a .science package": "拖放檔案以新增附件，或匯入 .science 研究套件",
-    "Files cannot be attached right now.": "目前無法新增附件。"
+    "Files cannot be attached right now.": "目前無法新增附件。",
+    "This turn was interrupted. Resume to continue.": "此輪操作已中斷。恢復以繼續。",
+    "Connection lost — Resume to reconnect and continue.": "連線已中斷 — 恢復以重新連線並繼續。",
+    "Session was interrupted before the app closed.": "應用程式關閉前，工作階段已中斷。",
+    "The run failed with no error message.": "執行失敗，未提供錯誤訊息。",
+    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "未傳送的訊息無法還原（{{failure}}）。請重新傳送，或停止執行後再試。",
+    "The unsent Session could not be removed ({{failure}}).": "未傳送的工作階段無法移除（{{failure}}）。",
+    "Agent Session cleanup did not complete.": "智能體工作階段清理未完成。"
   }
 }

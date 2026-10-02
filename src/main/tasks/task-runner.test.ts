@@ -39,7 +39,8 @@ import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
-import { SessionRepository } from '../session-persistence/repository'
+import { loadSessionMutationAuthority, SessionRepository } from '../session-persistence/repository'
+import { initDataRoot } from '../storage-root'
 import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from './task-run-journal'
 import {
@@ -6729,4 +6730,172 @@ describe('runtime terminal outcomes and recovery retention', () => {
       await recovered?.dispose()
     }
   })
+})
+
+const RESTART_PROMPT = 'task-prompt'
+const RESTART_RUN = 'task-run'
+
+// Reproduces the real restart path: the Session JSON still carries the crashed turn's activeRun,
+// the Task journal still holds the running Run, and the first process-wide load is the startup load.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+const crashedRestartTaskRun = async (owner?: 'main') => {
+  const root = await mkdtemp(join(tmpdir(), 'task-restart-recovery-'))
+  temporaryRoots.push(root)
+  initDataRoot(root)
+  const repository = new SessionRepository(root)
+  const coordinator = new SessionPersistenceCoordinator(repository, {
+    syncSession: vi.fn(async () => []),
+    softDeleteSession: vi.fn(async () => 'delete'),
+    restoreSession: vi.fn(async () => undefined),
+    softDeleteProject: vi.fn(async () => 'delete'),
+    reconcileProjectSessions: vi.fn(async () => undefined),
+    reconcileActiveSessions: vi.fn(async () => undefined),
+    markReconciliationIncomplete: vi.fn()
+  })
+  await repository.saveSession(
+    materializeSessionConversationGraph({
+      id: 'session',
+      projectId: 'project',
+      title: 'Task',
+      cwd: '/workspace',
+      agentFrameworkId: 'codex',
+      runtimeTranscriptOwner: owner,
+      status: 'running',
+      activeRun: { promptMessageId: RESTART_PROMPT, startedAt: 2 },
+      messages: [
+        {
+          id: RESTART_PROMPT,
+          role: 'user',
+          content: 'Run the analysis',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    })
+  )
+  const failRunOnce = { error: undefined as Error | undefined }
+  let journal: TaskRunJournalEntry[] = [
+    {
+      id: RESTART_RUN,
+      sessionId: 'session',
+      projectId: 'project',
+      cwd: '/workspace',
+      status: 'running',
+      startedAt: 2,
+      artifacts: [],
+      preferredComputeHostIds: [],
+      promptMessageId: RESTART_PROMPT
+    }
+  ]
+  const makeRunner = (): TaskRunner =>
+    new TaskRunner({
+      projects: { list: async () => [], create: async () => ({}) as never },
+      previewResources: {
+        acquire: async () => ({ id: 'r', url: 'preview://r', size: 0 }),
+        release: async () => undefined
+      },
+      runtimeEvents: { subscribe: () => () => undefined },
+      settings: { get: async () => ({}) as never },
+      specialists: { resolve: async (reference) => ({ id: reference }) },
+      reviewer: { review: async () => ({ started: true }) },
+      computePreferences: {
+        withReservation: async (_ids, operation) => operation([]),
+        set: async () => {
+          throw new Error('unexpected')
+        }
+      },
+      runWithLifecycleContext: (operation) => operation(),
+      createId: () => 'generated-id',
+      now: () => 100,
+      artifacts: {
+        finalizeRun: async () => ({ ok: true, artifacts: [] }),
+        resolveVersionDescriptors: async () => []
+      },
+      agent: {
+        withSessionAvailable: async (_p, _s, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        setMemoryEnabled: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => undefined
+      },
+      sessions: {
+        list: async () => (await coordinator.loadAll()).sessions,
+        save: (session: PersistedChatSession) => coordinator.saveSession(session),
+        bindSession: (request) => coordinator.bindTaskSession(request),
+        admitTurn: (request) => coordinator.admitTaskTurn(request),
+        stageCompletion: (request) => coordinator.stageTaskCompletion(request),
+        settleCompletion: (request) => coordinator.settleTaskCompletion(request),
+        failRun: async (request) => {
+          const failure = failRunOnce.error
+          failRunOnce.error = undefined
+          if (failure) throw failure
+          return coordinator.failTaskRun(request)
+        },
+        updateConfiguration: (session) => coordinator.saveSession(session),
+        setDelegationPolicy: async () => undefined
+      },
+      runJournal: {
+        load: async () => structuredClone(journal),
+        replace: async (runs) => {
+          journal = runs.map((run) => structuredClone(run))
+        }
+      }
+    } as TaskRunnerDependencies)
+  const raw = async (): Promise<PersistedChatSession> => {
+    const loaded = await loadSessionMutationAuthority(repository, 'project', 'session')
+    if (loaded.status !== 'found') throw new Error('Expected durable Session')
+    return loaded.session
+  }
+  return { makeRunner, raw, journal: () => journal, failRunOnce }
+}
+
+it.each([undefined, 'main'] as const)(
+  'recovers a Task Run interrupted by app restart through the real startup load (owner=%s)',
+  async (owner) => {
+    const h = await crashedRestartTaskRun(owner)
+    const runner = h.makeRunner()
+    await expect(runner.initialize()).resolves.toBeUndefined()
+    expect(runner.getRun(RESTART_RUN)).toMatchObject({
+      status: 'failed',
+      failureCode: 'process_restarted'
+    })
+    const session = await h.raw()
+    expect(session.taskRunCommitId).toBe(RESTART_RUN)
+    expect(session.activeRun).toBeUndefined()
+    expect(session.messages[0].turnOutcome).toMatchObject({
+      kind: 'interrupted',
+      cause: 'app-restart',
+      recovery: 'resume'
+    })
+    expect(session.resumeRecovery).toMatchObject({
+      cause: 'app-restart',
+      promptMessageId: RESTART_PROMPT
+    })
+    // A second startup converges instead of failing on the same Session forever.
+    await expect(h.makeRunner().initialize()).resolves.toBeUndefined()
+    expect((await h.raw()).messages[0].turnOutcome).toMatchObject({ kind: 'interrupted' })
+  }
+)
+
+it('does not let one Session repair failure reject startup and retries it on the next startup', async () => {
+  const h = await crashedRestartTaskRun('main')
+  h.failRunOnce.error = new Error('Session repair unavailable')
+  const runner = h.makeRunner()
+  await expect(runner.initialize()).resolves.toBeUndefined()
+  expect(runner.getRun(RESTART_RUN)).toMatchObject({
+    status: 'failed',
+    failureCode: 'process_restarted'
+  })
+  expect((await h.raw()).taskRunCommitId).toBeUndefined()
+  const second = h.makeRunner()
+  await expect(second.initialize()).resolves.toBeUndefined()
+  expect((await h.raw()).taskRunCommitId).toBe(RESTART_RUN)
+  expect(second.getRun(RESTART_RUN)).toMatchObject({ status: 'failed' })
 })

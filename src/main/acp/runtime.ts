@@ -879,6 +879,8 @@ class AcpRuntime {
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: (request) => this.connect(request),
       disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
+      onPromptEnded: (sessionId, turnToken) =>
+        this.nativeFollowUp.releaseTurn(sessionId, turnToken),
       clearPromptResources: () => this.nativeFollowUp.clear(),
       openAgentConnection: (attempt, onFrameworkResolved) =>
         this.openAgentConnection(attempt, onFrameworkResolved)
@@ -1118,14 +1120,50 @@ class AcpRuntime {
     return this.handoffContinuity.createClaudeContinuation(input)
   }
 
-  reportApprovedHandoffFailure(sessionId: string): void {
-    this.pushEvent({
-      kind: 'error',
-      level: 'error',
+  authorizeApprovedHandoffContinuation(
+    sessionId: string,
+    promptMessageId: string,
+    executionId: string,
+    isCurrent: () => boolean
+  ): number | undefined {
+    return this.options.runtimeSessions?.authorizeApprovedHandoffContinuation(
       sessionId,
+      promptMessageId,
+      executionId,
+      isCurrent
+    )
+  }
+
+  async reportApprovedHandoffFailure(
+    sessionId: string,
+    promptMessageId: string,
+    executionId: string,
+    isCurrent: () => boolean,
+    originalStartedAt?: number
+  ): Promise<void> {
+    const event = {
+      id: this.publication.nextEventId(),
+      timestamp: Date.now(),
+      kind: 'error' as const,
+      level: 'error' as const,
+      sessionId,
+      promptMessageId,
+      promptExecutionId: executionId,
       title: 'Specialist handoff failed',
       text: 'The approved specialist could not continue the current task.'
-    })
+    }
+    if (this.options.runtimeSessions && originalStartedAt !== undefined) {
+      await this.options.runtimeSessions.commitApprovedHandoffFailure(
+        event,
+        (published) => {
+          this.pushEvent(published)
+        },
+        isCurrent,
+        originalStartedAt
+      )
+    } else if (!this.options.runtimeSessions && isCurrent()) {
+      this.pushEvent(event)
+    }
   }
 
   private getInFlightSessionIds(): string[] {

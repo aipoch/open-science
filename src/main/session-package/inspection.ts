@@ -10,8 +10,12 @@ import { validatePackageRecords } from './validation'
 export const assertSettledHistory = (session: PersistedChatSession): void => {
   const context = session.runtimeContext
   if (
-    session.status !== 'idle' ||
+    session.activeRun ||
+    session.status === 'running' ||
+    session.status.startsWith('waiting-') ||
     hasCurrentRunningDelegatedAttempt(session) ||
+    context?.permission?.state === 'pending' ||
+    context?.plan?.approval === 'pending' ||
     context?.delegatedWork?.messageCommands?.some(
       (command) =>
         command.receipt.status === 'queued' ||

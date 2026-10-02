@@ -16,6 +16,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivityDetails } from './workspace-tool-activity-details'
+import type { TurnOutcomeActions } from './TurnOutcomeNotice'
 
 const reviewStoreMock = vi.hoisted(() => ({ loadError: undefined as string | undefined }))
 
@@ -214,6 +215,7 @@ const renderScroller = async (
     credentialPending?: boolean
     isResumingSession?: boolean
     optimisticMessage?: ChatMessage
+    turnOutcomeActions?: TurnOutcomeActions
   } = {}
 ): Promise<string> => {
   const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
@@ -225,9 +227,21 @@ const renderScroller = async (
       credentialPending={props.credentialPending}
       isResumingSession={props.isResumingSession}
       optimisticMessage={props.optimisticMessage}
+      turnOutcomeActions={props.turnOutcomeActions}
       onSendEditedMessage={vi.fn()}
     />
   )
+}
+
+const turnOutcomeActions: TurnOutcomeActions = {
+  canResume: false,
+  isResuming: false,
+  isDisabled: false,
+  onResume: vi.fn(),
+  artifactRetryDisabled: false,
+  onRetryArtifact: vi.fn(),
+  onReportError: vi.fn(),
+  resolveError: (error) => error ?? ''
 }
 
 describe('WorkspaceMessageScroller optimistic send render', () => {
@@ -1149,6 +1163,214 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('>Calls</button>')
     expect(html).not.toContain('Input</dt>')
   })
+
+  it('uses each explicit Main turn outcome after publication retry while preserving failed history', async () => {
+    const failedAt = 1710000001000
+    const retriedAt = 1710000125000
+    const messages = [
+      createMessage({
+        id: 'prompt-failed',
+        turnOutcome: { kind: 'failed', settledAt: failedAt, error: 'Earlier failure' }
+      }),
+      createMessage({
+        id: 'reply-failed',
+        role: 'agent',
+        content: 'Earlier response',
+        status: 'error',
+        responseToMessageId: 'prompt-failed',
+        failedAt
+      }),
+      createMessage({
+        id: 'prompt-retried',
+        createdAt: 1710000005000,
+        turnOutcome: { kind: 'completed', settledAt: retriedAt }
+      }),
+      createMessage({
+        id: 'reply-retried',
+        role: 'agent',
+        content: 'Artifact response',
+        status: 'error',
+        responseToMessageId: 'prompt-retried',
+        failedAt: 1710000010000
+      })
+    ]
+    const html = await renderScroller(createSession({ status: 'idle', messages }), {
+      turnOutcomeActions
+    })
+    const timestamps = html.match(/<time[^>]*>(?:Completed|Failed) [^<]*<\/time>/g)
+
+    expect(timestamps).toHaveLength(2)
+    expect(timestamps![0]).toContain('Failed ')
+    expect(timestamps![0]).toContain(new Date(failedAt).toISOString())
+    expect(timestamps![1]).toContain('Completed ')
+    expect(timestamps![1]).toContain(new Date(retriedAt).toISOString())
+    expect(html).toContain('Elapsed 2m')
+    expect(messages[3].status).toBe('error')
+    expect(messages[3].failedAt).toBe(1710000010000)
+    expect(html).toContain('data-slot="historical-turn-outcome"')
+    expect(html).toContain('Earlier failure')
+  })
+
+  it('keeps historical Artifact Retry and Report actions scoped without historical Resume', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        resumeRecovery: {
+          kind: 'resume-required',
+          promptMessageId: 'prompt-failed',
+          cause: 'connection-lost'
+        },
+        messages: [
+          createMessage({
+            id: 'prompt-failed',
+            turnOutcome: {
+              kind: 'failed',
+              settledAt: 1710000002000,
+              error: 'Artifact publication failed.',
+              errorReportable: true,
+              recovery: 'retry-artifact-publication'
+            }
+          }),
+          createMessage({
+            id: 'prompt-current',
+            createdAt: 1710000003000,
+            sortIndex: 2,
+            turnOutcome: { kind: 'completed', settledAt: 1710000004000 }
+          })
+        ]
+      }),
+      {
+        turnOutcomeActions: {
+          ...turnOutcomeActions,
+          resumePromptMessageId: 'prompt-failed',
+          canResume: true
+        }
+      }
+    )
+
+    expect(html).toContain('data-slot="historical-turn-outcome"')
+    expect(html).toContain('data-prompt-message-id="prompt-failed"')
+    expect(html).toContain('Retry Artifact publication')
+    expect(html).toContain('Report error')
+    expect(html).not.toContain('Resume session')
+  })
+
+  it('uses an explicit failed outcome even when its response fragment completed', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({
+            id: 'prompt-failed',
+            turnOutcome: { kind: 'failed', settledAt: 1710000002000 }
+          }),
+          createMessage({
+            id: 'reply-complete',
+            role: 'agent',
+            completedAt: 1710000001000,
+            responseToMessageId: 'prompt-failed'
+          })
+        ]
+      }),
+      { turnOutcomeActions }
+    )
+
+    expect(html).toMatch(/<time[^>]*>Failed [^<]*<\/time>/)
+    expect(html).not.toMatch(/<time[^>]*>Completed [^<]*<\/time>/)
+  })
+
+  it.each(['legacy', 'isolated-subagent'] as const)(
+    'retains the Message footer lifecycle for %s transcripts',
+    async (surface) => {
+      const html = await renderScroller(
+        createSession({
+          status: 'idle',
+          messages: [
+            createMessage({
+              id: 'prompt-1',
+              turnOutcome:
+                surface === 'isolated-subagent'
+                  ? { kind: 'completed', settledAt: 1710000002000 }
+                  : undefined
+            }),
+            createMessage({
+              id: 'reply-1',
+              role: 'agent',
+              status: 'error',
+              responseToMessageId: 'prompt-1',
+              failedAt: 1710000001000
+            })
+          ]
+        }),
+        surface === 'legacy' ? { turnOutcomeActions } : {}
+      )
+
+      expect(html).toMatch(/<time[^>]*>Failed [^<]*<\/time>/)
+      expect(html).toContain(new Date(1710000001000).toISOString())
+      expect(html).not.toMatch(/<time[^>]*>Completed [^<]*<\/time>/)
+    }
+  )
+
+  it.each(['main', 'isolated-subagent', 'standalone'] as const)(
+    'only retains legacy historical interruption labels outside %s Main presentation',
+    async (surface) => {
+      const interrupted = createMessage({ id: 'legacy-prompt', interrupted: true })
+      const html = await renderScroller(
+        createSession({
+          messages: [interrupted, createMessage({ id: 'later-prompt', sortIndex: 2 })]
+        }),
+        surface === 'main' ? { turnOutcomeActions } : {}
+      )
+      expect(html.includes('This turn was interrupted.')).toBe(surface !== 'main')
+      expect(html).not.toContain('data-slot="historical-turn-outcome"')
+      expect(interrupted.interrupted).toBe(true)
+    }
+  )
+
+  it.each(['cancelled', 'interrupted'] as const)(
+    'does not label a %s Main turn completed from a completed response fragment',
+    async (kind) => {
+      const html = await renderScroller(
+        createSession({
+          status: 'idle',
+          messages: [
+            createMessage({
+              id: 'prompt-1',
+              turnOutcome:
+                kind === 'cancelled'
+                  ? { kind, settledAt: 1710000002000, recovery: 'resume' }
+                  : {
+                      kind,
+                      settledAt: 1710000002000,
+                      cause: 'connection-lost',
+                      recovery: 'resume'
+                    }
+            }),
+            createMessage({
+              id: 'reply-1',
+              role: 'agent',
+              completedAt: 1710000001000,
+              responseToMessageId: 'prompt-1',
+              turnUsage: { inputTokens: 12, cacheTokens: 3, outputTokens: 4 }
+            }),
+            createMessage({
+              id: 'prompt-2',
+              sortIndex: 3,
+              createdAt: 1710000003000,
+              turnOutcome: { kind: 'completed', settledAt: 1710000004000 }
+            })
+          ]
+        }),
+        { turnOutcomeActions }
+      )
+
+      expect(html).not.toMatch(/<time[^>]*>(?:Completed|Failed) [^<]*<\/time>/)
+      expect(html).toContain('Elapsed 2s')
+      expect(html).toContain('>Calls</button>')
+      expect(html).not.toContain('data-slot="turn-outcome-notice"')
+      expect(html).not.toContain('data-slot="historical-turn-outcome"')
+    }
+  )
 
   it('keeps persisted completed and failed timestamps outside live regions', async () => {
     const completedHtml = await renderScroller(

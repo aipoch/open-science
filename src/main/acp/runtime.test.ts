@@ -6258,11 +6258,12 @@ describe('ACP runtime session management', () => {
       onPrompt: () => promptGate.promise
     })
     const events: AcpRuntimeEvent[] = []
+    const onPromptEnded = vi.fn()
     const runtime = new AcpRuntime({
       appVersion: '0.2.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      callbacks: { onEvent: (event) => events.push(event) }
+      callbacks: { onEvent: (event) => events.push(event), onPromptEnded }
     })
     const session = await runtime.createSession({ cwd: '/workspace' })
     const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stay pending' })
@@ -6272,6 +6273,7 @@ describe('ACP runtime session management', () => {
     process.stdout.end()
 
     await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
+    expect(onPromptEnded).toHaveBeenCalledOnce()
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: 'error',
@@ -6281,6 +6283,8 @@ describe('ACP runtime session management', () => {
       })
     )
     promptGate.resolve()
+    await prompt.catch(() => undefined)
+    expect(onPromptEnded).toHaveBeenCalledOnce()
   })
 
   it('does not attribute a resumed session event to a prompt from a closed connection', async () => {

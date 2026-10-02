@@ -1,3 +1,4 @@
+import { latestTurnAnchor } from '../../../../shared/session-persistence'
 import {
   projectSessionActionability,
   type ChatMessage,
@@ -34,8 +35,8 @@ const isCurrentToolActive = (activity: ToolActivity): boolean =>
 const getCurrentRunTimeline = (
   session: ChatSession
 ): { prompt: ChatMessage | undefined; tools: ToolActivity[] } => {
-  const latestUserPromptId = session.messages.findLast((message) => message.role === 'user')?.id
-  const promptMessageId = session.activeRun?.promptMessageId ?? latestUserPromptId
+  const promptMessageId =
+    session.activeRun?.promptMessageId ?? latestTurnAnchor(session.messages)?.id
   const prompt = promptMessageId
     ? session.messages.find((message) => message.id === promptMessageId)
     : undefined

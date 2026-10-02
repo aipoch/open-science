@@ -1,3 +1,7 @@
+import {
+  reportWorkspaceOperationError,
+  clearWorkspaceOperationError
+} from './workspace-operation-error'
 import { isRuntimeWriter } from './runtime-writer-client'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import {
@@ -7,7 +11,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
   type PropsWithChildren,
@@ -43,7 +46,6 @@ import { useAcpRuntime } from './useAcpRuntime'
 import {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
-  markRunningSessionsDisconnectedOnDrop,
   processVisibleWorkspaceRuntimeEvents,
   processWorkspaceRuntimeEvents,
   refreshDelegatedWorkSessions,
@@ -243,29 +245,6 @@ const useOwnedWorkspaceAgentRuntime = (
     []
   )
   const drainRuntimeEvents = useWorkspaceRuntimeEventDrain(runtime.reconcileSnapshot)
-  const previousStatusRef = useRef(runtime.state.status)
-  const previousSessionStatusesRef = useRef(runtime.state.sessionConnectionStatuses)
-  const previousDurablePermissionSessionIdsRef = useRef<ReadonlySet<string>>(new Set())
-  const durablePermissionSessionIdsKey = JSON.stringify(
-    Array.from(
-      new Set([
-        ...runtime.state.pendingPermissions
-          .filter((request) => request.durable)
-          .map((request) => request.sessionId),
-        ...restoredPermissionSessions
-          .filter(
-            (session) =>
-              (session.status === 'waiting-permission' || session.status === 'error') &&
-              session.runtimeContext?.permission?.state === 'pending'
-          )
-          .map((session) => session.id)
-      ])
-    ).sort()
-  )
-  const durablePermissionSessionIds = useMemo<ReadonlySet<string>>(
-    () => new Set(JSON.parse(durablePermissionSessionIdsKey) as string[]),
-    [durablePermissionSessionIdsKey]
-  )
   useEffect(() => {
     subagentTranscripts.reconcileSessions(useSessionStore.getState().sessions)
     const unsubscribeSessions = useSessionStore.subscribe((state) => {
@@ -335,22 +314,6 @@ const useOwnedWorkspaceAgentRuntime = (
       cancelled = true
     }
   }, [delegatedWorkSessionKey, runtime.state.delegatedWorkRevision])
-
-  useEffect(() => {
-    const previousStatus = previousStatusRef.current
-    const previousSessionStatuses = previousSessionStatusesRef.current
-    const previousDurablePermissionSessionIds = previousDurablePermissionSessionIdsRef.current
-    previousStatusRef.current = runtime.state.status
-    previousSessionStatusesRef.current = runtime.state.sessionConnectionStatuses
-    previousDurablePermissionSessionIdsRef.current = durablePermissionSessionIds
-    markRunningSessionsDisconnectedOnDrop(
-      previousStatus,
-      runtime.state.status,
-      previousSessionStatuses,
-      runtime.state.sessionConnectionStatuses,
-      new Set([...previousDurablePermissionSessionIds, ...durablePermissionSessionIds])
-    )
-  }, [durablePermissionSessionIds, runtime.state.status, runtime.state.sessionConnectionStatuses])
 
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageIntent): Promise<SendWorkspaceMessageResult | undefined> => {
@@ -528,6 +491,7 @@ const useOwnedWorkspaceAgentRuntime = (
         )
         attempt.restored = isRestoredRequest
         attempt.sessionId = request?.sessionId
+        if (request) clearWorkspaceOperationError(request.sessionId)
         try {
           let restored: AcpPermissionResponse['restored']
           if (request && isRestoredRequest) {
@@ -601,8 +565,9 @@ const useOwnedWorkspaceAgentRuntime = (
           if (request && isSessionSizeLimitError(error)) {
             onSessionSizeLimit?.(request.sessionId)
           } else if (request && isRestoredRequest) {
-            // The main-owned authority is still valid. Keep the card actionable; useAcpRuntime retains
-            // the transient action error separately for the active Session to display.
+            // The main-owned authority is still valid. Keep the card actionable and scope the
+            // failure to this Session; runtime.actionError is global and never shown with an active Session.
+            reportWorkspaceOperationError(request.sessionId, getErrorMessage(error))
             const permission = useSessionStore
               .getState()
               .sessions.find((session) => session.id === request.sessionId)
@@ -611,7 +576,7 @@ const useOwnedWorkspaceAgentRuntime = (
               useSessionStore.getState().setPermissionPending(request.sessionId)
             }
           } else if (request) {
-            useSessionStore.getState().failRun(request.sessionId, getErrorMessage(error))
+            reportWorkspaceOperationError(request.sessionId, getErrorMessage(error))
           }
         }
       })()
@@ -638,8 +603,9 @@ const useOwnedWorkspaceAgentRuntime = (
   )
   const revokePermissionGrant = useCallback(
     async (sessionId: string, categoryKey: string): Promise<void> => {
+      clearWorkspaceOperationError(sessionId)
       const snapshot = await runtime.revokePermissionGrant(sessionId, categoryKey)
-      if (!snapshot) useSessionStore.getState().failRun(sessionId, 'Permission revoke failed')
+      if (!snapshot) reportWorkspaceOperationError(sessionId, 'Permission revoke failed')
     },
     [runtime]
   )
@@ -706,7 +672,6 @@ export {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   getResumeFailureMessage,
-  markRunningSessionsDisconnectedOnDrop,
   processVisibleWorkspaceRuntimeEvents,
   setWorkspacePermissionProfile,
   pendingWorkspacePermissions,

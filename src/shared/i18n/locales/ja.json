@@ -6819,6 +6819,13 @@
     "Folder access was updated. Run the command again when you are ready.": "フォルダーへのアクセス権を更新しました。準備ができたら、コマンドを再実行してください。",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "このフォルダーの権限は、「ファイル」で取り消すまで、すべてのセッションに適用されます。コマンドは自動実行されません。",
     "Drop files to attach or import a .science package": "ファイルをドロップして添付するか、.science パッケージをインポート",
-    "Files cannot be attached right now.": "現在ファイルを添付できません。"
+    "Files cannot be attached right now.": "現在ファイルを添付できません。",
+    "This turn was interrupted. Resume to continue.": "このターンは中断されました。再開して続行してください。",
+    "Connection lost — Resume to reconnect and continue.": "接続が失われました — 再開して再接続し、続行してください。",
+    "Session was interrupted before the app closed.": "アプリが閉じる前にセッションが中断されました。",
+    "The run failed with no error message.": "実行はエラーメッセージなしで失敗しました。",
+    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "未送信のメッセージをロールバックできませんでした（{{failure}}）。もう一度送信するか、実行を停止して再試行してください。",
+    "The unsent Session could not be removed ({{failure}}).": "未送信のセッションを削除できませんでした（{{failure}}）。",
+    "Agent Session cleanup did not complete.": "エージェントセッションのクリーンアップが完了しませんでした。"
   }
 }

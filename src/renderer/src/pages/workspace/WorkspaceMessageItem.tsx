@@ -44,7 +44,11 @@ import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
-import type { LiteratureReference, MessagePart } from '../../../../shared/session-persistence'
+import type {
+  LiteratureReference,
+  MessagePart,
+  TurnOutcome
+} from '../../../../shared/session-persistence'
 import {
   isAgentResultDeliveryAttribution,
   isComputeJobCompletionAttribution,
@@ -122,6 +126,9 @@ type MessageRuntimeIdentity = Partial<
 >
 type WorkspaceAssistantTurnCompletionProps = {
   message: ChatMessage
+  // Main conversation supplies its anchoring user Message's explicit outcome. Other transcript
+  // surfaces retain their own Message lifecycle, including isolated Subagent Attempts.
+  turnOutcome?: TurnOutcome
   turnStartedAt?: number
   runtimeIdentity?: MessageRuntimeIdentity
   canBranchInNewSession?: boolean
@@ -144,6 +151,9 @@ type WorkspaceMessageItemProps = {
   canEditMessage?: boolean
   // Immutable transcript surfaces can reuse the normal message renderer without live actions.
   showUserActions?: boolean
+  // Main conversation owns recovery beside the composer. Other transcript surfaces retain
+  // their legacy Message interruption label, including isolated Subagent Attempts.
+  showUserInterruption?: boolean
   // Renderer-only optimistic Composer submission; never persisted in the Session graph.
   sending?: boolean
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
@@ -456,23 +466,27 @@ const UserMessageActionTooltip = ({
 // to carry its usage metadata. Timeline consumers can therefore place it after later owned work.
 const WorkspaceAssistantTurnCompletion = ({
   message,
+  turnOutcome,
   turnStartedAt,
   runtimeIdentity,
   canBranchInNewSession = false,
   onBranchInNewSession
 }: WorkspaceAssistantTurnCompletionProps): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const isCompleted = turnOutcome ? turnOutcome.kind === 'completed' : message.status === 'complete'
+  const isFailed = turnOutcome ? turnOutcome.kind === 'failed' : message.status === 'error'
   const hasTurnUsage = Boolean(message.turnUsage || message.turnUsageUnavailable)
-  const showTurnUsage = hasTurnUsage || (message.status === 'complete' && Boolean(runtimeIdentity))
+  const showTurnUsage = hasTurnUsage || (isCompleted && Boolean(runtimeIdentity))
   const timestamp =
-    message.status === 'complete'
+    turnOutcome?.settledAt ??
+    (message.status === 'complete'
       ? message.completedAt
       : message.status === 'error'
         ? message.failedAt
-        : undefined
+        : undefined)
   const terminalDate = toMessageDate(timestamp)
   const turnStartedDate = toMessageDate(turnStartedAt)
-  const terminalLabel = message.status === 'error' ? t('Failed') : t('Completed')
+  const terminalLabel = isFailed ? t('Failed') : isCompleted ? t('Completed') : undefined
   const [copied, setCopied] = useState(false)
   const copyResetTimeoutRef = useRef<number | null>(null)
 
@@ -531,7 +545,9 @@ const WorkspaceAssistantTurnCompletion = ({
           </div>
         </>
       ) : null}
-      {terminalDate ? <MessageTimestamp label={terminalLabel} date={terminalDate} /> : null}
+      {terminalDate && terminalLabel ? (
+        <MessageTimestamp label={terminalLabel} date={terminalDate} />
+      ) : null}
       {terminalDate && turnStartedDate ? (
         <span data-slot="assistant-message-elapsed-segment" className="whitespace-nowrap">
           <span aria-label={t('Elapsed run time')}>
@@ -1309,6 +1325,7 @@ const WorkspaceMessageItemImpl = ({
   onPreviewMentionArtifact,
   canEditMessage = false,
   showUserActions = true,
+  showUserInterruption = true,
   sending = false,
   contentPaddingClassName,
   onSendEditedMessage,
@@ -1801,7 +1818,10 @@ const WorkspaceMessageItemImpl = ({
                     )}
                   </WorkspaceUserMessageBubble>
                 </div>
-                {sending || sentDate || message.interrupted || showRevisionNavigation ? (
+                {sending ||
+                sentDate ||
+                (showUserInterruption && message.interrupted && !message.turnOutcome) ||
+                showRevisionNavigation ? (
                   <div
                     data-slot="user-message-footer"
                     className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
@@ -1815,7 +1835,7 @@ const WorkspaceMessageItemImpl = ({
                         {t('Sending…')}
                       </span>
                     ) : null}
-                    {message.interrupted ? (
+                    {showUserInterruption && message.interrupted && !message.turnOutcome ? (
                       <span
                         data-slot="user-message-interrupted"
                         className="italic text-status-warning-foreground dark:text-status-warning-dark-foreground"
@@ -2058,6 +2078,7 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onBranchInNewSession === next.onBranchInNewSession &&
   (previous.canEditMessage ?? false) === (next.canEditMessage ?? false) &&
   (previous.showUserActions ?? true) === (next.showUserActions ?? true) &&
+  (previous.showUserInterruption ?? true) === (next.showUserInterruption ?? true) &&
   (previous.sending ?? false) === (next.sending ?? false) &&
   previous.contentPaddingClassName === next.contentPaddingClassName &&
   previous.turnStartedAt === next.turnStartedAt &&

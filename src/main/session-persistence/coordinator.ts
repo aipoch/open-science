@@ -20,8 +20,10 @@ import {
   type UpdateSessionArchiveRequest,
   type SessionRuntimeContext,
   type SessionLoadFailure,
-  type SessionLoadWarning
+  type SessionLoadWarning,
+  type SessionSummary
 } from '../../shared/session-persistence'
+import { deriveSessionAttention, type SessionRecordProblem } from '../../shared/session-persistence'
 import type {
   AttachDelegatedMessageArtifactsInput,
   AttemptAgentEventInput,
@@ -49,7 +51,9 @@ import * as computeHostAccess from '../compute/session-compute-host-access'
 import type { ProjectSessionDeletionState } from './repository'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
+import type { AcpRuntimeEvent } from '../../shared/acp'
 import { saveSessionWithRevision } from './save-session'
+import { observeSessionRecordWrites } from './record-facts'
 import {
   SessionPersistenceStateOwner,
   SessionRuntimeContextRevisionConflictError,
@@ -57,7 +61,8 @@ import {
   type PatchSessionRuntimeContextCommand,
   type SessionMetadata,
   type SessionMetadataSnapshot,
-  type SessionSaveAuthority
+  type SessionSaveAuthority,
+  type RuntimeTerminalCommitRequest
 } from './state-owner'
 import {
   SessionSideChatPersistenceOwner,
@@ -192,6 +197,114 @@ const emitRecoverableDiagnostic = (
 // Session scopes. Catalog-wide reconciliation uses an exclusive barrier so unrelated Projects overlap
 // without allowing a late save to race or revive durable deletion authority.
 class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
+  private readonly notifySessionRecordProblems: SessionUpdatePublisher
+  private readonly sessionRecordProblems = new Map<string, Set<SessionRecordProblem>>()
+  private recordProblemKey(projectId: string, sessionId: string): string {
+    return `${projectId}\0${sessionId}`
+  }
+  recordSessionRecordProblem(
+    projectId: string,
+    sessionId: string,
+    problem: SessionRecordProblem
+  ): void {
+    const key = this.recordProblemKey(projectId, sessionId)
+    const problems = this.sessionRecordProblems.get(key) ?? new Set<SessionRecordProblem>()
+    problems.add(problem)
+    this.sessionRecordProblems.set(key, problems)
+  }
+  clearSessionRecordProblem(
+    projectId: string,
+    sessionId: string,
+    problem?: SessionRecordProblem
+  ): void {
+    const key = this.recordProblemKey(projectId, sessionId)
+    if (!problem) {
+      this.sessionRecordProblems.delete(key)
+      return
+    }
+    const problems = this.sessionRecordProblems.get(key)
+    if (!problems) return
+    problems.delete(problem)
+    if (problems.size === 0) this.sessionRecordProblems.delete(key)
+  }
+  listSessionRecordProblems(projectId: string, sessionId: string): readonly SessionRecordProblem[] {
+    return [...(this.sessionRecordProblems.get(this.recordProblemKey(projectId, sessionId)) ?? [])]
+  }
+  recordRuntimeTerminalFailure(
+    event: AcpRuntimeEvent,
+    retry: () => Promise<void>,
+    waitForWriteRelease?: () => Promise<void>
+  ): void {
+    this.stateOwner.recordRuntimeTerminalFailure(event, retry, waitForWriteRelease)
+    const sessionId = event.sessionId
+    if (event.terminalCommitFailure === 'missing-record' && event.terminalScope && sessionId)
+      this.recordSessionRecordProblem(event.terminalScope.projectId, sessionId, 'missing-record')
+  }
+  listRuntimeTerminalFailures(): AcpRuntimeEvent[] {
+    return this.stateOwner.listRuntimeTerminalFailures()
+  }
+  projectRuntimeSession(session: PersistedChatSession): PersistedChatSession {
+    return {
+      ...this.stateOwner.projectRuntimeSession(session),
+      recordProblems: this.listSessionRecordProblems(session.projectId, session.id)
+    }
+  }
+  async projectRuntimeSessionSummaries(
+    summaries: readonly SessionSummary[]
+  ): Promise<SessionSummary[]> {
+    const failures = this.listRuntimeTerminalFailures()
+    return Promise.all(
+      summaries.map(async (summary) => {
+        const problems = this.listSessionRecordProblems(summary.projectId, summary.id)
+        const withProblems = (candidate: SessionSummary): SessionSummary => ({
+          ...candidate,
+          recordProblems: problems,
+          ...(problems.length > 0 &&
+          candidate.presentedStatus !== 'running' &&
+          !candidate.presentedStatus.startsWith('waiting-')
+            ? { presentedStatus: 'error' as const }
+            : {})
+        })
+        const failure = failures.find(
+          ({ sessionId, terminalScope }) =>
+            sessionId === summary.id && terminalScope?.projectId === summary.projectId
+        )
+        if (!failure) return withProblems(summary)
+        const loaded = await this.repository.loadSessionWithDiagnostics(
+          summary.projectId,
+          summary.id,
+          {
+            mode: 'read-only',
+            preserveRuntimeState: true
+          }
+        )
+        if (loaded.status === 'missing' && failure.terminalCommitFailure === 'missing-record')
+          return withProblems({
+            ...summary,
+            status: 'error',
+            presentedStatus: 'error',
+            needsStartupRecovery: false
+          })
+        if (loaded.status !== 'found') return withProblems(summary)
+        const projected = this.projectRuntimeSession(loaded.session)
+        if (projected === loaded.session) return withProblems(summary)
+        return withProblems({
+          ...summary,
+          status: projected.status,
+          presentedStatus:
+            projected.status === 'running' || projected.status.startsWith('waiting-')
+              ? projected.status
+              : deriveSessionAttention(projected)
+                ? 'error'
+                : 'idle',
+          needsStartupRecovery: false
+        })
+      })
+    )
+  }
+  retryRuntimeTerminalCommit(request: RuntimeTerminalCommitRequest): Promise<void> {
+    return this.stateOwner.retryRuntimeTerminalCommit(request)
+  }
   private readonly exportingSessions = new Map<
     string,
     { projectId: string; released: Promise<void> }
@@ -224,6 +337,39 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     preparePackageDeletion?: (session: PersistedChatSession) => Promise<void>
   ) {
     const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
+    this.notifySessionRecordProblems = publishSessionUpdate
+    repository = observeSessionRecordWrites(repository, {
+      failedSizeLimit: async (session) => {
+        this.recordSessionRecordProblem(session.projectId, session.id, 'size-limit')
+        try {
+          const loaded = await repository.loadSessionWithDiagnostics(
+            session.projectId,
+            session.id,
+            {
+              mode: 'read-only',
+              preserveRuntimeState: true
+            }
+          )
+          if (loaded.status === 'found')
+            this.notifySessionRecordProblems(
+              this.projectRuntimeSession(loaded.session),
+              'runtime-transcript'
+            )
+        } catch {
+          // A read/publication failure cannot replace the original operation error.
+        }
+      },
+      committed: (session) => {
+        const hadProblems = this.listSessionRecordProblems(session.projectId, session.id).length > 0
+        this.clearSessionRecordProblem(session.projectId, session.id)
+        if (hadProblems)
+          this.notifySessionRecordProblems(
+            this.projectRuntimeSession(session),
+            'runtime-transcript'
+          )
+      }
+    })
+    this.repository = repository
     this.stateOwner = new SessionPersistenceStateOwner({
       repository,
       fileIndex,
@@ -237,7 +383,24 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         publishSessionUpdate(session, 'runtime-context'),
       notifyRuntimeTranscriptSessionUpdated: (session) =>
         publishSessionUpdate(session, 'runtime-transcript'),
-      notifyDelegationPolicyUpdated: (session) => onDelegationPolicyUpdated?.(session)
+      notifyDelegationPolicyUpdated: (session) => onDelegationPolicyUpdated?.(session),
+      releaseAbandonedPreparation: ({ projectId, sessionId }) => {
+        void this.operationScheduler
+          .runSession(projectId, sessionId, () =>
+            this.stateOwner.releaseAbandonedPreparation({ projectId, sessionId })
+          )
+          .catch((error: unknown) => {
+            try {
+              log.warn('abandoned prompt preparation release failed', {
+                operation: 'prompt-preparation-release',
+                outcome: 'degraded',
+                ...diagnosticErrorFields(error)
+              })
+            } catch {
+              // Diagnostics cannot change recovery; the next Session operation retries lazily.
+            }
+          })
+      }
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
@@ -268,6 +431,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       notifySessionsDeleted: (sessionIds) => this.notifySessionsDeleted(sessionIds)
     })
     this.reconciliationOwner = new SessionPersistenceReconciliationOwner({
+      ownsPromptPreparation: (session) => this.stateOwner.ownsPromptPreparation(session),
+      onSessionCommitted: (session) => {
+        this.stateOwner.recordSession(session)
+        publishSessionUpdate(session, 'runtime-transcript')
+      },
       repository,
       fileIndex,
       provenance,
@@ -861,6 +1029,23 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<PersistedChatSession> {
     // A renderer may already have a delayed projection save when another client reserves export.
     // Wait outside the scheduler lane so browsing/global reads and unrelated Sessions stay usable.
+    const terminalWriteRelease = this.stateOwner.assertRuntimeTerminalWriteAvailable(session.id)
+    if (terminalWriteRelease) await terminalWriteRelease
+    if (options.conversationCommands?.some(({ kind }) => kind === 'prepare-prompt')) {
+      const failure = this.stateOwner
+        .listRuntimeTerminalFailures()
+        .find(
+          (event) =>
+            event.sessionId === session.id && event.terminalScope?.projectId === session.projectId
+        )
+      if (failure?.promptMessageId && failure.terminalScope)
+        await this.stateOwner.retryRuntimeTerminalCommit({
+          projectId: session.projectId,
+          sessionId: session.id,
+          promptMessageId: failure.promptMessageId,
+          executionId: failure.terminalScope.executionId
+        })
+    }
     for (;;) {
       const result = await this.operationScheduler.runSession(
         session.projectId,
@@ -878,7 +1063,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           }
         }
       )
-      if (result.saved) return result.saved
+      if (result.saved) {
+        return this.projectRuntimeSession(result.saved)
+      }
       await result.released
     }
   }
@@ -971,7 +1158,24 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   }
 
   // Drain earlier writes in the existing persistence lane before freezing this Session.
-  reserveSessionExport(projectId: string, sessionId: string): Promise<() => void> {
+  async reserveSessionExport(projectId: string, sessionId: string): Promise<() => void> {
+    const failure = this.listRuntimeTerminalFailures().find(
+      (event) => event.sessionId === sessionId && event.terminalScope?.projectId === projectId
+    )
+    if (failure?.promptMessageId && failure.terminalScope) {
+      await this.retryRuntimeTerminalCommit({
+        projectId,
+        sessionId,
+        promptMessageId: failure.promptMessageId,
+        executionId: failure.terminalScope.executionId
+      })
+      if (
+        this.listRuntimeTerminalFailures().some(
+          (event) => event.sessionId === sessionId && event.terminalScope?.projectId === projectId
+        )
+      )
+        throw new Error('Wait for the Session to finish before exporting it.')
+    }
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
       this.assertMutable(projectId, sessionId, 'mutate')
       const key = sessionKey(projectId, sessionId)
@@ -1032,6 +1236,28 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
+  commitRecoveredArtifactReferences(
+    request: ReconcilePendingArtifactsRequest,
+    artifacts: import('../../shared/artifacts').ArtifactFile[]
+  ): Promise<void> {
+    return this.operationScheduler.runSession(request.projectId, request.sessionId, async () => {
+      this.assertMutable(request.projectId, request.sessionId, 'mutate')
+      const authority = await this.repository.loadSessionWithDiagnostics(
+        request.projectId,
+        request.sessionId,
+        { preserveRuntimeState: true }
+      )
+      if (authority.status !== 'found')
+        throw new Error('Cannot retry Artifact finalization without a readable Session.')
+      await this.reconciliationOwner.commitRecoveredArtifacts(
+        authority.session,
+        request.messageId,
+        artifacts,
+        request.pendingPaths
+      )
+    })
+  }
+
   // Session details is Main-owned metadata: its background lifecycle and the manual edit command
   // must compare and replace one authoritative Session inside the same lane as every other Session
   // mutation. It does not change transcript/file bindings, so the normal file-index and provenance
@@ -1073,11 +1299,15 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         throw new Error('This Project contains a Session locked for export.')
       this.deletedProjects.add(projectId)
       try {
-        return await this.deletionOwner.deleteProjectSessions(
+        const deleted = await this.deletionOwner.deleteProjectSessions(
           projectId,
           (sessionIds, operation) => scope.runSessionIdentities(sessionIds, operation),
           options
         )
+        for (const key of this.sessionRecordProblems.keys()) {
+          if (key.startsWith(`${projectId}\0`)) this.sessionRecordProblems.delete(key)
+        }
+        return deleted
       } catch (error) {
         try {
           const state = await this.deletionOwner.getProjectSessionDeletionState(projectId)
@@ -1202,6 +1432,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
               throw new SessionDeletionCommittedError(error)
             }))
         if (reconciled) {
+          this.clearSessionRecordProblem(projectId, sessionId)
           if (deletion.cleanupError) throw deletion.cleanupError
           return undefined
         }
@@ -1213,6 +1444,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           .catch((error: unknown) => {
             throw new SessionDeletionCommittedError(error)
           })
+        this.clearSessionRecordProblem(projectId, sessionId)
         if (cleanupError) throw cleanupError
       }
     )

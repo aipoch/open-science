@@ -1035,7 +1035,9 @@ describe('Session Store architecture', () => {
         'src/renderer/src/stores/session-store.test.ts',
         'src/renderer/src/stores/session-conversation-intents.test.ts',
         'src/renderer/src/stores/session-conversation-intents.ts',
-        'src/renderer/src/stores/session-store-conversation-intents.test.ts'
+        'src/renderer/src/stores/session-store-conversation-intents.test.ts',
+        'src/renderer/src/stores/session-store-compaction-gate.test.ts',
+        'src/renderer/src/stores/session-store-attention.test.ts'
       ],
       interfacePaths: [
         'src/renderer/src/stores/session-store.ts',
@@ -1056,7 +1058,9 @@ describe('Session Store architecture', () => {
           'src/renderer/src/stores/session-store.architecture.test.ts',
           'src/renderer/src/stores/session-job-store.test.ts',
           'src/renderer/src/stores/session-conversation-intents.test.ts',
-          'src/renderer/src/stores/session-store-conversation-intents.test.ts'
+          'src/renderer/src/stores/session-store-conversation-intents.test.ts',
+          'src/renderer/src/stores/session-store-compaction-gate.test.ts',
+          'src/renderer/src/stores/session-store-attention.test.ts'
         ],
         contract: ['src/shared/session-persistence.test.ts'],
         consumer: [
@@ -1388,7 +1392,11 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx',
           'src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx',
           'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
-          'src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx'
+          'src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx',
+          'src/renderer/src/lib/acp/workspace-prompt-admission.test.ts',
+          'src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts',
+          'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
+          'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts'
         ]
       },
       capabilityOverlays: ['renderer_state'],

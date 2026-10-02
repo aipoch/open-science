@@ -1445,6 +1445,73 @@ if (process.argv.includes('--version')) {
         return { stopReason: 'end_turn' }
       }
       if (prompt.includes(PROVIDER_RUNTIME_FAILURE_PROMPT)) await rejectThroughProviderBridge()
+      // Outcome journeys escape the ordinary successful-reply catch below. These checkpoints
+      // let the isolated Electron fixture arm an exact write fault before a terminal response.
+      if (prompt.includes('Fail the turn outcome fixture.')) {
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text: 'Turn outcome failure checkpoint.' }
+          }
+        })
+        throw acp.RequestError.internalError({}, 'Synthetic turn outcome failure.')
+      }
+      if (prompt.includes('Hold the turn outcome fixture.')) {
+        const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: {
+              type: 'text',
+              text: resumed
+                ? 'Turn outcome resumed successfully.'
+                : 'Turn outcome cancellation checkpoint.'
+            }
+          }
+        })
+        if (resumed) return { stopReason: 'end_turn' }
+        await waitForSessionCancellation(context.params.sessionId)
+        return { stopReason: 'cancelled' }
+      }
+      if (prompt.includes('Create the turn outcome retry artifact.')) {
+        const publication = await createProvenanceArtifact(context.params.sessionId)
+        const captureRoot = process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT
+        if (!captureRoot) throw new Error('The outcome fixture capture root is unavailable.')
+        const gate = join(captureRoot, 'turn-outcome-artifact-release.json')
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text: `${publication}\nTurn outcome artifact checkpoint.` }
+          }
+        })
+        let gateClosed = false
+        const result = await Promise.race([
+          (async () => {
+            // A finite wait also permits fixture shutdown when a failed test never releases it.
+            for (let attempt = 0; attempt < 1_800 && !gateClosed; attempt++) {
+              try {
+                if (JSON.parse(await readFile(gate, 'utf8')).sessionId === context.params.sessionId)
+                  return 'released'
+              } catch (error) {
+                if (error.code !== 'ENOENT') throw error
+              }
+              await delay(100)
+            }
+            if (!gateClosed) throw new Error('The outcome Artifact gate was not released.')
+            return 'cancelled'
+          })(),
+          waitForSessionCancellation(context.params.sessionId).then(() => 'cancelled')
+        ]).finally(() => {
+          gateClosed = true
+        })
+        return { stopReason: result === 'cancelled' ? 'cancelled' : 'end_turn' }
+      }
       // Use the supported mid-response interruption wrapper: generic provider errors are terminal
       // failures and intentionally do not offer Resume. Let this escape the reply fixture catch.
       if (

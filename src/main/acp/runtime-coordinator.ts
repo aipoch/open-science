@@ -171,6 +171,7 @@ class AcpRuntimeCoordinator {
   private snapshotRevision = 0
   private initializationGeneration = 0
   private globalCancellationGeneration = 0
+  private readonly handoffOutcomeGenerations = new Map<string, object>()
   private delegatedWorkRevision = 0
   private promptAttemptSequence = 0
   private readonly pendingPromptStarts = new Map<string, PendingPromptStart[]>()
@@ -782,9 +783,41 @@ class AcpRuntimeCoordinator {
     return this.runtimeForSession(input.sessionId).createClaudeCodeContinuationRequest(input)
   }
 
-  reportApprovedHandoffFailure(sessionId: string): void {
-    this.runtimeForSession(sessionId).reportApprovedHandoffFailure(sessionId)
-    this.emitState()
+  captureApprovedHandoffFailure(sessionId: string): (() => Promise<void>) | undefined {
+    const active = this.activePromptRequests.get(sessionId)
+    const promptMessageId = active?.request.provenanceContext?.promptMessageId
+    if (!active?.turnToken || !promptMessageId) return undefined
+    const executionId = active.turnToken
+    const originatingRuntime = active.runtime
+    const generation = {}
+    this.handoffOutcomeGenerations.set(sessionId, generation)
+    const cancellationGeneration = this.globalCancellationGeneration
+    const isApprovedHandoffCurrent = (): boolean =>
+      this.handoffOutcomeGenerations.get(sessionId) === generation &&
+      this.globalCancellationGeneration === cancellationGeneration
+    const isCurrent = (): boolean => {
+      const current = this.activePromptRequests.get(sessionId)
+      return (
+        isApprovedHandoffCurrent() &&
+        (!current || current.turnToken === undefined || current.turnToken === executionId)
+      )
+    }
+    const originalStartedAt = originatingRuntime.authorizeApprovedHandoffContinuation(
+      sessionId,
+      promptMessageId,
+      executionId,
+      isApprovedHandoffCurrent
+    )
+    return async () => {
+      await originatingRuntime.reportApprovedHandoffFailure(
+        sessionId,
+        promptMessageId,
+        executionId,
+        isCurrent,
+        originalStartedAt
+      )
+      this.emitState()
+    }
   }
 
   // Hot-switches the specialist on a live session. Delegates to the owning runtime so a framework
@@ -1964,6 +1997,7 @@ class AcpRuntimeCoordinator {
   }
 
   private invalidateSessionTurn(sessionId: string, notifyCancellation = true): void {
+    if (notifyCancellation) this.handoffOutcomeGenerations.delete(sessionId)
     for (const attempt of this.pendingPromptStarts.get(sessionId) ?? []) {
       attempt.cancelled = true
       attempt.startAdmission?.reject(

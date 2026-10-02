@@ -18,7 +18,11 @@ import {
 import { z } from 'zod'
 
 const identity = z.string().min(1).max(256)
-const commandBase = { id: identity, timestamp: z.number().finite().nonnegative() }
+const commandBase = {
+  id: identity,
+  timestamp: z.number().finite().nonnegative(),
+  preparationId: identity.optional()
+}
 const agentFrameworkId = z.enum(['claude-code', 'opencode', 'codex', 'codebuddy'])
 const segmentSchema = z.object({
   id: identity,
@@ -31,6 +35,13 @@ const segmentSchema = z.object({
 const wireCommands = z
   .array(
     z.discriminatedUnion('kind', [
+      z.object({
+        ...commandBase,
+        kind: z.literal('prepare-prompt'),
+        promptMessageId: identity,
+        mode: z.enum(['new', 'resume', 'rearm'])
+      }),
+      z.object({ ...commandBase, kind: z.literal('rollback-prompt'), preparationId: identity }),
       z.object({
         ...commandBase,
         kind: z.literal('append-user'),
@@ -101,7 +112,10 @@ export const sanitizeSessionConversationCommands = (
 export type SessionConversationCommand = {
   id: string
   timestamp: number
+  preparationId?: string
 } & (
+  | { kind: 'prepare-prompt'; promptMessageId: string; mode: 'new' | 'resume' | 'rearm' }
+  | { kind: 'rollback-prompt'; preparationId: string }
   | {
       kind: 'append-user'
       branchId: string
@@ -202,6 +216,11 @@ export const applySessionConversationCommands = (
       throw new Error('Root Agent Frame active Branch is invalid.')
     }
     switch (command.kind) {
+      case 'prepare-prompt':
+      case 'rollback-prompt':
+        // These commands require Main's preparation receipt. They are never optimistic graph
+        // mutations and must not be replayed through the renderer's shared projection helper.
+        throw new Error('Invalid Session conversation command identity.')
       case 'append-user': {
         if (command.message.role !== 'user') throw new Error('Only user Messages may be submitted.')
         const existing = graph.messages.find((entry) => entry.id === command.message.id)

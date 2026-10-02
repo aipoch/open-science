@@ -1,3 +1,5 @@
+import { useWorkspaceOperationErrors } from './workspace-operation-error'
+import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -22,6 +24,8 @@ import {
 
 describe('branchWorkspaceSessionFromMessage', () => {
   beforeEach(() => {
+    resetSessionConversationIntentsForTests()
+    useWorkspaceOperationErrors.setState({ errors: {} })
     useSessionStore.setState(createInitialSessionState())
   })
 
@@ -283,10 +287,14 @@ describe('branchWorkspaceSessionFromMessage', () => {
         expect(
           useSessionStore.getState().sessions.find((session) => session.id === 'child-session')
         ).toMatchObject({
-          status: 'error',
-          error: failure.message,
+          status: disk.get('child-session')?.status,
           messages: [expect.anything(), expect.anything()]
         })
+        expect(
+          useSessionStore.getState().sessions.find((session) => session.id === 'child-session')
+            ?.error
+        ).toBe(disk.get('child-session')?.error)
+        expect(useWorkspaceOperationErrors.getState().errors['child-session']).toBe(failure.message)
       }
       expect(deleteSession).toHaveBeenCalledWith({
         projectId: 'project-1',

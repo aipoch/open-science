@@ -90,6 +90,7 @@ const createHarness = (
   captureSessionBackend: ReturnType<typeof vi.fn>
   resumeSession: ReturnType<typeof vi.fn>
   prepareRuntimeResume: ReturnType<typeof vi.fn>
+  completeRuntimeAttachment: ReturnType<typeof vi.fn>
   session: PersistedChatSession
   request: {
     projectId: string
@@ -110,6 +111,7 @@ const createHarness = (
   }))
   const hasLiveSession = vi.fn(() => true)
   const prepareRuntimeResume = vi.fn(async () => {})
+  const completeRuntimeAttachment = vi.fn(async () => {})
   const captureSessionBackend = vi.fn(
     () =>
       ({
@@ -154,7 +156,7 @@ const createHarness = (
     { create: vi.fn() } as never,
     taskNotifications,
     archiveAvailability,
-    { loadSession: vi.fn(async () => session), prepareRuntimeResume },
+    { loadSession: vi.fn(async () => session), prepareRuntimeResume, completeRuntimeAttachment },
     saveAsSkillAdmission
   )
   const graph = session.conversationGraph!
@@ -166,6 +168,7 @@ const createHarness = (
     startContinuationWhenDispatchAdmitted,
     hasLiveSession,
     prepareRuntimeResume,
+    completeRuntimeAttachment,
     captureSessionBackend,
     resumeSession,
     session,
@@ -201,6 +204,20 @@ describe('ACP resume Session workflow', () => {
     expect(harness.prepareRuntimeResume.mock.invocationCallOrder[0]).toBeLessThan(
       harness.resumeSession.mock.invocationCallOrder[0]
     )
+  })
+
+  it('cleans up attachment-only recovery only after the provider successfully attaches', async () => {
+    const harness = createHarness(undefined, archiveAvailability)
+    await harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
+    expect(harness.completeRuntimeAttachment).toHaveBeenCalledWith(persistedProjectId, 'session-1')
+    expect(harness.resumeSession).toHaveBeenCalledBefore(harness.completeRuntimeAttachment)
+
+    harness.completeRuntimeAttachment.mockClear()
+    harness.resumeSession.mockRejectedValueOnce(new Error('attachment unavailable'))
+    await expect(
+      harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
+    ).rejects.toThrow('attachment unavailable')
+    expect(harness.completeRuntimeAttachment).not.toHaveBeenCalled()
   })
 
   it('clears the interrupted run before admitting the next prompt after restart', async () => {

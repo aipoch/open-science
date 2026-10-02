@@ -451,29 +451,12 @@ export const projectFailedRun = (
 export const projectAgentStatus = (session: ChatSession, text: string): ChatSession =>
   session.status === 'running' ? { ...session, agentStatus: text } : session
 
-export const projectCompactionStarted = (
-  session: ChatSession,
-  supersedeActiveRun = false
-): ChatSession => {
-  if (session.activeRun && !supersedeActiveRun) return session
-  return {
-    ...session,
-    ...CLEARED_AGENT_RUN_STATE,
-    status: 'idle',
-    error: undefined,
-    errorReportable: undefined,
-    compacting: true,
-    messages: compactTerminalMessageEventIds(failStreamingMessages(session.messages)),
-    activities: compactTerminalActivityEventIds(failOpenActivities(session.activities)),
-    activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
-    updatedAt: Date.now()
-  }
-}
+// Compaction is a local command gate; terminal run/message/tool settlement belongs to Main.
+export const projectCompactionStarted = (session: ChatSession): ChatSession =>
+  session.activeRun || session.compacting ? session : { ...session, compacting: true }
 
 export const projectCompactionFinished = (session: ChatSession): ChatSession =>
-  session.compacting && !session.activeRun
-    ? { ...session, status: 'idle', compacting: undefined, updatedAt: Date.now() }
-    : session
+  session.compacting ? { ...session, compacting: undefined } : session
 
 export const projectCompactionFailed = (session: ChatSession, error: string): ChatSession =>
   session.compacting && !session.activeRun

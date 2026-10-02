@@ -6819,6 +6819,13 @@
     "Folder access was updated. Run the command again when you are ready.": "文件夹访问权限已更新。准备好后，请手动重新运行命令。",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "此文件夹权限跨会话生效，直到您在“文件”中撤销。命令不会自动运行。",
     "Drop files to attach or import a .science package": "拖放文件以添加附件，或导入 .science 研究包",
-    "Files cannot be attached right now.": "当前无法添加附件。"
+    "Files cannot be attached right now.": "当前无法添加附件。",
+    "This turn was interrupted. Resume to continue.": "此轮操作已中断。恢复以继续。",
+    "Connection lost — Resume to reconnect and continue.": "连接已断开 — 恢复以重新连接并继续。",
+    "Session was interrupted before the app closed.": "应用关闭前，会话已中断。",
+    "The run failed with no error message.": "运行失败，未提供错误信息。",
+    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "未发送的消息无法回滚（{{failure}}）。请重新发送或停止运行后重试。",
+    "The unsent Session could not be removed ({{failure}}).": "未发送的会话无法移除（{{failure}}）。",
+    "Agent Session cleanup did not complete.": "智能体会话清理未完成。"
   }
 }

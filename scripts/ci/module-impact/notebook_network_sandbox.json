@@ -589,7 +589,20 @@
       "src/main/notebook/windows-runtime-probe.windows.test.ts",
       "scripts/windows-release-workflows.test.ts",
       "src/main/local-fs/notebook-folder-access.integration.test.ts",
-      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
+      "src/main/session-persistence/missing-runtime-session-repro.test.ts",
+      "src/main/session-persistence/prompt-preparation-restart.test.ts",
+      "src/main/session-persistence/terminal-commit-scheduler.test.ts",
+      "src/main/session-persistence/prompt-preparation-owner.test.ts",
+      "src/main/session-persistence/session-state-authority.test.ts",
+      "src/main/session-persistence/terminal-live-projection.test.ts",
+      "src/main/session-persistence/reconciliation-renderer-parity.test.ts",
+      "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
+      "src/main/session-persistence/attention-projection.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts",
+      "src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx",
+      "src/main/acp/approved-handoff-outcome.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.test.ts"
     ]
   },
   "capabilityOverlays": [],

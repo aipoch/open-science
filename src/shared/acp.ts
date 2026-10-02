@@ -163,6 +163,10 @@ export type AcpHandoffFailure = {
 // both sides at once.
 export const ACP_PROMPT_FAILED_EVENT_TITLE = 'Prompt failed'
 
+// Live, non-terminal notice that Artifact cleanup failed after the turn settled. It never rewrites
+// the Turn Outcome and is not an Artifact publication failure.
+export const ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE = 'Artifact cleanup failed'
+
 // Main owns restored permission authority. These lifecycle events let renderer projections follow
 // durable settlement without making the renderer part of the persistence protocol.
 export const ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE =
@@ -540,6 +544,23 @@ type AcpRuntimeEventBase = {
   // from the ACP layer itself (our runtime) and stays reportable unless it is one of our own crafted,
   // actionable reminder messages.
   providerError?: boolean
+  // Main-owned terminal classification, independent of provider error wording.
+  interruptionCause?: 'app-restart' | 'connection-lost' | 'terminal-commit-failed'
+  // Live-only release after bounded terminal persistence retries. Never written to Session JSON.
+  terminalCommitFailure?: 'missing-record' | 'storage'
+  terminalCommitError?: string
+  promptExecutionId?: string
+  terminalScope?: {
+    projectId: string
+    executionId: string
+    startedAt: number
+    agentFrameId: string
+    messageBranchId: string
+    runtimeSegmentId: string
+  }
+  errorReportable?: boolean
+  // A post-terminal Artifact failure still belongs to the original prompt.
+  artifactFailure?: true
   // Main has durably committed this event's Message/Artifact projection before publication.
   publicationOwner?: 'main'
   sessionId?: string

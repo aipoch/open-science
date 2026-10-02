@@ -13,6 +13,7 @@ import {
   type SessionSummary,
   type SessionUsageProjection
 } from '../../shared/session-persistence'
+import { deriveSessionAttention } from '../../shared/session-persistence'
 
 // Session projection writes contend with upload publication and other metadata writes on the
 // shared single-connection SQLite client. Keep transaction admission bounded, but allow the
@@ -24,7 +25,7 @@ const runProjectionTransaction = <Result>(
 ): Promise<Result> => client.$transaction(operation, { maxWait: 30_000 })
 
 const PROJECTION_STATE_ID = 'session-projection'
-const PROJECTION_VERSION = 5
+const PROJECTION_VERSION = 6
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
@@ -263,18 +264,22 @@ const presentedStatus = (session: PersistedChatSession): PersistedSessionStatus 
     return 'waiting-permission'
   }
   if (session.status === 'waiting-for-user') return 'waiting-for-user'
-  if (session.status === 'waiting-plan-approval') {
+  if (
+    session.status === 'waiting-plan-approval' ||
+    session.runtimeContext?.plan?.approval === 'pending'
+  ) {
     return 'waiting-plan-approval'
   }
   if (hasAnswerableDelegatedQuestion(session)) return 'waiting-for-user'
   if (
+    session.activeRun !== undefined ||
     session.status === 'running' ||
-    (session.status.startsWith('waiting-') && session.activeRun !== undefined) ||
     hasCurrentRunningDelegatedAttempt(session)
   ) {
     return 'running'
   }
-  return session.status.startsWith('waiting-') ? 'idle' : session.status
+  if (deriveSessionAttention(session)) return 'error'
+  return 'idle'
 }
 
 const projectionMessages = sessionUsageMessages
@@ -435,8 +440,8 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
       updatedAt: finiteNonNegativeInteger(session.updatedAt),
       presentedActivityAt: finiteNonNegativeInteger(presentedActivityAt),
       needsStartupRecovery:
-        session.status === 'running' ||
         session.activeRun !== undefined ||
+        session.status === 'running' ||
         hasCurrentRunningDelegatedAttempt(session) ||
         hasPendingArtifact(session)
     },

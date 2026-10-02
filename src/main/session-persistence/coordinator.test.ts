@@ -3766,7 +3766,10 @@ describe('SessionPersistenceCoordinator', () => {
       uploads
     )
 
-    await expect(coordinator.saveSession(legacySession)).resolves.toBe(receipt)
+    await expect(coordinator.saveSession(legacySession)).resolves.toEqual({
+      ...receipt,
+      recordProblems: []
+    })
     expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'session-1' }),
       { mode: 'live-save' }
@@ -4010,7 +4013,9 @@ describe('SessionPersistenceCoordinator', () => {
       0
     )
     expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
-    expect(provenance.captureFinalizedMessages).toHaveBeenCalledWith(result)
+    const { recordProblems, ...durableResult } = result
+    expect(recordProblems).toEqual([])
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledWith(durableResult)
   })
 
   it('preserves Main-owned specialist binding fields when renderer save options are forged', async () => {

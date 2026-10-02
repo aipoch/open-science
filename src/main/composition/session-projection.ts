@@ -1,7 +1,8 @@
 import type {
   LoadAllSessionsResult,
   PersistedChatSession,
-  SessionSummary
+  SessionSummary,
+  SessionLoadWarning
 } from '../../shared/session-persistence'
 import { PendingSessionSpecialistBindings } from '../agents/pending-session-specialist-bindings'
 import { ArchiveCoordinator } from '../archive/coordinator'
@@ -49,6 +50,11 @@ export function composeSessionProjection({
     | 'saveSession'
     | 'saveSessionSpecialistBinding'
     | 'setSessionDelegationPolicy'
+    | 'projectRuntimeSession'
+    | 'listRuntimeTerminalFailures'
+    | 'recordSessionRecordProblem'
+    | 'retryRuntimeTerminalCommit'
+    | 'projectRuntimeSessionSummaries'
   >
   projectDeletionCoordinator: ProjectDeletionCoordinator
   archiveCoordinator: ArchiveCoordinator
@@ -78,8 +84,21 @@ export function composeSessionProjection({
     sessionLoader: sessionPersistenceCoordinator
   })
   const sessionProjectionDiagnostics = new SessionProjectionDiagnostics()
+  const recordSizeProblems = (warnings: readonly SessionLoadWarning[] | undefined): void => {
+    for (const warning of warnings ?? []) {
+      if (warning.kind !== 'too-large' || !warning.fileName.endsWith('.json')) continue
+      const sessionId = warning.fileName.slice(0, -'.json'.length)
+      if (sessionId)
+        sessionPersistenceCoordinator.recordSessionRecordProblem(
+          warning.projectId,
+          sessionId,
+          'size-limit'
+        )
+    }
+  }
   const loadAllSessions = async (): Promise<LoadAllSessionsResult> => {
     const result = await sessionCatalogHydration.loadAll()
+    recordSizeProblems(result.diagnostics?.warnings)
     // Startup and non-renderer readers can recover historical files before the first list call.
     // Retain their warnings in the same cache used by subsequent projection-only reads.
     sessionProjectionDiagnostics.resolve(result.diagnostics)
@@ -128,11 +147,24 @@ export function composeSessionProjection({
     }
   }
   const uncoordinatedSessionPersistenceBackend: SessionPersistenceBackend = {
-    loadAll: loadAllSessions,
+    listRuntimeTerminalFailures: () => sessionPersistenceCoordinator.listRuntimeTerminalFailures(),
+    retryRuntimeTerminalCommit: (request) =>
+      sessionPersistenceCoordinator.retryRuntimeTerminalCommit(request),
+    loadAll: async () => {
+      const result = await loadAllSessions()
+      return {
+        ...result,
+        sessions: result.sessions.map((session) =>
+          sessionPersistenceCoordinator.projectRuntimeSession(session)
+        )
+      }
+    },
     list: async () => {
       const projection = await ensureSessionProjection()
       return {
-        sessions: projection.sessions,
+        sessions: await sessionPersistenceCoordinator.projectRuntimeSessionSummaries(
+          projection.sessions
+        ),
         manifest: projection.result?.manifest ?? (await sessionRepository.loadManifest()),
         diagnostics: sessionProjectionDiagnostics.resolve(projection.result?.diagnostics)
       }
@@ -149,14 +181,17 @@ export function composeSessionProjection({
         sessionPersistenceCoordinator
       )
       if (!recovery.isComplete) {
-        return recovery.result.sessions.find(
+        const session = recovery.result.sessions.find(
           (session) => session.projectId === projectId && session.id === sessionId
         )
+        return session && sessionPersistenceCoordinator.projectRuntimeSession(session)
       }
       const session = await sessionRepository.loadSession(projectId, sessionId)
-      return session && sessionEnabledComputeHostsOwnerRef.current
-        ? sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
-        : session
+      const reconciled =
+        session && sessionEnabledComputeHostsOwnerRef.current
+          ? await sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
+          : session
+      return reconciled && sessionPersistenceCoordinator.projectRuntimeSession(reconciled)
     },
     saveSession: async (session, options, authority) => {
       const created =

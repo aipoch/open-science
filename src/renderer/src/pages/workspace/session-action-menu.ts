@@ -21,6 +21,7 @@ import type {
   ActionMenuRecipeEntry
 } from '@/components/action-menu'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
+import { projectPresentedSessionActionability } from './session-wait-reason'
 
 export type SessionActionId =
   | 'toggle-pin'
@@ -100,12 +101,17 @@ type SessionActionOptions = {
   onDeleteSession: (session: ChatSession) => void
 }
 
-const isExportDisabled = ({ session, presentedStatus }: SessionActionInvocation): boolean =>
-  (session.activeMessageCount ?? session.messages.length) === 0 ||
+const hasTransferActivity = ({ session, presentedStatus }: SessionActionInvocation): boolean =>
   presentedStatus === 'running' ||
-  presentedStatus === 'waiting-for-user' ||
-  presentedStatus === 'waiting-permission' ||
-  presentedStatus === 'waiting-plan-approval'
+  presentedStatus.startsWith('waiting-') ||
+  Boolean(session.activeRun || session.compacting || session.agentPromptInFlight) ||
+  projectPresentedSessionActionability(session).activity !== 'inactive' ||
+  session.runtimeContext?.permission?.state === 'pending' ||
+  session.runtimeContext?.plan?.approval === 'pending'
+
+const isExportDisabled = (invocation: SessionActionInvocation): boolean =>
+  (invocation.session.activeMessageCount ?? invocation.session.messages.length) === 0 ||
+  hasTransferActivity(invocation)
 
 const forkDisabledDescription = (
   options: SessionActionOptions,
@@ -114,12 +120,7 @@ const forkDisabledDescription = (
   if (!options.canMutateConversations) return i18n.t('Session storage is not ready.')
   if (options.packageBusy)
     return i18n.t('Wait for the current transfer to finish before forking a Session.')
-  if (
-    session.status !== 'idle' ||
-    presentedStatus !== 'idle' ||
-    session.runtimeContext?.permission?.state === 'pending' ||
-    session.runtimeContext?.plan?.approval === 'pending'
-  ) {
+  if (hasTransferActivity({ session, presentedStatus })) {
     return i18n.t('Wait for all Session activity and pending approvals to finish before forking.')
   }
   return undefined
@@ -168,11 +169,10 @@ export const createSessionActionBindings = (
   'export-package': {
     execute: ({ session }) => options.onExportPackage?.(session),
     hidden: !options.onExportPackage,
-    disabled: ({ session, presentedStatus }) =>
+    disabled: (invocation) =>
       !options.canMutateConversations ||
       Boolean(options.packageBusy) ||
-      session.status !== 'idle' ||
-      presentedStatus !== 'idle'
+      hasTransferActivity(invocation)
   },
   'export-diagnostics': {
     execute: ({ session }) => options.onExportDiagnostics?.(session),

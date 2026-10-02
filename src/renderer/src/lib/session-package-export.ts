@@ -2,7 +2,8 @@ import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspac
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
-import type { ChatSession } from '@/stores/session-store'
+import { projectSessionActionability, type ChatSession } from '@/stores/session-store'
+import { hasCurrentRunningDelegatedAttempt } from '../../../shared/delegated-work-projection'
 
 export const sessionPackageExportAvailable = (): boolean =>
   document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true' &&
@@ -11,7 +12,12 @@ export const sessionPackageExportAvailable = (): boolean =>
 export const exportSessionPackage = async (session: ChatSession): Promise<void> => {
   if (
     !sessionPackageExportAvailable() ||
-    session.status !== 'idle' ||
+    projectSessionActionability(session, {
+      hasRunningWork: hasCurrentRunningDelegatedAttempt(session)
+    }).activity !== 'inactive' ||
+    session.compacting ||
+    session.runtimeContext?.permission?.state === 'pending' ||
+    session.runtimeContext?.plan?.approval === 'pending' ||
     packageOperationActive(usePackageOperationStore.getState().operation)
   )
     return

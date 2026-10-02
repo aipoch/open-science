@@ -180,6 +180,28 @@ export function composeSessionPackageSurfaces({
 } {
   const conversationExportService = createConversationExportService({
     translate,
+    reserveExport: async (projectId, sessionId) => {
+      let releasePersistence: (() => void) | undefined
+      try {
+        const releaseAdmission = await archiveCoordinator.reserveSessionExport(
+          projectId,
+          sessionId,
+          async () => {
+            releasePersistence = await sessionPersistenceCoordinator.reserveSessionExport(
+              projectId,
+              sessionId
+            )
+          }
+        )
+        return () => {
+          releasePersistence?.()
+          releaseAdmission()
+        }
+      } catch (error) {
+        releasePersistence?.()
+        throw error
+      }
+    },
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
     isSessionActive: (projectId, sessionId) =>
       runtime

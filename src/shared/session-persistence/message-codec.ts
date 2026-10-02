@@ -1,3 +1,4 @@
+import { sanitizeTurnOutcome } from './turn-outcome'
 import type {
   PersistedMessageRole,
   PersistedMessageStatus,
@@ -437,6 +438,10 @@ export const sanitizeMessage = (
     (message.structuredOutputEvidence !== undefined && !structuredOutputEvidence)
   ) {
     sanitized.structuredOutputEvidenceInvalid = true
+  }
+  if (role === 'user') {
+    const outcome = sanitizeTurnOutcome(message.turnOutcome)
+    if (outcome) sanitized.turnOutcome = outcome
   }
   if (role === 'user' && message.interrupted === true) sanitized.interrupted = true
   if (role === 'user') {

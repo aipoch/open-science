@@ -72,7 +72,16 @@
     "src/shared/runtime-session-projection.ts",
     "src/shared/session-conversation-command.test.ts",
     "src/shared/session-conversation-command.ts",
-    "src/shared/runtime-session-admission.ts"
+    "src/shared/runtime-session-admission.ts",
+    "src/shared/session-persistence/prompt-preparation.ts",
+    "src/shared/session-persistence/turn-outcome.test.ts",
+    "src/shared/session-persistence/turn-outcome.ts",
+    "src/shared/session-persistence/attention.ts",
+    "src/shared/session-persistence/attention.test.ts",
+    "src/shared/session-persistence/turn-anchor.ts",
+    "src/shared/session-persistence/turn-anchor.test.ts",
+    "src/shared/session-persistence/turn-outcome-codec.test.ts",
+    "src/shared/session-persistence/prompt-preparation.test.ts"
   ],
   "interfacePaths": [
     "src/shared/acp.ts",
@@ -126,7 +135,12 @@
       "src/shared/session-package.test.ts",
       "src/shared/session-persistence.test.ts",
       "src/shared/runtime-session-projection.test.ts",
-      "src/shared/session-conversation-command.test.ts"
+      "src/shared/session-conversation-command.test.ts",
+      "src/shared/session-persistence/turn-outcome.test.ts",
+      "src/shared/session-persistence/attention.test.ts",
+      "src/shared/session-persistence/turn-anchor.test.ts",
+      "src/shared/session-persistence/turn-outcome-codec.test.ts",
+      "src/shared/session-persistence/prompt-preparation.test.ts"
     ],
     "contract": ["src/shared/session-persistence.architecture.test.ts"],
     "consumer": []
