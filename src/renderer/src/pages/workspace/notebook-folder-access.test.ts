@@ -72,7 +72,7 @@ describe('Notebook folder recovery candidate', () => {
     ).toBeUndefined()
   })
 
-  it.each(['relative/config', '/', '/fixture/\u0000config'])(
+  it.each(['relative/config', '/', '/fixture/..', '/fixture/\u0000config'])(
     'rejects an unsafe or broad path: %s',
     (path) => {
       expect(

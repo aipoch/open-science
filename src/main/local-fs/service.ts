@@ -168,6 +168,8 @@ export class LocalFsService {
     if (!verdict.ok) {
       if (verdict.reason === 'is-home')
         throw new Error('The home folder is already browsable; it cannot be granted.')
+      if (verdict.reason === 'is-root')
+        throw new Error('A filesystem root cannot be granted as a folder.')
       throw new Error('Local path must be absolute.')
     }
     if (!(await stat(resolvedPath)).isDirectory()) throw new Error('Grant path is not a directory.')
