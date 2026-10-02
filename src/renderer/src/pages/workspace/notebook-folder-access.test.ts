@@ -127,6 +127,14 @@ describe('Notebook folder recovery candidate', () => {
     expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
   })
 
+  it('suppresses recovery when one raw permission error contains source and destination paths', () => {
+    const base = run()
+    const stderr =
+      "EACCES: permission denied, rename '/fixture/source/access-token.txt' -> '/fixture/destination/access-token.txt'"
+    const record = run({ text: { ...base.text, stderr } })
+    expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
+  })
+
   it.each(['relative/config', '/', '/fixture/..', '/fixture/\u0000config'])(
     'rejects an unsafe or broad path: %s',
     (path) => {

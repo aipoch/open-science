@@ -63,16 +63,17 @@ const rawPermissionPaths = (text: string): string[] => {
   const paths: string[] = []
   for (const line of diagnosticLines(text)) {
     const candidates = diagnosticPathMatches(line, true)
-    for (const failure of line.matchAll(failurePattern)) {
-      const start = failure.index ?? 0
-      const end = start + failure[0].length
-      const before = candidates.filter((candidate) => candidate.end <= start).at(-1)
-      const after = candidates.find((candidate) => candidate.index >= end)
-      const beforeDistance = before ? start - before.end : Number.POSITIVE_INFINITY
-      const afterDistance = after ? after.index - end : Number.POSITIVE_INFINITY
-      const candidate = beforeDistance <= afterDistance ? before : after
-      if (candidate) paths.push(candidate.path)
-    }
+    const failures = [...line.matchAll(failurePattern)]
+    failures.forEach((_, index) => {
+      const segmentStart =
+        index === 0 ? 0 : (failures[index - 1].index ?? 0) + failures[index - 1][0].length
+      const segmentEnd =
+        index + 1 < failures.length ? (failures[index + 1].index ?? line.length) : line.length
+      for (const candidate of candidates) {
+        if (candidate.index >= segmentStart && candidate.end <= segmentEnd)
+          paths.push(candidate.path)
+      }
+    })
   }
   return paths
 }
