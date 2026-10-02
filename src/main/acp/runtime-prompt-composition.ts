@@ -170,6 +170,7 @@ const composeAcpRuntimePromptOwners = (
       [],
     authorizeReferencedUploads: options.skillImport?.authorizeReferencedUploads,
     memory: options.memory,
+    prepareSessionReading: options.prepareSessionReading,
     isMemoryEnabledForSession: (sessionId) =>
       session.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().memoryEnabled ?? false,
     ...(options.notebook

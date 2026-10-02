@@ -29,6 +29,9 @@ import { respondToSessionPlan } from '../session-plan/respond-to-session-plan'
 import { PlanPreviewSurface, type RestoredPlanResponder } from '../session-plan/SessionPlanSurfaces'
 
 const LibraryPreview = lazy(() => import('./LibraryPreview'))
+const SessionReplayPreview = lazy(() =>
+  import('../SessionReplayPreview').then((module) => ({ default: module.SessionReplayPreview }))
+)
 
 const isNotebookPreviewItem = (item: PreviewToolItem): item is NotebookPreviewItem =>
   item.toolKind === 'notebook' && Boolean(item.notebook)
@@ -309,6 +312,25 @@ export const PreviewToolContent = ({
   restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element | null => {
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+  const { t } = useTranslation()
+
+  if (item.toolKind === 'replay')
+    return (
+      <Suspense
+        fallback={
+          <div role="status" className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+            <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+            {t('Loading…')}
+          </div>
+        }
+      >
+        <SessionReplayPreview
+          key={`${item.projectId}:${item.sessionId}`}
+          item={item}
+          isActive={isActive}
+        />
+      </Suspense>
+    )
 
   // Remount the Files tool per project so its transient dialog cannot outlive the project it opened.
   if (item.toolKind === 'files') {

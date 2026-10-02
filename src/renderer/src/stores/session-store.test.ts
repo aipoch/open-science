@@ -2960,6 +2960,50 @@ describe('session store', () => {
     )
   })
 
+  it('keeps linked Sessions after projections and respects durable unlink', () => {
+    const binding = {
+      projectId: 'source-project',
+      sessionId: 'source',
+      contextId: 'snapshot',
+      title: 'Analysis',
+      branchId: 'main',
+      promptMessageId: 'prompt'
+    }
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'receiving',
+        projectId: 'project',
+        title: 'Conversation',
+        cwd: '',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          sessionContext: { version: 1, bindings: [binding] }
+        }
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          sessionContext: { version: 1, bindings: [], lastPromptMessageId: 'prompt' }
+        }
+      },
+      mode: 'runtime-context-authority'
+    })
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.sessionContext?.bindings).toEqual(
+      []
+    )
+  })
+
   it('preserves PDF context when delegated authority advances', () => {
     const pdfContext = createPdfContext()
     useSessionStore.getState().hydrateSessions([
@@ -7394,6 +7438,7 @@ describe('session store public contract', () => {
     expect(directConsumerPaths()).toEqual([
       'src/renderer/src/components/NotificationBell.tsx',
       'src/renderer/src/components/NotificationLiveToast.tsx',
+      'src/renderer/src/components/SessionPackageOperation.tsx',
       'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',
       'src/renderer/src/components/job-binding-utils.ts',
       'src/renderer/src/components/notification-inbox-presentation.ts',
@@ -7420,6 +7465,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
       'src/renderer/src/lib/deep-link.ts',
       'src/renderer/src/lib/preview-persistence/preview-persistence.ts',
+      'src/renderer/src/lib/replay/timeline.ts',
       'src/renderer/src/lib/session-package-export.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.ts',
       'src/renderer/src/pages/home/HomePage.tsx',
@@ -7436,9 +7482,12 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
+      'src/renderer/src/pages/workspace/SessionDiscussionDialog.tsx',
+      'src/renderer/src/pages/workspace/SessionDiscussionSource.tsx',
       'src/renderer/src/pages/workspace/SessionInfoPopover.preview.tsx',
       'src/renderer/src/pages/workspace/SessionInfoPopover.tsx',
       'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
+      'src/renderer/src/pages/workspace/SessionReplayPreview.tsx',
       'src/renderer/src/pages/workspace/SessionReproducibilityDialog.tsx',
       'src/renderer/src/pages/workspace/SideChatWorkbench.tsx',
       'src/renderer/src/pages/workspace/SubagentReleaseSurfaces.tsx',
@@ -7473,6 +7522,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
+      'src/renderer/src/pages/workspace/replay/ReplayToolRecord.tsx',
       'src/renderer/src/pages/workspace/session-action-menu.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
@@ -7501,6 +7551,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts',
       'src/renderer/src/pages/workspace/workspace-session-details-controller.ts',
+      'src/renderer/src/pages/workspace/workspace-session-discussion.ts',
       'src/renderer/src/pages/workspace/workspace-skill-load.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts',

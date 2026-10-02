@@ -215,6 +215,7 @@ describe('Project-owned data catalog architecture', () => {
       'project-memory',
       'permission-grants',
       'project-preview-state',
+      'session-replay',
       'vision-evidence',
       'session-metadata-usage-history',
       'background-result-delivery',

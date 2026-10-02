@@ -228,6 +228,39 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'session-replay',
+    medium: 'sqlite',
+    resources: ['SessionReplayProgress', 'SessionDiscussionSnapshot'],
+    prismaModels: [
+      {
+        name: 'SessionReplayProgress',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')],
+        relationContracts: [
+          { field: 'project', target: 'Project', fromFields: ['projectId'], onDelete: 'Cascade' }
+        ]
+      },
+      {
+        name: 'SessionDiscussionSnapshot',
+        ownerFields: [requiredOwner('sourceProjectId'), requiredOwner('sourceSessionId')],
+        relationContracts: [
+          {
+            field: 'sourceProject',
+            target: 'Project',
+            fromFields: ['sourceProjectId'],
+            onDelete: 'Cascade'
+          }
+        ]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'Discussion snapshots are owned by their source Project; replay progress is owned by the replayed Session’s Project. Both are removed with that Project.'
+    }
+  },
+  {
     id: 'vision-evidence',
     medium: 'sqlite',
     resources: ['VisionEvidence'],

@@ -78,6 +78,7 @@
     "src/main/database/migrations/0044-literature-smart-collections.ts",
     "src/main/database/migrations/0045-literature-smart-pause-run.ts",
     "src/main/database/migrations/0046-journal-attributes.ts",
+    "src/main/database/migrations/0047-session-replay.ts",
     "src/main/database/notification-attention-metadata-migration.test.ts",
     "src/main/database/pdf-annotations-migration.test.ts",
     "src/main/database/permission-approval-summary.test.ts",
@@ -94,7 +95,8 @@
     "src/main/database/database-startup-owner.ts",
     "src/main/database/migration-service.ts",
     "src/main/database/migration-sql-executor.ts",
-    "src/main/database/startup-diagnostics.ts"
+    "src/main/database/startup-diagnostics.ts",
+    "src/main/database/migrations/0047-session-replay.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -482,7 +484,8 @@
       "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
       "src/main/acp/library-auto-policy.test.ts",
       "src/main/literature/journal-attributes.scale.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/session-replay/service.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

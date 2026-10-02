@@ -198,7 +198,8 @@ describe('Host SDK help', () => {
       availability: { status: 'available' },
       callForms: [
         { signature: 'await host.sessions.list(options?)' },
-        { signature: 'await host.sessions.inspect(sessionId)' }
+        { signature: 'await host.sessions.inspect(sessionId)' },
+        { signature: 'await host.sessions.read(options?)' }
       ]
     })
     expect(hostSdkHelp.query('host.sessions', { ...mainContext, capabilities })).toEqual(help)

@@ -1477,7 +1477,10 @@ it('debounces automatic changes, skips unchanged results and preserves explicit 
     })
   })
   await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(2), { timeout: 5000 })
-  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  // Classification is observed before its database writes and run finalization finish.
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
+    timeout: 15000
+  })
   await owner.execute({
     kind: 'smart-collection',
     action: 'override',

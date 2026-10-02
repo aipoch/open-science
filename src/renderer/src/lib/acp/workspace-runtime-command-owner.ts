@@ -1,3 +1,5 @@
+import { prepareDiscussionSendAnnotations } from '../../pages/workspace/discussion-send-context'
+import type { SessionDiscussionCapture } from '../../pages/workspace/replay/replay-context'
 import { i18next } from '../../i18n'
 import type { AcpMessageImage, AcpRuntimeEvent } from '../../../../shared/acp'
 import type { FileReference } from '../../../../shared/artifacts'
@@ -74,6 +76,7 @@ type SendWorkspaceMessageIntent = {
   turnIntent?: 'plan-first'
   attachments?: UploadedAttachment[]
   annotations?: annotationProtocol.Annotation[]
+  discussionFocus?: SessionDiscussionCapture
   cwd?: string
   projectId?: string
   permissionProfile?: PermissionProfileId
@@ -748,7 +751,12 @@ const sendWorkspaceMessage = async (
         }
       : input.pdfContext
   const attachments = input.attachments ?? []
-  const annotations = input.annotations ?? []
+  const annotations =
+    input.discussionFocus && !replayPrompt
+      ? await prepareDiscussionSendAnnotations(input.annotations ?? [], input.discussionFocus)
+      : (input.annotations ?? [])
+  if (lifecycle.isCurrent?.() === false) return undefined
+  input = { ...input, annotations }
   if (annotationProtocol.validateAnnotations(annotations, content)) return undefined
   if (
     input.supportsImageInput !== true &&

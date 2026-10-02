@@ -1,3 +1,7 @@
+import { captureDiscussionSendContext } from './discussion-send-context'
+import type { SessionDiscussionCapture } from './replay/replay-context'
+import type { SessionReadingContext } from '../../../../shared/session-reading'
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { useTranslation } from 'react-i18next'
 import {
   composerDraftStorageFailed,
@@ -74,7 +78,11 @@ type ComposerHistoryNavigation = {
 type ComposerSessionContext = {
   id: string
   projectId: string
-  runtimeContext?: { revision: number; pdfContext?: SessionPdfContext }
+  runtimeContext?: {
+    revision: number
+    pdfContext?: SessionPdfContext
+    sessionContext?: SessionReadingContext
+  }
 }
 
 type ComposerReadingContextBinding =
@@ -102,6 +110,7 @@ export type ComposerSendSnapshot = {
   version: number
   doc: ComposerDoc
   annotations: Annotation[]
+  discussionFocus?: SessionDiscussionCapture
   attachments: UploadedAttachment[]
   automaticReadingEnabled?: boolean
   pdfContext?: MessagePdfContextSnapshot
@@ -1210,6 +1219,13 @@ const useWorkspaceComposerController = ({
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
         doc: docRef.current,
         annotations: [...annotationsRef.current],
+        discussionFocus: captureDiscussionSendContext(
+          annotationsRef.current,
+          includeReadingContext
+            ? activeSession?.runtimeContext?.sessionContext?.bindings.at(-1)
+            : undefined,
+          activeSession?.id
+        ),
         attachments,
         queuedEdit: queuedEditRef.current,
         automaticReadingEnabled: automaticReadingEnabledRef.current,
@@ -1250,6 +1266,7 @@ const useWorkspaceComposerController = ({
     },
     [
       attachments,
+      activeSession,
       activeReadingBinding,
       activePendingReading,
       automaticStagedReadingContexts,
@@ -1396,7 +1413,21 @@ const useWorkspaceComposerController = ({
   // receives, so an inline closure here would defeat that memo on every composer re-render.
   const addAnnotation = useCallback(
     (annotation: Annotation): AnnotationValidationError | undefined => {
-      const next = [...annotationsRef.current, annotation]
+      const source = replayAnnotationTarget(annotation)
+      const retained = source
+        ? annotationsRef.current.filter((item) => {
+            const previous = replayAnnotationTarget(item)
+            return (
+              !previous ||
+              (previous.projectId === source.projectId &&
+                previous.sourceSessionId === source.sourceSessionId &&
+                previous.scope !== 'session' &&
+                source.scope !== 'session' &&
+                (previous.branchId !== source.branchId || previous.stepId !== source.stepId))
+            )
+          })
+        : annotationsRef.current
+      const next = [...retained, annotation]
       const validation = validateAnnotations(next, docToText(docRef.current))
       if (validation) return validation
       clearPastedTextUndo()

@@ -1,4 +1,10 @@
+import { SessionReadingOwner } from '../session-replay/session-reading'
+import type { createDefaultUploadRepository } from '../uploads/ipc'
 import type { ApplicationEvents } from '../application-events'
+import { SessionReplayRepository } from '../session-replay/repository'
+import { SessionReplayService } from '../session-replay/service'
+import { getProjectDbClient } from '../projects/prisma-client'
+import { resolveConfigRoot } from '../storage-root'
 import { BrowserWindow, dialog, webContents, type WebContents } from 'electron'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { type ApplicationCommandCompositionDependencies } from '../application-command-composition'
@@ -76,6 +82,7 @@ export function composeCommandDependencies({
   settingsBootstrap: Awaited<ReturnType<typeof composeSettingsBootstrap>>
   storageStartup: Awaited<ReturnType<typeof composeStorageStartup>>
   managedFileVersionService: ManagedFileVersionService
+  uploadRepository: ReturnType<typeof createDefaultUploadRepository>
   runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined }
   sessionFoundation: Awaited<ReturnType<typeof composeSessionFoundation>>
   sessionPackages: Awaited<ReturnType<typeof composeSessionPackages>>
@@ -117,7 +124,23 @@ export function composeCommandDependencies({
     }
     return sender
   }
+  const sessionReplay = new SessionReplayService(
+    new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
+    {
+      read: (projectId, sessionId) =>
+        sessionFoundation.sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
+          mode: 'read-only',
+          preserveRuntimeState: true
+        })
+    },
+    withDataRootWrite,
+    new SessionReadingOwner(
+      new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
+      sessionAuthority.sessionPersistenceCoordinator
+    )
+  )
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
+    sessionReplay,
     specialist: sessionSurfaces.specialistApplicationOwner,
     bookmarks: documentReading.bookmarkService,
     pdfAnnotations: documentReading.pdfAnnotationService,

@@ -1,3 +1,8 @@
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { createSessionReplayItem, loadSessionDiscussionContext } from './workspace-session-actions'
+import { SessionDiscussionDialog } from './SessionDiscussionDialog'
+import type { SessionDiscussionCapture } from './replay/replay-context'
 import { SessionPackageImportMenu } from '@/components/SessionPackageImportMenu'
 import {
   BookOpen,
@@ -126,6 +131,8 @@ type WorkspaceSidebarProps = {
 }
 
 type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
+  onViewReplay?: (session: ChatSession) => void
+  onDiscussSession?: (session: ChatSession) => Promise<void>
   rowActions?: SessionRowCallbacks
   now: number
   packageBusy?: boolean
@@ -149,6 +156,8 @@ type SessionRowCallbacks = Pick<
   | 'onDownloadArtifacts'
   | 'onCheckArtifacts'
   | 'onViewNotebook'
+  | 'onViewReplay'
+  | 'onDiscussSession'
   | 'onExportSession'
   | 'onForkSession'
   | 'onExportPackage'
@@ -167,6 +176,8 @@ const sessionRowCallbacks = ({
   onDownloadArtifacts,
   onCheckArtifacts,
   onViewNotebook,
+  onViewReplay,
+  onDiscussSession,
   onExportSession,
   onForkSession,
   onExportPackage,
@@ -183,6 +194,8 @@ const sessionRowCallbacks = ({
   onDownloadArtifacts,
   onCheckArtifacts,
   onViewNotebook,
+  onViewReplay,
+  onDiscussSession,
   onExportSession,
   onForkSession,
   onExportPackage,
@@ -500,6 +513,8 @@ const SessionRow = memo(function SessionRow({
       ? (target) => actions.onCheckArtifacts?.(target)
       : undefined,
     onViewNotebook: (target) => actions.onViewNotebook(target),
+    onViewReplay: actions.onViewReplay,
+    onDiscussSession: actions.onDiscussSession,
     onExportSession: canExportSession ? (target) => actions.onExportSession?.(target) : undefined,
     onForkSession: canForkSession
       ? async (target) => {
@@ -1295,7 +1310,41 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
 }
 
 const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.JSX.Element => {
-  const callbacks = sessionRowCallbacks(props)
+  const { t } = useTranslation()
+  const [discussionCapture, setDiscussionCapture] = useState<SessionDiscussionCapture>()
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const callbacks: SessionRowCallbacks = {
+    ...sessionRowCallbacks(props),
+    onViewReplay: (session) => {
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(
+          createSessionReplayItem(
+            session.projectId,
+            session.id,
+            session.title,
+            useNavigationStore.getState().activeProjectId ?? session.projectId
+          )
+        )
+    },
+    onDiscussSession: async (session) => {
+      const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
+      const context = await loadSessionDiscussionContext(session.projectId, session.id)
+      if (
+        !mounted.current ||
+        useNavigationStore.getState().explicitNavigationRevision !== navigationRevision
+      )
+        return
+      if (!context) throw new Error(t('No recorded steps are available.'))
+      setDiscussionCapture(context)
+    }
+  }
   const latestCallbacks = useRef(callbacks)
   useLayoutEffect(() => {
     latestCallbacks.current = callbacks
@@ -1310,6 +1359,10 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
       onDownloadArtifacts: (session) => latestCallbacks.current.onDownloadArtifacts(session),
       onCheckArtifacts: (session) => latestCallbacks.current.onCheckArtifacts?.(session),
       onViewNotebook: (session) => latestCallbacks.current.onViewNotebook(session),
+      onViewReplay: (session) => latestCallbacks.current.onViewReplay?.(session),
+      onDiscussSession: async (session) => {
+        await latestCallbacks.current.onDiscussSession?.(session)
+      },
       onExportSession: (session) => latestCallbacks.current.onExportSession?.(session),
       onForkSession: async (session) => {
         await latestCallbacks.current.onForkSession?.(session)
@@ -1326,7 +1379,17 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
     }),
     []
   )
-  return <WorkspaceSidebarView {...props} rowActions={rowActions} />
+  return (
+    <>
+      <WorkspaceSidebarView {...props} rowActions={rowActions} />
+      {discussionCapture ? (
+        <SessionDiscussionDialog
+          context={discussionCapture}
+          onClose={() => setDiscussionCapture(undefined)}
+        />
+      ) : null}
+    </>
+  )
 }
 
 const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {

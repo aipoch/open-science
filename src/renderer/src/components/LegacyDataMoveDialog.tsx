@@ -1,5 +1,5 @@
 import { storageErrorMessage } from '@/lib/storage-error'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { FolderInput, FolderOpen, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'

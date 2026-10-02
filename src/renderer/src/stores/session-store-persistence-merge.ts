@@ -295,6 +295,7 @@ const mergeRuntimeContextByOwner = (
   )
   const authoritative = incomingAdvanced ? incoming : current
   const fallback = incomingAdvanced ? current : incoming
+  const sessionContext = authoritative.sessionContext
   const pdfContext =
     incoming.revision === current.revision
       ? (authoritative.pdfContext ?? fallback.pdfContext)
@@ -312,6 +313,7 @@ const mergeRuntimeContextByOwner = (
     ...(authoritative.sideChatRelays
       ? { sideChatRelays: structuredClone(authoritative.sideChatRelays) }
       : {}),
+    ...(sessionContext ? { sessionContext: structuredClone(sessionContext) } : {}),
     ...(pdfContext ? { pdfContext: structuredClone(pdfContext) } : {})
   }
 }
@@ -336,6 +338,7 @@ const mergeDelegatedRuntimeAuthority = (
     ...(current?.sideChats ? { sideChats: structuredClone(current.sideChats) } : {}),
     ...(current?.sideChat ? { sideChat: structuredClone(current.sideChat) } : {}),
     ...(current?.sideChatRelays ? { sideChatRelays: structuredClone(current.sideChatRelays) } : {}),
+    ...(current?.sessionContext ? { sessionContext: structuredClone(current.sessionContext) } : {}),
     ...(current?.pdfContext ? { pdfContext: structuredClone(current.pdfContext) } : {})
   }
 }

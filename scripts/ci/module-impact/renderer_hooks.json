@@ -253,7 +253,11 @@
       "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
       "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
-      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
+      "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ]
   },
   "capabilityOverlays": [],

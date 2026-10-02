@@ -1,6 +1,7 @@
+import { OverlayLayerProvider } from '@/components/ui/overlay-layer'
 import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
 import { SideChatWorkbenchContent } from './SideChatWorkbench'
-import { BookOpen, Cpu, FolderOpen, Globe2, X } from 'lucide-react'
+import { BookOpen, Cpu, FolderOpen, Globe2, Play, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
@@ -378,6 +379,8 @@ const PreviewTab = ({
             <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
           ) : tab.toolKind === 'compute' ? (
             <Cpu className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+          ) : tab.toolKind === 'replay' ? (
+            <Play className="size-3.5 shrink-0" aria-hidden="true" />
           ) : tab.toolKind === 'notebook' || tab.toolKind === 'library' ? (
             <BookOpen className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
           ) : null}
@@ -680,12 +683,12 @@ const PreviewFilePanel = ({
   })
 
   return (
-    <>
+    <OverlayLayerProvider value={isFullScreenOpen ? 60 : 40}>
       {isFullScreenOpen ? (
         <div
           aria-hidden="true"
           data-state="open"
-          className={`${dialogOverlayClassName} z-[60] cursor-default`}
+          className={`${dialogOverlayClassName} z-[55] cursor-default`}
           onClick={() => closeFullScreen(true)}
         />
       ) : null}
@@ -702,7 +705,7 @@ const PreviewFilePanel = ({
         className={
           isFullScreenOpen
             ? dialogPanelClassName(
-                'z-[61] box-border flex h-[90vh] w-[90vw] max-h-[calc(100svh-2rem)] max-w-[calc(100vw-2rem)] min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain p-0'
+                'z-[56] box-border flex h-[90vh] w-[90vw] max-h-[calc(100svh-2rem)] max-w-[calc(100vw-2rem)] min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain p-0'
               )
             : cn(
                 'flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card'
@@ -714,7 +717,7 @@ const PreviewFilePanel = ({
           item={item}
           contentKey={contentKey}
           onPdfPageCountChange={reportPdfPageCount}
-          // Full-screen mode floats above the modal panel (z-[61]); tooltips must follow.
+          // Floating controls inherit the expanded surface layer through portals.
           tooltipClassName={isFullScreenOpen ? 'z-[70]' : undefined}
           actionMenuContentClassName={isFullScreenOpen ? 'z-[70]' : undefined}
           onClose={isFullScreenOpen ? () => closeFullScreen(true) : () => onClose(item.id)}
@@ -730,7 +733,7 @@ const PreviewFilePanel = ({
           {...annotationPort}
         />
       </section>
-    </>
+    </OverlayLayerProvider>
   )
 }
 
@@ -768,7 +771,7 @@ const PreviewToolPanel = ({
   })
 
   return (
-    <>
+    <OverlayLayerProvider value={isExpanded ? 60 : 40}>
       {isExpanded ? (
         <div
           aria-hidden="true"
@@ -801,7 +804,7 @@ const PreviewToolPanel = ({
           restoredPlanResponder={restoredPlanResponder}
         />
       </section>
-    </>
+    </OverlayLayerProvider>
   )
 }
 

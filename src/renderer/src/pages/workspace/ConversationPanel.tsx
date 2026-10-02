@@ -1,3 +1,7 @@
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
+import { SessionDiscussionSource } from './SessionDiscussionSource'
+import { SessionDiscussionButton } from './SessionDiscussionButton'
+import { createSessionReplayItem } from './workspace-session-actions'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import {
@@ -61,6 +65,7 @@ import {
   MessageCircleMore,
   PanelRight,
   Plus,
+  Play,
   RotateCcw,
   ScanEye,
   Square,
@@ -1842,19 +1847,44 @@ const ConversationPanel = ({
                             'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
                           )}
                         </p>
-                        {sessionForkAvailable() ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {sessionForkAvailable() ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                void forkSession(activeSession)
+                              }}
+                            >
+                              <GitBranch className="size-4" aria-hidden="true" />
+                              {t('Fork to continue')}
+                            </Button>
+                          ) : null}
                           <Button
                             variant="outline"
                             size="sm"
-                            className="mt-2"
+                            aria-controls="right-panel"
                             onClick={() => {
-                              void forkSession(activeSession)
+                              usePreviewWorkbenchStore
+                                .getState()
+                                .upsertAndActivateItem(
+                                  createSessionReplayItem(
+                                    activeSession.projectId,
+                                    activeSession.id,
+                                    activeSession.title
+                                  )
+                                )
                             }}
                           >
-                            <GitBranch className="size-4" aria-hidden="true" />
-                            {t('Fork to continue')}
+                            <Play className="size-4" aria-hidden="true" />
+                            {t('View replay')}
                           </Button>
-                        ) : null}
+                          <SessionDiscussionButton
+                            key={activeSession.id}
+                            projectId={activeSession.projectId}
+                            sessionId={activeSession.id}
+                          />
+                        </div>
                         <details className="mt-2 text-xs leading-5 text-muted-foreground">
                           <summary className="cursor-pointer">{t('Package source')}</summary>
                           <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
@@ -1935,6 +1965,15 @@ const ConversationPanel = ({
                                 : t('Drop files to attach')
                             }
                             className="rounded-2xl"
+                          />
+                        ) : null}
+                        {activeSession &&
+                        !annotations.some((annotation) => replayAnnotationTarget(annotation)) ? (
+                          <SessionDiscussionSource
+                            key={activeSession.id}
+                            projectId={activeSession.projectId}
+                            sessionId={activeSession.id}
+                            context={activeSession.runtimeContext}
                           />
                         ) : null}
                         {pdfContext.bindings.length > 0 ? (

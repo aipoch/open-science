@@ -260,7 +260,20 @@
       "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
       "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
-      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx"
+      "src/renderer/src/lib/replay/notebook-details.test.ts",
+      "src/renderer/src/lib/replay/replay.test.ts",
+      "src/renderer/src/lib/replay/source-uploads.test.ts",
+      "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
+      "src/renderer/src/pages/workspace/replay/replay-context.test.ts",
+      "src/renderer/src/pages/workspace/session-discussion-annotation.test.ts",
+      "src/renderer/src/pages/workspace/workspace-session-discussion.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
+      "src/renderer/src/pages/workspace/ReplayReferenceText.test.tsx",
+      "src/renderer/src/pages/workspace/SessionDiscussionSource.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx"
     ]
   },
   "capabilityOverlays": [],

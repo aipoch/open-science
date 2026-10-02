@@ -11,6 +11,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import { AnnotationDraftCards, AnnotationMessageCards } from './AnnotationCards'
 import { requestAnnotationReveal } from './annotation-reveal'
+import { createSessionDiscussionAnnotation } from '../session-discussion-annotation'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -120,6 +121,112 @@ describe('AnnotationCards image projection', () => {
     notifyResize = undefined
     if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver
     else delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver
+  })
+
+  it('presents replay references without exposing their transport payload in drafts or sent messages', async () => {
+    const annotation = createSessionDiscussionAnnotation({
+      projectId: 'source-project',
+      sourceSessionId: 'source-session',
+      sourceTitle: 'Saved analysis',
+      fingerprint: 'secret-fingerprint',
+      branchId: 'branch-id',
+      stepId: 'step-id',
+      stepOffsetMs: 123,
+      excerpt: 'RAW_OUTPUT '.repeat(100),
+      evidence: [
+        {
+          kind: 'message',
+          id: 'internal-message-id',
+          projectId: 'source-project',
+          sessionId: 'source-session'
+        }
+      ]
+    })!
+    const payload = annotation.quote
+    const onReveal = vi.fn()
+    await act(async () =>
+      root.render(
+        <AnnotationDraftCards
+          annotations={[annotation]}
+          disabled={false}
+          onUpdateNote={vi.fn()}
+          onRemove={vi.fn()}
+          onReveal={onReveal}
+        />
+      )
+    )
+    expect(container.textContent).toContain('Saved analysis')
+    expect(container.textContent).toContain('Discuss')
+    expect(container.textContent).not.toContain('Reading')
+    const source = container.querySelector('[data-session-discussion-source]')!
+    expect(source.textContent).not.toContain('Discuss')
+    expect(source.querySelector('.lucide-messages-square')).not.toBeNull()
+    expect(container.textContent).not.toContain('RAW_OUTPUT')
+    await act(async () => source.querySelector<HTMLButtonElement>('button')!.click())
+    expect(onReveal).toHaveBeenCalledWith(annotation)
+    await act(async () =>
+      root.render(<AnnotationMessageCards annotations={[annotation]} onReveal={onReveal} />)
+    )
+    expect(container.textContent).toContain('Saved analysis')
+    expect(container.textContent).toContain('Saved analysis')
+    expect(container.textContent).not.toMatch(/RAW_OUTPUT|secret-fingerprint|internal-message-id/)
+    expect(container.querySelector('.lucide-messages-square')).not.toBeNull()
+    expect(container.textContent).toContain('Discuss')
+    expect(container.textContent).not.toContain('Read with agent')
+    expect(annotation.quote).toBe(payload)
+  })
+
+  it('distinguishes the sent discussion scope from the source title and user note', async () => {
+    const context = {
+      projectId: 'project',
+      sourceSessionId: 'source',
+      sourceTitle: 'Study',
+      fingerprint: 'fp',
+      branchId: 'main',
+      stepId: 'one',
+      stepOffsetMs: 0,
+      excerpt: '',
+      stepTitle: 'Inspect output',
+      stepNumber: 7,
+      evidence: [
+        { kind: 'message' as const, id: 'message', projectId: 'project', sessionId: 'source' }
+      ]
+    }
+    const selected = {
+      ...createSessionDiscussionAnnotation(context, 'snapshot')!,
+      note: 'Explain the units'
+    }
+    const onReveal = vi.fn()
+    await act(async () =>
+      root.render(<AnnotationMessageCards annotations={[selected]} onReveal={onReveal} />)
+    )
+    expect(container.textContent).toContain('Step 7 · Inspect output')
+    expect(container.textContent).toContain('Explain the units')
+    await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+    expect(onReveal).toHaveBeenCalledWith(selected)
+    const entire = createSessionDiscussionAnnotation({ ...context, scope: 'session' }, 'whole')!
+    await act(async () =>
+      root.render(<AnnotationMessageCards annotations={[entire]} onReveal={onReveal} />)
+    )
+    expect(container.textContent).toContain('Entire research')
+    expect(container.textContent).not.toContain('Step 7')
+    expect(container.textContent).not.toContain('Read with agent')
+    for (const annotation of [selected, entire]) {
+      await act(async () =>
+        root.render(
+          <AnnotationDraftCards
+            annotations={[annotation]}
+            disabled={false}
+            onUpdateNote={vi.fn()}
+            onRemove={vi.fn()}
+          />
+        )
+      )
+      const source = container.querySelector('[data-session-discussion-source]')!
+      expect(source.textContent).toContain('Study')
+      expect(source.textContent).not.toContain('Entire research')
+      expect(source.textContent?.includes('Step 7')).toBe(annotation === selected)
+    }
   })
 
   it('keeps mixed annotation image numbering and pixels on sent cards', async () => {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { flushComposerDrafts } from '@/pages/workspace/composer-draft-storage'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 

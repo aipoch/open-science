@@ -50,9 +50,28 @@ import {
 } from '../../../shared/session-package'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useSessionStore } from '@/stores/session-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { createSessionReplayItem } from '@/pages/workspace/workspace-session-actions'
 import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { forkSession } from '@/lib/session-fork'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
+
+const openPackageSession = (operation: PackageOperationSnapshot): boolean => {
+  const identity = operation.result?.imported
+  if (!identity) return false
+  const { projectId, sessionId } = identity
+  if (operation.kind !== 'import')
+    return useNavigationStore.getState().openSession(projectId, sessionId, 'user')
+  return useNavigationStore.getState().openSession(projectId, sessionId, 'user', () => {
+    const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertAndActivateItem(
+        createSessionReplayItem(projectId, sessionId, session?.title ?? sessionId)
+      )
+  })
+}
 
 const operationStatus = (
   operation: PackageOperationSnapshot,
@@ -339,7 +358,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const [riskAcceptedFor, setRiskAcceptedFor] = useState<string>()
   if (riskAcceptedFor && (!open || riskAcceptedFor !== operation?.id)) setRiskAcceptedFor(undefined)
   const titleRef = useRef<HTMLHeadingElement>(null)
-  const navigationIntent = useRef<string | undefined>(undefined)
+  const navigationIntent = useRef<{ operationId: string; revision: number } | undefined>(undefined)
   const isWeb = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) === 'true'
   useEffect(() => {
     if (isWeb || !window.api?.sessions?.onPackageOperation) return
@@ -364,19 +383,21 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   useEffect(() => {
     if (
       isWeb ||
-      navigationIntent.current !== operation?.id ||
+      navigationIntent.current?.operationId !== operation?.id ||
       operation?.state !== 'succeeded' ||
       !operation.result?.imported ||
       openedImport.current === operation.id
     )
       return
     openedImport.current = operation.id
-    const identity = operation.result.imported
+    const revision = navigationIntent.current?.revision
+    if (revision !== useNavigationStore.getState().explicitNavigationRevision) return
     void useProjectStore
       .getState()
       .loadProjects()
       .then(() => {
-        useNavigationStore.getState().openSession(identity.projectId, identity.sessionId, 'user')
+        if (revision !== useNavigationStore.getState().explicitNavigationRevision) return
+        openPackageSession(operation)
       })
       .catch(() => undefined)
   }, [operation, isWeb])
@@ -401,11 +422,16 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
     operation.state === 'succeeded' ? Check : waiting ? Clock3 : busy ? LoaderCircle : PackageOpen
   const respond = async (request: PackageOperationRequest): Promise<void> => {
     setError(undefined)
-    if (request.action === 'confirm-import') navigationIntent.current = operation.id
+    if (request.action === 'confirm-import')
+      navigationIntent.current = {
+        operationId: operation.id,
+        revision: useNavigationStore.getState().explicitNavigationRevision
+      }
     try {
       await window.api.sessions.packageOperation(request)
     } catch (caught) {
-      if (navigationIntent.current === operation.id) navigationIntent.current = undefined
+      if (navigationIntent.current?.operationId === operation.id)
+        navigationIntent.current = undefined
       setError({
         id: operation.id,
         message: caught instanceof Error ? caught.message : String(caught)
@@ -537,12 +563,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const openImported = async (): Promise<void> => {
     try {
       await useProjectStore.getState().loadProjects()
-      const identity = operation.result?.imported
-      if (
-        identity &&
-        useNavigationStore.getState().openSession(identity.projectId, identity.sessionId, 'user')
-      )
-        dismiss()
+      if (openPackageSession(operation)) dismiss()
     } catch (caught) {
       setError({
         id: operation.id,

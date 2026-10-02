@@ -76,7 +76,21 @@ export type PreviewToolItem = PreviewItemBase & {
   // A message chip can request a transient Library scope without changing the durable tab format.
   libraryScopeRequest?: { section?: 'inbox'; collectionId?: string; collectionName?: string }
   toolKind?:
-    'notebook' | 'files' | 'library' | 'compute' | 'reviewer' | 'plan' | 'subagents' | 'side-chat'
+    | 'notebook'
+    | 'files'
+    | 'library'
+    | 'compute'
+    | 'reviewer'
+    | 'plan'
+    | 'subagents'
+    | 'side-chat'
+    | 'replay'
+  // A replay tab retains its source when the left-hand discussion selects another Session.
+  replaySourceProjectId?: string
+  replaySourceSessionId?: string
+  replayStepId?: string
+  replayBranchId?: string
+  replayRevealRequest?: number
   notebook?: NotebookSessionReference
   notebookRunId?: string
   notebookRunFocusRequest?: number

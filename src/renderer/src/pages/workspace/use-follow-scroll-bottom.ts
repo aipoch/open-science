@@ -38,6 +38,8 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
     bindingRef.current = undefined
     if (!viewport) return
 
+    let lastScrollTop = viewport.scrollTop
+
     const clearAutoscroll = (): void => {
       if (autoscrollFrameRef.current === undefined) return
       window.cancelAnimationFrame(autoscrollFrameRef.current)
@@ -49,6 +51,7 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
       if (Math.abs(viewport.scrollTop - nextTop) <= 0.5) return
       autoscrollingRef.current = true
       viewport.scrollTop = nextTop
+      lastScrollTop = viewport.scrollTop
       clearAutoscroll()
       autoscrollFrameRef.current = window.requestAnimationFrame(() => {
         autoscrollFrameRef.current = undefined
@@ -59,12 +62,15 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
     const handleScroll = (): void => {
       if (!enabledRef.current) return
       const atBottom = isAtFollowScrollBottom(viewport)
-      // Programmatic follow lands on the bottom; a user move away from it always pauses.
-      if (autoscrollingRef.current && atBottom) return
+      const movedUp = viewport.scrollTop < lastScrollTop - 0.5
+      lastScrollTop = viewport.scrollTop
+      // A delayed scroll event can arrive after streamed content grew again. Its unchanged
+      // offset is not a user departure; only an actual upward move suspends active follow.
+      if (autoscrollingRef.current && !movedUp) return
       // A user move ends the pending programmatic-scroll guard immediately.
       clearAutoscroll()
       autoscrollingRef.current = false
-      followingRef.current = atBottom
+      followingRef.current = atBottom || (followingRef.current && !movedUp)
     }
 
     const handleContentResize = (): void => {

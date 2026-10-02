@@ -1,3 +1,4 @@
+import type { PrepareSessionReading } from './replay-reference-prompt'
 import * as acp from '@agentclientprotocol/sdk'
 import type {
   ActiveSession,
@@ -224,6 +225,7 @@ export type AcpRuntimeCallbacks = {
 }
 
 type AcpRuntimeOptions = {
+  prepareSessionReading?: PrepareSessionReading
   classifySkills?: import('../../shared/classification').ClassifySkills
   classifyReadingRoute?: import('../../shared/classification').ClassifyReadingRoute
   hasPendingCredentialRequest?: (sessionId: string) => boolean

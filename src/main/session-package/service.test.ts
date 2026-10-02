@@ -1,3 +1,4 @@
+import { replayAnnotationId } from '../../shared/replay-reference'
 import { writePackageRoCrateMetadata } from './ro-crate'
 import { initDataRoot } from '../storage-root'
 import { createUploadVersionReference } from '../../shared/uploads'
@@ -2478,13 +2479,54 @@ it('preserves a completed Review and its findings without restarting the Review'
   initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  const elicitation = {
+    message: 'Choose a method',
+    fields: [
+      {
+        id: 'method',
+        kind: 'single-select' as const,
+        label: 'Method',
+        options: [
+          { value: 'r', label: 'R' },
+          { value: 'python', label: 'Python' }
+        ]
+      }
+    ],
+    state: 'answered' as const,
+    answers: [{ fieldId: 'method', value: 'r' }],
+    respondedAt: 3
+  }
   await new SessionRepository(source.storageRoot).saveSession({
     id: 'session-1',
     projectId: 'project-1',
     title: 'Reviewed work',
     cwd: '',
     status: 'idle',
-    messages: [],
+    messages: [
+      {
+        id: 'question',
+        role: 'user',
+        content: 'Compare methods',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    activities: [
+      {
+        id: 'ask-method',
+        kind: 'tool',
+        title: 'ask_user',
+        status: 'completed',
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 3,
+        sortIndex: 2,
+        promptMessageId: 'question',
+        elicitation
+      }
+    ],
     createdAt: 1,
     updatedAt: 2
   })
@@ -2529,6 +2571,13 @@ it('preserves a completed Review and its findings without restarting the Review'
     getClient: async () => target.client
   })
   const imported = await importer.importFrom(archive)
+  const restoredSession = await new SessionRepository(target.storageRoot).loadSession(
+    imported.projectId,
+    imported.sessionId
+  )
+  expect(
+    restoredSession?.activities?.find((activity) => activity.elicitation)?.elicitation
+  ).toMatchObject(elicitation)
   const origin = await importer.readOrigin(imported)
   expect(origin.identities[reviewedVersion.versionId]).toEqual(expect.any(String))
   await expect(
@@ -3855,3 +3904,317 @@ it.each([false, true])(
   },
   process.platform === 'win32' ? 120_000 : 60_000
 )
+
+it('round-trips delegated Notebook lanes and Compute receipts into replay without execution authority', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(source.storageRoot)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Delegate Compute replay' } })
+  const scope = { projectId: 'project-1', sessionId: 'session-1' }
+  const now = Date.UTC(2026, 8, 30, 4)
+  const script =
+    'const values = [2, 4, 6, 8]; console.log(JSON.stringify({n: values.length, mean: values.reduce((a,b) => a+b, 0) / values.length}))'
+  // Real local calculation; remote transport and provider turns remain explicit recorded fixtures.
+  const stdout = execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })
+  expect(JSON.parse(stdout)).toEqual({ n: 4, mean: 5 })
+  const graph = createLinearConversationGraph({
+    sessionId: scope.sessionId,
+    createdAt: now,
+    updatedAt: now + 2000,
+    messages: [
+      {
+        id: 'root-question',
+        role: 'user',
+        content: 'Compare delegated analysis and a simulated Compute job for samples 2, 4, 6, 8.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: now,
+        updatedAt: now
+      }
+    ]
+  })
+  const runs: import('../../shared/notebook').NotebookRunRecord[] = []
+  const frameworks = ['claude-code', 'opencode', 'codex-response', 'codex-bridge']
+  for (const [index, frameworkId] of frameworks.entries()) {
+    const id = `delegate-${index}`
+    const branchId = `branch-${index}`
+    const promptId = `question-${index}`
+    const runtimeSegmentId = `segment-${index}`
+    graph.frames.push({
+      id,
+      kind: 'delegate',
+      delegateName: `Statistics ${frameworkId}`,
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'root-question',
+      originBindingState: 'validated',
+      status: 'completed',
+      activeBranchId: branchId,
+      createdAt: now + 1000
+    })
+    graph.branches.push({
+      id: branchId,
+      agentFrameId: id,
+      headMessageId: promptId,
+      createdAt: now + 1000,
+      updatedAt: now + 3000
+    })
+    graph.messages.push({
+      id: promptId,
+      agentFrameId: id,
+      introducedOnBranchId: branchId,
+      runtimeSegmentId,
+      role: 'user',
+      content: `Calculate the sample mean. Recorded provider: ${frameworkId}.`,
+      status: 'complete',
+      eventIds: [],
+      createdAt: now + 1000,
+      updatedAt: now + 1000
+    })
+    graph.runtimeSegments.push({
+      id: runtimeSegmentId,
+      agentFrameId: id,
+      frameworkId,
+      startedAt: now + 1000,
+      endedAt: now + 3000
+    })
+    runs.push({
+      runId: `run-${index}`,
+      cellId: `cell-${index}`,
+      source: 'agent',
+      kernelKind: 'repl',
+      script,
+      status: 'completed',
+      startedAt: now + 2000,
+      endedAt: now + 3000,
+      rootFrameId: graph.rootFrameId,
+      agentFrameId: id,
+      messageBranchId: branchId,
+      runtimeSegmentId,
+      promptMessageId: promptId,
+      text: { stdout, stderr: '', traceback: '', plain: [] },
+      outputs: [{ type: 'stream', name: 'stdout', text: stdout }],
+      artifacts: [],
+      workingFiles: []
+    })
+  }
+  runs.push({
+    ...runs[0],
+    runId: 'compute-submit',
+    cellId: 'compute-cell',
+    agentFrameId: graph.rootFrameId,
+    messageBranchId: graph.branches[0].id,
+    promptMessageId: 'root-question',
+    runtimeSegmentId: undefined,
+    script: 'await host.compute.create("ssh:simulated").submitJob("Sample mean", "node mean.js")',
+    text: {
+      stdout: '{"job_id":"job-mean","status":"submitted"}',
+      stderr: '',
+      traceback: '',
+      plain: []
+    },
+    outputs: []
+  })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: scope.sessionId,
+    projectId: scope.projectId,
+    title: 'Delegate and Compute replay example',
+    cwd: '',
+    status: 'idle',
+    createdAt: now,
+    updatedAt: now + 5000,
+    messages: graph.messages.filter((message) => message.agentFrameId === graph.rootFrameId),
+    conversationGraph: graph
+  })
+  for (const run of runs) {
+    const lane = createFrameNotebookLane(scope.projectId, scope.sessionId, run.agentFrameId!)
+    await source.notebookRepository.loadOrCreate({
+      ...scope,
+      lane,
+      workspaceCwd: source.storageRoot
+    })
+    await source.notebookRepository.appendRun({ ...scope, lane, run })
+  }
+  await source.client.computeJob.create({
+    data: {
+      id: 'job-mean',
+      ...scope,
+      providerId: 'ssh:simulated',
+      shape: 'direct_ssh',
+      status: 'success',
+      intent: 'Sample mean (simulated remote transport)',
+      command: 'node mean.js',
+      commandHash: sha256('node mean.js'),
+      producerRunId: 'compute-submit',
+      stdoutTail: stdout,
+      exitCode: 0,
+      sensitiveDataEncrypted: false,
+      createdAt: new Date(now + 3000),
+      finishedAt: new Date(now + 5000)
+    }
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  const archive = join(source.storageRoot, 'delegate-compute.science')
+  try {
+    await exporter.exportTo(scope, archive)
+    initDataRoot(target.storageRoot)
+    const imported = await importer.importFrom(archive)
+    const session = (await new SessionRepository(target.storageRoot).loadSession(
+      imported.projectId,
+      imported.sessionId
+    ))!
+    const importedRuns = await target.notebookRepository.readSessionRuns(
+      imported.projectId,
+      imported.sessionId
+    )
+    expect(importedRuns).toHaveLength(5)
+    expect(session.conversationGraph!.branches).toHaveLength(5)
+    for (const frame of session.conversationGraph!.frames.filter(
+      (frame) => frame.kind === 'delegate'
+    )) {
+      const branchRuns = importedRuns.filter((run) => run.agentFrameId === frame.id)
+      expect(branchRuns).toHaveLength(1)
+      expect(branchRuns[0].messageBranchId).toBe(frame.activeBranchId)
+      expect(branchRuns[0].text.stdout).toBe(stdout)
+    }
+    const origin = await importer.readOrigin(imported)
+    const history = origin.history!
+    expect(history.computeJobs).toHaveLength(1)
+    expect(history.computeJobs[0].stdout).toBe(stdout)
+    expect(
+      importedRuns.some(
+        (run) => run.runId === origin.identities[history.computeJobs[0].producerRunId!]
+      )
+    ).toBe(true)
+    expect(await target.client.computeJob.count()).toBe(0)
+    // Optional local artifact for the separate isolated Electron import journey.
+    if (process.env.REPLAY_EXAMPLE_ARCHIVE)
+      await fsPromises.copyFile(archive, process.env.REPLAY_EXAMPLE_ARCHIVE)
+  } finally {
+    await exporter.close()
+    await importer.close()
+  }
+})
+
+it('round-trips portable history without local Session selection links', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
+  initDataRoot(target.storageRoot)
+  fixtures.push(source, target)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  const repository = new SessionRepository(source.storageRoot)
+  await repository.saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Question about a Session',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: [
+      {
+        id: 'q',
+        role: 'user',
+        content: '[Selected step](#session-replay:source-project:snapshot-1) Why?',
+        parts: [
+          { type: 'text', text: '[Selected step](#session-replay:source-project:snapshot-1) Why?' }
+        ],
+        annotations: [
+          {
+            id: replayAnnotationId(
+              {
+                projectId: 'source-project',
+                sourceSessionId: 'source-session',
+                branchId: 'main',
+                stepId: 'file'
+              },
+              'snapshot-1'
+            ),
+            kind: 'text',
+            target: 'agent',
+            quote: 'Saved selection label',
+            source: {
+              kind: 'project-file',
+              projectId: 'source-project',
+              sessionId: 'source-session',
+              fileSource: 'artifact',
+              sourceFileId: 'foreign-file',
+              versionId: 'foreign-version',
+              path: createArtifactVersionLocator({
+                projectId: 'source-project',
+                appSessionId: 'source-session',
+                artifactId: 'foreign-file',
+                versionId: 'foreign-version'
+              })
+            }
+          }
+        ],
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      sessionContext: {
+        version: 1,
+        bindings: [
+          {
+            projectId: 'source-project',
+            sessionId: 'source-session',
+            contextId: 'snapshot-1',
+            title: 'Source',
+            branchId: 'main',
+            promptMessageId: 'q'
+          }
+        ]
+      }
+    }
+  })
+  const archive = join(source.storageRoot, 'session-selection.science')
+  await new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  }).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  const imported = await importer.importFrom(archive)
+  const restored = await new SessionRepository(target.storageRoot).loadSession(
+    imported.projectId,
+    imported.sessionId
+  )
+  expect(restored?.runtimeContext?.sessionContext).toBeUndefined()
+  expect(restored?.messages[0].content).toContain('Saved selection label')
+  expect(restored?.messages[0].parts?.at(-1)).toEqual({
+    type: 'text',
+    text: '\n\nSaved selection label'
+  })
+  expect(restored?.messages[0].annotations ?? []).toEqual([])
+  expect(JSON.stringify(restored)).not.toContain('foreign-version')
+  expect(JSON.stringify(restored)).not.toContain('#session-replay:')
+  expect(restored?.messages[0].content).toContain('Selected step (local Session link omitted) Why?')
+  expect(
+    (await repository.loadSession('project-1', 'session-1'))?.runtimeContext?.sessionContext
+      ?.bindings
+  ).toHaveLength(1)
+  const forwarded = join(target.storageRoot, 'session-selection-forwarded.science')
+  await importer.exportTo(imported, forwarded)
+  const again = await importer.importFrom(forwarded)
+  expect(
+    (await new SessionRepository(target.storageRoot).loadSession(again.projectId, again.sessionId))
+      ?.runtimeContext?.sessionContext
+  ).toBeUndefined()
+})

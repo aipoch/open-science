@@ -1773,11 +1773,37 @@ describe('notebook run repository', () => {
     const window = await reader.readSessionRunWindow('default-project', 'session-1', 2)
     expect(window.runs.map((run) => run.runId)).toEqual(['run-6', 'run-7'])
     expect(window.total).toBe(runCount)
+    const index = await reader.readSessionRunIndex('default-project', 'session-1')
+    expect(index).toHaveLength(runCount)
+    expect(index[0]).toMatchObject({ runId: 'run-0', scriptCharacters: 8, hasOutput: true })
+    expect(index[0]).not.toHaveProperty('script')
+    expect(index[0]).not.toHaveProperty('text')
+    expect(await reader.readSessionRun('default-project', 'session-1', 'run-6')).toMatchObject({
+      script: 'print(6)'
+    })
+    expect(await reader.readSessionRun('default-project', 'session-1', 'missing')).toBeUndefined()
 
     const cache = reader as unknown as {
       documentCache: Map<string, { document: { runs: Array<{ runId: string }> } }>
     }
     expect([...cache.documentCache.values()][0]?.document.runs).toHaveLength(runCount)
+
+    // Simulate a large imported archive and verify replacement invalidates the compact index.
+    const largeDocument = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    largeDocument.runs = Array.from({ length: 2000 }, (_, i) => ({
+      ...largeDocument.runs[0],
+      runId: `large-${i}`,
+      startedAt: i + 1,
+      text: { stdout: 'x'.repeat(4096), stderr: '', traceback: '', plain: [] }
+    }))
+    await writeFile(runJsonPath, JSON.stringify(largeDocument))
+    const largeIndex = await reader.readSessionRunIndex('default-project', 'session-1')
+    expect(largeIndex).toHaveLength(2000)
+    expect(Buffer.byteLength(JSON.stringify(largeIndex))).toBeLessThan(1024 * 1024)
+    expect(await reader.readSessionRun('default-project', 'session-1', 'large-1999')).toMatchObject(
+      { text: { stdout: 'x'.repeat(4096) } }
+    )
+    expect(await reader.readSessionRun('default-project', 'session-1', 'run-6')).toBeUndefined()
   })
 
   it('leaves Session workspace output files in place when another run is appended', async () => {

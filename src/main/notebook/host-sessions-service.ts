@@ -213,7 +213,12 @@ class HostSessionsService {
   constructor(
     private readonly repository: HostSessionsRepository,
     private readonly runtime: HostSessionsRuntime,
-    private readonly resolveReferencedSession?: HostSessionsReferencedSessionResolver
+    private readonly resolveReferencedSession?: HostSessionsReferencedSessionResolver,
+    readonly read?: (
+      sessionId: unknown,
+      options: unknown,
+      context: HostSessionReadContext
+    ) => Promise<unknown>
   ) {}
 
   async list(options: unknown, context: HostSessionReadContext): Promise<unknown> {

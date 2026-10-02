@@ -22,7 +22,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation, Trans } from 'react-i18next'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 
 import type {
   RemoteAccessMode,

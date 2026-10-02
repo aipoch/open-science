@@ -717,3 +717,6 @@ export {
   useWorkspaceAgentRuntime
 }
 export type { WorkspaceAgentRuntime, WorkspaceSessionRuntimeSelection }
+
+// Public command types for feature adapters; runtime owners remain private implementation details.
+export type { SendWorkspaceMessageIntent, SendWorkspaceMessageResult }

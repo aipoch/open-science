@@ -522,8 +522,9 @@ describe('PreviewPanel', () => {
 
   it.each([
     ['compute', 'Compute', 'cpu'],
-    ['library', 'Library', 'book-open']
-  ] as const)('shows the sidebar icon on the %s preview tab', async (toolKind, title, icon) => {
+    ['library', 'Library', 'book-open'],
+    ['replay', 'Research replay', 'play']
+  ] as const)('shows the matching icon on the %s preview tab', async (toolKind, title, icon) => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createToolItem({ toolKind, title }))
 
     await renderPanel()

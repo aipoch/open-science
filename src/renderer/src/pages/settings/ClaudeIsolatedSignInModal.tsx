@@ -1,7 +1,7 @@
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { useEffect, useRef, useState } from 'react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { Check, Copy, Loader2, X } from 'lucide-react'
 import { Trans, useTranslation } from 'react-i18next'
 

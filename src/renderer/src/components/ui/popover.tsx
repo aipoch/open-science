@@ -1,3 +1,4 @@
+import { useOverlayLayer } from './overlay-layer'
 import * as React from 'react'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 
@@ -11,11 +12,13 @@ const PopoverTrigger = PopoverPrimitive.Trigger
 
 function PopoverContent({
   className,
+  style,
   sideOffset = 4,
   ref,
   onInteractOutside,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>): React.JSX.Element {
+  const layer = useOverlayLayer()
   const { setContentRef, onInteractOutside: guardChildDismissal } = useChildLayerDismissalGuard(ref)
 
   return (
@@ -28,6 +31,7 @@ function PopoverContent({
           className
         )}
         {...props}
+        style={layer > 40 ? { ...style, zIndex: layer + 10 } : style}
         onInteractOutside={(event) => {
           guardChildDismissal(event)
           onInteractOutside?.(event)

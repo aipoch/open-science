@@ -1,3 +1,4 @@
+import type { ReplayRunIndex } from '../replay'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../artifacts'
 
 import type {
@@ -117,6 +118,10 @@ export const contracts = {
   'notebook.shutdown': callable<
     (request: NotebookSessionRequest) => Promise<{ sessionId: string; status: 'shutdown' }>
   >()('notebook', ['notebook:shutdown']),
+  'notebook.runIndex': callable<(request: NotebookSessionRequest) => Promise<ReplayRunIndex[]>>()(
+    'notebook',
+    ['notebook:run-index']
+  ),
   'notebook.state': callable<
     (request: NotebookSessionStateRequest) => Promise<NotebookSessionState>
   >()('notebook', ['notebook:state']),

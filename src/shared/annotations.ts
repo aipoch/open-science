@@ -1,3 +1,4 @@
+import { replayAnnotationTarget, replayReferenceText } from './replay-reference'
 import type { ArtifactReference, FileReference } from './artifacts'
 import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
@@ -18,14 +19,22 @@ export const ANNOTATION_LIMITS = Object.freeze({
 })
 
 export type SessionTextAnnotationItemType =
-  'tool-activity' | 'plan' | 'elicitation' | 'delegated-elicitation' | 'subagent-message'
+  | 'tool-activity'
+  | 'plan'
+  | 'elicitation'
+  | 'delegated-elicitation'
+  | 'subagent-message'
+  | 'notebook-run'
+  | 'review'
 
 const SESSION_TEXT_ANNOTATION_ITEM_TYPES = new Set<SessionTextAnnotationItemType>([
   'tool-activity',
   'plan',
   'elicitation',
   'delegated-elicitation',
-  'subagent-message'
+  'subagent-message',
+  'notebook-run',
+  'review'
 ])
 
 export type TextAnnotationSource =
@@ -1099,6 +1108,17 @@ export const prepareAnnotationsForAgent = (
   annotations: readonly Annotation[],
   referencedArtifacts?: readonly FileReference[]
 ): PreparedAnnotationsForAgent => {
+  const readingLinks = annotations.flatMap((annotation) => {
+    const target = replayAnnotationTarget(annotation)
+    return target?.contextId
+      ? [
+          replayReferenceText(target.contextId, 'Session reading', target.projectId),
+          ...(annotation.note ? [annotation.note] : [])
+        ]
+      : []
+  })
+  annotations = annotations.filter((annotation) => !replayAnnotationTarget(annotation)?.contextId)
+  text = [text, ...readingLinks].filter(Boolean).join('\n')
   const preparedImages = prepareImagePointAnnotations(annotations)
   const regionImages = preparePdfRegionImages(annotations)
   const annotationText = annotationPayloadTextFromPrepared(

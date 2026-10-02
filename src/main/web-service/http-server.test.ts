@@ -3329,6 +3329,7 @@ describe('startWebHttpServer', () => {
       'notebook:read-input-preview',
       'notebook:restart',
       'notebook:run-cell',
+      'notebook:run-index',
       'notebook:shutdown',
       'notebook:state'
     ])

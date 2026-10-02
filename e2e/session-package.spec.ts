@@ -6,6 +6,13 @@ import { test } from './fixtures/electron-app'
 // Exercise visible transfer controls without hidden-window frame throttling on Windows.
 test.use({ windowMode: 'normal' })
 
+test.beforeEach(async ({ app }) => {
+  // These presentation assertions use English copy even when no fake provider is configured.
+  // Persist the choice so cold package launches use the same locale as the initial window.
+  await app.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'en')
+})
+
 test('preserves transfer outcomes while showing pending temporary cleanup', async ({
   app
 }, testInfo) => {
@@ -278,7 +285,7 @@ test('shows a recoverable disk-capacity error before copying an import', async (
   await operation.getByRole('button', { name: 'Close', exact: true }).click()
 })
 
-test('exports a Session package and imports its conversation as read-only history', async ({
+test('exports a Session package and opens the imported Session with replay', async ({
   app
 }, testInfo) => {
   // This journey validates the archive several times and performs two persistence restarts.
@@ -446,10 +453,15 @@ test('exports a Session package and imports its conversation as read-only histor
   await expect(importing.getByText('Package operation completed', { exact: true })).toBeVisible({
     timeout: 60_000
   })
-  await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
+  await expect(page.getByTestId('replay-panel')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-import-completed.png') })
   await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
-  const imported = page.getByRole('region', { name: 'Imported research history' })
+  await expect(page.getByTestId('replay-panel')).toBeVisible()
+  await expect(
+    page.getByTestId('replay-panel').getByRole('button', { name: 'Play replay', exact: true })
+  ).toBeVisible()
+  const replay = page.getByTestId('replay-panel')
+  const imported = page.getByRole('region', { name: 'Imported research history', exact: true })
   await expect(imported).toBeVisible()
   await expect(imported.getByText(/^Imported on /)).toBeVisible()
   const origins = await page.evaluate(async () =>
@@ -470,7 +482,13 @@ test('exports a Session package and imports its conversation as read-only histor
   await page.screenshot({ path: testInfo.outputPath('session-package-source.png') })
   await imported.getByText('Not included in this package', { exact: true }).click()
   await expect(imported.getByText('raw-results.csv', { exact: true })).toBeVisible()
-  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
+  await replay.getByRole('slider', { name: 'Replay progress', exact: true }).focus()
+  await page.keyboard.press('End')
+  await expect(
+    page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  ).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Ask anything' })).toHaveCount(0)
   const sessionRow = page
     .getByRole('navigation', { name: 'Sessions', includeHidden: true })
@@ -483,7 +501,7 @@ test('exports a Session package and imports its conversation as read-only histor
     includeHidden: true
   })
   const sessionMenu = sessionRow.getByRole('button', { name: `Open actions for ${prompt}` })
-  await page.getByRole('region', { name: 'Imported research history' }).hover()
+  await imported.hover()
   await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await page
     .getByRole('navigation', { name: 'Sessions' })
@@ -498,18 +516,22 @@ test('exports a Session package and imports its conversation as read-only histor
   await expect(page.getByRole('menu', { name: `Open actions for ${prompt}` })).toBeVisible()
   await expect(readOnlyBadge).toHaveCSS('opacity', '0')
   await page.keyboard.press('Escape')
-  await page.getByRole('region', { name: 'Imported research history' }).click()
+  await imported.getByText('Package source', { exact: true }).click()
   await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await sessionMenu.focus()
   await expect(readOnlyBadge).toHaveCSS('opacity', '0')
   await expect(sessionMenu).toHaveCSS('opacity', '1')
-  await page.getByRole('region', { name: 'Imported research history' }).click()
+  await imported.getByText('Package source', { exact: true }).click()
   await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await page.screenshot({ path: testInfo.outputPath('session-package-imported.png') })
   await page.getByRole('button', { name: 'New', exact: true }).click()
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue in an ordinary Session.')
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
-  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
+  await expect(
+    page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await expect(page.getByText('Conversation storage needs attention', { exact: true })).toHaveCount(
     0
@@ -533,8 +555,16 @@ test('exports a Session package and imports its conversation as read-only histor
     })
     .getByRole('button', { name: new RegExp(`Session status:.*${prompt}`) })
     .click()
-  await expect(app.page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
-  await expect(app.page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
+  await app.page
+    .getByRole('region', { name: 'Imported research history', exact: true })
+    .getByRole('button', { name: 'View replay', exact: true })
+    .click()
+  await expect(app.page.getByTestId('replay-panel')).toBeVisible()
+  await expect(
+    app.page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  ).toBeVisible()
   const identity = await app.page.evaluate(async () => {
     const session = (await window.api.sessions.loadAll()).sessions.find(
       (entry) => entry.packageOrigin

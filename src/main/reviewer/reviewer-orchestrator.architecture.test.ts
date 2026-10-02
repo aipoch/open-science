@@ -495,7 +495,12 @@ describe('Reviewer orchestrator architecture', () => {
         'src/main/reviewer/stale-reviews.ts',
         'src/main/reviewer/turn-evidence.ts'
       ],
-      consumerModules: ['workspace_runtime', 'workspace_page', 'artifact_provenance'],
+      consumerModules: [
+        'workspace_runtime',
+        'workspace_page',
+        'artifact_provenance',
+        'session_replay'
+      ],
       testFiles: {
         owner: [
           'src/main/reviewer/reviewer-orchestrator.architecture.test.ts',
