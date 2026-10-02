@@ -94,6 +94,33 @@ afterEach(() => {
 
 describe('ConnectorAddForm copy', () => {
   it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
+    'localizes Monarch evidence descriptions in %s',
+    async (locale) => {
+      await prepareI18nLocale(locale)
+      const t = i18next.getFixedT(locale, 'renderer')
+      const copy =
+        'Disease and gene phenotype associations with evidence sources via Monarch Initiative.'
+      expect(connectorDescription({ id: 'monarch', description: copy }, t)).toBe(
+        i18next.getResource(locale, 'renderer', copy)
+      )
+      for (const [method, english] of [
+        [
+          'monarch_get_disease_phenotypes',
+          'Retrieve disease–phenotype associations with evidence sources and relation types.'
+        ],
+        [
+          'monarch_get_gene_phenotypes',
+          'Retrieve gene–phenotype associations with evidence sources and relation types.'
+        ]
+      ]) {
+        const translated = connectorToolDescription(`monarch/${method}`, english, t)
+        expect(translated).toBe(i18next.getResource(locale, 'renderer', english))
+        expect(translated).not.toBe(english)
+      }
+    }
+  )
+
+  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
     'renders all Alliance tool descriptions from the %s catalog without English fallback',
     async (locale) => {
       await prepareI18nLocale(locale)

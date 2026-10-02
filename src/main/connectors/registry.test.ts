@@ -14,6 +14,30 @@ import { WORKBENCH_OMICS_TOOLS } from './descriptors/omics-workbench'
 import { VARIANTS_MAVEDB_TOOLS } from './descriptors/variants-mavedb'
 
 describe('registry + catalog', () => {
+  it('registers bounded Monarch evidence queries separately from OLS and Alliance', () => {
+    expect(getConnectorTools('monarch').map((tool) => tool.id)).toEqual([
+      'monarch_get_disease_phenotypes',
+      'monarch_get_gene_phenotypes'
+    ])
+    const tool = getDescriptor('monarch', 'monarch_get_disease_phenotypes')!
+    expect(() => validateToolArguments(tool, { disease_id: 'MONDO:0007947' })).not.toThrow()
+    for (const args of [
+      { disease_id: 'Marfan' },
+      { disease_id: 'MONDO:0007947\n' },
+      { disease_id: 'MONDO:0007947', limit: 101 },
+      { disease_id: 'MONDO:0007947', offset: -1 },
+      { disease_id: 'MONDO:0007947', direct: 'false' },
+      { disease_id: 'MONDO:0007947', query: '*' }
+    ])
+      expect(() => validateToolArguments(tool, args)).toThrow(/invalid_arguments/)
+    const doc = renderSkillDoc('monarch')
+    expect(doc).toContain('monarch_get_disease_phenotypes')
+    expect(doc).toContain('monarch_get_gene_phenotypes')
+    expect(doc).toContain('knowledge_level')
+    expect(doc).toContain('OLS')
+    expect(doc).toContain('Alliance')
+  })
+
   it('registers HMMER search, status and results with the Pfam hmmscan constraint', () => {
     expect(getConnectorTools('hmmer').map((tool) => tool.id)).toEqual([
       'search',

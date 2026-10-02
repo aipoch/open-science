@@ -684,7 +684,9 @@ it('keeps navigation bounded and ignores a previous selection’s late image', a
   await act(async () => next.click())
   expect(next.disabled).toBe(true)
   expect(previous.disabled).toBe(false)
-  expect(container.querySelector('[role="combobox"]')?.textContent).toContain('Figure 2')
+  expect(container.querySelector('[aria-label="Figure and table index"]')?.textContent).toContain(
+    'Figure 2'
+  )
   expect(container.querySelector('[data-pdf-caption]')?.textContent).toBe('Figure 2. Caption.')
   await act(async () => resolveImage('data:image/png;base64,c3RhbGU='))
   expect(container.querySelector('[data-pdf-image-frame] img')?.getAttribute('src')).toBe(
@@ -706,8 +708,12 @@ it.each(['rejected', 'absent'])('offers retry when the cached image is %s', asyn
 
 it('preserves source figure numbers when earlier figures were not extracted', async () => {
   await showFigures(1, 3)
-  expect(container.querySelector('[role="combobox"]')?.textContent).toContain('Figure 3.')
-  expect(container.querySelector('[role="combobox"]')?.textContent).not.toContain('Figure 1')
+  expect(container.querySelector('[aria-label="Figure and table index"]')?.textContent).toContain(
+    'Figure 3.'
+  )
+  expect(
+    container.querySelector('[aria-label="Figure and table index"]')?.textContent
+  ).not.toContain('Figure 1')
 })
 
 it('shows previously loaded figures immediately without another thumbnail read', async () => {
@@ -724,8 +730,12 @@ it('shows previously loaded figures immediately without another thumbnail read',
   expect(api.pdfStructure.readThumbnail).toHaveBeenCalledTimes(2)
   expect(container.querySelector('[data-pdf-image-frame]')?.getAttribute('aria-busy')).toBe('false')
   expect(container.querySelector('[aria-label="Enlarge image"]')).not.toBeNull()
-  expect(container.querySelector('[role="combobox"]')?.textContent).toContain('Figure 1. Caption.')
-  expect(container.querySelector('[role="combobox"]')?.textContent).toContain('Page 1')
+  expect(container.querySelector('[aria-label="Figure and table index"]')?.textContent).toContain(
+    'Figure 1. Caption.'
+  )
+  expect(container.querySelector('[aria-label="Figure and table index"]')?.textContent).toContain(
+    'Page 1'
+  )
   await click('Analyze again')
   expect(api.pdfStructure.readThumbnail).toHaveBeenCalledTimes(3)
   expect(container.querySelector('[data-pdf-image-frame]')?.getAttribute('aria-busy')).toBe('true')
@@ -1319,7 +1329,8 @@ it('presents an empty successful analysis as complete without an initial analysi
   expect(container.textContent).not.toContain('Scanned and rotated pages')
   expect(container.textContent).not.toContain('Download size')
   expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
-    'Analyze again'
+    'Analyze again',
+    '1x'
   ])
   await click('Analyze again')
   expect(api.pdfStructure.parse).toHaveBeenCalledTimes(4)
@@ -1343,7 +1354,8 @@ it('does not label an empty analysis complete when one of the pages failed', asy
   expect(container.querySelector('h3')?.textContent).toBe('Analysis incomplete')
   expect(container.textContent).not.toContain('No figures or tables detected')
   expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
-    'Analyze again'
+    'Analyze again',
+    '1x'
   ])
 })
 
@@ -1367,7 +1379,10 @@ it('keeps empty in-progress and cancelled runs distinct from successful completi
   await click('Analyze PDF')
   expect(container.textContent).toContain('Analyzing PDF…')
   expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('50')
-  expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Cancel'])
+  expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+    'Cancel',
+    '1x'
+  ])
   await click('Cancel')
   await act(async () => finish({ ...result, elements: [] }))
   expect(container.querySelector('h3')?.textContent).toBe('Analysis incomplete')
@@ -1705,3 +1720,304 @@ it('does not automatically restart a cancelled or failed uploaded-PDF request af
   expect(api.pdfStructure.parse).toHaveBeenCalledTimes(2)
   expect(container.textContent).toContain('Could not extract pages: 1')
 })
+
+const selectParallelPages = async (value: 1 | 2 | 4): Promise<void> => {
+  await act(async () =>
+    fireEvent.keyDown(container.querySelector('[aria-label="Parallel pages"]')!, {
+      key: 'ArrowDown'
+    })
+  )
+  const option = [...document.querySelectorAll('[role="option"]')].find(
+    (el) => el.textContent === `${value}x`
+  )!
+  expect(option).toBeDefined()
+  await act(async () => fireEvent.click(option))
+}
+const startParallel = async (concurrency: 1 | 2 | 4, pageCount = 5): Promise<void> => {
+  await act(async () =>
+    root.render(
+      <PdfFiguresView
+        source={{ attachmentVersionId: 'version-1' }}
+        pageCount={pageCount}
+        onNavigate={navigate}
+      />
+    )
+  )
+  expect(container.querySelector('[aria-label="Parallel pages"]')?.textContent).toBe('1x')
+  await selectParallelPages(concurrency)
+  await click(model.installedRevision ? 'Analyze PDF' : 'Download and continue')
+}
+const pendingPages = (): Map<
+  number,
+  { resolve(value: PdfStructureResult): void; reject(error: Error): void }
+> => {
+  const pending = new Map<
+    number,
+    { resolve(value: PdfStructureResult): void; reject(error: Error): void }
+  >()
+  api.pdfStructure.parse.mockImplementation(
+    ({ page }: { page: number }) =>
+      new Promise<PdfStructureResult>((resolve, reject) => pending.set(page, { resolve, reject }))
+  )
+  return pending
+}
+const emptyPage = (page: number): PdfStructureResult => ({
+  ...result,
+  extractionId: `result-${page}`,
+  requestedPages: [page],
+  processedPages: [page],
+  elements: []
+})
+
+it.each([1, 2, 4] as const)(
+  'bounds the dispatch window at %s pages and counts out-of-order completions',
+  async (concurrency) => {
+    const pending = pendingPages()
+    await startParallel(concurrency)
+    expect([...pending.keys()]).toEqual(Array.from({ length: concurrency }, (_, i) => i + 1))
+    expect(container.querySelector('[aria-label="Parallel pages"]')?.hasAttribute('disabled')).toBe(
+      true
+    )
+    await act(async () => pending.get(concurrency)!.resolve(emptyPage(concurrency)))
+    expect(container.textContent).toContain('Attempted 1 / 5 pages')
+    if (concurrency > 1) {
+      expect(api.pdfStructure.parse).toHaveBeenCalledTimes(concurrency)
+      await act(async () => pending.get(1)!.resolve(emptyPage(1)))
+      expect(api.pdfStructure.parse.mock.calls.at(-1)?.[0].page).toBe(concurrency === 2 ? 4 : 5)
+    }
+    const outstanding = api.pdfStructure.parse.mock.calls
+      .map(([request]) => request)
+      .filter(({ page }) => page !== 1 && page !== concurrency)
+    await click('Cancel')
+    for (const request of outstanding)
+      expect(api.pdfStructure.cancel).toHaveBeenCalledWith(request.requestId)
+    await act(async () => {
+      for (const [page, handle] of pending) handle.resolve(emptyPage(page))
+    })
+    expect(container.textContent).not.toContain('Analysis complete')
+  }
+)
+
+it('publishes reversed table completions in page order and joins the continuation', async () => {
+  const pending = pendingPages()
+  await startParallel(2, 2)
+  const pages = [1, 2].map((page) => {
+    const region = { page, x: 0.1, y: 0.1, width: 0.8, height: 0.5 }
+    return {
+      ...emptyPage(page),
+      elements: [
+        {
+          ...result.elements[0],
+          id: `table-${page}`,
+          regions: [region],
+          caption: {
+            text: page === 1 ? 'Table 1. Baseline data.' : 'Table 1. (continued)',
+            regions: [region]
+          },
+          table: {
+            rowCount: 2,
+            columnCount: 2,
+            issues: [],
+            unassignedText: [],
+            cells: [
+              ['Variable', 'Count'],
+              [page === 1 ? 'First row' : 'Second row', String(page)]
+            ].flatMap((row, r) =>
+              row.map((text, column) => ({
+                row: r,
+                column,
+                rowSpan: 1,
+                columnSpan: 1,
+                text,
+                regions: [region]
+              }))
+            )
+          }
+        }
+      ]
+    } satisfies PdfStructureResult
+  })
+  await act(async () => pending.get(2)!.resolve(pages[1]))
+  expect(container.querySelector('table')).toBeNull()
+  await act(async () => pending.get(1)!.resolve(pages[0]))
+  expect(container.querySelectorAll('table')).toHaveLength(1)
+  expect([...container.querySelectorAll('table tr')].map((row) => row.textContent)).toEqual([
+    'VariableCount',
+    'First row1',
+    'Second row2'
+  ])
+  expect(container.textContent).toContain('Pages 1–2')
+  expect(container.textContent).toContain('Analysis complete')
+})
+
+it('advances an ordered window past a failed page without discarding later results', async () => {
+  const pending = pendingPages()
+  await startParallel(2, 3)
+  await act(async () => pending.get(2)!.resolve(emptyPage(2)))
+  await act(async () => pending.get(1)!.reject(new Error('unsupported page')))
+  expect(pending.has(3)).toBe(true)
+  await act(async () => pending.get(3)!.resolve(emptyPage(3)))
+  expect(container.textContent).toContain('Could not extract pages: 1')
+  expect(container.textContent).toContain('Extracted 2 / 3 pages')
+})
+
+it('cancels siblings immediately on an out-of-order terminal error and ignores late results', async () => {
+  const pending = pendingPages()
+  await startParallel(4)
+  const requests = api.pdfStructure.parse.mock.calls.map(([request]) => request)
+  await act(async () => pending.get(4)!.reject(new Error(PDF_MODEL_CHANGED)))
+  expect(container.textContent).toContain('PDF extraction is unavailable')
+  for (const request of requests.slice(0, 3))
+    expect(api.pdfStructure.cancel).toHaveBeenCalledWith(request.requestId)
+  await act(async () => {
+    for (const [page, handle] of pending) handle.resolve(emptyPage(page))
+  })
+  expect(api.pdfStructure.parse).toHaveBeenCalledTimes(4)
+  expect(container.textContent).not.toContain('Analysis complete')
+})
+
+it('cancels every active page on unmount', async () => {
+  pendingPages()
+  await startParallel(4)
+  const requests = api.pdfStructure.parse.mock.calls.map(([request]) => request)
+  await act(async () => root.render(null))
+  expect(api.pdfStructure.cancel).toHaveBeenCalledTimes(4)
+  for (const request of requests)
+    expect(api.pdfStructure.cancel).toHaveBeenCalledWith(request.requestId)
+})
+
+it('shares one model installation across parallel misses, including a late miss', async () => {
+  model = { ...model, availability: 'notInstalled', installedRevision: undefined }
+  let finish!: (value: LocalModelSnapshot) => void
+  api.localModels.install.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  const pending = pendingPages()
+  await startParallel(2, 2)
+  const first = pending.get(1)!,
+    second = pending.get(2)!
+  await act(async () => first.reject(new Error(LOCAL_MODEL_NOT_INSTALLED)))
+  expect(api.localModels.install).toHaveBeenCalledOnce()
+  await act(async () => finish({ ...model, availability: 'ready', installedRevision: 'v1' }))
+  await act(async () => second.reject(new Error(LOCAL_MODEL_NOT_INSTALLED)))
+  expect(api.localModels.install).toHaveBeenCalledOnce()
+  expect(api.pdfStructure.parse).toHaveBeenCalledTimes(4)
+  await act(async () => {
+    for (const [page, handle] of pending) handle.resolve(emptyPage(page))
+  })
+  expect(container.textContent).toContain('Analysis complete')
+})
+
+it.each(['rejected', 'unavailable'] as const)(
+  'stops parallel extraction when shared model installation is %s and allows retry',
+  async (failure) => {
+    model = { ...model, availability: 'notInstalled', installedRevision: undefined }
+    if (failure === 'rejected')
+      api.localModels.install.mockRejectedValueOnce(new Error('checksum mismatch'))
+    else api.localModels.install.mockResolvedValueOnce(model)
+    const pending = pendingPages()
+    await startParallel(4, 6)
+    const requests = api.pdfStructure.parse.mock.calls.map(([request]) => request)
+    await act(async () => {
+      pending.get(2)!.reject(new Error(LOCAL_MODEL_NOT_INSTALLED))
+      pending.get(3)!.reject(new Error(LOCAL_MODEL_NOT_INSTALLED))
+    })
+    expect(api.localModels.install).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('PDF extraction is unavailable')
+    expect(container.textContent).not.toContain('Could not extract pages:')
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(4)
+    for (const request of [requests[0], requests[3]])
+      expect(api.pdfStructure.cancel).toHaveBeenCalledWith(request.requestId)
+    await act(async () => {
+      pending.get(1)!.resolve(emptyPage(1))
+      pending.get(4)!.resolve(emptyPage(4))
+    })
+    expect(container.textContent).not.toContain('Analysis complete')
+    model = { ...model, availability: 'ready', installedRevision: 'v1' }
+    api.pdfStructure.parse.mockImplementation(async ({ page }: { page: number }) => emptyPage(page))
+    await click('Analyze again')
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(10)
+    expect(container.textContent).toContain('Analysis complete')
+  }
+)
+
+it('applies the display limit in page order and cancels outstanding pages', async () => {
+  const pending = pendingPages()
+  await startParallel(4)
+  await act(async () => pending.get(2)!.resolve(result))
+  expect(container.querySelector('table')).toBeNull()
+  await act(async () =>
+    pending
+      .get(1)!
+      .resolve({ ...result, elements: Array.from({ length: 513 }, () => result.elements[0]) })
+  )
+  expect(container.textContent).toContain(
+    'Display limit reached. Some analyzed pages are not shown.'
+  )
+  expect(container.querySelector('table')).toBeNull()
+  expect(api.pdfStructure.parse).toHaveBeenCalledTimes(4)
+  expect(api.pdfStructure.cancel).toHaveBeenCalledTimes(2)
+})
+
+it('estimates parallel throughput from wall time and resets the selector when reopened', async () => {
+  let now = 0
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
+  try {
+    const pending = pendingPages()
+    await startParallel(2, 4)
+    now = 10_000
+    await act(async () => pending.get(2)!.resolve(emptyPage(2)))
+    await act(async () => pending.get(1)!.resolve(emptyPage(1)))
+    expect(container.textContent).toContain('Attempted 2 / 4 pages')
+    expect(container.textContent).toContain('About 10 sec remaining')
+    await click('Cancel')
+    await act(async () => root.render(null))
+    await act(async () =>
+      root.render(
+        <PdfFiguresView
+          source={{ attachmentVersionId: 'version-1' }}
+          pageCount={4}
+          onNavigate={navigate}
+        />
+      )
+    )
+    expect(container.querySelector('[aria-label="Parallel pages"]')?.textContent).toBe('1x')
+  } finally {
+    clock.mockRestore()
+  }
+})
+
+it.each([1, 4] as const)(
+  'awaits explicit download cancellation during polling with %s parallel pages before retrying',
+  async (concurrency) => {
+    vi.useFakeTimers()
+    model = { ...model, availability: 'notInstalled', installedRevision: undefined }
+    api.pdfStructure.parse.mockRejectedValue(new Error(LOCAL_MODEL_NOT_INSTALLED))
+    api.localModels.install.mockResolvedValueOnce({ ...model, availability: 'installing' })
+    let finishCancel!: () => void
+    api.localModels.cancel.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCancel = () => resolve(model)
+        })
+    )
+    await startParallel(concurrency, 4)
+    expect(container.textContent).toContain('Downloading and verifying…')
+    expect(api.localModels.install).toHaveBeenCalledOnce()
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(concurrency)
+    await click('Cancel download')
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(api.localModels.cancel).toHaveBeenCalledOnce()
+    await click('Download and continue')
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(concurrency)
+    expect(api.localModels.install).toHaveBeenCalledOnce()
+    api.pdfStructure.parse.mockImplementation(async ({ page }: { page: number }) => emptyPage(page))
+    await act(async () => finishCancel())
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(concurrency + 4)
+    expect(api.localModels.cancel).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Analysis complete')
+  }
+)

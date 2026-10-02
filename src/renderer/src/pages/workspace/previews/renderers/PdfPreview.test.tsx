@@ -417,7 +417,7 @@ describe('PdfPreviewContent', () => {
     ])
   })
 
-  it('keeps the notes toggle visible and enables the sidebar within the reader width budget', async () => {
+  it('floats notes in narrow readers and preserves the notebook and docked width across resizing', async () => {
     let width = 1200
     const callbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
@@ -473,18 +473,34 @@ describe('PdfPreviewContent', () => {
         await flush()
       })
     }
-    await resize(900)
+    await resize(1119)
+    expect(notebook.hasAttribute('inert')).toBe(false)
+    expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe('')
+    expect((notebook as HTMLElement).style.width).toBe('320px')
+    expect(container.querySelector('[aria-label="Resize notes sidebar"]')).toBeNull()
+    await resize(280)
+    expect((notebook as HTMLElement).style.width).toBe('264px')
     const narrowToggle = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Show notes sidebar"]'
+      '[role="tablist"] [aria-label="Hide notes sidebar"]'
     )!
-    expect(narrowToggle).not.toBeNull()
-    expect(narrowToggle.getAttribute('aria-disabled')).toBe('true')
     await act(async () => narrowToggle.click())
     expect(notebook.hasAttribute('inert')).toBe(true)
-    await resize(1200)
-    expect(
-      container.querySelector('[aria-label="Hide notes sidebar"]')?.getAttribute('aria-disabled')
-    ).toBe('false')
+    await act(async () => narrowToggle.click())
+    expect(notebook.hasAttribute('inert')).toBe(false)
+    expect(container.querySelector('[data-preview-escape-boundary]')).not.toBeNull()
+    await act(async () =>
+      notebook.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    )
+    expect(notebook.hasAttribute('inert')).toBe(true)
+    expect(document.activeElement).toBe(narrowToggle)
+    expect(container.querySelector('[data-preview-escape-boundary]')).toBeNull()
+    await act(async () => narrowToggle.click())
+    await resize(1120)
+    expect(container.querySelector('[aria-label="Resize notes sidebar"]')).not.toBeNull()
+    expect((notebook as HTMLElement).style.width).toBe('336px')
+    expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe(
+      '336px'
+    )
     expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')!.click()
@@ -494,7 +510,7 @@ describe('PdfPreviewContent', () => {
     const toggleWithNavigation = container.querySelector<HTMLButtonElement>(
       '[role="tablist"] [aria-label="Hide notes sidebar"]'
     )!
-    expect(toggleWithNavigation.getAttribute('aria-disabled')).toBe('false')
+    expect(toggleWithNavigation.getAttribute('aria-disabled')).not.toBe('true')
     await act(async () => toggleWithNavigation.click())
     expect(notebook.hasAttribute('inert')).toBe(true)
     await act(async () => toggleWithNavigation.click())
@@ -506,6 +522,30 @@ describe('PdfPreviewContent', () => {
     expect(createManagedPdfLoadingTask).toHaveBeenCalledTimes(loadCount)
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
     expect(destroyDocument).not.toHaveBeenCalled()
+  })
+
+  it('keeps notes docked at the default application modal width', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1150)
+    await act(async () => {
+      root.render(
+        <div data-slot="file-preview-dialog">
+          <PdfPreviewContent
+            path="literature-attachment-version:version-1"
+            name="paper.pdf"
+            source="literature"
+          />
+        </div>
+      )
+      await flush()
+    })
+    await act(async () => screen.getByRole('button', { name: 'Show notes sidebar' }).click())
+    const notes = container.querySelector<HTMLElement>('[data-pdf-notes-sidebar]')!
+    expect(notes.style.width).toBe('320px')
+    expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe(
+      '320px'
+    )
+    expect(screen.getByRole('separator', { name: 'Resize notes sidebar' })).not.toBeNull()
+    expect(container.querySelector('[data-preview-escape-boundary]')).toBeNull()
   })
 
   it('switches Literature reading modes without releasing or resetting the original PDF', async () => {

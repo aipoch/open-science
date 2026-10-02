@@ -21,6 +21,7 @@ import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
 import { HMMER_TOOLS } from './descriptors/hmmer'
 import { INTERPROSCAN_TOOLS } from './descriptors/interproscan'
 import { LITERATURE_TOOLS } from './descriptors/literature'
+import { MONARCH_TOOLS } from './descriptors/monarch'
 import { MOLECULE_TOOLS } from './descriptors/molecule'
 import { OMICS_ARCHIVES_TOOLS } from './descriptors/omics-archives'
 import { PATHWAY_COMMONS_TOOLS } from './descriptors/pathway-commons'
@@ -57,6 +58,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...HMMER_TOOLS,
   ...INTERPROSCAN_TOOLS,
   ...LITERATURE_TOOLS,
+  ...MONARCH_TOOLS,
   ...MOLECULE_TOOLS,
   ...OMICS_ARCHIVES_TOOLS,
   ...PATHWAY_COMMONS_TOOLS,

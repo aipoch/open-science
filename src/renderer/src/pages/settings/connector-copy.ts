@@ -10,6 +10,11 @@ export function connectorDescription(
       'Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.'
     )
   }
+  if (connector.id === 'monarch') {
+    return t(
+      'Disease and gene phenotype associations with evidence sources via Monarch Initiative.'
+    )
+  }
   if (connector.id === 'cellxgene-discover') {
     return t(
       'Public collections, datasets, versions and file download links from CELLxGENE Discover.'
@@ -64,6 +69,10 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t(
         'Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.'
       )
+    case 'monarch/monarch_get_disease_phenotypes':
+      return t('Retrieve disease–phenotype associations with evidence sources and relation types.')
+    case 'monarch/monarch_get_gene_phenotypes':
+      return t('Retrieve gene–phenotype associations with evidence sources and relation types.')
     case 'cellxgene-discover/list_collections':
       return t('Search public CELLxGENE Discover collections.')
     case 'cellxgene-discover/get_collection':
