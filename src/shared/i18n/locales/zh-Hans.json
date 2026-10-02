@@ -133,6 +133,9 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "获取 GEO 系列的元数据、样本和补充文件链接。",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "查找 GEO Series Matrix 和 NCBI RNA-seq 计数文件的链接，以便手动下载。",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "在分析前检查解压后的 GEO 矩阵结构、维度和样本对应关系。",
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "来自 Cellosaurus 的细胞系身份、来源、疾病、质量记录和数据库映射。",
     "Search cell lines by name or synonym.": "按名称或别名搜索细胞系。",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "通过 CVCL 或 RRID 获取细胞系身份、来源、质量记录和数据库映射。",

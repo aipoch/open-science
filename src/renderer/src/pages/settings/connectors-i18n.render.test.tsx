@@ -94,6 +94,50 @@ afterEach(() => {
 
 describe('ConnectorAddForm copy', () => {
   it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
+    'renders GEO tool descriptions from the %s catalog without API-contract fallback',
+    async (locale) => {
+      await prepareI18nLocale(locale)
+      const descriptions = [
+        ['geo_get_series', 'Retrieve GEO series metadata, samples and supplementary-file links.'],
+        [
+          'geo_get_matrix_files',
+          'Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.'
+        ],
+        [
+          'geo_preflight_matrix',
+          'Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.'
+        ]
+      ] as const
+      const fallback = 'Full English API contract'
+      const t = i18next.getFixedT(locale, 'renderer')
+      act(() => {
+        root.render(
+          <div>
+            {descriptions.map(([method]) => (
+              <p key={method}>
+                {connectorToolDescription(`omics-archives/${method}`, fallback, t)}
+              </p>
+            ))}
+          </div>
+        )
+      })
+      const paragraphs = container.querySelectorAll('p')
+      expect(paragraphs).toHaveLength(descriptions.length)
+      descriptions.forEach(([method, english], index) => {
+        const translated = i18next.getResource(locale, 'renderer', english)
+        expect(typeof translated).toBe('string')
+        expect(translated).not.toBe('')
+        expect(translated).not.toBe(english)
+        expect(paragraphs[index].textContent).toBe(translated)
+        expect(
+          connectorToolDescription(`omics-archives/${method}`, fallback, i18next.getFixedT('en'))
+        ).toBe(english)
+      })
+      expect(container.textContent).not.toContain(fallback)
+    }
+  )
+
+  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
     'localizes Monarch evidence descriptions in %s',
     async (locale) => {
       await prepareI18nLocale(locale)

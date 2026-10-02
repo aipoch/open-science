@@ -133,6 +133,9 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "GEO 시리즈의 메타데이터, 샘플 및 보충 파일 링크를 가져옵니다.",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "수동 다운로드를 위한 GEO Series Matrix 및 NCBI RNA-seq 카운트 파일 링크를 찾습니다.",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "분석 전에 압축 해제된 GEO 행렬의 구조, 차원 및 샘플 대응 관계를 확인합니다.",
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Cellosaurus의 세포주 식별 정보, 유래, 질환, 품질 기록 및 데이터베이스 매핑.",
     "Search cell lines by name or synonym.": "이름 또는 동의어로 세포주 검색.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "CVCL 또는 RRID로 세포주 식별 정보, 유래, 품질 기록 및 데이터베이스 매핑 조회.",
