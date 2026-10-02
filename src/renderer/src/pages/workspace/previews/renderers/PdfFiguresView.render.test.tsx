@@ -1625,19 +1625,18 @@ const managedSource = {
   }
 }
 
-it('automatically extracts an uploaded PDF once while Original PDF is visible, then reuses its results', async () => {
+it('waits for an explicit click to extract an uploaded PDF, then reuses its results', async () => {
   api.pdfStructure.parse.mockResolvedValue(result)
   const render = (active: boolean): void =>
     root.render(
-      <PdfFiguresView
-        source={managedSource}
-        pageCount={1}
-        active={active}
-        autoStart
-        onNavigate={navigate}
-      />
+      <PdfFiguresView source={managedSource} pageCount={1} active={active} onNavigate={navigate} />
     )
   await act(async () => render(false))
+  expect(api.pdfStructure.readCached).not.toHaveBeenCalled()
+  expect(api.pdfStructure.parse).not.toHaveBeenCalled()
+  await act(async () => render(true))
+  expect(api.pdfStructure.parse).not.toHaveBeenCalled()
+  await click('Analyze PDF')
   expect(api.pdfStructure.parse).toHaveBeenCalledOnce()
   expect(api.pdfStructure.parse).toHaveBeenCalledWith({
     ...managedSource,
@@ -1659,37 +1658,20 @@ it('does not analyze an uploaded PDF again when every page is cached, even witho
   model = { ...model, installedRevision: undefined, availability: 'notInstalled' }
   api.pdfStructure.readCached.mockResolvedValue(result)
   await act(async () =>
-    root.render(
-      <PdfFiguresView source={managedSource} pageCount={1} autoStart onNavigate={navigate} />
-    )
+    root.render(<PdfFiguresView source={managedSource} pageCount={1} onNavigate={navigate} />)
   )
   expect(container.textContent).toContain('Merged header')
   expect(api.pdfStructure.parse).not.toHaveBeenCalled()
   expect(api.localModels.install).not.toHaveBeenCalled()
 })
 
-it('keeps model download explicit before automatic uploaded-PDF analysis', async () => {
+it('keeps model download and uploaded-PDF analysis explicit', async () => {
   model = { ...model, installedRevision: undefined, availability: 'notInstalled' }
   await act(async () =>
-    root.render(
-      <PdfFiguresView source={managedSource} pageCount={1} autoStart onNavigate={navigate} />
-    )
+    root.render(<PdfFiguresView source={managedSource} pageCount={1} onNavigate={navigate} />)
   )
   expect(container.textContent).toContain('Download and continue')
   expect(api.pdfStructure.parse).not.toHaveBeenCalled()
-  expect(api.localModels.install).not.toHaveBeenCalled()
-})
-
-it('does not download if the model disappears between automatic admission and parsing', async () => {
-  api.localModels.getSnapshot.mockResolvedValueOnce(model)
-  model = { ...model, installedRevision: undefined, availability: 'notInstalled' }
-  api.pdfStructure.parse.mockRejectedValue(new Error(LOCAL_MODEL_NOT_INSTALLED))
-  await act(async () =>
-    root.render(
-      <PdfFiguresView source={managedSource} pageCount={1} autoStart onNavigate={navigate} />
-    )
-  )
-  expect(api.pdfStructure.parse).toHaveBeenCalledOnce()
   expect(api.localModels.install).not.toHaveBeenCalled()
 })
 
@@ -1703,15 +1685,10 @@ it('does not automatically restart a cancelled or failed uploaded-PDF request af
   )
   const render = (active: boolean): void =>
     root.render(
-      <PdfFiguresView
-        source={managedSource}
-        pageCount={1}
-        active={active}
-        autoStart
-        onNavigate={navigate}
-      />
+      <PdfFiguresView source={managedSource} pageCount={1} active={active} onNavigate={navigate} />
     )
   await act(async () => render(true))
+  await click('Analyze PDF')
   await click('Cancel')
   expect(api.pdfStructure.cancel).toHaveBeenCalledOnce()
   await act(async () => {

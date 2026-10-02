@@ -2088,7 +2088,6 @@ export const PdfPreviewContent = ({
     () => structureSource ?? (attachmentVersionId ? { attachmentVersionId } : undefined),
     [structureSource, attachmentVersionId]
   )
-  const autoExtract = Boolean(figuresSource && 'source' in figuresSource)
   const requestKey = createPreviewResourceKey({
     projectId,
     sessionId,
@@ -3318,10 +3317,7 @@ export const PdfPreviewContent = ({
               </div>
             </div>
           </Tabs.Content>
-          {figuresSource &&
-          (figuresVisited || autoExtract) &&
-          document &&
-          presentation !== 'search' ? (
+          {figuresSource && figuresVisited && document && presentation !== 'search' ? (
             <Tabs.Content value="figures" tabIndex={-1} forceMount asChild>
               <div
                 className={cn(
@@ -3336,7 +3332,6 @@ export const PdfPreviewContent = ({
                   key={requestKey}
                   active={readingMode === 'figures'}
                   source={figuresSource}
-                  autoStart={autoExtract}
                   pageCount={pageCount}
                   onBusyChange={setFiguresBusy}
                   onNavigate={(page) => {

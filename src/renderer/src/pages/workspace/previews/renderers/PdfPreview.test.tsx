@@ -1357,6 +1357,12 @@ describe('PdfPreviewContent', () => {
         )
         await flush()
       })
+      expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
+      const figures = screen.getByRole('tab', { name: /Figures & Tables/ })
+      await act(async () => fireEvent.mouseDown(figures, { button: 0 }))
+      expect(figures.getAttribute('aria-selected')).toBe('true')
+      expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Analyze PDF' })))
       expect(window.api.pdfStructure.parse).toHaveBeenCalledWith({
         source: {
           kind: 'managed',
@@ -1369,9 +1375,6 @@ describe('PdfPreviewContent', () => {
         requestId: expect.any(String)
       })
       expect(useSessionStore.getState().sessions[0].runtimeContext).toBeUndefined()
-      const figures = screen.getByRole('tab', { name: /Figures & Tables/ })
-      await act(async () => fireEvent.mouseDown(figures, { button: 0 }))
-      expect(figures.getAttribute('aria-selected')).toBe('true')
       expect(screen.getByRole('tab', { name: 'Notes & Annotations' })).not.toBeNull()
       await act(async () => root.render(<div />))
       expect(window.api.pdfStructure.cancel).toHaveBeenCalledOnce()

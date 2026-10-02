@@ -9,6 +9,15 @@ test('analyzes an uploaded PDF without Literature, message binding or note-write
   await page.goto('/uploaded-pdf.html')
   await expect(page.locator('[data-pdf-original-view] canvas')).toBeVisible()
   await page.getByRole('tab', { name: 'Figures & Tables' }).click()
+  await expect(page.getByRole('button', { name: 'Analyze PDF', exact: true })).toBeEnabled()
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { uploadedPdfAudit: { requests: unknown[] } }).uploadedPdfAudit
+          .requests.length
+    )
+  ).toBe(0)
+  await page.getByRole('button', { name: 'Analyze PDF', exact: true }).click()
   await expect(page.getByRole('table', { name: 'Candidate table' })).toBeVisible()
   await expect(page.getByRole('cell', { name: '42', exact: true })).toBeVisible()
   await expect(page.getByRole('tab', { name: 'Notes & Annotations' })).toHaveCount(0)

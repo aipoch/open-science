@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './pdf-research-table.css'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -667,14 +667,12 @@ export const PdfFiguresView = ({
   source,
   pageCount,
   active: visible = true,
-  autoStart = false,
   onBusyChange,
   onNavigate
 }: {
   source: PdfStructureSource
   pageCount: number
   active?: boolean
-  autoStart?: boolean
   onBusyChange?: (busy: boolean) => void
   onNavigate: (page: number) => void
 }): React.JSX.Element => {
@@ -691,7 +689,6 @@ export const PdfFiguresView = ({
   const [imageCache] = useState(() => new PdfPreviewImageCache())
   const [restoring, setRestoring] = useState(true)
   const [cacheChecked, setCacheChecked] = useState(false)
-  const automaticAttempt = useRef(false)
   const generation = useRef(0)
   const requestId = useRef<string | undefined>(undefined)
   const installation = useRef<Promise<void> | undefined>(undefined)
@@ -701,7 +698,7 @@ export const PdfFiguresView = ({
   }, [busy, onBusyChange])
   useEffect(() => () => onBusyChange?.(false), [onBusyChange])
   useEffect(() => {
-    if ((!visible && !autoStart) || cacheChecked) return
+    if (!visible || cacheChecked) return
     let live = true
     const own = generation.current
     const restore = async (): Promise<void> => {
@@ -745,9 +742,8 @@ export const PdfFiguresView = ({
     return () => {
       live = false
     }
-  }, [visible, autoStart, cacheChecked, source, pageCount])
+  }, [visible, cacheChecked, source, pageCount])
   const cancel = (): void => {
-    automaticAttempt.current = true
     generation.current++
     if (requestId.current)
       void window.api.pdfStructure.cancel(requestId.current).catch(() => undefined)
@@ -766,7 +762,7 @@ export const PdfFiguresView = ({
     }
   }, [imageCache])
   useEffect(() => {
-    if ((!visible && (!autoStart || automaticAttempt.current)) || busy) return
+    if (!visible || busy) return
     let live = true
     let timer: ReturnType<typeof setTimeout> | undefined
     const poll = (): void => {
@@ -790,148 +786,114 @@ export const PdfFiguresView = ({
       live = false
       clearTimeout(timer)
     }
-  }, [visible, autoStart, busy])
-  const extract = useCallback(
-    async (allowInstall = true): Promise<void> => {
-      automaticAttempt.current = true
-      const own = ++generation.current
-      imageCache.clear()
-      setBusy(true)
-      setError(undefined)
-      setResults([])
-      setFailed([])
-      setCompleted(0)
-      setRemainingSeconds(undefined)
-      setSelected(undefined)
-      setLimited(false)
-      let totalBytes = 0
-      let totalElements = 0
-      let parsingMs = 0
-      try {
-        // Join cancellation of an earlier install before starting a new one.
-        await installation.current
-        if (own !== generation.current) return
-        const snapshot = await window.api.localModels.getSnapshot()
-        if (own !== generation.current) return
-        let needsInstall = !snapshot.installedRevision || snapshot.updateAvailable
-        const install = async (): Promise<void> => {
-          needsInstall = false
-          const operation = async (): Promise<void> => {
-            let installed = await window.api.localModels.install()
-            while (installed.availability === 'installing' && own === generation.current) {
-              setModel(installed)
-              await new Promise((resolve) => setTimeout(resolve, 1000))
-              if (own !== generation.current) break
-              installed = await window.api.localModels.getSnapshot()
-            }
-            if (own !== generation.current) {
-              // Leaving a document cancels its continuation, not an app-wide download another
-              // document or Settings may now be using. Explicit Cancel still stops this live view.
-              if (mounted.current) await window.api.localModels.cancel()
-              return
-            }
+  }, [visible, busy])
+  const extract = async (): Promise<void> => {
+    const own = ++generation.current
+    imageCache.clear()
+    setBusy(true)
+    setError(undefined)
+    setResults([])
+    setFailed([])
+    setCompleted(0)
+    setRemainingSeconds(undefined)
+    setSelected(undefined)
+    setLimited(false)
+    let totalBytes = 0
+    let totalElements = 0
+    let parsingMs = 0
+    try {
+      // Join cancellation of an earlier install before starting a new one.
+      await installation.current
+      if (own !== generation.current) return
+      const snapshot = await window.api.localModels.getSnapshot()
+      if (own !== generation.current) return
+      let needsInstall = !snapshot.installedRevision || snapshot.updateAvailable
+      const install = async (): Promise<void> => {
+        needsInstall = false
+        const operation = async (): Promise<void> => {
+          let installed = await window.api.localModels.install()
+          while (installed.availability === 'installing' && own === generation.current) {
             setModel(installed)
-            if (!installed.installedRevision || installed.updateAvailable)
-              throw new Error('Model unavailable')
+            await new Promise((resolve) => setTimeout(resolve, 1000))
+            if (own !== generation.current) break
+            installed = await window.api.localModels.getSnapshot()
           }
-          const pending = operation()
-          installation.current = pending
-          try {
-            await pending
-          } finally {
-            if (installation.current === pending) installation.current = undefined
+          if (own !== generation.current) {
+            // Leaving a document cancels its continuation, not an app-wide download another
+            // document or Settings may now be using. Explicit Cancel still stops this live view.
+            if (mounted.current) await window.api.localModels.cancel()
+            return
           }
+          setModel(installed)
+          if (!installed.installedRevision || installed.updateAvailable)
+            throw new Error('Model unavailable')
         }
-        for (let page = 1; page <= pageCount && own === generation.current; page++) {
-          let pageStartedAt = performance.now()
-          const id = crypto.randomUUID()
-          requestId.current = id
-          try {
-            const request = { ...source, page, requestId: id }
-            // Cached results remain readable after the optional package is removed.
-            const result = await window.api.pdfStructure.parse(request).catch(async (error) => {
-              const message = error instanceof Error ? error.message : ''
-              if (
-                !allowInstall ||
-                !needsInstall ||
-                own !== generation.current ||
-                ![LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED].some((code) =>
-                  message.endsWith(code)
-                )
-              )
-                throw error
-              await install()
-              if (own !== generation.current) throw error
-              // Model download time is not representative of page parsing throughput.
-              pageStartedAt = performance.now()
-              return window.api.pdfStructure.parse(request)
-            })
-            if (own !== generation.current) return
-            totalBytes += JSON.stringify(result).length * 2
-            totalElements += result.elements.length
-            if (totalBytes > 32 * 1024 ** 2 || totalElements > 512) {
-              setLimited(true)
-              break
-            }
-            setResults((current) => [...current, result])
-          } catch (cause) {
-            if (own !== generation.current) return
-            const message = cause instanceof Error ? cause.message : ''
-            if (
-              [PDF_CLEANUP_PENDING, LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED].some((code) =>
-                message.endsWith(code)
-              )
-            ) {
-              setError(message)
-              setCompleted(page)
-              break
-            }
-            setFailed((current) => [...current, page])
-          }
-          if (own === generation.current) {
-            parsingMs += performance.now() - pageStartedAt
-            setCompleted(page)
-            if (page >= 2) setRemainingSeconds((parsingMs / page / 1000) * (pageCount - page))
-          }
-        }
-      } catch {
-        if (own === generation.current) setError('unavailable')
-      } finally {
-        if (own === generation.current) {
-          requestId.current = undefined
-          setBusy(false)
+        const pending = operation()
+        installation.current = pending
+        try {
+          await pending
+        } finally {
+          if (installation.current === pending) installation.current = undefined
         }
       }
-    },
-    [source, pageCount, imageCache]
-  )
-  useEffect(() => {
-    if (
-      !autoStart ||
-      automaticAttempt.current ||
-      !cacheChecked ||
-      restoring ||
-      busy ||
-      error ||
-      limited ||
-      results.length >= pageCount ||
-      !model?.installedRevision ||
-      model.updateAvailable
-    )
-      return
-    void extract(false)
-  }, [
-    autoStart,
-    cacheChecked,
-    restoring,
-    busy,
-    error,
-    limited,
-    results.length,
-    pageCount,
-    model,
-    extract
-  ])
+      for (let page = 1; page <= pageCount && own === generation.current; page++) {
+        let pageStartedAt = performance.now()
+        const id = crypto.randomUUID()
+        requestId.current = id
+        try {
+          const request = { ...source, page, requestId: id }
+          // Cached results remain readable after the optional package is removed.
+          const result = await window.api.pdfStructure.parse(request).catch(async (error) => {
+            const message = error instanceof Error ? error.message : ''
+            if (
+              !needsInstall ||
+              own !== generation.current ||
+              ![LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED].some((code) => message.endsWith(code))
+            )
+              throw error
+            await install()
+            if (own !== generation.current) throw error
+            // Model download time is not representative of page parsing throughput.
+            pageStartedAt = performance.now()
+            return window.api.pdfStructure.parse(request)
+          })
+          if (own !== generation.current) return
+          totalBytes += JSON.stringify(result).length * 2
+          totalElements += result.elements.length
+          if (totalBytes > 32 * 1024 ** 2 || totalElements > 512) {
+            setLimited(true)
+            break
+          }
+          setResults((current) => [...current, result])
+        } catch (cause) {
+          if (own !== generation.current) return
+          const message = cause instanceof Error ? cause.message : ''
+          if (
+            [PDF_CLEANUP_PENDING, LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED].some((code) =>
+              message.endsWith(code)
+            )
+          ) {
+            setError(message)
+            setCompleted(page)
+            break
+          }
+          setFailed((current) => [...current, page])
+        }
+        if (own === generation.current) {
+          parsingMs += performance.now() - pageStartedAt
+          setCompleted(page)
+          if (page >= 2) setRemainingSeconds((parsingMs / page / 1000) * (pageCount - page))
+        }
+      }
+    } catch {
+      if (own === generation.current) setError('unavailable')
+    } finally {
+      if (own === generation.current) {
+        requestId.current = undefined
+        setBusy(false)
+      }
+    }
+  }
   const entries = useMemo(() => groupPdfFigureSelections(results), [results])
   const analysisComplete =
     !restoring && !busy && !error && !limited && failed.length === 0 && results.length === pageCount
