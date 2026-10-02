@@ -343,6 +343,7 @@ type ElectronApp = {
   emitUpdateStatus: (status: UpdateStatus) => Promise<void>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
+  captureFindOverlay: () => Promise<Buffer>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
   observeMainWindowMenuPopup: (offset: number) => Promise<JSHandle<NativeMenuProbe>>
@@ -1132,6 +1133,21 @@ class ElectronAppHarness implements ElectronApp {
       if (!mainWindow) throw new Error('Open Science main window was not found.')
       mainWindow.webContents.send('skills:conversation-import-request', nextRequest)
     }, request)
+  }
+
+  async captureFindOverlay(): Promise<Buffer> {
+    // Capture the child WebContentsView with Electron's native API. The CDP screenshot
+    // path can fail for this independently composited view on macOS runners.
+    const png = await this.runningApplication.evaluate(async ({ webContents }) => {
+      const overlay = webContents
+        .getAllWebContents()
+        .find((contents) => !contents.isDestroyed() && contents.getURL().includes('/find-overlay/'))
+      if (!overlay) throw new Error('Find overlay was not found.')
+      const image = await overlay.capturePage(undefined, { stayHidden: true, stayAwake: true })
+      if (image.isEmpty()) throw new Error('Find overlay capture was empty.')
+      return image.toPNG().toString('base64')
+    })
+    return Buffer.from(png, 'base64')
   }
 
   async showMainWindow(): Promise<void> {

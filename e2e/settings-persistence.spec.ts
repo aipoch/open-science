@@ -297,7 +297,7 @@ test('contains long memory lists and layers destructive confirmations above sett
     .locator('[data-slot="memory-entry"]')
     .filter({ hasText: 'Overflow note 24' })
   await lastNoteRow.hover()
-  await expect(settings).toHaveCSS('z-index', '50')
+  await expect(settings).toHaveCSS('z-index', '60')
   await lastNoteRow.getByRole('button', { name: 'Delete note' }).click()
   const noteDialog = page.getByRole('alertdialog', { name: 'Delete note?' })
   await expect(noteDialog).toBeVisible()

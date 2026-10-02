@@ -770,9 +770,8 @@ test('long generated filenames preserve the extension beside the image icon and 
   })
   await panel.getByRole('slider').focus()
   await page.keyboard.press('End')
-  const card = panel
-    .locator('[data-replay-step="file-v1"]')
-    .getByRole('button', { name: /^Preview generated file/ })
+  // Adjacent generated versions share one gallery; select the immutable version, not its old step.
+  const card = panel.getByRole('button', { name: /^Preview generated file .* \(Version 1\)$/ })
   await expect(card.locator('img')).toBeVisible()
   await expect(card.getByTestId('file-name-extension')).toHaveText('.png')
   const extension = (await card.getByTestId('file-name-extension').boundingBox())!
@@ -831,10 +830,22 @@ test('wide Notebook follows playback, preserves manual scrolling and respects co
   await expect
     .poll(() => notebookScroll.evaluate((node) => node.scrollTop))
     .toBeGreaterThan(initialTop + 150)
-  const followingTop = await notebookScroll.evaluate((node) => node.scrollTop)
   await notebookScroll.hover()
+  // Playback can advance while Playwright moves the pointer. Measure at the wheel boundary,
+  // before the native scroll, rather than comparing against an earlier playback frame.
+  await notebookScroll.evaluate((node) => {
+    node.addEventListener(
+      'wheel',
+      () => {
+        node.setAttribute('data-wheel-start', String(node.scrollTop))
+      },
+      { once: true }
+    )
+  })
   await page.mouse.wheel(0, -100)
   await expect(panel.getByRole('button', { name: 'Play replay', exact: true })).toBeVisible()
+  await expect(notebookScroll).toHaveAttribute('data-wheel-start', /^\d+(?:\.\d+)?$/)
+  const followingTop = Number(await notebookScroll.getAttribute('data-wheel-start'))
   await expect
     .poll(() => notebookScroll.evaluate((node) => node.scrollTop))
     .toBeLessThan(followingTop - 40)
@@ -1144,7 +1155,7 @@ test('archived output reuses Notebook collapse and keeps long console tables ins
   expect(bounds.whiteSpace).toBe('pre')
   expect(bounds.scrollbarWidth).toBe('none')
   const code = material.locator('[data-testid="session-notebook-cell"] .overflow-auto').first()
-  expect(await code.evaluate((node) => getComputedStyle(node).scrollbarWidth)).toBe('none')
+  expect(await code.evaluate((node) => getComputedStyle(node).scrollbarWidth)).toBe('thin')
   await pre.evaluate((node) => {
     node.scrollLeft = 100
     node.scrollTop = 100
@@ -1348,11 +1359,11 @@ test('interactive history reaches the first message and preserves conversation a
   const historyButton = await conversation
     .getByRole('button', { name: 'Load earlier messages' })
     .boundingBox()
-  const conversationBox = (await conversation.boundingBox())!
-  expect(historyButton!.x + historyButton!.width / 2).toBeCloseTo(
-    conversationBox.x + conversationBox.width / 2,
-    0
+  // Native scrollbars consume client width on CI runners with persistent scrollbars.
+  const conversationCenter = await conversation.evaluate(
+    (node) => node.getBoundingClientRect().x + node.clientLeft + node.clientWidth / 2
   )
+  expect(historyButton!.x + historyButton!.width / 2).toBeCloseTo(conversationCenter, 0)
   const anchor = conversation.locator('[data-replay-step="history-18"]')
   const top = (await anchor.boundingBox())!.y
   await conversation.getByRole('button', { name: 'Load earlier messages' }).click()

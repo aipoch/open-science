@@ -900,13 +900,14 @@ const createAcpRuntime = ({
           : {}),
         callbacks: runtimeCallbacks,
         sideChatRelays,
-        prepareSessionReading: sessionPersistenceCoordinator
-          ? (request) =>
-              new SessionReadingOwner(
-                new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
-                sessionPersistenceCoordinator
-              ).prepare(request)
-          : undefined,
+        prepareSessionReading:
+          !delegatedNotebookConnection && sessionPersistenceCoordinator
+            ? (request) =>
+                new SessionReadingOwner(
+                  new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
+                  sessionPersistenceCoordinator
+                ).prepare(request)
+            : undefined,
         hasPendingCredentialRequest,
         ...(!delegatedNotebookConnection && memory ? { memory } : {}),
         permissionGrantStore,
