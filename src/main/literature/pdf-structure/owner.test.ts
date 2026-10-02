@@ -1015,3 +1015,77 @@ describe('PDF result boundary', () => {
     expect(() => parsePdfStructureResult(nested, identity)).toThrow('budget')
   })
 })
+
+it.each(['upload-version', 'artifact-version'] as const)(
+  'extracts %s without session context, shares the Literature cache and rechecks source access',
+  async (sourceKind) => {
+    const managed = {
+      kind: 'managed' as const,
+      projectId: 'project-1',
+      sourceKind,
+      sourceFileId: source.sourceFileId,
+      sourceVersionId: source.sourceVersionId
+    }
+    const verifyUnchanged = vi.fn(async () => undefined),
+      close = vi.fn(async () => undefined)
+    const managedVersion: ResolvedSessionPdfVersion = {
+      ...source,
+      sourceKind,
+      sourceSessionId: 'origin-session',
+      path: 'identity-only',
+      openContent: async () => ({
+        path: 'identity-only',
+        size: content.length,
+        readRange: async (start: number, end: number) => content.subarray(start, end),
+        verifyUnchanged,
+        close
+      })
+    }
+    const resolveVersion = vi.fn(
+      async ({
+        projectId
+      }: {
+        projectId: string
+      }): Promise<ResolvedSessionPdfVersion | undefined> =>
+        projectId === 'project-1' ? managedVersion : undefined
+    )
+    const loadSessionForContinuation = vi.fn(async () => {
+      throw new Error('No message binding')
+    })
+    authority = new PdfStructureSourceAuthority({
+      literature: { resolveVersion: literature },
+      sources: { resolveVersion },
+      sessions: { loadSessionForContinuation }
+    })
+    const test = setup()
+    const job = test.owner.acquire(managed, [1])
+    const run = await started(test)
+    expect(await readFile(run.request.inputPath)).toEqual(content)
+    run.output.resolve(resultFor(run.request.identity))
+    const result = await job.result
+    expect(resolveVersion).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sourceKind,
+      sourceVersionId: managed.sourceVersionId,
+      expectedSourceFileId: managed.sourceFileId
+    })
+    expect(loadSessionForContinuation).not.toHaveBeenCalled()
+    expect(verifyUnchanged).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+    expect(await test.owner.readCached(reading, [1])).toEqual(result)
+    expect(await test.owner.acquire(managed, [1]).result).toEqual(result)
+    expect(test.engine.start).toHaveBeenCalledOnce()
+    for (const change of [
+      undefined,
+      { ...managedVersion, sourceFileId: 'wrong-file' },
+      { ...managedVersion, sourceVersionId: 'wrong-version' },
+      { ...managedVersion, openContent: undefined }
+    ]) {
+      resolveVersion.mockResolvedValueOnce(change)
+      await expect(test.owner.readCached(managed, [1])).rejects.toThrow('LINKED_PDF_UNAVAILABLE')
+    }
+    await expect(
+      test.owner.readCached({ ...managed, projectId: 'other-project' }, [1])
+    ).rejects.toThrow('LINKED_PDF_UNAVAILABLE')
+  }
+)

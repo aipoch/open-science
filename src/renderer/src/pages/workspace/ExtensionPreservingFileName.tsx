@@ -49,7 +49,7 @@ const ExtensionPreservingFileName = ({
       ref={rootRef}
       data-testid="file-name-root"
       className={cn(
-        'flex min-w-0 max-w-full items-center overflow-hidden whitespace-nowrap',
+        'relative flex min-w-0 max-w-full items-center overflow-hidden whitespace-nowrap',
         className
       )}
     >

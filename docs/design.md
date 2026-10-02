@@ -422,7 +422,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### PDF reading and annotations
 
-- Original PDF, Figures & Tables, and Notes & Annotations use distinct leading document, image, and notebook icons with visible labels.
+- Original PDF, Figures & Tables, and Notes & Annotations use distinct leading document, image, and notebook icons with visible labels. Figures & Tables also accepts finalized upload/artifact PDF versions independently of Literature membership, Agent context, or annotation write access. Opening Figures & Tables restores cached results only. New analysis requires an explicit Analyze PDF or Download and continue action; uploading, opening a preview, and switching tabs never start analysis. Cancellation does not automatically restart analysis.
 - Parsed PDF tables in Figures & Tables preserve source row/column spans, use a collapsed border on every cell, and share one neutral theme surface without inferring headers from the first row or merged cells. Text and numbers use the same start alignment, with tabular digits and numeric no-wrap retained. Only the hovered cell is tinted, including when it spans multiple rows; row-spanning content stays vertically centered. Minimum widths apply uniformly because the first DOM cell below a rowspan may belong to a later column. These rules also apply to cached tables and do not change source text or exports.
 - Empty Notes shows a short explanation and a return-to-PDF action; an unavailable source shows a status instead of an empty panel.
 - Literature annotations belong to the exact PDF attachment version and appear in both Library and project previews. Upload/artifact annotations remain conversation-scoped. Both use the shared tag catalog.
@@ -826,6 +826,15 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Toolbar action buttons are `h-8 w-8`; send uses `bg-primary text-primary-foreground hover:bg-primary/80`, cancel uses `bg-bg-200 text-text-000 hover:bg-bg-300`.
 - Read-only state: apply `opacity-50` to the input content and action area as a whole, but do not shrink the layout.
 - Drag-and-drop state: use `ring-ring/50`, `border-ring/50`, or a semantic success token. Do not hardcode a new green.
+- Native files can be dropped anywhere in the central conversation (header, transcript, empty
+  space, or composer), excluding the left navigation, right preview, and portal dialogs. Use one
+  bounded overlay with neutral attachment/package wording because native hover events may hide
+  filenames. Ordinary files use the existing composer intake and remain draft attachments until
+  submission; one `.science` package opens the existing Project import flow. Reject mixed package
+  batches without partially attaching or importing. Respect blocked composer and Project availability.
+- Keep the new-Session `.science` import guide and keyboard-accessible picker visible at rest.
+  Ordinary file drags must not highlight that package-only guide. Clear hover feedback on leave,
+  drop, cancellation, or window blur.
 
 ### Resource Viewer / File Library
 

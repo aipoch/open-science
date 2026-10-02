@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 
+import { applyRuntimeSessionEvents } from '../../shared/runtime-session-projection'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { initDataRoot } from '../storage-root'
 import { loadSessionMutationAuthority, SessionRepository } from './repository'
@@ -170,6 +171,95 @@ it('exports runtime mutation failure diagnostics without changing the missing Se
 })
 
 describe('durable restart recovery before runtime attachment', () => {
+  it.each([
+    { live: false, status: 'running' as const, activeRun: true },
+    { live: false, status: 'running' as const, activeRun: false },
+    { live: false, status: 'idle' as const },
+    { live: false, status: 'error' as const },
+    { live: true, status: 'running' as const, activeRun: true },
+    { live: true, status: 'running' as const, activeRun: false },
+    { live: true, status: 'idle' as const },
+    { live: true, status: 'error' as const }
+  ])(
+    'persists a pending question before provider attachment (live=$live, status=$status, activeRun=$activeRun)',
+    async ({ live, status, activeRun }) => {
+      const h = await harness(live)
+      const graph = h.initial.conversationGraph!
+      const turn = {
+        promptMessageId: 'prompt-1',
+        agentFrameId: graph.activeFrameId,
+        messageBranchId: graph.frames[0].activeBranchId,
+        runtimeSegmentId: graph.runtimeSegments[0].id
+      }
+      await h.repository.saveSession(
+        applyRuntimeSessionEvents(h.initial, turn, [
+          {
+            id: 'question-event',
+            timestamp: 3,
+            kind: 'tool',
+            level: 'info',
+            sessionId: scope.sessionId,
+            promptMessageId: turn.promptMessageId,
+            toolCallId: 'question-1',
+            title: 'Next step',
+            status: 'in_progress',
+            elicitation: {
+              message: 'What should happen next?',
+              state: 'pending',
+              fields: [{ id: 'choice', label: 'Next step', kind: 'text' }],
+              durable: {
+                kind: 'agent-user-choice',
+                requestId: 'request-1',
+                promptMessageId: turn.promptMessageId
+              }
+            }
+          }
+        ])
+      )
+      if (status !== 'running' || !activeRun) {
+        const saved = await h.raw()
+        if (saved.status !== 'found') throw new Error('Missing historical question')
+        await h.repository.saveSession({
+          ...saved.session,
+          status,
+          activeRun: undefined,
+          // The legacy interruption string also occurs without a resumeRecovery marker.
+          error: status === 'error' ? 'Session was interrupted before the app closed.' : undefined
+        })
+      }
+      const before = await h.raw()
+      await h.owner.prepareRuntimeResume(scope)
+      if (live) {
+        expect(await h.raw()).toEqual(before)
+        return
+      }
+      const committed = await h.raw()
+      expect(committed).toMatchObject({
+        status: 'found',
+        session: {
+          status: 'waiting-for-user',
+          activities: [
+            expect.objectContaining({ elicitation: expect.objectContaining({ state: 'pending' }) })
+          ]
+        }
+      })
+      if (committed.status !== 'found') throw new Error('Missing committed question')
+      expect(committed.session.activeRun).toBeUndefined()
+      expect(committed.session.resumeRecovery).toBeUndefined()
+      expect(committed.session.error).toBeUndefined()
+      if (activeRun) {
+        expect(committed.session.runtimeTranscriptLastRun).toEqual(h.initial.activeRun)
+      }
+      // Once the provider is attached, reads preserve runtime state. The wait must already be on disk.
+      const attached = new SessionRepository(h.root, { hasLiveRuntimeSession: () => true })
+      expect(await attached.loadSession(scope.projectId, scope.sessionId)).toEqual(
+        committed.session
+      )
+      await h.owner.prepareRuntimeResume(scope)
+      expect(await h.raw()).toEqual(committed)
+    }
+  )
+
   it('commits the restore projection before reads begin preserving the attached runtime', async () => {
     const h = await harness()
     expect(await h.raw()).toMatchObject({

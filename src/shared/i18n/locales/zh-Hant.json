@@ -5684,7 +5684,6 @@
     "read-only history": "讀取唯讀歷史記錄",
     "continue research": "繼續研究",
     "Choose a .science file": "選擇 .science 檔案",
-    "Drop files": "拖入檔案",
     "Models": "模型",
     "Model source": "模型來源",
     "Local parsing models": "本機解析模型",
@@ -6810,6 +6809,8 @@
     "Return to current step": "回到目前步驟",
     "File access failed. System permissions or Notebook protection may be responsible.": "檔案存取失敗，可能是系統權限或 Notebook 保護所致。",
     "Folder access was updated. Run the command again when you are ready.": "資料夾存取權限已更新。準備好後，請手動重新執行命令。",
-    "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "此資料夾權限適用於各個工作階段，直到您在「檔案」中撤銷。命令不會自動執行。"
+    "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "此資料夾權限適用於各個工作階段，直到您在「檔案」中撤銷。命令不會自動執行。",
+    "Drop files to attach or import a .science package": "拖放檔案以新增附件，或匯入 .science 研究套件",
+    "Files cannot be attached right now.": "目前無法新增附件。"
   }
 }

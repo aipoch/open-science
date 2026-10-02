@@ -14,6 +14,12 @@ import type {
   PdfStructureResult
 } from '../../../shared/pdf-structure'
 import type { PdfStructureOwner } from './owner'
+import type { PdfStructureSourceRequest } from './source'
+
+const sourceOf = (request: ReadCachedPdfStructureRequest): PdfStructureSourceRequest =>
+  'source' in request
+    ? request.source
+    : { kind: 'literature', attachmentVersionId: request.attachmentVersionId }
 
 const authorize = (caller: CallerContext, lease: ApplicationCallerLease): void => {
   if (
@@ -36,11 +42,7 @@ export class PdfStructureReader {
   ): Promise<PdfStructureResult | undefined> {
     authorize(caller, lease)
     const request = readCachedPdfStructureRequest.parse(input)
-    const result = await this.owner.readCached(
-      { kind: 'literature', attachmentVersionId: request.attachmentVersionId },
-      [request.page],
-      lease.signal
-    )
+    const result = await this.owner.readCached(sourceOf(request), [request.page], lease.signal)
     authorize(caller, lease)
     return result
   }
@@ -55,11 +57,7 @@ export class PdfStructureReader {
     const key = `${callerLeaseOwnershipKey(lease)}:${lease.generation}:${request.requestId}`
     if (this.active.has(key) || this.active.size >= 16)
       throw new Error('PDF request is already active or the queue is full.')
-    const handle = this.owner.acquire(
-      { kind: 'literature', attachmentVersionId: request.attachmentVersionId },
-      [request.page],
-      { signal: lease.signal }
-    )
+    const handle = this.owner.acquire(sourceOf(request), [request.page], { signal: lease.signal })
     this.active.set(key, handle.release)
     try {
       const result = await handle.result
@@ -85,7 +83,7 @@ export class PdfStructureReader {
     authorize(caller, lease)
     const request = readPdfStructureThumbnailRequest.parse(input)
     const bytes = await this.owner.readThumbnail(
-      { kind: 'literature', attachmentVersionId: request.attachmentVersionId },
+      sourceOf(request),
       [request.page],
       request.extractionId,
       request.thumbnailId,

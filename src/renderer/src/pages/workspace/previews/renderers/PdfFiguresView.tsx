@@ -41,6 +41,7 @@ import {
 } from '../../../../../../shared/local-models'
 import {
   PDF_CLEANUP_PENDING,
+  type PdfStructureSource,
   type PdfStructureResult
 } from '../../../../../../shared/pdf-structure'
 import { copyPdfTable, pdfTableLayout } from '../../../../../../shared/pdf-table-copy'
@@ -288,7 +289,7 @@ const TableDetails = ({
 
 const CandidateDetails = ({
   selected,
-  attachmentVersionId,
+  source,
   imageCache,
   onNavigate,
   hideCaption = false,
@@ -296,7 +297,7 @@ const CandidateDetails = ({
   imageOnly = false
 }: {
   selected: Selection
-  attachmentVersionId: string
+  source: PdfStructureSource
   imageCache: PdfPreviewImageCache
   onNavigate: (page: number) => void
   hideCaption?: boolean
@@ -307,7 +308,7 @@ const CandidateDetails = ({
   const { result, element } = selected
   const table = selected.combinedTable ?? element.table
   const imageRequest = {
-    attachmentVersionId,
+    ...source,
     page: element.regions[0].page,
     extractionId: result.extractionId,
     thumbnailId: element.thumbnailId ?? ''
@@ -375,7 +376,7 @@ const CandidateDetails = ({
     if (element.thumbnailId && needsImage)
       void imageCache
         .load({
-          attachmentVersionId,
+          ...source,
           page: element.regions[0].page,
           extractionId: result.extractionId,
           thumbnailId: element.thumbnailId
@@ -392,7 +393,7 @@ const CandidateDetails = ({
     return () => {
       live = false
     }
-  }, [attachmentVersionId, element, result.extractionId, imageAttempt, imageCache, needsImage])
+  }, [source, element, result.extractionId, imageAttempt, imageCache, needsImage])
   return (
     <article className="space-y-3 text-sm">
       <div
@@ -663,13 +664,13 @@ const CandidateDetails = ({
 }
 
 export const PdfFiguresView = ({
-  attachmentVersionId,
+  source,
   pageCount,
   active: visible = true,
   onBusyChange,
   onNavigate
 }: {
-  attachmentVersionId: string
+  source: PdfStructureSource
   pageCount: number
   active?: boolean
   onBusyChange?: (busy: boolean) => void
@@ -709,7 +710,7 @@ export const PdfFiguresView = ({
           // Bound disk/RPC work while preserving physical page order and display limits.
           const batch = await Promise.all(
             Array.from({ length: Math.min(4, pageCount - page + 1) }, (_, offset) =>
-              window.api.pdfStructure.readCached({ attachmentVersionId, page: page + offset })
+              window.api.pdfStructure.readCached({ ...source, page: page + offset })
             )
           )
           if (!live || own !== generation.current) return
@@ -741,7 +742,7 @@ export const PdfFiguresView = ({
     return () => {
       live = false
     }
-  }, [visible, cacheChecked, attachmentVersionId, pageCount])
+  }, [visible, cacheChecked, source, pageCount])
   const cancel = (): void => {
     generation.current++
     if (requestId.current)
@@ -840,7 +841,7 @@ export const PdfFiguresView = ({
         const id = crypto.randomUUID()
         requestId.current = id
         try {
-          const request = { attachmentVersionId, page, requestId: id }
+          const request = { ...source, page, requestId: id }
           // Cached results remain readable after the optional package is removed.
           const result = await window.api.pdfStructure.parse(request).catch(async (error) => {
             const message = error instanceof Error ? error.message : ''
@@ -1230,7 +1231,7 @@ export const PdfFiguresView = ({
                     key={`${part.result.extractionId}:${part.element.id}`}
                     selected={part}
                     imageCache={imageCache}
-                    attachmentVersionId={attachmentVersionId}
+                    source={source}
                     onNavigate={onNavigate}
                     showPage={parts.length > 1}
                     hideCaption={active.combinedTable ? index > 0 : index < parts.length - 1}

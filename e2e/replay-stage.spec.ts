@@ -1387,3 +1387,99 @@ test('interactive history reaches the first message and preserves conversation a
   await expect(notebook.locator('[data-replay-notebook-run]')).toHaveCount(8)
   await expect.poll(async () => (await runAnchor.boundingBox())!.y).toBeCloseTo(runTop, 0)
 })
+
+test('keeps one generated gallery through reveal phases and delayed thumbnails without horizontal overflow', async ({
+  page
+}) => {
+  await page.goto(`${url}?panel=1&artifacts=1&longName=1&previewRegressions=1&delayedArtifacts=1`)
+  const panel = page.getByTestId('replay-panel')
+  const progress = panel.getByRole('slider', { name: 'Replay progress' })
+  const transcript = panel.getByRole('region', { name: 'Historical conversation' })
+  const seekPanel = async (position: number): Promise<void> => {
+    const track = (await panel.getByTestId('replay-progress-track').boundingBox())!
+    await page.mouse.click(track.x + (track.width * position) / 12000, track.y + track.height / 2)
+    await expect(progress).toHaveAttribute('aria-valuenow', String(position))
+  }
+  await seekPanel(10000)
+  await expect(transcript.getByText('GENERATED · 2', { exact: true })).toHaveCount(1)
+  const cards = transcript.getByRole('button', { name: /^Preview generated file/ })
+  await expect(cards.nth(0)).toBeEnabled()
+  await expect(cards.nth(1)).toBeDisabled()
+  await seekPanel(10300)
+  await expect(transcript.getByText('GENERATED · 2', { exact: true })).toHaveCount(1)
+  await expect(cards.nth(0)).toBeEnabled()
+  await expect(cards.nth(1)).toBeDisabled()
+  await seekPanel(10600)
+  await expect(cards.nth(1)).toBeEnabled()
+  await progress.focus()
+  await page.keyboard.press('End')
+  await expect(progress).toHaveAttribute('aria-valuenow', '12000')
+  await expect(transcript.getByText('GENERATED · 3', { exact: true })).toHaveCount(1)
+  await expect(cards).toHaveCount(3)
+  await expect(cards.locator('img')).toHaveCount(0)
+  expect(await transcript.evaluate((node) => node.scrollWidth)).toBe(
+    await transcript.evaluate((node) => node.clientWidth)
+  )
+  const before = await cards.evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const box = node.getBoundingClientRect()
+      return { x: box.x, y: box.y, width: box.width, height: box.height }
+    })
+  )
+  await page.evaluate(() => {
+    const fixture = window as unknown as { releaseReplayResource: (id: string) => void }
+    for (const id of ['plot-v1', 'plot-v2', 'plot-v3']) fixture.releaseReplayResource(id)
+  })
+  await expect(cards.locator('img')).toHaveCount(2)
+  expect(
+    await cards.evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const box = node.getBoundingClientRect()
+        return { x: box.x, y: box.y, width: box.width, height: box.height }
+      })
+    )
+  ).toEqual(before)
+  expect(await transcript.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+})
+
+test('restores Notebook and its code scrollbar after returning from a generated image', async ({
+  page
+}, info) => {
+  await page.goto(`${url}?panel=1&artifacts=1&longName=1&previewRegressions=1`)
+  await page.setViewportSize({ width: 1500, height: 900 })
+  const panel = page.getByTestId('replay-panel')
+  await panel.getByRole('button', { name: 'Enter full screen' }).click()
+  const progress = panel.getByRole('slider')
+  await progress.focus()
+  await page.keyboard.press('End')
+  const notebook = panel.getByRole('button', { name: 'Notebook', exact: true })
+  const transcript = panel.getByRole('region', { name: 'Historical conversation' })
+  const codeViewport = panel.locator('[data-replay-notebook-run] pre').first().locator('..')
+  await expect(codeViewport).toHaveClass(/scrollbar-auto-hide/)
+  await codeViewport.hover()
+  expect(await codeViewport.evaluate((node) => getComputedStyle(node).scrollbarWidth)).toBe('thin')
+  expect(await codeViewport.evaluate((node) => getComputedStyle(node).scrollbarColor)).not.toBe(
+    'rgba(0, 0, 0, 0) rgba(0, 0, 0, 0)'
+  )
+  await page.mouse.wheel(500, 0)
+  await expect.poll(() => codeViewport.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0)
+  expect(await transcript.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+  const card = transcript.getByRole('button', { name: /^Preview generated file/ }).first()
+  for (const notebookOpen of [true, false]) {
+    if (!notebookOpen) await notebook.click()
+    for (const action of ['back', 'escape']) {
+      await card.click()
+      const back = panel.getByRole('button', { name: 'Back to conversation' })
+      await expect(back).toBeVisible()
+      if (action === 'back') await back.click()
+      else await page.keyboard.press('Escape')
+      await expect(back).toHaveCount(0)
+      await expect(notebook).toHaveAttribute('aria-expanded', String(notebookOpen))
+      await expect(card).toBeFocused()
+      await expect(transcript).toBeVisible()
+    }
+  }
+  await notebook.click()
+  await codeViewport.hover()
+  await panel.screenshot({ path: info.outputPath('replay-notebook-generated-preview.png') })
+})

@@ -7,7 +7,7 @@ import { dirname } from 'node:path'
 import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
-import { fileChecksum, packageEntry } from './archive'
+import { fileChecksum, packageEntry, readPackageArchive } from './archive'
 import { ProjectRepository } from '../projects/repository'
 import { migrateApplicationDatabase } from '../projects/prisma-client'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -56,6 +56,101 @@ vi.mock('electron', () => ({
 }))
 
 const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
+
+it.each(['identical versions', 'identical evidence', 'small edit'] as const)(
+  'preserves independent history with shared package content for %s',
+  async (scenario) => {
+    const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
+    const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
+    fixtures.push(source, target)
+    await source.client.project.create({ data: { id: 'project-1', name: 'Repeated results' } })
+    await new SessionRepository(source.storageRoot).saveSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Repeated results',
+      cwd: '',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    })
+    // Deterministic opaque data larger than gzip's history window; no timing assertion.
+    const payload = Array.from({ length: 2048 }, (_, i) => sha256(`research-row-${i}`)).join('')
+    const edited = `${payload.slice(0, -1)}${payload.endsWith('a') ? 'b' : 'a'}`
+    await source.stagePng(payload)
+    const first = await source.repository.createVersion(createArtifactVersionRequest())
+    await source.stagePng(scenario === 'small edit' ? edited : payload)
+    const second = await source.repository.createVersion(
+      createArtifactVersionRequest({
+        writeOperationId: 'write-2',
+        writeRequestChecksum: 'b'.repeat(64)
+      })
+    )
+    expect(first.versionId).not.toBe(second.versionId)
+    const expected = [
+      createPngBytes(payload),
+      createPngBytes(scenario === 'small edit' ? edited : payload)
+    ]
+    const rows = await source.client.artifactVersion.findMany({ orderBy: { versionNumber: 'asc' } })
+    expect(rows).toHaveLength(2)
+    if (scenario === 'identical evidence') {
+      const evidence = join(source.storageRoot, 'notebooks/project-1/session-1/data/repeated.png')
+      await mkdir(dirname(evidence), { recursive: true })
+      await writeFile(evidence, expected[0])
+    }
+    const exporter = new SessionPackageService({
+      storageRoot: source.storageRoot,
+      getClient: async () => source.client
+    })
+    const importer = new SessionPackageService({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client
+    })
+    try {
+      const archive = join(source.storageRoot, 'repeated.science')
+      await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+      const extracted = join(source.storageRoot, 'extracted')
+      await mkdir(extracted)
+      await extractTar({ file: archive, cwd: extracted, gzip: true })
+      const hashes = new Set(expected.map((bytes) => sha256(bytes)))
+      const objects = await Promise.all(
+        (await readdir(join(extracted, 'objects'))).map(async (name) => {
+          const bytes = await readFile(join(extracted, 'objects', name))
+          return { checksum: sha256(bytes), size: bytes.length }
+        })
+      )
+      const payloads = objects.filter((object) => hashes.has(object.checksum))
+      // Import must use the archive alone, without consulting the original version/evidence files.
+      for (const directory of ['artifacts', 'notebooks']) {
+        await fsPromises.rm(join(source.storageRoot, directory), { recursive: true, force: true })
+      }
+      const imported = await importer.importFrom(archive)
+      const origin = await importer.readOrigin(imported)
+      const importedRows = await target.client.artifactVersion.findMany({
+        where: { artifactId: origin.identities[first.artifactId] },
+        orderBy: { versionNumber: 'asc' }
+      })
+      expect(importedRows).toHaveLength(2)
+      expect(new Set(importedRows.map((row) => row.id)).size).toBe(2)
+      for (const [index, row] of importedRows.entries()) {
+        expect(await readFile(join(target.storageRoot, row.contentStorageKey))).toEqual(
+          expected[index]
+        )
+        expect(row.checksum).toBe(sha256(expected[index]))
+      }
+      // Observe physical archive members, without requiring a hash-based naming scheme.
+      expect(
+        payloads,
+        'identical bytes should be carried once without merging logical versions'
+      ).toHaveLength(hashes.size)
+    } finally {
+      await Promise.all([exporter.close(), importer.close()])
+    }
+  },
+  60_000
+)
 
 it('resolves a copying file name once across progress chunks', async () => {
   const source = await createProvenanceTestFixture()
@@ -2662,6 +2757,70 @@ it('imports both immutable Artifact Versions and keeps original evidence distinc
   expect(copiedVersions).toHaveLength(2)
   expect(copiedVersions.every((version) => version.state === 'pending')).toBe(true)
   await expect(migrateApplicationDatabase(target.client)).resolves.toBeDefined()
+})
+
+it('exports duplicate Artifact Version bytes as one self-contained object', async () => {
+  const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
+  const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
+  fixtures.push(source, target)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Duplicate history',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  const payload = 'identical artifact bytes'
+  await source.stagePng(payload, 'first.png')
+  const first = await source.repository.createVersion(
+    createArtifactVersionRequest({ filename: 'first.png' })
+  )
+  await source.stagePng(payload, 'second.png')
+  const second = await source.repository.createVersion(
+    createArtifactVersionRequest({
+      filename: 'second.png',
+      writeOperationId: 'write-2',
+      writeRequestChecksum: 'b'.repeat(64)
+    })
+  )
+  const archive = join(source.storageRoot, 'deduplicated.science')
+  await new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  }).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+
+  const expanded = join(source.storageRoot, 'deduplicated')
+  const manifest = await readPackageArchive(archive, expanded)
+  const rows = await source.client.artifactVersion.findMany({
+    where: { id: { in: [first.versionId, second.versionId] } },
+    select: { contentStorageKey: true, checksum: true }
+  })
+  const contentStorageKeys = new Set(rows.map((row) => row.contentStorageKey))
+  const entries = manifest.inventory.filter(
+    (entry) => entry.storageKey && contentStorageKeys.has(entry.storageKey)
+  )
+  expect(manifest.requiredFeatures).toContain('content-dedupe')
+  expect(entries).toHaveLength(2)
+  expect(new Set(entries.map((entry) => entry.path))).toHaveLength(1)
+  expect(new Set(entries.map((entry) => entry.checksum))).toEqual(
+    new Set(rows.map((row) => row.checksum))
+  )
+
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  const imported = await importer.importFrom(archive)
+  const history = await importer.readOrigin(imported)
+  expect(history.files.map((file) => file.sourceStorageKey)).toEqual(
+    expect.arrayContaining([...contentStorageKeys])
+  )
 })
 
 it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation'] as const)(

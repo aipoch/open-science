@@ -84,8 +84,7 @@ import {
   type TextAnnotation
 } from '../../../../shared/annotations'
 
-import { FileDropOverlay } from '@/components/FileDropOverlay'
-import { sessionPackageImportAvailable } from '@/components/session-package-import-menu-model'
+import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
@@ -99,7 +98,6 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import {
   isRetryableArtifactFinalizationError,
@@ -330,7 +328,7 @@ type ConversationPanelView = {
   persistenceBlocked?: boolean
   actionError: string | null
   sideChatDisabledReason?: string
-  sessionImport?: { projectId: string; canImport: boolean }
+  sessionImport?: { projectId: string; projectName?: string; canImport: boolean }
 }
 
 type ConversationPanelSpecialist = {
@@ -1034,12 +1032,6 @@ const ConversationPanel = ({
     await submissions.submitResume(sessionId, onResumeSession)
   }
 
-  // Drag-and-drop shares the same staging callback as the picker and paste paths.
-  const { isDragging, dropZoneProps } = useFileDropZone({
-    enabled: canEditDraft && !isUploadingAttachments,
-    onFiles: onStageAttachmentFiles
-  })
-
   // Submits the current doc, passing the ids of any skills picked as inline chips.
   const handleWslSetupCommand = async (): Promise<void> => {
     if (!canEditDraft) return
@@ -1258,8 +1250,14 @@ const ConversationPanel = ({
 
   return (
     <ResizablePanel id="main-content" defaultSize="60%" minSize="30%">
-      <section
-        className="flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-[6px] pl-4 max-md:p-0"
+      <ProjectPackageDropZone
+        projectId={sessionImport?.projectId ?? ''}
+        projectName={sessionImport?.projectName ?? t('Project')}
+        canImport={sessionImport?.canImport ?? false}
+        canAttach={canEditDraft && !isUploadingAttachments && !ordinaryComposerBlocked}
+        onFiles={onStageAttachmentFiles}
+        data-testid="workspace-file-drop-zone"
+        className="relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-[6px] pl-4 max-md:p-0"
         data-session-id={activeSession?.id ?? ''}
         data-agent-running={activeSession?.status === 'running' ? 'true' : 'false'}
       >
@@ -1933,7 +1931,6 @@ const ConversationPanel = ({
                         )}
                         data-specialist-color={specialistComposerColor}
                         onSubmit={(event) => event.preventDefault()}
-                        {...dropZoneProps}
                         {...annotationDrop.props}
                       >
                         {annotationDrop.over ? (
@@ -1954,17 +1951,6 @@ const ConversationPanel = ({
                             className="composer-specialist-color-in"
                             style={{ borderColor: specialistComposerColor }}
                             aria-hidden="true"
-                          />
-                        ) : null}
-                        {/* File-drag overlay is scoped to the composer input card only. */}
-                        {isDragging ? (
-                          <FileDropOverlay
-                            label={
-                              sessionPackageImportAvailable()
-                                ? t('Drop files')
-                                : t('Drop files to attach')
-                            }
-                            className="rounded-2xl"
                           />
                         ) : null}
                         {activeSession &&
@@ -3065,7 +3051,7 @@ const ConversationPanel = ({
           contextUsage={contextUsage}
           onOpenChange={setIsContextWindowOpen}
         />
-      </section>
+      </ProjectPackageDropZone>
     </ResizablePanel>
   )
 }
