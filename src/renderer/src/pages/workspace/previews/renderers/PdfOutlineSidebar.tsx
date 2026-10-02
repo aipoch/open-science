@@ -424,6 +424,7 @@ export const PdfOutlineSidebar = ({
   position,
   selectedId,
   width,
+  floating = false,
   onWidthChange,
   onClose,
   onNavigate
@@ -436,6 +437,7 @@ export const PdfOutlineSidebar = ({
   position?: Readonly<{ pageNumber: number; top: number }>
   selectedId?: string
   width: number
+  floating?: boolean
   onWidthChange: (width: number) => void
   onClose: () => void
   onNavigate: (pageNumber: number, item?: PdfOutlineItem) => void
@@ -451,24 +453,39 @@ export const PdfOutlineSidebar = ({
     <TooltipProvider skipDelayDuration={300}>
       <aside
         id="pdf-navigation-sidebar"
-        className="relative flex shrink-0 flex-col border-r border-border-200 bg-bg-000 text-text-000"
+        className={cn(
+          'flex shrink-0 flex-col border-r border-border-200 bg-bg-000 text-text-000',
+          floating ? 'absolute inset-y-0 left-0 z-50 shadow-lg' : 'relative'
+        )}
         style={{ width }}
         aria-label={t('PDF navigation')}
       >
         <div className="grid h-10 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_1.75rem] gap-1 border-b border-border-200 p-1">
-          <button
-            type="button"
-            className={cn(
-              'inline-flex items-center justify-center gap-1 rounded text-xs text-text-200 hover:bg-bg-200 hover:text-text-000',
-              effectiveMode === 'outline' && 'bg-bg-200 font-medium text-text-000'
-            )}
-            disabled={items.length === 0}
-            aria-pressed={effectiveMode === 'outline'}
-            onClick={() => setMode('outline')}
-          >
-            <ListTree className="size-4" aria-hidden="true" />
-            {t('Outline')}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  'inline-flex items-center justify-center gap-1 rounded text-xs text-text-200',
+                  items.length === 0
+                    ? 'cursor-not-allowed opacity-50'
+                    : 'hover:bg-bg-200 hover:text-text-000',
+                  effectiveMode === 'outline' && 'bg-bg-200 font-medium text-text-000'
+                )}
+                aria-disabled={items.length === 0}
+                aria-pressed={effectiveMode === 'outline'}
+                onClick={() => {
+                  if (items.length > 0) setMode('outline')
+                }}
+              >
+                <ListTree className="size-4" aria-hidden="true" />
+                {t('Outline')}
+              </button>
+            </TooltipTrigger>
+            {items.length === 0 ? (
+              <TooltipContent>{t('No readable outline is available for this PDF')}</TooltipContent>
+            ) : null}
+          </Tooltip>
           <button
             type="button"
             className={cn(
@@ -516,52 +533,54 @@ export const PdfOutlineSidebar = ({
             onNavigate={onNavigate}
           />
         )}
-        <button
-          type="button"
-          role="separator"
-          aria-label={t('Resize navigation')}
-          aria-orientation="vertical"
-          aria-valuemin={SIDEBAR_MIN_WIDTH}
-          aria-valuemax={SIDEBAR_MAX_WIDTH}
-          aria-valuenow={width}
-          className="group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none select-none focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
-            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-            event.preventDefault()
-            resizeTo(
-              width + (event.key === 'ArrowRight' ? SIDEBAR_RESIZE_STEP : -SIDEBAR_RESIZE_STEP)
-            )
-          }}
-          onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
-            if (event.button !== 0 || !event.isPrimary) return
-            event.currentTarget.setPointerCapture?.(event.pointerId)
-            resizeGestureRef.current = {
-              pointerId: event.pointerId,
-              startX: event.clientX,
-              startWidth: width
-            }
-          }}
-          onPointerMove={(event) => {
-            const gesture = resizeGestureRef.current
-            if (gesture?.pointerId === event.pointerId) {
-              resizeTo(gesture.startWidth + event.clientX - gesture.startX)
-            }
-          }}
-          onPointerUp={(event) => {
-            const gesture = resizeGestureRef.current
-            if (gesture?.pointerId !== event.pointerId) return
-            resizeGestureRef.current = undefined
-            if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId)
-            }
-            if (gesture.startWidth + event.clientX - gesture.startX < SIDEBAR_MIN_WIDTH) onClose()
-          }}
-          onPointerCancel={() => {
-            resizeGestureRef.current = undefined
-          }}
-        >
-          <span className="mx-auto block h-full w-px bg-transparent group-hover:bg-primary/50 group-focus-visible:bg-primary/60" />
-        </button>
+        {!floating ? (
+          <button
+            type="button"
+            role="separator"
+            aria-label={t('Resize navigation')}
+            aria-orientation="vertical"
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            aria-valuenow={width}
+            className="group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none select-none focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+              event.preventDefault()
+              resizeTo(
+                width + (event.key === 'ArrowRight' ? SIDEBAR_RESIZE_STEP : -SIDEBAR_RESIZE_STEP)
+              )
+            }}
+            onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
+              if (event.button !== 0 || !event.isPrimary) return
+              event.currentTarget.setPointerCapture?.(event.pointerId)
+              resizeGestureRef.current = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startWidth: width
+              }
+            }}
+            onPointerMove={(event) => {
+              const gesture = resizeGestureRef.current
+              if (gesture?.pointerId === event.pointerId) {
+                resizeTo(gesture.startWidth + event.clientX - gesture.startX)
+              }
+            }}
+            onPointerUp={(event) => {
+              const gesture = resizeGestureRef.current
+              if (gesture?.pointerId !== event.pointerId) return
+              resizeGestureRef.current = undefined
+              if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              }
+              if (gesture.startWidth + event.clientX - gesture.startX < SIDEBAR_MIN_WIDTH) onClose()
+            }}
+            onPointerCancel={() => {
+              resizeGestureRef.current = undefined
+            }}
+          >
+            <span className="mx-auto block h-full w-px bg-transparent group-hover:bg-primary/50 group-focus-visible:bg-primary/60" />
+          </button>
+        ) : null}
       </aside>
     </TooltipProvider>
   )

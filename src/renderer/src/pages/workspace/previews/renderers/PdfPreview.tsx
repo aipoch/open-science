@@ -165,7 +165,7 @@ const MAX_ZOOM = 3
 const ZOOM_BUTTON_STEP = 0.25
 const READING_POSITION_UPDATE_MS = 100
 const OUTLINE_DEFAULT_WIDTH = 240
-const NOTES_SIDEBAR_MIN_READER_WIDTH = 1120
+const SIDEBAR_MIN_READER_WIDTH = 1120
 const NOTES_SIDEBAR_MIN_WIDTH = 300
 const NOTES_SIDEBAR_MAX_WIDTH = 420
 // Wheel zoom is proportional to accumulated deltaY so one trackpad/pinch gesture (many small
@@ -2193,7 +2193,7 @@ export const PdfPreviewContent = ({
   const hasNotes = Boolean(attachmentVersionId || pdfBookmarkSource)
   const hasReadingTabs = Boolean(figuresSource || pdfBookmarkSource) && presentation !== 'search'
   const showNotesSidebar = presentation !== 'search' && notesOpen && readingMode === 'original'
-  const floatingNotes = showNotesSidebar && readerWidth < NOTES_SIDEBAR_MIN_READER_WIDTH
+  const floatingNotes = showNotesSidebar && readerWidth < SIDEBAR_MIN_READER_WIDTH
   const maxNotesWidth = Math.min(
     NOTES_SIDEBAR_MAX_WIDTH,
     Math.max(NOTES_SIDEBAR_MIN_WIDTH, readerWidth - 752)
@@ -2504,9 +2504,17 @@ export const PdfPreviewContent = ({
     size: currentDocumentState?.status === 'ready' ? currentDocumentState.size : undefined
   })
   const pageCount = document?.numPages ?? 0
-  const pageWidth = fitWidth > 0 ? Math.round(fitWidth * zoom) : 0
   const outlineItems =
     outlineState?.requestKey === requestKey ? outlineState.items : EMPTY_OUTLINE_ITEMS
+  const showNavigation = Boolean(
+    document && outlineOpen && (pageCount > 1 || outlineItems.length > 0 || attachmentVersionId)
+  )
+  const floatingNavigation =
+    showNavigation &&
+    readingMode === 'original' &&
+    readerWidth > 0 &&
+    readerWidth < SIDEBAR_MIN_READER_WIDTH
+  const pageWidth = fitWidth > 0 ? Math.round(fitWidth * zoom) : 0
   const outlineAspectRatios = useMemo(() => {
     const ratios = new Map<number, number>()
     const visit = (items: readonly PdfOutlineItem[]): void => {
@@ -2936,16 +2944,16 @@ export const PdfPreviewContent = ({
           ['area', 'area-annotation', 'text-annotation'].includes(cursorMode)
         }
         data-preview-escape-boundary={
-          floatingNotes || (source === 'literature' && selectedBookmarkId) ? '' : undefined
+          floatingNavigation || floatingNotes || (source === 'literature' && selectedBookmarkId)
+            ? ''
+            : undefined
         }
         onKeyDown={(event) => {
           // Portalled panels remain mounted during exit motion. Let their own
           // dismissal consume Escape before the surrounding PDF tool handles it.
           if (event.target instanceof Node && !event.currentTarget.contains(event.target)) return
-          const layer =
-            event.target instanceof Element
-              ? event.target.closest('[role="dialog"], [role="menu"]')
-              : null
+          const target = event.target instanceof Element ? event.target : null
+          const layer = target?.closest('[role="dialog"], [role="menu"]')
           if (layer && !layer.contains(event.currentTarget)) return
           if (
             event.key === 'Escape' &&
@@ -2956,6 +2964,20 @@ export const PdfPreviewContent = ({
             event.preventDefault()
             event.stopPropagation()
             setSelectedBookmarkId(undefined)
+            return
+          }
+          if (
+            event.key === 'Escape' &&
+            !event.nativeEvent.isComposing &&
+            floatingNavigation &&
+            (!floatingNotes ||
+              (!target?.closest('[data-pdf-notes-sidebar]') &&
+                !notesToggleRef.current?.contains(target)))
+          ) {
+            event.preventDefault()
+            event.stopPropagation()
+            setOutlineOpen(false)
+            focusPdfView()
             return
           }
           if (event.key === 'Escape' && !event.nativeEvent.isComposing && floatingNotes) {
@@ -3259,9 +3281,7 @@ export const PdfPreviewContent = ({
                 showNotesSidebar && !floatingNotes ? { right: effectiveNotesWidth } : undefined
               }
             >
-              {document &&
-              outlineOpen &&
-              (pageCount > 1 || outlineItems.length > 0 || attachmentVersionId) ? (
+              {document && showNavigation ? (
                 <PdfOutlineSidebar
                   key={requestKey}
                   document={document}
@@ -3271,9 +3291,17 @@ export const PdfPreviewContent = ({
                   currentPage={currentPage}
                   position={outlinePosition}
                   selectedId={selectedOutlineId}
-                  width={outlineWidth}
+                  floating={floatingNavigation}
+                  width={
+                    floatingNavigation
+                      ? Math.max(0, Math.min(outlineWidth, readerWidth - 16))
+                      : outlineWidth
+                  }
                   onWidthChange={setOutlineWidth}
-                  onClose={() => setOutlineOpen(false)}
+                  onClose={() => {
+                    setOutlineOpen(false)
+                    if (floatingNavigation) focusPdfView()
+                  }}
                   onNavigate={navigateToPage}
                 />
               ) : null}

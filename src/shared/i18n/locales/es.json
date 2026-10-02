@@ -135,6 +135,9 @@
     "More items": "Más sesiones"
   },
   "renderer": {
+    "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Identidad, origen, enfermedades, registros de calidad y correspondencias en bases de datos de líneas celulares de Cellosaurus.",
+    "Search cell lines by name or synonym.": "Buscar líneas celulares por nombre o sinónimo.",
+    "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "Obtener la identidad, el origen, los registros de calidad y las correspondencias en bases de datos de una línea celular mediante CVCL o RRID.",
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Asociaciones de enfermedades y genes con fenotipos y fuentes de evidencia mediante Monarch Initiative.",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "Obtener asociaciones enfermedad–fenotipo con fuentes de evidencia y tipos de relación.",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "Obtener asociaciones gen–fenotipo con fuentes de evidencia y tipos de relación.",
@@ -2634,6 +2637,7 @@
     "PDF interaction tools": "Herramientas de interacción con PDF",
     "PDF view controls": "Controles de vista de PDF",
     "Outline": "Índice",
+    "No readable outline is available for this PDF": "No hay un esquema legible disponible para este PDF",
     "Pages": "Páginas",
     "Volume": "Volumen",
     "Issue": "Número",
