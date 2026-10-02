@@ -387,3 +387,42 @@ it('restores preparation progress when settings reopens and shows safe failure g
     vi.useRealTimers()
   }
 })
+
+it('does not replace completed setup with a late preparation status response', async () => {
+  vi.useFakeTimers()
+  let complete!: (status: unknown) => void
+  let stale!: (status: unknown) => void
+  const getStatus = vi
+    .fn()
+    .mockResolvedValueOnce({ kind: 'setupRequired', platform: 'win32', reasons: [] })
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          stale = resolve
+        })
+    )
+  Object.assign(window.api, {
+    platform: 'win32',
+    settings: {
+      getNotebookNetworkStatus: getStatus,
+      installNotebookNetwork: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            complete = resolve
+          })
+      )
+    }
+  })
+  try {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await act(async () => button('Set up').click())
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    await act(async () => complete({ kind: 'ready', warnings: [] }))
+    expect(container.textContent).toContain('Status: Active')
+    await act(async () => stale({ kind: 'checking' }))
+    expect(container.textContent).toContain('Status: Active')
+    expect(container.textContent).not.toContain('Checking…')
+  } finally {
+    vi.useRealTimers()
+  }
+})

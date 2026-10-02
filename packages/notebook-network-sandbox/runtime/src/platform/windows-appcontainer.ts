@@ -269,7 +269,27 @@ const verifyWindowsNetworkFence = async (
   }
 }
 
-const checkWindowsAppContainer = async (
+const pendingProtectionChecks = new Map<string, Promise<DependencyCheck>>()
+
+const checkWindowsAppContainer = (
+  hostPath: string,
+  installationId: string,
+  ownershipRoot: string
+): Promise<DependencyCheck> => {
+  // The fence probe temporarily binds the installed gateway port. Concurrent callers must share
+  // that probe rather than mistake its listener for an unrelated process occupying the port.
+  // Keep only in-flight checks: every later request must verify the current native protection.
+  const key = JSON.stringify([hostPath, installationId, ownershipRoot])
+  const current = pendingProtectionChecks.get(key)
+  if (current) return current
+  const pending = probeWindowsAppContainer(hostPath, installationId, ownershipRoot).finally(() => {
+    pendingProtectionChecks.delete(key)
+  })
+  pendingProtectionChecks.set(key, pending)
+  return pending
+}
+
+const probeWindowsAppContainer = async (
   hostPath: string,
   installationId: string,
   ownershipRoot: string
