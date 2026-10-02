@@ -72,6 +72,34 @@ describe('Notebook folder recovery candidate', () => {
     ).toBeUndefined()
   })
 
+  it.each([
+    {
+      text: "Access is denied. Error: EPERM: operation not permitted, open 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'",
+      field: 'stderr' as const,
+      platform: 'win32' as const,
+      expected: 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'
+    },
+    {
+      text: "Error: EACCES: permission denied, open '/fixture/home/.config/tool/access-token.txt'",
+      field: 'stdout' as const,
+      platform: 'linux' as const,
+      expected: '/fixture/home/.config/tool/access-token.txt'
+    }
+  ])(
+    'offers recovery for an explicit absolute path in raw permission output',
+    ({ text, field, platform, expected }) => {
+      const base = run()
+      const record = run({
+        text: {
+          ...base.text,
+          stderr: field === 'stdout' ? '' : base.text.stderr,
+          [field]: text
+        }
+      })
+      expect(notebookFolderAccessPath(record, platform)).toBe(expected)
+    }
+  )
+
   it.each(['relative/config', '/', '/fixture/..', '/fixture/\u0000config'])(
     'rejects an unsafe or broad path: %s',
     (path) => {
