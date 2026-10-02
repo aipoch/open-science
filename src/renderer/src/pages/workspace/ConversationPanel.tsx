@@ -1,7 +1,7 @@
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
-import { SessionReadingBar } from './SessionReadingBar'
+import { SessionDiscussionSource } from './SessionDiscussionSource'
 import { SessionDiscussionButton } from './SessionDiscussionButton'
-import { createResearchReplayItem } from './workspace-research-controller'
+import { createSessionReplayItem } from './workspace-session-actions'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import {
@@ -327,6 +327,7 @@ type ConversationPanelView = {
   activeSession: ChatSession | undefined
   composerFocusKey?: string
   canEditDraft: boolean
+  persistenceBlocked?: boolean
   actionError: string | null
   sideChatDisabledReason?: string
   sessionImport?: { projectId: string; canImport: boolean }
@@ -506,6 +507,7 @@ const ConversationPanel = ({
     activeSession,
     composerFocusKey,
     canEditDraft,
+    persistenceBlocked,
     actionError,
     sideChatDisabledReason,
     sessionImport
@@ -1412,6 +1414,16 @@ const ConversationPanel = ({
             {/* Runtime and session errors stay near the composer so recovery is visible. */}
             <div className={composerContentClassName}>
               <div className="px-1 md:px-3">
+                {persistenceBlocked ? (
+                  <ErrorNotice
+                    inline
+                    role="alert"
+                    title={t('Conversation storage limit reached')}
+                    description={t(
+                      'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
+                    )}
+                  />
+                ) : null}
                 {conversation.planProjectionRecoveryError && activeSession ? (
                   <UnavailablePlanNotice
                     key={`${activeSession.id}:${String(activeSession.runtimeContext?.revision)}`}
@@ -1856,7 +1868,7 @@ const ConversationPanel = ({
                               usePreviewWorkbenchStore
                                 .getState()
                                 .upsertAndActivateItem(
-                                  createResearchReplayItem(
+                                  createSessionReplayItem(
                                     activeSession.projectId,
                                     activeSession.id,
                                     activeSession.title
@@ -1957,7 +1969,7 @@ const ConversationPanel = ({
                         ) : null}
                         {activeSession &&
                         !annotations.some((annotation) => replayAnnotationTarget(annotation)) ? (
-                          <SessionReadingBar
+                          <SessionDiscussionSource
                             key={activeSession.id}
                             projectId={activeSession.projectId}
                             sessionId={activeSession.id}

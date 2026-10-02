@@ -872,9 +872,9 @@ describe('User Skill repository architecture', () => {
           'src/main/window-find-ipc.test.ts',
           'src/renderer/src/hooks/useLifecycleSync.test.tsx',
           'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',
-          'src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx',
+          'src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx',
           'src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx',
-          'src/renderer/src/pages/literature/LiteratureMetadataEditor.test.tsx',
+          'src/renderer/src/pages/literature/detail/LiteratureMetadataEditor.test.tsx',
           'src/renderer/src/pages/onboarding/OnboardingWizard.regressions.test.tsx',
           'src/renderer/src/pages/settings/ConnectorAddForm.render.test.tsx',
           'src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx',
@@ -929,7 +929,9 @@ describe('User Skill repository architecture', () => {
           'src/main/notebook/real-notebook-lineage.integration.test.ts',
           'src/main/notebook/real-parquet-lineage.integration.test.ts',
           'src/main/notebook/r-connection-guard.test.ts',
-          'src/main/notebook/dependency-analysis.lineage-regressions.test.ts'
+          'src/main/notebook/dependency-analysis.lineage-regressions.test.ts',
+          'src/main/session-diagnostics/export-evidence.integration.test.ts',
+          'src/main/permission-grants/connector-broker.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

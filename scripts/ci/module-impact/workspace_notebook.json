@@ -109,8 +109,8 @@
       "src/renderer/src/pages/workspace/PreviewFileSurface.freshness.test.tsx",
       "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx",
       "src/renderer/src/pages/workspace/PreviewPanel.test.tsx",
-      "src/renderer/src/pages/workspace/ResearchReplayEvidence.test.tsx",
-      "src/renderer/src/pages/workspace/ResearchReplayPreview.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
       "src/renderer/src/pages/workspace/SubagentReleaseSurfaces.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceActivityGroup.annotations.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceActivityGroup.i18n.render.test.tsx",
@@ -155,7 +155,7 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/workspace/ReplayReferenceText.test.tsx",
-      "src/renderer/src/pages/workspace/SessionReadingBar.test.tsx",
+      "src/renderer/src/pages/workspace/SessionDiscussionSource.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceMessageItem.actions.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceMessageItem.containment.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceMessageItem.mentions.test.tsx",
@@ -163,8 +163,11 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebarContainer.test.tsx",
       "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
-      "src/renderer/src/pages/workspace/workspace-research-context.test.tsx",
-      "src/renderer/src/pages/workspace/workspace-research-controller.test.tsx"
+      "src/renderer/src/pages/workspace/workspace-session-discussion.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
+      "src/renderer/src/components/SessionPackageOperation.test.tsx",
+      "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
+      "src/renderer/src/pages/home/HomePage.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

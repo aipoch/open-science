@@ -269,3 +269,64 @@ it('retains bounded runtime failure context and omits private or unknown diagnos
     })
   ).toEqual({})
 })
+
+it('preserves permission trace classifications and rejects spoofed raw identity fields', () => {
+  expect(
+    projectDiagnosticLog({
+      scope: 'permission',
+      msg: 'permission decision trace',
+      data: {
+        stage: 'decision',
+        profile: 'ask',
+        modelRoute: 'codex-bridge',
+        authority: 'registry_grant',
+        identitySource: 'verified_context',
+        matchedScope: 'session',
+        fallback: false,
+        toolKind: 'execute',
+        hasReportedToolName: false,
+        hasRawInput: true,
+        hasLocations: false,
+        capabilityKind: 'skill_operation',
+        capabilityKey: 'skill:invoke',
+        sessionRef: '0123456789abcdef',
+        toolCallRef: '/private/untrusted/tool',
+        requestRef: 'raw-provider-id',
+        reportedToolRef: 'raw-custom-tool',
+        rawInput: 'private-input'
+      }
+    })
+  ).toMatchObject({
+    diagnostics: {
+      stage: 'decision',
+      profile: 'ask',
+      modelRoute: 'codex-bridge',
+      authority: 'registry_grant',
+      identitySource: 'verified_context',
+      matchedScope: 'session',
+      fallback: false,
+      toolKind: 'execute',
+      hasReportedToolName: false,
+      hasRawInput: true,
+      hasLocations: false,
+      capabilityKind: 'skill_operation',
+      capabilityKey: 'skill:invoke',
+      sessionRef: '0123456789abcdef'
+    }
+  })
+  const invalid = projectDiagnosticLog({
+    scope: 'permission',
+    msg: 'permission decision trace',
+    data: {
+      authority: 'private-authority',
+      modelRoute: 'private-route',
+      stage: 'private-stage',
+      toolKind: 'private-kind',
+      hasRawInput: 'private-input',
+      capabilityKey: 'mcp:private-secret/tool',
+      toolCallRef: 'private-tool',
+      rawInput: 'private-input'
+    }
+  })
+  expect(JSON.stringify(invalid)).not.toContain('private-')
+})

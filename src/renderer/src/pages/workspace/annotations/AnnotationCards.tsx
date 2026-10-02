@@ -18,7 +18,7 @@ import type {
 import { prepareImagePointAnnotations } from './image-annotation-payload'
 import { annotationValidationMessage } from './annotation-validation-message'
 import { SentAnnotationCards, type SentAnnotationCardView } from './SentAnnotationCards'
-import { replayAnnotationTarget } from '../research-replay-context'
+import { replayAnnotationTarget } from '../session-discussion-annotation'
 import { SessionDiscussionBar } from '../SessionDiscussionBar'
 
 // Keep the source shortcut compact while the quote carries the selected content.

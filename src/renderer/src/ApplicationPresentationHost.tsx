@@ -166,7 +166,8 @@ const ApplicationPresentationContent = ({
       <>
         <EnvStatusBanner
           ui={startup.environment.ui}
-          onRetry={() => void startup.environment.retry()}
+          onRetry={startup.environment.retry}
+          statusError={startup.environment.statusError}
         />
         <Suspense
           fallback={
@@ -351,7 +352,8 @@ const ApplicationPresentationContent = ({
               >
                 <EnvStatusBanner
                   ui={startup.environment.ui}
-                  onRetry={() => void startup.environment.retry()}
+                  onRetry={startup.environment.retry}
+                  statusError={startup.environment.statusError}
                   onOpenRuntimes={events.settings.openRuntimes}
                 />
                 {sessions.catalogRecovery.kind !== 'ready' ? (
@@ -384,6 +386,7 @@ const ApplicationPresentationContent = ({
           hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
           catalogRecovery={sessions.catalogRecovery}
           onRetryCatalogRecovery={sessions.retryLoad}
+          sessionLoadError={sessions.loadError}
         />
       </Suspense>
       <Suspense fallback={null}>

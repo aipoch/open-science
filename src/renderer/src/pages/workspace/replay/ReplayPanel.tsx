@@ -46,12 +46,12 @@ import { ReplayStage } from './ReplayStage'
 import { ReplayControls } from './ReplayControls'
 import { ReplaySourceDetails } from './ReplaySourceDetails'
 import {
-  captureReplayStepContext,
-  captureSessionDiscussionContext,
+  captureDiscussionStep,
+  captureDiscussionSession,
   subscribeReplaySeek,
   consumeReplaySeek,
   type ReplaySeekTarget,
-  type ReplayStepContext
+  type SessionDiscussionCapture
 } from './replay-context'
 import {
   ReplayResourceCache,
@@ -66,7 +66,7 @@ export type ReplayPanelProps = {
   expanded?: boolean
   onToggleExpanded?: () => void
   onViewChange?: (state: ReplayViewState) => void
-  onAskStep: (context: ReplayStepContext) => void
+  onAskStep: (context: SessionDiscussionCapture) => void
   onOpenEvidence: (resource: ReplayResource | undefined, step: ReplayStep) => void
   readResource?: ReplayResourceReader
   readNotebookRun?: ReplayNotebookRunReader
@@ -477,11 +477,11 @@ const ReplayPanelContent = ({
 
   // Keep an accessor to the visible frame; capture evidence only when a message is sent.
   const captureCurrent = useRef(() =>
-    captureReplayStepContext(replayDocument, scene, runDetails, resources)
+    captureDiscussionStep(replayDocument, scene, runDetails, resources)
   )
   useLayoutEffect(() => {
     captureCurrent.current = () =>
-      captureReplayStepContext(replayDocument, scene, runDetails, resources)
+      captureDiscussionStep(replayDocument, scene, runDetails, resources)
   })
   const hasStep = !!scene.step
   useEffect(() => {
@@ -501,11 +501,11 @@ const ReplayPanelContent = ({
   const ask = (): void => {
     pause()
     if (scene.step)
-      onAskStep(captureReplayStepContext(replayDocument, scene, runDetails, resources))
+      onAskStep(captureDiscussionStep(replayDocument, scene, runDetails, resources))
   }
   const askSession = (): void => {
     pause()
-    const context = captureSessionDiscussionContext(replayDocument)
+    const context = captureDiscussionSession(replayDocument)
     if (context) onAskStep({ ...context, stepTitle: t('Entire research') })
   }
   const toggle = (): void => {
@@ -1001,4 +1001,4 @@ export const ReplayPanel = (props: ReplayPanelProps): React.JSX.Element => (
   />
 )
 
-export type { ReplayStepContext, ReplayViewState }
+export type { SessionDiscussionCapture, ReplayViewState }

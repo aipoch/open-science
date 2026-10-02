@@ -50,9 +50,28 @@ import {
 } from '../../../shared/session-package'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useSessionStore } from '@/stores/session-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { createSessionReplayItem } from '@/pages/workspace/workspace-session-actions'
 import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { forkSession } from '@/lib/session-fork'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
+
+const openPackageSession = (operation: PackageOperationSnapshot): boolean => {
+  const identity = operation.result?.imported
+  if (!identity) return false
+  const { projectId, sessionId } = identity
+  if (operation.kind !== 'import')
+    return useNavigationStore.getState().openSession(projectId, sessionId, 'user')
+  return useNavigationStore.getState().openSession(projectId, sessionId, 'user', () => {
+    const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertAndActivateItem(
+        createSessionReplayItem(projectId, sessionId, session?.title ?? sessionId)
+      )
+  })
+}
 
 const operationStatus = (
   operation: PackageOperationSnapshot,
@@ -373,13 +392,12 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
     openedImport.current = operation.id
     const revision = navigationIntent.current?.revision
     if (revision !== useNavigationStore.getState().explicitNavigationRevision) return
-    const identity = operation.result.imported
     void useProjectStore
       .getState()
       .loadProjects()
       .then(() => {
         if (revision !== useNavigationStore.getState().explicitNavigationRevision) return
-        useNavigationStore.getState().openSession(identity.projectId, identity.sessionId, 'user')
+        openPackageSession(operation)
       })
       .catch(() => undefined)
   }, [operation, isWeb])
@@ -545,12 +563,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const openImported = async (): Promise<void> => {
     try {
       await useProjectStore.getState().loadProjects()
-      const identity = operation.result?.imported
-      if (
-        identity &&
-        useNavigationStore.getState().openSession(identity.projectId, identity.sessionId, 'user')
-      )
-        dismiss()
+      if (openPackageSession(operation)) dismiss()
     } catch (caught) {
       setError({
         id: operation.id,

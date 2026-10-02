@@ -10,8 +10,8 @@ const row: SessionReplaySnapshot = {
 beforeEach(() =>
   useSessionReplayStore.setState({
     snapshots: {},
-    pendingQuestion: undefined,
-    questionDestination: undefined
+    pendingDiscussion: undefined,
+    discussionDestination: undefined
   })
 )
 describe('replay checkpoint cache', () => {

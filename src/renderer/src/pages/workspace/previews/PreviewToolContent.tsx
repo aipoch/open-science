@@ -29,8 +29,8 @@ import { respondToSessionPlan } from '../session-plan/respond-to-session-plan'
 import { PlanPreviewSurface, type RestoredPlanResponder } from '../session-plan/SessionPlanSurfaces'
 
 const LibraryPreview = lazy(() => import('./LibraryPreview'))
-const ResearchReplayPreview = lazy(() =>
-  import('../ResearchReplayPreview').then((module) => ({ default: module.ResearchReplayPreview }))
+const SessionReplayPreview = lazy(() =>
+  import('../SessionReplayPreview').then((module) => ({ default: module.SessionReplayPreview }))
 )
 
 const isNotebookPreviewItem = (item: PreviewToolItem): item is NotebookPreviewItem =>
@@ -324,7 +324,7 @@ export const PreviewToolContent = ({
           </div>
         }
       >
-        <ResearchReplayPreview
+        <SessionReplayPreview
           key={`${item.projectId}:${item.sessionId}`}
           item={item}
           isActive={isActive}

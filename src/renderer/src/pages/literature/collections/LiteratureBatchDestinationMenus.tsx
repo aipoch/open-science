@@ -1,0 +1,270 @@
+import { useLiteratureHoverMenu } from '../LiteratureHoverMenus'
+import { ChevronRight, FolderOpen, FolderPlus, LoaderCircle, Plus } from 'lucide-react'
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { ProjectPicker } from '@/components/ProjectPicker'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { cn } from '@/lib/utils'
+
+const SEARCH_THRESHOLD = 5
+
+type Destination = Readonly<{
+  id: string
+  name: string
+}>
+
+const destinationButtonClassName =
+  'flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors duration-150 hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none'
+
+const LiteratureBatchDestinationMenus = ({
+  collections,
+  disabled,
+  moveBetweenCollections,
+  onCreateCollection,
+  onCreateProject,
+  onSelectCollection,
+  onSelectProject,
+  projects,
+  projectsLoaded
+}: Readonly<{
+  collections: readonly Destination[]
+  disabled: boolean
+  moveBetweenCollections: boolean
+  onCreateCollection: (name: string) => Promise<boolean>
+  onCreateProject: () => void
+  onSelectCollection: (id: string) => void
+  onSelectProject: (id: string) => void
+  projects: readonly Destination[]
+  projectsLoaded: boolean
+}>): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [collectionCreateMode, setCollectionCreateMode] = useState(false)
+  const [collectionName, setCollectionName] = useState('')
+  const [collectionQuery, setCollectionQuery] = useState('')
+  const visibleCollections = collections.filter((collection) =>
+    collection.name.toLocaleLowerCase().includes(collectionQuery.trim().toLocaleLowerCase())
+  )
+  const [projectQuery, setProjectQuery] = useState('')
+  const collectionMenu = useLiteratureHoverMenu(disabled)
+  const projectMenu = useLiteratureHoverMenu(disabled)
+
+  return (
+    <>
+      <Popover
+        open={collectionMenu.open}
+        onOpenChange={(open) => {
+          collectionMenu.setOpen(open)
+          if (!open) {
+            setCollectionCreateMode(false)
+            setCollectionName('')
+            setCollectionQuery('')
+          }
+        }}
+      >
+        <PopoverTrigger asChild {...collectionMenu.triggerProps}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0 whitespace-nowrap"
+            aria-label={moveBetweenCollections ? t('Move to collection') : t('Add to collection')}
+            disabled={disabled}
+          >
+            <FolderOpen className="size-3.5" aria-hidden="true" />
+            {moveBetweenCollections ? t('Move to collection') : t('Add to collection')}
+            <ChevronRight className="ml-auto size-3.5 opacity-60" aria-hidden="true" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          data-slot="literature-batch-collection-popover"
+          {...collectionMenu.contentProps}
+          className="w-72 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu"
+        >
+          <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">
+            {t('Collections')}
+          </div>
+          {collections.length > SEARCH_THRESHOLD ? (
+            <Input
+              type="search"
+              aria-label={t('Search collections')}
+              placeholder={t('Search collections…')}
+              value={collectionQuery}
+              onChange={(event) => setCollectionQuery(event.target.value)}
+              className="mb-1 h-8 text-xs"
+            />
+          ) : null}
+          {collections.length > 0 ? (
+            <div className="max-h-56 overflow-y-auto">
+              {visibleCollections.length === 0 ? (
+                <p className="px-2 py-3 text-sm text-muted-foreground">
+                  {t('No matching collections')}
+                </p>
+              ) : null}
+              {visibleCollections.map((collection) => (
+                <PopoverClose key={collection.id} asChild>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    className={destinationButtonClassName}
+                    onClick={() => onSelectCollection(collection.id)}
+                  >
+                    <FolderOpen
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{collection.name}</span>
+                  </button>
+                </PopoverClose>
+              ))}
+            </div>
+          ) : (
+            <div className="flex gap-2 px-2 py-3">
+              <FolderPlus
+                className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('No collections')}</p>
+                <p className="mt-0.5 text-xs leading-4 text-muted-foreground">
+                  {t('Create a collection for the selected references.')}
+                </p>
+              </div>
+            </div>
+          )}
+          <div className="mt-1 border-t border-border pt-1">
+            {collectionCreateMode ? (
+              <form
+                className="flex gap-1"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  const name = collectionName.trim()
+                  if (!name) return
+                  void onCreateCollection(name).then((created) => {
+                    if (!created) return
+                    setCollectionCreateMode(false)
+                    setCollectionName('')
+                  })
+                }}
+              >
+                <Input
+                  autoFocus
+                  disabled={disabled}
+                  value={collectionName}
+                  onChange={(event) => setCollectionName(event.target.value)}
+                  placeholder={t('New collection')}
+                  aria-label={t('Collection name')}
+                  className="h-8 min-w-0 text-xs"
+                />
+                <Button
+                  type="submit"
+                  size="icon"
+                  className="size-8"
+                  disabled={!collectionName.trim() || disabled}
+                  aria-label={t('Create collection')}
+                >
+                  {disabled ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Plus className="size-4" aria-hidden="true" />
+                  )}
+                </Button>
+              </form>
+            ) : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start"
+                onClick={() => setCollectionCreateMode(true)}
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                {t('New collection')}
+              </Button>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+      <Popover
+        open={projectMenu.open}
+        onOpenChange={(open) => {
+          projectMenu.setOpen(open)
+          if (!open) setProjectQuery('')
+        }}
+      >
+        <PopoverTrigger asChild {...projectMenu.triggerProps}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0 whitespace-nowrap"
+            disabled={disabled}
+          >
+            <FolderPlus className="size-3.5" aria-hidden="true" />
+            {t('Add to project')}
+            <ChevronRight className="ml-auto size-3.5 opacity-60" aria-hidden="true" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          data-slot="literature-batch-project-popover"
+          {...projectMenu.contentProps}
+          className={cn(
+            'max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu',
+            projectsLoaded && projects.length === 0 ? 'w-max' : 'w-72'
+          )}
+        >
+          <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">
+            {t('Projects')}
+          </div>
+          <ProjectPicker
+            projects={projects}
+            query={projectQuery}
+            onQueryChange={setProjectQuery}
+            loaded={projectsLoaded}
+            disabled={disabled}
+            onSelect={(id) => {
+              projectMenu.setOpen(false)
+              setProjectQuery('')
+              onSelectProject(id)
+            }}
+            emptyContent={
+              <div className="flex gap-2 px-2 py-3">
+                <FolderPlus
+                  className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{t('No active projects')}</p>
+                  <p className="mt-0.5 text-xs leading-4 text-muted-foreground">
+                    {t('Create a project for the selected references.')}
+                  </p>
+                </div>
+              </div>
+            }
+          />
+          <div className="mt-1 border-t border-border pt-1">
+            <PopoverClose asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start"
+                onClick={onCreateProject}
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                {t('New project')}
+              </Button>
+            </PopoverClose>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </>
+  )
+}
+
+export { LiteratureBatchDestinationMenus }

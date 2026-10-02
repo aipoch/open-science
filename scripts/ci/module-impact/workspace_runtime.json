@@ -94,7 +94,7 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/lib/session-fork.test.ts",
-      "src/renderer/src/pages/workspace/ResearchReplayPreview.test.tsx"
+      "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx"
     ]
   },
   "capabilityOverlays": ["renderer_state"],

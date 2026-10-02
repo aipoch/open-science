@@ -6,7 +6,7 @@ import {
   useJournalDatasets,
   useJournalSourceYears,
   setJournalSourceYear
-} from './journal-attribute-store'
+} from './journals/journal-attribute-store'
 import { literatureItemInputSchema } from '../../../../shared/literature'
 import type { LiteratureChangedEvent } from '../../../../shared/literature'
 import type { JournalRequest } from '../../../../shared/journal-attributes'

@@ -59,8 +59,8 @@ it('serves lazy Worker modules without late optimization or full reloads', async
       '/src/pages/workspace/pdf-annotations/pdf-export.ts',
       '/src/pages/workspace/previews/tiff-preview-worker.ts?worker_file&type=module',
       '/src/pages/workspace/previews/tiff-preview.ts',
-      '/src/pages/literature/journal-import.worker.ts?worker_file&type=module',
-      '/src/pages/literature/journal-import-file.ts',
+      '/src/pages/literature/journals/journal-import.worker.ts?worker_file&type=module',
+      '/src/pages/literature/journals/journal-import-file.ts',
       ...['sheet.worker.js', 'parser.js', 'SheetJsModel.js', 'color.js', 'chartParser.js'].map(
         (file) => `/@fs/${normalizePath(join(spreadsheetRoot, file))}`
       )

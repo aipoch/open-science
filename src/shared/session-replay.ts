@@ -57,13 +57,15 @@ export const replayViewStateSchema = z
   })
   .strict()
 export type ReplayViewState = z.infer<typeof replayViewStateSchema>
-export const saveResearchReplayViewRequestSchema = sessionReplayRequestSchema
+export const saveSessionReplayProgressRequestSchema = sessionReplayRequestSchema
   .extend({
     state: replayViewStateSchema,
     expectedRevision: z.number().int().nonnegative()
   })
   .strict()
-export type SaveResearchReplayViewRequest = z.infer<typeof saveResearchReplayViewRequestSchema>
+export type SaveSessionReplayProgressRequest = z.infer<
+  typeof saveSessionReplayProgressRequestSchema
+>
 
 const replayEvidenceReferenceSchema = z
   .object({
@@ -138,7 +140,7 @@ export const sessionDiscussionSnapshotSchema = sessionReplayRequestSchema
           reference.projectId === context.projectId &&
           reference.sessionId === context.sourceSessionId
       ),
-    { message: 'Replay evidence must belong to the source research.' }
+    { message: 'Replay evidence must belong to the source Session.' }
   )
 export type SessionDiscussionSnapshot = z.infer<typeof sessionDiscussionSnapshotSchema>
 export const saveSessionDiscussionSnapshotRequestSchema = sessionReplayRequestSchema
@@ -150,7 +152,7 @@ export const saveSessionDiscussionSnapshotRequestSchema = sessionReplayRequestSc
     (request) =>
       request.projectId === request.context.projectId &&
       request.sourceSessionId === request.context.sourceSessionId,
-    { message: 'Replay question context identity does not match the request.' }
+    { message: 'Session discussion snapshot identity does not match the request.' }
   )
 export type SaveSessionDiscussionSnapshotRequest = z.infer<
   typeof saveSessionDiscussionSnapshotRequestSchema
@@ -176,12 +178,12 @@ export const sessionReplaySnapshotSchema = sessionReplayRequestSchema
   })
   .strict()
 export type SessionReplaySnapshot = z.infer<typeof sessionReplaySnapshotSchema>
-export type ResearchReplayViewSnapshot = z.infer<typeof viewSnapshotSchema>
+export type SessionReplayProgressSnapshot = z.infer<typeof viewSnapshotSchema>
 const saveViewResultSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('saved'), revision: z.number().int().positive() }).strict(),
   z.object({ status: z.literal('conflict'), snapshot: viewSnapshotSchema.nullable() }).strict()
 ])
-export type SaveResearchReplayViewResult = z.infer<typeof saveViewResultSchema>
+export type SaveSessionReplayProgressResult = z.infer<typeof saveViewResultSchema>
 
 export const unlinkSessionReadingRequestSchema = z
   .object({
@@ -207,7 +209,7 @@ export const sessionReplayCommandContracts = {
     validationCodec(z.array(sessionReplaySnapshotSchema))
   ),
   saveView: defineApplicationCommandContract(
-    validationCodec(z.tuple([saveResearchReplayViewRequestSchema])),
+    validationCodec(z.tuple([saveSessionReplayProgressRequestSchema])),
     validationCodec(saveViewResultSchema)
   ),
   saveSelectionSnapshot: defineApplicationCommandContract(

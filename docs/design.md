@@ -1177,6 +1177,13 @@ intentional exceptions and validation. Cross-panel Settings write failures use a
 notice above the scroll area. Global action feedback uses the top-center stack; background Notebook and recovery notices share the bottom-right stack.
 Local-file failures and Literature undo stay inside their owning content region.
 
+Restrict only the feature or region made unavailable by a failure; use application-wide blocking only
+when the application cannot operate safely. All floating background errors offer dismissal without
+clearing their underlying failure or safety gates. Keep recovery available in the owning surface:
+Session-load failures in Settings / Archived, size limits beside the affected conversation composer,
+and Notebook status/setup failures in Settings / Runtimes. Environment diagnostics start collapsed,
+outside the live summary; Retry shows pending feedback and never disables Close.
+
 Settings region warnings and operation failures, including preference saves, app-icon previews, logs, credentials, connection tests and storage scans, use the shared Notice surface. Keep retry, dismiss and diagnostics inside the owning notice when present, and keep the language rollback explanation available to screen readers. Input-linked validation stays beside its input using fieldErrorClassName (12px text, 20px line height, destructive text color and safe word wrapping), preserving ids and aria-describedby. Do not ellipsize embedded messages. Dense resource-row status labels, validation counters and destructive actions retain their existing compact presentation.
 
 Use the shared `ErrorNotice` for error summaries. The default is a compact inline surface across
@@ -1259,6 +1266,21 @@ alert region excludes the diagnostic payload so opening it does not announce the
 | File library      | Search                                               | `Input` / `CommandInput`                                                                 |
 | File library      | Grid/list switch                                     | `ToggleGroup type="single"`; hover `bg-muted`, selected `bg-bg-400`                      |
 | File library      | File card / file row                                 | `Card` / button row + neutral hover `bg-bg-100` / `bg-bg-200`                            |
+
+## Windows application menu row
+
+Windows desktop main windows place File, Edit, View and Help next to the Open-Science brand in a
+36px title-bar row. Electron `titleBarOverlay` retains native caption controls, window resizing and
+system window behavior. Reserve those controls with the `titlebar-area-*` CSS environment variables;
+only the menu buttons use `app-region: no-drag`, leaving the rest of the row draggable. Native popups
+preserve the editing target and use the existing command owners for settings, search, interface scale,
+close and quit. Alt/F10 focus the menu row; arrows move between menus and open them; Escape returns
+focus to the previous control. Scale and theme changes synchronize the native overlay from the existing
+renderer preferences and color tokens. Account for the row in full-height application layouts.
+Native fullscreen hides the row and removes its layout offset; leaving fullscreen restores both.
+Fullscreen state comes from the native window, including a fresh snapshot after renderer reload;
+Alt/F10 menu entry is inactive while the row is hidden. This state is not persisted.
+macOS and Linux keep their existing native window/menu presentation, and Web clients add no desktop row.
 
 ## Language Guidelines
 

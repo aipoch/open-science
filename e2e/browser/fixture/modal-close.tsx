@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { SpecialistMarketplace } from '@/pages/settings/SpecialistMarketplace'
 import { useMarketplaceStore } from '@/stores/marketplace-store'
-import { LiteratureAttachments } from '@/pages/literature/LiteratureAttachments'
+import { LiteratureAttachments } from '@/pages/literature/detail/LiteratureAttachments'
 import { SkillEditLoader } from '@/pages/settings/SkillEditor'
 import { MemoryPanel } from '@/pages/settings/MemoryPanel'
 import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
@@ -15,7 +15,7 @@ import { XaiOAuthSignInDialog } from '@/pages/settings/XaiOAuthSignInDialog'
 import {
   CollectionEditorDialog,
   type CollectionEditorDialogHandle
-} from '@/pages/literature/CollectionEditorDialog'
+} from '@/pages/literature/collections/CollectionEditorDialog'
 import { ArtifactLiteratureDetailDialog } from '@/pages/workspace/ArtifactLiteratureDetailDialog'
 import { SessionPackageImportError } from '@/components/SessionPackageImportError'
 import { usePackageOperationStore } from '@/stores/package-operation-store'

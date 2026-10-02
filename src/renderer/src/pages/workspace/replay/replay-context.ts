@@ -16,7 +16,7 @@ import {
   type ReplayCapturedRecord
 } from '../../../../../shared/session-replay'
 
-export type ReplayStepContext = {
+export type SessionDiscussionCapture = {
   scope?: 'step' | 'session'
   phase?: ReplayScene['phase']
   stepTitle?: string
@@ -35,26 +35,26 @@ export type ReplayStepContext = {
   excerpt: string
 }
 
-export const captureSessionDiscussionContext = (
+export const captureDiscussionSession = (
   document: ReplayDocument
-): ReplayStepContext | undefined => {
+): SessionDiscussionCapture | undefined => {
   const branch =
     document.branches.find((item) => item.id === document.defaultBranchId && item.steps.length) ??
     document.branches.find((item) => item.steps.length)
   if (!branch) return undefined
-  const context = captureReplayStepContext(
+  const context = captureDiscussionStep(
     document,
     projectReplayScene(document, branch.id, branch.steps[0].startMs)
   )
   return { ...context, scope: 'session', stepTitle: undefined, stepNumber: undefined }
 }
 
-export const captureReplayStepContext = (
+export const captureDiscussionStep = (
   document: ReplayDocument,
   scene: ReplayScene,
   runDetails: Readonly<Record<string, ReplayNotebookRunDetails>> = {},
   resources: ReplayResourceMap = {}
-): ReplayStepContext => {
+): SessionDiscussionCapture => {
   const step = scene.step
   if (!step) throw new Error('Replay step unavailable')
   const records: ReplayCapturedRecord[] = []
@@ -188,7 +188,7 @@ export const captureReplayStepContext = (
 
 export const REPLAY_SEEK_EVENT = 'open-science:replay-seek'
 export type ReplaySeekTarget = Pick<
-  ReplayStepContext,
+  SessionDiscussionCapture,
   'projectId' | 'sourceSessionId' | 'branchId' | 'stepId'
 > & { stepOffsetMs?: number }
 

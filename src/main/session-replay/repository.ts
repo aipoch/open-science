@@ -5,9 +5,9 @@ import {
   type SessionDiscussionSnapshot,
   type GetSessionDiscussionSnapshotRequest,
   type SessionReplayRequest,
-  type ResearchReplayViewSnapshot,
-  type SaveResearchReplayViewRequest,
-  type SaveResearchReplayViewResult
+  type SessionReplayProgressSnapshot,
+  type SaveSessionReplayProgressRequest,
+  type SaveSessionReplayProgressResult
 } from '../../shared/session-replay'
 
 export type SessionReplayClient = Pick<
@@ -17,7 +17,7 @@ export type SessionReplayClient = Pick<
 export type SessionReplayClientProvider = () => Promise<SessionReplayClient>
 export const replayViewSnapshot = (
   row: SessionReplayProgress | null
-): ResearchReplayViewSnapshot | undefined => {
+): SessionReplayProgressSnapshot | undefined => {
   if (!row?.stateJson || row.revision <= 0) return undefined
   try {
     return {
@@ -102,7 +102,9 @@ export class SessionReplayRepository {
     })
   }
 
-  async saveView(request: SaveResearchReplayViewRequest): Promise<SaveResearchReplayViewResult> {
+  async saveView(
+    request: SaveSessionReplayProgressRequest
+  ): Promise<SaveSessionReplayProgressResult> {
     const client = await this.getClient()
     return client.$transaction(async (tx) => {
       const project = await tx.project.findFirst({

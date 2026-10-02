@@ -204,27 +204,9 @@ describe('claudeCodeFramework', () => {
       hooks: [existingPreToolUseHook]
     })
 
-    const loadSkillHook = hooks.PreToolUse.find(
-      (hook) => hook.matcher === LOAD_SKILL_TOOL_CALLABLE_NAME
+    expect(hooks.PreToolUse.some((hook) => hook.matcher === LOAD_SKILL_TOOL_CALLABLE_NAME)).toBe(
+      false
     )
-    expect(loadSkillHook).toBeDefined()
-
-    const decision = await loadSkillHook!.hooks[0](
-      {
-        hook_event_name: 'PreToolUse',
-        tool_name: LOAD_SKILL_TOOL_CALLABLE_NAME,
-        tool_input: { name: 'literature-review' },
-        tool_use_id: 'tool-use-1'
-      },
-      'tool-use-1',
-      { signal: new AbortController().signal }
-    )
-    expect(decision).toEqual({
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'allow'
-      }
-    })
   })
 
   it('passes the Specialist Skill whitelist to the runtime loader', () => {

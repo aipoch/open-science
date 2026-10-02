@@ -3,9 +3,9 @@ import { LoaderCircle, MessageSquare } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
-import { ReplayConversationDialog } from './ReplayConversationDialog'
-import { loadSessionDiscussionContext } from './workspace-research-controller'
-import type { ReplayStepContext } from './replay/replay-context'
+import { SessionDiscussionDialog } from './SessionDiscussionDialog'
+import { loadSessionDiscussionContext } from './workspace-session-actions'
+import type { SessionDiscussionCapture } from './replay/replay-context'
 
 export const SessionDiscussionButton = ({
   projectId,
@@ -15,7 +15,7 @@ export const SessionDiscussionButton = ({
   sessionId: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const [context, setContext] = useState<ReplayStepContext>()
+  const [context, setContext] = useState<SessionDiscussionCapture>()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
   const request = useRef<AbortController | undefined>(undefined)
@@ -54,7 +54,7 @@ export const SessionDiscussionButton = ({
         {t('Discuss')}
       </Button>
       {context ? (
-        <ReplayConversationDialog context={context} onClose={() => setContext(undefined)} />
+        <SessionDiscussionDialog context={context} onClose={() => setContext(undefined)} />
       ) : null}
       {error ? (
         <ErrorNotice

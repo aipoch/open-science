@@ -4124,9 +4124,9 @@ it('round-trips portable history without local Session selection links', async (
       {
         id: 'q',
         role: 'user',
-        content: '[Selected step](#research-replay:source-project:snapshot-1) Why?',
+        content: '[Selected step](#session-replay:source-project:snapshot-1) Why?',
         parts: [
-          { type: 'text', text: '[Selected step](#research-replay:source-project:snapshot-1) Why?' }
+          { type: 'text', text: '[Selected step](#session-replay:source-project:snapshot-1) Why?' }
         ],
         annotations: [
           {
@@ -4204,7 +4204,7 @@ it('round-trips portable history without local Session selection links', async (
   })
   expect(restored?.messages[0].annotations ?? []).toEqual([])
   expect(JSON.stringify(restored)).not.toContain('foreign-version')
-  expect(JSON.stringify(restored)).not.toContain('#research-replay:')
+  expect(JSON.stringify(restored)).not.toContain('#session-replay:')
   expect(restored?.messages[0].content).toContain('Selected step (local Session link omitted) Why?')
   expect(
     (await repository.loadSession('project-1', 'session-1'))?.runtimeContext?.sessionContext

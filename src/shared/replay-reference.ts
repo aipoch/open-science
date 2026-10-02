@@ -9,7 +9,7 @@ export type ReplayReferenceTarget = {
   scope?: 'step' | 'session'
 }
 
-const REPLAY_ANNOTATION_PREFIX = 'research-replay:'
+const REPLAY_ANNOTATION_PREFIX = 'session-replay:'
 
 // An existing annotation ID carries a local replay locator. Its source and quote remain ordinary
 // annotation fields, so exported history uses the current .science message contract unchanged.
@@ -84,11 +84,11 @@ export type ReplayReferenceTextPart =
       label: string
     }
 export const replayReferenceText = (id: string, label: string, projectId?: string): string =>
-  `[${label.replace(/[[\]\r\n]/g, ' ')}](#research-replay:${projectId ? `${encodeURIComponent(projectId)}:` : ''}${id})`
+  `[${label.replace(/[[\]\r\n]/g, ' ')}](#session-replay:${projectId ? `${encodeURIComponent(projectId)}:` : ''}${id})`
 
 export const splitReplayReferenceText = (text: string): ReplayReferenceTextPart[] => {
   const pattern =
-    /\[([^\]\n]{1,200})\]\(#research-replay:(?:([a-zA-Z0-9%_.~-]{1,1536}):)?([a-zA-Z0-9-]{1,100})\)/g
+    /\[([^\]\n]{1,200})\]\(#session-replay:(?:([a-zA-Z0-9%_.~-]{1,1536}):)?([a-zA-Z0-9-]{1,100})\)/g
   const parts: ReplayReferenceTextPart[] = []
   let offset = 0
   for (const match of text.matchAll(pattern)) {

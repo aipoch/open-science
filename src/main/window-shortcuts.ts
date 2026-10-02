@@ -45,6 +45,19 @@ const installWindowShortcuts = (
 
     window.webContents.on('before-input-event', (event, input) => {
       if (!isMainWindow(window)) return
+      if (
+        process.platform === 'win32' &&
+        input.type === 'keyDown' &&
+        input.key === 'F11' &&
+        !input.control &&
+        !input.meta &&
+        !input.alt &&
+        !input.shift
+      ) {
+        event.preventDefault()
+        window.setFullScreen(!window.isFullScreen())
+        return
+      }
       const shortcut = scaleShortcutForInput(input)
       if (!shortcut) return
 

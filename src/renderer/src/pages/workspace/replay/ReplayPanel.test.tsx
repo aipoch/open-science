@@ -9,7 +9,7 @@ import { ReplayControls } from './ReplayControls'
 import { ReplayStage } from './ReplayStage'
 import * as notebookCell from '../NotebookRecordCell'
 import { createReplayPresentation } from './replay-presentation'
-import type { ReplayStepContext } from './replay-context'
+import type { SessionDiscussionCapture } from './replay-context'
 import { requestReplaySeek } from './replay-context'
 import type { ReplayPreparedResource } from './replay-resources'
 
@@ -406,7 +406,7 @@ describe('research replay interaction', () => {
     expect(screen.getByLabelText('Play replay')).toBeTruthy()
     seekProgress(1500)
     fireEvent.click(screen.getByText('Ask about this step'))
-    const captured = props.onAskStep.mock.calls[0][0] as ReplayStepContext
+    const captured = props.onAskStep.mock.calls[0][0] as SessionDiscussionCapture
     expect(captured.stepId).toBe('two')
     expect(captured.excerpt).toBe('Interpret saved evidence'.slice(0, 20))
     fireEvent.click(screen.getByLabelText('Next step'))
@@ -743,7 +743,7 @@ describe('replay source and evidence isolation', () => {
     expect(screen.queryByTestId('notebook-text-output')).toBeNull()
     expect(screen.queryByText('v2.txt')).toBeNull()
     fireEvent.click(screen.getByText('Ask about this step'))
-    const context = props.onAskStep.mock.calls[0][0] as ReplayStepContext
+    const context = props.onAskStep.mock.calls[0][0] as SessionDiscussionCapture
     expect(context.evidence.some((item) => item.kind === 'artifact-version')).toBe(false)
     expect(context.evidence.find((item) => item.kind === 'notebook-run')?.part).toBe('input')
     seekProgress(2800)

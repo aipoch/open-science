@@ -1,5 +1,5 @@
 import { prepareDiscussionSendAnnotations } from '../../pages/workspace/discussion-send-context'
-import type { ReplayStepContext } from '../../pages/workspace/replay/replay-context'
+import type { SessionDiscussionCapture } from '../../pages/workspace/replay/replay-context'
 import { i18next } from '../../i18n'
 import type { AcpMessageImage, AcpRuntimeEvent } from '../../../../shared/acp'
 import type { FileReference } from '../../../../shared/artifacts'
@@ -76,7 +76,7 @@ type SendWorkspaceMessageIntent = {
   turnIntent?: 'plan-first'
   attachments?: UploadedAttachment[]
   annotations?: annotationProtocol.Annotation[]
-  discussionFocus?: ReplayStepContext
+  discussionFocus?: SessionDiscussionCapture
   cwd?: string
   projectId?: string
   permissionProfile?: PermissionProfileId

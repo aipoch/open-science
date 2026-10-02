@@ -1,11 +1,8 @@
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
-import {
-  createResearchReplayItem,
-  loadSessionDiscussionContext
-} from './workspace-research-controller'
-import { ReplayConversationDialog } from './ReplayConversationDialog'
-import type { ReplayStepContext } from './replay/replay-context'
+import { createSessionReplayItem, loadSessionDiscussionContext } from './workspace-session-actions'
+import { SessionDiscussionDialog } from './SessionDiscussionDialog'
+import type { SessionDiscussionCapture } from './replay/replay-context'
 import { SessionPackageImportMenu } from '@/components/SessionPackageImportMenu'
 import {
   BookOpen,
@@ -1314,7 +1311,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
 
 const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const [question, setQuestion] = useState<ReplayStepContext>()
+  const [discussionCapture, setDiscussionCapture] = useState<SessionDiscussionCapture>()
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -1328,7 +1325,7 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
       usePreviewWorkbenchStore
         .getState()
         .upsertAndActivateItem(
-          createResearchReplayItem(
+          createSessionReplayItem(
             session.projectId,
             session.id,
             session.title,
@@ -1345,7 +1342,7 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
       )
         return
       if (!context) throw new Error(t('No recorded steps are available.'))
-      setQuestion(context)
+      setDiscussionCapture(context)
     }
   }
   const latestCallbacks = useRef(callbacks)
@@ -1385,8 +1382,11 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
   return (
     <>
       <WorkspaceSidebarView {...props} rowActions={rowActions} />
-      {question ? (
-        <ReplayConversationDialog context={question} onClose={() => setQuestion(undefined)} />
+      {discussionCapture ? (
+        <SessionDiscussionDialog
+          context={discussionCapture}
+          onClose={() => setDiscussionCapture(undefined)}
+        />
       ) : null}
     </>
   )

@@ -499,7 +499,7 @@ describe('Reviewer orchestrator architecture', () => {
         'workspace_runtime',
         'workspace_page',
         'artifact_provenance',
-        'research_replay'
+        'session_replay'
       ],
       testFiles: {
         owner: [
@@ -816,9 +816,9 @@ describe('Reviewer orchestrator architecture', () => {
           'src/renderer/src/components/ReviewerCard.render.test.tsx',
           'src/renderer/src/hooks/useLifecycleSync.test.tsx',
           'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',
-          'src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx',
+          'src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx',
           'src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx',
-          'src/renderer/src/pages/literature/LiteratureMetadataEditor.test.tsx',
+          'src/renderer/src/pages/literature/detail/LiteratureMetadataEditor.test.tsx',
           'src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx',
           'src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx',
           'src/shared/renderer-surface-inventory.test.ts',

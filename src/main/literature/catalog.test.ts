@@ -16,7 +16,7 @@ import {
   type LiteratureCandidateInput
 } from '../../shared/literature'
 import { toCslItem } from '../../shared/literature-csl'
-import { buildLiteratureMergeItem } from '../../renderer/src/pages/literature/literature-merge'
+import { buildLiteratureMergeItem } from '../../renderer/src/pages/literature/duplicates/literature-merge'
 import { migrateApplicationDatabase } from '../database/migration-service'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { LiteratureCatalog, normalizeIdentifier } from './catalog'

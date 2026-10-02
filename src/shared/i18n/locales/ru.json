@@ -43,7 +43,8 @@
     "Discard unsaved changes?": "Отменить несохранённые изменения?",
     "Export Session package": "Экспортировать пакет сеанса",
     "Import Session package": "Импортировать пакет сеанса",
-    "Wait for all Session activity and pending approvals to finish before forking.": "Дождитесь завершения всех действий сессии и ожидающих подтверждений перед созданием ответвления."
+    "Wait for all Session activity and pending approvals to finish before forking.": "Дождитесь завершения всех действий сессии и ожидающих подтверждений перед созданием ответвления.",
+    "Close window": "Закрыть окно"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Для системных учётных данных Linux необходимы исходно выбранный бэкенд Secret Service или KWallet и /usr/bin/busctl. Разблокируйте исходную связку ключей или кошелёк по умолчанию и перезапустите приложение. Не меняйте бэкенд password-store или профиль для обхода этой проверки.",
@@ -85,7 +86,6 @@
     "Move in progress": "Перенос выполняется",
     "Open-Science is still moving your data.": "Open-Science всё ещё переносит ваши данные.",
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "Ваши данные в любом случае в безопасности, но при выходе сейчас перенос останется незавершённым и его, возможно, придётся начать заново. Не закрывайте приложение до завершения переноса.",
-    "Close window": "Закрыть окно",
     "The app window stopped responding repeatedly.": "Окно приложения несколько раз переставало отвечать.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "Автоматическое восстановление приостановлено. После перезагрузки это окно вернётся на главный экран; фоновые задачи могут продолжать выполняться.",
     "Save file": "Сохранить файл",
@@ -7258,6 +7258,14 @@
     "Could not open this source. Retry or unlink the Session.": "Не удалось открыть источник. Повторите попытку или отвяжите сессию.",
     "Could not unlink the Session. Please retry.": "Не удалось отвязать сессию. Повторите попытку.",
     "Ask about this research": "Задать вопрос об исследовании",
-    "Entire research": "Всё исследование"
+    "Entire research": "Всё исследование",
+    "The Notebook environment needs attention. You can continue using other features.": "Среда Notebook требует внимания. Вы можете продолжать пользоваться другими функциями.",
+    "Help": "Справка",
+    "Application menu": "Меню приложения",
+    "Redo": "Повторить",
+    "Cut": "Вырезать",
+    "Paste": "Вставить",
+    "Full screen": "Полный экран",
+    "Documentation": "Документация"
   }
 }

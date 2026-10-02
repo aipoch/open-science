@@ -11,7 +11,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import { AnnotationDraftCards, AnnotationMessageCards } from './AnnotationCards'
 import { requestAnnotationReveal } from './annotation-reveal'
-import { createReplayStepAnnotation } from '../research-replay-context'
+import { createSessionDiscussionAnnotation } from '../session-discussion-annotation'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -124,7 +124,7 @@ describe('AnnotationCards image projection', () => {
   })
 
   it('presents replay references without exposing their transport payload in drafts or sent messages', async () => {
-    const annotation = createReplayStepAnnotation({
+    const annotation = createSessionDiscussionAnnotation({
       projectId: 'source-project',
       sourceSessionId: 'source-session',
       sourceTitle: 'Saved analysis',
@@ -193,7 +193,7 @@ describe('AnnotationCards image projection', () => {
       ]
     }
     const selected = {
-      ...createReplayStepAnnotation(context, 'snapshot')!,
+      ...createSessionDiscussionAnnotation(context, 'snapshot')!,
       note: 'Explain the units'
     }
     const onReveal = vi.fn()
@@ -204,7 +204,7 @@ describe('AnnotationCards image projection', () => {
     expect(container.textContent).toContain('Explain the units')
     await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
     expect(onReveal).toHaveBeenCalledWith(selected)
-    const entire = createReplayStepAnnotation({ ...context, scope: 'session' }, 'whole')!
+    const entire = createSessionDiscussionAnnotation({ ...context, scope: 'session' }, 'whole')!
     await act(async () =>
       root.render(<AnnotationMessageCards annotations={[entire]} onReveal={onReveal} />)
     )

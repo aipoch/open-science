@@ -78,7 +78,7 @@ import {
   starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
-import { useWorkspaceResearchContext } from './workspace-research-context'
+import { useWorkspaceSessionDiscussion } from './workspace-session-discussion'
 import { useConversationSubmissions } from './use-conversation-submissions'
 import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
 import { ConversationExportDialog } from './ConversationExportDialog'
@@ -525,7 +525,7 @@ const WorkspacePage = ({
   })
   const { doc: draftDoc, error: attachmentError } = composer.view
   const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
-  useWorkspaceResearchContext({ composer, draftKey: currentDraftKey, editable: canEditDraft })
+  useWorkspaceSessionDiscussion({ composer, draftKey: currentDraftKey, editable: canEditDraft })
   const delegationControl = useWorkspaceSessionDelegationControlOwner({
     activeSession,
     selectedSessionId,
@@ -1685,6 +1685,9 @@ const WorkspacePage = ({
                   activeSession,
                   composerFocusKey: currentDraftKey,
                   canEditDraft,
+                  persistenceBlocked: persistenceBlockedSessionIds.includes(
+                    activeSession?.id ?? ''
+                  ),
                   actionError: visibleActionError,
                   sideChatDisabledReason,
                   sessionImport: { projectId: scopedProjectId, canImport: canImportSessionPackage }

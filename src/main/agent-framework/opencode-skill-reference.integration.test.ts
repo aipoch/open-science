@@ -121,7 +121,10 @@ it.runIf(executable)(
         .client({ name: 'skill-reference-regression' })
         .onRequest(acp.methods.client.session.requestPermission, (ctx) => {
           permissionRequests.push(JSON.stringify(ctx.params))
-          return { outcome: { outcome: 'cancelled' } }
+          const once = ctx.params.options.find((option) => option.kind === 'allow_once')
+          return once && ctx.params.toolCall.title === 'skill'
+            ? { outcome: { outcome: 'selected', optionId: once.optionId } }
+            : { outcome: { outcome: 'cancelled' } }
         })
         .onRequest(acp.methods.client.fs.readTextFile, (ctx) => {
           fileRequests.push(ctx.params.path)
@@ -145,7 +148,8 @@ it.runIf(executable)(
         })
       expect(step, stderr.join('')).toBe(calls.length + 1)
       expect(updates.join('\n')).toContain('Read common-rules.md')
-      expect(permissionRequests).toEqual([])
+      expect(permissionRequests).toHaveLength(1)
+      expect(JSON.parse(permissionRequests[0]).toolCall.title).toBe('skill')
       expect
         .soft(results.join('\n'), `ACP file reads: ${JSON.stringify(fileRequests)}`)
         .toContain('ROOT_REFERENCE_MARKER')

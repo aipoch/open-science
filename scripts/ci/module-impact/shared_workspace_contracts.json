@@ -38,7 +38,8 @@
     "src/shared/storage.test.ts",
     "src/shared/storage.ts",
     "src/shared/uploads.test.ts",
-    "src/shared/uploads.ts"
+    "src/shared/uploads.ts",
+    "src/shared/renderer-contracts/session-replay.ts"
   ],
   "interfacePaths": [
     "src/shared/artifact-code-reconstruction.ts",
@@ -67,7 +68,8 @@
     "src/shared/session-replay.ts",
     "src/shared/session-reading.ts",
     "src/shared/storage.ts",
-    "src/shared/uploads.ts"
+    "src/shared/uploads.ts",
+    "src/shared/renderer-contracts/session-replay.ts"
   ],
   "consumerModules": [],
   "testFiles": {

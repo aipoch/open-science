@@ -17,14 +17,19 @@
     "src/renderer/src/renderer-diagnostics.test.ts",
     "src/renderer/src/renderer-diagnostics.ts",
     "src/renderer/src/security-policy.test.ts",
-    "src/renderer/vitest.worktree.config.ts"
+    "src/renderer/vitest.worktree.config.ts",
+    "src/renderer/src/components/WindowsTitleBar.tsx",
+    "src/renderer/src/components/WindowsTitleBar.test.tsx",
+    "src/renderer/src/components/windows-titlebar-context.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/app-shell-presentation-owner.ts",
     "src/renderer/src/main.tsx",
-    "src/renderer/src/renderer-diagnostics.ts"
+    "src/renderer/src/renderer-diagnostics.ts",
+    "src/renderer/src/components/WindowsTitleBar.tsx",
+    "src/renderer/src/components/windows-titlebar-context.ts"
   ],
-  "consumerModules": [],
+  "consumerModules": ["renderer_hooks"],
   "testFiles": {
     "owner": [
       "src/renderer/src/App.test.tsx",
@@ -32,7 +37,8 @@
       "src/renderer/src/app-shell-presentation-owner.test.ts",
       "src/renderer/src/main.render.test.tsx",
       "src/renderer/src/renderer-diagnostics.test.ts",
-      "src/renderer/src/security-policy.test.ts"
+      "src/renderer/src/security-policy.test.ts",
+      "src/renderer/src/components/WindowsTitleBar.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -83,9 +89,7 @@
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
       "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
       "src/renderer/src/pages/home/HomePage.render.test.tsx",
-      "src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
-      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
       "src/renderer/src/pages/onboarding/AgentStep.render.test.tsx",
       "src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx",
       "src/renderer/src/pages/onboarding/LocationStep.render.test.tsx",
@@ -176,8 +180,8 @@
       "src/renderer/src/pages/workspace/PreviewPanel.test.tsx",
       "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
       "src/renderer/src/pages/workspace/ReportErrorDialog.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/ResearchReplayEvidence.test.tsx",
-      "src/renderer/src/pages/workspace/ResearchReplayPreview.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.image-loading.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.integration.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.test.tsx",
@@ -241,7 +245,9 @@
       "src/renderer/src/stores/settings-navigation-slice.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
+      "src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx"
     ]
   },
   "capabilityOverlays": [],

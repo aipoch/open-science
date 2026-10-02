@@ -247,7 +247,7 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
     Object.hasOwn(session, 'providerContinuityToken')
   )
     return true
-  if (JSON.stringify(session).includes('research-replay:')) return true
+  if (JSON.stringify(session).includes('session-replay:')) return true
   const runtimeContext = session.runtimeContext
   return (
     isRecord(runtimeContext) &&

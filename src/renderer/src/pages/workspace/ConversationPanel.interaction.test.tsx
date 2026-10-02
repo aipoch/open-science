@@ -918,6 +918,14 @@ const dispatchDrag = (type: string, dataTransferTypes: string[], files: File[] =
 }
 
 describe('ConversationPanel header spacing', () => {
+  it('keeps a storage-limit explanation local to the blocked conversation', () => {
+    renderPanel({ view: { persistenceBlocked: true } })
+    expect(container.textContent).toContain('Conversation storage limit reached')
+    expect(container.textContent).toContain('Start a new conversation to keep working.')
+    renderPanel({ view: { persistenceBlocked: false } })
+    expect(container.textContent).not.toContain('Conversation storage limit reached')
+  })
+
   it('shows background export progress in New conversation and Session workspace', () => {
     act(() =>
       usePackageOperationStore.setState({

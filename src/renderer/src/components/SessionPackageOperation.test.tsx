@@ -1,6 +1,7 @@
 import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 // @vitest-environment jsdom
 import { act } from 'react'
@@ -1073,7 +1074,12 @@ it('navigates once after this desktop window confirms an import', async () => {
   }
   await act(async () => usePackageOperationStore.getState().receive(completed))
   await act(async () => usePackageOperationStore.getState().receive(completed))
-  expect(navigate).toHaveBeenCalledExactlyOnceWith('target', 'imported', 'user')
+  expect(navigate).toHaveBeenCalledExactlyOnceWith(
+    'target',
+    'imported',
+    'user',
+    expect.any(Function)
+  )
 })
 
 it.each(['before-completion', 'during-project-refresh'])(
@@ -1432,3 +1438,55 @@ it.each([
     [...document.querySelectorAll('button')].some((item) => item.textContent === 'Export anyway')
   ).toBe(false)
 })
+
+it.each(['import', 'fork'] as const)(
+  'opens replay only after navigation to an imported package, not a fork (%s)',
+  async (kind) => {
+    const operation: PackageOperationSnapshot = {
+      id: 'completed-package',
+      kind,
+      state: 'succeeded',
+      progress: { phase: 'importing' },
+      result: { imported: { projectId: 'target', sessionId: 'imported' } }
+    }
+    const navigate = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(true)
+    const reveal = vi
+      .spyOn(usePreviewWorkbenchStore.getState(), 'upsertAndActivateItem')
+      .mockImplementation(() => undefined)
+    navigate.mockClear()
+    reveal.mockClear()
+    vi.stubGlobal('api', {
+      sessions: {
+        packageOperation: async () => operation,
+        onPackageOperation: () => () => undefined
+      },
+      projects: {
+        list: async () => [{ id: 'target', name: 'Imported study', createdAt: 1, updatedAt: 1 }]
+      }
+    })
+    usePackageOperationStore.setState({ operation, open: true })
+    await act(async () => root.render(<SessionPackageOperation />))
+    expect(reveal).not.toHaveBeenCalled()
+    await act(async () =>
+      button(kind === 'import' ? 'Open imported Session' : 'Open forked Session').click()
+    )
+    expect(navigate).toHaveBeenCalledOnce()
+    expect(reveal).not.toHaveBeenCalled()
+    const continuation = navigate.mock.calls[0][3]
+    if (kind === 'import') {
+      expect(continuation).toEqual(expect.any(Function))
+      act(() => continuation!())
+      expect(reveal).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          toolKind: 'replay',
+          projectId: 'target',
+          sessionId: 'imported',
+          replaySourceProjectId: 'target',
+          replaySourceSessionId: 'imported'
+        })
+      )
+    } else {
+      expect(continuation).toBeUndefined()
+    }
+  }
+)

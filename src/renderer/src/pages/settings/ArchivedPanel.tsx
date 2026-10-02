@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { ProjectDeletionCleanupNotice } from '@/components/ProjectDeletionCleanupNotice'
+import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { DeleteProjectDialog } from '@/pages/home/DeleteProjectDialog'
@@ -26,6 +27,7 @@ type ArchivedPanelProps = {
   hasCompleteSessionCatalog?: boolean
   canDeleteProjects?: boolean
   onRetryCatalogRecovery?: () => void
+  sessionLoadError?: string
 }
 
 const describeError = (error: unknown, fallback: string): string =>
@@ -38,7 +40,8 @@ const ArchivedPanel = ({
   catalogRecovery = { kind: 'ready' },
   hasCompleteSessionCatalog = true,
   canDeleteProjects = true,
-  onRetryCatalogRecovery
+  onRetryCatalogRecovery,
+  sessionLoadError
 }: ArchivedPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const descriptionId = useId()
@@ -251,6 +254,14 @@ const ArchivedPanel = ({
 
   return (
     <div className="space-y-5 p-5">
+      {sessionLoadError && catalogRecovery.kind === 'ready' ? (
+        <SessionPersistenceAlert
+          inline
+          title={t('Saved conversations could not be loaded')}
+          message={sessionLoadError}
+          onRetry={onRetryCatalogRecovery}
+        />
+      ) : null}
       <SessionCatalogRecoveryAlert
         recovery={catalogRecovery}
         inline

@@ -2,6 +2,7 @@
 import { act, useImperativeHandle, type ReactNode, type Ref } from 'react'
 import type { SettingsPageHandle } from './pages/settings/SettingsPage'
 import { createRoot, type Root } from 'react-dom/client'
+import { WindowsTitleBar } from '@/components/WindowsTitleBar'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
@@ -157,6 +158,8 @@ const mocks = vi.hoisted(() => {
     },
     sideChatParentSessionIds: new Set<string>(),
     presentationProps: {
+      settings: undefined as
+        { sessionLoadError?: string; onRetryCatalogRecovery?: () => void } | undefined,
       closeConfirmation: undefined as { active?: boolean } | undefined,
       update: undefined as { active?: boolean } | undefined,
       computeApproval: undefined as { active?: boolean } | undefined,
@@ -390,12 +393,17 @@ vi.mock('@/pages/settings/SettingsPage', () => ({
   SettingsPage: ({
     ref,
     open,
-    onOpenSession
+    onOpenSession,
+    sessionLoadError,
+    onRetryCatalogRecovery
   }: {
     ref?: Ref<SettingsPageHandle>
     open: boolean
     onOpenSession?: (sessionId: string) => void
+    sessionLoadError?: string
+    onRetryCatalogRecovery?: () => void
   }): React.JSX.Element => {
+    mocks.presentationProps.settings = { sessionLoadError, onRetryCatalogRecovery }
     useImperativeHandle(ref, () => ({
       requestLeave: mocks.requestSettingsLeave,
       closeActivePane: () => false
@@ -637,6 +645,62 @@ describe('App startup routing', () => {
     root = createRoot(container)
     await act(async () => root.render(<App />))
   }
+
+  it('routes Windows menu commands through startup and dialog presentation guards', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
+      this: HTMLCanvasElement
+    ) {
+      if (this.width !== 1 || this.height !== 1) return null
+      return {
+        fillStyle: '',
+        fillRect: vi.fn(),
+        getImageData: () => ({ data: new Uint8ClampedArray([255, 255, 255, 255]) })
+      } as unknown as CanvasRenderingContext2D
+    })
+    window.api.platform = 'win32'
+    const showMenu = vi.fn().mockResolvedValue('settings')
+    window.api.window = {
+      ...window.api.window,
+      showTitleBarMenu: showMenu,
+      updateTitleBar: vi.fn().mockResolvedValue(undefined)
+    }
+    root = createRoot(container)
+    const renderFrame = (): Promise<void> =>
+      act(async () =>
+        root.render(
+          <WindowsTitleBar>
+            <App />
+          </WindowsTitleBar>
+        )
+      )
+    const selectSettings = async (): Promise<void> => {
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click()
+      })
+    }
+    await renderFrame()
+    await selectSettings()
+    expect(showMenu).toHaveBeenLastCalledWith(
+      expect.objectContaining({ settingsEnabled: false, searchEnabled: false })
+    )
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+
+    mocks.settings.isLoaded = true
+    await renderFrame()
+    await selectSettings()
+    expect(showMenu).toHaveBeenLastCalledWith(
+      expect.objectContaining({ settingsEnabled: true, searchEnabled: true })
+    )
+    expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
+
+    mocks.update.isDialogOpen = true
+    await renderFrame()
+    await selectSettings()
+    expect(showMenu).toHaveBeenLastCalledWith(
+      expect.objectContaining({ settingsEnabled: false, searchEnabled: false })
+    )
+    expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
+  })
 
   it('hydrates the persisted non-terminal Compute Job projection at app startup', async () => {
     mocks.settings.isLoaded = true
@@ -1726,6 +1790,29 @@ describe('App startup routing', () => {
     expect(mocks.sessionPersistence.retryLoad).toHaveBeenCalledOnce()
   })
 
+  it('dismisses a post-hydration load error without opening storage gates or removing Settings recovery', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isReady = false
+    mocks.sessionPersistence.loadError = 'Storage unavailable'
+    mocks.sessionPersistence.canDeleteSessionsAndProjects = false
+    await render()
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')!
+        .click()
+    )
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
+    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+    expect(mocks.sessionPersistence.isReady).toBe(false)
+    expect(mocks.sessionPersistence.loadError).toBe('Storage unavailable')
+    expect(mocks.sessionPersistence.retryLoad).not.toHaveBeenCalled()
+    expect(mocks.presentationProps.settings?.sessionLoadError).toBe('Storage unavailable')
+    expect(mocks.presentationProps.settings?.onRetryCatalogRecovery).toBe(
+      mocks.sessionPersistence.retryLoad
+    )
+  })
+
   it('warns that in-memory conversation changes are not durable and retries them', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.writeError =
@@ -1760,7 +1847,7 @@ describe('App startup routing', () => {
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Conversation storage limit reached')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
-    expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).toBeNull()
+    expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).not.toBeNull()
 
     container
       .querySelector<HTMLButtonElement>('[data-testid="session-persistence-action"]')
@@ -1769,6 +1856,16 @@ describe('App startup routing', () => {
     expect(mocks.presentationProps.workspace?.persistenceBlockedSessionIds).toEqual(['session-1'])
     mocks.presentationProps.workspace?.onSessionSizeLimit?.('session-plan')
     expect(mocks.sessionPersistence.reportSessionSizeLimit).toHaveBeenCalledWith('session-plan')
+    await act(async () =>
+      alert
+        ?.querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')
+        ?.click()
+    )
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
+    expect(mocks.presentationProps.workspace?.persistenceBlockedSessionIds).toEqual(['session-1'])
+    expect(mocks.sessionPersistence.dismissWriteWarning).not.toHaveBeenCalled()
+    await act(async () => root.render(<App />))
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
   })
 
   it('stops a persistence-blocked active run while the Home page is visible', async () => {

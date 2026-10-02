@@ -32,24 +32,24 @@ import {
   type JournalDataset
 } from '../../../../shared/journal-attributes'
 import { type TagColorKey } from '../../../../shared/tags'
-import { CollectionOptionHelp } from './CollectionOptionHelp'
-import { JournalColumnEditor } from './JournalColumnEditor'
-import { JournalDatasetActions } from './JournalDatasetActions'
-import { JournalEntriesTable } from './JournalEntriesTable'
-import { JournalImportMapping } from './JournalImportMapping'
-import { JournalImportReview } from './JournalImportReview'
+import { CollectionOptionHelp } from './collections/CollectionOptionHelp'
+import { JournalColumnEditor } from './journals/JournalColumnEditor'
+import { JournalDatasetActions } from './journals/JournalDatasetActions'
+import { JournalEntriesTable } from './journals/JournalEntriesTable'
+import { JournalImportMapping } from './journals/JournalImportMapping'
+import { JournalImportReview } from './journals/JournalImportReview'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
-import { LiteratureImportDialogFrame } from './LiteratureImportDialogFrame'
+import { LiteratureImportDialogFrame } from './imports/LiteratureImportDialogFrame'
 import {
   refreshJournalAttributes,
   setJournalSourceYear,
   useJournalSourceYears
-} from './journal-attribute-store'
-import { downloadJournalTemplate } from './journal-template'
-import { useJournalDatasetActions } from './useJournalDatasetActions'
-import { useJournalEditing } from './useJournalEditing'
-import { useJournalEntries } from './useJournalEntries'
-import { useJournalImport } from './useJournalImport'
+} from './journals/journal-attribute-store'
+import { downloadJournalTemplate } from './journals/journal-template'
+import { useJournalDatasetActions } from './journals/useJournalDatasetActions'
+import { useJournalEditing } from './journals/useJournalEditing'
+import { useJournalEntries } from './journals/useJournalEntries'
+import { useJournalImport } from './journals/useJournalImport'
 
 const REVIEW_PAGE_SIZE = 25
 

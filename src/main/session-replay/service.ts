@@ -7,7 +7,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   sessionReplayRequestSchema,
   sessionReplayListRequestSchema,
-  saveResearchReplayViewRequestSchema,
+  saveSessionReplayProgressRequestSchema,
   saveSessionDiscussionSnapshotRequestSchema,
   getSessionDiscussionSnapshotRequestSchema,
   type SaveSessionDiscussionSnapshotRequest,
@@ -16,8 +16,8 @@ import {
   type SessionReplayRequest,
   type SessionReplayListRequest,
   type SessionReplaySnapshot,
-  type SaveResearchReplayViewRequest,
-  type SaveResearchReplayViewResult
+  type SaveSessionReplayProgressRequest,
+  type SaveSessionReplayProgressResult
 } from '../../shared/session-replay'
 import { SessionReplayRepository, replayViewSnapshot } from './repository'
 
@@ -73,8 +73,10 @@ export class SessionReplayService {
     )
   }
 
-  async saveView(input: SaveResearchReplayViewRequest): Promise<SaveResearchReplayViewResult> {
-    const request = saveResearchReplayViewRequestSchema.parse(input)
+  async saveView(
+    input: SaveSessionReplayProgressRequest
+  ): Promise<SaveSessionReplayProgressResult> {
+    const request = saveSessionReplayProgressRequestSchema.parse(input)
     return this.withDataRootWrite(async () => {
       const source = await this.sessions.read(request.projectId, request.sourceSessionId)
       if (source.status !== 'found') throw new Error('The source Session cannot be read.')

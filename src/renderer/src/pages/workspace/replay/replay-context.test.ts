@@ -5,7 +5,7 @@ import type {
   ReplayNotebookRunDetails
 } from '../../../../../shared/replay'
 import { projectReplayScene } from '@/lib/replay'
-import { captureReplayStepContext, captureSessionDiscussionContext } from './replay-context'
+import { captureDiscussionStep, captureDiscussionSession } from './replay-context'
 
 const execution: ReplayStep = {
   id: 'execution',
@@ -77,16 +77,16 @@ const document: ReplayDocument = {
 }
 
 it('captures whole-session discussions without requiring imported history or a populated default branch', () => {
-  expect(captureSessionDiscussionContext(document)).toMatchObject({
+  expect(captureDiscussionSession(document)).toMatchObject({
     scope: 'session',
     sourceSessionId: 's',
     branchId: 'main',
     stepId: 'execution',
     stepNumber: undefined
   })
-  expect(captureSessionDiscussionContext({ ...document, branches: [] })).toBeUndefined()
+  expect(captureDiscussionSession({ ...document, branches: [] })).toBeUndefined()
   expect(
-    captureSessionDiscussionContext({
+    captureDiscussionSession({
       ...document,
       defaultBranchId: 'empty',
       branches: [{ ...document.branches[0], id: 'empty', steps: [] }, ...document.branches]
@@ -122,7 +122,7 @@ const resources = {
 }
 describe('step-scoped captured records', () => {
   it('keeps input-only questions free of unrevealed run results and file contents', () => {
-    const context = captureReplayStepContext(
+    const context = captureDiscussionStep(
       document,
       projectReplayScene(document, 'main', 100),
       details,
@@ -134,7 +134,7 @@ describe('step-scoped captured records', () => {
     expect(context.stepOffsetMs).toBe(100)
   })
   it('quotes only the current message without retaining earlier material as its source', () => {
-    const context = captureReplayStepContext(
+    const context = captureDiscussionStep(
       document,
       projectReplayScene(document, 'main', 1750),
       details,
@@ -149,11 +149,14 @@ describe('step-scoped captured records', () => {
   })
   it('keeps a partially revealed message frozen and reports unloaded material explicitly', () => {
     const scene = projectReplayScene(document, 'main', 1500)
-    const captured = captureReplayStepContext(document, scene)
+    const captured = captureDiscussionStep(document, scene)
     expect(captured.records?.find((record) => record.id === 'step')?.text).toBe(
       scene.step!.message!.content.slice(0, scene.messageCharacters)
     )
-    const unloaded = captureReplayStepContext(document, projectReplayScene(document, 'main', 100))
+    const unloaded = captureDiscussionStep(
+      document,
+      projectReplayScene(document, 'main', 100)
+    )
     expect(unloaded.records?.find((record) => record.id === 'notebook-run:run')).toMatchObject({
       scope: 'step',
       status: 'unavailable',
@@ -165,7 +168,7 @@ describe('step-scoped captured records', () => {
     modified.branches[0].steps[1].message!.content = 'x'.repeat(100_000)
     modified.branches[0].steps[1].resourceIds = ['version']
     modified.branches[0].steps[1].evidence.push(execution.evidence[1])
-    const captured = captureReplayStepContext(
+    const captured = captureDiscussionStep(
       modified,
       projectReplayScene(modified, 'main', 2000),
       details,

@@ -20,7 +20,7 @@ const view: ReplayViewState = {
   stepOffsetMs: 50,
   rate: 1
 }
-const questionContext = (): SessionDiscussionSnapshot => ({
+const discussionSnapshot = (): SessionDiscussionSnapshot => ({
   ...identity,
   id: 'selection-snapshot',
   sourceTitle: 'Original research',
@@ -128,7 +128,7 @@ describe('local research workspace ownership', () => {
       expect(
         await service.saveView({ ...identity, state: view, expectedRevision: 0 })
       ).toMatchObject({ status: 'saved' })
-      const context = { ...questionContext(), scope: 'session' as const }
+      const context = { ...discussionSnapshot(), scope: 'session' as const }
       await service.saveSelectionSnapshot({ ...identity, context })
       expect(
         await service.getSelectionSnapshot({ projectId: identity.projectId, id: context.id })
@@ -145,7 +145,7 @@ describe('local research workspace ownership', () => {
       'Data root changing'
     )
     await expect(
-      gated.saveSelectionSnapshot({ ...identity, context: questionContext() })
+      gated.saveSelectionSnapshot({ ...identity, context: discussionSnapshot() })
     ).rejects.toThrow('Data root changing')
     expect(reads).not.toHaveBeenCalled()
     expect(save).not.toHaveBeenCalled()
@@ -154,7 +154,7 @@ describe('local research workspace ownership', () => {
   })
 
   it('saves immutable bounded question references idempotently without creating a Discussion', async () => {
-    const context = questionContext()
+    const context = discussionSnapshot()
     await Promise.all([
       service.saveSelectionSnapshot({ ...identity, context }),
       service.saveSelectionSnapshot({ ...identity, context })
@@ -176,7 +176,7 @@ describe('local research workspace ownership', () => {
   })
 
   it('retains question references after source deletion, scopes reads to the Project and cleans up with it', async () => {
-    const context = questionContext()
+    const context = discussionSnapshot()
     await service.saveSelectionSnapshot({ ...identity, context })
     sessions.delete(identity.sourceSessionId)
     await service.saveSelectionSnapshot({ ...identity, context })
@@ -197,7 +197,7 @@ describe('local research workspace ownership', () => {
   })
 
   it('rejects question context rewrites across Projects and new references for deleted Projects', async () => {
-    const context = questionContext()
+    const context = discussionSnapshot()
     await service.saveSelectionSnapshot({ ...identity, context })
     await client.project.create({ data: { id: 'other', name: 'Other' } })
     await expect(

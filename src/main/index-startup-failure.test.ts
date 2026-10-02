@@ -270,6 +270,7 @@ vi.mock('./window-shortcuts', () => ({
   installWindowShortcuts: vi.fn()
 }))
 vi.mock('./window-ipc', () => ({ registerWindowZoomIpcHandler: vi.fn() }))
+vi.mock('./windows-titlebar', () => ({ registerWindowsTitleBarIpc: vi.fn() }))
 vi.mock('./network-ipc', () => ({ registerNetworkIpcHandlers: vi.fn() }))
 vi.mock('./database/database-startup-logging', () => ({
   createDatabaseStartupLogging: () => ({ migrationOptions: vi.fn(), reportBlocked: vi.fn() })

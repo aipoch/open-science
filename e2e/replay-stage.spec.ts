@@ -31,7 +31,7 @@ let url: string
 const test = base.extend<{ stageApp: ElectronApplication }>({
   // eslint-disable-next-line no-empty-pattern
   stageApp: async ({}, provide) => {
-    const userData = await mkdtemp(resolve(tmpdir(), 'research-replay-stage-'))
+    const userData = await mkdtemp(resolve(tmpdir(), 'session-replay-stage-'))
     const env = Object.fromEntries(
       Object.entries(process.env).filter(
         (entry): entry is [string, string] =>
@@ -1024,7 +1024,8 @@ test('chapter rail previews and seeks while adjacent sections and Ask retain pla
     await ask.click()
     expect(
       await page.evaluate(
-        () => (window as unknown as { replayQuestion: { stepId: string } }).replayQuestion.stepId
+        () =>
+          (window as unknown as { discussionCapture: { stepId: string } }).discussionCapture.stepId
       )
     ).toBe('analysis')
     await expect(progress).toHaveAttribute('aria-valuenow', '2000')

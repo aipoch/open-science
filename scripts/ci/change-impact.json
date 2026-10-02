@@ -269,6 +269,7 @@
         "src/shared/notebook.ts",
         "src/shared/notebook-network.ts",
         "src/shared/renderer-contract-catalog.ts",
+        "src/shared/renderer-contracts/**",
         "src/shared/settings.ts",
         "src/shared/update.ts",
         "src/shared/web-api-map.generated.ts",

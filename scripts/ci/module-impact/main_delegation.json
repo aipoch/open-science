@@ -501,9 +501,9 @@
       "src/main/window-find-ipc.test.ts",
       "src/renderer/src/hooks/useLifecycleSync.test.tsx",
       "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
-      "src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
-      "src/renderer/src/pages/literature/LiteratureMetadataEditor.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureMetadataEditor.test.tsx",
       "src/renderer/src/pages/settings/ConnectorAddForm.render.test.tsx",
       "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx",
       "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
@@ -548,7 +548,9 @@
       "src/main/literature/smart-collections.test.ts",
       "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
       "src/main/acp/library-auto-policy.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "src/main/session-diagnostics/export-evidence.integration.test.ts",
+      "src/main/permission-grants/connector-broker.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -1,8 +1,8 @@
 import { OverlayLayerProvider } from '../../../src/renderer/src/components/ui/overlay-layer'
-import { ReplayConversationDialog } from '../../../src/renderer/src/pages/workspace/ReplayConversationDialog'
+import { SessionDiscussionDialog } from '../../../src/renderer/src/pages/workspace/SessionDiscussionDialog'
 import { Profiler, useLayoutEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ResearchReplayEvidence } from '../../../src/renderer/src/pages/workspace/ResearchReplayEvidence'
+import { SessionReplayEvidence } from '../../../src/renderer/src/pages/workspace/SessionReplayEvidence'
 import { ReplayPanel } from '../../../src/renderer/src/pages/workspace/replay/ReplayPanel'
 import { ReplayStage } from '../../../src/renderer/src/pages/workspace/replay/ReplayStage'
 import { createReplayPresentation } from '../../../src/renderer/src/pages/workspace/replay/replay-presentation'
@@ -525,7 +525,7 @@ function PanelFixture() {
       </section>
       <OverlayLayerProvider value={expanded ? 60 : 40}>
         {question ? (
-          <ReplayConversationDialog context={question} onClose={() => setQuestion(undefined)} />
+          <SessionDiscussionDialog context={question} onClose={() => setQuestion(undefined)} />
         ) : null}
         <section
           data-replay-container="true"
@@ -552,7 +552,7 @@ function PanelFixture() {
               expanded={expanded}
               onToggleExpanded={() => setExpanded((value) => !value)}
               onAskStep={(context) => {
-                window.replayQuestion = context
+                window.discussionCapture = context
                 if (params.has('modalLayers')) {
                   setQuestion(context)
                   return
@@ -576,7 +576,7 @@ function PanelFixture() {
             />
           </div>
           {evidenceStep ? (
-            <ResearchReplayEvidence
+            <SessionReplayEvidence
               source={source}
               step={evidenceStep}
               resources={document.resources}

@@ -1,11 +1,11 @@
 import { create } from 'zustand'
 import type { SessionReplaySnapshot } from '../../../shared/session-replay'
-import type { ReplayStepContext } from '@/pages/workspace/replay/replay-context'
+import type { SessionDiscussionCapture } from '@/pages/workspace/replay/replay-context'
 
 export const sessionReplayKey = (projectId: string, sourceSessionId: string): string =>
   JSON.stringify([projectId, sourceSessionId])
 
-export type ReplayQuestionDestination = {
+export type SessionDiscussionDestination = {
   projectId: string
   sessionId?: string
   frameId?: string
@@ -17,12 +17,15 @@ type SessionReplayStore = {
   playhead?: {
     projectId: string
     sourceSessionId: string
-    capture: () => ReplayStepContext
+    capture: () => SessionDiscussionCapture
   }
   snapshots: Record<string, SessionReplaySnapshot>
-  pendingQuestion?: ReplayStepContext
-  questionDestination?: ReplayQuestionDestination
-  ask: (context: ReplayStepContext | undefined, destination?: ReplayQuestionDestination) => void
+  pendingDiscussion?: SessionDiscussionCapture
+  discussionDestination?: SessionDiscussionDestination
+  ask: (
+    context: SessionDiscussionCapture | undefined,
+    destination?: SessionDiscussionDestination
+  ) => void
   put: (snapshot: SessionReplaySnapshot) => void
   replaceProject: (
     projectId: string,
@@ -48,7 +51,8 @@ const mergeSnapshot = (
 // ordinary Session repository; immutable references and viewing checkpoints are owned by main.
 export const useSessionReplayStore = create<SessionReplayStore>((set) => ({
   snapshots: {},
-  ask: (pendingQuestion, questionDestination) => set({ pendingQuestion, questionDestination }),
+  ask: (pendingDiscussion, discussionDestination) =>
+    set({ pendingDiscussion, discussionDestination }),
   put: (snapshot) =>
     set((state) => ({
       snapshots: {

@@ -1,5 +1,5 @@
 import { useSessionReplayStore } from '@/stores/session-replay-store'
-import type { ReplayStepContext } from './replay/replay-context'
+import type { SessionDiscussionCapture } from './replay/replay-context'
 // @vitest-environment jsdom
 import { configureComposerDraftStorage, revokeComposerDraftStorage } from './composer-draft-storage'
 import { literatureItemInputSchema } from '../../../../shared/literature'
@@ -31,7 +31,7 @@ import {
 } from './composer/composer-doc'
 import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
-import { createReplayStepAnnotation } from './research-replay-context'
+import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
 import type { ComposerHistoryEntry } from './composer/composer-history'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -210,7 +210,7 @@ describe('workspace composer controller', () => {
     const hook = renderController(uploads(), undefined, [], null)
     mounted.push(hook)
     const selected = (sourceSessionId: string, stepId: string): TextAnnotation =>
-      createReplayStepAnnotation(
+      createSessionDiscussionAnnotation(
         {
           projectId: 'project',
           sourceSessionId,
@@ -244,7 +244,7 @@ describe('workspace composer controller', () => {
   it('captures the linked replay only at Send without changing the draft or an earlier snapshot', () => {
     const hook = renderController()
     mounted.push(hook)
-    const context: ReplayStepContext = {
+    const context: SessionDiscussionCapture = {
       projectId: 'project',
       sourceSessionId: 'source',
       sourceTitle: 'Study',
@@ -303,7 +303,7 @@ describe('workspace composer controller', () => {
       scope?: 'session',
       branchId = 'main'
     ): TextAnnotation =>
-      createReplayStepAnnotation(
+      createSessionDiscussionAnnotation(
         {
           projectId: 'project',
           sourceSessionId: 'source',

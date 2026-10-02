@@ -2,14 +2,17 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 import type { SaveSessionDiscussionSnapshotRequest } from '../../../../shared/session-replay'
-import type { ReplayStepContext } from './replay/replay-context'
+import type { SessionDiscussionCapture } from './replay/replay-context'
 import {
   captureDiscussionSendContext,
   prepareDiscussionSendAnnotations
 } from './discussion-send-context'
-import { createReplayStepAnnotation, replayAnnotationTarget } from './research-replay-context'
+import {
+  createSessionDiscussionAnnotation,
+  replayAnnotationTarget
+} from './session-discussion-annotation'
 
-const focus = (): ReplayStepContext => ({
+const focus = (): SessionDiscussionCapture => ({
   projectId: 'project',
   sourceSessionId: 'source',
   sourceTitle: 'Study',
@@ -52,7 +55,7 @@ it('captures only at Send, freezes evidence and retains the frame across async p
   expect(save).not.toHaveBeenCalled()
   expect(capture).not.toHaveBeenCalled()
   const frozen = captureDiscussionSendContext([], binding, 'discussion')!
-  const original = createReplayStepAnnotation(focus(), 'old')!
+  const original = createSessionDiscussionAnnotation(focus(), 'old')!
   const ordinary = { ...original, id: 'ordinary' }
   const annotations = [ordinary, original]
   const preparing = prepareDiscussionSendAnnotations(annotations, frozen)
@@ -86,7 +89,7 @@ it('matches the selected source, ignores self and unrelated replay, and preserve
   expect(
     captureDiscussionSendContext([], { ...binding, projectId: 'other' }, 'discussion')
   ).toBeUndefined()
-  const other = createReplayStepAnnotation(
+  const other = createSessionDiscussionAnnotation(
     {
       ...focus(),
       sourceSessionId: 'other',
@@ -98,7 +101,7 @@ it('matches the selected source, ignores self and unrelated replay, and preserve
   expect(capture).not.toHaveBeenCalled()
   expect(
     captureDiscussionSendContext(
-      [createReplayStepAnnotation(focus(), 'old')!],
+      [createSessionDiscussionAnnotation(focus(), 'old')!],
       undefined,
       'discussion'
     )
@@ -115,7 +118,7 @@ it('rejects failed saves without mutating the original message annotations', asy
       }
     }
   })
-  const annotations = [createReplayStepAnnotation(focus(), 'old')!]
+  const annotations = [createSessionDiscussionAnnotation(focus(), 'old')!]
   await expect(prepareDiscussionSendAnnotations(annotations, focus())).rejects.toThrow(
     'disk unavailable'
   )

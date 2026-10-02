@@ -20,6 +20,7 @@ type Job = {
   needs?: string | string[]
   permissions?: Record<string, string>
   'runs-on': string
+  'timeout-minutes'?: number
   strategy?: { 'fail-fast': boolean; matrix: { shard: number[] | string } }
   steps: Step[]
 }
@@ -36,7 +37,7 @@ const step = (job: Job, name: string): Step =>
   job.steps.find((candidate) => candidate.name === name)!
 const suites = [
   ['renderer_layout', 'test:e2e:browser', 0],
-  ['e2e_functional_windows', 'test:e2e:journey', 4],
+  ['e2e_functional_windows', 'test:e2e:journey', 7],
   ['e2e_workspace_windows', 'test:e2e:workspace', 4]
 ] as const
 
@@ -88,6 +89,19 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
     if: '${{ always() }}',
     with: { name: 'e2e-reports-windows-${{ matrix.shard }}', 'retention-days': 5 }
   })
+})
+
+it('budgets complete serial journeys and teardown within the shard job', () => {
+  const execution = workflow.jobs.windows_e2e
+  const budgets = suites.map(([id]) => {
+    const run = execution.steps.find((candidate) => candidate.id === id)!.run!
+    return Number(run.match(/--global-timeout=(\d+)/)![1])
+  })
+  expect(budgets).toEqual([420000, 900000, 900000])
+  // Leave time for restore, Chromium installation, uploads and teardown beyond suite budgets.
+  expect(
+    execution['timeout-minutes']! * 60000 - budgets.reduce((a, b) => a + b, 0)
+  ).toBeGreaterThanOrEqual(180000)
 })
 
 it('fails a scheduled shard when setup or any required suite does not succeed', () => {
@@ -225,7 +239,7 @@ it('discovers the reviewed mainline subset and retains every other case in the f
     conversation: 2,
     files: 2,
     notebook: 1,
-    windows: 2
+    windows: 5
   })) {
     expect(collect('test:e2e', `@pr-mainline-${group}(?:\\s|$)`)).toHaveLength(count)
   }

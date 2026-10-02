@@ -198,7 +198,9 @@
     "src/main/credential-identity/macos.test.ts",
     "src/main/credential-identity/probe-logging.test.ts",
     "src/main/process-tree-windows.ts",
-    "src/main/process-tree.windows.integration.test.ts"
+    "src/main/process-tree.windows.integration.test.ts",
+    "src/main/windows-titlebar.ts",
+    "src/main/windows-titlebar.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -338,7 +340,8 @@
       "src/main/credential-identity/windows-profile-key.test.ts",
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
-      "src/main/process-tree.windows.integration.test.ts"
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/windows-titlebar.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1096,9 +1099,9 @@
       "src/renderer/src/hooks/useWindowFindAppearanceSync.overlay.test.tsx",
       "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-      "src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
-      "src/renderer/src/pages/literature/LiteratureMetadataEditor.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureMetadataEditor.test.tsx",
       "src/renderer/src/pages/onboarding/OnboardingWizard.regressions.test.tsx",
       "src/renderer/src/pages/settings/ConnectorAddForm.render.test.tsx",
       "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx",
@@ -1174,7 +1177,8 @@
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
       "src/main/notebook/dependency-analysis.cwd-lineage.test.ts",
       "src/main/notebook/r-connection-guard.test.ts",
-      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
+      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
+      "src/main/permission-grants/connector-broker.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

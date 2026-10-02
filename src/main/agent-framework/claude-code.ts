@@ -131,26 +131,8 @@ export const claudeCodeFramework: AgentFramework = {
           Skill: LOAD_SKILL_TOOL_CALLABLE_NAME
         }
       : sessionOptions.toolAliases
-    const sessionHooks = recordValue(sessionOptions.hooks)
-    const hooks = skillRuntimeEnabled
-      ? {
-          ...sessionHooks,
-          PreToolUse: [
-            ...(Array.isArray(sessionHooks.PreToolUse) ? sessionHooks.PreToolUse : []),
-            {
-              matcher: LOAD_SKILL_TOOL_CALLABLE_NAME,
-              hooks: [
-                async () => ({
-                  hookSpecificOutput: {
-                    hookEventName: 'PreToolUse' as const,
-                    permissionDecision: 'allow' as const
-                  }
-                })
-              ]
-            }
-          ]
-        }
-      : sessionOptions.hooks
+    // Skill approvals belong to the app Permission broker, including revocable existing grants.
+    const hooks = sessionOptions.hooks
     const disallowedTools = Object.freeze([
       ...new Set([
         ...stringArrayValue(sessionOptions.disallowedTools),

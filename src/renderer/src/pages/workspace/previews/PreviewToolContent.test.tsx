@@ -92,8 +92,8 @@ vi.mock('../SessionReviewerPanel', () => ({
   )
 }))
 
-vi.mock('../ResearchReplayPreview', () => ({
-  ResearchReplayPreview: ({
+vi.mock('../SessionReplayPreview', () => ({
+  SessionReplayPreview: ({
     item,
     isActive
   }: {

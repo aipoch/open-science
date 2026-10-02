@@ -144,4 +144,25 @@ describe('installWindowShortcuts', () => {
     expect(dispatch({ key: '=', code: 'Equal' }).preventDefault).not.toHaveBeenCalled()
     expect(webContents.setZoomFactor).not.toHaveBeenCalled()
   })
+
+  it('preserves F11 fullscreen on Windows after removing the native menu bar', () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    installWindowShortcuts({ on: appOnSpy } as unknown as App)
+    const fakeWindow = {
+      webContents: { on: vi.fn() },
+      isFullScreen: vi.fn(() => false),
+      setFullScreen: vi.fn()
+    }
+    appOnSpy.mock.calls[0][1](null, fakeWindow)
+    const dispatch = fakeWindow.webContents.on.mock.calls[0][1]
+    const event = { preventDefault: vi.fn() }
+    dispatch(event, { type: 'keyDown', key: 'F11' })
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(fakeWindow.setFullScreen).toHaveBeenCalledWith(true)
+    fakeWindow.isFullScreen.mockReturnValue(true)
+    dispatch(event, { type: 'keyDown', key: 'F11' })
+    expect(fakeWindow.setFullScreen).toHaveBeenLastCalledWith(false)
+    dispatch(event, { type: 'keyDown', key: 'F11', shift: true })
+    expect(fakeWindow.setFullScreen).toHaveBeenCalledTimes(2)
+  })
 })

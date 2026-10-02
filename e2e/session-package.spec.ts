@@ -285,7 +285,7 @@ test('shows a recoverable disk-capacity error before copying an import', async (
   await operation.getByRole('button', { name: 'Close', exact: true }).click()
 })
 
-test('exports a Session package and imports it into replay with a writable discussion', async ({
+test('exports a Session package and opens the imported Session with replay', async ({
   app
 }, testInfo) => {
   // This journey validates the archive several times and performs two persistence restarts.
@@ -456,11 +456,12 @@ test('exports a Session package and imports it into replay with a writable discu
   await expect(page.getByTestId('replay-panel')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-import-completed.png') })
   await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
+  await expect(page.getByTestId('replay-panel')).toBeVisible()
+  await expect(
+    page.getByTestId('replay-panel').getByRole('button', { name: 'Play replay', exact: true })
+  ).toBeVisible()
   const replay = page.getByTestId('replay-panel')
-  const imported = replay
-    .locator('details')
-    .filter({ has: page.getByText('Imported research history', { exact: true }) })
-  await imported.locator('summary').first().click()
+  const imported = page.getByRole('region', { name: 'Imported research history', exact: true })
   await expect(imported).toBeVisible()
   await expect(imported.getByText(/^Imported on /)).toBeVisible()
   const origins = await page.evaluate(async () =>
@@ -483,8 +484,12 @@ test('exports a Session package and imports it into replay with a writable discu
   await expect(imported.getByText('raw-results.csv', { exact: true })).toBeVisible()
   await replay.getByRole('slider', { name: 'Replay progress', exact: true }).focus()
   await page.keyboard.press('End')
-  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
-  await expect(page.getByRole('textbox', { name: 'Ask anything' })).toBeEditable()
+  await expect(
+    page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  ).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Ask anything' })).toHaveCount(0)
   const sessionRow = page
     .getByRole('navigation', { name: 'Sessions', includeHidden: true })
     .locator('[data-session-id]')
@@ -550,8 +555,16 @@ test('exports a Session package and imports it into replay with a writable discu
     })
     .getByRole('button', { name: new RegExp(`Session status:.*${prompt}`) })
     .click()
+  await app.page
+    .getByRole('region', { name: 'Imported research history', exact: true })
+    .getByRole('button', { name: 'View replay', exact: true })
+    .click()
   await expect(app.page.getByTestId('replay-panel')).toBeVisible()
-  await expect(app.page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
+  await expect(
+    app.page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  ).toBeVisible()
   const identity = await app.page.evaluate(async () => {
     const session = (await window.api.sessions.loadAll()).sessions.find(
       (entry) => entry.packageOrigin

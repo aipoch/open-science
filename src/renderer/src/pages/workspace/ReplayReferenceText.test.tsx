@@ -85,7 +85,7 @@ describe('saved replay reference navigation', () => {
     expect(consumeReplaySeek(source.projectId, 'source')).toMatchObject(source)
   })
   it('preserves malformed references as readable text and decodes valid Project identities', () => {
-    const invalid = '[Recorded step](#research-replay:%ZZ:context)'
+    const invalid = '[Recorded step](#session-replay:%ZZ:context)'
     expect(splitReplayReferenceText(invalid)).toEqual([{ kind: 'text', text: invalid }])
     expect(
       splitReplayReferenceText(replayReferenceText(id, 'Recorded step', 'source:project'))

@@ -166,7 +166,7 @@ Export a completed research session as a portable `.science` package for review,
 2. Move the `.science` file to a collaborator or another computer.
 3. Import it into a project. The right-hand **Research replay** shows the recorded process; the left-hand conversation lets you ask about it and follow fixed step references.
 
-Imported records remain read-only. Watching a replay does not execute code, call a model, or restore credentials. Your first question creates an associated writable discussion; use **Create a copy to continue research** to run follow-up experiments. Re-executing a result still requires a complete recipe, required inputs, and an available runtime. See the [Research replay guide](docs/research-replay.md) for controls, evidence references, recovery, and current limitations.
+Imported records remain read-only. Watching a replay does not execute code, call a model, or restore credentials. Your first question creates an associated writable discussion; use **Create a copy to continue research** to run follow-up experiments. Re-executing a result still requires a complete recipe, required inputs, and an available runtime.
 
 ## Benchmark Performance
 

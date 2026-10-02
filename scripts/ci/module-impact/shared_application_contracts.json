@@ -132,7 +132,33 @@
     "src/shared/literature-smart-collections.ts",
     "src/shared/smart-collection-rule.test.ts",
     "src/shared/smart-collection-rule.ts",
-    "src/shared/journal-attributes.ts"
+    "src/shared/journal-attributes.ts",
+    "src/shared/renderer-contracts/acp.ts",
+    "src/shared/renderer-contracts/artifacts.ts",
+    "src/shared/renderer-contracts/compute.ts",
+    "src/shared/renderer-contracts/conversation.ts",
+    "src/shared/renderer-contracts/definition.test.ts",
+    "src/shared/renderer-contracts/definition.ts",
+    "src/shared/renderer-contracts/files.ts",
+    "src/shared/renderer-contracts/literature.ts",
+    "src/shared/renderer-contracts/memory.ts",
+    "src/shared/renderer-contracts/notebook.ts",
+    "src/shared/renderer-contracts/notifications.ts",
+    "src/shared/renderer-contracts/permissions.ts",
+    "src/shared/renderer-contracts/previews.ts",
+    "src/shared/renderer-contracts/projects.ts",
+    "src/shared/renderer-contracts/remote-access.ts",
+    "src/shared/renderer-contracts/reviewer.ts",
+    "src/shared/renderer-contracts/runtime.ts",
+    "src/shared/renderer-contracts/settings-connectors.ts",
+    "src/shared/renderer-contracts/settings-models.ts",
+    "src/shared/renderer-contracts/settings-preferences.ts",
+    "src/shared/renderer-contracts/settings-skills.ts",
+    "src/shared/renderer-contracts/specialist.ts",
+    "src/shared/renderer-contracts/storage.ts",
+    "src/shared/renderer-contracts/system.ts",
+    "src/shared/renderer-contracts/update.ts",
+    "src/shared/renderer-contracts/window.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -268,13 +294,15 @@
       "src/shared/update.test.ts",
       "src/shared/web-rpc-contract.test.ts",
       "src/shared/window-controls.test.ts",
-      "src/shared/pdf-annotations.test.ts"
+      "src/shared/pdf-annotations.test.ts",
+      "src/shared/renderer-contracts/definition.test.ts"
     ],
     "contract": [],
     "consumer": [
       "src/main/literature/journal-attributes.test.ts",
-      "src/renderer/src/pages/literature/journal-import-file.test.ts",
-      "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx"
+      "src/renderer/src/pages/literature/journals/journal-import-file.test.ts",
+      "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
+      "src/main/windows-titlebar.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -826,17 +826,21 @@ describe('preload bridge — public surface inventory', () => {
       'window.close',
       'window.closeFind',
       'window.findInPage',
+      'window.isFullScreen',
       'window.onCloseActivePane',
       'window.onCloseConfirmDismiss',
       'window.onCloseConfirmRequest',
       'window.onFindInOffice',
       'window.onFindInPageResult',
+      'window.onFullScreenChanged',
       'window.onHideWindowFind',
       'window.onInterfaceScaleShortcut',
       'window.onShowWindowFind',
       'window.onWindowFindAppearance',
       'window.sendCloseConfirmResponse',
-      'window.setZoomFactor'
+      'window.setZoomFactor',
+      'window.showTitleBarMenu',
+      'window.updateTitleBar'
     ])
   })
 })

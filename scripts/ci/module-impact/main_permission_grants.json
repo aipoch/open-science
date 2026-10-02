@@ -22,7 +22,8 @@
     "src/main/permission-grants/registry.test.ts",
     "src/main/permission-grants/registry.ts",
     "src/main/permission-grants/scope-liveness.test.ts",
-    "src/main/permission-grants/scope-liveness.ts"
+    "src/main/permission-grants/scope-liveness.ts",
+    "src/main/permission-grants/diagnostics.ts"
   ],
   "interfacePaths": [
     "src/main/permission-grants/application-commands.ts",
@@ -35,7 +36,8 @@
     "src/main/permission-grants/projection-controller.ts",
     "src/main/permission-grants/reconciliation.ts",
     "src/main/permission-grants/registry.ts",
-    "src/main/permission-grants/scope-liveness.ts"
+    "src/main/permission-grants/scope-liveness.ts",
+    "src/main/permission-grants/diagnostics.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -234,7 +236,8 @@
       "src/main/notebook/runtime-service.rpc-retirement.test.ts",
       "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
       "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
-      "src/main/acp/library-auto-policy.test.ts"
+      "src/main/acp/library-auto-policy.test.ts",
+      "src/main/session-diagnostics/export-evidence.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

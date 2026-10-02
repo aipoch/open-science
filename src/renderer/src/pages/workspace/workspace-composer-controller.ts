@@ -1,5 +1,5 @@
 import { captureDiscussionSendContext } from './discussion-send-context'
-import type { ReplayStepContext } from './replay/replay-context'
+import type { SessionDiscussionCapture } from './replay/replay-context'
 import type { SessionReadingContext } from '../../../../shared/session-reading'
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { useTranslation } from 'react-i18next'
@@ -110,7 +110,7 @@ export type ComposerSendSnapshot = {
   version: number
   doc: ComposerDoc
   annotations: Annotation[]
-  discussionFocus?: ReplayStepContext
+  discussionFocus?: SessionDiscussionCapture
   attachments: UploadedAttachment[]
   automaticReadingEnabled?: boolean
   pdfContext?: MessagePdfContextSnapshot

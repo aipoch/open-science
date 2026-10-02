@@ -4,7 +4,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { splitReplayReferenceText } from './replay-reference-text'
-import { createResearchReplayItem } from './workspace-research-controller'
+import { createSessionReplayItem } from './workspace-session-actions'
 import { requestReplaySeek } from './replay/replay-context'
 
 export const ReplayReferenceText = ({
@@ -73,7 +73,7 @@ const ScopedReplayReferenceText = ({
       usePreviewWorkbenchStore
         .getState()
         .upsertAndActivateItem(
-          createResearchReplayItem(
+          createSessionReplayItem(
             context.projectId,
             context.sourceSessionId,
             t('Research replay'),

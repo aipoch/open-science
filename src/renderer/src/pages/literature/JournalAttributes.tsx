@@ -12,7 +12,7 @@ import { TAG_COLORS } from '@/pages/settings/tag-presentation'
 import type { TagColorKey } from '../../../../shared/tags'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
-import { useJournalAttributes } from './journal-attribute-store'
+import { useJournalAttributes } from './journals/journal-attribute-store'
 import { cn } from '@/lib/utils'
 
 const JOURNAL_POPOVER_OPENED = 'open-science:journal-popover-opened'
