@@ -153,10 +153,7 @@ describe('step-scoped captured records', () => {
     expect(captured.records?.find((record) => record.id === 'step')?.text).toBe(
       scene.step!.message!.content.slice(0, scene.messageCharacters)
     )
-    const unloaded = captureDiscussionStep(
-      document,
-      projectReplayScene(document, 'main', 100)
-    )
+    const unloaded = captureDiscussionStep(document, projectReplayScene(document, 'main', 100))
     expect(unloaded.records?.find((record) => record.id === 'notebook-run:run')).toMatchObject({
       scope: 'step',
       status: 'unavailable',

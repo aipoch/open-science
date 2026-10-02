@@ -216,7 +216,7 @@ describe('packaged database migration ledger smoke', () => {
       },
       {
         id: '0047_session_replay',
-        checksum: 'a90fd9b8f95f825b8cd77e3823c1e25948cd1a875e29882bd6c33309f8339a38'
+        checksum: 'f76aff6bd97c42cabd744f87f0c37241259ffb1c45c5feef2a3643babcef2f91'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()

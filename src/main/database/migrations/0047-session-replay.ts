@@ -1,6 +1,6 @@
 // Session viewing state and immutable selections; Session history remains in its existing store.
 // Project ownership provides cleanup without tying these rows to the rebuildable Session index.
-export const sessionReplayMigration = {
+const sessionReplayMigration = {
   id: '0047_session_replay',
   statements: [
     `CREATE TABLE "SessionReplayProgress" (
@@ -48,3 +48,5 @@ export const sessionReplayMigration = {
     }
   ] as const
 }
+
+export { sessionReplayMigration }

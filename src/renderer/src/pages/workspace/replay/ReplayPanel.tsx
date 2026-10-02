@@ -500,8 +500,7 @@ const ReplayPanelContent = ({
 
   const ask = (): void => {
     pause()
-    if (scene.step)
-      onAskStep(captureDiscussionStep(replayDocument, scene, runDetails, resources))
+    if (scene.step) onAskStep(captureDiscussionStep(replayDocument, scene, runDetails, resources))
   }
   const askSession = (): void => {
     pause()
