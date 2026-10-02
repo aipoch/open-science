@@ -24,18 +24,8 @@ import type {
   NotebookRunHistorySummary,
   NotebookRunRecord
 } from '../../../../shared/notebook'
-import { NotebookCodeBlock } from './notebook-code'
-import { NotebookRunEvidence } from './NotebookRunEvidence'
-import { NotebookRunOutputs } from './NotebookRunOutputs'
-import { NotebookInputDataStrip } from './NotebookInputDataStrip'
-import {
-  isProblemRunStatus,
-  kernelKindLabel,
-  kernelOriginLabel,
-  notebookRunStatusLabel,
-  resolveRunErrorLine,
-  resolveRunKernelKind
-} from './notebook-cell-utils'
+import { kernelKindLabel, resolveRunKernelKind } from './notebook-cell-utils'
+import { NotebookRecordCell as NotebookDialogCell } from './NotebookRecordCell'
 import { loadSessionNotebookData } from './session-notebook-data'
 import {
   createNotebookFrameFilterOptions,
@@ -56,75 +46,8 @@ const HISTORY_SUMMARY_CACHE_LIMIT = 20
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-// One persisted run rendered as a notebook cell: header badges, code, and split stdout/stderr. The
-// zero-based index is the cell number shown in [n], aligning the display with a notebook's cells.
-const NotebookDialogCell = ({
-  run,
-  index,
-  showInputData = false,
-  showEnvironmentCaptureWarning = true
-}: {
-  run: NotebookRunRecord
-  index: number
-  showInputData?: boolean
-  showEnvironmentCaptureWarning?: boolean
-}): React.JSX.Element => {
-  const { t } = useTranslation()
-  const isProblem = isProblemRunStatus(run.status)
-  const statusLabel = notebookRunStatusLabel(run.status)
-  const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
-  const kind = resolveRunKernelKind(run)
-  const originLabel = kernelOriginLabel(kind)
-
-  return (
-    <div className="px-4 py-3" data-testid="session-notebook-cell">
-      <div className="mb-2 flex items-center justify-between text-xs">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-text-300">[{index}]</span>
-          <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{kind}</span>
-          {isProblem ? (
-            errorLine ? (
-              <span className="rounded bg-danger-000 px-1.5 py-0.5 font-medium text-white">
-                {t('error (line {{line}})', { line: errorLine })}
-              </span>
-            ) : (
-              <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">
-                {t('error')}
-              </span>
-            )
-          ) : statusLabel ? (
-            <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
-              {t(statusLabel)}
-            </span>
-          ) : null}
-        </div>
-        {originLabel ? (
-          <span className="font-mono text-text-300" data-testid="session-notebook-cell-origin">
-            {originLabel}
-          </span>
-        ) : null}
-      </div>
-      {showInputData ? (
-        <NotebookInputDataStrip
-          inputFiles={run.inputFiles ?? []}
-          className="mb-2 rounded-md border border-border bg-muted px-2 py-1.5"
-        />
-      ) : null}
-      <NotebookCodeBlock
-        code={run.script}
-        language={kind === 'repl' ? 'javascript' : kind}
-        highlightLine={errorLine}
-      />
-      <NotebookRunOutputs run={run} />
-      <NotebookRunEvidence
-        run={run}
-        showEnvironmentCaptureWarning={showEnvironmentCaptureWarning}
-      />
-    </div>
-  )
-}
-
 type SessionNotebookContentProps = {
+  allowFolderAccess?: boolean
   sessionId: string
   projectId?: string
   runs: NotebookRunRecord[]
@@ -149,6 +72,7 @@ type SessionNotebookContentProps = {
 // and the .ipynb export footer. Kept free of data-loading hooks and Dialog context so it renders
 // standalone in tests; close is delegated through onClose.
 const SessionNotebookContent = ({
+  allowFolderAccess = false,
   sessionId,
   projectId,
   runs,
@@ -544,6 +468,7 @@ const SessionNotebookContent = ({
                   <div key={run.runId} data-notebook-run-id={run.runId}>
                     <NotebookDialogCell
                       run={run}
+                      allowFolderAccess={allowFolderAccess}
                       index={index}
                       showInputData={Boolean(projectId)}
                     />
@@ -831,6 +756,9 @@ const SessionNotebookDialog = ({
           <Dialog.Title className="sr-only">{t('Session notebook')}</Dialog.Title>
           {dialogSession ? (
             <SessionNotebookContent
+              allowFolderAccess={
+                dialogSession.contentLoaded !== false && !dialogSession.packageOrigin
+              }
               // Remount per session: the dialog is mounted once and the session prop swaps in
               // place, so per-session export state (a failure banner, an in-flight setState from
               // a superseded export) must be discarded rather than leak into the next session.

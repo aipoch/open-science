@@ -45,6 +45,7 @@ const NotebookFilePreview = lazy(() =>
 export const renderPreviewFile = ({
   item,
   presentation,
+  readOnly,
   annotationVersionId,
   annotationBlockedByHistoricalVersion,
   annotationVersionPending,
@@ -58,6 +59,7 @@ export const renderPreviewFile = ({
   const props = {
     item,
     presentation,
+    readOnly,
     annotationVersionId,
     annotationBlockedByHistoricalVersion,
     annotationVersionPending,
@@ -84,7 +86,7 @@ export const renderPreviewFile = ({
     case 'image':
       return <ImagePreviewRenderer {...props} />
     case 'json':
-      return <PlanJsonPreview item={item} />
+      return <PlanJsonPreview item={item} readOnly={readOnly} />
     case 'markdown':
       return <MarkdownPreviewRenderer {...props} />
     case 'pdb':

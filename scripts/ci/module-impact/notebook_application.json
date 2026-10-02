@@ -284,9 +284,14 @@
     "src/main/notebook/real-parquet-lineage.integration.test.ts",
     "src/main/notebook/fixtures/lineage/cwd-unpacked-atomic-paths.json",
     "src/main/notebook/fixtures/lineage/failed-cell-language-handoff.json",
+    "src/main/notebook/fixtures/lineage/failed-empty-model-report.json",
     "src/main/notebook/fixtures/lineage/r-source-callback-inputs.json",
     "src/main/notebook/fixtures/lineage/readonly-sqlite-handoff.json",
-    "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
+    "src/main/notebook/fixtures/lineage/native-array-report-handoff.json",
+    "src/main/notebook/fixtures/lineage/native-model-missing-global.json",
+    "src/main/notebook/fixtures/lineage/native-callback-helper-promises.json",
+    "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
+    "src/main/notebook/host-session-reading.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-version.ts",
@@ -353,7 +358,8 @@
     "src/main/notebook/trust-bundle.ts",
     "src/main/notebook/working-file-observer.ts",
     "src/main/notebook/shell-npm-environment.ts",
-    "src/main/notebook/scientific-replay.test-support.ts"
+    "src/main/notebook/scientific-replay.test-support.ts",
+    "src/main/notebook/host-session-reading.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -557,6 +563,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/notebook/windows-runtime-probe.windows.test.ts",
+      "src/main/notebook/windows-runtime-manager.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/literature/command-owner.test.ts",
@@ -950,7 +958,18 @@
       "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
       "src/main/acp/library-auto-policy.test.ts",
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
-      "src/main/literature/journal-attributes.test.ts"
+      "src/main/literature/journal-attributes.test.ts",
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "src/main/session-replay/session-reading.test.ts",
+      "src/main/session-persistence/reconciliation-renderer-parity.test.ts",
+      "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
+      "src/main/session-persistence/missing-runtime-session-repro.test.ts",
+      "src/main/session-persistence/prompt-preparation-restart.test.ts",
+      "src/main/session-persistence/terminal-commit-scheduler.test.ts",
+      "src/main/session-persistence/attention-projection.test.ts",
+      "src/main/acp/approved-handoff-outcome.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

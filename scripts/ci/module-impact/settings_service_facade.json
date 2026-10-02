@@ -99,7 +99,8 @@
       "src/main/web-service/artifact-download.integration.test.ts",
       "src/main/web-service/controller.test.ts",
       "src/main/web-service/task-api.test.ts",
-      "src/main/literature/smart-collections.test.ts"
+      "src/main/literature/smart-collections.test.ts",
+      "src/main/session-persistence/ipc.test.ts"
     ]
   },
   "capabilityOverlays": [

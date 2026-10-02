@@ -1,5 +1,11 @@
 import type { ChatSession, SessionStatus } from './session-store-persistence-owner'
-import type { SessionWaitReason } from '../../../shared/session-persistence'
+import {
+  deriveSessionAttention,
+  projectSessionAttention,
+  type PersistedChatSession,
+  type SessionAttention,
+  type SessionWaitReason
+} from '../../../shared/session-persistence'
 
 export type SessionInteractionState = Readonly<{
   permission: boolean
@@ -36,6 +42,7 @@ export type SessionActionabilityFacts = Readonly<{
 
 export type SessionActionabilityProjection = Readonly<{
   presentedStatus: SessionStatus
+  attention?: SessionAttention
   activity: 'inactive' | 'running' | 'waiting'
   attentionOwner: 'none' | 'agent' | 'user'
   waitReason?: SessionWaitReason
@@ -67,6 +74,12 @@ type SessionInteractionSource = Readonly<{
   agentPromptInFlight?: boolean
   isPending?: boolean
   pendingHistoryReplay?: unknown
+  attention?: SessionAttention
+  messages?: PersistedChatSession['messages']
+  conversationGraph?: PersistedChatSession['conversationGraph']
+  recordProblems?: PersistedChatSession['recordProblems']
+  contentLoaded?: boolean
+  conversationGraphSyncBlocked?: boolean
 }>
 
 type SessionPermissionRequest = Readonly<{
@@ -154,7 +167,10 @@ export const projectSessionActionability = (
   // locked until that ownership settles, while preserving actionable user waits above it.
   const running =
     !waitReason &&
-    (status === 'running' || session.agentPromptInFlight === true || facts.hasRunningWork === true)
+    (status === 'running' ||
+      Boolean(session.activeRun) ||
+      session.agentPromptInFlight === true ||
+      facts.hasRunningWork === true)
   const durableRootPermissionPending = session.runtimeContext?.permission?.state === 'pending'
   const permissionPending =
     durableRootPermissionPending || (facts.rootPermissionPending ?? interactionState.permission)
@@ -201,13 +217,28 @@ export const projectSessionActionability = (
       ? 'session-running'
       : (attentionDisabledReason ?? interactionDisabledReason)
   const activity = waitReason ? 'waiting' : running ? 'running' : 'inactive'
+  const durableAttention =
+    session.contentLoaded === false || !session.messages
+      ? session.attention
+      : deriveSessionAttention(session as PersistedChatSession)
+  const attention =
+    projectSessionAttention({
+      latestVisibleTurn: durableAttention?.turn,
+      recordProblems: [
+        ...(session.recordProblems ?? durableAttention?.recordProblems ?? []),
+        ...(session.conversationGraphSyncBlocked ? (['conversation-graph-sync'] as const) : [])
+      ]
+    }) ?? (session.contentLoaded === false ? durableAttention : undefined)
   const executionAvailability = (
     reason: SessionActionDisabledReason | undefined
   ): SessionActionAvailability =>
     session.packageOrigin ? { allowed: false } : actionAvailability(reason)
 
   return {
-    presentedStatus: waitReason ?? (running ? 'running' : status),
+    presentedStatus:
+      waitReason ??
+      (running ? 'running' : attention ? 'error' : !session.messages ? status : 'idle'),
+    attention,
     activity,
     attentionOwner: waitReason ? 'user' : running ? 'agent' : 'none',
     waitReason,

@@ -48,8 +48,8 @@ let root: string | undefined
 type HostViewImageTestHarness = {
   service: HostViewImageService
   readHostArtifactCatalog: ReturnType<typeof vi.fn>
-  openLatest: ReturnType<typeof vi.fn>
-  closeLatest: ReturnType<typeof vi.fn>
+  openVersion: ReturnType<typeof vi.fn>
+  closeVersion: ReturnType<typeof vi.fn>
   prepareImage: ReturnType<typeof vi.fn>
   setBackend(next: HostViewImageBackend): void
 }
@@ -64,7 +64,7 @@ const harness = (
     backend?: HostViewImageBackend
     items?: HostArtifactCatalogItem[]
     prepareImage?: ReturnType<typeof vi.fn>
-    openLatest?: HostViewImageServiceOptions['managedFileVersions']['openLatest']
+    openVersion?: HostViewImageServiceOptions['managedFileVersions']['openVersion']
   } = {}
 ): HostViewImageTestHarness => {
   let backend = options.backend ?? visualBackend()
@@ -74,12 +74,15 @@ const harness = (
         (item) => item.projectId === projectId && (!versionId || item.versionId === versionId)
       )
   )
-  const closeLatest = vi.fn(async () => undefined)
-  const openLatest = vi.fn(
-    options.openLatest ??
+  const closeVersion = vi.fn(async () => undefined)
+  const openVersion = vi.fn(
+    options.openVersion ??
       (async ({ source }: { source: 'artifact' | 'upload' }) => ({
-        path: source === 'artifact' ? '/managed/artifact-v2.png' : '/managed/upload-v2.png',
-        close: closeLatest
+        path:
+          source === 'artifact'
+            ? '/managed/artifact-version-1.png'
+            : '/managed/upload-version-1.png',
+        close: closeVersion
       }))
   )
   const prepareImage =
@@ -92,15 +95,15 @@ const harness = (
     }))
   const service = new HostViewImageService({
     catalog: { readHostArtifactCatalog },
-    managedFileVersions: { openLatest },
+    managedFileVersions: { openVersion },
     captureBackend: () => backend,
     prepareImage: prepareImage as NonNullable<HostViewImageServiceOptions['prepareImage']>
   })
   return {
     service,
     readHostArtifactCatalog,
-    openLatest,
-    closeLatest,
+    openVersion,
+    closeVersion,
     prepareImage,
     setBackend: (next: HostViewImageBackend) => {
       backend = next
@@ -177,7 +180,7 @@ describe('HostViewImageService', () => {
     ).resolves.toMatchObject({ attached: true, sourceKind: 'artifactVersion' })
   })
 
-  it('uses historical Version ids only to identify logical files, then opens latest', async () => {
+  it('opens the exact requested historical image version for artifacts and uploads', async () => {
     const artifact = catalogItem('artifact')
     const upload = catalogItem('upload')
     const h = harness({ items: [artifact, upload] })
@@ -193,27 +196,35 @@ describe('HostViewImageService', () => {
       projectId: 'project-a',
       versionId: artifact.versionId
     })
-    expect(h.openLatest).toHaveBeenNthCalledWith(1, {
-      source: 'artifact',
-      projectId: 'project-a',
-      fileId: 'artifact-1'
-    })
-    expect(h.openLatest).toHaveBeenNthCalledWith(2, {
-      source: 'upload',
-      projectId: 'project-a',
-      fileId: 'upload-1'
-    })
+    expect(h.openVersion).toHaveBeenNthCalledWith(
+      1,
+      {
+        source: 'artifact',
+        projectId: 'project-a',
+        fileId: 'artifact-1'
+      },
+      artifact.versionId
+    )
+    expect(h.openVersion).toHaveBeenNthCalledWith(
+      2,
+      {
+        source: 'upload',
+        projectId: 'project-a',
+        fileId: 'upload-1'
+      },
+      upload.versionId
+    )
     expect(h.prepareImage).toHaveBeenNthCalledWith(
       1,
-      '/managed/artifact-v2.png',
+      '/managed/artifact-version-1.png',
       {},
       expect.objectContaining({ aborted: false }),
       undefined
     )
-    expect(h.closeLatest).toHaveBeenCalledTimes(2)
+    expect(h.closeVersion).toHaveBeenCalledTimes(2)
   })
 
-  it('closes the latest lease when image preparation fails', async () => {
+  it('closes the version lease when image preparation fails', async () => {
     const artifact = catalogItem('artifact')
     const h = harness({
       items: [artifact],
@@ -225,7 +236,7 @@ describe('HostViewImageService', () => {
     await expect(h.service.stage({ versionId: artifact.versionId }, {}, context())).rejects.toThrow(
       /could not prepare/u
     )
-    expect(h.closeLatest).toHaveBeenCalledOnce()
+    expect(h.closeVersion).toHaveBeenCalledOnce()
   })
 
   it('rejects missing, ambiguous, malformed, and caller-forged source fields', async () => {

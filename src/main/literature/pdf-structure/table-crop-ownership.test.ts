@@ -1,10 +1,42 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
+import { readPdfFixture } from './read-fixture'
 
 const { refineTable } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
 )
+const { trimTableNoteCrop } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-geometry.mjs')).href
+)
+
+it('cuts a confirmed note below final cell ink even when preliminary rows contain the note', () => {
+  const f = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/confirmed-note-below-final-cell-ink-with-stale-row-band.jsonl'
+    )
+  )
+  const cropRect = [...f.table.cropRect]
+  expect(f.notes[0].rect[1]).toBeLessThan(f.contentRect[3])
+  trimTableNoteCrop({ ...f, cropRect })
+  expect(cropRect).toEqual([59, 813, 422, 1046.3078])
+  expect(f.table.cropRect[3]).toBe(1054)
+})
+
+it('keeps notes from cutting owned cell ink or an unresolved source row', () => {
+  const f = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/confirmed-note-below-final-cell-ink-with-stale-row-band.jsonl'
+    )
+  )
+  for (const uncertain of [false, true]) {
+    const cropRect = [...f.table.cropRect]
+    if (uncertain) f.table.unassigned = [{ rect: f.notes[0].rect.map((v: number) => v * f.scale) }]
+    else f.notes[0].rect[1] = 1037 / f.scale
+    trimTableNoteCrop({ ...f, cropRect })
+    expect(cropRect).toEqual(f.table.cropRect)
+  }
+})
 const item = (text: string, rect: number[]): object => ({
   text,
   rect,

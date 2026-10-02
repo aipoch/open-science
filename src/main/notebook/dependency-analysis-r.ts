@@ -1324,6 +1324,7 @@ const analyzeRSource = (
     'set.seed',
     'warning',
     'sink',
+    'write',
     'write.csv',
     'write.csv2',
     'writeBin',
@@ -2535,7 +2536,7 @@ const analyzeRSource = (
     (pkg === 'tidyr' && tidyrMask.has(name)) ||
     (pkg === 'stats' && (modelMask.has(name) || pureSafe.has(name))) ||
     (pkg === 'svglite' && svgliteOutputCalls.includes(name)) ||
-    (pkg === 'utils' && outputSafe.has(name)) ||
+    (pkg === 'utils' && name !== 'write' && outputSafe.has(name)) ||
     (pkg === 'writexl' && writexlOutputCalls.includes(name)) ||
     (pkg === 'xml2' && (xml2ReferenceReadCalls.includes(name) || xml2OutputCalls.includes(name))) ||
     (pkg === 'yaml' && (yamlValueReadCalls.includes(name) || yamlOutputCalls.includes(name)))
@@ -4483,6 +4484,16 @@ const analyzeRSource = (
       return
     }
     if (op && !qualified) recordPackageRead(op)
+    if (
+      op === 'write' &&
+      contractAvailable(op, qualified?.package, 'base') &&
+      !atomicValueExpression(expr.args[callbackArgumentIndex(expr, ['x'], [])])
+    ) {
+      // write() coerces non-character objects via as.character(), which can
+      // dispatch a user method. Preserve the known destination without claiming
+      // that an arbitrary object's formatting has no additional effects.
+      unknown.push('opaque-call')
+    }
     // Record ownership at serialization time, not the variable's final cell value.
     const fileEffect = op ? R_FILE_CALL_EFFECTS.get(op) : undefined
     if (
@@ -7084,6 +7095,20 @@ const rFileCallArgument = (
   expr: Extract<RExpr, { kind: 'call' }>,
   effect: NotebookFileCallEffect
 ): RExpr | undefined => {
+  if (effect === R_FILE_CALL_EFFECTS.get('write')) {
+    const named = rOptionArgumentIndex(expr.names, 'file')
+    if (named >= 0) return expr.args[named]
+    const remaining = ['x', 'file', 'ncolumns', 'append', 'sep'].filter(
+      (name) => rOptionArgumentIndex(expr.names, name) < 0
+    )
+    // Unlike writeLines()/cat(), base::write() defaults to a file named "data".
+    return (
+      expr.args.filter((_arg, index) => !expr.names[index])[remaining.indexOf('file')] ?? {
+        kind: 'character',
+        value: 'data'
+      }
+    )
+  }
   const namedIndex = expr.names.findIndex((name) => name && effect.keywords.includes(name))
   return namedIndex >= 0
     ? expr.args[namedIndex]
@@ -7210,12 +7235,16 @@ const rLocalFileWrappers = (
     }
     if (isCall(body) && body.operator === '{' && body.args.length === 1) body = body.args[0]
     const name = rCalledName(body)
+    const qualified = isCall(body) ? rQualifiedCall(body) : undefined
     const effect = name ? R_FILE_CALL_EFFECTS.get(name) : undefined
     const parameters = formals?.kind === 'formals' ? formals.names : []
     const argument = isCall(body) && effect ? rFileCallArgument(body, effect) : undefined
     const parameterIndex = isSymbol(argument) ? parameters.indexOf(argument.name) : -1
     if (
       !effect ||
+      // A function body can resolve an unqualified writer against changed caller
+      // bindings. Only an explicit base qualifier establishes this wrapper contract.
+      (name === 'write' && qualified?.package !== 'base') ||
       effect.additionalPaths?.length ||
       [
         'getGEO',
@@ -7516,6 +7545,31 @@ const analyzeRFileAccessTree = (
       return
     }
     if (R_FILESYSTEM_MUTATIONS.has(rCalledName(expr) ?? '')) {
+      if (
+        rCalledName(expr) === 'file.copy' &&
+        rPrimitiveFileMutation(expr, bindings, collections)
+      ) {
+        const parameters = ['from', 'to', 'overwrite', 'recursive', 'copy.mode', 'copy.date']
+        const recursive = connectionArgument(expr, parameters, 'recursive')
+        if (!recursive || (recursive.kind === 'atomic' && recursive.logical === false)) {
+          const from = rStaticString(
+            connectionArgument(expr, parameters, 'from'),
+            bindings,
+            collections
+          )
+          const to = rStaticString(
+            connectionArgument(expr, parameters, 'to'),
+            bindings,
+            collections
+          )
+          if (from && to) {
+            if (!definitelyWritten.has(from)) reads.add(from)
+            writes.add(to)
+            // These are possible paths. Copying can fail, or `to` can name a directory;
+            // do not prove a generated file or waive the filesystem coverage gaps.
+          }
+        }
+      }
       const removedPaths = !valueUsed && rExactUnlinkPaths(expr, bindings, collections)
       if (removedPaths) {
         for (const path of removedPaths) {
@@ -7820,6 +7874,14 @@ const analyzeRFileAccessTree = (
       if (unresolvedLocalEffects.get(name)?.has('write')) unresolvedWrites = true
     }
     let fileArgumentOverride: { value: RExpr | undefined } | undefined
+    if (
+      name === 'write' &&
+      ((qualified && qualified.package !== 'base') ||
+        (!qualified &&
+          shadowedQuotationNames.has(name) &&
+          call === R_FILE_CALL_EFFECTS.get('write')))
+    )
+      call = undefined
     if (
       name &&
       R_GRAPHICS_FILE_DEVICES.has(name) &&
@@ -8189,6 +8251,18 @@ const analyzeRFileAccessTree = (
       const path = inMemoryRead
         ? undefined
         : (fileConnectionPath(argument) ?? rStaticString(argument, bindings, collections))
+      if (
+        name === 'write' &&
+        call === R_FILE_CALL_EFFECTS.get('write') &&
+        (path === '' || path?.trimStart().startsWith('|'))
+      ) {
+        // Empty destinations use the current output/sink; pipes invoke external
+        // commands. Neither establishes a literal disk artifact.
+        unsupportedExternalState = true
+        unresolvedWrites = true
+        expr.args.forEach((argument) => visit(argument))
+        return
+      }
       // These readers expand a directory into companion files at runtime. Keep
       // the proven root path but do not claim complete input coverage.
       if (call.kind === 'read' && (name === 'Read10X' || name === 'Load10X_Spatial') && path) {

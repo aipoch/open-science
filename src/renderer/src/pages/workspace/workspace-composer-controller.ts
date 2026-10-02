@@ -1,3 +1,7 @@
+import { captureDiscussionSendContext } from './discussion-send-context'
+import type { SessionDiscussionCapture } from './replay/replay-context'
+import type { SessionReadingContext } from '../../../../shared/session-reading'
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { useTranslation } from 'react-i18next'
 import {
   composerDraftStorageFailed,
@@ -74,7 +78,11 @@ type ComposerHistoryNavigation = {
 type ComposerSessionContext = {
   id: string
   projectId: string
-  runtimeContext?: { revision: number; pdfContext?: SessionPdfContext }
+  runtimeContext?: {
+    revision: number
+    pdfContext?: SessionPdfContext
+    sessionContext?: SessionReadingContext
+  }
 }
 
 type ComposerReadingContextBinding =
@@ -96,12 +104,14 @@ const samePdfContextSources = (
   left.every((source, index) => pdfContextSourceKey(source) === pdfContextSourceKey(right[index]))
 
 export type ComposerSendSnapshot = {
+  retrySessionOwner?: ComposerDraft['retrySessionOwner']
   setupSessionToken?: string
   queuedEdit?: ComposerDraft['queuedEdit']
   draftKey: string
   version: number
   doc: ComposerDoc
   annotations: Annotation[]
+  discussionFocus?: SessionDiscussionCapture
   attachments: UploadedAttachment[]
   automaticReadingEnabled?: boolean
   pdfContext?: MessagePdfContextSnapshot
@@ -193,7 +203,12 @@ type WorkspaceComposerController = {
     captureSend: (includeReadingContext?: boolean) => ComposerSendSnapshot
     captureRevision: (doc: ComposerDoc, annotations: Annotation[]) => ComposerSendSnapshot
     clearDraft: (draftKey: string, expectedVersion?: number) => boolean
-    restoreFailedSend: (snapshot: ComposerSendSnapshot, preserveOnConflict?: boolean) => boolean
+    restoreFailedSend: (
+      snapshot: ComposerSendSnapshot,
+      preserveOnConflict?: boolean,
+      boundDraftKey?: string,
+      reportConflict?: boolean
+    ) => boolean
     discardSnapshot: (snapshot: ComposerSendSnapshot) => void
     hasUnfinishedTransfers: (draftKey: string) => boolean
     beginSessionDeletion: (draftKey: string) => boolean
@@ -261,6 +276,7 @@ const useWorkspaceComposerController = ({
   )
   const [queuedEdit, setQueuedEdit] = useState(initialDraft.queuedEdit)
   const queuedEditRef = useRef<ComposerDraft['queuedEdit']>(initialDraft.queuedEdit)
+  const retrySessionOwnerRef = useRef(initialDraft.retrySessionOwner)
   const setupSessionTokenRef = useRef(initialDraft.setupSessionToken)
   const setupSessionTokenStore = useMemo(
     () => new SetupSessionTokenStore(initialDraft.setupSessionToken),
@@ -421,6 +437,7 @@ const useWorkspaceComposerController = ({
       const draftKey = activeDraftKeyRef.current
       if (!deletedDraftKeys.has(draftKey)) {
         drafts[draftKey] = {
+          retrySessionOwner: retrySessionOwnerRef.current,
           doc: history[draftKey]?.scratch ?? docRef.current,
           annotations: annotationsRef.current,
           ...captureDraftAttachments(),
@@ -894,6 +911,7 @@ const useWorkspaceComposerController = ({
       delete draftsRef.current[previousDraftKey]
     } else {
       draftsRef.current[previousDraftKey] = {
+        retrySessionOwner: retrySessionOwnerRef.current,
         setupSessionToken: setupSessionTokenRef.current,
         doc: outgoingHistory?.scratch ?? doc,
         annotations,
@@ -921,6 +939,7 @@ const useWorkspaceComposerController = ({
     activateDraftAttachments(nextDraft)
     setActiveAutomaticReadingEnabled(nextDraft.automaticReadingEnabled)
     setActiveQueuedEdit(nextDraft.queuedEdit)
+    retrySessionOwnerRef.current = nextDraft.retrySessionOwner
     setActiveSetupSessionToken(nextDraft.setupSessionToken)
     activeDraftKeyRef.current = currentDraftKey
     delete draftsRef.current[currentDraftKey]
@@ -968,6 +987,7 @@ const useWorkspaceComposerController = ({
     clearPastedTextUndo(currentDraftKey)
     clearUndo(currentDraftKey)
     markChanged(currentDraftKey)
+    retrySessionOwnerRef.current = undefined
     setActiveDoc(pendingConversationPrefill.doc)
     if (pendingConversationPrefill.kind === 'wsl-support') {
       setActiveSetupSessionToken(pendingConversationPrefill.setupSessionToken)
@@ -1205,11 +1225,19 @@ const useWorkspaceComposerController = ({
         })
         .slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - includedDurableBindings.length))
       return {
+        retrySessionOwner: retrySessionOwnerRef.current,
         setupSessionToken: setupSessionTokenRef.current,
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
         doc: docRef.current,
         annotations: [...annotationsRef.current],
+        discussionFocus: captureDiscussionSendContext(
+          annotationsRef.current,
+          includeReadingContext
+            ? activeSession?.runtimeContext?.sessionContext?.bindings.at(-1)
+            : undefined,
+          activeSession?.id
+        ),
         attachments,
         queuedEdit: queuedEditRef.current,
         automaticReadingEnabled: automaticReadingEnabledRef.current,
@@ -1250,6 +1278,7 @@ const useWorkspaceComposerController = ({
     },
     [
       attachments,
+      activeSession,
       activeReadingBinding,
       activePendingReading,
       automaticStagedReadingContexts,
@@ -1277,6 +1306,7 @@ const useWorkspaceComposerController = ({
         blank()
       )
       if (activeDraftKeyRef.current !== draftKey) return true
+      retrySessionOwnerRef.current = undefined
       setActiveSetupSessionToken(undefined)
       setActiveDoc(emptyDoc)
       setActiveQueuedEdit(undefined)
@@ -1301,45 +1331,87 @@ const useWorkspaceComposerController = ({
       setError
     ]
   )
+  const reportNewerDraftKept = useCallback(
+    (snapshot: ComposerSendSnapshot): void => {
+      setError(
+        t(
+          'Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.'
+        ),
+        [
+          docToText(snapshot.doc),
+          ...snapshot.annotations.map((annotation) => JSON.stringify(annotation)),
+          ...snapshot.attachments.map((attachment) => attachment.originalName || attachment.name)
+        ].join('\n')
+      )
+      releaseHistoryResources([{ attachments: snapshot.attachments, attachmentTransfers: [] }])
+    },
+    [releaseHistoryResources, setError, t]
+  )
   const restoreFailedSend = useCallback(
-    (snapshot: ComposerSendSnapshot, preserveOnConflict = false): boolean => {
-      if (deletedDraftKeysRef.current.has(snapshot.draftKey)) {
+    (
+      snapshot: ComposerSendSnapshot,
+      preserveOnConflict = false,
+      boundDraftKey?: string,
+      reportConflict = false
+    ): boolean => {
+      const draftKey = boundDraftKey ?? snapshot.draftKey
+      if (deletedDraftKeysRef.current.has(draftKey)) {
         if (!preserveOnConflict)
           releaseHistoryResources([{ attachments: snapshot.attachments, attachmentTransfers: [] }])
         return false
       }
-      if (
-        preserveOnConflict &&
-        (activeDraftKeyRef.current !== snapshot.draftKey ||
-          !docIsEmpty(docRef.current) ||
-          annotationsRef.current.length > 0 ||
-          attachments.length > 0 ||
-          transfers.length > 0 ||
-          queuedEditRef.current)
-      )
+      // Read live draft content: callers may hold this callback from submit time, before the
+      // composer was cleared.
+      const liveDraft = captureDraftAttachments()
+      const activeDraftConflicts =
+        !docIsEmpty(docRef.current) ||
+        annotationsRef.current.length > 0 ||
+        liveDraft.attachments.length > 0 ||
+        liveDraft.attachmentTransfers.length > 0 ||
+        Boolean(queuedEditRef.current)
+      if (preserveOnConflict && (activeDraftKeyRef.current !== draftKey || activeDraftConflicts)) {
+        const retainIfEmpty = (key: string): void => {
+          const previous = draftsRef.current[key]
+          if (
+            !previous ||
+            (docIsEmpty(previous.doc) &&
+              !previous.annotations.length &&
+              !previous.attachments.length &&
+              !previous.attachmentTransfers.length &&
+              !previous.queuedEdit)
+          ) {
+            draftsRef.current[key] = {
+              retrySessionOwner: snapshot.retrySessionOwner,
+              setupSessionToken: snapshot.setupSessionToken,
+              queuedEdit: snapshot.queuedEdit,
+              doc: snapshot.doc,
+              annotations: [...snapshot.annotations],
+              attachments: snapshot.attachments,
+              attachmentTransfers: [],
+              automaticReadingEnabled: snapshot.automaticReadingEnabled !== false
+            }
+            markChanged(key)
+          }
+        }
+        if (activeDraftKeyRef.current !== draftKey) retainIfEmpty(draftKey)
+        else if (boundDraftKey && boundDraftKey !== snapshot.draftKey)
+          retainIfEmpty(snapshot.draftKey)
+        else if (reportConflict) reportNewerDraftKept(snapshot)
         return false
+      }
       if (
         !preserveOnConflict &&
         (versionsRef.current[snapshot.draftKey] ?? 0) !== snapshot.version
       ) {
-        setError(
-          t(
-            'Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.'
-          ),
-          [
-            docToText(snapshot.doc),
-            ...snapshot.annotations.map((annotation) => JSON.stringify(annotation)),
-            ...snapshot.attachments.map((attachment) => attachment.originalName || attachment.name)
-          ].join('\n')
-        )
-        releaseHistoryResources([{ attachments: snapshot.attachments, attachmentTransfers: [] }])
+        reportNewerDraftKept(snapshot)
         return false
       }
-      if (preserveOnConflict) markChanged(snapshot.draftKey)
-      clearUndo(snapshot.draftKey)
-      clearPastedTextUndo(snapshot.draftKey)
-      clearHistory(snapshot.draftKey)
-      if (activeDraftKeyRef.current === snapshot.draftKey) {
+      if (preserveOnConflict) markChanged(draftKey)
+      clearUndo(draftKey)
+      clearPastedTextUndo(draftKey)
+      clearHistory(draftKey)
+      if (activeDraftKeyRef.current === draftKey) {
+        retrySessionOwnerRef.current = snapshot.retrySessionOwner
         setActiveSetupSessionToken(snapshot.setupSessionToken)
         setActiveQueuedEdit(snapshot.queuedEdit)
         setActiveDoc(snapshot.doc)
@@ -1348,19 +1420,21 @@ const useWorkspaceComposerController = ({
         setActiveAutomaticReadingEnabled(snapshot.automaticReadingEnabled !== false)
         return true
       }
-      draftsRef.current[snapshot.draftKey] = {
+      draftsRef.current[draftKey] = {
+        retrySessionOwner: snapshot.retrySessionOwner,
         setupSessionToken: snapshot.setupSessionToken,
         queuedEdit: snapshot.queuedEdit,
         doc: snapshot.doc,
         annotations: [...snapshot.annotations],
         attachments: snapshot.attachments,
-        attachmentTransfers: draftsRef.current[snapshot.draftKey]?.attachmentTransfers ?? [],
+        attachmentTransfers: draftsRef.current[draftKey]?.attachmentTransfers ?? [],
         automaticReadingEnabled: snapshot.automaticReadingEnabled !== false
       }
       return true
     },
     [
-      attachments.length,
+      captureDraftAttachments,
+      reportNewerDraftKept,
       draftsRef,
       versionsRef,
       deletedDraftKeysRef,
@@ -1374,10 +1448,7 @@ const useWorkspaceComposerController = ({
       setActiveAttachments,
       setActiveAnnotations,
       setActiveDoc,
-      setActiveAutomaticReadingEnabled,
-      transfers.length,
-      setError,
-      t
+      setActiveAutomaticReadingEnabled
     ]
   )
 
@@ -1396,7 +1467,21 @@ const useWorkspaceComposerController = ({
   // receives, so an inline closure here would defeat that memo on every composer re-render.
   const addAnnotation = useCallback(
     (annotation: Annotation): AnnotationValidationError | undefined => {
-      const next = [...annotationsRef.current, annotation]
+      const source = replayAnnotationTarget(annotation)
+      const retained = source
+        ? annotationsRef.current.filter((item) => {
+            const previous = replayAnnotationTarget(item)
+            return (
+              !previous ||
+              (previous.projectId === source.projectId &&
+                previous.sourceSessionId === source.sourceSessionId &&
+                previous.scope !== 'session' &&
+                source.scope !== 'session' &&
+                (previous.branchId !== source.branchId || previous.stepId !== source.stepId))
+            )
+          })
+        : annotationsRef.current
+      const next = [...retained, annotation]
       const validation = validateAnnotations(next, docToText(docRef.current))
       if (validation) return validation
       clearPastedTextUndo()

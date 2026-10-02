@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpPermissionWaitOwner } from '../acp/permission-wait-owner'
 import { continueInterruptedTurn } from '../acp/interrupted-turn-continuation'
@@ -14,8 +14,12 @@ import {
   RuntimeSessionArtifactPublicationError,
   RuntimeSessionOwner,
   type RuntimeSessionArtifactPublication,
+  TERMINAL_COMMIT_INITIAL_BUDGET_MS,
+  TERMINAL_COMMIT_RETRY_BUDGET_MS,
   type RuntimeSessionTurnScope
 } from './runtime-session-owner'
+
+afterEach(() => vi.useRealTimers())
 
 const scope = (suffix = '1'): RuntimeSessionTurnScope => ({
   projectId: 'project-1',
@@ -222,6 +226,192 @@ const harness = (initial = [session()]) => {
   return { owner, sessions, scheduled, mutateSession, finalizeArtifacts }
 }
 
+describe('Main terminal commit recovery', () => {
+  it('does not retry durable terminal writes when an observer throws', async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    const turn = scope()
+    await h.owner.begin(turn)
+    await h.owner.commitTerminal(stopEvent(turn, 20), () => {
+      throw new Error('closed observer')
+    })
+    h.owner.retryTerminalCommits(turn.sessionId)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(h.mutateSession).toHaveBeenCalledTimes(2)
+    expect(h.sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
+  })
+  it('drops old cleanup terminals after a new execution resumes the same prompt', async () => {
+    const h = harness()
+    const turn = scope()
+    await h.owner.begin(turn)
+    await h.owner.commitTerminal(
+      { ...stopEvent(turn, 20), promptExecutionId: turn.executionId },
+      vi.fn()
+    )
+    const durable = h.sessions.get(turn.sessionId)!
+    durable.status = 'running'
+    durable.activeRun = { promptMessageId: turn.promptMessageId, startedAt: 30 }
+    await h.owner.begin({ ...turn, executionId: 'resumed-execution' })
+    const publish = vi.fn()
+    await h.owner.commitTerminal(
+      {
+        id: 'late-cleanup',
+        kind: 'error',
+        level: 'error',
+        timestamp: 40,
+        sessionId: turn.sessionId,
+        promptMessageId: turn.promptMessageId,
+        promptExecutionId: turn.executionId,
+        artifactFailure: true,
+        text: 'old cleanup error'
+      },
+      publish
+    )
+    expect(publish).not.toHaveBeenCalled()
+    expect(h.sessions.get(turn.sessionId)?.activeRun?.startedAt).toBe(30)
+    expect(h.sessions.get(turn.sessionId)?.error).toBeUndefined()
+  })
+  it('retries the exact terminal after release and publishes only after a durable commit', async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    const turn = scope()
+    await h.owner.begin(turn)
+    h.mutateSession.mockRejectedValueOnce(new Error('disk temporarily unavailable'))
+    const publish = vi.fn()
+    await h.owner.commitTerminal(stopEvent(turn, 20), publish)
+    expect(publish).not.toHaveBeenCalled()
+    expect(h.sessions.get(turn.sessionId)?.activeRun).toBeDefined()
+    const scheduledCount = h.scheduled.length
+    h.owner.accept({
+      id: 'retry-receipt',
+      kind: 'tool',
+      level: 'info',
+      timestamp: 25,
+      sessionId: turn.sessionId,
+      promptMessageId: turn.promptMessageId,
+      toolCallId: 'receipt',
+      title: 'Tool receipt',
+      status: 'completed'
+    })
+    expect(h.scheduled).toHaveLength(scheduledCount)
+    h.owner.retryTerminalCommits(turn.sessionId)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(publish).toHaveBeenCalledOnce()
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'question-stop',
+        publicationOwner: 'main',
+        terminalScope: expect.objectContaining({ executionId: turn.executionId, startedAt: 1 })
+      })
+    )
+    expect(h.sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
+  })
+
+  it.each([
+    ['Cannot update a missing runtime Session.', 'missing-record'],
+    ['EIO: write failed', 'storage']
+  ] as const)(
+    'releases exhausted %s as a live interruption and retains explicit retry authority',
+    async (message, failure) => {
+      vi.useFakeTimers()
+      const h = harness()
+      const turn = scope()
+      await h.owner.begin(turn)
+      const mutate = h.mutateSession.getMockImplementation()!
+      h.mutateSession.mockRejectedValue(new Error(message))
+      const publish = vi.fn()
+      await h.owner.commitTerminal(stopEvent(turn, 20), publish)
+      h.owner.retryTerminalCommits(turn.sessionId)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.mutateSession).toHaveBeenCalledTimes(4) // admission and three terminal attempts
+      expect(publish).toHaveBeenCalledOnce()
+      expect(publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          interruptionCause: 'terminal-commit-failed',
+          terminalCommitFailure: failure,
+          terminalCommitError: message,
+          errorReportable: false
+        })
+      )
+      expect(h.sessions.get(turn.sessionId)?.status).toBe('running') // live result is never written
+      const scheduledCount = h.scheduled.length
+      h.owner.accept({
+        id: 'late-tool',
+        kind: 'tool',
+        level: 'info',
+        timestamp: 25,
+        sessionId: turn.sessionId,
+        promptMessageId: turn.promptMessageId,
+        toolCallId: 'late-tool',
+        title: 'Final tool receipt',
+        status: 'completed'
+      })
+      expect(h.scheduled).toHaveLength(scheduledCount)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(h.mutateSession).toHaveBeenCalledTimes(4)
+      await h.owner.retryTerminalCommitNow(turn.sessionId, turn.promptMessageId, 'wrong-execution')
+      expect(h.mutateSession).toHaveBeenCalledTimes(4)
+      h.mutateSession.mockImplementation(mutate)
+      await h.owner.retryTerminalCommitNow(turn.sessionId, turn.promptMessageId, turn.executionId)
+      expect(h.sessions.get(turn.sessionId)?.status).toBe('idle')
+      expect(publish).toHaveBeenLastCalledWith(
+        expect.objectContaining({ kind: 'stop', id: 'question-stop' })
+      )
+    }
+  )
+
+  it('bounds a stalled first attempt and retries without waiting for its unresolved write', async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    const turn = scope()
+    await h.owner.begin(turn)
+    h.mutateSession.mockImplementationOnce(() => new Promise(() => undefined))
+    const publish = vi.fn()
+    const commit = h.owner.commitTerminal(stopEvent(turn, 20), publish)
+    await vi.advanceTimersByTimeAsync(TERMINAL_COMMIT_INITIAL_BUDGET_MS)
+    await commit
+    h.owner.retryTerminalCommits(turn.sessionId)
+    await vi.advanceTimersByTimeAsync(TERMINAL_COMMIT_RETRY_BUDGET_MS)
+    expect(publish).toHaveBeenCalledOnce()
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ terminalCommitFailure: 'storage' })
+    )
+  })
+
+  it('admits a follow-up while retries are pending and never lets the old terminal clear its active run', async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    const turn = scope()
+    await h.owner.begin(turn)
+    h.owner.accept(messageEvent(turn, 'partial', 'partial response'))
+    h.mutateSession.mockRejectedValueOnce(new Error('temporary disk error'))
+    const publish = vi.fn()
+    await h.owner.commitTerminal(stopEvent(turn, 20), publish)
+    h.owner.retryTerminalCommits(turn.sessionId)
+    const next = { ...turn, promptMessageId: 'follow-up', executionId: 'follow-up-execution' }
+    await h.owner.begin(next, {
+      applicationPrompt: {
+        text: 'Next question',
+        attribution: {
+          kind: 'application',
+          feature: 'background-results',
+          purpose: 'agent-result-delivery',
+          deliveryKey: 'next',
+          deliveryIds: ['local-run:next']
+        }
+      }
+    })
+    await vi.advanceTimersByTimeAsync(10_000)
+    const durable = h.sessions.get(turn.sessionId)!
+    expect(durable.activeRun?.promptMessageId).toBe('follow-up')
+    expect(durable.messages.find(({ content }) => content === 'partial response')?.status).toBe(
+      'complete'
+    )
+    expect(durable.messages.find(({ id }) => id === turn.promptMessageId)).toBeDefined()
+    expect(publish).toHaveBeenCalledOnce()
+  })
+})
+
 const parentMessageSession = (): PersistedChatSession => {
   const turn = scope()
   const durable = session()
@@ -347,6 +537,48 @@ const settlementPublication = (
 })
 
 describe('durable settlement admission', () => {
+  it('commits a pending settlement terminal fence with the next admission', async () => {
+    vi.useFakeTimers()
+    const { turn, admission, owner, sessions, mutateSession } = settlementHarness()
+    await owner.begin(turn, { settlementAdmission: admission })
+    await owner.markSettlementDispatch(turn)
+    owner.accept({
+      ...messageEvent(turn, 'settlement-answer', 'Child result received'),
+      timestamp: 25
+    })
+    mutateSession.mockRejectedValueOnce(new Error('temporary disk error'))
+    const publish = vi.fn()
+    await owner.commitTerminal(
+      { ...stopEvent(turn, 30), promptExecutionId: turn.executionId },
+      publish
+    )
+    expect(sessions.get(turn.sessionId)!.runtimeSessionAdmissions![0].settlement!.stage).toBe(
+      'dispatching'
+    )
+    const next = { ...turn, promptMessageId: 'follow-up', executionId: 'follow-up-execution' }
+    await owner.begin(next, {
+      applicationPrompt: {
+        text: 'Next question',
+        attribution: {
+          kind: 'application',
+          feature: 'background-results',
+          purpose: 'agent-result-delivery',
+          deliveryKey: 'next',
+          deliveryIds: ['local-run:next']
+        }
+      }
+    })
+    owner.retryTerminalCommits(turn.sessionId)
+    await vi.advanceTimersByTimeAsync(10_000)
+    const durable = sessions.get(turn.sessionId)!
+    expect(durable.runtimeSessionAdmissions![0].settlement!.stage).toBe('terminal')
+    expect(durable.activeRun?.promptMessageId).toBe('follow-up')
+    expect(
+      durable.messages.find(({ content }) => content === 'Child result received')?.status
+    ).toBe('complete')
+    expect(publish).toHaveBeenCalledOnce()
+  })
+
   it('re-arms idle root atomically with a fresh Segment and immutable origin', async () => {
     const { turn, durable, admission, owner, sessions } = settlementHarness()
     const next = await owner.begin(turn, { settlementAdmission: admission })
@@ -1061,6 +1293,10 @@ describe('RuntimeSessionOwner', () => {
         owner.accept(stopEvent(turn, 21))
         await owner.flush(turn.sessionId, turn.promptMessageId)
         expect(sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
+        expect(
+          sessions.get(turn.sessionId)?.messages.find(({ id }) => id === turn.promptMessageId)
+            ?.turnOutcome
+        ).toEqual({ kind: 'completed', settledAt: 21 })
         expect(sessions.get(turn.sessionId)?.messages).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
@@ -1456,7 +1692,7 @@ describe('RuntimeSessionOwner', () => {
       artifacts: [artifact()]
     })
 
-    expect(sessions.get(turn.sessionId)?.status).toBe('error')
+    expect(sessions.get(turn.sessionId)?.status).toBe('idle')
     expect(receipt.messageId).toBeTruthy()
     expect(receipt.artifacts).toContainEqual(expect.objectContaining({ versionId: 'version-1' }))
   })
@@ -1494,7 +1730,11 @@ describe('RuntimeSessionOwner', () => {
     durable.conversationGraph!.messages.find(
       ({ id }) => id === resumed.promptMessageId
     )!.runtimeSegmentId = resumed.runtimeSegmentId
+    expect(durable.messages[0].turnOutcome?.kind).toBe('cancelled')
+    expect(durable.messages[0].interrupted).toBe(true)
     await owner.begin(resumed)
+    expect(sessions.get(first.sessionId)?.messages[0].turnOutcome).toBeUndefined()
+    expect(sessions.get(first.sessionId)?.messages[0].interrupted).toBeUndefined()
 
     owner.accept(messageEvent(first, 'stale-chunk', 'stale'))
     owner.accept({ ...messageEvent(resumed, 'current-chunk', 'current'), timestamp: 11 })
@@ -1506,6 +1746,13 @@ describe('RuntimeSessionOwner', () => {
           ({ responseToMessageId }) => responseToMessageId === resumed.promptMessageId
         )?.content
     ).toBe('current')
+    owner.accept(stopEvent(resumed, 12))
+    await owner.flush(resumed.sessionId, resumed.promptMessageId)
+    expect(sessions.get(first.sessionId)?.messages[0].turnOutcome).toEqual({
+      kind: 'completed',
+      settledAt: 12
+    })
+    expect(sessions.get(first.sessionId)?.messages[0].interrupted).toBeUndefined()
     await expect(
       owner.publish({
         appSessionId: first.sessionId,
@@ -2042,6 +2289,11 @@ describe('RuntimeSessionOwner', () => {
           }
         }
       }
+      const cancellation = { kind: 'cancelled' as const, settledAt: 3, recovery: 'resume' as const }
+      if (kind === 'rejected-plan') {
+        restored.messages[0].turnOutcome = cancellation
+        restored.conversationGraph!.messages[0].turnOutcome = cancellation
+      }
       for (const state of ['queued', 'accepted', 'interrupted'] as const) {
         const stale = structuredClone(restored)
         stale.runtimeContext = {
@@ -2071,6 +2323,15 @@ describe('RuntimeSessionOwner', () => {
       })
       await owner.flush(turn.sessionId, turn.promptMessageId)
       expect(sessions.get(turn.sessionId)?.messages.at(-1)?.content).toBe('Continuing after review')
+      owner.accept(stopEvent(turn, 12))
+      await owner.flush(turn.sessionId, turn.promptMessageId)
+      expect(sessions.get(turn.sessionId)?.messages[0].turnOutcome).toEqual(
+        kind === 'review-feedback'
+          ? undefined
+          : kind === 'rejected-plan'
+            ? cancellation
+            : { kind: 'completed', settledAt: 12 }
+      )
     }
   )
 
@@ -2471,4 +2732,214 @@ describe('RuntimeSessionOwner', () => {
       'Runtime Session turn is unknown or superseded.'
     )
   })
+})
+
+describe('approved Handoff turn ownership', () => {
+  const failureEvent = (turn: RuntimeSessionTurnScope): AcpRuntimeEvent => ({
+    id: 'approved-handoff-failure',
+    timestamp: 30,
+    kind: 'error',
+    level: 'error',
+    sessionId: turn.sessionId,
+    promptMessageId: turn.promptMessageId,
+    promptExecutionId: turn.executionId,
+    title: 'Specialist handoff failed',
+    text: 'handoff failed'
+  })
+
+  // Mirrors state-owner's last-run witness after draining the original provider Attempt.
+  const cancelledTurn = async (): Promise<ReturnType<typeof harness>> => {
+    const h = harness()
+    const turn = scope()
+    await h.owner.begin(turn)
+    await h.owner.commitTerminal(
+      { ...stopEvent(turn, 20), text: 'cancelled', promptExecutionId: turn.executionId },
+      () => undefined
+    )
+    h.sessions.get(turn.sessionId)!.runtimeTranscriptLastRun = {
+      promptMessageId: turn.promptMessageId,
+      startedAt: 1
+    }
+    return h
+  }
+
+  it('only the approved Main failure replaces the exact original cancellation', async () => {
+    const h = await cancelledTurn()
+    const turn = scope()
+    await h.owner.commitTerminal(
+      { ...failureEvent(turn), id: 'late-provider-error' },
+      () => undefined
+    )
+    expect(h.sessions.get(turn.sessionId)?.messages[0].turnOutcome?.kind).toBe('cancelled')
+    await h.owner.commitApprovedHandoffFailure(
+      failureEvent(turn),
+      () => undefined,
+      () => true,
+      1
+    )
+    expect(h.sessions.get(turn.sessionId)?.messages[0].turnOutcome?.kind).toBe('failed')
+    expect(h.sessions.get(turn.sessionId)?.resumeRecovery).toBeUndefined()
+  })
+
+  it.each([
+    'unadmitted',
+    'cancelled-receipt',
+    'other-execution',
+    'newer-run',
+    'newer-prompt',
+    'other-branch',
+    'other-segment'
+  ])('refuses stale Handoff authority: %s', async (scenario) => {
+    const h = await cancelledTurn()
+    const turn = scope()
+    const current = h.sessions.get(turn.sessionId)!
+    if (scenario === 'unadmitted') current.runtimeSessionAdmissions = []
+    if (scenario === 'newer-run')
+      current.activeRun = { promptMessageId: turn.promptMessageId, startedAt: 25 }
+    if (scenario === 'newer-prompt')
+      current.activeRun = { promptMessageId: 'newer-prompt', startedAt: 25 }
+    if (scenario === 'other-branch') {
+      current.conversationGraph!.branches.push({
+        id: 'new-branch',
+        agentFrameId: turn.agentFrameId,
+        headMessageId: turn.promptMessageId,
+        createdAt: 25,
+        updatedAt: 25
+      })
+      current.conversationGraph!.frames[0].activeBranchId = 'new-branch'
+    }
+    if (scenario === 'other-segment')
+      current.conversationGraph!.runtimeSegments.push({
+        id: 'new-segment',
+        agentFrameId: turn.agentFrameId,
+        frameworkId: 'codex',
+        startedAt: 25
+      })
+    const before = structuredClone(current)
+    await h.owner.commitApprovedHandoffFailure(
+      {
+        ...failureEvent(turn),
+        ...(scenario === 'other-execution' ? { promptExecutionId: 'unknown' } : {})
+      },
+      () => undefined,
+      () => scenario !== 'cancelled-receipt',
+      1
+    )
+    expect(h.sessions.get(turn.sessionId)).toEqual(before)
+  })
+
+  it('retains bounded terminal retry and the exact approved result through a write failure', async () => {
+    vi.useFakeTimers()
+    const h = await cancelledTurn()
+    const publish = vi.fn()
+    h.mutateSession.mockRejectedValueOnce(new Error('storage unavailable'))
+    await h.owner.commitApprovedHandoffFailure(failureEvent(scope()), publish, () => true, 1)
+    expect(h.sessions.get(scope().sessionId)?.messages[0].turnOutcome?.kind).toBe('cancelled')
+    await vi.advanceTimersByTimeAsync(TERMINAL_COMMIT_RETRY_BUDGET_MS)
+    expect(h.sessions.get(scope().sessionId)?.messages[0].turnOutcome?.kind).toBe('failed')
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        publicationOwner: 'main',
+        promptExecutionId: scope().executionId,
+        text: 'handoff failed'
+      })
+    )
+  })
+
+  it('rejects the captured failure after a same-token approved continuation re-arms', async () => {
+    const h = await cancelledTurn()
+    const turn = scope()
+    const originalStartedAt = h.owner.authorizeApprovedHandoffContinuation(
+      turn.sessionId,
+      turn.promptMessageId,
+      turn.executionId,
+      () => true
+    )!
+    await h.owner.begin(turn, { approvedHandoffContinuation: true })
+    const resumed = structuredClone(h.sessions.get(turn.sessionId))
+    expect(resumed?.activeRun?.startedAt).toBeGreaterThan(originalStartedAt)
+    await h.owner.commitApprovedHandoffFailure(
+      failureEvent(turn),
+      () => undefined,
+      () => true,
+      originalStartedAt
+    )
+    expect(h.sessions.get(turn.sessionId)).toEqual(resumed)
+  })
+
+  it('rechecks user cancellation inside the serialized durable mutation', async () => {
+    const h = await cancelledTurn()
+    const mutate = h.mutateSession.getMockImplementation()!
+    let current = true
+    h.mutateSession.mockImplementationOnce(async (turn, update) => {
+      current = false
+      return mutate(turn, update)
+    })
+    const cancelled = structuredClone(h.sessions.get(scope().sessionId))
+    await h.owner.commitApprovedHandoffFailure(
+      failureEvent(scope()),
+      () => undefined,
+      () => current,
+      1
+    )
+    expect(h.sessions.get(scope().sessionId)).toEqual(cancelled)
+  })
+
+  it.each(['cancelled', 'failed'] as const)(
+    'only a current approved app continuation re-arms %s',
+    async (outcome) => {
+      const h = await cancelledTurn()
+      const turn = scope()
+      let current = true
+      h.owner.authorizeApprovedHandoffContinuation(
+        turn.sessionId,
+        turn.promptMessageId,
+        turn.executionId,
+        () => current
+      )
+      if (outcome === 'failed')
+        await h.owner.commitApprovedHandoffFailure(
+          failureEvent(turn),
+          () => undefined,
+          () => true,
+          1
+        )
+      const next = { ...turn, executionId: 'handoff-continuation' }
+      await expect(h.owner.begin(next)).rejects.toThrow('unknown or superseded')
+      current = false
+      await expect(h.owner.begin(next, { approvedHandoffContinuation: true })).rejects.toThrow(
+        'unknown or superseded'
+      )
+      current = true
+      await h.owner.begin(next, { approvedHandoffContinuation: true })
+      expect(h.sessions.get(turn.sessionId)?.activeRun?.startedAt).toBeGreaterThan(1)
+      expect(h.sessions.get(turn.sessionId)?.messages[0].turnOutcome).toBeUndefined()
+      const active = structuredClone(h.sessions.get(turn.sessionId))
+      await h.owner.commitApprovedHandoffFailure(
+        failureEvent(turn),
+        () => undefined,
+        () => true,
+        1
+      )
+      expect(h.sessions.get(turn.sessionId)).toEqual(active)
+      // The old approved lease is consumed; a later ordinary cancellation cannot reuse it.
+      await h.owner.commitTerminal(
+        {
+          ...stopEvent(next, 40),
+          id: 'continuation-cancel',
+          text: 'cancelled',
+          promptExecutionId: next.executionId
+        },
+        () => undefined
+      )
+      const stopped = h.sessions.get(turn.sessionId)!
+      stopped.runtimeTranscriptLastRun = active!.activeRun
+      await expect(
+        h.owner.begin(
+          { ...next, executionId: 'third-attempt' },
+          { approvedHandoffContinuation: true }
+        )
+      ).rejects.toThrow('unknown or superseded')
+    }
+  )
 })

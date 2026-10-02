@@ -1,3 +1,4 @@
+import { indexReplayRun, type ReplayRunIndex } from '../../shared/replay'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -660,6 +661,45 @@ class NotebookRunRepository {
     { mtimeMs: number; size: number; ino: number; document: NotebookRunDocument }
   >()
   private documentCacheBytes = 0
+  // ponytail: reuse the bounded document cache; cold/oversized JSON still needs a full read.
+  // A durable per-run index is the next step if archives routinely exceed that cache budget.
+  private readonly runIndexes = new WeakMap<
+    NotebookRunDocument,
+    { rows: ReplayRunIndex[]; byId: Map<string, NotebookRunRecord> }
+  >()
+
+  private runIndex(document: NotebookRunDocument): {
+    rows: ReplayRunIndex[]
+    byId: Map<string, NotebookRunRecord>
+  } {
+    let index = this.runIndexes.get(document)
+    if (!index) {
+      index = {
+        rows: document.runs.map(indexReplayRun),
+        byId: new Map(document.runs.map((run) => [run.runId, run]))
+      }
+      this.runIndexes.set(document, index)
+    }
+    return index
+  }
+
+  async readSessionRunIndex(projectId: string, sessionId: string): Promise<ReplayRunIndex[]> {
+    return (await this.readSessionDocuments(projectId, sessionId))
+      .flatMap((document) => this.runIndex(document).rows)
+      .sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
+  }
+
+  async readSessionRun(
+    projectId: string,
+    sessionId: string,
+    runId: string
+  ): Promise<NotebookRunRecord | undefined> {
+    for (const document of await this.readSessionDocuments(projectId, sessionId)) {
+      const run = this.runIndex(document).byId.get(runId)
+      if (run) return run
+    }
+    return undefined
+  }
 
   constructor(private readonly storageRoot: string) {}
 

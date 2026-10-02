@@ -127,7 +127,7 @@ describe('release and scheduled workflow topology', () => {
       "${{ fromJSON((inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes') && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
     )
     expect(dependencies).toMatchObject({
-      needs: 'plan',
+      needs: ['plan', 'windows_notebook_runtime'],
       'runs-on': 'windows-latest',
       outputs: {
         artifact_id: '${{ steps.upload.outputs.artifact-id }}',
@@ -267,7 +267,7 @@ describe('release and scheduled workflow topology', () => {
       with: { 'workflow-file': 'runtime-resource-soak.yml' }
     })
     expect(soak).toMatchObject({
-      needs: 'plan',
+      needs: ['plan', 'windows_notebook_runtime'],
       if: "needs.plan.outputs.should_test == 'true' && inputs.mode != 'package-macos-arm64'",
       'runs-on': 'windows-latest',
       'timeout-minutes': 70
@@ -288,8 +288,8 @@ describe('release and scheduled workflow topology', () => {
     const nightly = workflow('nightly.yml')
     const release = workflow('release.yml')
 
-    expect(build.needs).toBe('setup')
-    expect(build.if).toBe("${{ needs.setup.result == 'success' }}")
+    expect(build.needs).toEqual(['setup'])
+    expect(build.if).toBe("${{ !cancelled() && needs.setup.result == 'success' }}")
     expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
     expect(release.jobs.publish.needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
     expect(release.jobs['notarize-mac'].needs).toEqual(['build', 'package-smoke'])
@@ -859,8 +859,8 @@ describe('build verification throughput', () => {
       "${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}"
     )
     expect(build.jobs.setup.if).toBe('${{ !inputs.verify_only }}')
-    expect(build.jobs.build.needs).toBe('setup')
-    expect(build.jobs.build.if).toBe("${{ needs.setup.result == 'success' }}")
+    expect(build.jobs.build.needs).toEqual(['setup'])
+    expect(build.jobs.build.if).toBe("${{ !cancelled() && needs.setup.result == 'success' }}")
     expect(release.jobs['package-smoke'].if).toBe('${{ !inputs.verify_only }}')
     for (const name of ['publish', 'notarize-mac']) {
       expect(release.jobs[name].if).toBe(

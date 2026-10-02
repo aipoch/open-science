@@ -1429,7 +1429,15 @@ describe('HomePage activity overview', () => {
       reason: 'the question belongs to an inactive root Branch',
       mutate: (candidate: ChatSession) => {
         const rootFrame = candidate.conversationGraph?.frames.find(({ id }) => id === 'root')
-        if (rootFrame) rootFrame.activeBranchId = 'inactive-root-branch'
+        if (rootFrame && candidate.conversationGraph) {
+          candidate.conversationGraph.branches.push({
+            id: 'inactive-root-branch',
+            agentFrameId: rootFrame.id,
+            createdAt: 1,
+            updatedAt: 1
+          })
+          rootFrame.activeBranchId = 'inactive-root-branch'
+        }
       }
     },
     {

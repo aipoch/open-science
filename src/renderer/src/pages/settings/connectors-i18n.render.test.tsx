@@ -94,6 +94,77 @@ afterEach(() => {
 
 describe('ConnectorAddForm copy', () => {
   it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
+    'renders GEO tool descriptions from the %s catalog without API-contract fallback',
+    async (locale) => {
+      await prepareI18nLocale(locale)
+      const descriptions = [
+        ['geo_get_series', 'Retrieve GEO series metadata, samples and supplementary-file links.'],
+        [
+          'geo_get_matrix_files',
+          'Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.'
+        ],
+        [
+          'geo_preflight_matrix',
+          'Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.'
+        ]
+      ] as const
+      const fallback = 'Full English API contract'
+      const t = i18next.getFixedT(locale, 'renderer')
+      act(() => {
+        root.render(
+          <div>
+            {descriptions.map(([method]) => (
+              <p key={method}>
+                {connectorToolDescription(`omics-archives/${method}`, fallback, t)}
+              </p>
+            ))}
+          </div>
+        )
+      })
+      const paragraphs = container.querySelectorAll('p')
+      expect(paragraphs).toHaveLength(descriptions.length)
+      descriptions.forEach(([method, english], index) => {
+        const translated = i18next.getResource(locale, 'renderer', english)
+        expect(typeof translated).toBe('string')
+        expect(translated).not.toBe('')
+        expect(translated).not.toBe(english)
+        expect(paragraphs[index].textContent).toBe(translated)
+        expect(
+          connectorToolDescription(`omics-archives/${method}`, fallback, i18next.getFixedT('en'))
+        ).toBe(english)
+      })
+      expect(container.textContent).not.toContain(fallback)
+    }
+  )
+
+  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
+    'localizes Monarch evidence descriptions in %s',
+    async (locale) => {
+      await prepareI18nLocale(locale)
+      const t = i18next.getFixedT(locale, 'renderer')
+      const copy =
+        'Disease and gene phenotype associations with evidence sources via Monarch Initiative.'
+      expect(connectorDescription({ id: 'monarch', description: copy }, t)).toBe(
+        i18next.getResource(locale, 'renderer', copy)
+      )
+      for (const [method, english] of [
+        [
+          'monarch_get_disease_phenotypes',
+          'Retrieve disease–phenotype associations with evidence sources and relation types.'
+        ],
+        [
+          'monarch_get_gene_phenotypes',
+          'Retrieve gene–phenotype associations with evidence sources and relation types.'
+        ]
+      ]) {
+        const translated = connectorToolDescription(`monarch/${method}`, english, t)
+        expect(translated).toBe(i18next.getResource(locale, 'renderer', english))
+        expect(translated).not.toBe(english)
+      }
+    }
+  )
+
+  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
     'renders all Alliance tool descriptions from the %s catalog without English fallback',
     async (locale) => {
       await prepareI18nLocale(locale)
@@ -276,6 +347,10 @@ describe('ConnectorAddForm copy', () => {
     const fallback = 'runtime fallback'
     const connectorCases = [
       [
+        'cellosaurus',
+        'Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.'
+      ],
+      [
         'cellxgene-discover',
         'Public collections, datasets, versions and file download links from CELLxGENE Discover.'
       ],
@@ -306,6 +381,11 @@ describe('ConnectorAddForm copy', () => {
     expect(connectorDescription({ id: 'custom', description: fallback }, t)).toBe(fallback)
 
     const toolCases = [
+      ['cellosaurus/search_cell_lines', 'Search cell lines by name or synonym.'],
+      [
+        'cellosaurus/get_cell_line',
+        'Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.'
+      ],
       ['cellxgene-discover/list_collections', 'Search public CELLxGENE Discover collections.'],
       ['cellxgene-discover/get_collection', 'Retrieve collection metadata and a page of datasets.'],
       ['cellxgene-discover/list_datasets', 'Search public single-cell datasets by metadata.'],

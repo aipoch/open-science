@@ -169,6 +169,7 @@
         "src/main/cli-install/launcher.ts",
         "src/main/composition/notebook-bridge.ts",
         "src/main/composition/settings-effects.ts",
+        "src/main/composition/settings-bootstrap.ts",
         "src/main/compute/connection-adapters.ts",
         "src/main/compute/credential-vault.ts",
         "src/main/compute/scp-runner.ts",

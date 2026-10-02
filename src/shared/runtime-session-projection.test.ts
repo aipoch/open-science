@@ -138,6 +138,92 @@ describe('runtime Session projection', () => {
     ).toMatchObject({ content: 'New settlement answer' })
   })
 
+  it('projects an unexpected ACP close as a resumable, non-reportable interruption without provider wording', () => {
+    const { session, scope } = fixture()
+    const result = applyRuntimeSessionEvents(session, scope, [
+      event('message', {
+        id: 'partial',
+        timestamp: 2,
+        messageId: 'output',
+        role: 'assistant',
+        text: 'Partial output'
+      }),
+      event('tool', {
+        id: 'tool',
+        timestamp: 3,
+        toolCallId: 'open-tool',
+        title: 'Tool',
+        status: 'in_progress'
+      }),
+      event('error', {
+        id: 'close',
+        timestamp: 4,
+        text: 'ACP connection closed',
+        providerError: false,
+        interruptionCause: 'connection-lost'
+      })
+    ])
+    expect(result.activeRun).toBeUndefined()
+    expect(result.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'connection-lost',
+      promptMessageId: scope.promptMessageId
+    })
+    expect(result.errorReportable).toBe(false)
+    expect(result.messages.find(({ id }) => id === scope.promptMessageId)?.interrupted).toBe(true)
+    expect(result.activities?.[0].status).toBe('failed')
+  })
+
+  it.each([
+    ['The attached image is invalid.', false],
+    ['unknown app invariant failed', true]
+  ])('classifies Main-authored %s independently of providerError', (text, reportable) => {
+    const { session, scope } = fixture()
+    const result = applyRuntimeSessionEvents(session, scope, [
+      event('error', { id: 'main-error', timestamp: 2, text })
+    ])
+    expect(result.errorReportable).toBe(reportable)
+  })
+
+  it('attributes a post-terminal Artifact cleanup failure without altering a newer active run', () => {
+    const { session, scope } = fixture()
+    const stopped = applyRuntimeSessionEvents(session, scope, [
+      event('stop', { id: 'stop', timestamp: 2, text: 'end_turn' })
+    ])
+    const cleanup = event('error', {
+      id: 'cleanup',
+      timestamp: 3,
+      text: 'cleanup failed',
+      artifactFailure: true
+    })
+    expect(applyRuntimeSessionEvents(stopped, scope, [cleanup]).error).toBe('cleanup failed')
+    const newer = {
+      ...stopped,
+      status: 'running' as const,
+      activeRun: { promptMessageId: 'new-prompt', startedAt: 3 }
+    }
+    const projected = applyRuntimeSessionEvents(newer, scope, [cleanup])
+    expect(projected.activeRun).toEqual(newer.activeRun)
+    expect(projected.status).toBe('running')
+  })
+
+  it('rejects a delayed live release for an older execution of the same prompt', () => {
+    const { session, scope } = fixture()
+    session.activeRun!.startedAt = 10
+    const result = applyRuntimeSessionEvents(session, scope, [
+      event('error', {
+        id: 'late',
+        timestamp: 20,
+        text: 'interrupted',
+        interruptionCause: 'terminal-commit-failed',
+        terminalCommitFailure: 'storage',
+        terminalScope: { ...scope, projectId: session.projectId, executionId: 'old', startedAt: 1 }
+      })
+    ])
+    expect(result.activeRun).toEqual(session.activeRun)
+    expect(result.status).toBe('running')
+    expect(result.messages[0].interrupted).toBeUndefined()
+  })
   it('appends partial chunks by stream, deduplicates events, and separates streams', () => {
     const { session, scope } = fixture()
     const events = [
@@ -494,9 +580,178 @@ describe('runtime Session projection', () => {
         text: 'must not revive the turn'
       })
     ])
-    expect(replayed.status).toBe('error')
+    expect(replayed.status).toBe('idle')
     expect(replayed.messages[0]).toMatchObject({ interrupted: true })
     expect(replayed.messages[1]).toMatchObject({ status: 'error', content: 'partial' })
     expect(replayed.messages).toHaveLength(2)
+  })
+})
+
+describe('Main terminal Turn Outcome attribution', () => {
+  it.each(['ordinary', 'hidden', 'application', 'plan-first'] as const)(
+    'settles the exact %s anchor',
+    (source) => {
+      const { session, scope } = fixture()
+      for (const message of [session.messages[0], session.conversationGraph!.messages[0]]) {
+        if (source === 'hidden') message.turnIntent = 'save-as-skill'
+        if (source === 'plan-first') message.turnIntent = 'plan-first'
+        if (source === 'application')
+          message.attribution = {
+            kind: 'application',
+            feature: 'background-results',
+            purpose: 'agent-result-delivery',
+            deliveryKey: 'settlement',
+            deliveryIds: ['result']
+          }
+      }
+      const completed = applyRuntimeSessionEvents(session, scope, [
+        event('stop', { id: 'done', timestamp: 4, text: 'end_turn' })
+      ])
+      expect(completed.messages[0].turnOutcome).toEqual({ kind: 'completed', settledAt: 4 })
+      expect(completed.conversationGraph?.messages[0].turnOutcome).toEqual(
+        completed.messages[0].turnOutcome
+      )
+      const failed = applyRuntimeSessionEvents(session, scope, [
+        event('error', {
+          id: 'failure',
+          timestamp: 4,
+          text: 'Provider rejected',
+          providerError: true
+        })
+      ])
+      expect(failed.messages[0].turnOutcome).toEqual({
+        kind: 'failed',
+        settledAt: 4,
+        error: 'Provider rejected',
+        errorReportable: false
+      })
+    }
+  )
+
+  it.each(['permission', 'plan', 'user-choice'] as const)(
+    'does not settle a parked %s turn',
+    (wait) => {
+      const { session, scope } = fixture()
+      session.error = 'Previous failure'
+      session.errorReportable = true
+      session.resumeRecovery = {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: scope.promptMessageId
+      }
+      if (wait === 'plan')
+        session.runtimeContext = {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'plan',
+            artifactVersionId: 'version',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            originatingPromptMessageId: scope.promptMessageId,
+            stepStatuses: {}
+          }
+        }
+      if (wait === 'permission')
+        session.runtimeContext = {
+          version: 1,
+          revision: 1,
+          permission: { state: 'pending' } as never
+        }
+      const events =
+        wait === 'user-choice'
+          ? [
+              event('tool', {
+                id: 'question',
+                timestamp: 2,
+                title: 'Question',
+                toolCallId: 'ask',
+                status: 'in_progress',
+                elicitation: {
+                  state: 'pending',
+                  durable: {
+                    kind: 'agent-user-choice',
+                    questions: [{ question: 'Choice?', options: [{ label: 'A' }, { label: 'B' }] }],
+                    sequence: 1,
+                    askedAt: 2
+                  }
+                }
+              } as never)
+            ]
+          : []
+      const waiting = applyRuntimeSessionEvents(session, scope, [
+        ...events,
+        event('stop', { id: 'stop', timestamp: 3, text: 'end_turn' })
+      ])
+      expect(waiting.messages[0].turnOutcome).toBeUndefined()
+      expect(waiting.status).toBe(
+        wait === 'permission'
+          ? 'waiting-permission'
+          : wait === 'plan'
+            ? 'waiting-plan-approval'
+            : 'waiting-for-user'
+      )
+      expect(waiting.activeRun).toBeUndefined()
+      expect(waiting.error).toBeUndefined()
+      expect(waiting.errorReportable).toBeUndefined()
+      expect(waiting.resumeRecovery).toBeUndefined()
+    }
+  )
+
+  it('records Artifact publication failure and interrupted causes on the anchored turn', () => {
+    const { session, scope } = fixture()
+    const attached = attachRuntimeSessionArtifacts(session, scope, {
+      eventId: 'artifact-reference',
+      runId: 'artifact-run',
+      timestamp: 2,
+      artifacts: [
+        {
+          id: 'pending-file',
+          projectId: session.projectId,
+          sessionId: session.id,
+          name: 'result.csv',
+          path: '/managed/session/.pending/artifact-run/result.csv',
+          fileUrl: 'file:///managed/session/.pending/artifact-run/result.csv',
+          size: 3,
+          mtimeMs: 2,
+          createdAt: '1970-01-01T00:00:00.002Z'
+        }
+      ]
+    })
+    const publication = applyRuntimeSessionEvents(attached.session, scope, [
+      event('error', {
+        id: 'artifacts',
+        timestamp: 4,
+        text: 'Artifacts failed',
+        artifactFailure: true,
+        errorReportable: false
+      })
+    ])
+    expect(publication.messages[0].turnOutcome).toMatchObject({
+      kind: 'failed',
+      recovery: 'retry-artifact-publication',
+      errorReportable: false
+    })
+    const cleanup = applyRuntimeSessionEvents(session, scope, [
+      event('error', {
+        id: 'cleanup',
+        timestamp: 4,
+        text: 'Artifact cleanup failed',
+        artifactFailure: true
+      })
+    ])
+    expect(cleanup.messages[0].turnOutcome).toMatchObject({ kind: 'failed' })
+    expect(cleanup.messages[0].turnOutcome).not.toHaveProperty('recovery')
+    for (const cause of ['app-restart', 'connection-lost', 'terminal-commit-failed'] as const) {
+      const interrupted = applyRuntimeSessionEvents(session, scope, [
+        event('error', { id: cause, timestamp: 4, text: 'Interrupted', interruptionCause: cause })
+      ])
+      expect(interrupted.messages[0].turnOutcome).toMatchObject({
+        kind: 'interrupted',
+        cause,
+        recovery: 'resume',
+        errorReportable: false
+      })
+    }
   })
 })

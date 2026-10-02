@@ -1274,47 +1274,79 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].requestRetirement).toHaveBeenCalledOnce()
   })
 
-  it('refreshes Shell capabilities across default and explicit targets before the next prompt', async () => {
-    const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
-      const fake = createFakeRuntime({
-        frameworkId: target?.frameworkId ?? 'claude-code',
-        sessionIds: [`session-${created.length}`],
-        callbacks
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'refreshes Shell capabilities in both directions for %s conversations',
+    async (frameworkId) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+        const fake = createFakeRuntime({
+          frameworkId: target?.frameworkId ?? frameworkId,
+          sessionIds: [`session-${created.length}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
       })
-      created.push(fake)
-      return fake.runtime
-    })
-    const explicitTarget: AcpSessionAgentTarget = {
-      frameworkId: 'opencode',
-      providerId: 'provider-explicit',
-      model: 'model-explicit',
-      reasoningEffort: 'high'
+      const explicitTarget: AcpSessionAgentTarget = {
+        frameworkId,
+        providerId: 'provider-explicit',
+        model: 'model-explicit',
+        reasoningEffort: 'high'
+      }
+      const defaultSession = await coordinator.createSession()
+      const explicitSession = await coordinator.createSession({ agentTarget: explicitTarget })
+
+      await coordinator.requestShellCapabilityRefresh()
+
+      expect(created[0].requestRetirement).toHaveBeenCalledOnce()
+      expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+      await coordinator.resumeSession({
+        sessionId: defaultSession.sessionId,
+        cwd: '/workspace'
+      })
+      await coordinator.resumeSession({
+        sessionId: explicitSession.sessionId,
+        cwd: '/workspace',
+        agentTarget: explicitTarget
+      })
+      await coordinator.sendPrompt({
+        sessionId: defaultSession.sessionId,
+        text: 'next default turn'
+      })
+      await coordinator.sendPrompt({
+        sessionId: explicitSession.sessionId,
+        text: 'next pinned turn'
+      })
+
+      expect(created[0].sendPrompt).not.toHaveBeenCalled()
+      expect(created[1].sendPrompt).not.toHaveBeenCalled()
+      expect(created[2].sendPrompt).toHaveBeenCalledOnce()
+      expect(created[3].sendPrompt).toHaveBeenCalledOnce()
+
+      // Switching back refreshes the same conversations again rather than restoring a stale owner.
+      await coordinator.requestShellCapabilityRefresh()
+      expect(created[2].requestRetirement).toHaveBeenCalledOnce()
+      expect(created[3].requestRetirement).toHaveBeenCalledOnce()
+      await coordinator.resumeSession({ sessionId: defaultSession.sessionId, cwd: '/workspace' })
+      await coordinator.resumeSession({
+        sessionId: explicitSession.sessionId,
+        cwd: '/workspace',
+        agentTarget: explicitTarget
+      })
+      await coordinator.sendPrompt({
+        sessionId: defaultSession.sessionId,
+        text: 'after switching back'
+      })
+      await coordinator.sendPrompt({
+        sessionId: explicitSession.sessionId,
+        text: 'pinned after switching back'
+      })
+      expect(created[2].sendPrompt).toHaveBeenCalledOnce()
+      expect(created[3].sendPrompt).toHaveBeenCalledOnce()
+      expect(created[4].sendPrompt).toHaveBeenCalledOnce()
+      expect(created[5].sendPrompt).toHaveBeenCalledOnce()
     }
-    const defaultSession = await coordinator.createSession()
-    const explicitSession = await coordinator.createSession({ agentTarget: explicitTarget })
-
-    await coordinator.requestShellCapabilityRefresh()
-
-    expect(created[0].requestRetirement).toHaveBeenCalledOnce()
-    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
-    await coordinator.resumeSession({
-      sessionId: defaultSession.sessionId,
-      cwd: '/workspace'
-    })
-    await coordinator.resumeSession({
-      sessionId: explicitSession.sessionId,
-      cwd: '/workspace',
-      agentTarget: explicitTarget
-    })
-    await coordinator.sendPrompt({ sessionId: defaultSession.sessionId, text: 'next default turn' })
-    await coordinator.sendPrompt({ sessionId: explicitSession.sessionId, text: 'next pinned turn' })
-
-    expect(created[0].sendPrompt).not.toHaveBeenCalled()
-    expect(created[1].sendPrompt).not.toHaveBeenCalled()
-    expect(created[2].sendPrompt).toHaveBeenCalledOnce()
-    expect(created[3].sendPrompt).toHaveBeenCalledOnce()
-  })
+  )
 
   it('retires a generation admitted while an earlier Shell refresh is still rejecting', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []

@@ -100,7 +100,11 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/lib/session-fork.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
-      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
+      "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
+      "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
+      "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -21,10 +21,16 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
-import { SESSION_SIZE_LIMIT_ERROR_CODE } from '../../../../shared/session-persistence'
+import {
+  SESSION_SIZE_LIMIT_ERROR_CODE,
+  type PersistedChatSession,
+  type SaveSessionOptions
+} from '../../../../shared/session-persistence'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
+import { pendingSessionConversationCommands } from '../../stores/session-conversation-intents'
 import { resetDeferredArtifactEventsForTests } from './workspace-events'
 import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
+import { useWorkspaceOperationErrors } from './workspace-operation-error'
 import {
   drainWorkspaceRuntimeEventsForPersistence,
   resetWorkspaceRuntimeEventOwnerForTests
@@ -184,12 +190,26 @@ describe('workspace Agent Runtime hook contract', () => {
     resetDeferredArtifactEventsForTests()
     resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
+    useWorkspaceOperationErrors.setState({ errors: {} })
     useSettingsStore.setState(createInitialSettingsState())
     runtimeMock.current = createRuntime(createSnapshot())
     useAcpRuntimeMock.mockReset()
     useAcpRuntimeMock.mockImplementation(() => runtimeMock.current)
     window.api = {
-      acp: { getState: vi.fn().mockResolvedValue(createSnapshot()) }
+      acp: { getState: vi.fn().mockResolvedValue(createSnapshot()) },
+      // This hook contract fakes transport, but prompt preparation still crosses its durable
+      // command boundary. Acknowledge receipts as Main does before provider dispatch is allowed.
+      sessions: {
+        saveSession: vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) => ({
+          ...session,
+          runtimeConversationCommandIds: [
+            ...new Set([
+              ...(session.runtimeConversationCommandIds ?? []),
+              ...(options?.conversationCommands?.map(({ id }) => id) ?? [])
+            ])
+          ]
+        }))
+      }
     } as never
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -772,21 +792,34 @@ describe('workspace Agent Runtime hook contract', () => {
     })
     runtime.currentRuntimeEvents = () => []
     runtimeMock.current = runtime
+    // Main settles the overflow before recovery may replace provider context. The event adapter
+    // must load that authority rather than clearing its still-running renderer snapshot itself.
+    window.api.sessions.loadOne = vi.fn(async () => ({
+      ...toPersistedSession(useSessionStore.getState().sessions[0]),
+      status: 'error',
+      error: 'context overflow',
+      activeRun: undefined,
+      runtimeConversationCommandIds: pendingSessionConversationCommands('session-1').map(
+        ({ id }) => id
+      )
+    })) as never
     await render()
 
-    liveListener?.(
-      [
-        {
-          id: 'runtime-1:overflow-1',
-          timestamp: 1,
-          kind: 'error',
-          level: 'error',
-          sessionId: 'session-1',
-          recoverable: 'context-overflow',
-          text: 'context overflow'
-        }
-      ],
-      createSnapshot({ sessionIds: ['session-1'] })
+    await act(async () =>
+      liveListener?.(
+        [
+          {
+            id: 'runtime-1:overflow-1',
+            timestamp: 1,
+            kind: 'error',
+            level: 'error',
+            sessionId: 'session-1',
+            recoverable: 'context-overflow',
+            text: 'context overflow'
+          }
+        ],
+        createSnapshot({ sessionIds: ['session-1'] })
+      )
     )
 
     await vi.waitFor(() => expect(runtime.resetSessionContext).toHaveBeenCalledOnce())
@@ -814,22 +847,33 @@ describe('workspace Agent Runtime hook contract', () => {
     })
     runtime.currentRuntimeEvents = () => []
     runtimeMock.current = runtime
+    window.api.sessions.loadOne = vi.fn(async () => ({
+      ...toPersistedSession(useSessionStore.getState().sessions[0]),
+      status: 'error',
+      error: 'Internal error: OpenCode service failure',
+      activeRun: undefined,
+      runtimeConversationCommandIds: pendingSessionConversationCommands('session-1').map(
+        ({ id }) => id
+      )
+    })) as never
     await render()
 
-    liveListener?.(
-      [
-        {
-          id: 'runtime-1:session-lost-1',
-          timestamp: 1,
-          kind: 'error',
-          level: 'error',
-          sessionId: 'session-1',
-          // This is the main-process marker for OpenCode's `{ service: "session" }` failure.
-          recoverable: 'session-lost',
-          text: 'Internal error: OpenCode service failure'
-        } as AcpRuntimeEvent
-      ],
-      createSnapshot({ sessionIds: ['session-1'] })
+    await act(async () =>
+      liveListener?.(
+        [
+          {
+            id: 'runtime-1:session-lost-1',
+            timestamp: 1,
+            kind: 'error',
+            level: 'error',
+            sessionId: 'session-1',
+            // This is the main-process marker for OpenCode's `{ service: "session" }` failure.
+            recoverable: 'session-lost',
+            text: 'Internal error: OpenCode service failure'
+          } as AcpRuntimeEvent
+        ],
+        createSnapshot({ sessionIds: ['session-1'] })
+      )
     )
 
     await vi.waitFor(() => expect(runtime.resetSessionContext).toHaveBeenCalledOnce())
@@ -971,14 +1015,16 @@ describe('workspace Agent Runtime hook contract', () => {
       promptInFlightSessionIds: []
     })
     const getState = vi.fn().mockResolvedValue(reconciledSnapshot)
-    window.api = { acp: { getState } } as never
+    window.api = { ...window.api, acp: { getState } } as never
     await render()
 
     let request!: Promise<unknown>
     act(() => {
       request = latest.sendMessage({ sessionId: 'session-1', text: 'Continue' })
     })
-    await act(async () => Promise.resolve())
+    await act(async () => {
+      await vi.waitFor(() => expect(runtime.resumeSession).toHaveBeenCalledOnce())
+    })
 
     expect(runtime.resumeSession).toHaveBeenCalledOnce()
     expect(runtime.resumeSession.mock.calls[0]?.at(-2)).toEqual({
@@ -1014,7 +1060,10 @@ describe('workspace Agent Runtime hook contract', () => {
       promptInFlightSessionIds: ['session-1']
     })
     const reconcileSnapshot = vi.fn()
-    window.api = { acp: { getState: vi.fn().mockResolvedValue(legacySnapshot) } } as never
+    window.api = {
+      ...window.api,
+      acp: { getState: vi.fn().mockResolvedValue(legacySnapshot) }
+    } as never
 
     await drainWorkspaceRuntimeEventsForPersistence(undefined, reconcileSnapshot)
 
@@ -1027,7 +1076,7 @@ describe('workspace Agent Runtime hook contract', () => {
       .spyOn(useSessionStore.getState(), 'setContextUsage')
       .mockImplementation(() => order.push('durable'))
     const snapshot = createSnapshot({ revision: 2, sessionIds: ['session-1'] })
-    window.api = { acp: { getState: vi.fn().mockResolvedValue(snapshot) } } as never
+    window.api = { ...window.api, acp: { getState: vi.fn().mockResolvedValue(snapshot) } } as never
 
     await drainWorkspaceRuntimeEventsForPersistence(undefined, () => order.push('runtime'))
 
@@ -1441,6 +1490,20 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(runtime.respondToPermission).toHaveBeenCalledTimes(2)
   })
 
+  it('shows a restored permission response failure for its own Session', async () => {
+    const { runtime } = arrangeRestoredPermission()
+    runtime.respondToPermission.mockRejectedValue(new Error('Permission continuation unavailable'))
+    await render()
+
+    await act(async () => {
+      await latest.respondToPermission('permission-restored', 'allow-once')
+    })
+
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toBe(
+      'Permission continuation unavailable'
+    )
+  })
+
   it('coalesces concurrent responses for the same restored permission request', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -1693,7 +1756,10 @@ describe('workspace Agent Runtime hook contract', () => {
   it('rejects an older quit-drain rearm that resolves after a newer terminal snapshot', async () => {
     const { request, runtime } = arrangeRestoredPermission()
     const olderPull = createDeferred<AcpStateSnapshot>()
-    window.api = { acp: { getState: vi.fn().mockReturnValue(olderPull.promise) } } as never
+    window.api = {
+      ...window.api,
+      acp: { getState: vi.fn().mockReturnValue(olderPull.promise) }
+    } as never
     await render()
     await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
 

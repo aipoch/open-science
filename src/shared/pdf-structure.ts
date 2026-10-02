@@ -219,12 +219,24 @@ export const parsePdfStructureResult = (
     left.length === right.length && left.every((page, index) => page === right[index])
   const auxiliary = result.auxiliaryPages ?? []
   const requested = new Set(expected.requestedPages)
-  const figureCaptionPages = new Set(
-    result.elements
-      .filter((e) => e.kind === 'figure')
-      .flatMap((e) => e.caption?.regions.map((r) => r.page) ?? [])
-  )
   const coveredPages = [...result.requestedPages, ...auxiliary].sort((a, b) => a - b)
+  const isContinuedTableCaptionPage = (
+    element: PdfStructureResult['elements'][number],
+    page: number
+  ): boolean =>
+    element.kind === 'table' &&
+    coveredPages.includes(page + 1) &&
+    element.regions.some((region) => region.page === page + 2)
+  const captionPages = new Set(
+    result.elements.flatMap(
+      (element) =>
+        element.caption?.regions
+          .filter(
+            ({ page }) => element.kind === 'figure' || isContinuedTableCaptionPage(element, page)
+          )
+          .map(({ page }) => page) ?? []
+    )
+  )
   if (
     !samePages(result.requestedPages, expected.requestedPages) ||
     !samePages(result.processedPages, expected.requestedPages) ||
@@ -237,7 +249,7 @@ export const parsePdfStructureResult = (
         page > result.pageCount ||
         requested.has(page) ||
         (index > 0 && page <= auxiliary[index - 1]) ||
-        (!requested.has(page - 1) && !requested.has(page + 1) && !figureCaptionPages.has(page))
+        (!requested.has(page - 1) && !requested.has(page + 1) && !captionPages.has(page))
     ) ||
     result.requestedPages.some(
       (page, index, pages) => page > result.pageCount || (index > 0 && page <= pages[index - 1])
@@ -287,7 +299,9 @@ export const parsePdfStructureResult = (
       element.caption?.regions.some(
         ({ page }) =>
           !coveredPages.includes(page) ||
-          (element.kind !== 'figure' && !element.regions.some((r) => Math.abs(r.page - page) <= 1))
+          (element.kind !== 'figure' &&
+            !element.regions.some((r) => Math.abs(r.page - page) <= 1) &&
+            !isContinuedTableCaptionPage(element, page))
       )
     )
       throw new Error('PDF caption refers to an unread or unsupported source page.')
@@ -298,33 +312,47 @@ export const parsePdfStructureResult = (
   return result
 }
 
-export type ParsePdfStructureRequest = Readonly<{
-  attachmentVersionId: string
-  page: number
-  requestId: string
-}>
-export type ReadPdfStructureThumbnailRequest = Readonly<{
-  attachmentVersionId: string
-  page: number
-  extractionId: string
-  thumbnailId: string
-}>
-export type ReadCachedPdfStructureRequest = Pick<
-  ParsePdfStructureRequest,
-  'attachmentVersionId' | 'page'
->
+const managedSource = z
+  .object({
+    kind: z.literal('managed'),
+    projectId: z.string().min(1).max(200),
+    sourceKind: z.enum(['upload-version', 'artifact-version']),
+    sourceFileId: z.string().min(1).max(200),
+    sourceVersionId: z.string().min(1).max(200)
+  })
+  .strict()
 
-const sourceRequest = z.object({
+export type ManagedPdfStructureSource = z.infer<typeof managedSource>
+export type PdfStructureSource =
+  Readonly<{ attachmentVersionId: string }> | Readonly<{ source: ManagedPdfStructureSource }>
+export type ReadCachedPdfStructureRequest = PdfStructureSource & Readonly<{ page: number }>
+export type ParsePdfStructureRequest = ReadCachedPdfStructureRequest &
+  Readonly<{ requestId: string }>
+export type ReadPdfStructureThumbnailRequest = ReadCachedPdfStructureRequest &
+  Readonly<{
+    extractionId: string
+    thumbnailId: string
+  }>
+
+const literatureRequest = z.object({
   attachmentVersionId: z.string().min(1).max(200),
   page: z.number().int().positive()
 })
-export const readCachedPdfStructureRequest = sourceRequest.strict()
-export const parsePdfStructureRequest = sourceRequest
-  .extend({ requestId: z.string().uuid() })
-  .strict()
-export const readPdfStructureThumbnailRequest = sourceRequest
-  .extend({ extractionId: z.string().uuid(), thumbnailId: id })
-  .strict()
+const managedRequest = z.object({ source: managedSource, page: z.number().int().positive() })
+export const readCachedPdfStructureRequest = z.union([
+  literatureRequest.strict(),
+  managedRequest.strict()
+])
+const parseFields = { requestId: z.string().uuid() }
+export const parsePdfStructureRequest = z.union([
+  literatureRequest.extend(parseFields).strict(),
+  managedRequest.extend(parseFields).strict()
+])
+const thumbnailFields = { extractionId: z.string().uuid(), thumbnailId: id }
+export const readPdfStructureThumbnailRequest = z.union([
+  literatureRequest.extend(thumbnailFields).strict(),
+  managedRequest.extend(thumbnailFields).strict()
+])
 export const pdfStructureCommandContracts = {
   readCached: defineApplicationCommandContract(z.tuple([readCachedPdfStructureRequest]), {
     parse(value: unknown): PdfStructureResult | undefined {

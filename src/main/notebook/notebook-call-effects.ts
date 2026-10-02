@@ -385,6 +385,7 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
   ['save.image', { kind: 'write', position: 0, keywords: ['file'] }],
   ['saveWidget', { kind: 'write', position: 1, keywords: ['file'] }],
   ['sink', { kind: 'write', position: 0, keywords: ['file'], pathOptional: true }],
+  ['write', { kind: 'write', position: 1, keywords: ['file'] }],
   ['write_file', { kind: 'write', position: 1, keywords: ['file'] }],
   ['write_json', { kind: 'write', position: 1, keywords: ['path'] }],
   ['write_lines', { kind: 'write', position: 1, keywords: ['file'] }],

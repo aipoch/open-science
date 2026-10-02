@@ -1,3 +1,4 @@
+import { replayAnnotationTarget, splitReplayReferenceText } from '../../shared/replay-reference'
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId
@@ -174,12 +175,51 @@ type PackageSnapshotOptions = PackageExportOptions & {
   consumeSnapshot?: (directory: string) => Promise<void>
 }
 
+// Session links refer to local snapshots, so portable history retains their readable labels only.
+const portableMessage = <T extends PersistedChatSession['messages'][number]>(message: T): T => {
+  const clean = (text: string): string =>
+    splitReplayReferenceText(text)
+      .map((part) =>
+        part.kind === 'text' ? part.text : `${part.label} (local Session link omitted)`
+      )
+      .join('')
+  const annotations = message.annotations?.filter(
+    (annotation) => !replayAnnotationTarget(annotation)
+  )
+  const quotes =
+    message.annotations
+      ?.filter((annotation) => replayAnnotationTarget(annotation))
+      .map((annotation) => (annotation.kind === 'text' ? annotation.quote : ''))
+      .filter(Boolean) ?? []
+  return {
+    ...message,
+    content: [clean(message.content), ...quotes].filter(Boolean).join('\n\n'),
+    annotations,
+    parts: message.parts
+      ? [
+          ...message.parts.map((part) =>
+            part.type === 'text' ? { ...part, text: clean(part.text) } : part
+          ),
+          ...(quotes.length ? [{ type: 'text' as const, text: `\n\n${quotes.join('\n\n')}` }] : [])
+        ]
+      : undefined
+  }
+}
+
 // Strip only known private or auxiliary runtime metadata. Delivered Side Chat relays already live
 // in the main conversation graph and remain exportable; the auxiliary transcripts and queue do not.
 // A similarly named key inside research evidence must still be inspected and rejected when
 // sensitive, never silently removed from the evidence.
 const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSession => ({
   ...session,
+  messages: session.messages.map(portableMessage),
+  conversationGraph: session.conversationGraph
+    ? {
+        ...session.conversationGraph,
+        messages: session.conversationGraph.messages.map(portableMessage)
+      }
+    : undefined,
+  promptPreparation: undefined,
   providerSessionId: undefined,
   providerContinuityToken: undefined,
   runtimeContext: session.runtimeContext
@@ -188,7 +228,9 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
         permission: undefined,
         sideChat: undefined,
         sideChats: undefined,
-        sideChatRelays: undefined
+        sideChatRelays: undefined,
+        // Local reading links are not part of a portable Session package.
+        sessionContext: undefined
       }
     : undefined
 })
@@ -202,14 +244,16 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   const session = hasEnvelopeField ? envelope.session : envelope
   if (!isRecord(session)) return false
   if (
+    Object.hasOwn(session, 'promptPreparation') ||
     Object.hasOwn(session, 'providerSessionId') ||
     Object.hasOwn(session, 'providerContinuityToken')
   )
     return true
+  if (JSON.stringify(session).includes('session-replay:')) return true
   const runtimeContext = session.runtimeContext
   return (
     isRecord(runtimeContext) &&
-    ['permission', 'sideChat', 'sideChats', 'sideChatRelays'].some((key) =>
+    ['permission', 'sideChat', 'sideChats', 'sideChatRelays', 'sessionContext'].some((key) =>
       Object.hasOwn(runtimeContext, key)
     )
   )
@@ -493,8 +537,9 @@ export class SessionPackageService {
       request.sessionId
     )
     if (loaded.status !== 'found') throw new Error('Session not found or unreadable.')
-    const session = loaded.session
-    assertSettledHistory(session)
+    assertSettledHistory(loaded.session)
+    // Remove local selectors before collecting annotation file dependencies as well.
+    const session = withoutPrivateAuthority(loaded.session)
     if (session.packageOrigin) {
       // Forward the retained source package, never relabel locally derived hashes as original.
       const origin = await this.readOrigin(request)
@@ -616,13 +661,16 @@ export class SessionPackageService {
       )
       return withPackageCleanup(
         async () => {
-          await assertPackageCapacity(
-            staging,
-            forwarded.inventory.reduce((sum, entry) => sum + entry.sizeBytes, 0)
-          )
+          const uniqueForwardedBytes = [
+            ...new Map(forwarded.inventory.map((entry) => [entry.path, entry.sizeBytes])).values()
+          ].reduce((sum, size) => sum + size, 0)
+          await assertPackageCapacity(staging, uniqueForwardedBytes)
           await mkdir(join(staging, 'objects'))
+          const copiedPaths = new Set<string>()
           for (const entry of forwarded.inventory) {
             this.signal.throwIfAborted()
+            if (copiedPaths.has(entry.path)) continue
+            copiedPaths.add(entry.path)
             if (entry.path === 'session.json' && forwardedSessionJson) {
               await writeFile(join(staging, entry.path), forwardedSessionJson)
               continue
@@ -819,7 +867,7 @@ export class SessionPackageService {
       async () => {
         if (!options.consumeSnapshot && !options.allowSensitiveContent)
           await assertShareable(records, this.signal, 'records.json')
-        let totalBytes = metadataBytes
+        const totalBytes = metadataBytes
         const storageKeys = [
           ...new Set([
             ...nativeStorageKeys(records),
@@ -829,6 +877,10 @@ export class SessionPackageService {
           ])
         ].filter((key) => !excludedKeys.has(key))
         const sizes = new Map<string, number>()
+        // Hash before copying so equal bytes can share one object without a temporary second copy.
+        const contentIntegrity = new Map<string, { sizeBytes: number; checksum: string }>()
+        const contentOwners = new Map<string, string>()
+        let physicalContentBytes = 0
         for (const key of storageKeys) {
           await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
           const original = resolveStorageKey(this.options.storageRoot, sourceKey(key))
@@ -848,11 +900,20 @@ export class SessionPackageService {
             }
           }
           sizes.set(key, metadata.size)
+          const integrity = await digestFileWithinBudget(original, metadata.size, this.signal)
+          if (integrity.sizeBytes !== metadata.size)
+            throw new Error('The Session changed during export. Try again.')
+          contentIntegrity.set(key, integrity)
+          const contentIdentity = `${integrity.sizeBytes}:${integrity.checksum}`
+          if (!contentOwners.has(contentIdentity)) {
+            contentOwners.set(contentIdentity, key)
+            physicalContentBytes += integrity.sizeBytes
+          }
         }
         const selectedBytes = [...sizes.values()].reduce((sum, size) => sum + size, 0)
-        if (selectedBytes + totalBytes > PACKAGE_MAX_BYTES)
+        if (physicalContentBytes + totalBytes > PACKAGE_MAX_BYTES)
           throw new Error('Session package exceeds the export limit.')
-        await assertPackageCapacity(directory, selectedBytes + metadataBytes)
+        await assertPackageCapacity(directory, physicalContentBytes + metadataBytes)
         await writeFile(join(directory, 'session.json'), sessionJson)
         await writeFile(join(directory, 'records.json'), recordsJson)
         await writeFile(join(directory, 'README.md'), PACKAGE_README)
@@ -864,6 +925,11 @@ export class SessionPackageService {
         await mkdir(join(directory, 'objects'))
         let completedBytes = 0
         let completedFiles = 0
+        let deduplicated = false
+        const copiedContent = new Map<
+          string,
+          { objectPath: string; integrity: { sizeBytes: number; checksum: string } }
+        >()
         for (const storageKey of sizes.keys()) {
           assertPortablePackageStorageKey(storageKey)
           await assertPackageSourcePath(this.options.storageRoot, sourceKey(storageKey))
@@ -871,35 +937,60 @@ export class SessionPackageService {
           const metadata = await lstat(original)
           if (!metadata.isFile() || metadata.size > PACKAGE_MAX_FILE_BYTES)
             throw new Error('Invalid or oversized package source file.')
-          totalBytes += metadata.size
-          if (totalBytes > PACKAGE_MAX_BYTES || inventory.length >= 10000)
+          if (inventory.length >= 10000)
             throw new Error('Session package exceeds the export limit.')
+          const measured = contentIntegrity.get(storageKey)
+          if (!measured || measured.sizeBytes !== metadata.size)
+            throw new Error('The Session changed during export. Try again.')
+          const contentIdentity = `${measured.sizeBytes}:${measured.checksum}`
+          const existing = copiedContent.get(contentIdentity)
           const objectPath = `objects/${sha256(storageKey)}`
           const currentFile =
             selectable.find((file) => file.storageKey === storageKey)?.filename ?? storageKey
-          const copied = await copyFileWithinBudget(
-            original,
-            join(directory, objectPath),
-            metadata.size,
-            this.signal,
-            (bytes) =>
-              options.onProgress?.({
-                phase: 'copying',
-                completedBytes: completedBytes + bytes,
-                totalBytes: selectedBytes,
-                completedFiles,
-                totalFiles: sizes.size,
-                currentFile
-              })
-          )
-          completedBytes += copied.sizeBytes
-          completedFiles += 1
-          if (copied.sizeBytes !== metadata.size)
-            throw new Error('The Session changed during export. Try again.')
-          assertNoExcludedContentCopies(records, excludedFiles, [copied])
-          if (!options.consumeSnapshot && !options.allowSensitiveContent)
-            await assertShareableFile(
+          let copied: { sizeBytes: number; checksum: string }
+          let objectPathForEntry = objectPath
+          if (existing) {
+            const current = await digestFileWithinBudget(original, metadata.size, this.signal)
+            if (current.checksum !== measured.checksum || current.sizeBytes !== metadata.size)
+              throw new Error('The Session changed during export. Try again.')
+            copied = existing.integrity
+            objectPathForEntry = existing.objectPath
+            deduplicated = true
+            completedBytes += copied.sizeBytes
+            options.onProgress?.({
+              phase: 'copying',
+              completedBytes,
+              totalBytes: selectedBytes,
+              completedFiles: completedFiles + 1,
+              totalFiles: sizes.size,
+              currentFile
+            })
+          } else {
+            copied = await copyFileWithinBudget(
+              original,
               join(directory, objectPath),
+              metadata.size,
+              this.signal,
+              (bytes) =>
+                options.onProgress?.({
+                  phase: 'copying',
+                  completedBytes: completedBytes + bytes,
+                  totalBytes: selectedBytes,
+                  completedFiles,
+                  totalFiles: sizes.size,
+                  currentFile
+                })
+            )
+            if (copied.sizeBytes !== metadata.size || copied.checksum !== measured.checksum)
+              throw new Error('The Session changed during export. Try again.')
+            copiedContent.set(contentIdentity, { objectPath, integrity: copied })
+            completedBytes += copied.sizeBytes
+          }
+          completedFiles += 1
+          assertNoExcludedContentCopies(records, excludedFiles, [copied])
+          if (!existing && !options.consumeSnapshot && !options.allowSensitiveContent)
+            await assertShareableFile(
+              join(directory, objectPathForEntry),
               this.signal,
               storageKey,
               sourceKey(storageKey),
@@ -911,15 +1002,19 @@ export class SessionPackageService {
               }
             )
           inventory.push({
-            path: objectPath,
+            path: objectPathForEntry,
             kind: notebookKeys.includes(storageKey) ? 'notebook' : 'file',
             ...copied,
             storageKey
           })
         }
+        const requiredFeatures = [
+          ...(records.literature ? (['literature'] as const) : []),
+          ...(deduplicated ? (['content-dedupe'] as const) : [])
+        ]
         const manifest: SessionPackageManifest = {
           format: 'open-science-session',
-          ...(records.literature ? { requiredFeatures: ['literature' as const] } : {}),
+          ...(requiredFeatures.length ? { requiredFeatures } : {}),
           schemaVersion: 1,
           createdAt: Date.now(),
           source: { ...request, projectName: project.name, title: session.title },
@@ -1233,6 +1328,8 @@ export class SessionPackageService {
           ? {
               ...mappedSession.runtimeContext,
               sideChatRelays: undefined,
+              // Local reading links are not part of a portable Session package.
+              sessionContext: undefined,
               plan: mappedSession.runtimeContext.plan
                 ? { ...mappedSession.runtimeContext.plan, delivery: undefined }
                 : undefined

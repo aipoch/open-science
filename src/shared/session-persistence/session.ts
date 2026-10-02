@@ -33,6 +33,34 @@ export type PersistedSessionResumeRecovery = {
   promptMessageId?: string
 }
 
+// Main's exact, not-yet-admitted preparation. This is ownership evidence, not conversation history.
+export type PersistedPromptPreparation = {
+  id: string
+  projectId: string
+  sessionId: string
+  promptMessageId: string
+  mode: 'new' | 'resume' | 'rearm'
+  preparedAt: number
+  runStartedAt?: number
+  expectedState: PersistedPromptPreparation['previousState']
+  previousState: {
+    status: PersistedSessionStatus
+    error?: string
+    errorReportable?: boolean
+    resumeRecovery?: PersistedSessionResumeRecovery
+  }
+  // Immutable Main-owned display evidence written on every prepare-prompt (new send, Resume,
+  // edit or rearm): the original Branch's notice state before the preparation changes it. Keeps
+  // the prior notice and Resume visible until admission; never used for rollback or restart
+  // execution, where previousState retains those meanings.
+  noticeBaseline?: {
+    messageBranchId: string
+    // Absent only for a legacy recovery with no original user anchor.
+    promptMessageId?: string
+    state: PersistedPromptPreparation['previousState']
+  }
+}
+
 export type PersistedPendingHistoryReplay =
   { kind: 'all' } | { kind: 'before-message'; messageId: string }
 
@@ -141,6 +169,8 @@ export type PersistedRuntimeSessionAdmission = {
 }
 
 export type PersistedChatSession = {
+  // Main-only transient read projection. Never accepted from callers or encoded in Session JSON.
+  recordProblems?: readonly import('./attention').SessionRecordProblem[]
   // Imported history has no execution authority. Absence preserves existing local Session behavior.
   packageOrigin?: import('../session-package').SessionPackageOrigin
   // Copy receipt and recovery identity; unlike packageOrigin this grants no read-only status.
@@ -232,6 +262,7 @@ export type PersistedChatSession = {
   activities?: PersistedToolActivity[]
   activityGroups?: PersistedActivityGroup[]
   activeRun?: PersistedActiveRun
+  promptPreparation?: PersistedPromptPreparation
   // Main-owned witness for the latest terminal Task Run whose Session projection was committed.
   // Historical files omit it; Task Run recovery then fails closed.
   taskRunCommitId?: string
@@ -282,6 +313,8 @@ export type SessionSummary = Readonly<{
   title: string
   status: PersistedSessionStatus
   presentedStatus: PersistedSessionStatus
+  // Transient Main facts; the SQLite schema remains unchanged.
+  recordProblems?: readonly import('./attention').SessionRecordProblem[]
   pinned: boolean
   archivedAt?: number
   revision: number

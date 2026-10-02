@@ -17,6 +17,9 @@ files:
   - '!.claude{,/**/*}'
   - '!.codex{,/**/*}'
   - '!**/{.worktree,.worktrees,.codegraph,.agents}{,/**/*}'
+  # Runtime source builds, diagnostic traces and internal plans are local-only artifacts.
+  - '!tmp{,/**/*}'
+  - '!docs/internal{,/**/*}'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'

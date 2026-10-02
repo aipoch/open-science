@@ -8,11 +8,482 @@ import {
 } from './literature-pdf-source-records.mjs'
 import { union, rebaseTableCrop } from './literature-pdf-table-geometry.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+import { recoverRuledBodyRecords } from './literature-pdf-ruled-body-records.mjs'
+
+// Complete cohort estimates anchor a record even when selected lanes wrap the
+// SD/CI on the next baseline. Only an exact parenthesized numeric suffix can
+// extend a scalar in that same lane; later measured stubs remain independent.
+export function recoverWrappedCohortStatistics(table, items, captions, rules) {
+  if (!captions.some((c) => /^Table\s*\d/i.test(c.lines?.[0] ?? ''))) return
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (![4, 7].includes(columns.length)) return
+  const [left, top, right, bottom] = table.cropRect,
+    cuts = [
+      left,
+      ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+      right
+    ]
+  const source = tableSourceItems(items, table.cropRect),
+    h = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  if (!(h > 0)) return
+  const all = joinHorizontalTableRules(rules).filter(
+    (r) =>
+      Math.abs(r[0] - left) < h * 1.5 &&
+      Math.abs(r[2] - right) < h * 1.5 &&
+      r[1] >= top &&
+      r[1] <= bottom
+  )
+  const borders = []
+  for (const r of all) {
+    const prior = borders.at(-1)
+    if (
+      prior &&
+      r[1] - prior[1] < h * 0.1 &&
+      Math.abs(r[0] - prior[0]) < 0.01 &&
+      Math.abs(r[2] - prior[2]) < 0.01
+    )
+      borders[borders.length - 1] = r
+    else borders.push(r)
+  }
+  if (borders.length !== 3 || borders[1][1] - borders[0][1] > h * 7) return
+  const header = source.filter((i) => i.rect[3] <= borders[1][1]),
+    body = source.filter((i) => !header.includes(i))
+  if (body.some((i) => i.rect[1] < borders[1][1] || i.rect[3] > borders[2][1])) return
+  const samples = header.filter((i) => /\bn(?:\s*=\s*\d+\))?$/i.test(i.text.trim())).length
+  if (
+    samples < (columns.length === 4 ? 3 : 2) ||
+    !header.some((i) => /mean\s*\(\s*(?:sd|ci)/i.test(i.text))
+  )
+    return
+  const compact = (s) => s.replace(/\s/g, ''),
+    scalar = (s) => /^[−+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(compact(s))
+  const numeric = (s) => /^(?:[−+-]?(?:\d|\.\d)[\d.,()%–−+\s/-]*[a-d]*|[-–—])$/.test(compact(s))
+  const groups = groupSourceRowsWithScripts(body, h, 0.35)
+  if (!groups) return
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const records = [],
+    sections = [],
+    owned = [...header]
+  let measured = 0,
+    wrapped = 0
+  for (const g of groups) {
+    const v = readSourceRow(g, cuts),
+      data = g.filter((i) => col(i) > 0)
+    if (
+      v &&
+      v.slice(1).filter(Boolean).length >= (columns.length === 4 ? 3 : 4) &&
+      v.slice(1).every((s) => !s || numeric(s))
+    ) {
+      if (!v[0] || !/\p{L}/u.test(v[0])) return
+      records.push([...g])
+      owned.push(...g)
+      measured++
+      continue
+    }
+    const previous = records.at(-1),
+      p = previous && readSourceRow(previous, cuts, { multiline: true })
+    if (
+      v &&
+      data.length &&
+      previous &&
+      p &&
+      v
+        .slice(1)
+        .every((s, c) => !s || (/^\([\d.,–−+\s-]+\)$/.test(compact(s)) && scalar(p[c + 1]))) &&
+      v.slice(1).some(Boolean)
+    ) {
+      const label = g.filter((i) => col(i) === 0),
+        priorLabel = previous.filter((i) => col(i) === 0)
+      const stub = priorLabel.map((i) => i.text).join(' ')
+      if (label.length && !/[,/]$/.test(stub.trim())) return
+      const unitWitness =
+        label.length === 1 &&
+        /^[\p{L}]+$/u.test(label[0].text) &&
+        groups.filter((peer, n) => {
+          const tail = peer.filter((i) => col(i) === 0),
+            head = groups[n - 1],
+            hv = head && readSourceRow(head, cuts)
+          const headLabel = head?.filter((i) => col(i) === 0)
+          return (
+            tail.length === 1 &&
+            tail[0].text === label[0].text &&
+            headLabel?.length &&
+            hv?.slice(1).every(numeric) &&
+            /[,/]$/.test(
+              headLabel
+                .map((i) => i.text)
+                .join(' ')
+                .trim()
+            ) &&
+            Math.abs(tail[0].rect[0] - label[0].rect[0]) < h * 0.1 &&
+            Math.abs(tail[0].baseline - head[0].baseline - (g[0].baseline - previous[0].baseline)) <
+              h * 0.1
+          )
+        }).length >= 2
+      if (
+        label.some(
+          (i) =>
+            Math.abs(i.rect[0] - Math.min(...priorLabel.map((t) => t.rect[0]))) >
+            h * (unitWitness ? 1.5 : 0.1)
+        ) ||
+        g[0].baseline - Math.max(...previous.map((i) => i.baseline)) > h * 1.5 ||
+        rules.some(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] > Math.max(...previous.map((i) => i.baseline)) &&
+            r[1] < g[0].baseline
+        )
+      )
+        return
+      previous.push(...g)
+      owned.push(...g)
+      wrapped++
+      continue
+    }
+    if (g.every((i) => /\p{L}/u.test(i.text) || i.height < h * 0.8)) {
+      sections.push(records.length)
+      records.push([...g])
+      owned.push(...g)
+      continue
+    }
+    return
+  }
+  if (
+    measured < 8 ||
+    wrapped < (columns.length === 4 ? 4 : 1) ||
+    !hasUniqueRecordTokens(source, [owned])
+  )
+    return
+  let head = recoverRuledHeaderBands(header, cuts, rules, borders[0][1], borders[1][1])
+  if (!head) return
+  if (columns.length === 4) {
+    const unit = header.filter((i) => /Mean\s*\(SD\)\s*\/\s*n\s*\(%\)/i.test(i.text))
+    if (unit.length !== 1) return
+    const u = unit[0],
+      above = header.filter(
+        (i) => i !== u && !(i.height < h * 0.8 && Math.abs(i.baseline - u.baseline) < h)
+      ),
+      line = joinHorizontalTableRules(rules).filter(
+        (r) =>
+          r[1] > Math.max(...above.map((i) => i.rect[3])) &&
+          r[1] < u.rect[1] + h * 0.2 &&
+          r[0] >= cuts[1] - h * 3 &&
+          r[2] >= right - h
+      )
+    if (line.length !== 1) return
+    head = {
+      rows: [
+        [left, borders[0][1], right, line[0][1]],
+        [left, line[0][1], right, borders[1][1]]
+      ],
+      spans: [{ row: 1, column: 1, rowSpan: 1, colSpan: 3 }]
+    }
+  }
+  const bounds = records.map(union),
+    rows = [
+      ...head.rows,
+      ...bounds.map((r, n) => [
+        left,
+        n ? (bounds[n - 1][3] + r[1]) / 2 : borders[1][1],
+        right,
+        n + 1 < bounds.length ? (r[3] + bounds[n + 1][1]) / 2 : borders[2][1]
+      ])
+    ]
+  if (
+    records.some((g, n) =>
+      g.some(
+        (i) =>
+          i.rect[1] < rows[n + head.rows.length][1] || i.rect[3] > rows[n + head.rows.length][3]
+      )
+    )
+  )
+    return
+  return {
+    cropRect: [...table.cropRect],
+    rows,
+    columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
+    headerRows: head.rows.map((_, n) => n),
+    spans: [
+      ...head.spans,
+      ...sections.map((r) => ({
+        row: r + head.rows.length,
+        column: 0,
+        rowSpan: 1,
+        colSpan: columns.length
+      }))
+    ],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    repair: 'native-body-records-recovered'
+  }
+}
+
+// Repeated three-arm resource records independently locate a long shared stub.
+// Its two native baselines can overlap two arm rows; the model span's starting
+// row must not move the label onto an earlier arm in the preceding cycle.
+export function recoverResourceCohortRecords(table, items, captions, rules) {
+  if (!captions.some((c) => /^Table\s*\d/i.test(c.lines?.[0] ?? ''))) return
+  const predicted = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length !== 6) return
+  const [left, top, right, bottom] = table.cropRect
+  const cuts = [
+    left,
+    ...predicted.slice(1).map((c, n) => left + (predicted[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const source = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.rect[0] >= left &&
+      i.rect[2] <= right &&
+      i.rect[1] >= top &&
+      i.rect[3] <= bottom
+  )
+  const h = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  if (!(h > 0)) return
+  const groups = groupSourceRowsWithScripts(
+    source.slice().sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+    h,
+    0.35
+  )
+  if (!groups) return
+  const values = groups.map((g) => readSourceRow(g, cuts))
+  const header = values.findIndex(
+    (v) =>
+      v &&
+      /^Groups?$/i.test(v[1]) &&
+      v[2] === 'N' &&
+      /^Mean\s*\(SD\)\s*\/\s*Median$/i.test(v[3]) &&
+      /^Min$/i.test(v[4]) &&
+      /^Max$/i.test(v[5])
+  )
+  if (header !== 0) return
+  const frame = joinHorizontalTableRules(rules).filter(
+    (r) => Math.abs(r[0] - left) <= h * 1.5 && Math.abs(r[2] - right) <= h * 1.5
+  )
+  const upper = frame.filter(
+    (r) => r[1] <= union(groups[0])[1] + h * 0.2 && union(groups[0])[1] - r[1] < h
+  )
+  const lower = frame.filter(
+    (r) => r[1] >= union(groups.at(-1))[3] && r[1] - union(groups.at(-1))[3] < h * 2.5
+  )
+  if (upper.length !== 1 || lower.length !== 1 || lower[0][1] - bottom > h * 2) return
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const number = (s) => /^\d[\d.,()/%\s–−+-]*$/.test(s)
+  const arms = groups.slice(1).filter((g, n) => values[n + 1]?.[1])
+  if (arms.length < 9 || arms.length % 3) return
+  const sequence = arms.slice(0, 3).map((g) => readSourceRow(g, cuts)[1])
+  if (new Set(sequence).size !== 3 || sequence.some((s) => !/^\p{L}[\p{L}\s-]*$/u.test(s))) return
+  const records = [{ members: groups[0], header: true }],
+    spans = [],
+    owned = [...groups[0]]
+  let wrapped = 0
+  for (let n = 0; n < arms.length; n += 3) {
+    const cycle = arms.slice(n, n + 3),
+      first = groups.indexOf(cycle[0]),
+      last = groups.indexOf(cycle[2])
+    const preceding = groups.slice(n ? groups.indexOf(arms[n - 1]) + 1 : 1, first)
+    for (const g of preceding) {
+      if (g.some((i) => col(i) !== 0) || !/\p{L}/u.test(g.map((i) => i.text).join(' '))) return
+      spans.push({ row: records.length, column: 0, rowSpan: 1, colSpan: 6 })
+      records.push({ members: g })
+      owned.push(...g)
+    }
+    const members = groups.slice(first, last + 1).flat(),
+      labels = members.filter((i) => col(i) === 0)
+    if (!labels.length || !labels.every((i) => /\p{L}/u.test(i.text))) return
+    const primaryLabels = labels.filter((i) => i.height >= h * 0.8)
+    if (!primaryLabels.length) return
+    const baseline = Math.min(...primaryLabels.map((i) => i.baseline))
+    if (
+      Math.abs(baseline - cycle[0][0].baseline) > h * 0.35 ||
+      primaryLabels.some((i) => i.baseline > cycle[1][0].baseline + h * 0.35)
+    )
+      return
+    if (new Set(primaryLabels.map((i) => Math.round(i.baseline))).size > 1) wrapped++
+    const row = records.length
+    for (let arm = 0; arm < 3; arm++) {
+      const g = cycle[arm],
+        v = readSourceRow(g, cuts)
+      if (
+        !v ||
+        v[1] !== sequence[arm] ||
+        !/^\d+$/.test(v[2]) ||
+        v.slice(3).some((s) => s && !number(s))
+      )
+        return
+      const data = g.filter((i) => col(i) > 0)
+      if (
+        data.some((i) => Math.abs(i.baseline - g[0].baseline) > h * 0.35) ||
+        (arm && g[0].baseline - cycle[arm - 1][0].baseline > h * 1.7)
+      )
+        return
+      records.push({ members: arm ? data : [...labels, ...data] })
+    }
+    const body = members.filter((i) => col(i) > 0)
+    if (body.some((i) => !cycle.some((g) => g.includes(i)))) return
+    spans.push({ row, column: 0, rowSpan: 3, colSpan: 1 })
+    owned.push(...members)
+  }
+  if (!wrapped || !hasUniqueRecordTokens(source, [owned])) return
+  const tail = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.rect[0] >= left &&
+      i.rect[2] <= right &&
+      i.rect[1] >= top &&
+      i.rect[3] <= lower[0][1] + 0.5 &&
+      !source.includes(i)
+  )
+  if (tail.length) return
+  const bounds = records.map((r) => union(r.members)),
+    rows = bounds.map((r, n) => [
+      left,
+      n ? (bounds[n - 1][3] + r[1]) / 2 : r[1],
+      right,
+      n + 1 < bounds.length ? (r[3] + bounds[n + 1][1]) / 2 : r[3]
+    ])
+  // Shared labels overlap arm baselines; row geometry follows the independent
+  // data baselines while the source label belongs only to its three-row span.
+  for (let n = 1; n < records.length; n++) {
+    const data = records[n].members.filter((i) => col(i) > 0)
+    if (data.length) {
+      const r = union(data)
+      rows[n][1] = r[1]
+      rows[n][3] = r[3]
+    }
+  }
+  return {
+    cropRect: [left, top, right, Math.max(bottom, lower[0][1] + 0.5)],
+    rows,
+    columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, Math.max(bottom, lower[0][1] + 0.5)]),
+    headerRows: [0],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(owned),
+    repair: 'native-body-records-recovered'
+  }
+}
+
+// An already detected five-lane count table can clip just the ends of its
+// native frame. Three sample-qualified header lanes, an independent P lane,
+// complete count records and separately ruled sections establish ownership;
+// only empty border padding is recovered, without rebuilding rows or spans.
+export function recoverCountHeaderFrameCrop(table, items, rules) {
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  const headers = table.structure.objects.filter((o) => o.label === 'table column header')
+  if (columns.length !== 5 || headers.length !== 1) return
+  const source = tableSourceItems(items, table.cropRect)
+  if (!source.length) return
+  const h = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  if (!(h > 0)) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const header = source.filter((i) => i.rect[3] <= top + headers[0].rect[3])
+  const body = source.filter((i) => !header.includes(i))
+  // A sample parenthesis can overhang an otherwise stable model gutter by a
+  // fraction of the font box. This proof only pads the outer frame: retain
+  // the original body cuts and permit no header overhang beyond one tenth em.
+  const headerLanes = cuts.slice(1).map(() => [])
+  for (const i of header) {
+    const c = cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+    if (c < 0 || i.rect[0] < cuts[c] - h * 0.1 || i.rect[2] > cuts[c + 1] + h * 0.1) return
+    headerLanes[c].push(i)
+  }
+  const head = headerLanes.map((lane) =>
+    lane
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '')
+  )
+  if (
+    !head ||
+    !head[0] ||
+    ![1, 2, 4].every((c) => /\(n=\d+\)/i.test(head[c])) ||
+    !/^p[- ]?value/i.test(head[3])
+  )
+    return
+  if ((head.join('').match(/\(n=\d+\)/gi) ?? []).length !== 3) return
+  const groups = groupSourceRowsWithScripts(body, h, 0.3)
+  if (!groups || !hasUniqueRecordTokens(source, [header, ...groups])) return
+  const horizontal = joinHorizontalTableRules(rules).filter(
+    (r) =>
+      Math.abs(r[0] - left) <= h * 0.5 &&
+      Math.abs(r[2] - right) <= h * 0.5 &&
+      r[1] >= top &&
+      r[1] <= bottom + h * 0.5
+  )
+  const first = Math.min(...header.map((i) => i.rect[1]))
+  const last = Math.max(...body.map((i) => i.rect[3]))
+  const opening = horizontal.filter((r) => Math.abs(r[1] - first) <= h * 0.5)
+  const closing = horizontal.filter((r) => r[1] >= last && r[1] - last <= h * 2)
+  if (opening.length !== 1 || closing.length !== 1 || horizontal.length < 4) return
+  if (
+    Math.abs(opening[0][0] - closing[0][0]) > 0.5 ||
+    Math.abs(opening[0][2] - closing[0][2]) > 0.5
+  )
+    return
+  if (
+    horizontal.some(
+      (r) => Math.abs(r[0] - opening[0][0]) > 0.5 || Math.abs(r[2] - opening[0][2]) > 0.5
+    )
+  )
+    return
+  const headerBottom = Math.max(...header.map((i) => i.rect[3]))
+  const bodyTop = Math.min(...body.map((i) => i.rect[1]))
+  if (horizontal.filter((r) => r[1] >= headerBottom && r[1] <= bodyTop + h * 0.25).length !== 1)
+    return
+  let sections = 0,
+    paired = 0
+  for (const g of groups) {
+    const v = readSourceRow(g, cuts)
+    if (!v || !v[0] || !/^(?:0?\.\d+|1(?:\.0+)?)?$/.test(v[3])) return
+    if ([1, 2, 4].every((c) => !v[c])) {
+      if (!/\p{L}/u.test(v[0]) || !horizontal.some((r) => Math.abs(r[1] - union(g)[1]) <= h * 0.25))
+        return
+      sections++
+    } else {
+      if (![1, 2, 4].every((c) => !v[c] || /^\d+\(\d+(?:\.\d+)?%\)$/.test(v[c]))) return
+      if ([1, 2, 4].every((c) => v[c])) paired++
+    }
+  }
+  if (sections < 2 || paired < 4) return
+  const frame = [
+    left,
+    top,
+    Math.max(right, closing[0][2] + 0.5),
+    Math.max(bottom, closing[0][1] + 0.5)
+  ]
+  const introduced = items.some(
+    (i) =>
+      i.horizontal &&
+      i.rect[0] < frame[2] &&
+      i.rect[2] > frame[0] &&
+      i.rect[1] < frame[3] &&
+      i.rect[3] > frame[1] &&
+      !source.includes(i)
+  )
+  if (introduced) return
+  return frame
+}
 
 // A cohort comparison may change from mean/deviation records to count/percent
 // records, adding a total column only in the second section. Explicit repeated
 // units and additive counts distinguish the two local header roles.
 export function recoverMixedCohortSummaries(table, items) {
+  const compact = recoverCompactCohortCountFields(table, items)
+  if (compact) return compact
   const [left, top, right, bottom] = table.cropRect
   const columns = table.structure.objects
     .filter((o) => o.label === 'table column')
@@ -155,9 +626,69 @@ export function recoverMixedCohortSummaries(table, items) {
   }
 }
 
+// Two sample-qualified cohort headings own the complete count/percent field.
+// Independent N and % leaf headings do not satisfy this proof.
+function recoverCompactCohortCountFields(table, items) {
+  if (table.structure.objects.filter((o) => o.label === 'table column').length !== 6) return
+  const [left, top, right, bottom] = table.cropRect
+  const source = tableSourceItems(items, table.cropRect)
+  if (!source.length) return
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  const groups = groupSourceRowsWithScripts(source, height, 0.3)
+  if (!groups || groups.length < 4) return
+  const head = groups[0].slice().sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    head.length !== 4 ||
+    !/\p{L}/u.test(head[0].text) ||
+    !head.slice(1, 3).every((i) => /\p{L}.*\(\s*n\s*=\s*\d+\s*\)/iu.test(i.text)) ||
+    !/^p(?:-?value)?$/i.test(head[3].text.replace(/\s/g, ''))
+  )
+    return
+  const cuts = [left, ...head.slice(1).map((i, n) => (head[n].rect[2] + i.rect[0]) / 2), right]
+  const stub = source.filter((i) => i.rect[0] < head[1].rect[0])
+  const stubEnd = Math.max(...stub.map((i) => i.rect[2]))
+  if (stubEnd >= head[1].rect[0]) return
+  cuts[1] = (stubEnd + head[1].rect[0]) / 2
+  if (cuts.some((x, n) => n && x <= cuts[n - 1])) return
+  const values = groups.map((g) => readSourceRow(g, cuts))
+  if (values.some((v) => !v)) return
+  const numeric = (s) =>
+    /^(?:[<>≤≥]?\d+(?:\.\d+)?|\.\d+)(?:\((?:\d+(?:\.\d+)?%|\d+(?:\.\d+)?[–−-]\d+(?:\.\d+)?)\))?$/.test(
+      s
+    )
+  const count = (s) => /^\d+\(\d+(?:\.\d+)?%\)$/.test(s)
+  let paired = 0
+  const sections = []
+  for (let n = 1; n < groups.length; n++) {
+    const v = values[n]
+    if (!/\p{L}/u.test(v[0]) || !v.slice(1).every((s) => !s || numeric(s))) return
+    if (!v[1] && !v[2]) sections.push(n)
+    if (count(v[1]) && count(v[2])) paired++
+  }
+  if (paired < 2 || !hasUniqueRecordTokens(source, groups)) return
+  const bounds = groups.map(union)
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  return {
+    rows: bounds.map((r) => [left, r[1], right, r[3]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans: sections.map((row) => ({ row, column: 0, rowSpan: 1, colSpan: values[row][3] ? 3 : 4 })),
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
 // Dense count/percentage cohorts distinguish native section labels from empty
 // model bands. The same columns may carry one interval summary per cohort.
 export function recoverClinicalCountSections(table, items, rules) {
+  const wrappedRisk = recoverWrappedRiskRatioSections(table, items, rules)
+  if (wrappedRisk) return wrappedRisk
+  const continuation = recoverRuledContinuationCounts(table, items, rules)
+  if (continuation) return continuation
+  const intervalSections = recoverSharedIntervalSections(table, items, rules)
+  if (intervalSections) return intervalSections
+  const physical = recoverRuledBodyRecords(table, items, rules)
+  if (physical) return { ...physical, repair: 'native-body-records-recovered' }
   const nested = recoverNestedCountSummaries(table, items, rules)
   if (nested) return nested
   const centered = recoverCenteredCohortSections(table, items, rules)
@@ -335,10 +866,193 @@ export function recoverClinicalCountSections(table, items, rules) {
   }
 }
 
+// A closed continuation has three repeated count/percent fields and an
+// independent probability field. Native section rules and complete records
+// establish the two split model fields without borrowing a missing header.
+export function recoverRuledContinuationCounts(table, items, rules) {
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 7) return
+  const [left, , right] = table.cropRect
+  const source = tableSourceItems(items, table.cropRect)
+  if (!source.length) return
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  const horizontal = joinHorizontalTableRules(rules).filter(
+    (r) => Math.abs(r[0] - left) <= height && r[2] >= right - height && r[2] - right <= height * 4
+  )
+  const firstTop = Math.min(...source.map((i) => i.rect[1]))
+  const lastBottom = Math.max(...source.map((i) => i.rect[3]))
+  const opening = horizontal.find((r) => Math.abs(r[1] - firstTop) <= height * 0.5)
+  const closing = horizontal.find((r) => r[1] >= lastBottom && r[1] - lastBottom <= height * 2)
+  if (
+    horizontal.length < 4 ||
+    !opening ||
+    !closing ||
+    Math.abs(opening[0] - closing[0]) > height * 0.5 ||
+    Math.abs(opening[2] - closing[2]) > height * 0.5
+  )
+    return
+  const original = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const cuts = [original[0], original[1], original[3], original[4], original[5], original[7]]
+  const groups = groupSourceRowsWithScripts(source, height, 0.3)
+  if (!groups || groups.length < 9) return
+  const values = groups.map((g) => readSourceRow(g, cuts))
+  if (values.some((v) => !v)) return
+  const count = (s) => /^\d+(?:\(\d+(?:\.\d+)?%\))?$/.test(s)
+  const probability = (s) => /^(?:0?\.\d+|1(?:\.0+)?)$/.test(s)
+  const sections = []
+  let paired = 0
+  for (let n = 0; n < groups.length; n++) {
+    const v = values[n]
+    if (!v[0] || !v.slice(1).every((s, c) => !s || (c === 2 ? probability(s) : count(s)))) return
+    if (!v[1] && !v[2] && !v[4]) {
+      const r = union(groups[n])
+      if (
+        !/\p{L}/u.test(v[0]) ||
+        !horizontal.some((line) => Math.abs(r[1] - line[1]) <= height * 0.5)
+      )
+        return
+      sections.push(n)
+    } else if ([1, 2, 4].every((c) => /^\d+\(\d+(?:\.\d+)?%\)$/.test(v[c]))) paired++
+  }
+  if (
+    sections.length < 3 ||
+    sections[0] !== 0 ||
+    paired < 5 ||
+    !hasUniqueRecordTokens(source, groups)
+  )
+    return
+  const bounds = groups.map(union)
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  const frame = [
+    Math.max(0, opening[0] - 0.5),
+    Math.max(0, Math.min(opening[1], firstTop) - 0.5),
+    closing[2] + 0.5,
+    closing[1] + 0.5
+  ]
+  const framedSource = tableSourceItems(items, frame)
+  if (framedSource.length !== source.length || framedSource.some((i) => !source.includes(i))) return
+  cuts[0] = frame[0]
+  cuts[cuts.length - 1] = frame[2]
+  return {
+    repair: 'native-body-records-recovered',
+    cropRect: frame,
+    rows: bounds.map((r) => [frame[0], r[1], frame[2], r[3]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], frame[1], x, frame[3]]),
+    spans: sections.map((row) => ({ row, column: 0, rowSpan: 1, colSpan: values[row][3] ? 3 : 5 })),
+    headerRows: [],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Three native borders, a shared CI heading and consecutive lettered sections
+// prove a sparse interval table without supplying values in a blank cohort.
+function recoverSharedIntervalSections(table, items, rules) {
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 3) return
+  const source = tableSourceItems(items, table.cropRect)
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  if (!height) return
+  const borders = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        Math.abs(r[0] - left) < height * 1.5 &&
+        Math.abs(r[2] - right) < height * 1.5 &&
+        r[1] >= top - height &&
+        r[1] <= bottom + height
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    borders.length !== 3 ||
+    Math.abs(borders[0][1] - top) > height ||
+    Math.abs(borders[2][1] - bottom) > height ||
+    borders[1][1] - top > height * 5
+  )
+    return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const physical = groupSourceRowsWithScripts(source, height, 0.3)
+  if (!physical) return
+  const header = physical.filter((g) => Math.max(...g.map((i) => i.rect[3])) < borders[1][1])
+  if (header.length !== 2) return
+  const leaves = readSourceRow(header[0], cuts),
+    parent = header[1]
+  if (
+    !leaves ||
+    leaves[0] ||
+    !leaves.slice(1).every((s) => /\p{L}/u.test(s)) ||
+    parent.length !== 1 ||
+    !/^.+\[95\s*%\s*CI\]$/.test(parent[0].text) ||
+    parent[0].rect[0] < cuts[1] ||
+    parent[0].rect[2] > right ||
+    parent[0].rect[2] <= cuts[2]
+  )
+    return
+  const body = physical.slice(2),
+    sections = []
+  const interval = (s) => /^\d+(?:\.\d+)?\s*\[\d+(?:\.\d+)?\s*[–−-]\s*\d+(?:\.\d+)?\]$/.test(s)
+  let measured = 0
+  for (const [n, g] of body.entries()) {
+    const title = readSourceRow(g, [left, right])?.[0]
+    const letter = title?.match(/^\(([a-z])\)\s*\p{L}/u)
+    if (letter) {
+      if (
+        letter[1] !== String.fromCharCode(97 + sections.length) ||
+        g.some((i) => i.rect[0] >= cuts[1]) ||
+        n === body.length - 1
+      )
+        return
+      sections.push(n)
+      continue
+    }
+    const v = readSourceRow(g, cuts)
+    if (
+      !sections.length ||
+      !v ||
+      !/^\p{L}|^\d/u.test(v[0]) ||
+      !interval(v[1]) ||
+      (v[2] && !interval(v[2]))
+    )
+      return
+    measured++
+  }
+  if (sections.length < 2 || measured < 2 || !body.some((g) => readSourceRow(g, cuts)?.[2])) return
+  const owned = [...header, ...body],
+    bounds = owned.map(union)
+  if (bounds.some((b, n) => n && b[1] <= bounds[n - 1][3]) || !hasUniqueRecordTokens(source, owned))
+    return
+  return {
+    rows: bounds.map((b) => [left, b[1], right, b[3]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    headerRows: [0, 1],
+    spans: [
+      { row: 1, column: 1, rowSpan: 1, colSpan: 2 },
+      ...sections.map((n) => ({ row: n + 2, column: 0, rowSpan: 1, colSpan: 3 }))
+    ],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    repair: 'native-body-records-recovered'
+  }
+}
+
 // Two cohort columns can mix slash counts with mean/deviation summaries.
 // Full native rules, sample-qualified headers and complete paired values make
 // section and wrapped-label ownership independent of overlapping model rows.
 function recoverRuledRatioCohorts(table, items, rules) {
+  const wrapped = recoverWrappedRiskRatioSections(table, items, rules)
+  if (wrapped) return wrapped
   const crop = table.cropRect
   const predicted = table.structure.objects
     .filter((o) => o.label === 'table column')
@@ -435,6 +1149,89 @@ function recoverRuledRatioCohorts(table, items, rules) {
         colSpan: 3
       }))
     ],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+function recoverWrappedRiskRatioSections(table, items, rules) {
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 3) return
+  const [left, top, right, bottom] = table.cropRect,
+    source = tableSourceItems(items, table.cropRect)
+  if (!source.length) return
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  const borders = joinHorizontalTableRules(rules).filter(
+    (r) =>
+      Math.abs(r[0] - left) < height * 1.5 &&
+      Math.abs(r[2] - right) < height * 1.5 &&
+      r[1] >= top - height &&
+      r[1] <= bottom + height
+  )
+  if (
+    borders.length !== 3 ||
+    Math.abs(borders[0][1] - top) > height ||
+    Math.abs(borders[2][1] - bottom) > height
+  )
+    return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const groups = groupSourceRowsWithScripts(source, height, 0.3),
+    values = groups?.map((g) => readSourceRow(g, cuts))
+  if (
+    !values ||
+    values.some((v) => !v) ||
+    values[0][1] !== 'RiskRatio' ||
+    !/^PValue$/i.test(values[0][2]) ||
+    union(groups[0])[3] >= borders[1][1] + height * 0.1
+  )
+    return
+  const bands = [groups[0]],
+    sections = []
+  let records = 0
+  for (let n = 1; n < groups.length;) {
+    if (values[n].slice(1).every((s) => !s)) {
+      const section = [...groups[n]],
+        start = n++
+      while (n < groups.length && values[n].slice(1).every((s) => !s)) {
+        if (n - start > 1 || union(groups[n])[1] - union(groups[n - 1])[3] > height * 0.8) return
+        section.push(...groups[n++])
+      }
+      if (
+        n === start + 1 ||
+        n + 1 >= groups.length ||
+        Math.min(...groups[n].filter((i) => i.rect[0] < cuts[1]).map((i) => i.rect[0])) -
+          Math.min(...section.map((i) => i.rect[0])) <
+          height * 0.5
+      )
+        return
+      sections.push(bands.length)
+      bands.push(section)
+    } else {
+      const v = values[n]
+      if (
+        !/\p{L}/u.test(v[0]) ||
+        !/^\d+(?:\.\d+)?(?:\(\d+(?:\.\d+)?,\d+(?:\.\d+)?\))?$/.test(v[1]) ||
+        !/^(?:…|(?:0?\.\d+|1(?:\.0+)?))$/.test(v[2])
+      )
+        return
+      records++
+      bands.push(groups[n++])
+    }
+  }
+  if (sections.length !== 2 || records !== 4 || !hasUniqueRecordTokens(source, bands)) return
+  const bounds = bands.map(union)
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  return {
+    rows: bounds.map((r) => [left, r[1], right, r[3]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans: sections.map((row) => ({ row, column: 0, rowSpan: 1, colSpan: 3 })),
+    headerRows: [0],
     completeSpans: true,
     ownedTokens: new Set(source)
   }
@@ -570,7 +1367,7 @@ function recoverCompleteCountCohorts(table, items, rules) {
   )
   if (!source.length) return
   const height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)]
-  const numeric = (s) => /^[-+−<>≤≥]?\d[\d.,·–−+%()/<>≤≥-]*$/.test(s)
+  const numeric = (s) => /^[-+−<>≤≥]?\d[\d.,·–−+%()[\]/<>≤≥-]*$/.test(s)
   const edges = joinHorizontalTableRules(rules).filter(
     (r) =>
       r[0] <= crop[0] + 16 && r[2] >= crop[2] - 16 && r[1] > crop[1] && r[1] - crop[1] < height * 8
@@ -579,6 +1376,8 @@ function recoverCompleteCountCohorts(table, items, rules) {
     const header = source.filter((i) => i.rect[3] < divider[1]),
       body = source.filter((i) => i.rect[1] > divider[1])
     if (!header.length || !body.length || !hasUniqueRecordTokens(source, [header, body])) continue
+    const heading = readSourceRow(header, cuts, { multiline: true })
+    const qualifiedPercent = heading?.slice(1).every((s) => /n=\d+\(%\)$/i.test(s))
     const physical = groupSourceRowsWithScripts(body, height, 0.3)
     if (!physical) continue
     const groups = [],
@@ -616,7 +1415,11 @@ function recoverCompleteCountCohorts(table, items, rules) {
           v
             .slice(1)
             .every(
-              (s) => /\d(?:\/\d+)?\([<>]?\d[\d.,·]*%\)$/.test(s) || s === '0' || /^0\/\d+$/.test(s)
+              (s) =>
+                /\d(?:\/\d+)?\([<>]?\d[\d.,·]*%\)$/.test(s) ||
+                (qualifiedPercent && /^\d+\([<>]?\d[\d.,·]*\)$/.test(s)) ||
+                s === '0' ||
+                /^0\/\d+$/.test(s)
             )
         )
           counts++
@@ -1171,6 +1974,18 @@ export function recoverNestedCountRecords(table, items) {
 // when every printed line has the same leading. Outdented unit-bearing section
 // labels remain separate and may span beyond the first numeric column.
 export function recoverWrappedRepeatedMeasures(table, items, rules) {
+  const effects = recoverNativeRepeatedEffects(table, items, rules)
+  if (effects) return effects
+  const stages = recoverCenteredStageComparisons(table, items)
+  if (stages) return stages
+  const staggered = recoverStaggeredRepeatedMeasures(table, items, rules)
+  if (staggered) return staggered
+  const alternating = recoverAlternatingCohortPairs(table, items, rules)
+  if (alternating) return alternating
+  const dense = recoverDenseCohortSummaries(table, items, rules)
+  if (dense) return dense
+  const beforeAfter = recoverRepeatedCohortSummaries(table, items, rules)
+  if (beforeAfter) return beforeAfter
   const [left, top, right, bottom] = table.cropRect
   const source = tableSourceItems(items, table.cropRect)
   const columns = table.structure.objects
@@ -1303,6 +2118,485 @@ export function recoverWrappedRepeatedMeasures(table, items, rules) {
       }))
     ],
     headerRows: hierarchy.rows.map((_, n) => n),
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// A native eleven-lane frame separates three cohort summaries and three
+// effect/CI pairs. Repeated baseline/time sequences witness every sparse stub.
+function recoverNativeRepeatedEffects(table, items, rules) {
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 11) return
+  const source = tableSourceItems(items, table.cropRect)
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  if (!height) return
+  const borders = joinHorizontalTableRules(rules, 1)
+    .filter(
+      (r) =>
+        Math.abs(r[0] - left) < height * 2 &&
+        Math.abs(r[2] - right) < height * 2 &&
+        r[1] >= top - height &&
+        r[1] <= bottom + height
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    borders.length !== 3 ||
+    borders[1][1] - top > height * 6 ||
+    Math.abs(borders[2][1] - bottom) > height
+  )
+    return
+  const segments = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        Math.abs(r[1] - borders[0][1]) < 0.1 &&
+        r[0] >= borders[0][0] - 0.1 &&
+        r[2] <= borders[0][2] + 0.1
+    )
+    .sort((a, b) => a[0] - b[0])
+  if (
+    segments.length !== 11 ||
+    segments.some((r, n) => n && Math.abs(r[0] - segments[n - 1][2]) > 0.1)
+  )
+    return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const physical = groupSourceRowsWithScripts(source, height, 0.3)
+  if (!physical) return
+  const header = physical.filter((g) => Math.max(...g.map((i) => i.rect[3])) < borders[1][1])
+  if (header.length < 2 || header.length > 3) return
+  const upper = header.slice(0, -1).flat(),
+    leaf = header.at(-1)
+  const shared = upper.filter((i) => /^Hedges[’']\s*g\s*\(95\s*%\s*CI\)$/.test(i.text))
+  if (shared.length !== 1) return
+  const owner = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const evidence = [
+    ...upper.filter((i) => !shared.includes(i)),
+    ...physical.slice(header.length).flat()
+  ]
+  const clusters = columns.map((_, c) => evidence.filter((i) => owner(i) === c))
+  for (let c = 1; c < columns.length; c++) {
+    if (!clusters[c - 1].length || !clusters[c].length) return
+    const end = Math.max(...clusters[c - 1].map((i) => i.rect[2])),
+      start = Math.min(...clusters[c].map((i) => i.rect[0]))
+    if (end >= start) return
+    if (cuts[c] < end || cuts[c] > start) cuts[c] = (end + start) / 2
+  }
+  const cells = readSourceRow(leaf, [
+    left,
+    cuts[1],
+    cuts[2],
+    cuts[3],
+    cuts[4],
+    cuts[5],
+    cuts[7],
+    cuts[9],
+    right
+  ])
+  if (
+    !cells ||
+    cells[0] ||
+    cells[1] ||
+    !cells.slice(2, 5).every((s) => s === 'M(SD)') ||
+    !cells.slice(5).every((s) => /^\p{L}.*vs\.\p{L}/u.test(s))
+  )
+    return
+  const gHeader = upper.filter((i) => i.rect[0] >= cuts[5] - 0.01)
+  if (gHeader.length !== 1 || !/^Hedges[’']\s*g\s*\(95\s*%\s*CI\)$/.test(gHeader[0].text)) return
+  const groups = physical.slice(header.length),
+    values = groups.map((g) => readSourceRow(g, cuts)),
+    blocks = []
+  const number = (s) => /^[−–+-]?(?:\d|\.\d)[\d.,()\s−–+-]*$/.test(s)
+  for (const [n, v] of values.entries()) {
+    if (!v || !v.slice(2, 5).every((s) => /^\d+(?:\.\d+)?\s*\(\d+(?:\.\d+)?\)$/.test(s))) return
+    if (v[0]) {
+      if (!/^\p{L}/u.test(v[0]) || v[1] !== 'Baseline' || !v.slice(5).every((s) => s === '–'))
+        return
+      blocks.push(n)
+    } else if (
+      !blocks.length ||
+      !/^\d+months?$/.test(v[1]) ||
+      !v
+        .slice(5)
+        .every((s, c) => (c % 2 ? /^\([−–+-]?(?:\d|\.\d)[\d.,\s−–+-]*\)$/.test(s) : number(s)))
+    )
+      return
+  }
+  if (
+    blocks.length < 2 ||
+    blocks.some((n, b) => {
+      const end = blocks[b + 1] ?? values.length,
+        firstEnd = blocks[1]
+      return (
+        end - n < 3 ||
+        values
+          .slice(n, end)
+          .map((v) => v[1])
+          .join('|') !==
+          values
+            .slice(0, firstEnd)
+            .map((v) => v[1])
+            .join('|')
+      )
+    })
+  )
+    return
+  const owned = [upper, leaf, ...groups],
+    bounds = owned.map(union)
+  if (bounds.some((b, n) => n && b[1] <= bounds[n - 1][3]) || !hasUniqueRecordTokens(source, owned))
+    return
+  return {
+    rows: bounds.map((b) => [left, b[1], right, b[3]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    headerRows: [0, 1],
+    spans: [
+      { row: 0, column: 0, rowSpan: 2, colSpan: 1 },
+      { row: 0, column: 1, rowSpan: 2, colSpan: 1 },
+      { row: 0, column: 5, rowSpan: 1, colSpan: 6 },
+      ...[5, 7, 9].map((c) => ({ row: 1, column: c, rowSpan: 1, colSpan: 2 })),
+      ...blocks.map((n, b) => ({
+        row: n + 2,
+        column: 0,
+        rowSpan: (blocks[b + 1] ?? values.length) - n,
+        colSpan: 1
+      }))
+    ],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    repair: 'native-body-records-recovered'
+  }
+}
+
+// Repeated sample-qualified cohorts contain complete summary or count records.
+// All native tokens must fit disjoint gutters before replacing any model row.
+function recoverDenseCohortSummaries(table, items, rules) {
+  const crop = table.cropRect,
+    cols = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+  if (cols.length < 4 || cols.length > 7) return
+  const cuts = [
+    crop[0],
+    ...cols.slice(1).map((c, n) => crop[0] + (cols[n].rect[2] + c.rect[0]) / 2),
+    crop[2]
+  ]
+  let borders = joinHorizontalTableRules(rules, 1).filter(
+    (r) =>
+      Math.abs(r[0] - crop[0]) < 16 &&
+      Math.abs(r[2] - crop[2]) < 16 &&
+      r[1] >= crop[1] - 16 &&
+      r[1] <= crop[3] + 16
+  )
+  borders = borders.filter((r, n) => !borders[n + 1] || borders[n + 1][1] - r[1] > 1)
+  if (borders.length !== 3) return
+  const frame = [crop[0], borders[0][1], crop[2], borders[2][1]],
+    source = tableSourceItems(items, frame)
+  if (!source.length) return
+  const h = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)],
+    header = source.filter((i) => i.rect[3] < borders[1][1]),
+    body = source.filter((i) => i.rect[1] > borders[1][1])
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x),
+    lanes = cuts.slice(1).map((_, c) => source.filter((i) => col(i) === c))
+  for (let c = 1; c < cols.length; c++) {
+    if (!lanes[c - 1].length || !lanes[c].length) return
+    let a = Math.max(...lanes[c - 1].map((i) => i.rect[2])),
+      b = Math.min(...lanes[c].map((i) => i.rect[0]))
+    if (a >= b) return
+    cuts[c] = (a + b) / 2
+  }
+  const names = readSourceRow(header, cuts, { multiline: true })
+  if (
+    !names ||
+    !/\p{L}/u.test(names[0]) ||
+    !names.slice(1, -1).every((s) => /N=\d+/i.test(s)) ||
+    !/^P-?value$/i.test(names.at(-1))
+  )
+    return
+  const groups = groupSourceRowsWithScripts(body, h, 0.3)
+  if (!groups || !hasUniqueRecordTokens(source, [header, ...groups])) return
+  const spans = []
+  let summaries = 0,
+    counts = 0,
+    sections = 0
+  const summary = (s) =>
+      s === '0' || /^\d+(?:\.\d+)?;\d+(?:\.\d+)?\(\d+(?:\.\d+)?[–−-]\d+(?:\.\d+)?\)\*?$/.test(s),
+    count = (s) => /^N=\d+(?:\(\d+(?:\.\d+)?%\))?$/.test(s),
+    prob = (s) => /^[<>≤≥]?(?:0?\.\d+|1(?:\.0+)?)$/.test(s)
+  for (const [n, g] of groups.entries()) {
+    const v = readSourceRow(g, cuts)
+    if (!v || !v[0]) return
+    if (v.slice(1).every((s) => !s)) {
+      if (!/\p{L}/u.test(v[0])) return
+      sections++
+      spans.push({ row: n + 1, column: 0, rowSpan: 1, colSpan: cols.length })
+      continue
+    }
+    if (v.slice(1, -1).every(summary) && prob(v.at(-1))) summaries++
+    else if (v.slice(1, -1).every(count) && !v.at(-1)) counts++
+    else return
+  }
+  if (summaries < 6 || counts < 6 || sections < 2) return
+  const bounds = groups.map(union)
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  return {
+    cropRect: frame,
+    rows: [
+      [frame[0], frame[1], frame[2], borders[1][1]],
+      ...bounds.map((r) => [frame[0], r[1], frame[2], r[3]])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], frame[1], x, frame[3]]),
+    spans,
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Complete before/after measurements anchor repeated cohort records independently
+// of model rows. A repeated cohort sequence proves the shared outcome and P cell.
+function recoverRepeatedCohortSummaries(table, items, rules) {
+  const crop = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 5) return
+  const cuts = [
+    crop[0],
+    ...columns.slice(1).map((c, n) => crop[0] + (columns[n].rect[2] + c.rect[0]) / 2),
+    crop[2]
+  ]
+  const borders = joinHorizontalTableRules(rules, 1).filter(
+    (r) =>
+      Math.abs(r[0] - crop[0]) < 16 &&
+      Math.abs(r[2] - crop[2]) < 16 &&
+      r[1] >= crop[1] - 16 &&
+      r[1] <= crop[3] + 16
+  )
+  if (borders.length !== 3) return
+  const source = tableSourceItems(items, [crop[0], borders[0][1], crop[2], borders[2][1]])
+  const header = source.filter((i) => i.rect[3] < borders[1][1])
+  const names = readSourceRow(header, cuts, { multiline: true })
+  if (
+    !names ||
+    !/group|arm/i.test(names[1]) ||
+    !/^Before/i.test(names[2]) ||
+    !/^After/i.test(names[3]) ||
+    !/^Pvalue$/i.test(names[4])
+  )
+    return
+  const body = source.filter((i) => !header.includes(i))
+  const height = Math.max(...body.map((i) => i.height))
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const measured = body.filter((i) => col(i) >= 1 && col(i) <= 3)
+  const groups = groupSourceRowsWithScripts(measured, height, 0.3)
+  const values = groups?.map((g) => readSourceRow(g, cuts))
+  if (
+    !values ||
+    values.length < 6 ||
+    values.some(
+      (v) =>
+        !v || !/\p{L}/u.test(v[1]) || !v.slice(2, 4).every((s) => /^[−+-]?\d[\d.,±−+()-]*$/.test(s))
+    )
+  )
+    return
+  const labels = body.filter((i) => col(i) === 0)
+  const starts = []
+  for (const label of labels) {
+    const index = groups.findIndex(
+      (g) => Math.abs(Math.min(...g.map((i) => i.baseline)) - label.baseline) < height * 0.35
+    )
+    if (index < 0 || !/\p{L}/u.test(label.text)) return
+    if (!starts.includes(index)) starts.push(index)
+    groups[index].push(label)
+  }
+  starts.sort((a, b) => a - b)
+  const period = starts[1]
+  if (
+    starts.length < 2 ||
+    starts[0] !== 0 ||
+    period < 2 ||
+    period > 4 ||
+    groups.length % period ||
+    starts.some((r, n) => r !== n * period) ||
+    starts.length * period !== groups.length
+  )
+    return
+  const sequence = values.slice(0, period).map((v) => v[1])
+  if (new Set(sequence).size !== period || values.some((v, n) => v[1] !== sequence[n % period]))
+    return
+  const spans = []
+  for (const start of starts) {
+    const block = groups.slice(start, start + period).flat()
+    const bounds = union(block)
+    const probabilities = body.filter(
+      (i) =>
+        col(i) === 4 &&
+        i.rect[1] >= bounds[1] - height * 0.2 &&
+        i.rect[3] <= bounds[3] + height * 0.2
+    )
+    if (
+      probabilities.length !== 1 ||
+      !/^[<>≤≥]?(?:0?\.\d+|1(?:\.0+)?)$/.test(probabilities[0].text.replace(/\s/g, ''))
+    )
+      return
+    groups[start].push(...probabilities)
+    for (const column of [0, 4]) spans.push({ row: start + 1, column, rowSpan: period, colSpan: 1 })
+  }
+  if (!hasUniqueRecordTokens(source, [header, ...groups])) return
+  const bounds = groups.map((g) => union(g.filter((i) => col(i) !== 4)))
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  const ys = [
+    borders[1][1],
+    ...bounds.slice(1).map((r, n) => (r[1] + bounds[n][3]) / 2),
+    borders[2][1]
+  ]
+  return {
+    rows: [
+      [crop[0], borders[0][1], crop[2], borders[1][1]],
+      ...groups.map((_, n) => [crop[0], ys[n], crop[2], ys[n + 1]])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], borders[0][1], x, borders[2][1]]),
+    headerRows: [0],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Explicit group, between-group interval and probability headers establish
+// shared statistics across repeated alternating cohort rows. Native gutters and
+// complete pair records are required; generic sparse rows remain ambiguous.
+function recoverAlternatingCohortPairs(table, items, rules) {
+  const crop = table.cropRect,
+    width = 9
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== width) return
+  const cuts = [
+    crop[0],
+    ...columns.slice(1).map((c, n) => crop[0] + (columns[n].rect[2] + c.rect[0]) / 2),
+    crop[2]
+  ]
+  const edges = joinHorizontalTableRules(rules, 1).filter(
+    (r) =>
+      Math.abs(r[0] - crop[0]) < 16 &&
+      Math.abs(r[2] - crop[2]) < 16 &&
+      r[1] >= crop[1] - 16 &&
+      r[1] <= crop[3] + 16
+  )
+  if (edges.length !== 3) return
+  const source = tableSourceItems(items, [crop[0], edges[0][1], crop[2], edges[2][1]])
+  const header = source.filter((i) => i.rect[3] <= edges[1][1])
+  const body = source.filter((i) => !header.includes(i))
+  if (!body.length) return
+  const height = body.map((i) => i.height).sort((a, b) => a - b)[Math.floor(body.length / 2)]
+  // The model cut can graze a complete numeric interval. All repeated data
+  // clusters must expose a disjoint gutter before moving that cut.
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const measured = body.filter((i) => /^[\d(−+–-]/.test(i.text) && i.rect[0] > cuts[2])
+  const lanes = Array.from({ length: width }, (_, c) => measured.filter((i) => col(i) === c))
+  for (let c = 4; c < width; c++) {
+    if (!lanes[c - 1].length || !lanes[c].length) return
+    const end = Math.max(...lanes[c - 1].map((i) => i.rect[2])),
+      start = Math.min(...lanes[c].map((i) => i.rect[0]))
+    if (end >= start) return
+    cuts[c] = (end + start) / 2
+  }
+  const headerForRecognition = header.map((i) => {
+    const c = col(i)
+    return c < 0 || i.rect[0] < cuts[c] - height * 0.5 || i.rect[2] > cuts[c + 1] + height * 0.5
+      ? i
+      : {
+          ...i,
+          rect: [
+            Math.max(i.rect[0], cuts[c]),
+            i.rect[1],
+            Math.min(i.rect[2], cuts[c + 1]),
+            i.rect[3]
+          ]
+        }
+  })
+  const names = readSourceRow(headerForRecognition, cuts, { multiline: true })
+  if (
+    !names ||
+    !/^(?:Group|Arm)$/i.test(names[1]) ||
+    !/^N\*?$/.test(names[2]) ||
+    !/difference.*between.*groups/i.test(names[7]) ||
+    !/^P\(diff\)$/i.test(names[8])
+  )
+    return
+  const groups = groupSourceRowsWithScripts(body, height, 0.3)
+  if (!groups) return
+  const values = groups.map((g) => readSourceRow(g, cuts))
+  const numeric = (s) => /^[<>≤≥−+–-]?(?:\d|\.\d)[\d.,()%−+–-]*(?:[†‡*]+)?$/.test(s)
+  const spans = [],
+    cohorts = new Set()
+  let pairs = 0
+  for (let n = 0; n < groups.length; n++) {
+    const v = values[n],
+      next = values[n + 1]
+    if (
+      (v && /\p{L}/u.test(v[0]) && v.slice(1).every((s) => !s)) ||
+      (groups[n].length === 1 &&
+        /^[\p{L}\s()-]+$/u.test(groups[n][0].text) &&
+        groups[n][0].rect[0] < cuts[1] &&
+        next &&
+        /^[A-Za-z]{1,12}$/.test(next[1]))
+    ) {
+      spans.push({ row: n + 1, column: 0, rowSpan: 1, colSpan: width })
+      continue
+    }
+    if (
+      !v ||
+      !next ||
+      !/\p{L}/u.test(v[0]) ||
+      !/^[A-Za-z]{1,12}$/.test(v[1]) ||
+      !/^[A-Za-z]{1,12}$/.test(next[1]) ||
+      next[1] === v[1] ||
+      !v.slice(2).every(numeric) ||
+      !next.slice(2, 7).every(numeric) ||
+      next[7] ||
+      next[8] ||
+      (next[0] && !/^(?:\([^)]*\)|\p{Ll}[\p{L}.]*\([^)]*\))$/u.test(next[0])) ||
+      Math.min(...groups[n + 1].map((i) => i.baseline)) -
+        Math.max(...groups[n].map((i) => i.baseline)) >
+        height * 1.5
+    )
+      return
+    const stub = groups[n].filter((i) => i.rect[2] <= cuts[1]),
+      tail = groups[n + 1].filter((i) => i.rect[2] <= cuts[1])
+    if (
+      !stub.length ||
+      (tail.length &&
+        Math.min(...tail.map((i) => i.rect[0])) < Math.min(...stub.map((i) => i.rect[0])))
+    )
+      return
+    const pattern = v[1] + '|' + next[1]
+    cohorts.add(pattern)
+    pairs++
+    for (const column of [0, 7, 8]) spans.push({ row: n + 1, column, rowSpan: 2, colSpan: 1 })
+    n++
+  }
+  if (pairs < 3 || cohorts.size !== 1 || !hasUniqueRecordTokens(source, [header, ...groups])) return
+  const bounds = groups.map(union)
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  const ys = [edges[1][1], ...bounds.slice(1).map((r, n) => (r[1] + bounds[n][3]) / 2), edges[2][1]]
+  return {
+    rows: [
+      [crop[0], edges[0][1], crop[2], edges[1][1]],
+      ...groups.map((_, n) => [crop[0], ys[n], crop[2], ys[n + 1]])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], edges[0][1], x, edges[2][1]]),
+    spans,
+    headerRows: [0],
     completeSpans: true,
     ownedTokens: new Set(source)
   }
@@ -1808,6 +3102,8 @@ export function recoverSectionLocalColumns(table, items, rules) {
 // a row or combines adjacent records. Sparse ancestors remain bounded by the
 // next printed ancestor; wrapped values must stay within their identifier band.
 export function recoverIdentifierRecords(table, items, rules) {
+  const numbered = recoverNumberedWrappedRecords(table, items, rules)
+  if (numbered) return numbered
   const [left, top, right, bottom] = table.cropRect
   const columns = table.structure.objects
     .filter((o) => o.label === 'table column')
@@ -1904,6 +3200,155 @@ export function recoverIdentifierRecords(table, items, rules) {
     headerRows: head.rows.map((_, n) => n),
     completeSpans: true,
     ownedTokens: new Set(source)
+  }
+}
+
+// A labelled identifier column, consecutive native identifiers, and a ruled
+// opening independently bound variable-height case records. Wrapped categorical
+// values stay above the next identifier; model row omissions cannot discard one.
+function recoverNumberedWrappedRecords(table, items, rules) {
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 8) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const source = tableSourceItems(items, table.cropRect)
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  if (
+    !height ||
+    !joinHorizontalTableRules(rules).some(
+      (r) =>
+        Math.abs(r[0] - left) < height &&
+        Math.abs(r[2] - right) < height &&
+        Math.abs(r[1] - top) < height
+    )
+  )
+    return
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const header = source.find(
+    (i) =>
+      col(i) === 0 &&
+      /^(?:Lesion|Record|Case)$/i.test(i.text.trim()) &&
+      i.rect[3] < top + height * 4
+  )
+  if (!header) return
+  const anchors = source
+    .filter((i) => col(i) === 0 && i.baseline > header.baseline && /^\d+\*?$/.test(i.text.trim()))
+    .sort((a, b) => a.baseline - b.baseline)
+  if (
+    anchors.length < 4 ||
+    anchors.some(
+      (i, n) => n && Number.parseInt(i.text) !== Number.parseInt(anchors[n - 1].text) + 1
+    )
+  )
+    return
+  const physical = groupSourceRowsWithScripts(source, height, 0.3)
+  if (!physical) return
+  const heading = physical.filter((g) => g[0].baseline <= header.baseline + height * 0.2).flat()
+  const groups = [],
+    sections = []
+  let continuation
+  for (
+    let n = physical.findIndex((g) => g.some((i) => i.baseline > header.baseline + height * 0.2));
+    n < physical.length;
+    n++
+  ) {
+    const g = physical[n]
+    const anchor = g.find((i) => anchors.includes(i))
+    if (anchor) {
+      groups.push([...g])
+      continue
+    }
+    if (g.every((i) => col(i) === 0)) {
+      const title = [...g]
+      while (physical[n + 1]?.every((i) => col(i) === 0 && !anchors.includes(i)))
+        title.push(...physical[++n])
+      if (
+        !/^\p{L}.*\(n=\d+\)$/u.test(
+          title
+            .map((i) => i.text)
+            .join('')
+            .replace(/\s/g, '')
+        )
+      )
+        return
+      sections.push(groups.length)
+      groups.push(title)
+      continue
+    }
+    const compact = g
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '')
+    if (/^\(Table\d+continues\)$/i.test(compact) && n === physical.length - 1) {
+      continuation = union(g)
+      continue
+    }
+    const prior = groups.at(-1)
+    if (
+      !prior ||
+      sections.includes(groups.length - 1) ||
+      g.some((i) => col(i) === 0) ||
+      g.some((i) => !i.horizontal || Math.abs(i.height - height) > height * 0.15) ||
+      Math.min(...g.map((i) => i.baseline)) - Math.max(...prior.map((i) => i.baseline)) >
+        height * 1.5
+    )
+      return
+    prior.push(...g)
+  }
+  if (sections.length < 1) return
+  const body = groups.filter((_, n) => !sections.includes(n)).flat()
+  for (let c = 1; c < columns.length; c++) {
+    const a = body.filter((i) => col(i) === c - 1),
+      b = body.filter((i) => col(i) === c)
+    if (!a.length || !b.length) return
+    const end = Math.max(...a.map((i) => i.rect[2])),
+      start = Math.min(...b.map((i) => i.rect[0]))
+    if (end >= start) return
+    if (cuts[c] < end || cuts[c] > start) cuts[c] = (end + start) / 2
+  }
+  const values = groups.map((g, n) =>
+    sections.includes(n) ? undefined : readSourceRow(g, cuts, { multiline: true })
+  )
+  if (
+    values.some(
+      (v, n) =>
+        !sections.includes(n) &&
+        (!v ||
+          !/^\d+\*?$/.test(v[0]) ||
+          !v.slice(1).every(Boolean) ||
+          !/^\d+$/.test(v[2]) ||
+          !/^\p{L}/u.test(v[1]) ||
+          !/^\p{L}/u.test(v[3]) ||
+          !/^\p{L}/u.test(v[5]) ||
+          !/^\p{L}/u.test(v[6]) ||
+          !/^(?:\d+|…)$/.test(v[7]))
+    )
+  )
+    return
+  const h = readSourceRow(heading, cuts, { multiline: true })
+  if (!h || !h.every((s) => /\p{L}/u.test(s))) return
+  const owned = [heading, ...groups],
+    bounds = owned.map(union)
+  if (bounds.some((b, n) => n && b[1] <= bounds[n - 1][3])) return
+  const cropRect =
+    continuation && continuation[1] > bounds.at(-1)[3]
+      ? [left, top, right, (bounds.at(-1)[3] + continuation[1]) / 2]
+      : undefined
+  return {
+    cropRect,
+    rows: bounds.map((b) => [left, b[1], right, b[3]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, cropRect?.[3] ?? bottom]),
+    spans: sections.map((n) => ({ row: n + 1, column: 0, rowSpan: 1, colSpan: 8 })),
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(owned.flat()),
+    repair: 'native-body-records-recovered'
   }
 }
 
@@ -2907,4 +4352,291 @@ function recoverCenteredCohortSections(table, items, rules) {
     completeSpans: true,
     ownedTokens: new Set(source)
   }
+}
+
+// Some native tables align cohort/measurement labels slightly above their
+// numeric baseline. Consecutive time leaves and a repeated two-cohort/P pattern
+// establish complete records without retaining overlapping model bands.
+function recoverStaggeredRepeatedMeasures(table, items) {
+  const crop = table.cropRect,
+    predicted = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length !== 6) return
+  const cuts = [
+    crop[0],
+    ...predicted.slice(1).map((c, n) => crop[0] + (predicted[n].rect[2] + c.rect[0]) / 2),
+    crop[2]
+  ]
+  const source = tableSourceItems(items, crop),
+    height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)]
+  const physical = groupSourceRowsWithScripts(source, height, 0.35)
+  if (!physical || physical.length < 8) return
+  const head = readSourceRow(physical[0], cuts)
+  if (
+    !head ||
+    head[0] ||
+    head[1] ||
+    head[2] !== 'T1' ||
+    head[3] !== 'T2' ||
+    head[4] !== 'T3' ||
+    !/^P[- ]?value[*†‡]*$/i.test(head[5])
+  )
+    return
+  const body = physical.slice(1),
+    header = physical[0]
+  const probability = (s) => /^[<>≤≥]?(?:0?\.\d+|1(?:\.0+)?)$/.test(s)
+  const measured = (s) => /^[−–+-]?\d+(?:\.\d+)?±\d+(?:\.\d+)?$/.test(s)
+  const anchors = body.filter((g) => {
+    const v = readSourceRow(g, cuts)
+    return (
+      v &&
+      !v[0] &&
+      !v[1] &&
+      ((v.slice(2, 5).every(measured) && probability(v[5])) ||
+        (v.slice(2, 5).every(probability) && !v[5]))
+    )
+  })
+  if (anchors.length < 6 || anchors.length % 3) return
+  const groups = anchors.map((g) => [...g])
+  for (const g of body.filter((g) => !anchors.includes(g))) {
+    if (!g.every((i) => i.rect[2] < cuts[2]) || !/\p{L}/u.test(g.map((i) => i.text).join('')))
+      return
+    const owners = anchors
+      .map((a, n) => ({ n, d: a[0].baseline - g[0].baseline }))
+      .filter((a) => a.d > 0 && a.d < height)
+    if (owners.length !== 1) return
+    groups[owners[0].n].push(...g)
+  }
+  const values = groups.map((g) => readSourceRow(g, cuts, { multiline: true })),
+    spans = []
+  let labels
+  for (let n = 0; n < groups.length; n += 3) {
+    const block = values.slice(n, n + 3)
+    if (
+      block.some((v) => !v) ||
+      !/\p{L}/u.test(block[0][0]) ||
+      block[1][0] ||
+      block[2][0] ||
+      !/\p{L}/u.test(block[0][1]) ||
+      !/\p{L}/u.test(block[1][1]) ||
+      !/^[†‡]*p[- ]?value[†‡]*$/i.test(block[2][1])
+    )
+      return
+    const pair = block.slice(0, 2).map((v) => v[1])
+    if (labels && JSON.stringify(labels) !== JSON.stringify(pair)) return
+    labels = pair
+    spans.push({ row: n + 1, column: 0, rowSpan: 3, colSpan: 1 })
+  }
+  if (!hasUniqueRecordTokens(source, [header, ...groups])) return
+  const bounds = groups.map(union)
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  return {
+    rows: [union(header), ...bounds].map((r) => [crop[0], r[1], crop[2], r[3]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], crop[1], x, crop[3]]),
+    spans,
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Shared outcome/P cells are centered over consecutive native stage records.
+function recoverCenteredStageComparisons(table, items) {
+  const crop = table.cropRect,
+    predicted = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length !== 3) return
+  const cuts = [
+      crop[0],
+      ...predicted.slice(1).map((c, n) => crop[0] + (predicted[n].rect[2] + c.rect[0]) / 2),
+      crop[2]
+    ],
+    source = tableSourceItems(items, crop)
+  if (!source.length) return
+  const height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)],
+    physical = groupSourceRowsWithScripts(source, height, 0.35)
+  const head = physical && readSourceRow(physical[0], cuts)
+  if (!head || head[0] || head[1] !== 'Stages' || !/^p[- ]?value$/i.test(head[2])) return
+  const sections = physical
+    .slice(1)
+    .filter(
+      (g) =>
+        g.every((i) => /^[\p{L}\s]+$/u.test(i.text)) &&
+        /^Significant scores between (?:the )?(?:groups|stages)$/i.test(
+          g.map((i) => i.text).join(' ')
+        )
+    )
+  if (sections.length !== 2) return
+  const groups = [physical[0]],
+    spans = [],
+    rows = [union(physical[0])]
+  let centered = 0,
+    records = 0
+  for (let section = 0; section < sections.length; section++) {
+    const label = sections[section],
+      start = physical.indexOf(label) + 1,
+      end =
+        section + 1 < sections.length ? physical.indexOf(sections[section + 1]) : physical.length,
+      part = physical.slice(start, end).flat()
+    spans.push({ row: groups.length, column: 0, rowSpan: 1, colSpan: 3 })
+    groups.push(label)
+    rows.push(union(label))
+    const stages = groupSourceRowsWithScripts(
+      part.filter((i) => i.rect[0] >= cuts[1] && i.rect[2] <= cuts[2]),
+      height,
+      0.35
+    )
+    const labels = groupSourceRowsWithScripts(
+      part.filter((i) => i.rect[2] < cuts[1]),
+      height,
+      0.35
+    )
+    const probabilities = groupSourceRowsWithScripts(
+      part.filter((i) => i.rect[0] >= cuts[2]),
+      height,
+      0.35
+    )
+    if (
+      !stages?.length ||
+      !labels?.length ||
+      labels.length !== probabilities?.length ||
+      stages.some(
+        (g) =>
+          !/^\d+(?:st|nd|rd|th)(?:and\d+(?:st|nd|rd|th))?stage$/.test(
+            readSourceRow(g, cuts)?.[1] ?? ''
+          )
+      )
+    )
+      return
+    const bands = stages.map((g) => [...g]),
+      offset = groups.length
+    let next = 0
+    for (let n = 0; n < labels.length; n++) {
+      const l = labels[n],
+        p = probabilities[n],
+        baseline = l[0].baseline,
+        stops = stages
+          .map((_, k) => k + 1)
+          .filter(
+            (k) =>
+              k > next &&
+              k - next <= 3 &&
+              Math.abs(baseline - (stages[next][0].baseline + stages[k - 1][0].baseline) / 2) <
+                height * 0.3
+          )
+      if (
+        stops.length !== 1 ||
+        Math.abs(p[0].baseline - baseline) > height * 0.3 ||
+        !/^[<>≤≥]?(?:0?\.\d+|1(?:\.0+)?)$/.test(readSourceRow(p, cuts)?.[2] ?? '')
+      )
+        return
+      const stop = stops[0]
+      bands[next].push(...l, ...p)
+      if (stop - next > 1) {
+        centered++
+        for (const column of [0, 2])
+          spans.push({ row: offset + next, column, rowSpan: stop - next, colSpan: 1 })
+      }
+      records += stop - next
+      next = stop
+    }
+    if (next !== stages.length) return
+    const bounds = stages.map(union),
+      ys = [
+        Math.min(...bands[0].map((i) => i.rect[1])),
+        ...bounds.slice(1).map((r, n) => (bounds[n][3] + r[1]) / 2),
+        Math.max(...bands.at(-1).map((i) => i.rect[3]))
+      ]
+    groups.push(...bands)
+    rows.push(...bands.map((_, n) => [crop[0], ys[n], crop[2], ys[n + 1]]))
+  }
+  if (centered < 2 || records < 6 || !hasUniqueRecordTokens(source, groups)) return
+  if (rows.some((r, n) => n && r[1] < rows[n - 1][3])) return
+  return {
+    rows: rows.map((r) => [crop[0], r[1], crop[2], r[3]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], crop[1], x, crop[3]]),
+    spans,
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// An independently painted unit closes the stub on the same source baseline.
+// Move only the first model cut, and only through an otherwise empty gutter.
+export function recoverParenthesizedStubUnitCut(items, cuts, rules, crop) {
+  if (cuts.length !== 6) return
+  const source = tableSourceItems(items, crop),
+    h = source.map((i) => i.height).sort((a, b) => a - b)[source.length >> 1]
+  if (!(h > 0)) return
+  const groups = groupSourceRowsWithScripts(source, h, 0.3)
+  if (!groups || !hasUniqueRecordTokens(source, groups)) return
+  const full = joinHorizontalTableRules(rules).filter(
+    (r) => r[1] === r[3] && Math.abs(r[0] - crop[0]) < h && Math.abs(r[2] - crop[2]) < h
+  )
+  if (
+    !full.some(
+      (r) =>
+        r[1] <= Math.min(...source.map((i) => i.rect[1])) &&
+        Math.min(...source.map((i) => i.rect[1])) - r[1] < h
+    ) ||
+    full.filter(
+      (r) =>
+        r[1] >= Math.max(...source.map((i) => i.rect[3])) &&
+        r[1] - Math.max(...source.map((i) => i.rect[3])) < h
+    ).length !== 1
+  )
+    return
+  const candidates = []
+  for (const g of groups) {
+    const head = g.find((i) => /\(mean$/i.test(i.text.trim())),
+      sign = g.find((i) => i.text === '±'),
+      tail = g.find((i) => i.text === 'SD)')
+    if (
+      !head ||
+      !sign ||
+      !tail ||
+      !(head.rect[0] < cuts[1] && head.rect[2] > cuts[1]) ||
+      Math.abs(sign.rect[0] - head.rect[2]) > h * 0.1 ||
+      Math.abs(tail.rect[0] - sign.rect[2]) > h * 0.1 ||
+      [sign, tail].some(
+        (i) =>
+          Math.abs(i.baseline - head.baseline) > h * 0.1 ||
+          Math.abs(i.height - head.height) > h * 0.1
+      )
+    )
+      continue
+    const remainder = g.filter((i) => ![head, sign, tail].includes(i) && i.rect[0] > tail.rect[2]),
+      start = Math.min(...remainder.map((i) => i.rect[0])),
+      cut = (tail.rect[2] + start) / 2
+    if (
+      start - tail.rect[2] < h * 2 ||
+      cut >= cuts[2] ||
+      source.some((i) => ![head, sign, tail].includes(i) && i.rect[0] < cut && i.rect[2] > cuts[1])
+    )
+      continue
+    const proposed = [cuts[0], cut, ...cuts.slice(2)],
+      v = readSourceRow(g, proposed)
+    if (
+      !v ||
+      !v.slice(1, 4).every((s) => /^\d+(?:\.\d+)?±\d+(?:\.\d+)?$/.test(s)) ||
+      !/^\d*\.?\d+$/.test(v[4])
+    )
+      continue
+    if (
+      !groups.some((row) => {
+        const values = readSourceRow(row, proposed)
+        return (
+          values &&
+          values.slice(1, 4).every((s) => /\(N=\d+\)$/i.test(s)) &&
+          /^p-?value$/i.test(values[4])
+        )
+      })
+    )
+      continue
+    candidates.push(cut)
+  }
+  if (candidates.length === 1) return candidates[0]
 }

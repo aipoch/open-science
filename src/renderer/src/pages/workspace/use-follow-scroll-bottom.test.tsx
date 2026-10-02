@@ -151,6 +151,24 @@ describe('useFollowScrollBottom', () => {
     expect(viewport.scrollTop).toBe(1000)
   })
 
+  it('does not mistake a delayed programmatic scroll event for user movement after content grows', () => {
+    const resize = stubResizeObserver()
+    render(<Harness enabled contentHeight={1000} />)
+    const viewport = screen.getByTestId('viewport')
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1000, scrollTop: 0 })
+    resize()
+    expect(viewport.scrollTop).toBe(600)
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1400, scrollTop: 600 })
+    fireEvent.scroll(viewport)
+    resize()
+    expect(viewport.scrollTop).toBe(1000)
+    viewport.scrollTop = 500
+    fireEvent.scroll(viewport)
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1600, scrollTop: 500 })
+    resize()
+    expect(viewport.scrollTop).toBe(500)
+  })
+
   it('pauses after the user leaves the bottom and resumes when they return', () => {
     const notifyResize = stubResizeObserver()
     const view = render(<Harness enabled contentHeight={1000} />)

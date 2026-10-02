@@ -1,4 +1,5 @@
 import type { SettlementAdmission } from '../runtime-session-admission'
+import { sanitizePromptPreparation, resolvePreparationNoticeBaseline } from './prompt-preparation'
 import {
   type PersistedSessionStatus,
   type PersistedActiveRun,
@@ -37,6 +38,7 @@ import {
   normalizeActivityGroupAfterRestore,
   normalizeSessionAfterRestore,
   rearmUnacceptedElicitationContinuations,
+  restorePendingElicitationWait,
   resolveRestorablePermissionToolAuthority,
   normalizeActivityAfterRestore
 } from './restore'
@@ -343,6 +345,8 @@ export const sanitizeSession = (
   if (taskRunCommitId) sanitized.taskRunCommitId = taskRunCommitId
   if (session.runtimeTranscriptOwner === 'main') {
     sanitized.runtimeTranscriptOwner = 'main'
+    const preparation = sanitizePromptPreparation(session.promptPreparation, sanitized)
+    if (preparation) sanitized.promptPreparation = preparation
     const reviewOwner = session.runtimeTranscriptReviewOwner
     if (
       isRecord(reviewOwner) &&
@@ -614,9 +618,31 @@ export const sanitizeSession = (
     sanitized.sessionDetailsGenerationEligible = true
   }
 
+  if (sanitized.promptPreparation) {
+    const preparation = sanitized.promptPreparation
+    if (preparation.noticeBaseline && !resolvePreparationNoticeBaseline(sanitized))
+      delete preparation.noticeBaseline
+    const ownsPrompt = sanitized.messages.some(
+      (message) => message.id === preparation.promptMessageId && message.role === 'user'
+    )
+    if (!ownsPrompt && (preparation.mode !== 'new' || preparation.runStartedAt !== undefined))
+      delete sanitized.promptPreparation
+  }
+
   // Normalize only after resolving the canonical active Branch. Recovery references and the durable
   // interrupted marker must never be inferred from an abandoned Branch.
   if (!options.preserveRuntimeState) {
+    // The pre-graph restore may have classified a pending question as an interrupted run or
+    // an idle approved Plan; older releases may have saved that projection. Resolve its actual
+    // wait only with sanitized active-Branch authority.
+    if (
+      session.status === 'running' ||
+      session.status === 'waiting-for-user' ||
+      session.status === 'idle' ||
+      session.status === 'error'
+    ) {
+      sanitized = restorePendingElicitationWait(sanitized)
+    }
     sanitized = rearmUnacceptedElicitationContinuations(sanitized)
     sanitized = normalizeSessionAfterRestore(sanitized, { reconcileCompletedRecovery: true })
   }

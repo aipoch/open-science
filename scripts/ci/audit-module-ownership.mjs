@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isModuleOwnershipPath } from './module-ownership-paths.mjs'
@@ -31,9 +32,15 @@ export function auditModuleOwnership(manifest, files) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
-    .split('\0')
-    .filter(Boolean)
+  const files = [
+    ...new Set(
+      execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
+        encoding: 'utf8'
+      })
+        .split('\0')
+        .filter((path) => Boolean(path) && existsSync(path))
+    )
+  ]
   const manifest = loadModuleImpactManifest()
   const result = auditModuleOwnership(manifest, files)
   if (process.argv.includes('--json')) console.log(JSON.stringify(result, null, 2))

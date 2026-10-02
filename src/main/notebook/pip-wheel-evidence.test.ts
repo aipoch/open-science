@@ -26,13 +26,14 @@ urllib.request.build_opener = lambda *args: Opener()
 
 describe('legacy pip wheel evidence', () => {
   it.skipIf(!process.env.RUN_KERNEL || !python).each([
-    ['bundled', 'normal'],
-    ['bundled', 'deterministic'],
-    ['current', 'normal'],
-    ['current', 'deterministic']
+    ['bundled', 'normal', 'standard'],
+    ['bundled', 'deterministic', 'standard'],
+    ['current', 'normal', 'standard'],
+    ['current', 'deterministic', 'standard'],
+    ['bundled', 'normal', 'over-limit']
   ])(
-    'recovers a real %s pip installation with %s generated entry points only when their bytes match',
-    async (installer, metadata) => {
+    'recovers a real %s pip installation with %s %s generated entry points only when their bytes match',
+    async (installer, metadata, entryPointCase) => {
       // Keep RECORD-relative paths consistent with Python's canonical venv path on macOS.
       const root = await realpath(await mkdtemp(join(tmpdir(), 'wheel-entry-points-')))
       const prefix = join(root, 'env')
@@ -71,7 +72,12 @@ describe('legacy pip wheel evidence', () => {
             'Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n'
           ),
           [dist + '/entry_points.txt']: Buffer.from(
-            '[console_scripts]\nentry-probe = entry_probe:main\n[gui_scripts]\nentry-probe-gui = entry_probe:main\n'
+            entryPointCase === 'over-limit'
+              ? `[console_scripts]\n${Array.from(
+                  { length: 129 },
+                  (_, index) => `entry-probe-${index} = entry_probe:main`
+                ).join('\n')}\n`
+              : '[console_scripts]\npip = entry_probe:main\neasy_install = entry_probe:main\nentry-probe = entry_probe:main\n[gui_scripts]\nentry-probe-gui = entry_probe:main\n'
           )
         }
         payload[dist + '/RECORD'] = Buffer.from(
@@ -195,9 +201,10 @@ describe('legacy pip wheel evidence', () => {
         const recovered = await probe()
         expect(capture, JSON.stringify(capture)).toMatchObject({
           state: 'captured',
-          captureStatus: 'complete'
+          captureStatus: entryPointCase === 'over-limit' ? 'partial' : 'complete'
         })
-        expect(recovered).toHaveLength(1)
+        expect(recovered).toHaveLength(entryPointCase === 'over-limit' ? 0 : 1)
+        if (entryPointCase === 'over-limit') return
         const script = join(
           prefix,
           process.platform === 'win32' ? 'Scripts/entry-probe.exe' : 'bin/entry-probe'

@@ -1,6 +1,12 @@
 import { createLogger } from '../logger'
 import { prepareReplCellBindings, type ReplCellBindings } from './repl-cell-bindings'
 import {
+  resolveWindowsNotebookRuntime,
+  type WindowsNotebookRuntime,
+  windowsNotebookRuntimeEnvironment
+} from './windows-notebook-runtime'
+import { prepareShellNpmEnvironment } from './shell-npm-environment'
+import {
   NotebookExecutionStopError,
   markNotebookKernelExitCleanedUp,
   NotebookKernelExitError,
@@ -1064,13 +1070,21 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // A missing session dir would surface as an opaque ENOENT; fall back to the OS default cwd so
     // spawn fails only for a genuinely missing interpreter.
     const spawnCwd = existsSync(request.cwd) ? realpathSync(request.cwd) : undefined
+    const windowsRuntime =
+      kind === 'repl' && this.platform === 'win32'
+        ? await this.processSandbox?.resolveWindowsRuntime?.({
+            runtime: 'repl',
+            signal: request.signal
+          })
+        : undefined
     const ownerToken = this.processLifecycle?.createOwnerToken()
     const spawnEnv = this.buildEnv(
       kind,
       request,
       figuresDir,
       workloadCacheEnv,
-      ownerToken ? this.processLifecycle?.environment(ownerToken) : undefined
+      ownerToken ? this.processLifecycle?.environment(ownerToken) : undefined,
+      windowsRuntime
     )
     const prefix = envPrefix(request.runtimeRoot, env, this.platform)
 
@@ -1079,7 +1093,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
     let loopPath: string
     if (kind === 'repl') {
       // Run the control-plane loop as plain Node via the app binary (ELECTRON_RUN_AS_NODE set in env).
-      command = process.execPath
+      command =
+        this.platform === 'win32' && windowsRuntime !== null
+          ? (windowsRuntime ?? resolveWindowsNotebookRuntime()).node
+          : process.execPath
       loopPath = this.replLoopPath
       // Node otherwise realpaths the main module before loading it. A Windows AppContainer can read
       // the explicitly granted script but cannot enumerate its drive root or unrelated ancestors.
@@ -1104,11 +1121,19 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // The semantic guard rejects known installers before dispatch. This native layer makes the
     // app-owned runtime read-only to the complete persistent-kernel process tree as well, covering
     // dynamically constructed R/Python/REPL calls. Only the disposable workload-cache subtree remains
-    // writable; manage_packages remains the only package writer and wraps each installer separately.
+    // writable for data kernels. Windows REPL additionally shares the Shell owner's npm tool prefix;
+    // manage_packages remains the only managed Python/R package writer.
     const nativeInvocation = { executable: command, args }
     const invocation = this.processSandbox
       ? nativeInvocation
-      : protectManagedRuntimeWrites(nativeInvocation, request.runtimeRoot, this.platform)
+      : protectManagedRuntimeWrites(
+          nativeInvocation,
+          request.runtimeRoot,
+          this.platform,
+          kind === 'repl' && this.platform === 'win32' && spawnEnv.NPM_CONFIG_PREFIX
+            ? [spawnEnv.NPM_CONFIG_PREFIX]
+            : []
+        )
     const sessionId = request.sessionId
     const projectId = request.projectId
     if (this.processSandbox && (!sessionId || !projectId)) {
@@ -1166,6 +1191,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
               request.notebookSessionRoot,
               request.cwd,
               figuresDir,
+              ...(kind === 'repl' && this.platform === 'win32' && spawnEnv.NPM_CONFIG_PREFIX
+                ? [spawnEnv.NPM_CONFIG_PREFIX]
+                : []),
               ...(request.runtimeRoot ? [notebookWorkloadCacheRoot(request.runtimeRoot)] : [])
             ]),
             deniedReadRoots: request.protectedDirs ?? [],
@@ -1408,7 +1436,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     request: NotebookExecutionRequest,
     figuresDir: string,
     workloadCacheEnv: NodeJS.ProcessEnv = notebookWorkloadCacheEnv(request.runtimeRoot),
-    processOwnershipEnv?: NodeJS.ProcessEnv
+    processOwnershipEnv?: NodeJS.ProcessEnv,
+    windowsRuntime?: WindowsNotebookRuntime | null
   ): NodeJS.ProcessEnv {
     // A resolved interpreter is user-owned (BYO/overlay). Never put app-managed conda DLLs ahead of
     // it: on Windows that can load an incompatible BLAS/compiler runtime into the external R process.
@@ -1491,6 +1520,20 @@ class NotebookKernelExecutor implements NotebookExecutor {
           sourceEnv: env
         })
       )
+    }
+    if (kind === 'repl' && this.platform === 'win32') {
+      const runtimeEnv =
+        windowsRuntime === null
+          ? env
+          : windowsNotebookRuntimeEnvironment(
+              env,
+              windowsRuntime ?? resolveWindowsNotebookRuntime()
+            )
+      // Control-plane REPL requests can run without managed storage. They still need the bundled
+      // interpreter, but cannot create or grant a shared npm prefix without its runtime owner.
+      return request.runtimeRoot
+        ? prepareShellNpmEnvironment(request.runtimeRoot, 'win32', runtimeEnv)
+        : runtimeEnv
     }
     return kind === 'r' ? normalizeRProcessLocale(env, this.platform) : env
   }

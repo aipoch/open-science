@@ -1,3 +1,4 @@
+import type { SessionReadingContext } from './session-reading'
 import type { AgentUserChoicePrompt } from './elicitation'
 import type { PlanDocumentV1 } from './session-plan/contract'
 import type { AgentFrameworkId, ReasoningEffort } from './settings'
@@ -15,7 +16,13 @@ export type SessionRuntimeContextValue =
   | { [key: string]: SessionRuntimeContextValue }
 
 export type SessionRuntimeContextOwner =
-  'plan' | 'delegatedWork' | 'permission' | 'sideChat' | 'sideChatRelays' | 'pdfContext'
+  | 'plan'
+  | 'delegatedWork'
+  | 'permission'
+  | 'sideChat'
+  | 'sideChatRelays'
+  | 'pdfContext'
+  | 'sessionContext'
 
 export const MAX_SESSION_PDF_CONTEXTS = 3
 
@@ -318,6 +325,7 @@ export type SessionRuntimeContext = Readonly<{
   plan?: SessionPlanRuntimeContext
   delegatedWork?: SessionDelegatedWorkRuntimeContext
   permission?: SessionPermissionRuntimeContext
+  sessionContext?: SessionReadingContext
   pdfContext?: SessionPdfContext
   sideChat?: PersistedSideChat
   sideChats?: readonly PersistedSideChat[]
@@ -337,6 +345,7 @@ export type SessionRuntimeContextPatch = Readonly<
     plan: SessionPlanRuntimeContext | undefined
     delegatedWork: SessionDelegatedWorkRuntimeContext | undefined
     permission: SessionPermissionRuntimeContext | undefined
+    sessionContext: SessionReadingContext | undefined
     pdfContext: SessionPdfContext | undefined
     sideChat: PersistedSideChat | undefined
     sideChats: readonly PersistedSideChat[] | undefined

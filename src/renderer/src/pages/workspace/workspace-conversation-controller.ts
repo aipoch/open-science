@@ -482,6 +482,33 @@ const useWorkspaceConversationController = (
       }
 
       const snapshot = composer.lifecycle.captureSend(!branchInNewSession)
+      const retryOwner = snapshot.retrySessionOwner
+        ? current.getSession(snapshot.retrySessionOwner.sessionId)
+        : undefined
+      if (snapshot.retrySessionOwner) {
+        if (
+          !retryOwner ||
+          retryOwner.id !== snapshot.retrySessionOwner.sessionId ||
+          retryOwner.projectId !== snapshot.retrySessionOwner.projectId ||
+          (current.projectId && retryOwner.projectId !== current.projectId) ||
+          retryOwner.archivedAt ||
+          retryOwner.isPending
+        ) {
+          composer.actions.setError(i18next.t('This session was deleted or is unavailable.'))
+          return
+        }
+        if (
+          !projectSessionActionability(retryOwner).actions.startTurn.allowed ||
+          retryOwner.conversationGraphSyncBlocked ||
+          retryOwner.compacting ||
+          retryOwner.fixLoopActive ||
+          current.persistenceBlockedSessionIds.includes(retryOwner.id) ||
+          current.promptInFlightSessionIds.includes(retryOwner.id) ||
+          current.sendPreparationInFlightSessionIds.includes(retryOwner.id) ||
+          current.session.lifecycle.isBarrierInFlight(retryOwner.id)
+        )
+          return
+      }
       // A distinct new draft can start while an earlier conversation is still preparing.
       const submissionKey = activeSession
         ? snapshot.draftKey
@@ -500,6 +527,7 @@ const useWorkspaceConversationController = (
         session.lifecycle.captureSendIntent(branchInNewSession)
 
       const dispatch = (sessionId: string | undefined): void => {
+        let preparationRejected = false
         const optimisticMessage = sessionId
           ? {
               id: `optimistic-${snapshot.draftKey}-${snapshot.version}`,
@@ -531,12 +559,49 @@ const useWorkspaceConversationController = (
           .sendMessage({
             sessionId,
             onMessageAppended: clearOptimisticMessage,
+            onPreparationRejected: (message, rejectedSessionId, finalizedAttachments) => {
+              preparationRejected = true
+              clearOptimisticMessage()
+              // Rejection is asynchronous: act on the composer as it is now, not as it was at submit.
+              const latest = optionsRef.current
+              const targetDraftKey =
+                wasNewConversation || branchInNewSession
+                  ? (rejectedSessionId ?? snapshot.draftKey)
+                  : snapshot.draftKey
+              if (latest.currentDraftKey === targetDraftKey)
+                latest.composer.actions.setError(message)
+              const rejectedOwner = rejectedSessionId
+                ? latest.getSession(rejectedSessionId)
+                : undefined
+              const retrySessionOwner =
+                rejectedOwner && !rejectedOwner.isPending
+                  ? { sessionId: rejectedOwner.id, projectId: rejectedOwner.projectId }
+                  : snapshot.retrySessionOwner
+              const byId = new Map(
+                finalizedAttachments?.map((attachment) => [attachment.id, attachment])
+              )
+              latest.composer.lifecycle.restoreFailedSend(
+                {
+                  ...snapshot,
+                  retrySessionOwner,
+                  // Native setup authority has already been bound to the retry Session.
+                  ...(retrySessionOwner ? { setupSessionToken: undefined } : {}),
+                  attachments: snapshot.attachments.map(
+                    (attachment) => byId.get(attachment.id) ?? attachment
+                  )
+                },
+                true,
+                wasNewConversation || branchInNewSession ? rejectedSessionId : undefined,
+                true
+              )
+            },
             ...(branchInNewSession && activeSession
               ? { branchSourceSessionId: activeSession.id }
               : {}),
             text: docToText(snapshot.doc),
             attachments: snapshot.attachments,
             annotations: snapshot.annotations,
+            discussionFocus: snapshot.discussionFocus,
             referencedArtifacts: docToArtifactRefs(snapshot.doc),
             parts: docToMessageParts(snapshot.doc),
             pdfContext: snapshot.pdfContext,
@@ -574,7 +639,7 @@ const useWorkspaceConversationController = (
           })
           .then((result) => {
             if (!result) {
-              composer.lifecycle.restoreFailedSend(snapshot)
+              if (!preparationRejected) composer.lifecycle.restoreFailedSend(snapshot)
               return
             }
             if (snapshot.annotations.length > 0) {
@@ -604,7 +669,7 @@ const useWorkspaceConversationController = (
       }
 
       if (snapshot.annotations.length === 0) composer.lifecycle.clearDraft(current.currentDraftKey)
-      dispatch(branchInNewSession ? undefined : activeSession?.id)
+      dispatch(branchInNewSession ? undefined : (retryOwner?.id ?? activeSession?.id))
     }
 
     const submitRestoredPlan = async (response: RestoredPlanResponse): Promise<void> => {

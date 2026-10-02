@@ -38,7 +38,7 @@ export type Wsl2BashPreviewStatus = Readonly<{
 }>
 
 export type SwitchToPowerShellResult = Readonly<{
-  runtimeBinding: Readonly<{ kind: 'powershell'; version: '5.1' }>
+  runtimeBinding: Readonly<{ kind: 'powershell'; version: '5.1' | '7.6' }>
   appliesTo: 'subsequent-executions'
   wslProfilePreserved: boolean
 }>

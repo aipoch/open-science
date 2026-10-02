@@ -8,6 +8,18 @@ const { refineTable } = await import(
 const { associateTableNotes } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-notes.mjs')).href
 )
+
+it.each(['Values are number (proportion).', 'Values are numbers (proportions).'])(
+  'owns an explicit statistic or unprefixed glossary beneath a table: %s',
+  (text) => {
+    const line = { text, x: 20, y: 110, width: 270, height: 8, fontSize: 8 }
+    const tables = [{ rect: [10, 20, 300, 100] }]
+    expect(
+      associateTableNotes({ lines: [line] }, tables)[0].map((n: { text: string }) => n.text)
+    ).toEqual([text])
+    expect(associateTableNotes({ lines: [{ ...line, y: 250 }] }, tables)).toEqual([[]])
+  }
+)
 it('keeps a bibliographic source beneath a table without absorbing modified-result prose', () => {
   const line = (text: string, y = 184): object => ({
     text,
@@ -1131,3 +1143,16 @@ it.each([
     expect(t.unassigned).toEqual([])
   }
 )
+it('owns an unprefixed comma-separated acronym glossary only beside its table', () => {
+  const text =
+    'SD standard deviation, BMI body mass index, AFC antral follicle count, AMH anti-Mullerian hormone'
+  const line = { text, x: 20, y: 110, width: 280, height: 8, fontSize: 8 }
+  expect(
+    associateTableNotes({ lines: [line] }, [{ rect: [10, 20, 300, 100] }])[0].map(
+      (n: { text: string }) => n.text
+    )
+  ).toEqual([text])
+  expect(
+    associateTableNotes({ lines: [{ ...line, y: 250 }] }, [{ rect: [10, 20, 300, 100] }])
+  ).toEqual([[]])
+})

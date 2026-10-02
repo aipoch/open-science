@@ -208,6 +208,18 @@ export const sessionsDeleteSessionContracts = {
   'sessions.loadOne': callable<
     (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   >()('sessions', ['sessions:load-one']),
+  'sessions.listRuntimeTerminalFailures': callable<
+    () => Promise<import('../acp').AcpRuntimeEvent[]>
+  >()('sessions', ['sessions:list-runtime-terminal-failures']),
+  'sessions.retryRuntimeTerminalCommit': callable<
+    (request: import('../session-persistence').RetryRuntimeTerminalCommitRequest) => Promise<void>
+  >()('sessions', [
+    'sessions:retry-runtime-terminal-commit',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'sessions.loadUsage': callable<() => Promise<SessionUsageProjection>>()('sessions', [
     'sessions:load-usage'
   ]),

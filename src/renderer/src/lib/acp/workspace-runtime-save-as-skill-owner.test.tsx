@@ -3,16 +3,33 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { materializeSessionConversationGraph } from '../../../../shared/session-persistence'
+import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
+import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
+import { useWorkspaceOperationErrors } from './workspace-operation-error'
+import { applyWorkspaceRuntimeEvent } from './workspace-events'
+import type { AcpRuntimeEvent } from '../../../../shared/acp'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession,
+  type SaveSessionOptions
+} from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
-import { flushSessionPersistence } from '../session-persistence/session-persistence'
+import {
+  flushSessionPersistence,
+  resetSessionPersistenceWriteFailuresForTests,
+  type SessionPersistenceApi
+} from '../session-persistence/session-persistence'
 import type { WorkspaceSessionRuntimeSelection } from './useWorkspaceAgentRuntime'
+import { resetWorkspacePromptRollbacksForTests } from './workspace-prompt-preparation'
 import { useWorkspaceRuntimeSaveAsSkillOwner } from './workspace-runtime-save-as-skill-owner'
 
-vi.mock('../session-persistence/session-persistence', () => ({
+vi.mock('../session-persistence/session-persistence', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../session-persistence/session-persistence')>()),
   flushSessionPersistence: vi.fn(async () => undefined)
 }))
+
+let sessionApi: Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -70,6 +87,40 @@ describe('workspace Save as skill owner', () => {
   let root: Root | undefined
 
   beforeEach(() => {
+    resetWorkspacePromptRollbacksForTests()
+    resetSessionConversationIntentsForTests()
+    resetSessionPersistenceWriteFailuresForTests()
+    useWorkspaceOperationErrors.setState({ errors: {} })
+    const preparationOwner = new SessionPromptPreparationOwner()
+    let durable: Parameters<SessionPersistenceApi['saveSession']>[0] | undefined
+    sessionApi = {
+      saveSession: vi.fn(async (candidate: PersistedChatSession, options?: SaveSessionOptions) => {
+        const commands = options?.conversationCommands ?? []
+        if (!durable) {
+          const baseline = structuredClone(candidate)
+          // Unit fixtures have no database record: pending graph commands have not yet been
+          // committed, so their newly opened segments are absent from that baseline.
+          const opened = new Set(
+            commands.flatMap((command) =>
+              command.kind === 'open-segment' ? [command.segment.id] : []
+            )
+          )
+          if (baseline.conversationGraph)
+            baseline.conversationGraph.runtimeSegments =
+              baseline.conversationGraph.runtimeSegments.filter(({ id }) => !opened.has(id))
+          durable = baseline
+        }
+        durable = preparationOwner.apply(durable, commands)
+        durable = {
+          ...durable,
+          revision: (durable.revision ?? 0) + 1,
+          runtimeTranscriptOwner: 'main'
+        }
+        preparationOwner.observe(durable)
+        return structuredClone(durable)
+      }),
+      saveManifest: vi.fn(async () => undefined)
+    }
     vi.mocked(flushSessionPersistence).mockReset().mockResolvedValue(undefined)
     useSettingsStore.setState({
       ...createInitialSettingsState(),
@@ -124,7 +175,7 @@ describe('workspace Save as skill owner', () => {
     )
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { acp: { saveAsSkill } }
+      value: { sessions: sessionApi, acp: { saveAsSkill } }
     })
     const resumeSession = vi.fn()
     const runtime = {
@@ -186,6 +237,76 @@ describe('workspace Save as skill owner', () => {
     expect(owner.saveAsSkillInFlightSessionIds).toEqual([])
   })
 
+  it('reports a later Main-authored hidden failure after provider acceptance without rewriting the outcome', async () => {
+    useSessionStore.setState({ sessions: [structuredClone(session)] })
+    const saveAsSkill = vi.fn(async () => undefined)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { sessions: sessionApi, acp: { saveAsSkill } }
+    })
+    const runtime = { state: { sessionIds: [session.id] }, resumeSession: vi.fn() } as never
+    let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+    const Harness = (): null => {
+      owner = useWorkspaceRuntimeSaveAsSkillOwner({
+        runtime,
+        resolveSessionRuntimeSelection: sessionRuntimeSelection
+      })
+      return null
+    }
+    root = createRoot(document.createElement('div'))
+    act(() => root?.render(createElement(Harness)))
+    const frame = session.conversationGraph!.frames[0]
+    await act(async () =>
+      owner.saveAsSkill({
+        projectId: session.projectId,
+        sessionId: session.id,
+        agentFrameId: frame.id,
+        messageBranchId: frame.activeBranchId
+      })
+    )
+    expect(saveAsSkill).toHaveBeenCalledOnce()
+    const controlId = useSessionStore.getState().sessions[0].activeRun!.promptMessageId
+    // The terminal projection belongs to Main; the command Promise has already fulfilled.
+    useSessionStore.setState(({ sessions }) => ({
+      sessions: sessions.map((current) => ({
+        ...current,
+        status: 'error',
+        error: 'Skill evaluation failed',
+        activeRun: undefined,
+        messages: current.messages.map((message) =>
+          message.id === controlId
+            ? {
+                ...message,
+                turnOutcome: {
+                  kind: 'failed' as const,
+                  settledAt: 10,
+                  error: 'Skill evaluation failed'
+                }
+              }
+            : message
+        )
+      }))
+    }))
+    const authority = useSessionStore.getState().sessions[0]
+    await applyWorkspaceRuntimeEvent({
+      id: 'hidden-late-error',
+      kind: 'error',
+      level: 'error',
+      timestamp: 10,
+      sessionId: session.id,
+      promptMessageId: controlId,
+      publicationOwner: 'main',
+      text: 'Skill evaluation failed'
+    } as AcpRuntimeEvent)
+    expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBe(
+      'Skill evaluation failed'
+    )
+    expect(useSessionStore.getState().sessions[0]).toBe(authority)
+    expect(authority.messages.find(({ id }) => id === controlId)?.turnOutcome).toMatchObject({
+      kind: 'failed'
+    })
+  })
+
   it.each(['resume', 'persistence'] as const)(
     'does not dispatch after cancellation during %s preparation',
     async (phase) => {
@@ -203,7 +324,7 @@ describe('workspace Save as skill owner', () => {
       })
       Object.defineProperty(window, 'api', {
         configurable: true,
-        value: { acp: { saveAsSkill } }
+        value: { sessions: sessionApi, acp: { saveAsSkill } }
       })
       let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
       const Harness = (): null => {
@@ -248,21 +369,30 @@ describe('workspace Save as skill owner', () => {
         await result
       })
       expect(saveAsSkill).not.toHaveBeenCalled()
-      expect(useSessionStore.getState().sessions[0].resumeRecovery).toMatchObject({
-        cause: 'cancelled',
-        ...(controlId ? { promptMessageId: controlId } : {})
-      })
+      if (phase === 'persistence') {
+        expect(useSessionStore.getState().sessions[0].resumeRecovery).toBeUndefined()
+        expect(
+          useSessionStore
+            .getState()
+            .sessions[0].messages.some(({ turnIntent }) => turnIntent === 'save-as-skill')
+        ).toBe(false)
+      } else {
+        expect(useSessionStore.getState().sessions[0].resumeRecovery).toMatchObject({
+          cause: 'cancelled'
+        })
+      }
       expect(owner.saveAsSkillInFlightSessionIds).toEqual([])
     }
   )
 
-  it('keeps a rejected hidden turn recoverable', async () => {
+  it('rolls back a rejected unadmitted hidden turn and reports the operation error', async () => {
     useSessionStore.setState({
       sessions: [{ ...session, branchContextResetRequired: true }]
     })
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
+        sessions: sessionApi,
         acp: { saveAsSkill: vi.fn(async () => Promise.reject(new Error('Disconnected'))) },
         notebook: { shutdown: vi.fn(async () => ({ sessionId: session.id, status: 'shutdown' })) }
       }
@@ -301,14 +431,106 @@ describe('workspace Save as skill owner', () => {
     ).rejects.toThrow('Disconnected')
 
     const rejected = useSessionStore.getState().sessions[0]
-    const control = rejected?.messages.at(-1)
-    expect(control).toMatchObject({ turnIntent: 'save-as-skill', interrupted: true })
-    expect(rejected?.resumeRecovery).toEqual({
-      kind: 'resume-required',
-      cause: 'connection-lost',
-      promptMessageId: control?.id
+    expect(rejected.messages.some(({ turnIntent }) => turnIntent === 'save-as-skill')).toBe(false)
+    expect(rejected.status).toBe('idle')
+    expect(rejected.error).toBeUndefined()
+    expect(rejected.activeRun).toBeUndefined()
+    expect(rejected.resumeRecovery).toBeUndefined()
+    expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBe('Disconnected')
+  })
+
+  it('surfaces a failed rollback with the original failure and keeps its retry for the next attempt', async () => {
+    useSessionStore.setState({ sessions: [session] })
+    useWorkspaceOperationErrors.setState({ errors: { [session.id]: 'Previous failure' } })
+    const failingSave = sessionApi.saveSession
+    let failRollback = true
+    sessionApi = {
+      ...sessionApi,
+      saveSession: vi.fn(async (candidate: PersistedChatSession, options?: SaveSessionOptions) => {
+        if (
+          failRollback &&
+          options?.conversationCommands?.some(({ kind }) => kind === 'rollback-prompt')
+        ) {
+          throw new Error('No space left on device')
+        }
+        return failingSave(candidate, options)
+      })
+    }
+    const saveAsSkill = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('Disconnected'))
+      .mockResolvedValue(undefined)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { sessions: sessionApi, acp: { saveAsSkill } }
     })
-    expect(rejected?.pendingHistoryReplay).toEqual({ kind: 'all' })
+    const runtime = { state: { sessionIds: ['session-1'] }, resumeSession: vi.fn() } as never
+    let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+    const Harness = (): null => {
+      owner = useWorkspaceRuntimeSaveAsSkillOwner({
+        runtime,
+        resolveSessionRuntimeSelection: sessionRuntimeSelection
+      })
+      return null
+    }
+    root = createRoot(document.createElement('div'))
+    act(() => root?.render(createElement(Harness)))
+    const graph = session.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+    const request = {
+      projectId: session.projectId,
+      sessionId: session.id,
+      agentFrameId: frame.id,
+      messageBranchId: frame.activeBranchId
+    }
+
+    await expect(act(() => owner.saveAsSkill(request))).rejects.toThrow('Disconnected')
+    const reported = useWorkspaceOperationErrors.getState().errors[session.id]
+    expect(reported).toContain('Disconnected')
+    expect(reported).toContain('No space left on device')
+    expect(useSessionStore.getState().sessions[0].activeRun).toBeDefined()
+
+    failRollback = false
+    // The retained exact preparation is released before the retry prepares anything new.
+    await act(() => owner.saveAsSkill(request))
+    expect(saveAsSkill).toHaveBeenCalledTimes(2)
+    expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBeUndefined()
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[0].messages.filter(({ turnIntent }) => turnIntent === 'save-as-skill')
+    ).toHaveLength(1)
+  })
+
+  it('clears a previous Operation Error when a retry starts', async () => {
+    useSessionStore.setState({ sessions: [session] })
+    useWorkspaceOperationErrors.setState({ errors: { [session.id]: 'Earlier failure' } })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { sessions: sessionApi, acp: { saveAsSkill: vi.fn(async () => undefined) } }
+    })
+    const runtime = { state: { sessionIds: ['session-1'] }, resumeSession: vi.fn() } as never
+    let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+    const Harness = (): null => {
+      owner = useWorkspaceRuntimeSaveAsSkillOwner({
+        runtime,
+        resolveSessionRuntimeSelection: sessionRuntimeSelection
+      })
+      return null
+    }
+    root = createRoot(document.createElement('div'))
+    act(() => root?.render(createElement(Harness)))
+    const graph = session.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+    await act(() =>
+      owner.saveAsSkill({
+        projectId: session.projectId,
+        sessionId: session.id,
+        agentFrameId: frame.id,
+        messageBranchId: frame.activeBranchId
+      })
+    )
+    expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBeUndefined()
   })
 
   it.each([{ contextReset: false }, { contextReset: true }])(
@@ -320,7 +542,7 @@ describe('workspace Save as skill owner', () => {
       const saveAsSkill = vi.fn(async () => undefined)
       Object.defineProperty(window, 'api', {
         configurable: true,
-        value: { acp: { saveAsSkill } }
+        value: { sessions: sessionApi, acp: { saveAsSkill } }
       })
       const runtime = {
         state: { cwd: '/workspace', sessionIds: [] },
@@ -404,7 +626,7 @@ describe('workspace Save as skill owner', () => {
       const saveAsSkill = vi.fn(async () => undefined)
       Object.defineProperty(window, 'api', {
         configurable: true,
-        value: { acp: { saveAsSkill } }
+        value: { sessions: sessionApi, acp: { saveAsSkill } }
       })
       const resumeSession = vi.fn(async () => ({
         sessionId: session.id,
@@ -509,7 +731,7 @@ describe('workspace Save as skill owner', () => {
     const saveAsSkill = vi.fn(async () => undefined)
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { acp: { saveAsSkill }, notebook: { shutdown } }
+      value: { sessions: sessionApi, acp: { saveAsSkill }, notebook: { shutdown } }
     })
     const resetSessionContext = vi.fn(async () => ({
       sessionId: session.id,
@@ -565,7 +787,7 @@ describe('workspace Save as skill owner', () => {
     const saveAsSkill = vi.fn(async () => undefined)
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { acp: { saveAsSkill } }
+      value: { sessions: sessionApi, acp: { saveAsSkill } }
     })
     const runtime = {
       state: { cwd: session.cwd, sessionIds: [session.id] },

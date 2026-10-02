@@ -63,6 +63,7 @@ export type FailTaskSessionRunRequest = SettleTaskSessionCompletionRequest &
   Readonly<{
     error: string
     errorReportable?: false
+    interruptionCause?: 'app-restart'
   }>
 
 // Renderer-safe diagnostics for durable Session files omitted during startup hydration.
@@ -119,6 +120,19 @@ export type LoadSessionRequest = {
   projectId: string
   sessionId: string
 }
+
+export const retryRuntimeTerminalCommitRequestSchema = z
+  .object({
+    projectId: z.string().min(1),
+    sessionId: z.string().min(1),
+    promptMessageId: z.string().min(1),
+    executionId: z.string().min(1)
+  })
+  .strict()
+
+export type RetryRuntimeTerminalCommitRequest = z.infer<
+  typeof retryRuntimeTerminalCommitRequestSchema
+>
 
 export type OpenSessionRecoveryFolderRequest = {
   projectId: string
@@ -303,6 +317,10 @@ const updateSessionConfigurationArgsCodec: RuntimeCodec<
 // Runtime-validated contracts for Electron-facing Session commands. Request schemas double as wire
 // types, while Session-bearing commands share the recursive persistence codec above.
 export const sessionApplicationCommandContracts = Object.freeze({
+  retryRuntimeTerminalCommit: defineApplicationCommandContract(
+    validationCodec(z.tuple([retryRuntimeTerminalCommitRequestSchema])),
+    validationCodec(z.void())
+  ),
   filterPdfContextCandidates: defineApplicationCommandContract(
     validationCodec(z.tuple([filterSessionPdfContextCandidatesRequestSchema])),
     validationCodec(filterSessionPdfContextCandidatesResultSchema)

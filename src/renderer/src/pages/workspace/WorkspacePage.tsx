@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
   pendingWorkspaceElicitations,
   useWorkspaceElicitation
@@ -78,6 +79,7 @@ import {
   starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
+import { useWorkspaceSessionDiscussion } from './workspace-session-discussion'
 import { useConversationSubmissions } from './use-conversation-submissions'
 import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
 import { ConversationExportDialog } from './ConversationExportDialog'
@@ -88,7 +90,6 @@ import { SessionReproducibilityDialog } from './SessionReproducibilityDialog'
 import { FilePreviewDialog } from './FilePreviewDialog'
 import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
-import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { BookmarksProvider } from './bookmarks/BookmarksProvider'
 import { PdfAnnotationsProvider } from './pdf-annotations/PdfAnnotationsProvider'
 import { JobDetailModal } from '@/components/JobDetailModal'
@@ -270,8 +271,10 @@ const WorkspacePage = ({
   const openDiagnostics = (session: ChatSession): void =>
     setDiagnosticSession({ projectId: session.projectId, sessionId: session.id })
   const [checkSession, setCheckSession] = useState<ChatSession>()
-  const [artifactFinalizationRetrySessionId, setArtifactFinalizationRetrySessionId] =
-    useState<string>()
+  const [artifactFinalizationRetry, setArtifactFinalizationRetry] = useState<{
+    sessionId: string
+    promptMessageId: string
+  }>()
   const [manualReviewRequests, setManualReviewRequests] = useState<
     Record<string, ManualReviewRequestState>
   >({})
@@ -524,6 +527,7 @@ const WorkspacePage = ({
   })
   const { doc: draftDoc, error: attachmentError } = composer.view
   const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
+  useWorkspaceSessionDiscussion({ composer, draftKey: currentDraftKey, editable: canEditDraft })
   const delegationControl = useWorkspaceSessionDelegationControlOwner({
     activeSession,
     selectedSessionId,
@@ -836,16 +840,20 @@ const WorkspacePage = ({
       : activeSession?.status === 'error'
         ? 'Resolve the current session error before compacting.'
         : 'Wait for the current agent activity to finish.'
+  // runtime.actionError is global to the Runtime, so only the no-Session surface may show it.
+  const activeSessionOperationError = useWorkspaceOperationErrors((state) =>
+    activeSession ? (state.errors[activeSession.id] ?? null) : null
+  )
   const durablePermissionError =
     activeSession?.status === 'waiting-permission' &&
     activeSession.runtimeContext?.permission?.state === 'pending'
-      ? (activeSession.error ?? actionError)
+      ? (activeSession.error ?? activeSessionOperationError)
       : null
   const visibleActionError =
     activeManualReviewRequest?.error ??
     attachmentError ??
     sessionController.view.exportError ??
-    (activeSession ? durablePermissionError : actionError)
+    (activeSession ? (durablePermissionError ?? activeSessionOperationError) : actionError)
 
   const compactActiveContext = useCallback((): void => {
     if (!activeSession || !canCompactContext) return
@@ -1345,15 +1353,16 @@ const WorkspacePage = ({
     })()
   }
 
-  const requestArtifactFinalizationRetry = (): void => {
-    if (!activeSession || artifactFinalizationRetrySessionId) return
-    const sessionId = activeSession.id
-    setArtifactFinalizationRetrySessionId(sessionId)
-    void retryPendingArtifactFinalization(sessionId)
+  const requestArtifactFinalizationRetry = (sessionId: string, promptMessageId: string): void => {
+    if (artifactFinalizationRetry) return
+    setArtifactFinalizationRetry({ sessionId, promptMessageId })
+    void retryPendingArtifactFinalization(sessionId, undefined, { promptMessageId })
       .catch(() => undefined)
       .finally(() => {
-        setArtifactFinalizationRetrySessionId((current) =>
-          current === sessionId ? undefined : current
+        setArtifactFinalizationRetry((current) =>
+          current?.sessionId === sessionId && current.promptMessageId === promptMessageId
+            ? undefined
+            : current
         )
       })
   }
@@ -1440,10 +1449,7 @@ const WorkspacePage = ({
     isSessionPersistenceReady && Boolean(activeProject) && activeProject?.archivedAt === undefined
 
   const content = (
-    <ProjectPackageDropZone
-      projectId={scopedProjectId}
-      projectName={activeProject?.name ?? t('Project')}
-      canImport={canImportSessionPackage}
+    <main
       ref={previewFocusFallbackRef}
       tabIndex={-1}
       className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]"
@@ -1688,7 +1694,11 @@ const WorkspacePage = ({
                   ),
                   actionError: visibleActionError,
                   sideChatDisabledReason,
-                  sessionImport: { projectId: scopedProjectId, canImport: canImportSessionPackage }
+                  sessionImport: {
+                    projectId: scopedProjectId,
+                    projectName: activeProject?.name ?? t('Project'),
+                    canImport: canImportSessionPackage
+                  }
                 }}
                 composer={composer}
                 conversation={conversation}
@@ -1756,7 +1766,11 @@ const WorkspacePage = ({
                 }}
                 workflows={{
                   artifactFinalization: {
-                    running: artifactFinalizationRetrySessionId !== undefined,
+                    running: artifactFinalizationRetry !== undefined,
+                    retryingPromptMessageId:
+                      artifactFinalizationRetry?.sessionId === activeSession?.id
+                        ? artifactFinalizationRetry?.promptMessageId
+                        : undefined,
                     request: requestArtifactFinalizationRetry
                   },
                   review: {
@@ -1898,7 +1912,7 @@ const WorkspacePage = ({
           <ProjectFormDialog {...projectFormDialog.dialogProps} />
         </PdfAnnotationsProvider>
       </BookmarksProvider>
-    </ProjectPackageDropZone>
+    </main>
   )
   return (
     <LibraryReferenceActionsContext.Provider

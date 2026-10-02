@@ -49,7 +49,8 @@
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/pdf-annotations/repository.integration.test.ts",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx",
-      "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
+      "src/main/session-persistence/ipc.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

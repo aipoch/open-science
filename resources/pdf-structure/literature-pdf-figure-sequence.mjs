@@ -10,6 +10,79 @@ import { isUprightText } from './literature-pdf-orientation.mjs'
 const isLegendHeading = (text) =>
   /^(?:figure\s+(?:legends|captions)|List of Figures)\s*:?\s*$/i.test(text.trim())
 
+export const isPlateProseHeading = (text) =>
+  /^(?:Highlights|Key points)\s*:?\s*$/i.test(text.trim())
+
+// A complete plate image already owns its embedded axes and vector labels.
+// Outside proof watermarks and running headers must not widen that image's crop.
+// Native panel letters just above the image still belong to the plate.
+export function rasterPlateRect(page) {
+  const images = page.graphicsBounds.filter(
+    (g) =>
+      g.kind === 'image' &&
+      (g.normalizedRect[2] - g.normalizedRect[0]) * (g.normalizedRect[3] - g.normalizedRect[1]) >
+        0.03
+  )
+  if (!images.length) return
+  const rects = images.map((g) =>
+    g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+  )
+  const imageRect = [
+    Math.min(...rects.map((r) => r[0])),
+    Math.min(...rects.map((r) => r[1])),
+    Math.max(...rects.map((r) => r[2])),
+    Math.max(...rects.map((r) => r[3]))
+  ]
+  const labels = page.lines
+    .filter((l) => {
+      if (captionKind(l.text) || isPlateProseHeading(l.text)) return false
+      const r = [l.x, l.y, l.x + l.width, l.y + l.height]
+      const inside =
+        r[0] >= imageRect[0] - l.height &&
+        r[2] <= imageRect[2] + l.height &&
+        r[1] >= imageRect[1] - l.height &&
+        r[3] <= imageRect[3] + l.height
+      const panel =
+        /^\(?[A-Z]\)?$/.test(l.text.trim()) &&
+        r[0] >= imageRect[0] &&
+        r[2] <= imageRect[2] &&
+        r[3] <= imageRect[1] &&
+        imageRect[1] - r[3] <= l.height * 4
+      return inside || panel
+    })
+    .map((l) => [l.x, l.y, l.x + l.width, l.y + l.height])
+  const parts = [imageRect, ...labels]
+  return [
+    Math.min(...parts.map((r) => r[0])),
+    Math.min(...parts.map((r) => r[1])),
+    Math.max(...parts.map((r) => r[2])),
+    Math.max(...parts.map((r) => r[3]))
+  ]
+}
+
+// Manuscript page numbers can sit well inside the nominal bottom margin.
+// Require a consecutive sequence at the same position on at least three pages;
+// a chart tick or isolated measurement cannot establish a running footer.
+const withoutRunningNumbers = (pages) =>
+  pages.map((page) => ({
+    ...page,
+    lines: page.lines.filter((line) => {
+      if (!/^\d+$/.test(line.text.trim()) || !(line.y > page.height * 0.8)) return true
+      const offset = Number(line.text) - page.pageNumber
+      return (
+        pages.filter((peer) =>
+          peer.lines.some(
+            (candidate) =>
+              /^\d+$/.test(candidate.text.trim()) &&
+              Number(candidate.text) - peer.pageNumber === offset &&
+              Math.abs(candidate.y / peer.height - line.y / page.height) < 1 / 256 &&
+              Math.abs(candidate.x / peer.width - line.x / page.width) < 1 / 256
+          )
+        ).length < 3
+      )
+    })
+  }))
+
 const hasNumberedLegends = (page) => {
   const labels = page.lines.filter((l) => /^(?:Figure|Fig\.)\s*\d+\s*[.:]\s+/.test(l.text))
   return (
@@ -44,6 +117,7 @@ const citedPanelLetters = (text) => {
 // Match only an explicit legend section, ordered 1..N, followed by exactly N
 // text-free or explicitly numbered pages. Cropping still requires native graphic evidence.
 export function matchFigureSequence(pages) {
+  pages = withoutRunningNumbers(pages)
   const heading = pages.findIndex(
     (page) =>
       page.lines.some((line) => isLegendHeading(line.text)) ||
@@ -77,7 +151,7 @@ export function matchFigureSequence(pages) {
   }
   let lastLegend = heading
   let central = false
-  for (let i = heading; i < pages.length && pages[i].lines.length; i++) {
+  legends: for (let i = heading; i < pages.length && pages[i].lines.length; i++) {
     if (i > heading && isExportedPlate(pages[i])) break
     if (i > heading && pages[i].lines.some((l) => /^Table\s+\d+\s*[.:]/i.test(l.text))) break
     // A repeated standalone Figure 1 starts the numbered plates, not a
@@ -91,7 +165,14 @@ export function matchFigureSequence(pages) {
     )
       break
     lastLegend = i
-    for (const line of pages[i].lines) {
+    const headingLine =
+      i === heading ? pages[i].lines.findIndex((l) => isLegendHeading(l.text)) : -1
+    for (const line of pages[i].lines.slice(headingLine + 1)) {
+      if (
+        captions.length >= 2 &&
+        /^(?:Supplement(?:ary)?\s+(?:Figure|Fig\.)|Authors?[’']?\s+disclosures?)/i.test(line.text)
+      )
+        break legends
       const number = /^(?:Figure|Fig\.)\s*(\d+)\s*[.:]\s*/i.exec(line.text)
       const illustration = /^Central Illustration\s*:/i.test(line.text)
       if (number || illustration) {
@@ -129,15 +210,38 @@ export function matchFigureSequence(pages) {
   const labelPattern = /^(?:Figure|Fig\.)\s*(\d+)([A-Z])?\.?$/i
   for (let i = firstPlate; i < pages.length; i++) {
     if (pages[i].lines.some((line) => isLegendHeading(line.text))) break
-    const labels = pages[i].lines.filter(
+    const proseStart = pages[i].lines.findIndex((l) => isPlateProseHeading(l.text))
+    if (proseStart === 0) break
+    const lines = proseStart >= 0 ? pages[i].lines.slice(0, proseStart) : pages[i].lines
+    const labels = lines.filter(
       (l) => labelPattern.test(l.text.trim()) || repeatsCaption(l, groups.length)
     )
     const label = labels.length === 1 ? labelPattern.exec(labels[0].text.trim()) : undefined
-    const number = label ? Number(label[1]) : groups.length + 1
-    const panel = label?.[2]?.toUpperCase()
-    if (pages[i].lines.length && !isExportedPlate(pages[i]) && labels.length !== 1) break
+    const standalone = !implicit && lines.filter((l) => /^\([A-Z]\)$/.test(l.text.trim()))
+    const letter = standalone?.length === 1 ? standalone[0].text.trim()[1] : undefined
+    const number = letter
+      ? letter === 'A'
+        ? groups.length + 1
+        : groups.length
+      : label
+        ? Number(label[1])
+        : groups.length + 1
+    const panel = label?.[2]?.toUpperCase() ?? letter
+    if (letter) {
+      // An upper Fig. 1 can trail the preceding plate while (A) starts Fig. 2.
+      // The end of a panel group can instead carry its own figure number.
+      if (
+        pages[i].graphicCount < 1 ||
+        labels.length > 1 ||
+        (label &&
+          Number(label[1]) !== number &&
+          !(letter === 'A' && Number(label[1]) === number - 1 && labels[0].y < standalone[0].y)) ||
+        lines.some((l) => !labels.includes(l) && !standalone.includes(l))
+      )
+        return new Map()
+    } else if (lines.length && !isExportedPlate(pages[i]) && labels.length !== 1) break
     if (panel) {
-      if (!label || pages[i].graphicCount < 1 || pages[i].lines.length !== 1) return new Map()
+      if (!letter && (!label || pages[i].graphicCount < 1 || lines.length !== 1)) return new Map()
       if (number === groups.length + 1 && panel === 'A') groups.push([])
       const group = groups[number - 1]
       if (number !== groups.length || !group || panel !== String.fromCharCode(65 + group.length))

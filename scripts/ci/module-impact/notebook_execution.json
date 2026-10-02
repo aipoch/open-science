@@ -1,5 +1,12 @@
 {
   "ownerPaths": [
+    "src/main/notebook/windows-runtime-catalog.json",
+    "src/main/notebook/windows-runtime-components.ts",
+    "src/main/notebook/windows-runtime-components.test.ts",
+    "src/main/notebook/windows-runtime-manager.ts",
+    "src/main/notebook/windows-runtime-manager.test.ts",
+    "src/main/notebook/windows-runtime-probe.ts",
+    "src/main/notebook/windows-runtime-probe.windows.test.ts",
     "src/main/notebook/configured-shell-runtime.test.ts",
     "src/main/notebook/configured-shell-runtime.ts",
     "src/main/notebook/dependency-analysis-python.ts",
@@ -187,7 +194,9 @@
     "src/main/notebook/wsl2-scheduling.integration.test.ts",
     "src/main/notebook/r-save-guard.test.ts",
     "src/main/notebook/r-connection-guard.test.ts",
-    "src/main/notebook/fixtures/lineage/r-save-promises.R"
+    "src/main/notebook/fixtures/lineage/r-save-promises.R",
+    "src/main/notebook/windows-notebook-runtime.ts",
+    "src/main/notebook/windows-notebook-runtime.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/configured-shell-runtime.ts",
@@ -274,6 +283,9 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/notebook/windows-runtime-components.test.ts",
+      "src/main/notebook/windows-runtime-manager.test.ts",
+      "src/main/notebook/windows-runtime-probe.windows.test.ts",
       "src/main/notebook/configured-shell-runtime.test.ts",
       "src/main/notebook/dependency-analysis.python-data-science.test.ts",
       "src/main/notebook/dependency-analysis.python-state.test.ts",
@@ -344,7 +356,8 @@
       "src/main/notebook/windows-micromamba-runner.test.ts",
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
       "src/main/notebook/r-save-guard.test.ts",
-      "src/main/notebook/r-connection-guard.test.ts"
+      "src/main/notebook/r-connection-guard.test.ts",
+      "src/main/notebook/windows-notebook-runtime.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -352,6 +365,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/notebook/powershell-search-parser.windows.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/literature/command-owner.test.ts",
@@ -922,7 +936,15 @@
       "src/main/notebook/dependency-analysis.cwd-lineage.test.ts",
       "src/main/notebook/real-notebook-lineage.integration.test.ts",
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
-      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
+      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
+      "src/main/session-persistence/reconciliation-renderer-parity.test.ts",
+      "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
+      "src/main/session-persistence/missing-runtime-session-repro.test.ts",
+      "src/main/session-persistence/prompt-preparation-restart.test.ts",
+      "src/main/session-persistence/terminal-commit-scheduler.test.ts",
+      "src/main/session-persistence/attention-projection.test.ts",
+      "src/main/acp/approved-handoff-outcome.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

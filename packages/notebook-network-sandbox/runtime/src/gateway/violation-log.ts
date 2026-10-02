@@ -9,19 +9,64 @@ const clean = (value: string): string =>
     .trim()
     .slice(0, 1000)
 
-const pathNear = (stderr: string, failure: string): string | undefined => {
-  const path = String.raw`([A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]+|\/[^\s'"\x60:]+)`
-  for (const line of stderr.split(/\r?\n/)) {
-    const failureMatch = new RegExp(failure, 'i').exec(line)
+const diagnosticLines = function* (output: string, failure: RegExp): Generator<string> {
+  for (const line of output.split(/\r?\n/)) {
+    // Unicode escapes can also encode the error phrase itself in a JSON message.
+    if (!failure.test(line) && !line.includes('\\u')) continue
+    // CLI JSON envelopes escape Windows separators. Decode complete JSON strings only;
+    // replacing backslashes in ordinary output would corrupt UNC paths and escape sequences.
+    // Advance monotonically: an unterminated string must not retry at every escaped quote.
+    let index = 0
+    while (index < line.length) {
+      if (line[index] !== '"') {
+        index += 1
+        continue
+      }
+      const start = index++
+      while (index < line.length && line[index] !== '"') {
+        index += line[index] === '\\' ? 2 : 1
+      }
+      if (index >= line.length) break
+      const literal = line.slice(start, ++index)
+      try {
+        yield JSON.parse(literal) as string
+      } catch {
+        // Quoted prose is not necessarily JSON; retain the original line below.
+      }
+    }
+    yield line
+  }
+}
+
+const diagnosticPaths = (text: string): string[] => {
+  // Consume whole quoted tokens, including non-path tokens, before looking for bare paths.
+  // Spaces are filename bytes: never normalize or truncate a path used for folder recovery.
+  const tokens = /"[^"\r\n]*"|'[^'\r\n]*'|`[^`\r\n]*`|(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`:]+/g
+  const paths: string[] = []
+  for (const match of text.matchAll(tokens)) {
+    const quoted = /^["'`]/.test(match[0])
+    const candidate = quoted ? match[0].slice(1, -1) : match[0]
+    if (!/^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+|\/)/.test(candidate)) continue
+    if (!quoted) {
+      // Do not recover a suffix inside another token, or a prefix of an unquoted spaced path.
+      if (match.index > 0 && !/[\s:]/.test(text[match.index - 1])) continue
+      if (!/^\s*(?::|$)/.test(text.slice(match.index + match[0].length))) continue
+    }
+    if (candidate.length > 1000 || /[\u0000-\u001f\u007f]/.test(candidate)) continue
+    paths.push(candidate)
+  }
+  return paths
+}
+
+const pathNear = (output: string, failure: string): string | undefined => {
+  const failurePattern = new RegExp(failure, 'i')
+  for (const line of diagnosticLines(output, failurePattern)) {
+    const failureMatch = failurePattern.exec(line)
     if (!failureMatch) continue
-    const before = [...line.slice(0, failureMatch.index).matchAll(new RegExp(path, 'gi'))].at(
-      -1
-    )?.[1]
-    const after = line
-      .slice(failureMatch.index + failureMatch[0].length)
-      .match(new RegExp(path, 'i'))?.[1]
+    const before = diagnosticPaths(line.slice(0, failureMatch.index)).at(-1)
+    const after = diagnosticPaths(line.slice(failureMatch.index + failureMatch[0].length))[0]
     const candidate = before ?? after
-    if (candidate) return clean(candidate)
+    if (candidate) return candidate
   }
   return undefined
 }
@@ -43,12 +88,14 @@ class ViolationLog {
   attach(
     commandId: string,
     stderr: string,
-    hiddenBySandbox: (path: string) => boolean = () => false
+    hiddenBySandbox: (path: string) => boolean = () => false,
+    stdout = ''
   ): string {
     const events = this.#events.get(commandId)
     this.#events.delete(commandId)
-    const permissionDenied = new RegExp(permissionFailure, 'i').test(stderr)
-    const missing = missingPath(stderr)
+    const diagnostics = `${stderr}\n${stdout}`
+    const permissionDenied = new RegExp(permissionFailure, 'i').test(diagnostics)
+    const missing = missingPath(diagnostics)
     const hiddenMissingPath = missing && hiddenBySandbox(missing) ? missing : undefined
     const lines = [...(events ?? [])]
     if (
@@ -65,7 +112,7 @@ class ViolationLog {
     ) {
       lines.unshift(NETWORK_POLICY_BLOCKED)
     }
-    const path = (permissionDenied ? deniedPath(stderr) : undefined) ?? hiddenMissingPath
+    const path = (permissionDenied ? deniedPath(diagnostics) : undefined) ?? hiddenMissingPath
     if (path) {
       lines.push(
         `OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED${path ? `: ${path}` : ''} ` +

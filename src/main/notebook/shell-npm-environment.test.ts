@@ -80,6 +80,9 @@ describe('managed shell npm storage', () => {
       const paths = shellNpmPaths(root, platform)
       expect(second.PATH).toBe(`${paths.bin}${platform === 'win32' ? ';' : ':'}existing-path`)
       expect(second.NPM_CONFIG_GLOBAL).toBeUndefined()
+      expect(second.OPEN_SCIENCE_CANONICAL_NPM_PREFIX).toBe(
+        platform === 'win32' ? realpathSync.native(paths.prefix) : undefined
+      )
     }
   )
 
@@ -94,10 +97,12 @@ describe('managed shell npm storage', () => {
     const env = prepareShellNpmEnvironment(root, 'linux', {
       npm_config_prefix: '/host-global',
       Npm_Config_Cache: '/host-cache',
+      OPEN_SCIENCE_CANONICAL_NPM_PREFIX: '/host-prefix',
       KEEP: 'retained'
     })
     expect(env.npm_config_prefix).toBeUndefined()
     expect(env.Npm_Config_Cache).toBeUndefined()
+    expect(env.OPEN_SCIENCE_CANONICAL_NPM_PREFIX).toBeUndefined()
     expect(env.KEEP).toBe('retained')
     expect(env.NPM_CONFIG_PREFIX).toBe(shellNpmPaths(root, 'linux').prefix)
   })

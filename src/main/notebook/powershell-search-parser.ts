@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
+import { resolveWindowsNotebookRuntime } from './windows-notebook-runtime'
 
 // Only parse stdin. Never evaluate AST values or invoke user script blocks.
 const parserScript = String.raw`
@@ -44,11 +45,14 @@ export type ParsedPowerShellCommand = { name: string | null; arguments: (string 
 
 export const parsePowerShellSearchCommands = (
   source: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  version: '5.1' | '7.6' = '5.1'
 ): Promise<ParsedPowerShellCommand[]> =>
   new Promise((resolve, reject) => {
     const child = execFile(
-      resolveWindowsPowerShellExecutable(),
+      version === '7.6'
+        ? resolveWindowsNotebookRuntime().powershell
+        : resolveWindowsPowerShellExecutable(),
       [
         '-NoLogo',
         '-NoProfile',

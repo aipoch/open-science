@@ -487,7 +487,7 @@ describe('Settings backend ownership architecture', () => {
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
         getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail getSkillMarketplaceBatch getSkillMarketplaceDetail getWsl2BashPreviewStatus getWslSetupStatus hasActiveInstall holdInstallAdmission
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
-        importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
+        cancelNotebookNetworkSetup importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
         dispose loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
@@ -1101,7 +1101,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/web-service/artifact-download.integration.test.ts',
       'src/main/web-service/controller.test.ts',
       'src/main/web-service/task-api.test.ts',
-      'src/main/literature/smart-collections.test.ts'
+      'src/main/literature/smart-collections.test.ts',
+      'src/main/session-persistence/ipc.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
       'src/main/storage/wsl-npm-migration.integration.test.ts',
@@ -1541,7 +1542,15 @@ describe('Settings backend ownership architecture', () => {
       'src/main/acp/library-auto-policy.test.ts',
       'src/main/literature/journal-attributes.test.ts',
       'src/main/session-diagnostics/export-evidence.integration.test.ts',
-      'src/main/permission-grants/connector-broker.test.ts'
+      'src/main/permission-grants/connector-broker.test.ts',
+      'src/main/session-persistence/missing-runtime-session-repro.test.ts',
+      'src/main/session-persistence/prompt-preparation-restart.test.ts',
+      'src/main/session-persistence/terminal-commit-scheduler.test.ts',
+      'src/main/session-persistence/reconciliation-renderer-parity.test.ts',
+      'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
+      'src/main/session-persistence/attention-projection.test.ts',
+      'src/main/acp/approved-handoff-outcome.integration.test.ts',
+      'src/main/acp/approved-handoff-outcome.test.ts'
     ])
     expect(
       [

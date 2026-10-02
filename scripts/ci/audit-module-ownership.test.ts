@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -13,9 +13,15 @@ import {
 import { isModuleOwnershipPath } from './module-ownership-paths.mjs'
 
 const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
-const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
-  .split('\0')
-  .filter(Boolean)
+const files = [
+  ...new Set(
+    execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
+      encoding: 'utf8'
+    })
+      .split('\0')
+      .filter((path) => Boolean(path) && existsSync(path))
+  )
+]
 const graph = { status: 'unavailable-manifest-only', testFiles: [] }
 
 describe('complete module ownership', () => {

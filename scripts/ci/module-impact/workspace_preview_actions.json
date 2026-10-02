@@ -62,7 +62,15 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
-      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/PreviewToolContent.test.tsx",
+      "src/renderer/src/pages/workspace/previews/PreviewToolContent.multi-plan-progress.test.tsx",
+      "src/renderer/src/pages/workspace/previews/PreviewToolContent.plan-progress-refresh.test.tsx",
+      "src/renderer/src/pages/workspace/previews/PreviewToolContent.plan.test.tsx",
+      "src/renderer/src/pages/workspace/previews/PreviewToolContent.reviewer.integration.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx"
     ]
   },
   "capabilityOverlays": [],

@@ -1,5 +1,173 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { inside } from './literature-pdf-table-geometry.mjs'
+import { hasNativeNonTableLayout } from './literature-pdf-native-non-table-layout.mjs'
+
+// Native paragraph ink crosses a detector's artificial column cuts. Require
+// several connected words on the same baseline; separate description columns
+// and independently measured records do not supply this proof.
+function hasContinuousNativeProse(table, items) {
+  if (!table.cropRect || !table.cells?.length) return false
+  const [left, top, right, bottom] = table.cropRect
+  const cuts = [
+    ...new Set(
+      table.cells
+        .filter((c) => c.colSpan === 1)
+        .map((c) => c.rect[2])
+        .filter((x) => x > left + 2 && x < right - 2)
+    )
+  ]
+  if (!cuts.length) return false
+  const source = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.height > 0 &&
+      i.rect[3] > top &&
+      i.rect[1] < bottom &&
+      i.rect[2] > left &&
+      i.rect[0] < right
+  )
+  if (!source.length) return false
+  const em = Math.max(...source.map((i) => i.height))
+  const rows = []
+  for (const item of source
+    .filter((i) => i.height >= em * 0.85)
+    .sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0])) {
+    const row = rows.find((r) => Math.abs(r[0].rect[1] - item.rect[1]) < em * 0.15)
+    if (row) row.push(item)
+    else rows.push([item])
+  }
+  const prose = []
+  for (const row of rows) {
+    const chains = []
+    for (const item of row.sort((a, b) => a.rect[0] - b.rect[0])) {
+      const chain = chains.at(-1),
+        previous = chain?.at(-1)
+      if (previous && item.rect[0] - previous.rect[2] < em * 0.9) chain.push(item)
+      else chains.push([item])
+    }
+    for (const chain of chains) {
+      const text = chain.map((i) => i.text).join(' ')
+      if (
+        (text.match(/\p{L}{2,}/gu) ?? []).length >= 5 &&
+        chain.at(-1).rect[2] - chain[0].rect[0] > (right - left) * 0.5 &&
+        cuts.some((x) => chain[0].rect[0] < x - em && chain.at(-1).rect[2] > x + em)
+      )
+        prose.push(chain)
+    }
+  }
+  const measuredRows = table.grid.filter(
+    (row) => row.filter((t) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(t.trim())).length >= 2
+  )
+  if (
+    measuredRows.length ||
+    table.grid.some((row) => row.some((t) => /^[-+−]?\d+(?:\.\d+)?\s*\([^)]*\)$/.test(t.trim())))
+  )
+    return false
+  const text = source.map((i) => i.text).join(' ')
+  return (
+    prose.length >= 2 ||
+    (prose.length === 1 && /[=≤≥⪰≳]/.test(text) && source.some((i) => /^[∇∥≥≤=−+]/.test(i.text)))
+  )
+}
+
+function isNumberedNativeDisplay(table, items) {
+  const equations = table.grid.filter(
+    (row) =>
+      row.some((t) => /^\((?:[A-Z]\.)?\d+(?:\.\d+)*\)$/.test(t.trim())) &&
+      row.some((t) => /[=≤≥⪰∥∇]/.test(t))
+  )
+  if (!equations.length || !table.cropRect) return false
+  const numericRows = table.grid.filter(
+    (row) => row.filter((t) => /^[-+−]?\d+(?:\.\d+)?$/.test(t.trim())).length >= 2
+  )
+  if (numericRows.length) return false
+  return equations.every((row) => {
+    const label = row.find((t) => /^\((?:[A-Z]\.)?\d+(?:\.\d+)*\)$/.test(t.trim()))
+    const matches = items.filter(
+      (i) => i.horizontal && i.text.trim() === label && inside(table.cropRect, i)
+    )
+    return (
+      matches.length === 1 &&
+      matches[0].rect[0] > table.cropRect[0] + (table.cropRect[2] - table.cropRect[0]) * 0.8 &&
+      items.some(
+        (i) =>
+          i.horizontal &&
+          /[=≤≥⪰∥∇]/.test(i.text) &&
+          Math.abs(i.rect[3] - matches[0].rect[3]) < matches[0].height * 0.2 &&
+          matches[0].rect[0] - i.rect[2] > matches[0].height * 4
+      )
+    )
+  })
+}
+
+function isNativeSingleColumnDerivation(table, caption, items, rules) {
+  if (
+    !Array.isArray(rules) ||
+    !caption?.rect ||
+    !table.cropRect ||
+    table.grid.length < 4 ||
+    table.grid.some((row) => row.length !== 1)
+  )
+    return false
+  const [left, top, right, bottom] = table.cropRect
+  const source = items.filter((i) => i.horizontal && i.height > 0 && inside(table.cropRect, i))
+  const em = Math.max(0, ...source.map((i) => i.height))
+  const captionTop = caption.rect[1] * 1.5,
+    bodyBottom = Math.max(
+      ...(table.cells ?? []).flatMap((c) => (c.sourceRects ?? []).map((r) => r[3]))
+    )
+  if (
+    !em ||
+    captionTop - bottom > em * 3 ||
+    (captionTop < bottom &&
+      (!Number.isFinite(bodyBottom) || bottom - captionTop > em * 2 || captionTop <= bodyBottom))
+  )
+    return false
+  if (
+    rules.some(
+      (r) => r[1] === r[3] && r[1] >= top && r[1] <= bottom && r[2] - r[0] > (right - left) * 0.5
+    )
+  )
+    return false
+  const physicalRows = []
+  for (const item of source
+    .filter((i) => i.rect[1] >= top && i.height >= em * 0.85)
+    .sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0])) {
+    const row = physicalRows.find((r) => Math.abs(r[0].rect[1] - item.rect[1]) < em * 0.15)
+    if (row) row.push(item)
+    else physicalRows.push([item])
+  }
+  const prose = physicalRows
+    .map((row) => {
+      row.sort((a, b) => a.rect[0] - b.rect[0])
+      return {
+        text: row.map((i) => i.text).join(' '),
+        rect: [row[0].rect[0], row[0].rect[1], row.at(-1).rect[2], row[0].rect[3]],
+        continuous: row.every((i, n) => !n || i.rect[0] - row[n - 1].rect[2] < em * 0.9)
+      }
+    })
+    .filter(
+      (i) =>
+        i.continuous &&
+        i.rect[2] - i.rect[0] > (right - left) * 0.5 &&
+        (i.text.match(/\p{L}{2,}/gu) ?? []).length >= 5
+    )
+  if (prose.length < 3 || prose.some((i) => Math.abs(i.rect[0] - prose[0].rect[0]) > em * 0.2))
+    return false
+  const labels = source.filter(
+    (i) => /^\(\d+(?:\.\d+)*\)$/.test(i.text.trim()) && i.rect[0] > left + (right - left) * 0.8
+  )
+  return (
+    labels.length === 1 &&
+    table.grid.some((row) => (row[0].match(/=/g) ?? []).length >= 2) &&
+    source.some(
+      (i) =>
+        /=/.test(i.text) &&
+        Math.abs(i.rect[3] - labels[0].rect[3]) < em * 0.2 &&
+        labels[0].rect[0] - i.rect[2] > em * 4
+    )
+  )
+}
 
 // Risk strips belong to their survival plot. A detector can cross the plot
 // boundary into prose, so test the assigned numeric cells rather than padding.
@@ -35,7 +203,7 @@ export function isFigureRiskTable(table, figures, page, scale = 1.5) {
 // content-supported row/column refinement, require evidence from source text.
 // ponytail: uncaptioned single-column or single-row tables remain ambiguous with lists;
 // retain them only with a reliable table caption until richer layout evidence is available.
-export function hasTableEvidence(table, caption, pageItems = []) {
+export function hasTableEvidence(table, caption, pageItems = [], sourceRules) {
   const populatedRows = table.grid.map((row) => row.filter((text) => text.trim()).length)
   if (!populatedRows.some((count) => count > 0)) return false
   // A supplementary-materials directory names several external tables. Its
@@ -55,7 +223,9 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     table.grid.every((row) => row.filter((text) => text.trim()).length <= 3)
   )
     return false
+  if (isNativeSingleColumnDerivation(table, caption, pageItems, sourceRules)) return false
   if (caption) return true
+  if (hasNativeNonTableLayout(table, pageItems, sourceRules)) return false
   if (
     table.repairs?.some((r) =>
       ['closed-numeric-grid-recovered', 'wrapped-count-grid-recovered'].includes(r)
@@ -98,14 +268,29 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     return false
   const measurement = (text) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(text.trim())
   const hasMeasurement = table.grid.some((row) => row.some(measurement))
+  if (hasContinuousNativeProse(table, pageItems) || isNumberedNativeDisplay(table, pageItems))
+    return false
+  // Repeated affiliation markers, institutions and contact addresses identify
+  // an author footer even when word-spaced prose became many model columns.
+  if (
+    !hasMeasurement &&
+    (cropText.match(/[†‡§¶]/g) ?? []).length >= 3 &&
+    (cropText.match(/\b(?:Department|University|Institute|College)\b/gi) ?? []).length >= 3 &&
+    (cropText.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g) ?? []).length >= 2
+  )
+    return false
   // Article metadata can form a false stub beside the abstract. Receipt and
-  // acceptance dates plus a DOI identify that publication block independently.
+  // acceptance dates plus a DOI or a complete history/keywords heading identify
+  // that publication block independently of the neighboring abstract.
   if (
     !hasMeasurement &&
     table.grid.every((row) => row.length <= 2) &&
     /\bReceived\s+\d/i.test(cropText) &&
     /\bAccepted\s+\d/i.test(cropText) &&
-    /\bDOI\s*:\s*10\./i.test(cropText)
+    (/\bDOI\s*:\s*10\./i.test(cropText) ||
+      (/\bArticle history\s*:/i.test(cropText) &&
+        /\bAvailable online\b/i.test(cropText) &&
+        /\bKeywords\s*:/i.test(cropText)))
   )
     return false
   // Abstract headings and clipped paragraph tails do not become a table

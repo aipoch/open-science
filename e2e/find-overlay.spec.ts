@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 
@@ -47,14 +48,14 @@ test('refocuses the open find overlay and follows app language changes', async (
   await expect(input).toHaveAttribute('placeholder', '查找')
   await expect(overlay.locator('html')).toHaveAttribute('lang', 'zh-Hans')
   await expect(overlay.getByRole('button', { name: '上一个匹配项', exact: true })).toBeVisible()
-  await overlay.screenshot({ path: testInfo.outputPath('find-overlay-zh-Hans.png') })
+  await writeFile(testInfo.outputPath('find-overlay-zh-Hans.png'), await app.captureFindOverlay())
 
   await page.evaluate(async () => {
     await window.api.locale.setPreference({ preference: 'ja' })
   })
   await expect(input).toHaveAttribute('placeholder', '検索')
   await expect(overlay.locator('html')).toHaveAttribute('lang', 'ja')
-  await overlay.screenshot({ path: testInfo.outputPath('find-overlay-ja.png') })
+  await writeFile(testInfo.outputPath('find-overlay-ja.png'), await app.captureFindOverlay())
   await input.fill('overlay query')
   await overlay.getByRole('button', { name: '検索を閉じる' }).click()
   await expect.poll(() => app.findOverlayIsVisible()).toBe(false)

@@ -1,3 +1,7 @@
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
+import { SessionDiscussionSource } from './SessionDiscussionSource'
+import { SessionDiscussionButton } from './SessionDiscussionButton'
+import { createSessionReplayItem } from './workspace-session-actions'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import {
@@ -35,7 +39,11 @@ import type {
   SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import { MAX_UPLOAD_FILE_BYTES, formatUploadSizeLimit } from '../../../../shared/uploads'
-import { MAX_SESSION_PDF_CONTEXTS } from '../../../../shared/session-persistence'
+import {
+  MAX_SESSION_PDF_CONTEXTS,
+  latestOutcomePrompt,
+  resolvePreparationNoticeBaseline
+} from '../../../../shared/session-persistence'
 import {
   isReportableRunFailure,
   VISION_MODEL_NOT_CONFIGURED_MESSAGE,
@@ -61,13 +69,14 @@ import {
   MessageCircleMore,
   PanelRight,
   Plus,
+  Play,
   RotateCcw,
   ScanEye,
   Square,
   Stethoscope,
   X
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import {
   isUnsupportedCodexAcpVersionError,
@@ -79,8 +88,7 @@ import {
   type TextAnnotation
 } from '../../../../shared/annotations'
 
-import { FileDropOverlay } from '@/components/FileDropOverlay'
-import { sessionPackageImportAvailable } from '@/components/session-package-import-menu-model'
+import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
@@ -94,10 +102,8 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import {
-  isRetryableArtifactFinalizationError,
   projectSessionActionability,
   useSessionStore,
   type ChatSession
@@ -132,10 +138,12 @@ import { ComposerSpecialistPicker } from './ComposerSpecialistPicker'
 import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { ReadingContextPicker } from './ReadingContextPicker'
-import { normalizeRunFailureError } from './error-report'
+import { normalizeRunFailureError, type SessionReportSubject } from './error-report'
 import { isClaudeCliCompatibilityError } from '../../../../shared/claude-runtime'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
+import { TurnOutcomeNotice, type TurnOutcomeActions } from './TurnOutcomeNotice'
+import { resolveCurrentTurnOutcomeItem } from './workspace-conversation-timeline'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
@@ -325,7 +333,7 @@ type ConversationPanelView = {
   persistenceBlocked?: boolean
   actionError: string | null
   sideChatDisabledReason?: string
-  sessionImport?: { projectId: string; canImport: boolean }
+  sessionImport?: { projectId: string; projectName?: string; canImport: boolean }
 }
 
 type ConversationPanelSpecialist = {
@@ -415,7 +423,8 @@ type ConversationPanelWslSetup = {
 type ConversationPanelWorkflows = {
   artifactFinalization: {
     running: boolean
-    request: () => void
+    retryingPromptMessageId?: string
+    request: (sessionId: string, promptMessageId: string) => void
   }
   review: ConversationPanelReview
   saveAsSkill: ConversationPanelSaveAsSkill
@@ -713,10 +722,15 @@ const ConversationPanel = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // The workspace retains pending Resume state while this panel remounts for another session.
-  const isResuming =
-    activeSession !== undefined && submissions.resumePendingSessionIds.has(activeSession.id)
+  const isResuming = Boolean(
+    activeSession && submissions.resumePendingSessionIds.has(activeSession.id)
+  )
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
+  const [reportSnapshot, setReportSnapshot] = useState<{
+    error: string
+    subject: SessionReportSubject
+  }>()
   const [isContextWindowOpen, setIsContextWindowOpen] = useState(false)
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
   const [composerRestoreFocusRequest, setComposerRestoreFocusRequest] = useState<number>()
@@ -732,7 +746,15 @@ const ConversationPanel = ({
     return () => window.removeEventListener(FOCUS_COMPOSER_EVENT, focusComposer)
   }, [])
 
-  const openReportDialog = (): void => {
+  const openReportDialog = (errorOverride?: string): void => {
+    setReportSnapshot({
+      error: errorOverride ?? resolvedRunError,
+      subject: {
+        agentFrameworkId: activeSession?.agentFrameworkId,
+        agentBackendId: activeSession?.agentBackendId,
+        model: activeSession?.agentModel
+      }
+    })
     setReportDialogEpoch((epoch) => epoch + 1)
     setIsReportOpen(true)
   }
@@ -809,15 +831,66 @@ const ConversationPanel = ({
     activeSession?.status === 'waiting-plan-approval'
       ? activePendingPlan
       : undefined
-  const resolvedRunError =
-    (isClaudeCliCompatibilityError(activeSession?.error ?? '')
-      ? t(
-          'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
-        )
-      : undefined) ??
-    localizeImageAnnotationSourceError(activeSession?.error, t) ??
-    localizeVisionRunFailure(activeSession?.error, t) ??
-    normalizeRunFailureError(activeSession?.error)
+  const resolveRunError = useCallback(
+    (error: string | undefined): string => {
+      switch (error) {
+        case 'This turn was interrupted. Resume to continue.':
+          return t('This turn was interrupted. Resume to continue.')
+        case 'ACP connection closed':
+        case 'Connection lost — Resume to reconnect and continue.':
+          return t('Connection lost — Resume to reconnect and continue.')
+        case 'Session was interrupted before the app closed.':
+          return t('Session was interrupted before the app closed.')
+        default:
+          return (
+            (isClaudeCliCompatibilityError(error ?? '')
+              ? t(
+                  'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
+                )
+              : undefined) ??
+            localizeImageAnnotationSourceError(error, t) ??
+            localizeVisionRunFailure(error, t) ??
+            (error?.trim()
+              ? normalizeRunFailureError(error)
+              : t('The run failed with no error message.'))
+          )
+      }
+    },
+    [t]
+  )
+  const latestTurnAnchor = activeSession ? latestOutcomePrompt(activeSession) : undefined
+  const currentTurnOutcome = resolveCurrentTurnOutcomeItem(activeSession)
+  const preparationNoticeBaseline = activeSession && resolvePreparationNoticeBaseline(activeSession)
+  const preparedRecoveryPromptMessageId =
+    preparationNoticeBaseline?.state.resumeRecovery?.promptMessageId ??
+    activeSession?.promptPreparation?.previousState.resumeRecovery?.promptMessageId
+  const resumePromptMessageId =
+    activeSession?.resumeRecovery?.promptMessageId ??
+    (currentTurnOutcome?.promptMessageId === preparedRecoveryPromptMessageId
+      ? preparedRecoveryPromptMessageId
+      : undefined)
+  const latestTurnIsUnadmittedPreparation = Boolean(
+    latestTurnAnchor &&
+    !latestTurnAnchor.turnOutcome &&
+    activeSession?.promptPreparation?.promptMessageId === latestTurnAnchor.id
+  )
+  const hasCurrentTurnAnchor = Boolean(
+    currentTurnOutcome || (latestTurnAnchor && !latestTurnIsUnadmittedPreparation)
+  )
+  const legacyDisplayState =
+    latestTurnIsUnadmittedPreparation &&
+    preparationNoticeBaseline &&
+    !preparationNoticeBaseline.promptMessageId
+      ? preparationNoticeBaseline.state
+      : activeSession
+  const legacyInterrupted = Boolean(
+    activeSession?.interrupted || legacyDisplayState?.resumeRecovery
+  )
+  const resolvedRunError = resolveRunError(legacyDisplayState?.error)
+  // Anchorless legacy diagnostics remain readable. A hidden or historical turn is still an anchor,
+  // so neither its failure nor the live terminal-write exception returns to the composer. A newly
+  // saved preparation is not an anchor yet and cannot displace anchorless attachment recovery.
+  const showLegacyRunError = legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
   const resolvedActionError =
     (isClaudeCliCompatibilityError(actionError ?? '')
       ? t(
@@ -829,7 +902,7 @@ const ConversationPanel = ({
     actionError
   const errorKey = JSON.stringify([
     activeSession?.id,
-    activeSession?.status === 'error' ? activeSession.error : null,
+    legacyDisplayState?.status === 'error' ? legacyDisplayState.error : null,
     actionError,
     // An explicit recovery attempt must reveal its failure even when the provider
     // returns the same diagnostic that the user previously dismissed.
@@ -837,23 +910,25 @@ const ConversationPanel = ({
   ])
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
-    visionRunFailureMessage(activeSession?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
+    (showLegacyRunError &&
+      visionRunFailureMessage(legacyDisplayState?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE)
   const hasUnsupportedCodexRunError =
-    isUnsupportedCodexAcpVersionError(activeSession?.error) ||
-    isCodexCliCompatibilityError(activeSession?.error)
+    isUnsupportedCodexAcpVersionError(legacyDisplayState?.error) ||
+    isCodexCliCompatibilityError(legacyDisplayState?.error)
+  const showLegacyRunErrorRow =
+    showLegacyRunError && (!legacyInterrupted || hasUnsupportedCodexRunError)
   const showCodexSettings =
     isUnsupportedCodexAcpVersionError(actionError) ||
     isCodexCliCompatibilityError(actionError) ||
-    hasUnsupportedCodexRunError
+    (showLegacyRunError && hasUnsupportedCodexRunError)
   // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
-  // reportability is resolved at failure time and persisted on the session: a model-provider error is
-  // tagged non-reportable at the ACP layer, and an app-crafted reminder is recognized by its own text.
-  // Fall back to classifying the raw error for sessions persisted before the flag existed (undefined).
+  // reportability is resolved at failure time and persisted on the Turn Outcome (errorReportable):
+  // a model-provider error is tagged non-reportable at the ACP layer, and an app-crafted reminder is
+  // recognized by its own text. The Session-level flag is only read for legacy display; fall back to
+  // classifying the raw error for sessions persisted before the flag existed (undefined).
   const isRunErrorReportable =
     !hasUnsupportedCodexRunError &&
-    (activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error))
-  const canRetryArtifactFinalization = isRetryableArtifactFinalizationError(activeSession?.error)
-
+    (legacyDisplayState?.errorReportable ?? isReportableRunFailure(legacyDisplayState?.error))
   const activeSpecialist = specialistId
     ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)
     : undefined
@@ -1028,12 +1103,61 @@ const ConversationPanel = ({
 
     await submissions.submitResume(sessionId, onResumeSession)
   }
-
-  // Drag-and-drop shares the same staging callback as the picker and paste paths.
-  const { isDragging, dropZoneProps } = useFileDropZone({
-    enabled: canEditDraft && !isUploadingAttachments,
-    onFiles: onStageAttachmentFiles
+  // The scroller memo compares this object by identity, so keep it stable across draft edits:
+  // callbacks read the latest render's handlers through a ref instead of being recreated.
+  const turnOutcomeHandlers = {
+    resume: handleResume,
+    retryArtifact: (promptMessageId: string): void => {
+      if (activeSession) workflows.artifactFinalization.request(activeSession.id, promptMessageId)
+    },
+    reportError: openReportDialog
+  }
+  const turnOutcomeHandlersRef = useRef(turnOutcomeHandlers)
+  useLayoutEffect(() => {
+    turnOutcomeHandlersRef.current = turnOutcomeHandlers
   })
+  const isTurnOutcomeDisabled = isStopping || rootTurnBusy
+  const artifactRetryingPromptMessageId = workflows.artifactFinalization.retryingPromptMessageId
+  const artifactRetryDisabled = workflows.artifactFinalization.running
+  const settingsAction = useCallback(
+    (error: string | undefined): { label: string; onClick: () => void } | undefined => {
+      const vision = visionRunFailureMessage(error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
+      const codex = isUnsupportedCodexAcpVersionError(error) || isCodexCliCompatibilityError(error)
+      return vision || codex
+        ? {
+            label: vision ? t('Model settings') : t('Agent settings'),
+            onClick: () => openSettingsToPanel(vision ? 'model' : 'agent')
+          }
+        : undefined
+    },
+    [openSettingsToPanel, t]
+  )
+  const turnOutcomeActions = useMemo<TurnOutcomeActions>(
+    () => ({
+      resumePromptMessageId,
+      canResume: canResumeSession,
+      isResuming,
+      isDisabled: isTurnOutcomeDisabled,
+      onResume: () => void turnOutcomeHandlersRef.current.resume(),
+      artifactRetryingPromptMessageId,
+      artifactRetryDisabled,
+      onRetryArtifact: (promptMessageId) =>
+        turnOutcomeHandlersRef.current.retryArtifact(promptMessageId),
+      resolveError: resolveRunError,
+      onReportError: (error) => turnOutcomeHandlersRef.current.reportError(error),
+      settingsAction
+    }),
+    [
+      artifactRetryDisabled,
+      artifactRetryingPromptMessageId,
+      canResumeSession,
+      isResuming,
+      isTurnOutcomeDisabled,
+      resolveRunError,
+      resumePromptMessageId,
+      settingsAction
+    ]
+  )
 
   // Submits the current doc, passing the ids of any skills picked as inline chips.
   const handleWslSetupCommand = async (): Promise<void> => {
@@ -1253,8 +1377,14 @@ const ConversationPanel = ({
 
   return (
     <ResizablePanel id="main-content" defaultSize="60%" minSize="30%">
-      <section
-        className="flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-[6px] pl-4 max-md:p-0"
+      <ProjectPackageDropZone
+        projectId={sessionImport?.projectId ?? ''}
+        projectName={sessionImport?.projectName ?? t('Project')}
+        canImport={sessionImport?.canImport ?? false}
+        canAttach={canEditDraft && !isUploadingAttachments && !ordinaryComposerBlocked}
+        onFiles={onStageAttachmentFiles}
+        data-testid="workspace-file-drop-zone"
+        className="relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-[6px] pl-4 max-md:p-0"
         data-session-id={activeSession?.id ?? ''}
         data-agent-running={activeSession?.status === 'running' ? 'true' : 'false'}
       >
@@ -1386,6 +1516,7 @@ const ConversationPanel = ({
               handoffLifecycleSource={workspaceHandoffLifecycleClient}
               onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
               reportPresentationRevealing
+              turnOutcomeActions={turnOutcomeActions}
               annotations={annotations}
               onAddAnnotation={handleAddTranscriptAnnotation}
               onUpdateAnnotationNote={handleUpdateTranscriptAnnotation}
@@ -1419,6 +1550,13 @@ const ConversationPanel = ({
                     )}
                   />
                 ) : null}
+                {currentTurnOutcome ? (
+                  <TurnOutcomeNotice
+                    promptMessageId={currentTurnOutcome.promptMessageId}
+                    outcome={currentTurnOutcome.outcome}
+                    actions={turnOutcomeActions}
+                  />
+                ) : null}
                 {conversation.planProjectionRecoveryError && activeSession ? (
                   <UnavailablePlanNotice
                     key={`${activeSession.id}:${String(activeSession.runtimeContext?.revision)}`}
@@ -1433,14 +1571,12 @@ const ConversationPanel = ({
                 {composerError && composerErrorDetail ? (
                   <DiagnosticDetails detail={composerErrorDetail} />
                 ) : null}
-                {/* Interrupted sessions get a neutral banner with a Resume action instead of the
-                    red error box, so the user can re-attach and continue the interrupted turn. */}
-                {activeSession?.interrupted ? (
+                {legacyInterrupted && !hasCurrentTurnAnchor ? (
                   <SessionInterruptedBanner
                     message={
                       hasUnsupportedCodexRunError
                         ? t('This session was interrupted.')
-                        : (activeSession.error ?? t('This session was interrupted.'))
+                        : (legacyDisplayState?.error ?? t('This session was interrupted.'))
                     }
                     isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}
@@ -1454,52 +1590,31 @@ const ConversationPanel = ({
                     <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
                     {t('Compacting conversation to fit the context limit…')}
                   </div>
-                ) : (resolvedActionError || activeSession?.status === 'error') &&
-                  (!activeSession?.interrupted || hasUnsupportedCodexRunError) ? (
+                ) : resolvedActionError || showLegacyRunErrorRow ? (
                   <DismissibleConversationError key={errorKey}>
                     {/* Transient action errors and a run failure can coexist; show each on its own row
                         so the run's report affordance is never suppressed by a transient error. */}
                     {resolvedActionError ? (
                       <span className="min-w-0 break-words pr-6">{resolvedActionError}</span>
                     ) : null}
-                    {activeSession?.status === 'error' ? (
+                    {showLegacyRunErrorRow ? (
                       <div className="flex flex-col items-stretch gap-2">
                         <span className="min-w-0 break-words pr-6">{resolvedRunError}</span>
                         {/* Actions stay with the run's own error, so the shown and reported text are
                             always the same error. Shown only for an unknown failure — a recognized one
                             (app guidance or a known provider error) keeps its message but is not a bug
                             worth a GitHub issue. */}
-                        {canRetryArtifactFinalization || isRunErrorReportable ? (
+                        {isRunErrorReportable ? (
                           <div className="flex flex-wrap items-center justify-end gap-1 self-end">
-                            {canRetryArtifactFinalization ? (
-                              <button
-                                type="button"
-                                onClick={workflows.artifactFinalization.request}
-                                disabled={workflows.artifactFinalization.running}
-                                className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                                aria-label={t('Retry Artifact publication')}
-                              >
-                                {workflows.artifactFinalization.running ? (
-                                  <Loader2
-                                    className="size-3 animate-spin"
-                                    strokeWidth={2.2}
-                                    aria-hidden="true"
-                                  />
-                                ) : null}
-                                {t('Retry Artifact publication')}
-                              </button>
-                            ) : null}
-                            {isRunErrorReportable ? (
-                              <button
-                                type="button"
-                                onClick={openReportDialog}
-                                className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                                aria-label={t('Report this error')}
-                              >
-                                <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
-                                {t('Report error')}
-                              </button>
-                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => openReportDialog()}
+                              className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                              aria-label={t('Report this error')}
+                            >
+                              <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
+                              {t('Report error')}
+                            </button>
                           </div>
                         ) : null}
                       </div>
@@ -1842,19 +1957,44 @@ const ConversationPanel = ({
                             'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
                           )}
                         </p>
-                        {sessionForkAvailable() ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {sessionForkAvailable() ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                void forkSession(activeSession)
+                              }}
+                            >
+                              <GitBranch className="size-4" aria-hidden="true" />
+                              {t('Fork to continue')}
+                            </Button>
+                          ) : null}
                           <Button
                             variant="outline"
                             size="sm"
-                            className="mt-2"
+                            aria-controls="right-panel"
                             onClick={() => {
-                              void forkSession(activeSession)
+                              usePreviewWorkbenchStore
+                                .getState()
+                                .upsertAndActivateItem(
+                                  createSessionReplayItem(
+                                    activeSession.projectId,
+                                    activeSession.id,
+                                    activeSession.title
+                                  )
+                                )
                             }}
                           >
-                            <GitBranch className="size-4" aria-hidden="true" />
-                            {t('Fork to continue')}
+                            <Play className="size-4" aria-hidden="true" />
+                            {t('View replay')}
                           </Button>
-                        ) : null}
+                          <SessionDiscussionButton
+                            key={activeSession.id}
+                            projectId={activeSession.projectId}
+                            sessionId={activeSession.id}
+                          />
+                        </div>
                         <details className="mt-2 text-xs leading-5 text-muted-foreground">
                           <summary className="cursor-pointer">{t('Package source')}</summary>
                           <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
@@ -1903,7 +2043,6 @@ const ConversationPanel = ({
                         )}
                         data-specialist-color={specialistComposerColor}
                         onSubmit={(event) => event.preventDefault()}
-                        {...dropZoneProps}
                         {...annotationDrop.props}
                       >
                         {annotationDrop.over ? (
@@ -1926,15 +2065,13 @@ const ConversationPanel = ({
                             aria-hidden="true"
                           />
                         ) : null}
-                        {/* File-drag overlay is scoped to the composer input card only. */}
-                        {isDragging ? (
-                          <FileDropOverlay
-                            label={
-                              sessionPackageImportAvailable()
-                                ? t('Drop files')
-                                : t('Drop files to attach')
-                            }
-                            className="rounded-2xl"
+                        {activeSession &&
+                        !annotations.some((annotation) => replayAnnotationTarget(annotation)) ? (
+                          <SessionDiscussionSource
+                            key={activeSession.id}
+                            projectId={activeSession.projectId}
+                            sessionId={activeSession.id}
+                            context={activeSession.runtimeContext}
                           />
                         ) : null}
                         {pdfContext.bindings.length > 0 ? (
@@ -3012,13 +3149,18 @@ const ConversationPanel = ({
         <ReportErrorDialog
           key={reportDialogEpoch}
           open={isReportOpen}
-          error={resolvedRunError}
-          subject={{
-            agentFrameworkId: activeSession?.agentFrameworkId,
-            agentBackendId: activeSession?.agentBackendId,
-            model: activeSession?.agentModel
+          error={reportSnapshot?.error ?? resolvedRunError}
+          subject={
+            reportSnapshot?.subject ?? {
+              agentFrameworkId: activeSession?.agentFrameworkId,
+              agentBackendId: activeSession?.agentBackendId,
+              model: activeSession?.agentModel
+            }
+          }
+          onClose={() => {
+            setIsReportOpen(false)
+            setReportSnapshot(undefined)
           }}
-          onClose={() => setIsReportOpen(false)}
         />
         <ContextWindowDialog
           open={isContextWindowOpen}
@@ -3026,7 +3168,7 @@ const ConversationPanel = ({
           contextUsage={contextUsage}
           onOpenChange={setIsContextWindowOpen}
         />
-      </section>
+      </ProjectPackageDropZone>
     </ResizablePanel>
   )
 }

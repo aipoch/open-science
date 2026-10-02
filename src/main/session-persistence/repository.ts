@@ -805,6 +805,15 @@ class SessionRepository {
     return this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
   }
 
+  // Decode-only preservation for Main's live release after exhausted writes. This is not evidence
+  // of an attached runtime and is never persisted; process restart uses ordinary recovery.
+  private readonly retainedRuntimeState = new Set<string>()
+  retainRuntimeSessionState(projectId: string, sessionId: string, retained: boolean): void {
+    const key = JSON.stringify([projectId, sessionId])
+    if (retained) this.retainedRuntimeState.add(key)
+    else this.retainedRuntimeState.delete(key)
+  }
+
   // Terminal mutations must distinguish absence from a transient/non-ENOENT read failure. Treating
   // both as undefined could unlink the JSON before Upload cleanup has observed its final authority.
   async loadSessionWithDiagnostics(
@@ -2028,7 +2037,8 @@ class SessionRepository {
           ? preserveRuntimeState
           : (sessionId) =>
               this.dependencies.hasActiveRuntimePrompt(projectId, sessionId) ||
-              this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
+              this.dependencies.hasLiveRuntimeSession(projectId, sessionId) ||
+              this.retainedRuntimeState.has(JSON.stringify([projectId, sessionId]))
     })
     if (decoded.status === 'unsupported-version') throw new UnsupportedSessionFileError()
     if (decoded.status === 'invalid') throw new Error('Invalid Session file')

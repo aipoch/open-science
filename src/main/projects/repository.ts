@@ -24,6 +24,8 @@ type ProjectClient = Pick<
   | 'project'
   | 'projectDeletionIntent'
   | 'projectPreviewState'
+  | 'sessionReplayProgress'
+  | 'sessionDiscussionSnapshot'
   | 'bookmark'
   | 'pdfAnnotation'
   | 'tagAssignment'
@@ -291,6 +293,8 @@ class ProjectRepository {
       )
       await transaction.projectLiterature.deleteMany({ where: { projectId: id } })
       await transaction.projectPreviewState.deleteMany({ where: { projectId: id } })
+      await transaction.sessionReplayProgress.deleteMany({ where: { projectId: id } })
+      await transaction.sessionDiscussionSnapshot.deleteMany({ where: { sourceProjectId: id } })
       await transaction.bookmark.deleteMany({ where: { projectId: id } })
       await deletePdfAnnotations(transaction, { projectId: id })
       await transaction.visionEvidence.deleteMany({ where: { projectId: id } })

@@ -8,6 +8,7 @@ import type { PreviewFileRendererProps } from './preview-types'
 export const PreviewFileContent = ({
   item,
   presentation,
+  readOnly,
   downloadVersionContext,
   onRetry,
   annotationVersionId,
@@ -28,6 +29,7 @@ export const PreviewFileContent = ({
   const content = renderPreviewFile({
     item,
     presentation,
+    readOnly,
     annotationVersionId,
     annotationBlockedByHistoricalVersion,
     annotationVersionPending,

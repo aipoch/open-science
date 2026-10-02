@@ -14,7 +14,7 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import * as Dialog from '@/components/ui/dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'

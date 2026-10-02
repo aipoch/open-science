@@ -77,7 +77,7 @@ export function composeArtifactSurfaces({
   }
   sessionPersistenceCoordinator: Pick<
     SessionPersistenceCommands,
-    'retryArtifactFinalization' | 'runSessionMutation'
+    'retryArtifactFinalization' | 'commitRecoveredArtifactReferences' | 'runSessionMutation'
   >
   pdfAnnotationService: PdfAnnotationService
   uploadCommandOwner: ReturnType<typeof createUploadCommandOwner>
@@ -137,6 +137,8 @@ export function composeArtifactSurfaces({
     codeReconstruction,
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
+    commitRecoveredArtifacts: (request, artifacts) =>
+      sessionPersistenceCoordinator.commitRecoveredArtifactReferences(request, artifacts),
     recoverPendingArtifacts: (request) =>
       sessionPersistenceCoordinator.retryArtifactFinalization(request)
   })

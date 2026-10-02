@@ -1,5 +1,21 @@
+import { prepareDiscussionSendAnnotations } from '../../pages/workspace/discussion-send-context'
+import type { SessionDiscussionCapture } from '../../pages/workspace/replay/replay-context'
+import {
+  clearWorkspaceOperationError,
+  reportWorkspaceOperationError
+} from './workspace-operation-error'
+import {
+  attemptWorkspacePromptRollback,
+  describeWorkspacePromptRollbackFailure,
+  hasPendingWorkspacePromptRollback,
+  ownsWorkspacePromptPreparation,
+  prepareWorkspacePrompt,
+  retryPendingWorkspacePromptRollback,
+  rollbackWorkspacePrompt,
+  type WorkspacePromptPreparation
+} from './workspace-prompt-preparation'
 import { i18next } from '../../i18n'
-import type { AcpMessageImage, AcpRuntimeEvent } from '../../../../shared/acp'
+import type { AcpMessageImage } from '../../../../shared/acp'
 import type { FileReference } from '../../../../shared/artifacts'
 import * as annotationProtocol from '../../../../shared/annotations'
 import {
@@ -8,6 +24,7 @@ import {
 } from '../../../../shared/session-pdf-context'
 import {
   collectSessionReferences,
+  materializeSessionConversationGraph,
   isSessionSizeLimitError,
   MAX_SESSION_PDF_CONTEXTS,
   type DelegationPolicy,
@@ -26,13 +43,18 @@ import {
   type PermissionProfileId
 } from '../../../../shared/permission-profiles'
 import {
+  DEFAULT_UPLOAD_PROJECT_ID,
   toPersistedUploadedAttachment,
   toRuntimeUploadedAttachment,
   type UploadedAttachment
 } from '../../../../shared/uploads'
-import { getActiveConversationContext } from '../../../../shared/conversation-graph'
+import {
+  getActiveConversationContext,
+  rebindConversationGraphSessionId
+} from '../../../../shared/conversation-graph'
 import {
   confirmPendingDelegationPolicyAuthority,
+  deleteSession,
   flushSessionPersistence,
   isSessionPersistenceDeferredError,
   saveSessionInOrder,
@@ -46,6 +68,9 @@ import {
 } from './history-preamble'
 import {
   canAdmitExistingWorkspacePrompt,
+  consumePendingSessionRetry,
+  isPendingSessionRetryable,
+  markPendingSessionRetryable,
   prepareExistingWorkspacePrompt
 } from './workspace-runtime-prompt-preparation-owner'
 import {
@@ -66,6 +91,11 @@ type SendWorkspaceMessageIntent = {
   messageId?: string
   // Renderer-only notification: the real message now replaces the composer's pending preview.
   onMessageAppended?: (message: SendWorkspaceMessageResult) => void
+  onPreparationRejected?: (
+    error: string,
+    sessionId?: string,
+    attachments?: UploadedAttachment[]
+  ) => void
   branchSourceSessionId?: string
   branchSourceMessageId?: string
   text: string
@@ -74,6 +104,7 @@ type SendWorkspaceMessageIntent = {
   turnIntent?: 'plan-first'
   attachments?: UploadedAttachment[]
   annotations?: annotationProtocol.Annotation[]
+  discussionFocus?: SessionDiscussionCapture
   cwd?: string
   projectId?: string
   permissionProfile?: PermissionProfileId
@@ -111,6 +142,7 @@ type WorkspaceCommandLifecycle = {
   // Ownership of asynchronous admission, before the command establishes its own prompt run.
   isCurrent?: () => boolean
   awaitPendingPreparation?: boolean
+  awaitPromptAdmission?: boolean
   flushPersistence?: (target?: string) => Promise<void>
   onSendPreparationStateChange?: (sessionId: string, inFlight: boolean) => void
   drainRuntimeEvents?: (sessionId?: string) => Promise<void>
@@ -177,40 +209,30 @@ const createSessionFailureMessage = (error: unknown): string =>
     .replace(/^Error invoking remote method '[^']*':\s*/i, '')
     .replace(/^Error(?::\s*|$)/i, '')
     .trim() || 'Agent session could not be created.'
-const latestFailureId = (events: AcpRuntimeEvent[], sessionId: string): string | undefined => {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]
-    if (event.kind === 'error' && event.sessionId === sessionId) return event.id
-  }
-  return undefined
-}
-const failPrompt = async (
+const rejectPreparedPrompt = async (
   sessionId: string,
   message: string,
-  isCurrent: () => boolean,
-  priorErrorEventId?: string
+  preparation?: WorkspacePromptPreparation,
+  rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void
 ): Promise<void> => {
-  if (!isCurrent()) return
-  if (useSessionStore.getState().sessions.find((item) => item.id === sessionId)?.compacting) return
-
-  let reportable: boolean | undefined
-  try {
-    const snapshot = await window.api.acp.getState()
-    if (!isCurrent()) return
-    const status = snapshot.sessionConnectionStatuses?.[sessionId] ?? snapshot.status
-    if (status === 'closed' || status === 'error') {
-      useSessionStore.getState().markDisconnected(sessionId, message)
-      return
-    }
-    const event = [...snapshot.events]
-      .reverse()
-      .find((item) => item.kind === 'error' && item.sessionId === sessionId)
-    if (event && event.id !== priorErrorEventId && event.providerError) reportable = false
-  } catch {
-    reportable = undefined
+  const source = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
+  const prompt = preparation
+    ? (source?.conversationGraph?.messages.find(({ id }) => id === preparation.promptMessageId) ??
+      source?.messages.find(({ id }) => id === preparation.promptMessageId))
+    : undefined
+  const restoredAttachments = prompt?.uploads?.map((upload) =>
+    toRuntimeUploadedAttachment(upload, source?.projectId)
+  )
+  let reported = message
+  if (preparation) {
+    const { rolledBack, failure } = await attemptWorkspacePromptRollback(preparation)
+    if (failure !== undefined) {
+      // The failed preparation is retained for retry; keep the draft and report both failures.
+      reported = describeWorkspacePromptRollbackFailure(message, failure)
+    } else if (!rolledBack) return
   }
-  if (!isCurrent()) return
-  useSessionStore.getState().failRun(sessionId, message, { reportable })
+  reportWorkspaceOperationError(sessionId, reported)
+  rejected?.(reported, sessionId, restoredAttachments)
 }
 const replayHistory = (
   messages: ChatMessage[],
@@ -257,21 +279,49 @@ type PromptDispatch = {
   }
   turnIntent?: SendWorkspaceMessageIntent['turnIntent']
   accepted?: () => void
+  preparation?: WorkspacePromptPreparation
+  rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void
 }
 
-const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatch): void => {
+const dispatchPrompt = (
+  runtime: WorkspaceCommandRuntime,
+  request: PromptDispatch
+): Promise<boolean> => {
   // Recovery can rearm the same Message, so its ID cannot identify a dispatch attempt.
   const admittedRun = useSessionStore
     .getState()
     .sessions.find((session) => session.id === request.sessionId)?.activeRun
-  const isCurrent = (): boolean =>
-    admittedRun !== undefined &&
-    useSessionStore.getState().sessions.find((session) => session.id === request.sessionId)
-      ?.activeRun === admittedRun
-  const priorErrorEventId = latestFailureId(
-    [...(runtime.currentRuntimeEvents?.() ?? runtime.state.events)],
-    request.sessionId
-  )
+  const isCurrent = (): boolean => {
+    if (request.preparation) return ownsWorkspacePromptPreparation(request.preparation)
+    const current = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === request.sessionId)?.activeRun
+    return (
+      admittedRun !== undefined &&
+      current?.promptMessageId === admittedRun.promptMessageId &&
+      current.startedAt === admittedRun.startedAt
+    )
+  }
+  let resolveAdmission!: (accepted: boolean) => void
+  const admission = new Promise<boolean>((resolve) => {
+    resolveAdmission = resolve
+  })
+  const unsubscribe = useSessionStore.subscribe(() => {
+    if (!request.preparation) return
+    const session = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === request.sessionId)
+    if (
+      session?.runtimeSessionAdmissions?.some(
+        ({ promptMessageId, executionId }) =>
+          promptMessageId === request.messageId &&
+          !request.preparation!.previousAdmissionIds.has(executionId)
+      )
+    ) {
+      unsubscribe()
+      resolveAdmission(true)
+    }
+  })
   const preparedAnnotations = annotationProtocol.prepareAnnotationsForAgent(
     request.content,
     request.annotations ?? [],
@@ -297,19 +347,38 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
   const referencedSessions = request.referencedSessions?.length
     ? request.referencedSessions
     : undefined
-  const result =
-    currentImages?.length || request.parts?.length
-      ? runtime.sendPrompt(...args, referencedSessions, currentImages, request.parts)
-      : referencedSessions
-        ? runtime.sendPrompt(...args, referencedSessions)
-        : runtime.sendPrompt(...args)
+  let result: ReturnType<WorkspaceCommandRuntime['sendPrompt']>
+  try {
+    result =
+      currentImages?.length || request.parts?.length
+        ? runtime.sendPrompt(...args, referencedSessions, currentImages, request.parts)
+        : referencedSessions
+          ? runtime.sendPrompt(...args, referencedSessions)
+          : runtime.sendPrompt(...args)
+  } catch (error) {
+    unsubscribe()
+    throw error
+  }
   void result
-    .then(() => request.accepted?.())
-    .catch((error) => {
-      if (!isCurrent()) return
-      const message = errorMessage(error).trim() || 'Agent run failed'
-      void failPrompt(request.sessionId, message, isCurrent, priorErrorEventId)
+    .then(() => {
+      unsubscribe()
+      request.accepted?.()
+      resolveAdmission(true)
     })
+    .catch(async (error) => {
+      unsubscribe()
+      if (isCurrent()) {
+        const message = errorMessage(error).trim() || 'Agent run failed'
+        await rejectPreparedPrompt(
+          request.sessionId,
+          message,
+          request.preparation,
+          request.rejected
+        )
+      }
+      resolveAdmission(false)
+    })
+  return admission
 }
 
 type PendingPromptRequest = SendWorkspaceMessageCommand & {
@@ -527,6 +596,95 @@ const filterPendingPdfContext = async (
   }
 }
 
+const pendingPromptSeed = (
+  source: Parameters<typeof toPersistedSession>[0],
+  promptMessageId: string,
+  sessionId = source.id
+): ReturnType<typeof toPersistedSession> => {
+  const seed = toPersistedSession(source)
+  const graph =
+    seed.conversationGraph &&
+    rebindConversationGraphSessionId(seed.conversationGraph, source.id, sessionId)
+  const prompt = graph?.messages.find(({ id }) => id === promptMessageId)
+  return {
+    ...seed,
+    id: sessionId,
+    status: 'idle',
+    delegationPolicy: source.delegationPolicyAuthorityPending ? 'allow' : seed.delegationPolicy,
+    activeRun: undefined,
+    error: undefined,
+    errorReportable: undefined,
+    messages: seed.messages.filter(({ id }) => id !== promptMessageId),
+    ...(graph
+      ? {
+          conversationGraph: {
+            ...graph,
+            messages: graph.messages.filter(({ id }) => id !== promptMessageId),
+            branches: graph.branches.map((branch) =>
+              branch.headMessageId === promptMessageId
+                ? { ...branch, headMessageId: prompt?.parentMessageId }
+                : branch
+            )
+          }
+        }
+      : {})
+  }
+}
+const rejectUnboundPendingPrompt = async (
+  pending: SendWorkspaceMessageResult,
+  message: string,
+  rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void
+): Promise<void> => {
+  const source = useSessionStore.getState().sessions.find(({ id }) => id === pending.sessionId)
+  if (source?.isPending) markPendingSessionRetryable(source.id)
+  if (source?.isPending && source.activeRun?.promptMessageId === pending.messageId) {
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: pendingPromptSeed(source, pending.messageId),
+      mode: 'prompt-rollback-authority'
+    })
+    // A rejected pending admission may have a queued start-run command replayed by the
+    // authority projection. Keep the optimistic pending Session idle so the same composer can
+    // retry without exposing a renderer-owned terminal error state.
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === pending.sessionId && candidate.isPending
+          ? {
+              ...candidate,
+              status: 'idle',
+              activeRun: undefined,
+              activeRunRuntimeSegmentId: undefined,
+              agentStatus: undefined,
+              awaitingFirstAgentOutput: undefined,
+              agentPromptInFlight: undefined
+            }
+          : candidate
+      )
+    }))
+  }
+  await rejectPreparedPrompt(pending.sessionId, message, undefined, rejected)
+}
+
+const discardUnboundSeedSession = async (
+  runtime: WorkspaceCommandRuntime,
+  projectId: string,
+  sessionId: string
+): Promise<string | undefined> => {
+  try {
+    // The terminal deletion owner removes runtime, JSON and file relations in order.
+    const result = await deleteSession({ projectId, sessionId })
+    if (result.status === 'deleted') return undefined
+    return i18next.t('Agent Session cleanup did not complete.')
+  } catch (error) {
+    try {
+      await runtime.deleteSession?.(sessionId)
+    } catch {
+      // The reported failure below already names the Session cleanup problem.
+    }
+    return errorMessage(error)
+  }
+}
+
 const startPendingPrompt = (
   runtime: WorkspaceCommandRuntime,
   request: PendingPromptRequest,
@@ -535,6 +693,7 @@ const startPendingPrompt = (
   onSessionSizeLimit?: (sessionId: string) => void
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   return (async () => {
+    let promptPreparation: WorkspacePromptPreparation | undefined
     const pending = request.pending
     if (!ownsPrompt(pending.sessionId, pending.messageId)) return undefined
     let created
@@ -562,20 +721,74 @@ const startPendingPrompt = (
         : await runtime.createSession(...createSessionArgs, undefined, request.setupSessionToken)
     } catch (error) {
       if (ownsPrompt(pending.sessionId, pending.messageId)) {
-        useSessionStore.getState().failRun(pending.sessionId, createSessionFailureMessage(error))
+        await rejectUnboundPendingPrompt(
+          pending,
+          createSessionFailureMessage(error),
+          request.onPreparationRejected
+        )
       }
       return undefined
     }
     if (!ownsPrompt(pending.sessionId, pending.messageId)) return undefined
     if (!created?.sessionId) {
-      useSessionStore.getState().failRun(pending.sessionId, 'Agent session could not be created.')
+      await rejectUnboundPendingPrompt(
+        pending,
+        'Agent session could not be created.',
+        request.onPreparationRejected
+      )
       return undefined
     }
     const cwd = created.cwd ?? request.cwd
     if (!cwd) {
-      useSessionStore
-        .getState()
-        .failRun(pending.sessionId, 'Agent session did not return a workspace.')
+      await rejectUnboundPendingPrompt(
+        pending,
+        'Agent session did not return a workspace.',
+        request.onPreparationRejected
+      )
+      return undefined
+    }
+    const pendingSession = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === pending.sessionId)
+    if (!pendingSession) return undefined
+    // Persist an empty/copied-history seed while the optimistic prompt remains isPending and
+    // invisible to the saver. Main then captures a real baseline before binding publishes it.
+    const seed = pendingPromptSeed(pendingSession, pending.messageId, created.sessionId)
+    Object.assign(seed, {
+      cwd,
+      agentFrameworkId: created.frameworkId,
+      agentBackendId: created.backendId,
+      providerSessionId: created.providerSessionId,
+      providerContinuityToken: created.providerContinuityToken
+    })
+    let seedPersisted = false
+    try {
+      const durableSeed = await saveSessionInOrder(seed)
+      seedPersisted = true
+      if (!ownsPrompt(pending.sessionId, pending.messageId)) return undefined
+      promptPreparation = await prepareWorkspacePrompt(durableSeed, pending.messageId, 'new')
+      if (!ownsPrompt(pending.sessionId, pending.messageId)) {
+        await rollbackWorkspacePrompt(promptPreparation)
+        return undefined
+      }
+    } catch (error) {
+      if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(pending.sessionId)
+      // The pending Session retries by creating a new Agent Session, so the seed persisted under
+      // created.sessionId (it may carry copied Branch history) would otherwise remain as a ghost.
+      // Only this attempt's own new Session is deleted; a Branch source is never touched.
+      const cleanupFailure = seedPersisted
+        ? await discardUnboundSeedSession(runtime, pendingSession.projectId, created.sessionId)
+        : undefined
+      const message = errorMessage(error)
+      await rejectUnboundPendingPrompt(
+        pending,
+        cleanupFailure === undefined
+          ? message
+          : `${message}\n\n${i18next.t('The unsent Session could not be removed ({{failure}}).', {
+              failure: cleanupFailure
+            })}`,
+        request.onPreparationRejected
+      )
       return undefined
     }
     const bound = useSessionStore.getState().bindPendingSession({
@@ -586,7 +799,9 @@ const startPendingPrompt = (
       agentBackendId: created.backendId,
       providerSessionId: created.providerSessionId,
       providerContinuityToken: created.providerContinuityToken,
-      wslSetup: created.wslSetup
+      wslSetup: created.wslSetup,
+      preparationId: promptPreparation.id,
+      preparationBaseline: promptPreparation.authority
     })
     onSessionBound?.(pending.sessionId, created.sessionId)
     const boundMessageId = bound?.messageId
@@ -626,7 +841,12 @@ const startPendingPrompt = (
           console.warn('Agent Session cleanup after persistence failure failed', cleanupError)
         }
         if (ownsPrompt(created.sessionId, boundMessageId)) {
-          useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
+          await rejectPreparedPrompt(
+            created.sessionId,
+            errorMessage(error),
+            promptPreparation,
+            request.onPreparationRejected
+          )
         }
         return undefined
       }
@@ -675,39 +895,88 @@ const startPendingPrompt = (
       }
     } catch (error) {
       if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(created.sessionId)
-      useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
+      await rejectPreparedPrompt(
+        created.sessionId,
+        errorMessage(error),
+        promptPreparation,
+        request.onPreparationRejected
+      )
       return undefined
     }
     if (!ownsPrompt(created.sessionId, boundMessageId)) return undefined
 
-    dispatchPrompt(runtime, {
-      sessionId: created.sessionId,
-      messageId: boundMessageId,
-      content: request.content,
-      annotations: request.annotations,
-      attachments,
-      forcedSkillIds: request.forcedSkillIds,
-      referencedArtifacts: withPdf(request.projectId, request.referencedArtifacts, pdfContext),
-      referencedSessions: collectSessionReferences(request.parts),
-      parts: request.parts,
-      replay: {
-        ...request.replay,
-        ...(request.specialistId ? { resumeFallback: request.replay } : {}),
-        contextReset: Boolean(request.contextReset)
-      },
-      turnIntent: request.turnIntent,
-      accepted: () =>
-        useSessionStore.getState().clearPendingContextReplay(created.sessionId, boundMessageId)
-    })
+    try {
+      const ready = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === created.sessionId)
+      if (!ready) return undefined
+      await saveSessionInOrder(toPersistedSession(ready))
+    } catch (error) {
+      if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(created.sessionId)
+      await rejectPreparedPrompt(
+        created.sessionId,
+        errorMessage(error),
+        promptPreparation,
+        request.onPreparationRejected
+      )
+      return undefined
+    }
+    if (!ownsPrompt(created.sessionId, boundMessageId)) {
+      await rollbackWorkspacePrompt(promptPreparation)
+      return undefined
+    }
+    try {
+      dispatchPrompt(runtime, {
+        sessionId: created.sessionId,
+        messageId: boundMessageId,
+        content: request.content,
+        annotations: request.annotations,
+        attachments,
+        forcedSkillIds: request.forcedSkillIds,
+        referencedArtifacts: withPdf(request.projectId, request.referencedArtifacts, pdfContext),
+        referencedSessions: collectSessionReferences(request.parts),
+        parts: request.parts,
+        replay: {
+          ...request.replay,
+          ...(request.specialistId ? { resumeFallback: request.replay } : {}),
+          contextReset: Boolean(request.contextReset)
+        },
+        turnIntent: request.turnIntent,
+        preparation: promptPreparation,
+        rejected: request.onPreparationRejected,
+        accepted: () =>
+          useSessionStore.getState().clearPendingContextReplay(created.sessionId, boundMessageId)
+      })
+    } catch (error) {
+      if (ownsWorkspacePromptPreparation(promptPreparation)) {
+        await rejectPreparedPrompt(
+          created.sessionId,
+          errorMessage(error),
+          promptPreparation,
+          request.onPreparationRejected
+        )
+      }
+      return undefined
+    }
     return { sessionId: created.sessionId, messageId: boundMessageId }
   })()
 }
 
-const sendWorkspaceMessage = async (
+const performSendWorkspaceMessage = async (
   runtime: WorkspaceCommandRuntime,
   input: SendWorkspaceMessageCommand,
   lifecycle: WorkspaceCommandLifecycle = {}
 ): Promise<SendWorkspaceMessageResult | undefined> => {
+  let promptPreparation: WorkspacePromptPreparation | undefined
+  if (input.sessionId) clearWorkspaceOperationError(input.sessionId)
+  if (input.sessionId && hasPendingWorkspacePromptRollback(input.sessionId)) {
+    // A prior rejected preparation whose rollback failed still owns the Session in Main.
+    const { failure } = await retryPendingWorkspacePromptRollback(input.sessionId)
+    if (failure !== undefined) {
+      reportWorkspaceOperationError(input.sessionId, failure)
+      return undefined
+    }
+  }
   if (input.branchSourceSessionId && input.branchSourceMessageId) {
     return branchWorkspaceSessionFromMessage(
       runtime,
@@ -748,7 +1017,12 @@ const sendWorkspaceMessage = async (
         }
       : input.pdfContext
   const attachments = input.attachments ?? []
-  const annotations = input.annotations ?? []
+  const annotations =
+    input.discussionFocus && !replayPrompt
+      ? await prepareDiscussionSendAnnotations(input.annotations ?? [], input.discussionFocus)
+      : (input.annotations ?? [])
+  if (lifecycle.isCurrent?.() === false) return undefined
+  input = { ...input, annotations }
   if (annotationProtocol.validateAnnotations(annotations, content)) return undefined
   if (
     input.supportsImageInput !== true &&
@@ -825,15 +1099,23 @@ const sendWorkspaceMessage = async (
       if (!ownsPrompt(pendingPrompt.sessionId, pendingPrompt.messageId)) return pendingPrompt
       history = reconciled.messages.filter((message) => message.id !== pendingPrompt.messageId)
     } catch (error) {
-      useSessionStore.getState().failRun(pending.sessionId, errorMessage(error))
-      return pendingPrompt
+      await rejectUnboundPendingPrompt(
+        pendingPrompt,
+        errorMessage(error),
+        input.onPreparationRejected
+      )
+      return undefined
     }
     let replay: HistoryReplayContext | undefined
     try {
       replay = replayHistory(history, input, session.projectId)
     } catch (error) {
-      useSessionStore.getState().failRun(pending.sessionId, errorMessage(error))
-      return pendingPrompt
+      await rejectUnboundPendingPrompt(
+        pendingPrompt,
+        errorMessage(error),
+        input.onPreparationRejected
+      )
+      return undefined
     }
     const preparation = startPendingPrompt(
       runtime,
@@ -870,7 +1152,9 @@ const sendWorkspaceMessage = async (
     if (lifecycle.awaitPendingPreparation) {
       return preparation
     }
-    void preparation
+    void preparation.catch((error) =>
+      rejectUnboundPendingPrompt(pendingPrompt, errorMessage(error), input.onPreparationRejected)
+    )
     return pendingPrompt
   }
 
@@ -878,6 +1162,7 @@ const sendWorkspaceMessage = async (
     const sessionId = input.sessionId
     let session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
     const stableMessageId = input.messageId?.trim()
+    const submissionMessageId = stableMessageId ?? `message-${crypto.randomUUID()}`
     if (input.messageId !== undefined && !stableMessageId) return undefined
     let existingStableMessage = stableMessageId
       ? session?.messages.find((message) => message.id === stableMessageId)
@@ -913,7 +1198,8 @@ const sendWorkspaceMessage = async (
       rearmExistingStableMessage = true
     }
     if (input.requireExistingSession && !session) return undefined
-    if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
+    const pendingRetry = Boolean(session?.isPending && isPendingSessionRetryable(sessionId))
+    if (!pendingRetry && !canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
     if (session?.delegationPolicyAuthorityPending) {
       try {
         await confirmPendingDelegationPolicyAuthority(session)
@@ -921,7 +1207,8 @@ const sendWorkspaceMessage = async (
         session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
       } catch (error) {
         if (lifecycle.isCurrent?.() === false) return undefined
-        useSessionStore.getState().failRun(sessionId, errorMessage(error))
+        if (session?.isPending) markPendingSessionRetryable(sessionId)
+        reportWorkspaceOperationError(sessionId, errorMessage(error))
         return undefined
       }
     }
@@ -937,7 +1224,8 @@ const sendWorkspaceMessage = async (
             projectId
           )
         } catch (error) {
-          useSessionStore.getState().failRun(session.id, errorMessage(error))
+          markPendingSessionRetryable(session.id)
+          reportWorkspaceOperationError(session.id, errorMessage(error))
           return { sessionId: session.id, messageId: session.pendingContextReplayMessageId }
         }
       }
@@ -960,6 +1248,8 @@ const sendWorkspaceMessage = async (
         preserveSelection: input.preserveSelection
       })
       if (!appended) return undefined
+      // This submission now owns the retry; a concurrent send must not also bypass admission.
+      consumePendingSessionRetry(sessionId)
       input.onMessageAppended?.(appended)
       const preparation = startPendingPrompt(
         runtime,
@@ -996,7 +1286,7 @@ const sendWorkspaceMessage = async (
         if (lifecycle.isCurrent?.() === false) return undefined
         if (isSessionPersistenceDeferredError(error)) return undefined
         if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
-        useSessionStore.getState().failRun(sessionId, errorMessage(error))
+        reportWorkspaceOperationError(sessionId, errorMessage(error))
         return undefined
       }
       if (lifecycle.isCurrent?.() === false) return undefined
@@ -1073,26 +1363,83 @@ const sendWorkspaceMessage = async (
     } catch (error) {
       if (lifecycle.isCurrent?.() === false) return undefined
       if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
-      useSessionStore.getState().failRun(sessionId, errorMessage(error))
+      reportWorkspaceOperationError(sessionId, errorMessage(error))
       return undefined
     }
     if (lifecycle.isCurrent?.() === false) return undefined
     if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
     // Replay conversion may reject malformed media; complete it before establishing a run.
     const replay = prepared.replay()
-    if (input.truncateFromMessageId) {
-      if (promptAttachments.length > 0) {
-        useSessionStore.getState().replaceMessageUploads({
+    let preparationSource = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === sessionId)
+    if (!preparationSource) {
+      const now = Date.now()
+      const seed = materializeSessionConversationGraph({
+        id: sessionId,
+        projectId: projectId ?? DEFAULT_UPLOAD_PROJECT_ID,
+        title: content.slice(0, 80),
+        cwd: input.cwd ?? runtime.state.cwd ?? '',
+        status: 'idle',
+        messages: [],
+        createdAt: now,
+        updatedAt: now,
+        permissionProfile: input.permissionProfile,
+        agentFrameworkId: input.agentFrameworkId,
+        agentBackendId: input.agentBackendId,
+        agentConfiguration: input.agentConfiguration,
+        memoryEnabled: input.memoryEnabled,
+        autoReviewEnabled: input.autoReviewEnabled
+      })
+      try {
+        const durable = await saveSessionInOrder(seed)
+        if (lifecycle.isCurrent?.() === false) return undefined
+        useSessionStore.getState().upsertPersistedSession(durable)
+        preparationSource = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === sessionId)
+      } catch (error) {
+        if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
+        await rejectPreparedPrompt(
           sessionId,
-          messageId: input.truncateFromMessageId,
-          uploads: promptAttachments.map(toPersistedUploadedAttachment)
-        })
+          errorMessage(error),
+          undefined,
+          input.onPreparationRejected
+        )
+        return undefined
       }
-      useSessionStore.getState().truncateSessionFromMessage(sessionId, input.truncateFromMessageId)
+    }
+    if (!preparationSource) return undefined
+    try {
+      // Establish the receipt before the first append or edit Branch command can be saved.
+      promptPreparation = await prepareWorkspacePrompt(
+        toPersistedSession(preparationSource),
+        submissionMessageId,
+        rearmExistingStableMessage ? (preparationSource.resumeRecovery ? 'resume' : 'rearm') : 'new'
+      )
+    } catch (error) {
+      if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
+      await rejectPreparedPrompt(
+        sessionId,
+        errorMessage(error),
+        undefined,
+        input.onPreparationRejected
+      )
+      return undefined
+    }
+    if (lifecycle.isCurrent?.() === false) {
+      await rollbackWorkspacePrompt(promptPreparation)
+      return undefined
+    }
+    if (input.truncateFromMessageId) {
+      useSessionStore
+        .getState()
+        .truncateSessionFromMessage(sessionId, input.truncateFromMessageId, promptPreparation.id)
     }
     const appended = useSessionStore.getState().appendUserMessage({
       sessionId,
-      messageId: stableMessageId,
+      messageId: submissionMessageId,
+      preparationId: promptPreparation.id,
       rearmExisting: rearmExistingStableMessage,
       content,
       attachments: promptAttachments,
@@ -1139,7 +1486,12 @@ const sendWorkspaceMessage = async (
       } catch (error) {
         if (isSessionPersistenceDeferredError(error)) return undefined
         if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
-        useSessionStore.getState().failRun(sessionId, errorMessage(error))
+        await rejectPreparedPrompt(
+          sessionId,
+          errorMessage(error),
+          promptPreparation,
+          input.onPreparationRejected
+        )
         return undefined
       }
       if (!ownsPrompt(sessionId, appended.messageId)) return undefined
@@ -1149,7 +1501,12 @@ const sendWorkspaceMessage = async (
       } catch (error) {
         if (isSessionPersistenceDeferredError(error)) return undefined
         if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
-        useSessionStore.getState().failRun(sessionId, errorMessage(error))
+        await rejectPreparedPrompt(
+          sessionId,
+          errorMessage(error),
+          promptPreparation,
+          input.onPreparationRejected
+        )
         return undefined
       }
       if (!ownsPrompt(sessionId, appended.messageId)) return undefined
@@ -1163,11 +1520,8 @@ const sendWorkspaceMessage = async (
             supportsImageRelay: input.supportsImageRelay
           })
         : undefined
-    const admittedRun = useSessionStore
-      .getState()
-      .sessions.find((item) => item.id === sessionId)?.activeRun
     try {
-      dispatchPrompt(runtime, {
+      const admission = dispatchPrompt(runtime, {
         sessionId,
         messageId: appended.messageId,
         content,
@@ -1181,14 +1535,19 @@ const sendWorkspaceMessage = async (
           ? { ...replay, historyAttachments: promptMedia.historyAttachments }
           : replay,
         turnIntent: input.turnIntent,
-        accepted: () => prepared.acceptPrompt(appended.messageId)
+        accepted: () => prepared.acceptPrompt(appended.messageId),
+        preparation: promptPreparation,
+        rejected: input.onPreparationRejected
       })
+      if (lifecycle.awaitPromptAdmission && !(await admission)) return undefined
     } catch (error) {
-      if (
-        useSessionStore.getState().sessions.find((item) => item.id === sessionId)?.activeRun ===
-        admittedRun
-      ) {
-        useSessionStore.getState().failRun(sessionId, errorMessage(error))
+      if (ownsWorkspacePromptPreparation(promptPreparation)) {
+        await rejectPreparedPrompt(
+          sessionId,
+          errorMessage(error),
+          promptPreparation,
+          input.onPreparationRejected
+        )
       }
       return undefined
     }
@@ -1240,8 +1599,28 @@ const sendWorkspaceMessage = async (
   if (lifecycle.awaitPendingPreparation) {
     return preparation
   }
-  void preparation
+  void preparation.catch((error) =>
+    rejectUnboundPendingPrompt(pending, errorMessage(error), input.onPreparationRejected)
+  )
   return pending
+}
+
+const preparingSessionIds = new Set<string>()
+const sendWorkspaceMessage = async (
+  runtime: WorkspaceCommandRuntime,
+  input: SendWorkspaceMessageCommand,
+  lifecycle: WorkspaceCommandLifecycle = {}
+): Promise<SendWorkspaceMessageResult | undefined> => {
+  const sessionId = input.sessionId
+  // Establish the local admission gate before the first persistence/preparation await. An idle
+  // Session stays idle until append; two commands must not both capture that same baseline.
+  if (sessionId && preparingSessionIds.has(sessionId)) return undefined
+  if (sessionId) preparingSessionIds.add(sessionId)
+  try {
+    return await performSendWorkspaceMessage(runtime, input, lifecycle)
+  } finally {
+    if (sessionId) preparingSessionIds.delete(sessionId)
+  }
 }
 
 const resendEditedWorkspaceMessage = async (
@@ -1267,7 +1646,7 @@ const resendEditedWorkspaceMessage = async (
       toRuntimeUploadedAttachment(upload, session.projectId)
     )
   } catch (error) {
-    useSessionStore.getState().failRun(input.sessionId, errorMessage(error))
+    reportWorkspaceOperationError(input.sessionId, errorMessage(error))
     return false
   }
   return Boolean(
@@ -1297,7 +1676,7 @@ const resendEditedWorkspaceMessage = async (
         supportsImageInput: options.supportsImageInput,
         supportsImageRelay: options.supportsImageRelay
       },
-      options
+      { ...options, awaitPromptAdmission: true }
     )
   )
 }

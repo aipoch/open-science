@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useRelativeTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
 import { SettingsIconAction } from './SettingsLayout'
+import { TokenUsageBars } from './TokenUsageBars'
 import {
   buildTokenUsageAnalytics,
   buildTokenUsageAnalyticsFromProjection,
@@ -726,109 +727,12 @@ function TokenUsagePanel({
                     style={{ bottom: `${percentage}%` }}
                   />
                 ))}
-                <div
-                  role="group"
-                  aria-label={t('Stacked daily token usage for the last 30 days')}
-                  className="relative z-10 grid h-full grid-cols-[repeat(30,minmax(0,1fr))] items-end gap-1"
-                >
-                  {analytics.last30Days.map((point) => {
-                    const totalHeight =
-                      chartScaleMaximum === 0
-                        ? 0
-                        : Math.max(1.5, (point.totalTokens / chartScaleMaximum) * 100)
-                    const inputHeight =
-                      point.totalTokens === 0 ? 0 : (point.inputTokens / point.totalTokens) * 100
-                    const cacheHeight =
-                      point.totalTokens === 0 ? 0 : (point.cacheTokens / point.totalTokens) * 100
-                    const outputHeight =
-                      point.totalTokens === 0 ? 0 : (point.outputTokens / point.totalTokens) * 100
-
-                    return (
-                      <div key={point.dateKey} className="flex min-w-0 flex-col items-center">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              aria-label={stackedBarLabel(point)}
-                              className="group flex h-40 w-full min-w-0 items-end justify-center rounded-md outline-none transition-[background-color,box-shadow] duration-150 hover:bg-muted hover:shadow-sm focus-visible:bg-muted focus-visible:shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card active:bg-muted motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50"
-                            >
-                              {point.totalTokens === 0 ? (
-                                <span className="mb-px h-px w-4 bg-border" aria-hidden="true" />
-                              ) : (
-                                <span
-                                  className="flex w-[clamp(0.25rem,55%,0.75rem)] flex-col-reverse overflow-hidden rounded-t-sm bg-muted"
-                                  style={{ height: `${totalHeight}%` }}
-                                  aria-hidden="true"
-                                >
-                                  <span
-                                    className="w-full bg-chart-1"
-                                    style={{ height: `${inputHeight}%` }}
-                                  />
-                                  <span
-                                    className="w-full bg-chart-2"
-                                    style={{ height: `${cacheHeight}%` }}
-                                  />
-                                  <span
-                                    className="w-full bg-chart-3"
-                                    style={{ height: `${outputHeight}%` }}
-                                  />
-                                </span>
-                              )}
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent
-                            side="top"
-                            sideOffset={10}
-                            collisionPadding={16}
-                            className="w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover p-4 text-sm text-popover-foreground shadow-lg"
-                          >
-                            <div className="flex items-baseline justify-between gap-5">
-                              <span className="font-semibold tabular-nums">{point.dateKey}</span>
-                              <span className="font-semibold tabular-nums">
-                                {formatNumber(point.totalTokens)}
-                              </span>
-                            </div>
-                            <div className="mt-3 grid gap-2">
-                              {[
-                                {
-                                  label: 'Input (cached)',
-                                  value: point.cacheTokens,
-                                  className: 'bg-chart-2'
-                                },
-                                {
-                                  label: 'Input (uncached)',
-                                  value: point.inputTokens,
-                                  className: 'bg-chart-1'
-                                },
-                                {
-                                  label: 'Output',
-                                  value: point.outputTokens,
-                                  className: 'bg-chart-3'
-                                }
-                              ].map((row) => (
-                                <div
-                                  key={row.label}
-                                  className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5"
-                                >
-                                  <span
-                                    className={cn('size-2.5 rounded-[3px]', row.className)}
-                                    aria-hidden="true"
-                                  />
-                                  <span className="min-w-0 text-muted-foreground">
-                                    {t(row.label)}
-                                  </span>
-                                  <span className="tabular-nums text-foreground">
-                                    {formatNumber(row.value)}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
-                    )
-                  })}
-                </div>
+                <TokenUsageBars
+                  points={analytics.last30Days}
+                  scaleMaximum={chartScaleMaximum}
+                  formatNumber={formatNumber}
+                  barLabel={stackedBarLabel}
+                />
               </div>
               <span aria-hidden="true" />
               <div

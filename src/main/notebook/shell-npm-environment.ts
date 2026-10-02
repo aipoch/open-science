@@ -77,17 +77,25 @@ export const prepareShellNpmEnvironment = (
   if (!isAbsolute(runtimeRoot))
     throw new Error('Shell npm storage requires an absolute runtime root.')
   const target = `${platform}-${process.arch}`
-  const prefix = prepareChild(prepareChild(runtimeRoot, 'npm'), target)
+  const preparedPrefix = prepareChild(prepareChild(runtimeRoot, 'npm'), target)
+  // npm may start in a different Session. Pass a host-verified physical boundary so its Windows
+  // realpath cache does not need to inspect ungranted ancestors of the shared tool directory.
+  const prefix = platform === 'win32' ? realpathSync.native(preparedPrefix) : preparedPrefix
   const cache = prepareChild(prepareChild(notebookWorkloadCacheRoot(runtimeRoot), 'npm'), target)
   const bin = platform === 'win32' ? prefix : prepareChild(prefix, 'bin')
   const separator = platform === 'win32' ? win32.delimiter : posix.delimiter
   const env = Object.fromEntries(
-    Object.entries(environment).filter(([key]) => !/^npm_config_(prefix|cache)$/i.test(key))
+    Object.entries(environment).filter(
+      ([key]) =>
+        !/^npm_config_(prefix|cache)$/i.test(key) &&
+        key.toUpperCase() !== 'OPEN_SCIENCE_CANONICAL_NPM_PREFIX'
+    )
   )
   return {
     ...env,
     NPM_CONFIG_PREFIX: prefix,
     NPM_CONFIG_CACHE: cache,
+    ...(platform === 'win32' ? { OPEN_SCIENCE_CANONICAL_NPM_PREFIX: prefix } : {}),
     PATH: [bin, env.PATH].filter(Boolean).join(separator)
   }
 }

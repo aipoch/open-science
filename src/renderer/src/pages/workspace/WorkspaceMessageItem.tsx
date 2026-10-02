@@ -1,8 +1,17 @@
+import {
+  GeneratedFileCard,
+  artifactCardClassName,
+  artifactGalleryClassName
+} from './GeneratedFileCard'
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { ErrorNotice } from '@/components/error-notice'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
+import {
+  WorkspaceMessageTimestamp as MessageTimestamp,
+  WorkspaceUserMessageBubble,
+  WorkspaceAssistantMessageSurface
+} from './WorkspaceTranscriptSurface'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
@@ -10,7 +19,6 @@ import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
 import {
-  ArrowUpRight,
   Bot,
   Brain,
   BookOpenText,
@@ -29,12 +37,18 @@ import {
 } from 'lucide-react'
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ReplayReferenceText } from './ReplayReferenceText'
+import { splitReplayReferenceText } from './replay-reference-text'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
-import type { LiteratureReference, MessagePart } from '../../../../shared/session-persistence'
+import type {
+  LiteratureReference,
+  MessagePart,
+  TurnOutcome
+} from '../../../../shared/session-persistence'
 import {
   isAgentResultDeliveryAttribution,
   isComputeJobCompletionAttribution,
@@ -112,6 +126,9 @@ type MessageRuntimeIdentity = Partial<
 >
 type WorkspaceAssistantTurnCompletionProps = {
   message: ChatMessage
+  // Main conversation supplies its anchoring user Message's explicit outcome. Other transcript
+  // surfaces retain their own Message lifecycle, including isolated Subagent Attempts.
+  turnOutcome?: TurnOutcome
   turnStartedAt?: number
   runtimeIdentity?: MessageRuntimeIdentity
   canBranchInNewSession?: boolean
@@ -134,6 +151,9 @@ type WorkspaceMessageItemProps = {
   canEditMessage?: boolean
   // Immutable transcript surfaces can reuse the normal message renderer without live actions.
   showUserActions?: boolean
+  // Main conversation owns recovery beside the composer. Other transcript surfaces retain
+  // their legacy Message interruption label, including isolated Subagent Attempts.
+  showUserInterruption?: boolean
   // Renderer-only optimistic Composer submission; never persisted in the Session graph.
   sending?: boolean
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
@@ -183,32 +203,6 @@ const toMessageDate = (timestamp: number | undefined): Date | undefined => {
   if (timestamp === undefined) return undefined
   const date = new Date(timestamp)
   return Number.isNaN(date.getTime()) ? undefined : date
-}
-
-const MessageTimestamp = ({
-  label,
-  date
-}: {
-  // Already-resolved copy: the caller owns which of sent/completed/failed applies.
-  label: string
-  date: Date
-}): React.JSX.Element => {
-  const formatDate = useDateTimeFormat()
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <time
-          dateTime={date.toISOString()}
-          tabIndex={0}
-          className="rounded-sm focus-visible:keyboard-focus"
-        >
-          {label} {formatDate(date)}
-        </time>
-      </TooltipTrigger>
-      <TooltipContent>{formatDate(date, 'full')}</TooltipContent>
-    </Tooltip>
-  )
 }
 
 const formatElapsedDuration = (durationMs: number): string => {
@@ -446,13 +440,6 @@ const TurnTokenUsage = ({
   )
 }
 
-const artifactCardClassName =
-  'h-[82px] w-[128px] shrink-0 cursor-pointer overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 active:bg-bg-300 focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-50'
-const artifactPreviewClassName = 'h-[56px] w-full overflow-hidden bg-bg-200'
-const artifactGalleryClassName = 'grid max-w-full grid-cols-[repeat(auto-fill,128px)] gap-2 pb-1'
-
-const userMessageBubbleClassName =
-  'max-w-[90%] break-words rounded-2xl bg-bg-300 px-3.5 py-2 text-sm text-message-user-text md:max-w-[min(85%,56rem)] md:px-4 md:py-2.5 md:text-[15px]'
 const userMessageCollapseButtonClassName =
   'inline-flex items-center gap-1 whitespace-nowrap rounded-md text-[13px] font-medium text-text-200 transition-colors duration-200 ease-out hover:text-text-000 focus-visible:keyboard-focus active:translate-y-px disabled:pointer-events-none disabled:opacity-50 motion-reduce:active:translate-y-0 motion-reduce:transition-none'
 const USER_MESSAGE_PREVIEW_LINE_COUNT = 12.5
@@ -479,23 +466,27 @@ const UserMessageActionTooltip = ({
 // to carry its usage metadata. Timeline consumers can therefore place it after later owned work.
 const WorkspaceAssistantTurnCompletion = ({
   message,
+  turnOutcome,
   turnStartedAt,
   runtimeIdentity,
   canBranchInNewSession = false,
   onBranchInNewSession
 }: WorkspaceAssistantTurnCompletionProps): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const isCompleted = turnOutcome ? turnOutcome.kind === 'completed' : message.status === 'complete'
+  const isFailed = turnOutcome ? turnOutcome.kind === 'failed' : message.status === 'error'
   const hasTurnUsage = Boolean(message.turnUsage || message.turnUsageUnavailable)
-  const showTurnUsage = hasTurnUsage || (message.status === 'complete' && Boolean(runtimeIdentity))
+  const showTurnUsage = hasTurnUsage || (isCompleted && Boolean(runtimeIdentity))
   const timestamp =
-    message.status === 'complete'
+    turnOutcome?.settledAt ??
+    (message.status === 'complete'
       ? message.completedAt
       : message.status === 'error'
         ? message.failedAt
-        : undefined
+        : undefined)
   const terminalDate = toMessageDate(timestamp)
   const turnStartedDate = toMessageDate(turnStartedAt)
-  const terminalLabel = message.status === 'error' ? t('Failed') : t('Completed')
+  const terminalLabel = isFailed ? t('Failed') : isCompleted ? t('Completed') : undefined
   const [copied, setCopied] = useState(false)
   const copyResetTimeoutRef = useRef<number | null>(null)
 
@@ -554,7 +545,9 @@ const WorkspaceAssistantTurnCompletion = ({
           </div>
         </>
       ) : null}
-      {terminalDate ? <MessageTimestamp label={terminalLabel} date={terminalDate} /> : null}
+      {terminalDate && terminalLabel ? (
+        <MessageTimestamp label={terminalLabel} date={terminalDate} />
+      ) : null}
       {terminalDate && turnStartedDate ? (
         <span data-slot="assistant-message-elapsed-segment" className="whitespace-nowrap">
           <span aria-label={t('Elapsed run time')}>
@@ -592,9 +585,6 @@ const artifactMentionPillClassName =
   'inline-flex max-w-[220px] align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium'
 // Interactive additions layered onto the pill shape when a mention resolves to a clickable target.
 const mentionButtonClassName = 'cursor-pointer hover:brightness-95 focus-visible:keyboard-focus'
-
-const assistantMessageSurfaceClassName =
-  'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'
 
 const measurementContentClassName = 'before:content-[attr(data-content)]'
 
@@ -940,57 +930,39 @@ const ArtifactCard = ({
   })
 
   return (
-    <button
-      ref={setElement}
-      type="button"
-      className={cn('group flex min-w-0 flex-col', artifactCardClassName)}
+    <GeneratedFileCard
+      buttonRef={setElement}
+      name={artifactName}
+      sizeLabel={sizeLabel}
       disabled={publicationPending}
-      onClick={() => {
-        onPreviewArtifact(artifact)
-      }}
-      aria-label={t('Preview generated file {{name}}', { name: artifactName })}
+      onClick={() => onPreviewArtifact(artifact)}
+      label={t('Preview generated file {{name}}', { name: artifactName })}
       title={artifact.path}
-    >
-      <div className={cn('relative', artifactPreviewClassName)}>
-        <span className={cn('block size-full', missing && 'opacity-40')}>
-          {/* Unmount the reader outside the overscan window so message history stays lightweight. */}
-          {publicationPending ? null : isNearViewport ? (
-            <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
-          ) : (
-            <ArtifactPreview
-              artifact={artifact}
-              projectId={artifact.resolvedProjectId}
-              sessionId={artifact.resolvedSessionId}
-              managedFileId={artifact.artifactId}
-              selectedVersionId={artifact.versionId}
-              isVisible={false}
-            />
-          )}
-        </span>
-        {missing ? (
-          <span className="absolute left-1 top-1 rounded bg-text-000/75 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
-            {t(FILE_MISSING_TAG_KEY)}
+      preview={
+        <>
+          <span className={cn('block size-full', missing && 'opacity-40')}>
+            {/* Unmount the reader outside the overscan window so message history stays lightweight. */}
+            {publicationPending ? null : isNearViewport ? (
+              <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
+            ) : (
+              <ArtifactPreview
+                artifact={artifact}
+                projectId={artifact.resolvedProjectId}
+                sessionId={artifact.resolvedSessionId}
+                managedFileId={artifact.artifactId}
+                selectedVersionId={artifact.versionId}
+                isVisible={false}
+              />
+            )}
           </span>
-        ) : null}
-        <span
-          data-slot="generated-artifact-open-icon"
-          className="absolute right-1 top-1 flex size-7 items-center justify-center rounded-md bg-bg-000/90 text-text-100 opacity-0 shadow-sm transition-[opacity,background-color,color] duration-150 hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
-          aria-hidden="true"
-        >
-          <ArrowUpRight className="size-4" strokeWidth={1.75} />
-        </span>
-      </div>
-      <div className="flex min-w-0 flex-1 items-center px-1.5">
-        <ExtensionPreservingFileName
-          name={artifactName}
-          className="flex-1 text-[12px] leading-5"
-          compact
-        />
-        {sizeLabel ? (
-          <span className="ml-1 shrink-0 text-[11px] text-text-000">{sizeLabel}</span>
-        ) : null}
-      </div>
-    </button>
+          {missing ? (
+            <span className="absolute left-1 top-1 rounded bg-text-000/75 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
+              {t(FILE_MISSING_TAG_KEY)}
+            </span>
+          ) : null}
+        </>
+      }
+    />
   )
 }
 
@@ -1160,7 +1132,7 @@ const MessagePartsContent = ({
   const { t } = useTranslation()
 
   return (
-    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+    <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
       {parts.map((part, index) => {
         if (part.type === 'skill') {
           // A static (provenance) part carries no id, so it renders as a plain pill.
@@ -1330,13 +1302,13 @@ const MessagePartsContent = ({
           )
         }
 
-        return (
-          <span key={index} className="whitespace-pre-wrap">
-            {part.text}
-          </span>
+        return isStatic ? (
+          <span key={index}>{part.text}</span>
+        ) : (
+          <ReplayReferenceText key={index} text={part.text} projectId={projectId} />
         )
       })}
-    </p>
+    </div>
   )
 }
 
@@ -1353,6 +1325,7 @@ const WorkspaceMessageItemImpl = ({
   onPreviewMentionArtifact,
   canEditMessage = false,
   showUserActions = true,
+  showUserInterruption = true,
   sending = false,
   contentPaddingClassName,
   onSendEditedMessage,
@@ -1584,20 +1557,23 @@ const WorkspaceMessageItemImpl = ({
         onPreviewMentionArtifact={onPreviewMentionArtifact}
       />
     ) : message.content ? (
-      <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.content}</p>
+      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+        <ReplayReferenceText text={message.content} projectId={projectId} />
+      </div>
     ) : null
   const hasInteractiveUserMessageContent = Boolean(
     !staticParts &&
-    message.parts?.some(
-      (part) =>
-        part.type === 'skill' ||
-        part.type === 'artifact' ||
-        part.type === 'literature' ||
-        part.type === 'session' ||
-        (onOpenLibraryMention &&
-          part.type === 'literature-scope' &&
-          (part.scope === 'collection' || (part.scope === 'project' && Boolean(projectId))))
-    )
+    (splitReplayReferenceText(message.content).some((part) => part.kind === 'reference') ||
+      message.parts?.some(
+        (part) =>
+          part.type === 'skill' ||
+          part.type === 'artifact' ||
+          part.type === 'literature' ||
+          part.type === 'session' ||
+          (onOpenLibraryMention &&
+            part.type === 'literature-scope' &&
+            (part.scope === 'collection' || (part.scope === 'project' && Boolean(projectId))))
+      ))
   )
 
   return (
@@ -1818,7 +1794,7 @@ const WorkspaceMessageItemImpl = ({
                       </div>
                     </>
                   ) : null}
-                  <div data-slot="user-message-bubble" className={userMessageBubbleClassName}>
+                  <WorkspaceUserMessageBubble>
                     <MessagePdfReadingContext message={message} projectId={projectId} />
                     <AnnotationMessageCards
                       annotations={message.annotations ?? []}
@@ -1840,9 +1816,12 @@ const WorkspaceMessageItemImpl = ({
                     ) : (
                       userMessageContent
                     )}
-                  </div>
+                  </WorkspaceUserMessageBubble>
                 </div>
-                {sending || sentDate || message.interrupted || showRevisionNavigation ? (
+                {sending ||
+                sentDate ||
+                (showUserInterruption && message.interrupted && !message.turnOutcome) ||
+                showRevisionNavigation ? (
                   <div
                     data-slot="user-message-footer"
                     className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
@@ -1856,7 +1835,7 @@ const WorkspaceMessageItemImpl = ({
                         {t('Sending…')}
                       </span>
                     ) : null}
-                    {message.interrupted ? (
+                    {showUserInterruption && message.interrupted && !message.turnOutcome ? (
                       <span
                         data-slot="user-message-interrupted"
                         className="italic text-status-warning-foreground dark:text-status-warning-dark-foreground"
@@ -1933,9 +1912,8 @@ const WorkspaceMessageItemImpl = ({
               </div>
             )
           ) : (
-            <div
+            <WorkspaceAssistantMessageSurface
               className={cn(
-                assistantMessageSurfaceClassName,
                 'select-text overflow-visible',
                 // Reserve the tallest loading-row geometry only when this reply replaces that row.
                 // If Thinking or a live tool remains below, the buffered message stays at line height.
@@ -1986,7 +1964,7 @@ const WorkspaceMessageItemImpl = ({
                   onBranchInNewSession={onBranchInNewSession}
                 />
               ) : null}
-            </div>
+            </WorkspaceAssistantMessageSurface>
           )}
         </div>
         <EditMessageConfirmDialog
@@ -2100,6 +2078,7 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onBranchInNewSession === next.onBranchInNewSession &&
   (previous.canEditMessage ?? false) === (next.canEditMessage ?? false) &&
   (previous.showUserActions ?? true) === (next.showUserActions ?? true) &&
+  (previous.showUserInterruption ?? true) === (next.showUserInterruption ?? true) &&
   (previous.sending ?? false) === (next.sending ?? false) &&
   previous.contentPaddingClassName === next.contentPaddingClassName &&
   previous.turnStartedAt === next.turnStartedAt &&

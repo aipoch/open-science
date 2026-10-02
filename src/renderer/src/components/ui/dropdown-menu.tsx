@@ -1,3 +1,4 @@
+import { useOverlayLayer } from './overlay-layer'
 import * as React from 'react'
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui'
 import { Check } from 'lucide-react'
@@ -27,6 +28,7 @@ function DropdownMenuSubTrigger({
 
 function DropdownMenuSubContent({
   className,
+  style,
   // Must clear the parent content's padding + border or the submenu visibly overlaps the parent
   // menu: radix anchors the submenu to the SubTrigger's edge, which sits inside the parent's
   // padding box. 8px covers both p-1 (4px) and p-1.5 (6px) parents with a small visual gap.
@@ -34,6 +36,7 @@ function DropdownMenuSubContent({
   alignOffset = -5,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>): React.JSX.Element {
+  const layer = useOverlayLayer()
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.SubContent
@@ -45,6 +48,7 @@ function DropdownMenuSubContent({
           className
         )}
         {...props}
+        style={layer > 40 ? { ...style, zIndex: layer + 10 } : style}
       />
     </DropdownMenuPrimitive.Portal>
   )
@@ -52,9 +56,11 @@ function DropdownMenuSubContent({
 
 function DropdownMenuContent({
   className,
+  style,
   sideOffset = 4,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>): React.JSX.Element {
+  const layer = useOverlayLayer()
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
@@ -65,6 +71,7 @@ function DropdownMenuContent({
           className
         )}
         {...props}
+        style={layer > 40 ? { ...style, zIndex: layer + 10 } : style}
       />
     </DropdownMenuPrimitive.Portal>
   )

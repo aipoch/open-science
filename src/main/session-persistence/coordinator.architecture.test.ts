@@ -428,6 +428,14 @@ describe('Session persistence coordinator architecture', () => {
   it('keeps the established facade, constructor, and module exports', () => {
     expect(methods(facade, 'public')).toEqual(
       [
+        'recordSessionRecordProblem',
+        'clearSessionRecordProblem',
+        'listSessionRecordProblems',
+        'recordRuntimeTerminalFailure',
+        'listRuntimeTerminalFailures',
+        'projectRuntimeSession',
+        'projectRuntimeSessionSummaries',
+        'retryRuntimeTerminalCommit',
         'acknowledgeUncertainMessage',
         'admitMessageCommand',
         'admitQuestion',
@@ -471,6 +479,7 @@ describe('Session persistence coordinator architecture', () => {
         'repairProjectFiles',
         'reserveSessionExport',
         'retryArtifactFinalization',
+        'commitRecoveredArtifactReferences',
         'runSessionMutation',
         'saveManifest',
         'saveSession',
@@ -500,7 +509,7 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(methods(facade, 'private')).toEqual(
-      ['assertMutable', 'notifyFilesChanged', 'notifySessionsDeleted'].sort()
+      ['assertMutable', 'notifyFilesChanged', 'notifySessionsDeleted', 'recordProblemKey'].sort()
     )
     expect(publicNonMethodMembers(facade)).toEqual([])
 
@@ -559,6 +568,8 @@ describe('Session persistence coordinator architecture', () => {
   it('composes each owner once and keeps mutable state with its sole owner', () => {
     expect(fields(facade)).toEqual(
       [
+        'notifySessionRecordProblems',
+        'sessionRecordProblems',
         'computeJobs',
         'delegatedStartupRecoveryComplete',
         'deletedProjects',
@@ -609,7 +620,9 @@ describe('Session persistence coordinator architecture', () => {
         'isSessionMetadataComplete',
         'options',
         'sessionMetadata',
-        'validatedBindingTopologies'
+        'validatedBindingTopologies',
+        'runtimeTerminalFailures',
+        'promptPreparations'
       ].sort()
     )
     expect(fields(deletionOwner)).toEqual(
@@ -630,6 +643,8 @@ describe('Session persistence coordinator architecture', () => {
     )
     expect(fields(reconciliationOwner)).toEqual(
       [
+        'onSessionCommitted',
+        'ownsPromptPreparation',
         'artifactStorage',
         'fileIndex',
         'permissionGrants',
@@ -723,6 +738,7 @@ describe('Session persistence coordinator architecture', () => {
         'readSessionSnapshot',
         'reserveSessionExport',
         'retryArtifactFinalization',
+        'commitRecoveredArtifactReferences',
         'runSessionMutation',
         'saveSession',
         'saveSessionSpecialistBinding',
@@ -751,7 +767,55 @@ describe('Session persistence coordinator architecture', () => {
     )
     for (const name of asynchronousMethods) {
       const method = methodFrom(facade, name)
-      if (name === 'saveSession') {
+      if (
+        [
+          'recordSessionRecordProblem',
+          'clearSessionRecordProblem',
+          'listSessionRecordProblems',
+          'recordRuntimeTerminalFailure',
+          'projectRuntimeSession'
+        ].includes(name)
+      ) {
+        // Synchronous Main facts decorate projections; they never write durable Session state.
+        const text = method.getText(facadeFile)
+        expect(text).not.toContain('this.operationScheduler.')
+        expect(text).not.toContain('this.repository.')
+        expect(text).not.toContain('saveSession(')
+        continue
+      }
+      if (
+        [
+          'recordRuntimeTerminalFailure',
+          'listRuntimeTerminalFailures',
+          'projectRuntimeSession',
+          'retryRuntimeTerminalCommit'
+        ].includes(name)
+      ) {
+        // Ephemeral facts/projections do not mutate durable authority. Explicit Retry invokes the
+        // runtime's scheduled mutation callback; holding its lane here would deadlock that callback.
+        expect(calledOwnerMethods(method), name).toEqual([`stateOwner.${name}`])
+        expect(method.body?.statements, name).toHaveLength(1)
+        expect(
+          walk(method, isCallExpression).map(
+            (call) => isCallExpression(call) && call.expression.getText(facadeFile)
+          ),
+          name
+        ).toEqual([`this.stateOwner.${name}`])
+        continue
+      }
+      if (name === 'projectRuntimeSessionSummaries') {
+        // Live release facts overlay returned summaries only; this path must never save them.
+        expect(calledOwnerMethods(method)).toEqual([])
+        const repositoryCalls = walk(method, isCallExpression)
+          .filter(isCallExpression)
+          .map((call) => call.expression.getText(facadeFile))
+          .filter((call) => call.startsWith('this.repository.'))
+        expect(repositoryCalls).toEqual(['this.repository.loadSessionWithDiagnostics'])
+        expect(method.getText(facadeFile)).toContain("mode: 'read-only'")
+        expect(method.getText(facadeFile)).not.toContain('this.operationScheduler.')
+        continue
+      }
+      if (name === 'saveSession' || name === 'reserveSessionExport') {
         // Export release waits outside the lane; each actual save still enters the same Session
         // scheduler. Behavioral coordinator tests cover release/retry and unrelated-lane progress.
         const calls: string[] = []
@@ -806,7 +870,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(49)
+    expect(expectedSchedulerRoute.size).toBe(50)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -933,6 +997,11 @@ describe('Session persistence coordinator architecture', () => {
   it('keeps owner interfaces narrow and facade routes explicit', () => {
     expect(methods(stateOwner, 'public')).toEqual(
       [
+        'recordRuntimeTerminalFailure',
+        'listRuntimeTerminalFailures',
+        'projectRuntimeSession',
+        'retryRuntimeTerminalCommit',
+        'assertRuntimeTerminalWriteAvailable',
         'appendUserMessage',
         'beginHydration',
         'containsMessageOnActiveBranch',
@@ -944,6 +1013,8 @@ describe('Session persistence coordinator architecture', () => {
         'patchRuntimeContext',
         'pruneEnabledComputeHosts',
         'readRuntimeContext',
+        'ownsPromptPreparation',
+        'releaseAbandonedPreparation',
         'recordSession',
         'removeProject',
         'removeSession',
@@ -965,6 +1036,7 @@ describe('Session persistence coordinator architecture', () => {
     )
     expect(methods(stateOwner, 'private')).toEqual(
       [
+        'clearRuntimeTerminalFailure',
         'loadRuntimeContextSession',
         'loadTaskRunAuthority',
         'persistTaskSession',
@@ -994,9 +1066,14 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(methods(reconciliationOwner, 'public')).toEqual(
-      ['reconcileLoadedSessions', 'repairFileProjection', 'retryArtifactFinalization'].sort()
+      [
+        'commitRecoveredArtifacts',
+        'reconcileLoadedSessions',
+        'repairFileProjection',
+        'retryArtifactFinalization'
+      ].sort()
     )
-    expect(methods(reconciliationOwner, 'private')).toEqual([])
+    expect(methods(reconciliationOwner, 'private')).toEqual(['confirmPublishedVersions'])
     expect(methods(sideChatOwner, 'public')).toEqual(
       ['appendRelay', 'clear', 'commitRelays', 'loadCatalog', 'saveProjection'].sort()
     )
@@ -1050,7 +1127,12 @@ describe('Session persistence coordinator architecture', () => {
       pruneSessionEnabledComputeHosts: ['stateOwner.pruneEnabledComputeHosts'],
       readSessionRuntimeContext: ['stateOwner.readRuntimeContext'],
       replaceSessionMetadata: ['stateOwner.replaceMetadata'],
-      saveSession: ['stateOwner.saveSession'],
+      saveSession: [
+        'stateOwner.assertRuntimeTerminalWriteAvailable',
+        'stateOwner.listRuntimeTerminalFailures',
+        'stateOwner.retryRuntimeTerminalCommit',
+        'stateOwner.saveSession'
+      ],
       saveSessionSpecialistBinding: ['stateOwner.saveSessionSpecialistBinding'],
       saveSideChatProjection: ['sideChatOwner.saveProjection'],
       sessionMetadataSnapshot: ['stateOwner.metadataSnapshot'],
@@ -1197,7 +1279,23 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/runtime-writer.test.ts',
       'src/main/session-persistence/runtime-writer.ts',
       'src/main/session-persistence/runtime-resume-recovery.test.ts',
-      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts'
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
+      'src/main/session-persistence/missing-runtime-session-repro.test.ts',
+      'src/main/session-persistence/prompt-preparation-owner.test.ts',
+      'src/main/session-persistence/prompt-preparation-owner.ts',
+      'src/main/session-persistence/prompt-preparation-restart.test.ts',
+      'src/main/session-persistence/reconciliation-renderer-parity.test.ts',
+      'src/main/session-persistence/runtime-attachment-recovery.test.ts',
+      'src/main/session-persistence/runtime-attachment-recovery.ts',
+      'src/main/session-persistence/session-state-authority.test.ts',
+      'src/main/session-persistence/terminal-commit-recovery.test.ts',
+      'src/main/session-persistence/terminal-commit-scheduler.test.ts',
+      'src/main/session-persistence/terminal-live-projection.test.ts',
+      'src/main/session-persistence/turn-outcome-authority.ts',
+      'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
+      'src/main/session-persistence/record-facts.ts',
+      'src/main/session-persistence/attention-projection.test.ts',
+      'src/main/session-persistence/turn-outcome-authority.test.ts'
     ])
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts',
@@ -1256,7 +1354,19 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/runtime-session-owner.test.ts',
       'src/main/session-persistence/runtime-writer.test.ts',
       'src/main/session-persistence/runtime-resume-recovery.test.ts',
-      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts'
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
+      'src/main/session-persistence/missing-runtime-session-repro.test.ts',
+      'src/main/session-persistence/prompt-preparation-owner.test.ts',
+      'src/main/session-persistence/prompt-preparation-restart.test.ts',
+      'src/main/session-persistence/reconciliation-renderer-parity.test.ts',
+      'src/main/session-persistence/runtime-attachment-recovery.test.ts',
+      'src/main/session-persistence/session-state-authority.test.ts',
+      'src/main/session-persistence/terminal-commit-recovery.test.ts',
+      'src/main/session-persistence/terminal-commit-scheduler.test.ts',
+      'src/main/session-persistence/terminal-live-projection.test.ts',
+      'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
+      'src/main/session-persistence/attention-projection.test.ts',
+      'src/main/session-persistence/turn-outcome-authority.test.ts'
     ])
     expect(sessionPersistence.testFiles.contract).toEqual([
       'src/shared/session-persistence.test.ts',
@@ -1692,7 +1802,16 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/notebook/real-notebook-lineage.integration.test.ts',
       'src/main/notebook/real-parquet-lineage.integration.test.ts',
       'src/main/notebook/r-connection-guard.test.ts',
-      'src/main/notebook/dependency-analysis.lineage-regressions.test.ts'
+      'src/main/notebook/dependency-analysis.lineage-regressions.test.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-admission.test.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx',
+      'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts',
+      'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
+      'src/main/acp/approved-handoff-outcome.integration.test.ts',
+      'src/main/acp/approved-handoff-outcome.test.ts',
+      'src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx',
+      'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

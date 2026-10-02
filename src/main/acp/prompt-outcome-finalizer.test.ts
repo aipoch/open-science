@@ -1,8 +1,13 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { AcpRuntimeEvent } from '../../shared/acp'
+import { ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE, type AcpRuntimeEvent } from '../../shared/acp'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
+import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import {
   AcpPromptOutcomeFinalizer,
@@ -11,6 +16,8 @@ import {
 } from './prompt-outcome-finalizer'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
+
+afterEach(() => vi.useRealTimers())
 
 type MutableHandles = {
   -readonly [Key in keyof AcpPromptFinalizationHandles]: AcpPromptFinalizationHandles[Key]
@@ -157,6 +164,79 @@ it.each(['stop', 'error'] as const)(
 )
 
 describe('AcpPromptOutcomeFinalizer', () => {
+  it('starts terminal retries only after releasing interaction and the admission callback', async () => {
+    const h = createHarness()
+    let released = false
+    h.handles.onPromptEnded = () => {
+      released = true
+    }
+    h.handles.retryTerminalCommits = vi.fn(() => {
+      expect(released).toBe(true)
+      expect(h.interactions.current('s1')).toBeUndefined()
+    })
+    h.interactions.captureTerminal(h.interaction, 'stop')
+    await new AcpPromptOutcomeFinalizer().finalize(h.handles, stopped())
+    expect(h.handles.retryTerminalCommits).toHaveBeenCalledOnce()
+  })
+
+  it('still schedules terminal retries when the connection released the interaction first', async () => {
+    const h = createHarness()
+    h.handles.retryTerminalCommits = vi.fn()
+    h.handles.commitTerminal = vi.fn(async () => {
+      // The first commit is retained; the connection then closes before finalization completes.
+      h.interactions.supersede(h.interaction)
+    })
+    h.interactions.captureTerminal(h.interaction, 'stop')
+    await new AcpPromptOutcomeFinalizer().finalize(h.handles, stopped())
+    expect(h.interactions.current('s1')).toBeUndefined()
+    expect(h.handles.onPromptEnded).not.toHaveBeenCalled()
+    expect(h.handles.retryTerminalCommits).toHaveBeenCalledOnce()
+  })
+
+  it('publishes cleanup failure as a live non-terminal notice without settling the turn', async () => {
+    const h = createHarness()
+    const committed: Array<Partial<AcpRuntimeEvent>> = []
+    h.handles.commitTerminal = vi.fn(async (event) => {
+      committed.push(event)
+    })
+    h.handles.disposeArtifact = vi.fn(async () => {
+      throw new Error('cleanup exploded')
+    })
+    h.interactions.captureTerminal(h.interaction, 'cancelled')
+    await new AcpPromptOutcomeFinalizer().finalize(h.handles, stopped({ stopReason: 'cancelled' }))
+    expect(committed.map(({ kind, text }) => `${kind}:${text}`)).toEqual(['stop:cancelled'])
+    expect(h.events).toContainEqual(
+      expect.objectContaining({
+        kind: 'system',
+        level: 'warning',
+        title: ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
+        text: 'cleanup exploded',
+        sessionId: 's1',
+        promptMessageId: 'prompt-1'
+      })
+    )
+  })
+
+  it('commits exhausted Artifact publication as a failed turn', async () => {
+    const h = createHarness()
+    h.handles.emitArtifact = vi.fn(async () => {
+      throw new Error('opaque Artifact publication failure')
+    })
+    h.handles.commitTerminal = vi.fn(async (event) => {
+      h.events.push(event)
+    })
+    h.interactions.captureTerminal(h.interaction, 'stop')
+    await expect(new AcpPromptOutcomeFinalizer().finalize(h.handles, stopped())).rejects.toThrow(
+      'opaque Artifact publication failure'
+    )
+    expect(h.events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        artifactFailure: true,
+        errorReportable: true
+      })
+    )
+  })
   it.each([true, false])(
     'retains failed Notebook stop severity after cleanup (fatal: %s)',
     async (fatal) => {
@@ -817,4 +897,177 @@ it('publishes a prompt-scoped cancellation when the provider resolves cancelled 
       text: 'cancelled'
     })
   )
+})
+
+// The fixture keeps concrete mock signatures for failure injection.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+const ownerHarness = () => {
+  let durable: PersistedChatSession = materializeSessionConversationGraph({
+    id: 'session',
+    projectId: 'project',
+    title: 'Research',
+    cwd: '/workspace',
+    status: 'running',
+    activeRun: { promptMessageId: 'prompt', startedAt: 1 },
+    messages: [
+      {
+        id: 'prompt',
+        role: 'user',
+        content: 'Research',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    agentFrameworkId: 'codex',
+    createdAt: 1,
+    updatedAt: 1
+  })
+  const graph = durable.conversationGraph!
+  const interactions = new AcpSessionInteractionOwner({ now: () => 10 })
+  const interaction = interactions.claim({ sessionId: 'session', kind: 'prompt' })
+  const scope = {
+    projectId: durable.projectId,
+    sessionId: durable.id,
+    promptMessageId: 'prompt',
+    agentFrameId: graph.rootFrameId,
+    messageBranchId: graph.branches[0].id,
+    runtimeSegmentId: graph.runtimeSegments[0].id,
+    executionId: interaction.turnToken
+  }
+  let writeFailure: Error | undefined
+  const exhausted = vi.fn()
+  const publish = vi.fn()
+  const mutate = vi.fn(
+    async (_scope, mutation: (session: PersistedChatSession) => PersistedChatSession) => {
+      if (writeFailure) throw writeFailure
+      durable = mutation(structuredClone(durable))
+      return structuredClone(durable)
+    }
+  )
+  const owner = new RuntimeSessionOwner({
+    loadSession: async () => structuredClone(durable),
+    mutateSession: mutate,
+    finalizeArtifacts: async () => [],
+    onTerminalCommitExhausted: exhausted,
+    scheduleFlush: () => () => undefined,
+    now: () => 10
+  })
+  let sequence = 0
+  const retryTerminalCommits = vi.fn(() => owner.retryTerminalCommits(scope.sessionId))
+  const handles = (disposeArtifact: () => Promise<void>): MutableHandles => ({
+    sessionId: scope.sessionId,
+    promptMessageId: scope.promptMessageId,
+    interaction,
+    interactions,
+    permission: { clearCorrelationsForSession: vi.fn() },
+    skill: { reloadDecision: { kind: 'continue' as const }, close: vi.fn() },
+    emitUserMessage: vi.fn(),
+    emitArtifact: vi.fn(async (onPublished: () => void) => onPublished()),
+    disposeArtifact,
+    failPendingSkillActivities: vi.fn(),
+    recordContextUsed: vi.fn(() => true),
+    errorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    errorKind: () => undefined,
+    pushEvent: vi.fn((event: Partial<AcpRuntimeEvent>) =>
+      owner.accept({
+        ...event,
+        id: `live-${sequence++}`,
+        timestamp: 20 + sequence
+      } as AcpRuntimeEvent)
+    ),
+    commitTerminal: async (event: Partial<AcpRuntimeEvent>) =>
+      owner.commitTerminal(
+        {
+          ...event,
+          id: `terminal-${sequence++}`,
+          timestamp: event.timestamp ?? 15,
+          level: event.level ?? 'info'
+        } as AcpRuntimeEvent,
+        publish
+      ),
+    retryTerminalCommits,
+    emitState: vi.fn(),
+    beforeInteractionRelease: vi.fn(),
+    afterInteractionRelease: vi.fn(async () => undefined),
+    onPromptEnded: vi.fn(),
+    generationActivityChanged: vi.fn(),
+    autoCompactIfNeeded: vi.fn(async () => undefined)
+  })
+  const stopped = (stopReason: PromptResponse['stopReason']): AcpPromptFinalizationOutcome => ({
+    kind: 'stopped' as const,
+    response: { stopReason },
+    facts: {}
+  })
+  return {
+    scope,
+    owner,
+    interactions,
+    interaction,
+    exhausted,
+    publish,
+    retryTerminalCommits,
+    handles,
+    stopped,
+    read: () => structuredClone(durable),
+    failWrites: (error?: Error) => {
+      writeFailure = error
+    }
+  }
+}
+
+describe('prompt finalization with the Runtime Session owner', () => {
+  it.each([
+    ['cancelled', 'cancelled'],
+    ['end_turn', 'completed']
+  ] as const)(
+    'keeps a %s turn settled when Artifact cleanup throws',
+    async (stopReason, outcomeKind) => {
+      const h = ownerHarness()
+      await h.owner.begin(h.scope)
+      h.interactions.captureTerminal(
+        h.interaction,
+        stopReason === 'cancelled' ? 'cancelled' : 'stop'
+      )
+      const handles = h.handles(async () => {
+        throw new Error('cleanup exploded')
+      })
+      await new AcpPromptOutcomeFinalizer().finalize(handles, h.stopped(stopReason))
+      await h.owner.flush(h.scope.sessionId, h.scope.promptMessageId)
+      const session = h.read()
+      const prompt = session.conversationGraph!.messages.find(({ id }) => id === 'prompt')!
+      expect(prompt.turnOutcome).toMatchObject({ kind: outcomeKind })
+      expect(prompt.turnOutcome).not.toHaveProperty('recovery', 'retry-artifact-publication')
+      if (stopReason === 'cancelled') {
+        expect(prompt.turnOutcome).toMatchObject({ recovery: 'resume' })
+        expect(session.resumeRecovery).toMatchObject({ promptMessageId: 'prompt' })
+      } else {
+        expect(session.status).toBe('idle')
+        expect(session.error).toBeUndefined()
+      }
+    }
+  )
+
+  it('exhausts and publishes when the connection closes while the first terminal commit is retained', async () => {
+    vi.useFakeTimers()
+    const h = ownerHarness()
+    await h.owner.begin(h.scope)
+    h.failWrites(new Error('disk temporarily unavailable'))
+    h.interactions.captureTerminal(h.interaction, 'stop')
+    const handles = h.handles(async () => undefined)
+    const commitTerminal = handles.commitTerminal!
+    handles.commitTerminal = async (event) => {
+      await commitTerminal(event)
+      // Connection teardown releases the interaction before finalization reaches its cleanup.
+      h.interactions.supersedeAll()
+    }
+    await new AcpPromptOutcomeFinalizer().finalize(handles, h.stopped('end_turn'))
+    expect(h.retryTerminalCommits).toHaveBeenCalledOnce()
+    await vi.runAllTimersAsync()
+    expect(h.exhausted).toHaveBeenCalledOnce()
+    expect(h.publish).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ interruptionCause: 'terminal-commit-failed' })
+    )
+  })
 })

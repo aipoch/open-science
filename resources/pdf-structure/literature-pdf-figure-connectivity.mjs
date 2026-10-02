@@ -1,5 +1,324 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { intersection, area, lineRect } from './literature-pdf-page-geometry.mjs'
+import { intersection, area, lineRect, union } from './literature-pdf-page-geometry.mjs'
+
+export function nativeClosedRuleFrames(rules, endpointTolerance = 0.01) {
+  const horizontal = rules.filter((r) => r[1] === r[3] && r[2] - r[0] >= 30),
+    vertical = rules.filter((r) => r[0] === r[2] && r[3] - r[1] >= 30)
+  return horizontal
+    .flatMap((top) =>
+      horizontal.flatMap((bottom) =>
+        bottom[1] - top[1] >= 30 &&
+        Math.abs(top[0] - bottom[0]) < endpointTolerance &&
+        Math.abs(top[2] - bottom[2]) < endpointTolerance &&
+        [top[0], top[2]].every((x) =>
+          vertical.some(
+            (r) =>
+              Math.abs(r[0] - x) < endpointTolerance &&
+              Math.abs(r[1] - top[1]) < endpointTolerance &&
+              Math.abs(r[3] - bottom[1]) < endpointTolerance
+          )
+        )
+          ? [[top[0], top[1], top[2], bottom[1]]]
+          : []
+      )
+    )
+    .filter(
+      (r, n, all) => !all.slice(0, n).some((p) => p.every((v, i) => Math.abs(v - r[i]) < 0.01))
+    )
+}
+
+// Missing PDF font advances do not justify fabricated glyph widths. Repeated
+// zero-width numeric anchors beside one closed axis can still establish where
+// that axis starts; a rotated native label supplies its own horizontal extent.
+export function collapsedNativeAxisLeft(page, caption, tables, rules, bounds) {
+  const ticks = page.lines
+    .filter(
+      (l) =>
+        l.width === 0 &&
+        l.height > 0 &&
+        l.fontSize > 0 &&
+        [l.x, l.y, l.height, l.fontSize].every(Number.isFinite) &&
+        /^[−-]?\d+(?:\.\d+)?$/.test(l.text.trim()) &&
+        l.x < bounds[0] &&
+        bounds[0] - l.x <= l.fontSize * 3 &&
+        l.y >= bounds[1] &&
+        l.y <= bounds[3]
+    )
+    .sort((a, b) => a.y - b.y)
+  if (
+    ticks.length < 4 ||
+    ticks.some(
+      (l) => Math.abs(l.x - ticks[0].x) > 0.01 || Math.abs(l.fontSize - ticks[0].fontSize) > 0.01
+    ) ||
+    ticks
+      .slice(1)
+      .some(
+        (l, i) => Math.abs(l.y - ticks[i].y - ticks[1].y + ticks[0].y) > ticks[0].fontSize * 0.05
+      )
+  )
+    return
+  const frames = nativeClosedRuleFrames(rules).filter(
+    (r) =>
+      r[0] > ticks[0].x &&
+      r[0] - ticks[0].x <= ticks[0].fontSize * 3 &&
+      r[1] <= ticks[0].y &&
+      r[3] >= ticks.at(-1).y &&
+      intersection(r, bounds) / area(r) > 0.95 &&
+      caption.rect[1] >= r[3] &&
+      caption.rect[1] - r[3] <= ticks[0].fontSize * 7
+  )
+  if (frames.length !== 1) return
+  const labels = page.lines.filter(
+    (l) =>
+      l.height === 0 &&
+      l.width > 0 &&
+      l.fontSize > 0 &&
+      l.fontSize <= ticks[0].fontSize * 2 &&
+      [l.x, l.y, l.width, l.fontSize].every(Number.isFinite) &&
+      /^\p{L}{1,3}$/u.test(l.text.trim()) &&
+      l.x < ticks[0].x &&
+      ticks[0].x - l.x <= ticks[0].fontSize * 3 &&
+      l.x + l.width <= ticks[0].x &&
+      l.y >= ticks[0].y &&
+      l.y <= ticks.at(-1).y
+  )
+  if (!labels.length) return
+  const left = Math.min(...labels.map((l) => l.x)),
+    strip = [left, frames[0][1], bounds[0], frames[0][3]]
+  if (
+    tables.some((r) => intersection(r, strip) > 0) ||
+    page.lines.some(
+      (l) =>
+        l.width > 0 && l.height > 0 && l.text.length > 40 && intersection(lineRect(l), strip) > 0
+    )
+  )
+    return
+  return left
+}
+
+// Repeated plot faces can have their headings fused into long native text runs.
+// Four explicit stroke edges, uniform non-overlapping faces and interior drawing
+// evidence distinguish that plate from a paragraph background or empty grid.
+export function nativeFramedPanelArray(page, captions, tables, rules) {
+  if (captions.length !== 1 || !rules.length) return
+  const caption = captions[0],
+    horizontal = rules.filter((r) => r[1] === r[3] && r[2] - r[0] >= 30),
+    vertical = rules.filter((r) => r[0] === r[2] && r[3] - r[1] >= 30),
+    paths = page.graphicsBounds
+      .filter((g) => g.kind === 'path')
+      .map((g) => g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)))
+  const frames = horizontal
+    .flatMap((top) =>
+      horizontal.flatMap((bottom) => {
+        if (
+          bottom[1] - top[1] < 30 ||
+          bottom[1] > caption.rect[1] ||
+          Math.abs(top[0] - bottom[0]) > 0.01 ||
+          Math.abs(top[2] - bottom[2]) > 0.01 ||
+          ![top[0], top[2]].every((x) =>
+            vertical.some(
+              (r) =>
+                Math.abs(r[0] - x) < 0.01 &&
+                Math.abs(r[1] - top[1]) < 0.01 &&
+                Math.abs(r[3] - bottom[1]) < 0.01
+            )
+          )
+        )
+          return []
+        const rect = [top[0], top[1], top[2], bottom[1]]
+        if (
+          tables.some((r) => intersection(r, rect) > 0) ||
+          paths.filter(
+            (r) =>
+              area(r) < area(rect) * 0.8 &&
+              area(r) > area(rect) * 0.005 &&
+              intersection(r, rect) / area(r) > 0.95
+          ).length < 3
+        )
+          return []
+        return [rect]
+      })
+    )
+    .filter(
+      (r, n, all) => !all.slice(0, n).some((p) => p.every((v, i) => Math.abs(v - r[i]) < 0.01))
+    )
+  if (
+    frames.length < 8 ||
+    frames.some((r, n) => frames.slice(0, n).some((p) => intersection(p, r) > 0.01)) ||
+    frames.some(
+      (r) =>
+        Math.abs(r[2] - r[0] - frames[0][2] + frames[0][0]) > 1 ||
+        Math.abs(r[3] - r[1] - frames[0][3] + frames[0][1]) > 1
+    )
+  )
+    return
+  const frameBounds = union(frames),
+    fontLimit = Math.min(...frames.map((r) => r[3] - r[1])) * 0.1
+  if (
+    frameBounds[2] - frameBounds[0] < (frames[0][2] - frames[0][0]) * 2.5 ||
+    frameBounds[3] - frameBounds[1] < (frames[0][3] - frames[0][1]) * 1.5 ||
+    caption.rect[1] - frameBounds[3] > 24 ||
+    page.lines.some(
+      (l) =>
+        l.fontSize > fontLimit && l.text.length > 60 && intersection(lineRect(l), frameBounds) > 0
+    )
+  )
+    return
+  const owned = paths.filter(
+    (r) =>
+      r[0] >= frameBounds[0] - 24 &&
+      r[2] <= frameBounds[2] + 24 &&
+      r[1] >= frameBounds[1] - 24 &&
+      r[3] <= frameBounds[3] + 24 &&
+      r[3] < caption.rect[1]
+  )
+  const bounds = union([frameBounds, ...owned]),
+    labels = page.lines.filter(
+      (l) =>
+        l.fontSize > 0 &&
+        l.fontSize <= fontLimit &&
+        l.x >= bounds[0] - 12 &&
+        l.x + l.width <= bounds[2] + 12 &&
+        l.y >= bounds[1] - 12 &&
+        l.y + l.height <= Math.min(bounds[3] + 12, caption.rect[1] - 2)
+    )
+  return { caption, rect: union([bounds, ...labels.map(lineRect)]), graphicsCount: owned.length }
+}
+
+// A caption above a native node tree has no lateral root next to the caption.
+// Closed, populated frames and a single complete connector component establish
+// the whole diagram without accepting unrelated path marks by proximity.
+export function topCaptionedNativeFlow(page, caption, captions, tables, frames) {
+  if (
+    !/\b(?:CONSORT|flow\s*chart|flow diagram|flow of participants)\b/i.test(caption.lines.join(' '))
+  )
+    return
+  const eligible = frames
+    .filter(
+      (r) =>
+        r[1] > caption.rect[3] &&
+        r[3] < page.height * 0.9 &&
+        !tables.some((t) => intersection(t, r) > 0)
+    )
+    .filter(
+      (r, n, all) => !all.slice(0, n).some((p) => p.every((v, i) => Math.abs(v - r[i]) < 0.1))
+    )
+  const ownsLine = (l) =>
+    eligible.reduce((sum, r) => sum + intersection(lineRect(l), r), 0) / area(lineRect(l)) > 0.8
+  if (
+    eligible.length < 4 ||
+    eligible.some(
+      (r) =>
+        !page.lines.some((l) => l.text.trim() && intersection(lineRect(l), r) > 0 && ownsLine(l))
+    )
+  )
+    return
+  const upper = Math.min(...eligible.map((r) => r[1]))
+  if (upper - caption.rect[3] > page.height * 0.08) return
+  const paths = page.graphicsBounds
+    .filter((g) => g.kind === 'path')
+    .map((g) => ({ rect: g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width)) }))
+    .filter(
+      ({ rect: r }) =>
+        r[1] >= caption.rect[3] &&
+        r[3] < page.height * 0.9 &&
+        !tables.some((t) => intersection(t, r) > 0)
+    )
+  const seed = paths.find(({ rect: r }) => intersection(r, eligible[0]) / area(eligible[0]) > 0.95)
+  if (!seed) return
+  const component = [seed],
+    pending = new Set(paths.filter((p) => p !== seed))
+  connectFigureGraphics(component, pending)
+  if (
+    pending.size ||
+    eligible.some((r) => !component.some((p) => intersection(p.rect, r) / area(r) > 0.95))
+  )
+    return
+  const rect = union(component.map((p) => p.rect))
+  if (
+    captions.some(
+      (c) => c !== caption && c.page === caption.page && intersection(c.rect, rect) > 0
+    ) ||
+    page.lines.some(
+      (l) =>
+        l.text.length > 80 &&
+        intersection(lineRect(l), rect) > 0 &&
+        !eligible.some((r) => intersection(lineRect(l), r) / area(lineRect(l)) > 0.8)
+    )
+  )
+    return
+  const legend = page.lines.filter(
+    (l) =>
+      /^Legend:\s*$/i.test(l.text) &&
+      l.y >= rect[3] &&
+      l.y - rect[3] <= l.fontSize * 4 &&
+      l.x >= rect[0] - l.fontSize * 3 &&
+      l.x + l.width <= rect[2]
+  )
+  if (legend.length === 1) {
+    const start = legend[0],
+      tail = page.lines.filter(
+        (l) =>
+          l.x >= start.x &&
+          l.x + l.width <= rect[2] &&
+          Math.abs(l.y - start.y) <= start.fontSize * 0.3 &&
+          l.height <= start.fontSize * 1.2
+      )
+    const keys = tail.filter((l) => /^[†‡§*]$/.test(l.text.trim()))
+    if (
+      keys.length >= 2 &&
+      keys.every((key) =>
+        page.lines.some(
+          (l) =>
+            l.text.trim() === key.text.trim() &&
+            intersection(lineRect(l), rect) / area(lineRect(l)) > 0.95
+        )
+      ) &&
+      !captions.some(
+        (c) =>
+          c !== caption &&
+          c.page === caption.page &&
+          tail.some((l) => intersection(c.rect, lineRect(l)) > 0)
+      )
+    )
+      rect.splice(0, 4, ...union([rect, ...tail.map(lineRect)]))
+  }
+  return { caption, rect, graphicsCount: component.length }
+}
+
+export function closedCaptionFigureFrame(page, caption, captions, tables, frames) {
+  const tolerance = page.height / 128
+  const eligible = frames
+    .filter((r) => {
+      const labels = page.lines.filter(
+        (l) => intersection(lineRect(l), r) / area(lineRect(l)) > 0.95
+      )
+      return (
+        r[2] - r[0] > page.width * 0.25 &&
+        r[3] - r[1] > page.height * 0.12 &&
+        Math.abs(r[3] - caption.rect[1]) < 24 &&
+        (intersection([r[0], caption.rect[1], r[2], caption.rect[3]], caption.rect) > 0 ||
+          (caption.rect[2] <= r[0] && r[0] - caption.rect[2] < page.width * 0.3)) &&
+        labels.length >= 8 &&
+        !captions.some((c) => c !== caption && intersection(c.rect, r) > 0) &&
+        !tables.some((t) => intersection(t, r) > 0)
+      )
+    })
+    .filter(
+      (r, n, all) =>
+        !all.some((b, m) => m !== n && area(b) > area(r) && intersection(r, b) / area(r) > 0.99)
+    )
+  if (!eligible.length || eligible.length > 2) return
+  if (
+    eligible.length === 2 &&
+    (intersection(...eligible) > 0 ||
+      Math.abs(eligible[0][1] - eligible[1][1]) > tolerance ||
+      Math.abs(eligible[0][3] - eligible[1][3]) > tolerance)
+  )
+    return
+  const rect = union(eligible).map((v, n) => v + (n < 2 ? -1 : 1))
+  return { caption, rect, graphicsCount: eligible.length, ownsContainedTables: true }
+}
 
 // A frame may be painted as dozens of thin paths, none large enough to be a
 // panel alone. Require all four enclosing edges, a nearby caption, and actual

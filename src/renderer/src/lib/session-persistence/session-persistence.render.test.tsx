@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import type { AcpRuntimeEvent } from '../../../../shared/acp'
+import { useWorkspaceOperationErrors } from '../acp/workspace-operation-error'
+import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,6 +25,7 @@ import {
 } from '../../stores/session-store'
 import {
   flushSessionPersistence,
+  resetSessionPersistenceWriteFailuresForTests,
   useSessionPersistence,
   type SessionPersistenceState
 } from './session-persistence'
@@ -60,6 +64,8 @@ describe('session persistence startup', () => {
   let reportRendererFailure: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
+    resetSessionConversationIntentsForTests()
+    resetSessionPersistenceWriteFailuresForTests()
     await i18next.changeLanguage('en')
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -88,6 +94,7 @@ describe('session persistence startup', () => {
       }
     } as unknown as Window['api']
     useSessionStore.setState(createInitialSessionState())
+    useWorkspaceOperationErrors.setState({ errors: {} })
   })
 
   afterEach(async () => {
@@ -185,6 +192,254 @@ describe('session persistence startup', () => {
     window.api.sessions.loadOne = loadOne
     return loadOne
   }
+
+  it('shows retained terminal storage failures globally and retries only the exact execution', async () => {
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    const event: AcpRuntimeEvent = {
+      id: 'terminal-failure',
+      timestamp: 1,
+      kind: 'error',
+      level: 'error',
+      sessionId: 'session-other',
+      promptMessageId: 'prompt-1',
+      terminalCommitFailure: 'storage',
+      interruptionCause: 'terminal-commit-failed',
+      terminalScope: {
+        projectId: 'project-other',
+        executionId: 'execution-1',
+        startedAt: 1,
+        agentFrameId: 'frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'segment-1'
+      }
+    }
+    const list = vi.fn().mockResolvedValue([event])
+    const retry = vi.fn(async () => {
+      list.mockResolvedValue([])
+    })
+    window.api.sessions.listRuntimeTerminalFailures = list
+    window.api.sessions.retryRuntimeTerminalCommit = retry
+    await act(async () => root.render(<Probe />))
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
+    )
+    await act(async () =>
+      (container.querySelector('[data-testid="retry-writes"]') as HTMLButtonElement).click()
+    )
+    expect(retry).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'project-other',
+      sessionId: 'session-other',
+      promptMessageId: 'prompt-1',
+      executionId: 'execution-1'
+    })
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'changes saved'
+    )
+  })
+
+  it.each(['storage', 'missing-record'] as const)(
+    'clears the %s notice when another operation commits the retained result',
+    async (terminalCommitFailure) => {
+      loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+      const event: AcpRuntimeEvent = {
+        id: 'failed-terminal',
+        timestamp: 1,
+        kind: 'error',
+        level: 'error',
+        sessionId: 'session-other',
+        promptMessageId: 'prompt-1',
+        terminalCommitFailure,
+        terminalScope: {
+          projectId: 'project-other',
+          executionId: 'execution-1',
+          startedAt: 1,
+          agentFrameId: 'frame-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'segment-1'
+        }
+      }
+      const list = vi.fn().mockResolvedValue([event])
+      window.api.sessions.listRuntimeTerminalFailures = list
+      let publish: (events: AcpRuntimeEvent[]) => void = () => undefined
+      window.api.acp = {
+        onEvent: (listener) => {
+          publish = listener
+          return () => undefined
+        }
+      } as Window['api']['acp']
+      await act(async () => root.render(<Probe />))
+      expect(list).toHaveBeenCalledTimes(1)
+      // A normal committed event only requests fresh authority; an unrelated success cannot
+      // erase this failed execution while Main still retains it.
+      const committed: AcpRuntimeEvent = {
+        ...event,
+        id: 'unrelated-commit',
+        kind: 'stop',
+        level: 'info',
+        publicationOwner: 'main',
+        terminalCommitFailure: undefined
+      }
+      await act(async () => publish([committed]))
+      expect(list).toHaveBeenCalledTimes(2)
+      if (terminalCommitFailure === 'storage')
+        expect(container.querySelector('[data-testid="write-error"]')?.textContent).not.toBe(
+          'changes saved'
+        )
+      else expect(useWorkspaceOperationErrors.getState().errors['session-other']).toBeDefined()
+      list.mockResolvedValue([])
+      await act(async () => publish([{ ...committed, id: 'recovered-commit' }]))
+      expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+        'changes saved'
+      )
+      expect(useWorkspaceOperationErrors.getState().errors['session-other']).toBeUndefined()
+    }
+  )
+
+  it.each(['matching', 'newer-start', 'newer-execution'] as const)(
+    'applies a terminal failure overlay only to its admitted attempt (%s)',
+    async (attempt) => {
+      const event: AcpRuntimeEvent = {
+        id: 'failed-terminal',
+        timestamp: 20,
+        kind: 'error',
+        level: 'error',
+        sessionId: 'session-1',
+        promptMessageId: 'prompt-1',
+        terminalCommitFailure: 'storage',
+        interruptionCause: 'terminal-commit-failed',
+        terminalScope: {
+          projectId: 'project-a',
+          executionId: 'execution-1',
+          startedAt: 10,
+          agentFrameId: 'frame-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'segment-1'
+        }
+      }
+      const admission = {
+        executionId: 'execution-1',
+        promptMessageId: 'prompt-1',
+        promptRuntimeSegmentId: 'segment-1',
+        rootFrameId: 'frame-1',
+        agentFrameId: 'frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'segment-1'
+      }
+      const live = createPersistedSession({
+        runtimeTranscriptOwner: 'main',
+        status: 'running',
+        activeRun: { promptMessageId: 'prompt-1', startedAt: attempt === 'newer-start' ? 11 : 10 },
+        runtimeSessionAdmissions: [
+          {
+            ...admission,
+            executionId: attempt === 'newer-execution' ? 'execution-2' : 'execution-1'
+          }
+        ],
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Run',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 10,
+            updatedAt: 10
+          }
+        ]
+      })
+      const overlay = {
+        ...live,
+        status: 'idle' as const,
+        activeRun: undefined,
+        runtimeSessionAdmissions: [admission]
+      }
+      loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [live] })
+      window.api.sessions.listRuntimeTerminalFailures = vi.fn().mockResolvedValue([event])
+      window.api.sessions.loadOne = vi.fn().mockResolvedValue(overlay)
+      await act(async () => root.render(<Probe />))
+      const source = useSessionStore.getState().sessions.find(({ id }) => id === live.id)!
+      expect(source.activeRunRuntimeSegmentId).toBeUndefined()
+      expect(source.activeRun).toEqual(attempt === 'matching' ? undefined : live.activeRun)
+      expect(source.status).toBe(attempt === 'matching' ? 'idle' : 'running')
+    }
+  )
+
+  it('keeps a missing record notice scoped to its Session without a global storage retry', async () => {
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    const event: AcpRuntimeEvent = {
+      id: 'missing-record',
+      timestamp: 1,
+      kind: 'error',
+      level: 'error',
+      sessionId: 'missing-session',
+      promptMessageId: 'prompt-1',
+      terminalCommitFailure: 'missing-record',
+      terminalScope: {
+        projectId: 'project-other',
+        executionId: 'execution-1',
+        startedAt: 1,
+        agentFrameId: 'frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'segment-1'
+      }
+    }
+    window.api.sessions.listRuntimeTerminalFailures = vi.fn().mockResolvedValue([event])
+    window.api.sessions.retryRuntimeTerminalCommit = vi.fn()
+    await act(async () => root.render(<Probe />))
+    expect(useWorkspaceOperationErrors.getState().errors).toEqual({
+      'missing-session': 'This session was deleted or is unavailable.'
+    })
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'changes saved'
+    )
+    await act(async () =>
+      (container.querySelector('[data-testid="retry-writes"]') as HTMLButtonElement).click()
+    )
+    expect(window.api.sessions.retryRuntimeTerminalCommit).not.toHaveBeenCalled()
+  })
+
+  it('releases a matching live run when Main reports a missing terminal record', async () => {
+    const event: AcpRuntimeEvent = {
+      id: 'missing-live-record',
+      timestamp: 1,
+      kind: 'error',
+      level: 'error',
+      sessionId: 'session-live',
+      promptMessageId: 'prompt-live',
+      terminalCommitFailure: 'missing-record',
+      terminalScope: {
+        projectId: 'project-a',
+        executionId: 'execution-live',
+        startedAt: 1,
+        agentFrameId: 'frame-live',
+        messageBranchId: 'branch-live',
+        runtimeSegmentId: 'segment-live'
+      }
+    }
+    const live = createPersistedSession({
+      id: 'session-live',
+      projectId: 'project-a',
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-live', startedAt: 1 }
+    })
+    loadAll.mockReset().mockResolvedValue({
+      sessions: [live],
+      manifest: { version: SESSION_MANIFEST_VERSION },
+      diagnostics: emptyLoadResult().diagnostics
+    })
+    window.api.sessions.listRuntimeTerminalFailures = vi.fn().mockResolvedValue([event])
+    window.api.sessions.loadOne = vi.fn().mockResolvedValue(undefined)
+    await act(async () => root.render(<Probe />))
+    await vi.waitFor(() => {
+      const session = useSessionStore.getState().sessions.find(({ id }) => id === 'session-live')
+      expect(session?.status).toBe('idle')
+      expect(session?.activeRun).toBeUndefined()
+      expect(session?.recordProblems).toEqual(['missing-record'])
+    })
+    expect(useWorkspaceOperationErrors.getState().errors['session-live']).toBe(
+      'This session was deleted or is unavailable.'
+    )
+  })
 
   it.each(
     (['read-only', 'failed-save', 'pending-save', 'running'] as const).flatMap((mode) => [
@@ -546,13 +801,21 @@ describe('session persistence startup', () => {
   it('surfaces a save failure and retries the latest in-memory session', async () => {
     let writesFail = true
     loadAll.mockReset().mockResolvedValue(emptyLoadResult())
-    saveSession.mockImplementation(async (session) => {
+    saveSession.mockImplementation(async (session, options) => {
       if (writesFail) {
         throw new Error(
           'ENOENT: could not write /Users/private/.open-science/sessions/project-a/session-1.json'
         )
       }
-      return session
+      return {
+        ...session,
+        runtimeConversationCommandIds: [
+          ...new Set([
+            ...(session.runtimeConversationCommandIds ?? []),
+            ...(options?.conversationCommands?.map(({ id }: { id: string }) => id) ?? [])
+          ])
+        ]
+      }
     })
 
     await act(async () => root.render(<Probe />))
@@ -1269,7 +1532,7 @@ describe('session persistence startup', () => {
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
       'changes saved'
     )
-    expect(reconcilePendingArtifactsApi).toHaveBeenCalledOnce()
+    expect(reconcilePendingArtifactsApi).not.toHaveBeenCalled()
   })
 
   it('keeps persistence blocked when startup storage recovery is incomplete', async () => {

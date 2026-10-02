@@ -2,8 +2,10 @@ import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import * as processTree from '../process-tree'
 import * as powerShellParser from './powershell-search-parser'
+import * as windowsRuntime from './windows-notebook-runtime'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,6 +28,7 @@ import { terminateProcessTree } from '../process-tree'
 import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
 import { shellNpmPaths } from './shell-npm-environment'
 import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
+import { ViolationLog } from '../../../packages/notebook-network-sandbox/runtime/src/gateway/violation-log'
 
 let portableRuntimeRoot: string
 
@@ -121,6 +124,74 @@ describe('notebook shell process behavior', () => {
         })
       } finally {
         expect(await adapter.shutdown()).toEqual({ reaped: true })
+      }
+    }
+  )
+
+  it.each(
+    (['7.6', '5.1'] as const).flatMap((version) =>
+      [false, true].map((aliased) => ({ version, aliased }))
+    )
+  )(
+    'requires the bundled Node read grant only for PowerShell $version (aliased storage: $aliased)',
+    async ({ version, aliased }) => {
+      const alias = join(portableRuntimeRoot, 'alias')
+      if (aliased)
+        await symlink(portableRuntimeRoot, alias, process.platform === 'win32' ? 'junction' : 'dir')
+      const runtimeRoot = join(aliased ? alias : portableRuntimeRoot, 'managed')
+      const root = join(portableRuntimeRoot, 'bundled')
+      const nodeRoot = join(root, 'node')
+      const hostTools = join(portableRuntimeRoot, 'host-tools')
+      await mkdir(hostTools)
+      const resolver = vi.spyOn(windowsRuntime, 'resolveWindowsNotebookRuntime').mockReturnValue({
+        root,
+        node: join(nodeRoot, 'node.exe'),
+        powershell: join(root, 'powershell', 'pwsh.exe')
+      })
+      const parser = vi
+        .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
+        .mockResolvedValue([])
+      const admission = vi
+        .spyOn(processTree, 'assertProcessTreeSupport')
+        .mockImplementation(() => {})
+      const wrap = vi
+        .fn<NotebookProcessSandbox['wrap']>()
+        .mockRejectedValue(new Error('stop-before-spawn'))
+      try {
+        const result = await runShellCommand({
+          command: 'node --version',
+          cwd: portableRuntimeRoot,
+          handoffDir: portableRuntimeRoot,
+          runtimeRoot,
+          environment: {
+            PATH: hostTools,
+            ...(version === '7.6'
+              ? { NPM_CONFIG_PREFIX: join(portableRuntimeRoot, '.notebook-tools', 'npm') }
+              : {})
+          },
+          sessionId: 'fixture-session',
+          projectId: 'fixture-project',
+          platform: 'win32',
+          runtimeBinding: { kind: 'powershell', version },
+          processSandbox: { wrap }
+        })
+        expect(result.stderr).toBe('stop-before-spawn')
+        expect(wrap).toHaveBeenCalledOnce()
+        const { filesystem, env } = wrap.mock.calls[0][0]
+        if (version === '7.6') {
+          expect(env.NPM_CONFIG_PREFIX).toBe(
+            realpathSync.native(shellNpmPaths(runtimeRoot, 'win32').prefix)
+          )
+          expect(filesystem.readWriteRoots).toContain(env.NPM_CONFIG_PREFIX)
+        }
+        if (version === '7.6') expect(filesystem.readOnlyRoots).toContain(nodeRoot)
+        else expect(filesystem.readOnlyRoots).not.toContain(nodeRoot)
+        expect(filesystem.readOnlyRoots).not.toContain(hostTools)
+        expect(filesystem.optionalReadOnlyRoots).toContain(hostTools)
+      } finally {
+        resolver.mockRestore()
+        parser.mockRestore()
+        admission.mockRestore()
       }
     }
   )
@@ -259,7 +330,10 @@ describe('notebook shell process behavior', () => {
 
     it('uses an absolute non-interactive PowerShell command on Windows without relying on PATH', () => {
       vi.stubEnv('SystemRoot', 'C:\\Windows')
-      const invocation = resolveShellInvocation('cp "source.png" "destination.png"', 'win32')
+      const invocation = resolveShellInvocation('cp "source.png" "destination.png"', {
+        kind: 'powershell',
+        version: '5.1'
+      })
 
       expect(invocation.executable).toBe(
         'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
@@ -306,7 +380,7 @@ describe('notebook shell process behavior', () => {
     it('isolates PowerShell command syntax from the exit-code wrapper', () => {
       vi.stubEnv('SystemRoot', 'C:\\Windows')
       const command = "Write-Output 'first'\n# keep this comment\nWrite-Output 'continued' `"
-      const invocation = resolveShellInvocation(command, 'win32')
+      const invocation = resolveShellInvocation(command, { kind: 'powershell', version: '5.1' })
       const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
       const encodedCommand = script.match(/\$openScienceCommandBase64 = '([A-Za-z0-9+/=]+)'/)?.[1]
 
@@ -652,6 +726,55 @@ describe('notebook shell process behavior', () => {
       }
     })
 
+    it('annotates redirected JSON filesystem errors while preserving Shell stdout', async () => {
+      const parser = vi
+        .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
+        .mockResolvedValue([])
+      vi.stubEnv('SystemRoot', 'C:\\Windows')
+      const path = String.raw`C:\Users\fixture\.config\sample-tool\access-token.txt`
+      const stdout = `Access is denied.\n${JSON.stringify(
+        {
+          ok: false,
+          message: `EPERM: operation not permitted, open '${path}'`
+        },
+        null,
+        2
+      )}\n`
+      const log = new ViolationLog()
+      try {
+        const result = await runShellCommand({
+          command: 'sample-command 2>&1',
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot: portableRuntimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'win32',
+          runtimeBinding: { kind: 'powershell', version: '5.1' },
+          processSandbox: {
+            wrap: async (invocation) => ({
+              executable: process.execPath,
+              args: ['-e', `process.stdout.write(${JSON.stringify(stdout)})`],
+              env: invocation.env,
+              confirmProcessTreeTermination: async () => true,
+              annotateStderr: (stderr, output) => log.attach('command', stderr, undefined, output),
+              cleanup: async () => ({
+                processesTerminated: true,
+                networkClosed: true,
+                temporaryResourcesRemoved: true
+              })
+            })
+          },
+          terminateTree: async () => ({ reaped: true })
+        })
+        expect(result.stdout).toBe(stdout)
+        expect(result.stderr).toContain(`OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: ${path} `)
+        expect(result.stderr).not.toContain('"ok"')
+      } finally {
+        parser.mockRestore()
+      }
+    })
+
     it('keeps Windows shell runtime variables while excluding host secrets', () => {
       const runtimeRoot = 'D:\\OpenScience\\runtime'
       const env = buildShellEnv(
@@ -669,7 +792,9 @@ describe('notebook shell process behavior', () => {
           OPEN_SCIENCE_PSMODULEPATH: 'C:\\host\\controlled-modules',
           OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
         },
-        runtimeRoot
+        runtimeRoot,
+        undefined,
+        { kind: 'powershell', version: '5.1' }
       )
       const cacheRoot = join(runtimeRoot, 'cache', 'notebook')
 

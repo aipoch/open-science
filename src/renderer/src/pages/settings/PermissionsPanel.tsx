@@ -3,7 +3,7 @@ import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { AlertTriangle, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 

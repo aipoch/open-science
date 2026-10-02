@@ -101,6 +101,11 @@ import {
   registerBookmarkApplicationCommands,
   type BookmarkCommandOwner
 } from './bookmarks/application-commands'
+import {
+  sessionReplayCommandGroup,
+  registerSessionReplayCommands,
+  type SessionReplayCommandOwner
+} from './session-replay/application-commands'
 
 type AnyApplicationCommand = ApplicationCommand<string, readonly unknown[], unknown>
 type AnyApplicationCommandGroup = ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>
@@ -141,6 +146,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
   bookmarks: BookmarkCommandOwner
+  sessionReplay: SessionReplayCommandOwner
   pdfAnnotations: PdfAnnotationCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
@@ -303,6 +309,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([bookmarkApplicationCommandGroup], (registrar) =>
       registerBookmarkApplicationCommands(registrar, dependencies.bookmarks)
+    ),
+    defineApplicationCommandModule([sessionReplayCommandGroup], (registrar) =>
+      registerSessionReplayCommands(registrar, dependencies.sessionReplay)
     ),
     defineApplicationCommandModule([pdfAnnotationApplicationCommandGroup], (registrar) =>
       registerPdfAnnotationApplicationCommands(registrar, dependencies.pdfAnnotations)

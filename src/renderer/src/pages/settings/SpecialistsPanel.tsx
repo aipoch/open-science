@@ -23,7 +23,8 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import { AlertDialog, Collapsible } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
+import { Collapsible } from 'radix-ui'
 import { OwlScholarIcon } from '@/components/app-icons/custom-glyphs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'

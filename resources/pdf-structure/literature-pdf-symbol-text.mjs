@@ -1,18 +1,113 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import {
+  joinHorizontalTableRules,
+  clusterTableRulePositions,
+  classifyTableRuleEdge
+} from './literature-pdf-table-rules.mjs'
+
+function closedTextFrames(context) {
+  if (!context?.viewport || context.viewport.rotation !== 0 || !context.rules) return []
+  const horizontal = joinHorizontalTableRules(context.rules, 1),
+    groups = []
+  for (const rule of horizontal) {
+    const group = groups.find(
+      (g) => Math.abs(g[0][0] - rule[0]) < 0.1 && Math.abs(g[0][2] - rule[2]) < 0.1
+    )
+    if (group) group.push(rule)
+    else groups.push([rule])
+  }
+  const vertical = context.rules.filter((r) => r[0] === r[2])
+  return groups.flatMap((group) => {
+    if (group.length < 4) return []
+    const [left, top, right] = group[0],
+      bottom = group.at(-1)[1]
+    const xs = clusterTableRulePositions(
+      vertical
+        .filter(
+          (r) => r[0] >= left - 0.1 && r[0] <= right + 0.1 && r[1] >= top - 1 && r[3] <= bottom + 1
+        )
+        .map((r) => r[0])
+    )
+    if (
+      xs.length < 4 ||
+      Math.abs(xs[0] - left) > 0.1 ||
+      Math.abs(xs.at(-1) - right) > 0.1 ||
+      xs.some((x) => classifyTableRuleEdge(vertical, 0, x, top, bottom) !== 1)
+    )
+      return []
+    return [{ rect: [left, top, right, bottom], cuts: xs.slice(1, -1) }]
+  })
+}
+
+function closedCellParts(item, glyphs, first, scale, context, frames) {
+  if (!frames.length || item.transform[1] !== 0 || item.transform[2] !== 0) return
+  const [x, y] = context.viewport.convertToViewportPoint(item.transform[4], item.transform[5])
+  const unit = context.viewport.scale
+  const owners = frames.filter(
+    ({ rect, numericOnly }) =>
+      (!numericOnly || /^[<>≤≥−+\d.\s-]+$/u.test(item.str)) &&
+      x >= rect[0] &&
+      x + item.width * unit <= rect[2] &&
+      y - item.height * unit >= rect[1] &&
+      y <= rect[3]
+  )
+  if (owners.length !== 1) return
+  const boundaries = []
+  for (const [cutIndex, cut] of owners[0].cuts.entries()) {
+    if (cut <= x || cut >= x + item.width * unit) continue
+    const band = owners[0].gutterBands?.[cutIndex]
+    const matches = glyphs.slice(1).flatMap((g, n) => {
+      const a = x + (glyphs[n].end - first.start) * scale * unit,
+        b = x + (g.start - first.start) * scale * unit
+      const inside = band
+        ? ((a >= band[0] && b <= band[1]) || (a < cut && b > cut)) &&
+          b - a >= item.height * unit * 0.25
+        : a < cut && b > cut && b - a > 0.1
+      return inside ? [n + 1] : []
+    })
+    // A complete body label can overhang the corresponding header gutter.
+    // The descriptive-record proof validates that whole label in its lane.
+    if (!matches.length && band && x + item.width * unit <= band[1]) continue
+    if (matches.length !== 1) return
+    boundaries.push(matches[0])
+  }
+  if (!boundaries.length) return
+  let count = 0,
+    start = 0
+  const parts = []
+  for (const match of item.str.matchAll(/\S/gu)) {
+    const index = match.index
+    if (boundaries.includes(count)) {
+      if (!/\s/u.test(item.str[index - 1] ?? '')) return
+      parts.push(item.str.slice(start, index).trim())
+      start = index
+    }
+    count++
+  }
+  parts.push(item.str.slice(start).trim())
+  return parts.length === boundaries.length + 1 && parts.every(Boolean) ? parts : undefined
+}
 
 // Recover separate numeric entries from one PDF.js item using the original TJ
 // advances, not equal-width guesses. Bounded count/fraction, header and statistic
 // patterns are eligible; incompatible font streams or geometry remain untouched.
-export function splitPdfNumericRuns(content, operators) {
+export function splitPdfNumericRuns(content, operators, context) {
+  const observeWhitespace = context?.observeWhitespace
+  const frames =
+    context?.viewport?.rotation === 0
+      ? [...closedTextFrames(context), ...(context?.provenFrames ?? [])]
+      : []
   const pattern = /^\d+(?:\.\d+)?\s*\(\d+\/\d+\)(?:\s+\d+(?:\.\d+)?\s*\(\d+\/\d+\))+$/
   const joinedHeader = /^(\d+\))\s+([A-Za-z][A-Za-z -]+\s*\(n)$/
   const closingCategory = /^([)\]])\s+(\p{L}[\p{L}\s/-]+)$/u
   const joinedRange = /^(.+\((?:range|IQR)\))\s+(\d+(?:\.\d+)?\s*\(\d+(?:\.\d+)?)$/i
   const spacedStatistics =
-    /^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?(?:\s*\([−–+-]?\d+(?:\.\d+)?[−–-][−–+-]?\d+(?:\.\d+)?\))?|\*{1,3})$/
+    /^([−+-]?(?:\d+(?:\.\d+)?|\.\d+))\s+([−+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:\s*\([−–+-]?\d+(?:\.\d+)?[−–-][−–+-]?\d+(?:\.\d+)?\))?|\*{1,3})$/
   const pairedSummary =
     /^(\d+(?:\.\d+)?\s*\(\d+(?:\.\d+)?(?:[–-]\d+(?:\.\d+)?)?\))\s+(\d+(?:\.\d+)?\s*\(\d+(?:\.\d+)?(?:[–-]\d+(?:\.\d+)?)?\))$/
+  const intervalStatistic =
+    /^(\d+(?:\.\d+)?(?:\s*\(\d+(?:\.\d+)?\))?\s*\[[−+-]?\d+(?:\.\d+)?,\s*[−+-]?\d+(?:\.\d+)?\])\s+([<>≤≥]?(?:\d+(?:\.\d+)?|\.\d+))$/u
   // A font change at the range separator can leave one item containing the
   // previous interval's end and the next interval's start. Require the same
   // measured gutter as complete paired summaries before separating them.
@@ -20,11 +115,11 @@ export function splitPdfNumericRuns(content, operators) {
     /^([−+-]?\d+(?:\.\d+)?\))\s+([−+-]?\d+(?:\.\d+)?\s*\([−+-]?\d+(?:\.\d+)?)$/
   const countStatistics =
     /^[<>≤≥−+-]?\d+(?:\.\d+)?(?:\s*\(\d+(?:\.\d+)?%?\))?(?:\s+[<>≤≥−+-]?\d+(?:\.\d+)?(?:\s*\(\d+(?:\.\d+)?%?\))?)+$/u
+  const decimalRun = /^(?:[<>≤≥−+-]?(?:\d+\.\d+|\.\d+)\s+){2,}[<>≤≥−+-]?(?:\d+\.\d+|\.\d+)$/u
   const countParts = (text) =>
-    countStatistics.test(text.trim()) &&
-    (/\(\d+(?:\.\d+)?%?\)/u.test(text) ||
-      /^(?:[<>≤≥−+-]?\d+\.\d+\s+){2,}[<>≤≥−+-]?\d+\.\d+$/u.test(text.trim()))
-      ? [...text.matchAll(/[<>≤≥−+-]?\d+(?:\.\d+)?(?:\s*\(\d+(?:\.\d+)?%?\))?/gu)].map(
+    decimalRun.test(text.trim()) ||
+    (countStatistics.test(text.trim()) && /\(\d+(?:\.\d+)?%?\)/u.test(text))
+      ? [...text.matchAll(/[<>≤≥−+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:\s*\(\d+(?:\.\d+)?%?\))?/gu)].map(
           (match) => match[0]
         )
       : undefined
@@ -43,10 +138,16 @@ export function splitPdfNumericRuns(content, operators) {
     joinedRange.test(text.trim()) ||
     spacedStatistics.test(text.trim()) ||
     pairedSummary.test(text.trim()) ||
+    intervalStatistic.test(text.trim()) ||
     adjoiningIntervals.test(text.trim()) ||
     !!countParts(text) ||
     !!deviationParts(text)
-  if (!content.items.some((i) => 'str' in i && eligible(i.str))) return content
+  if (
+    !observeWhitespace &&
+    !frames.length &&
+    !content.items.some((i) => 'str' in i && eligible(i.str))
+  )
+    return content
   const streams = new Map(),
     stack = []
   let font,
@@ -70,7 +171,7 @@ export function splitPdfNumericRuns(content, operators) {
       if (!streams.has(font)) streams.set(font, [])
       const stream = streams.get(font)
       let x = 0
-      for (const glyph of args[0]) {
+      for (const [glyphIndex, glyph] of args[0].entries()) {
         if (typeof glyph === 'number') {
           x -= (glyph * size) / 1000
           continue
@@ -81,26 +182,81 @@ export function splitPdfNumericRuns(content, operators) {
         for (const char of glyph.unicode
           .replace(/[ﬀ-ﬆ]/gu, (c) => c.normalize('NFKC'))
           .replace(/\s/gu, ''))
-          stream.push({ char, start, end: x, run, size })
+          stream.push({
+            char,
+            glyphIndex,
+            start,
+            // The observation endpoint excludes trailing character spacing,
+            // matching PDF.js item.width. Keep the numeric splitter unchanged.
+            end: observeWhitespace ? start + (glyph.width * size) / 1000 : x,
+            run,
+            size
+          })
       }
     }
   }
-  const source = new Map()
+  const source = new Map(),
+    unmatchedStreams = new Map()
   for (const i of content.items)
     if ('str' in i)
       source.set(i.fontName, (source.get(i.fontName) ?? '') + i.str.replace(/\s/gu, ''))
   for (const [name, stream] of streams)
-    if (stream.map((g) => g.char).join('') !== source.get(name)) streams.delete(name)
+    if (stream.map((g) => g.char).join('') !== source.get(name)) {
+      unmatchedStreams.set(name, stream)
+      streams.delete(name)
+    }
   const offsets = new Map()
+  // A range separator in another font can split both neighboring intervals.
+  // Require the original adjacent fragments to balance both intervals before
+  // using their measured internal spacing to distinguish a narrow gutter.
+  const boundedInterval = (item, index) => {
+    if (item.transform[1] !== 0 || item.transform[2] !== 0 || item.transform[0] <= 0) return false
+    const before = content.items.slice(index - 2, index),
+      after = content.items.slice(index + 1, index + 3)
+    if (before.length !== 2 || after.length !== 2) return false
+    const number = '[−+-]?\\d+(?:\\.\\d+)?'
+    if (
+      !new RegExp(`^${number}\\s*\\(${number}$`).test(before[0].str?.trim()) ||
+      !/^[–−-]$/.test(before[1].str?.trim()) ||
+      !/^[–−-]$/.test(after[0].str?.trim()) ||
+      !new RegExp(`^${number}\\)$`).test(after[1].str?.trim())
+    )
+      return false
+    const fragments = [...before, item, ...after]
+    return fragments.every(
+      (fragment, n) =>
+        fragment.transform &&
+        fragment.dir === item.dir &&
+        fragment.transform.slice(0, 4).every((value, axis) => value === item.transform[axis]) &&
+        Math.abs(fragment.transform[5] - item.transform[5]) < 0.01 &&
+        (!n ||
+          Math.abs(fragment.transform[4] - fragments[n - 1].transform[4] - fragments[n - 1].width) <
+            item.height * 0.1)
+    )
+  }
   return {
     ...content,
-    items: content.items.flatMap((item) => {
-      if (!('str' in item) || !streams.has(item.fontName)) return [item]
+    items: content.items.flatMap((item, itemIndex) => {
+      if (!('str' in item)) return [item]
       const offset = offsets.get(item.fontName) ?? 0,
-        length = item.str.replace(/\s/gu, '').length
+        length = Array.from(item.str.replace(/\s/gu, '')).length
       offsets.set(item.fontName, offset + length)
+      let local
+      if (!streams.has(item.fontName)) {
+        // A different ligature elsewhere can invalidate page-wide stream
+        // alignment. Closed cells allow only a unique exact local match.
+        const stream = unmatchedStreams.get(item.fontName)
+        if ((!frames.length && !observeWhitespace) || !stream || !/\s/u.test(item.str))
+          return [item]
+        const text = item.str.replace(/\s/gu, ''),
+          native = stream.map((g) => g.char).join('')
+        const at = native.indexOf(text)
+        if (at < 0 || native.indexOf(text, at + 1) >= 0) return [item]
+        const nativeIndex = Array.from(native.slice(0, at)).length
+        local = stream.slice(nativeIndex, nativeIndex + length)
+      }
       if (
-        !eligible(item.str) ||
+        (!observeWhitespace && !frames.length && !eligible(item.str)) ||
         !item.transform ||
         item.dir !== 'ltr' ||
         Math.abs(item.transform[0] * item.transform[2] + item.transform[1] * item.transform[3]) >
@@ -108,7 +264,7 @@ export function splitPdfNumericRuns(content, operators) {
         item.transform[0] * item.transform[3] - item.transform[1] * item.transform[2] <= 0
       )
         return [item]
-      let glyphs = streams.get(item.fontName).slice(offset, offset + length)
+      let glyphs = local ?? streams.get(item.fontName).slice(offset, offset + length)
       const first = glyphs[0]
       if (!first || first.size <= 0) return [item]
       const axis = Math.hypot(item.transform[0], item.transform[1])
@@ -116,11 +272,14 @@ export function splitPdfNumericRuns(content, operators) {
       const statistics =
         item.str.trim().match(spacedStatistics) ??
         item.str.trim().match(pairedSummary) ??
+        item.str.trim().match(intervalStatistic) ??
         item.str.trim().match(adjoiningIntervals)
       let separateRuns = false
       if (glyphs.some((g) => g.run !== first.run)) {
-        if (!statistics) return [item]
-        const split = statistics[1].replace(/\s/g, '').length,
+        if (!statistics && !frames.length) return [item]
+        const split = statistics
+            ? statistics[1].replace(/\s/g, '').length
+            : glyphs.findIndex((g) => g.run !== first.run),
           second = glyphs[split]
         if (
           second.run === first.run ||
@@ -134,7 +293,8 @@ export function splitPdfNumericRuns(content, operators) {
         // the sole intervening gap; no equal-width character estimate is used.
         const secondStart = first.start + item.width / scale - (glyphs.at(-1).end - second.start)
         const gap = (secondStart - glyphs[split - 1].end) * scale
-        if (gap < 0 || gap > item.height * 2) return [item]
+        if (gap < 0 || (!frames.length && gap > item.height * 2)) return [item]
+        if (intervalStatistic.test(item.str.trim()) && gap < item.height * 0.2) return [item]
         glyphs = glyphs.map((g, n) =>
           n < split
             ? g
@@ -148,6 +308,57 @@ export function splitPdfNumericRuns(content, operators) {
       }
       if (scale <= 0 || Math.abs((glyphs.at(-1).end - first.start) * scale - item.width) > 0.02)
         return [item]
+      if (observeWhitespace) {
+        if (
+          context.viewport?.rotation !== 0 ||
+          item.transform[1] !== 0 ||
+          item.transform[2] !== 0 ||
+          !item.transform.every(Number.isFinite) ||
+          !(Number.isFinite(item.width) && item.width > 0) ||
+          !(Number.isFinite(item.height) && item.height > 0) ||
+          !(Number.isFinite(context.viewport.scale) && context.viewport.scale > 0) ||
+          glyphs.some((glyph) => !Number.isFinite(glyph.start) || !Number.isFinite(glyph.end))
+        )
+          return [item]
+        const unit = context.viewport.scale,
+          [x, baseline] = context.viewport.convertToViewportPoint(
+            item.transform[4],
+            item.transform[5]
+          ),
+          gaps = []
+        let count = 0
+        const characters = Array.from(item.str)
+        for (let index = 0; index < characters.length; index++) {
+          if (/\s/u.test(characters[index])) continue
+          if (count && /\s/u.test(characters[index - 1])) {
+            const left = x + (glyphs[count - 1].end - first.start) * scale * unit,
+              right = x + (glyphs[count].start - first.start) * scale * unit
+            if (right > left) gaps.push({ left, right, index: count })
+          }
+          count++
+        }
+        observeWhitespace({
+          text: item.str,
+          rect: [x, baseline - item.height * unit, x + item.width * unit, baseline],
+          baseline,
+          height: item.height * unit,
+          gaps,
+          glyphRuns: glyphs.map((glyph) => glyph.run),
+          literalGlyphs: [...new Set(glyphs.map((glyph) => glyph.run))].flatMap((run) => {
+            const matched = glyphs.filter((glyph) => glyph.run === run)
+            // One TJ run may paint several PDF.js items. Keep only this item's
+            // matched native span, including any real space glyph between its edges.
+            return operators.argsArray[run][0]
+              .slice(matched[0].glyphIndex, matched.at(-1).glyphIndex + 1)
+              .flatMap((glyph) =>
+                glyph && typeof glyph.unicode === 'string' ? [glyph.unicode] : []
+              )
+          })
+        })
+        return [item]
+      }
+      const closed = closedCellParts(item, glyphs, first, scale, context, frames)
+      if (!closed && (local || !eligible(item.str))) return [item]
       let cursor = 0
       const joined =
         item.str.trim().match(joinedHeader) ??
@@ -157,26 +368,42 @@ export function splitPdfNumericRuns(content, operators) {
       // A closing delimiter may share one TJ run with the next column's
       // category. Require a measured half-em gutter, preserving normal prose.
       if (
+        !closed &&
         closingCategory.test(item.str.trim()) &&
         (glyphs[1].start - glyphs[0].end) * scale < item.height * 0.5
       )
         return [item]
-      if (statistics && !separateRuns) {
+      if (!closed && statistics && !separateRuns) {
         const split = statistics[1].replace(/\s/g, '').length
+        const gap = (glyphs[split].start - glyphs[split - 1].end) * scale
+        const internalGap = Math.max(
+          0,
+          ...glyphs
+            .slice(1)
+            .flatMap((glyph, index) =>
+              index + 1 === split ? [] : [(glyph.start - glyphs[index].end) * scale]
+            )
+        )
+        const bounded =
+          adjoiningIntervals.test(item.str.trim()) &&
+          boundedInterval(item, itemIndex) &&
+          gap > internalGap * 1.5 &&
+          gap >= item.height * 0.25
         // A normal space or thousands separator is not a column boundary.
         if (
-          (glyphs[split].start - glyphs[split - 1].end) * scale <
-          item.height *
-            (pairedSummary.test(item.str.trim()) || adjoiningIntervals.test(item.str.trim())
-              ? 0.5
-              : 0.75)
+          !bounded &&
+          gap <
+            item.height *
+              (pairedSummary.test(item.str.trim()) || adjoiningIntervals.test(item.str.trim())
+                ? 0.5
+                : 0.75)
         )
           return [item]
       }
       const counted = !joined && (countParts(item.str) ?? deviationParts(item.str))
       // Mixed count/percentage and P-value runs must have a measured column
       // gutter at every split. Ordinary inline statistics remain one token.
-      if (counted) {
+      if (!closed && counted) {
         let boundary = 0
         if (
           counted.slice(0, -1).some((part) => {
@@ -186,11 +413,13 @@ export function splitPdfNumericRuns(content, operators) {
         )
           return [item]
       }
-      const fragments = joined
-        ? joined.slice(1)
-        : (counted ?? [...item.str.matchAll(/\d+(?:\.\d+)?\s*\(\d+\/\d+\)/g)].map((m) => m[0]))
+      const fragments =
+        closed ??
+        (joined
+          ? joined.slice(1)
+          : (counted ?? [...item.str.matchAll(/\d+(?:\.\d+)?\s*\(\d+\/\d+\)/g)].map((m) => m[0])))
       const parts = fragments.map((text) => {
-        const count = text.replace(/\s/gu, '').length,
+        const count = Array.from(text.replace(/\s/gu, '')).length,
           a = glyphs[cursor],
           b = glyphs[cursor + count - 1]
         cursor += count
@@ -219,6 +448,14 @@ export function splitPdfNumericRuns(content, operators) {
         : [item]
     })
   }
+}
+
+// Expose only measured whitespace from the same validated native stream used
+// for splitting. This observation path never changes content or estimates ink.
+export function nativeWhitespaceGaps(content, operators, viewport) {
+  const runs = []
+  splitPdfNumericRuns(content, operators, { viewport, observeWhitespace: (run) => runs.push(run) })
+  return runs
 }
 
 // This embedded TeX font uses a legacy symbol encoding but is sometimes given a
@@ -369,7 +606,13 @@ const publisherSymbols = new Map([
   ['AdvMT_SY', new Map([[188, ['¼', '=', 770]]])],
   ['AdvPSMSAM10', new Map([[88, ['X', '✓', 833, 'X']]])],
   ['MinionMathSymbols', new Map([[136, ['�', '=', 583]]])],
-  ['TeX_CM_Bold_Maths_Symbols', new Map([[136, ['¼', '=', 885]]])],
+  [
+    'TeX_CM_Bold_Maths_Symbols',
+    new Map([
+      [136, ['¼', '=', 885]],
+      [135, ['þ', '+', 885]]
+    ])
+  ],
   [
     'AdvTT454a7a89',
     new Map([
@@ -600,8 +843,215 @@ const symbolFontName = (name) => {
   return publisherSymbols.has(untagged) ? untagged : family
 }
 
+// These subsets paint mathematical outlines under Latin encoding names. Admit
+// only the complete reviewed Type1 encoding, then check the native glyph slot,
+// Unicode and advance below. A family name alone is insufficient evidence.
+const reviewedSubsetSymbols = (font, name) => {
+  // This CID subset retains the Windows Symbol PUA character. Symbol encoding
+  // B3 names greaterequal and its native advance is 549; do not infer it from
+  // neighboring numeric text or apply the mapping to other subset codes.
+  if (
+    name === 'SymbolMT' &&
+    font.type === 'CIDFontType2' &&
+    Array.isArray(font.differences) &&
+    font.differences.length === 0
+  )
+    return new Map([[3, ['\uf0b3', '≥', 549]]])
+  if (font.type !== 'Type1' || !Array.isArray(font.differences)) return undefined
+  const matches = (length, entries) =>
+    font.differences.length === length &&
+    font.differences.filter(Boolean).length === entries.length &&
+    entries.every(([slot, value]) => font.differences[slot] === value)
+  if (
+    name === 'MathTechnicalPD' &&
+    matches(57, [
+      [32, 'space'],
+      [56, 'eight']
+    ])
+  )
+    return new Map([[56, ['8', '±', 1000]]])
+  if (name === 'Universal-GreekwithMathPi') {
+    if (
+      matches(32, [
+        [30, 'six'],
+        [31, 'comma']
+      ])
+    )
+      return new Map([
+        [30, ['6', '±', 833]],
+        [31, [',', '<', 833]]
+      ])
+    if (
+      matches(32, [
+        [27, 'one'],
+        [28, 'six'],
+        [29, 'space'],
+        [30, 'comma'],
+        [31, 'x']
+      ])
+    )
+      return new Map([
+        [28, ['6', '±', 833]],
+        [30, ['\ue02c', '<', 833]],
+        [31, ['\ue078', 'χ', 556]]
+      ])
+  }
+  if (
+    name === 'AdvP4C4E74' &&
+    matches(255, [
+      [2, 'C21'],
+      [3, 'C20'],
+      [4, 'C0'],
+      [188, 'onequarter'],
+      [254, 'thorn']
+    ])
+  )
+    return new Map([[254, ['þ', '+', 770]]])
+  if (name === 'AdvP7DA6') {
+    if (
+      matches(58, [
+        [35, 'numbersign'],
+        [36, 'dollar'],
+        [44, 'comma'],
+        [46, 'period'],
+        [57, 'nine']
+      ])
+    )
+      return new Map([
+        [35, ['#', '≤', 833]],
+        [36, ['$', '≥', 833]],
+        [44, [',', '<', 833]],
+        [46, ['.', '>', 833]]
+      ])
+    if (
+      matches(64, [
+        [35, 'numbersign'],
+        [44, 'comma'],
+        [46, 'period'],
+        [63, 'question']
+      ])
+    )
+      return new Map([
+        [44, [',', '<', 833]],
+        [46, ['.', '>', 833]],
+        [63, ['?', '·', 333]]
+      ])
+  }
+  if (name === 'AdvMacms' && matches(3, [[2, 'C3']])) return new Map([[2, ['\u0002', '*', 500]]])
+  if (font.differences.length) return undefined
+  const punctuation = new Map([
+    ['AdvPS44A44B', [36, '$', '·', 447, 'dollar']],
+    ['AdvP3F4C13', [104, 'h', 'η', 635, 'h']],
+    ['AdvTT98d9a78a', [75, 'K', 'µ', 666, 'K']],
+    ['AdvPSMP10', [97, 'a', 'α', 500, 'a']],
+    ['AdvEls-ent8', [55, '7', '±', 979, 'seven']],
+    ['AdvEls-ent5', [88, 'X', '≥', 979, 'X']]
+  ]).get(name)
+  if (punctuation && font.defaultEncoding?.[punctuation[0]] === punctuation[4])
+    return new Map([[punctuation[0], punctuation.slice(1, 4)]])
+  return undefined
+}
+
+// PDF.js classifies a missing ToUnicode entry by its numeric CID. When that
+// happens to be a combining-mark code point it reports zero width, even though
+// the PDF paints a positive-advance glyph. Recover geometry only: the intended
+// Unicode character is still unknown. Mapped marks and unmatched streams stay
+// untouched.
+function recoverUnmappedCidAdvances(page, content, operators) {
+  if (!content.items.some((item) => item.width === 0 && /^\p{Mn}$/u.test(item.str ?? '')))
+    return content
+  const streams = new Map(),
+    stack = []
+  let fontName,
+    size = 0,
+    charSpace = 0
+  for (let index = 0; index < (operators?.fnArray.length ?? 0); index++) {
+    const op = operators.fnArray[index],
+      args = operators.argsArray[index]
+    if (op === OPS.save) stack.push({ fontName, size, charSpace })
+    else if (op === OPS.restore)
+      ({ fontName, size, charSpace } = stack.pop() ?? { size: 0, charSpace: 0 })
+    else if (op === OPS.setFont) [fontName, size] = args
+    else if (op === OPS.setCharSpacing) charSpace = args[0]
+    else if (op === OPS.showText && fontName) {
+      if (!streams.has(fontName)) streams.set(fontName, [])
+      for (const glyph of args[0]) {
+        if (!glyph || typeof glyph.unicode !== 'string') continue
+        for (const char of glyph.unicode.replace(/\s/gu, ''))
+          streams.get(fontName).push({ char, glyph, charSpace, size })
+      }
+    }
+  }
+  const source = new Map(),
+    offsets = new Map()
+  for (const item of content.items)
+    if ('str' in item)
+      source.set(item.fontName, (source.get(item.fontName) ?? '') + item.str.replace(/\s/gu, ''))
+  for (const [name, stream] of streams)
+    if (stream.map((entry) => entry.char).join('') !== source.get(name)) streams.delete(name)
+  return {
+    ...content,
+    items: content.items.map((item) => {
+      if (!('str' in item) || !streams.has(item.fontName)) return item
+      const offset = offsets.get(item.fontName) ?? 0
+      offsets.set(item.fontName, offset + [...item.str.replace(/\s/gu, '')].length)
+      if (
+        item.width !== 0 ||
+        !Number.isFinite(item.height) ||
+        item.height <= 0 ||
+        !/^\p{Mn}$/u.test(item.str) ||
+        item.dir !== 'ltr' ||
+        !item.transform ||
+        !item.transform.every(Number.isFinite) ||
+        item.transform[0] <= 0 ||
+        item.transform[3] <= 0 ||
+        item.transform[1] !== 0 ||
+        item.transform[2] !== 0
+      )
+        return item
+      const entry = streams.get(item.fontName)[offset]
+      if (
+        !entry ||
+        !Number.isFinite(entry.charSpace) ||
+        !(entry.size > 0) ||
+        entry.glyph.unicode !== item.str
+      )
+        return item
+      const glyph = entry.glyph
+      if (glyph.originalCharCode !== item.str.codePointAt(0) || !(glyph.width > 0)) return item
+      let font
+      try {
+        font = page.commonObjs?.get?.(item.fontName)
+      } catch {
+        return item
+      }
+      const map = font?.toUnicode?._map,
+        matrix = font?.fontMatrix
+      if (
+        font?.composite !== true ||
+        font.type !== 'CIDFontType2' ||
+        !map ||
+        map[glyph.originalCharCode] !== undefined ||
+        font.widths?.[glyph.originalCharCode] !== glyph.width ||
+        !matrix ||
+        matrix.length !== 6 ||
+        matrix[0] !== 0.001 ||
+        matrix[3] !== 0.001 ||
+        matrix[1] !== 0 ||
+        matrix[2] !== 0 ||
+        matrix[4] !== 0 ||
+        matrix[5] !== 0
+      )
+        return item
+      const width = (glyph.width * matrix[0] + entry.charSpace / entry.size) * item.transform[0]
+      return Number.isFinite(width) && width > 0 ? { ...item, width } : item
+    })
+  }
+}
+
 export async function repairPdfSymbolText(page, content, operators) {
   if (content.items.some((item) => item.transform)) operators ??= await page.getOperatorList()
+  content = recoverUnmappedCidAdvances(page, content, operators)
   content = repairSpacedTextOffsets(content, operators)
   const originalContent = content
   // Myriad's fitted numeral glyphs retain Adobe private-use codes in some
@@ -669,8 +1119,9 @@ export async function repairPdfSymbolText(page, content, operators) {
   const hasMappedPublisherGlyph = content.items.some((item) => {
     if (!('str' in item)) return false
     try {
-      const name = symbolFontName(page.commonObjs?.get?.(item.fontName)?.name)
-      const mappings = name ? publisherSymbols.get(name) : undefined
+      const font = page.commonObjs?.get?.(item.fontName) ?? {}
+      const name = symbolFontName(font.name)
+      const mappings = reviewedSubsetSymbols(font, name) ?? publisherSymbols.get(name)
       return mappings
         ? [...mappings.values()].some(([unicode]) => item.str.includes(unicode))
         : false
@@ -761,6 +1212,7 @@ export async function repairPdfSymbolText(page, content, operators) {
     else if (op === OPS.showText && font) {
       const fontInfo = page.commonObjs?.get(font) ?? {}
       const name = symbolFontName(fontInfo.name)
+      const reviewed = reviewedSubsetSymbols(fontInfo, name)
       // These legacy Pi subsets label mathematical outlines with Latin glyph
       // names. Require the complete observed encoding as well as each glyph's
       // original code, Unicode and width; other subsets remain untouched.
@@ -802,7 +1254,12 @@ export async function repairPdfSymbolText(page, content, operators) {
         )
       )
         continue
-      if (name !== 'TeX_CM_Maths_Symbols' && name !== 'AdvPS44A44B' && !publisherSymbols.has(name))
+      if (
+        name !== 'TeX_CM_Maths_Symbols' &&
+        name !== 'AdvPS44A44B' &&
+        !publisherSymbols.has(name) &&
+        !reviewed
+      )
         continue
       let map = mappings.get(font)
       if (!map) mappings.set(font, (map = new Map()))
@@ -832,7 +1289,8 @@ export async function repairPdfSymbolText(page, content, operators) {
           fontInfo.differences?.[121] === 'y' &&
           fontInfo.differences?.[254] === 'thorn'
         const publisher =
-          name === 'AdvP4C4E74' &&
+          reviewed?.get(glyph.originalCharCode) ??
+          (name === 'AdvP4C4E74' &&
           fontInfo.differences?.[2] === 'C15' &&
           glyph.originalCharCode === 2
             ? ['\u000f', '•', 500]
@@ -889,7 +1347,7 @@ export async function repairPdfSymbolText(page, content, operators) {
                                   fontInfo.differences?.[254] === 'thorn' &&
                                   glyph.originalCharCode === 254
                                 ? ['þ', '+', 770]
-                                : publisherSymbols.get(name)?.get(glyph.originalCharCode)
+                                : publisherSymbols.get(name)?.get(glyph.originalCharCode))
         // Subset slots vary; the embedded glyph name is authoritative when present.
         const namedUniversal =
           name === 'Universal-GreekwithMathPi'
@@ -937,6 +1395,8 @@ export async function repairPdfSymbolText(page, content, operators) {
                 ['H11022', [glyph.unicode, '>', 833]],
                 ['H11350', [glyph.unicode, '≥', 833]],
                 ['H11349', [glyph.unicode, '≤', 833]],
+                ['H9252', [glyph.unicode, 'β', 611]],
+                ['H9257', [glyph.unicode, 'η', 611]],
                 ['H9273', [glyph.unicode, 'χ', 556]]
               ]).get(fontInfo.differences?.[glyph.originalCharCode])
             : undefined) ??
@@ -1107,7 +1567,9 @@ export function removeClippedFormText(content, operators, originalContent = cont
         chars = streams.get(item.fontName)
       if (!('str' in item) || !chars) return true
       const start = positions.get(item.fontName) ?? 0,
-        length = source.str.replace(/\s/gu, '').length
+        // The operator stream above expands Unicode code points. UTF-16
+        // lengths skip clip owners after mathematical letters or other astral glyphs.
+        length = [...source.str.replace(/\s/gu, '')].length
       positions.set(item.fontName, start + length)
       if (!length || !item.transform) return true
       const [a, b, c, d, x, y] = item.transform,

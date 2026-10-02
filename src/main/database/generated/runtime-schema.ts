@@ -231,6 +231,24 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ProjectPreviewState_panelState_check" CHECK ("panelState" IN ('open', 'collapsed')),
     CONSTRAINT "ProjectPreviewState_itemsJson_check" CHECK (json_valid("items") AND json_type("items") = 'array')
 );`,
+  `CREATE TABLE IF NOT EXISTS "SessionReplayProgress" (
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "stateJson" TEXT,
+    "revision" INTEGER NOT NULL DEFAULT 0,
+    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY ("projectId", "sessionId"),
+    CONSTRAINT "SessionReplayProgress_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionDiscussionSnapshot" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "sourceProjectId" TEXT NOT NULL,
+    "sourceSessionId" TEXT NOT NULL,
+    "contextJson" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "SessionDiscussionSnapshot_sourceProjectId_fkey" FOREIGN KEY ("sourceProjectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
   `CREATE TABLE IF NOT EXISTS "UnreadTaskSession" (
     "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     "sessionId" TEXT NOT NULL
@@ -1205,6 +1223,7 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "PermissionGrant_fingerprint_key" ON "PermissionGrant"("fingerprint");`,
   `CREATE INDEX IF NOT EXISTS "PermissionGrant_capabilityKind_capabilityKey_qualifierMode_qualifierValue_scopeKind_projectId_sessionId_idx" ON "PermissionGrant"("capabilityKind", "capabilityKey", "qualifierMode", "qualifierValue", "scopeKind", "projectId", "sessionId");`,
   `CREATE INDEX IF NOT EXISTS "PermissionGrant_projectId_sessionId_idx" ON "PermissionGrant"("projectId", "sessionId");`,
+  `CREATE INDEX IF NOT EXISTS "SessionDiscussionSnapshot_sourceProjectId_sourceSessionId_idx" ON "SessionDiscussionSnapshot"("sourceProjectId", "sourceSessionId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "UnreadTaskSession_sessionId_key" ON "UnreadTaskSession"("sessionId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "NotificationInboxItem_id_key" ON "NotificationInboxItem"("id");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "NotificationInboxItem_dedupeKey_key" ON "NotificationInboxItem"("dedupeKey");`,
@@ -1364,6 +1383,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'PermissionGrant',
   'PermissionGrantSeed',
   'ProjectPreviewState',
+  'SessionReplayProgress',
+  'SessionDiscussionSnapshot',
   'UnreadTaskSession',
   'NotificationInboxItem',
   'Review',

@@ -112,6 +112,7 @@ import type {
 import type { PendingElicitationRequest } from '../../../../shared/acp'
 import { isHumanUserMessage } from '../../../../shared/session-persistence'
 import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
+import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
 import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import { useNotebookRunsById } from './use-notebook-runs-by-id'
@@ -181,6 +182,7 @@ type WorkspaceMessageScrollerProps = {
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: SendEditedMessage
   onStartResearch?: (prompt: string) => void
+  researchTitle?: string
   // Gates the .science import entry on the empty state.
   sessionImport?: { projectId: string; canImport: boolean }
   onOpenLibraryMention?: (scope: LibraryMentionScopeRequest) => void
@@ -201,6 +203,7 @@ type WorkspaceMessageScrollerProps = {
   // Opt-in (main panel only): report smooth-streaming reveal activity so the workspace
   // message queue can hold queued sends until the transcript finishes presenting.
   reportPresentationRevealing?: boolean
+  turnOutcomeActions?: TurnOutcomeActions
 }
 
 const MessageScrollerFollowIntent = ({
@@ -588,6 +591,7 @@ const WorkspaceMessageScrollerImpl = ({
   onSendEditedMessage,
   onOpenLibraryMention,
   onStartResearch,
+  researchTitle,
   sessionImport,
   annotations = EMPTY_ANNOTATIONS,
   onAddAnnotation,
@@ -602,7 +606,8 @@ const WorkspaceMessageScrollerImpl = ({
   pendingElicitations = [],
   handoffLifecycleSource,
   onRetryHandoff,
-  reportPresentationRevealing = false
+  reportPresentationRevealing = false,
+  turnOutcomeActions
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const { t } = useTranslation()
   const packageLocked = usePackageOperationStore((state) =>
@@ -788,9 +793,10 @@ const WorkspaceMessageScrollerImpl = ({
     () => createConversationItems(activeSession, handoffEvents),
     [activeSession, handoffEvents]
   )
+  const showTurnOutcomes = turnOutcomeActions !== undefined
   const conversationItems = useMemo(
-    () => createWorkspaceConversationTimeline(activeSession, handoffEvents),
-    [activeSession, handoffEvents]
+    () => createWorkspaceConversationTimeline(activeSession, handoffEvents, showTurnOutcomes),
+    [activeSession, handoffEvents, showTurnOutcomes]
   )
   const notebookRunIdByActivityId = useMemo(
     () =>
@@ -1279,8 +1285,8 @@ const WorkspaceMessageScrollerImpl = ({
       revisionsByRootMessageId: revisionsByRoot
     }
   }, [conversationGraph])
-  const messageCreatedAtById = useMemo(
-    () => new Map(activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []),
+  const transcriptMessageById = useMemo(
+    () => new Map(activeSession?.messages.map((message) => [message.id, message]) ?? []),
     [activeSession?.messages]
   )
 
@@ -1620,6 +1626,7 @@ const WorkspaceMessageScrollerImpl = ({
           {showEmptyConversationBanner ? (
             <EmptyConversationBanner
               onStartResearch={onStartResearch}
+              researchTitle={researchTitle}
               sessionImport={sessionImport}
             />
           ) : null}
@@ -1777,10 +1784,11 @@ const WorkspaceMessageScrollerImpl = ({
                     canBranchInNewSession,
                     onBranchInNewSession,
                     turnStartedAt: item.message.responseToMessageId
-                      ? messageCreatedAtById.get(item.message.responseToMessageId)
+                      ? transcriptMessageById.get(item.message.responseToMessageId)?.createdAt
                       : undefined,
                     runtimeIdentity,
                     showAssistantFooter: item.message.role !== 'agent',
+                    showUserInterruption: !showTurnOutcomes,
                     subsequentTurns: subsequentTurnCountByMessageId.get(item.message.id) ?? 0,
                     revisionNavigation:
                       revisionIndex >= 0 && revisions.length > 1
@@ -1875,6 +1883,9 @@ const WorkspaceMessageScrollerImpl = ({
                 }
 
                 if (item.type === 'turn-completion') {
+                  const promptMessage = item.message.responseToMessageId
+                    ? transcriptMessageById.get(item.message.responseToMessageId)
+                    : undefined
                   const messageNode = conversationMessageById.get(item.message.id)
                   const runtimeSegment = messageNode?.runtimeSegmentId
                     ? runtimeSegmentById.get(messageNode.runtimeSegmentId)
@@ -1899,11 +1910,12 @@ const WorkspaceMessageScrollerImpl = ({
                           <div className="mx-auto w-full max-w-[56rem]">
                             <WorkspaceAssistantTurnCompletion
                               message={item.message}
-                              turnStartedAt={
-                                item.message.responseToMessageId
-                                  ? messageCreatedAtById.get(item.message.responseToMessageId)
-                                  : undefined
+                              // Only Main conversation opts into explicit turn authority; legacy
+                              // and isolated Subagent footers retain their Message lifecycle.
+                              turnOutcome={
+                                showTurnOutcomes ? promptMessage?.turnOutcome : undefined
                               }
+                              turnStartedAt={promptMessage?.createdAt}
                               runtimeIdentity={runtimeIdentity}
                               canBranchInNewSession={canBranchInNewSession}
                               onBranchInNewSession={onBranchInNewSession}
@@ -1923,6 +1935,25 @@ const WorkspaceMessageScrollerImpl = ({
                       ) : null}
                       {forkDivider(item.id)}
                     </Fragment>
+                  )
+                }
+
+                if (item.type === 'turn-outcome') {
+                  // Main-panel notices are opt-in; isolated Subagent transcripts keep their own
+                  // Attempt status and error presentation.
+                  if (!turnOutcomeActions) return null
+                  return (
+                    <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
+                      <div className="px-4 pb-1 md:px-6">
+                        <div className="mx-auto w-full max-w-[56rem]">
+                          <HistoricalTurnOutcome
+                            promptMessageId={item.promptMessageId}
+                            outcome={item.outcome}
+                            actions={turnOutcomeActions}
+                          />
+                        </div>
+                      </div>
+                    </MessageScrollerItem>
                   )
                 }
 
@@ -2065,6 +2096,11 @@ const WorkspaceMessageScrollerImpl = ({
 
                 return (
                   <WorkspaceActivityGroup
+                    allowFolderAccess={Boolean(
+                      activeSession &&
+                      activeSession.contentLoaded !== false &&
+                      !activeSession.packageOrigin
+                    )}
                     key={item.id}
                     group={item}
                     isExpanded={!collapsedActivityGroups.has(item.id)}
@@ -2278,9 +2314,11 @@ const areWorkspaceMessageScrollerPropsEqual = (
   (previous.scrollIntentActive ?? true) === (next.scrollIntentActive ?? true) &&
   previous.onSendEditedMessage === next.onSendEditedMessage &&
   previous.onStartResearch === next.onStartResearch &&
+  previous.researchTitle === next.researchTitle &&
   previous.sessionImport?.projectId === next.sessionImport?.projectId &&
   (previous.sessionImport?.canImport ?? false) === (next.sessionImport?.canImport ?? false) &&
   previous.onOpenLibraryMention === next.onOpenLibraryMention &&
+  previous.turnOutcomeActions === next.turnOutcomeActions &&
   (previous.credentialPending ?? false) === (next.credentialPending ?? false) &&
   (previous.visiblePermissionPending ?? false) === (next.visiblePermissionPending ?? false) &&
   previous.optimisticMessage === next.optimisticMessage &&

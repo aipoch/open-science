@@ -1,3 +1,8 @@
+import { ReviewRepository } from '../reviewer/repository'
+import { readLinkedSession } from '../notebook/host-session-reading'
+import { SessionReplayRepository } from '../session-replay/repository'
+import { NotebookRunRepository } from '../notebook/repository'
+import { getProjectDbClient } from '../projects/prisma-client'
 import { app } from 'electron'
 import { resolveEffectiveSpecialistSkills } from '../../shared/specialist'
 import { ImageInputCompatibilityOwner } from '../acp/image-input-compatibility-owner'
@@ -36,7 +41,7 @@ import { createDefaultSessionRepository } from '../session-persistence/ipc'
 import { SettingsService } from '../settings/service'
 import { HostSkillsService, type HostSkillsCatalog } from '../skills/host-skills-service'
 import { SpecialistService } from '../specialist/service'
-import { resolveConfigRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { TagService } from '../tags/service'
 import { WslSetupOwner } from '../wsl/wsl-setup-owner'
 import { WslSetupSessionOwner } from '../wsl/wsl-setup-session-owner'
@@ -118,6 +123,16 @@ export async function composeNotebookBridge({
       await settingsService.deleteSkill({ id })
       await removeResourceTags([{ resourceType: 'catalog.skill', resourceId: id }])
     }
+  }
+  let readingRoot = resolveDataRoot()
+  let readingRuns = new NotebookRunRepository(readingRoot)
+  const sessionReadingRuns = (): NotebookRunRepository => {
+    const root = resolveDataRoot()
+    if (root !== readingRoot) {
+      readingRoot = root
+      readingRuns = new NotebookRunRepository(root)
+    }
+    return readingRuns
   }
   const hostSkillsService = new HostSkillsService({
     storageRoot: configRoot,
@@ -273,7 +288,68 @@ export async function composeNotebookBridge({
             })
         },
         { getSnapshot: () => runtimeRef.current?.getSnapshot() },
-        resolveHostReferencedSession
+        resolveHostReferencedSession,
+        (sessionId, options, context) =>
+          readLinkedSession(
+            {
+              contexts: new SessionReplayRepository(() => getProjectDbClient(configRoot)),
+              readSession: async (projectId, sourceId) => {
+                const result = await sessionRepository.loadSessionWithDiagnostics(
+                  projectId,
+                  sourceId,
+                  { mode: 'read-only' }
+                )
+                return result.status === 'found' ? result.session : undefined
+              },
+              readFiles: async (projectId, sourceId) =>
+                (await projectFilesRepository.readHostArtifactCatalog({ projectId })).filter(
+                  (file) => file.sessionId === sourceId
+                ),
+              readFile: async (file) => {
+                if (
+                  !/^text\/|^application\/(json|xml|javascript)/.test(file.contentType ?? '') &&
+                  !/\.(txt|md|csv|tsv|json|py|r|js|ts|html|xml|yaml|yml)$/i.test(file.filename)
+                ) {
+                  return JSON.stringify({
+                    name: file.filename,
+                    versionId: file.versionId,
+                    contentType: file.contentType,
+                    size: file.sizeBytes,
+                    note:
+                      file.projectId === context.projectId
+                        ? 'Binary content; these are metadata, not image pixels. If the response includes viewImage, pass it to host.viewImage to inspect this exact version.'
+                        : 'Binary content; these are metadata, not image pixels. This file belongs to another Project and cannot be viewed by host.viewImage here. Use the source preview or ask the user to attach the image; do not infer its contents.'
+                  })
+                }
+                if (file.sizeBytes > 8 * 1024 * 1024)
+                  throw new Error('This text file exceeds the Session reader limit of 8 MiB.')
+                const lease = await managedFileVersionService.openVersion(
+                  { source: file.source, projectId: file.projectId, fileId: file.sourceFileId },
+                  file.versionId
+                )
+                try {
+                  const bytes = await lease.readRange(0, lease.size)
+                  await lease.verifyUnchanged()
+                  return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+                } finally {
+                  await lease.close()
+                }
+              },
+              readReviews: (projectId, sourceId) =>
+                new ReviewRepository(() =>
+                  getProjectDbClient(configRoot)
+                ).getReviewsForProjectSession(projectId, sourceId),
+              readRunIndex: (projectId, sourceId) =>
+                sessionReadingRuns().readSessionRunIndex(projectId, sourceId),
+              readRun: (projectId, sourceId, runId) =>
+                sessionReadingRuns().readSessionRun(projectId, sourceId, runId),
+              readRuns: (projectId, sourceId) =>
+                sessionReadingRuns().readSessionRuns(projectId, sourceId)
+            },
+            context,
+            sessionId,
+            options
+          )
       ),
       inputRegistry: notebookInputRegistry,
       agentsService,

@@ -38,6 +38,9 @@ import {
   selectProcessTree
 } from '../../scripts/performance/process-snapshot'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
+import { NotebookRunRepository } from '../../src/main/notebook/repository'
+import { createRootNotebookLane } from '../../src/main/notebook/lane-identity'
+import type { NotebookRunRecord } from '../../src/shared/notebook'
 import { RendererFailureGate } from './renderer-failure-gate'
 import type { ConversationSkillImportApprovalRequest } from '../../src/shared/settings'
 import type { UpdateStatus } from '../../src/shared/update'
@@ -315,6 +318,7 @@ type ElectronApp = {
 
   readonly page: Page
   openAdditionalRenderer: () => Promise<Page>
+  readNotebookFixtureRuns: (projectId: string, sessionId: string) => Promise<NotebookRunRecord[]>
   authenticatedWebUrl: () => Promise<string>
   allowRendererConsoleError: (text: string) => void
   captureMainLog: (name: string) => Promise<string>
@@ -339,6 +343,7 @@ type ElectronApp = {
   emitUpdateStatus: (status: UpdateStatus) => Promise<void>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
+  captureFindOverlay: () => Promise<Buffer>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
   observeMainWindowMenuPopup: (offset: number) => Promise<JSHandle<NativeMenuProbe>>
@@ -357,7 +362,10 @@ type ElectronApp = {
   restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
   restartAfterCrash: (options?: { force?: boolean }) => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
-  restartWithSessionFixture: (session: PersistedChatSession) => Promise<Page>
+  restartWithSessionFixture: (
+    session: PersistedChatSession,
+    notebookRuns?: NotebookRunRecord[]
+  ) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
   recordResourceTiming: (name: string, durationMs: number) => void
   captureResourceTimings: (prefix?: string) => Promise<void>
@@ -835,6 +843,16 @@ class ElectronAppHarness implements ElectronApp {
     return page
   }
 
+  async readNotebookFixtureRuns(
+    projectId: string,
+    sessionId: string
+  ): Promise<NotebookRunRecord[]> {
+    const dataRoot = await this.page.evaluate(
+      async () => (await window.api.storage.getInfo()).dataRoot
+    )
+    return new NotebookRunRepository(dataRoot).readSessionRuns(projectId, sessionId)
+  }
+
   async authenticatedWebUrl(): Promise<string> {
     const target = electronLaunchTarget(this.roots.userDataRoot)
     const child = spawn(
@@ -1117,6 +1135,21 @@ class ElectronAppHarness implements ElectronApp {
     }, request)
   }
 
+  async captureFindOverlay(): Promise<Buffer> {
+    // Capture the child WebContentsView with Electron's native API. The CDP screenshot
+    // path can fail for this independently composited view on macOS runners.
+    const png = await this.runningApplication.evaluate(async ({ webContents }) => {
+      const overlay = webContents
+        .getAllWebContents()
+        .find((contents) => !contents.isDestroyed() && contents.getURL().includes('/find-overlay/'))
+      if (!overlay) throw new Error('Find overlay was not found.')
+      const image = await overlay.capturePage(undefined, { stayHidden: true, stayAwake: true })
+      if (image.isEmpty()) throw new Error('Find overlay capture was empty.')
+      return image.toPNG().toString('base64')
+    })
+    return Buffer.from(png, 'base64')
+  }
+
   async showMainWindow(): Promise<void> {
     await this.runningApplication.evaluate(({ BrowserWindow }) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
@@ -1387,10 +1420,16 @@ class ElectronAppHarness implements ElectronApp {
     return this.page
   }
 
-  async restartWithSessionFixture(session: PersistedChatSession): Promise<Page> {
+  async restartWithSessionFixture(
+    session: PersistedChatSession,
+    notebookRuns: NotebookRunRecord[] = []
+  ): Promise<Page> {
     if (![session.projectId, session.id].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
       throw new Error('Invalid E2E Session fixture identity.')
     }
+    const dataRoot = notebookRuns.length
+      ? await this.page.evaluate(async () => (await window.api.storage.getInfo()).dataRoot)
+      : undefined
     await this.close()
     const directory = join(this.roots.storageRoot, 'sessions', session.projectId)
     await mkdir(directory, { recursive: true })
@@ -1398,6 +1437,28 @@ class ElectronAppHarness implements ElectronApp {
       join(directory, `${session.id}.json`),
       JSON.stringify(createSessionFile(session))
     )
+    if (dataRoot && notebookRuns.length) {
+      if (session.packageOrigin)
+        await mkdir(
+          join(dataRoot, 'artifacts', session.projectId, session.id, '.session-package'),
+          { recursive: true }
+        )
+      const repository = new NotebookRunRepository(dataRoot)
+      const lane = createRootNotebookLane(session.projectId, session.id, `root-frame-${session.id}`)
+      await repository.loadOrCreate({
+        projectId: session.projectId,
+        sessionId: session.id,
+        workspaceCwd: session.cwd,
+        lane
+      })
+      for (const run of notebookRuns)
+        await repository.appendRun({
+          projectId: session.projectId,
+          sessionId: session.id,
+          lane,
+          run
+        })
+    }
     // Rebuild the catalog from the fixture file, just as the historical-session fixture does.
     const client = createProjectDbClient(this.roots.storageRoot)
     try {

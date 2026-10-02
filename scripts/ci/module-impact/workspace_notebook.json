@@ -9,6 +9,7 @@
     "src/renderer/src/pages/workspace/NotebookPreview.tsx",
     "src/renderer/src/pages/workspace/NotebookRunEvidence.render.test.tsx",
     "src/renderer/src/pages/workspace/NotebookRunEvidence.tsx",
+    "src/renderer/src/pages/workspace/NotebookRecordCell.tsx",
     "src/renderer/src/pages/workspace/NotebookRunOutputs.render.test.tsx",
     "src/renderer/src/pages/workspace/NotebookRunOutputs.tsx",
     "src/renderer/src/pages/workspace/NotebookToolFigureOutputs.tsx",
@@ -38,9 +39,14 @@
     "src/renderer/src/pages/workspace/use-notebook-runs-by-id.test.ts",
     "src/renderer/src/pages/workspace/use-notebook-runs-by-id.ts",
     "src/renderer/src/pages/workspace/workspace-compute-host-access-controller.test.ts",
-    "src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts"
+    "src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts",
+    "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
+    "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.tsx",
+    "src/renderer/src/pages/workspace/notebook-folder-access.test.ts",
+    "src/renderer/src/pages/workspace/notebook-folder-access.ts"
   ],
   "interfacePaths": [
+    "src/renderer/src/pages/workspace/NotebookRecordCell.tsx",
     "src/renderer/src/pages/workspace/ExecutionContextDetails.tsx",
     "src/renderer/src/pages/workspace/NotebookInputDataStrip.tsx",
     "src/renderer/src/pages/workspace/NotebookPreview.tsx",
@@ -56,7 +62,8 @@
     "src/renderer/src/pages/workspace/session-notebook-data.ts",
     "src/renderer/src/pages/workspace/tool-execution-phase.ts",
     "src/renderer/src/pages/workspace/use-notebook-runs-by-id.ts",
-    "src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts"
+    "src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts",
+    "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -79,15 +86,21 @@
       "src/renderer/src/pages/workspace/session-notebook-data.test.ts",
       "src/renderer/src/pages/workspace/tool-execution-phase.test.ts",
       "src/renderer/src/pages/workspace/use-notebook-runs-by-id.test.ts",
-      "src/renderer/src/pages/workspace/workspace-compute-host-access-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-compute-host-access-controller.test.ts",
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/notebook-folder-access.test.ts"
     ],
     "contract": [],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/lib/replay/notebook-details.test.ts",
+      "src/renderer/src/lib/replay/replay.test.ts",
+      "src/renderer/src/lib/replay/source-uploads.test.ts",
       "src/renderer/src/main.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactProvenanceMessages.integration.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx",
@@ -103,6 +116,8 @@
       "src/renderer/src/pages/workspace/PreviewFileSurface.freshness.test.tsx",
       "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx",
       "src/renderer/src/pages/workspace/PreviewPanel.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
       "src/renderer/src/pages/workspace/SubagentReleaseSurfaces.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceActivityGroup.annotations.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceActivityGroup.i18n.render.test.tsx",
@@ -134,6 +149,9 @@
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.test.tsx",
       "src/renderer/src/pages/workspace/previews/preview-registry.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/SourcePreview.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
+      "src/renderer/src/pages/workspace/replay/replay-context.test.ts",
       "src/renderer/src/pages/workspace/use-follow-scroll-bottom.test.tsx",
       "src/renderer/src/pages/workspace/use-transcript-window.test.tsx",
       "src/renderer/src/pages/workspace/workspace-conversation-items.test.ts",
@@ -143,7 +161,20 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
+      "src/renderer/src/pages/workspace/ReplayReferenceText.test.tsx",
+      "src/renderer/src/pages/workspace/SessionDiscussionSource.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceMessageItem.actions.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceMessageItem.containment.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceMessageItem.mentions.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceMessageItem.tooltips.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebarContainer.test.tsx",
+      "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-session-discussion.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
+      "src/renderer/src/components/SessionPackageOperation.test.tsx",
+      "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
+      "src/renderer/src/pages/home/HomePage.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

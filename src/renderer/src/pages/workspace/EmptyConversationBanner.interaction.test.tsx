@@ -55,13 +55,13 @@ it('exposes the file picker as a keyboard-accessible button', () => {
   pickerClick.mockRestore()
 })
 
-it('highlights the row while a file drag is active and clears afterwards', () => {
+it('keeps the package guide neutral while ordinary files are dragged', () => {
   const row = mount()
   expect(row.className).not.toContain('border-primary')
 
   fireEvent.dragEnter(row, { dataTransfer: { types: ['Files'] } })
-  expect(row.className).toContain('border-primary')
-  expect(row.className).toContain('bg-primary/5')
+  expect(row.className).not.toContain('border-primary')
+  expect(row.className).not.toContain('bg-primary/5')
 
   fireEvent.dragLeave(row, { dataTransfer: { types: ['Files'] } })
   expect(row.className).not.toContain('border-primary')
@@ -73,7 +73,7 @@ it('does not highlight for non-file drags', () => {
   expect(row.className).not.toContain('border-primary')
 })
 
-it('does not intercept drops itself — the page-level drop zone owns package drops', () => {
+it('does not intercept drops itself — the conversation drop zone owns package drops', () => {
   const row = mount()
   fireEvent.drop(row, {
     dataTransfer: { types: ['Files'], files: [new File(['fixture'], 'research.science')] }
@@ -82,7 +82,7 @@ it('does not intercept drops itself — the page-level drop zone owns package dr
   expect(row.className).not.toContain('border-primary')
 })
 
-it('clears the entry highlight when the page capture handler consumes a package drop', async () => {
+it('clears the entry highlight when the conversation capture handler consumes a package drop', async () => {
   render(
     <ProjectPackageDropZone projectId="target" projectName="Research" canImport>
       <EmptyConversationBanner sessionImport={{ projectId: 'target', canImport: true }} />
@@ -90,7 +90,7 @@ it('clears the entry highlight when the page capture handler consumes a package 
   )
   const row = screen.getByTestId('session-package-entry')
   fireEvent.dragEnter(row, { dataTransfer: { types: ['Files'] } })
-  expect(row.className).toContain('border-primary')
+  expect(row.className).not.toContain('border-primary')
 
   fireEvent.drop(row, {
     dataTransfer: { types: ['Files'], files: [new File(['fixture'], 'research.science')] }

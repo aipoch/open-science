@@ -2,7 +2,7 @@ import { InlineNotice } from '@/components/ui/inline-notice'
 import { X } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 
 import type {
   ComputeHost,

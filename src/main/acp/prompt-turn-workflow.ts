@@ -193,6 +193,7 @@ type AcpPromptTurnFinalization = Readonly<{
   errorKind: AcpPromptFinalizationHandles['errorKind']
   pushEvent: AcpPromptFinalizationHandles['pushEvent']
   commitTerminal?: AcpPromptFinalizationHandles['commitTerminal']
+  retryTerminalCommits?: (sessionId: string) => void
   onPromptEnded: (sessionId: string, turnToken: string) => void
   generationActivityChanged: () => void
   autoCompact: (
@@ -249,13 +250,15 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     planDeliveryCommandId?: string,
     delegatedMessageId?: string,
     applicationPrompt?: { text: string; attribution: MessageAttribution },
-    settlementAdmission?: SettlementAdmission
+    settlementAdmission?: SettlementAdmission,
+    approvedHandoffContinuation?: boolean
   ) => Promise<void>
   settlementLifecycle?: Readonly<{
     markDispatch: (request: AcpPromptRequest, executionId: string) => Promise<void>
     markAccepted: (request: AcpPromptRequest, executionId: string) => Promise<void>
     finishNotDispatched: (request: AcpPromptRequest, executionId: string) => Promise<void>
   }>
+  assertRuntimeSessionAdmissionAvailable?: (sessionId: string) => Promise<void>
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
 }>
@@ -338,6 +341,9 @@ class AcpPromptTurnWorkflow {
     if (!activeSession) throw new Error(`ACP session not found: ${request.sessionId}`)
     this.assertSessionIdle(request.sessionId)
 
+    if (this.options.assertRuntimeSessionAdmissionAvailable) {
+      await this.options.assertRuntimeSessionAdmissionAvailable(request.sessionId)
+    }
     let reservation = this.reserve(request)
     let plan: AcpPromptTurnPlanContext
     let skill: TurnSkillHandle
@@ -473,7 +479,8 @@ class AcpPromptTurnWorkflow {
           mode.kind === 'application'
             ? { text: admittedRequest.text ?? '', attribution: mode.attribution }
             : undefined,
-          mode.kind === 'app-continuation' ? mode.settlementAdmission : undefined
+          mode.kind === 'app-continuation' ? mode.settlementAdmission : undefined,
+          mode.kind === 'app-continuation'
         )
         if (settlementExecution) settlementExecution.admitted = true
       }
@@ -846,6 +853,7 @@ class AcpPromptTurnWorkflow {
         errorKind: finalization.errorKind,
         pushEvent: finalization.pushEvent,
         ...(finalization.commitTerminal ? { commitTerminal: finalization.commitTerminal } : {}),
+        retryTerminalCommits: () => finalization.retryTerminalCommits?.(sessionId),
         emitState: this.options.emitState,
         onPromptEnded: () => finalization.onPromptEnded(sessionId, turnToken),
         generationActivityChanged: finalization.generationActivityChanged,

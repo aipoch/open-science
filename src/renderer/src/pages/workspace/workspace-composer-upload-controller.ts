@@ -27,6 +27,8 @@ import {
 import type { MessageQueueEditIntent } from './workspace-message-queue-owner'
 
 export type ComposerDraft = {
+  // Process-local retry owner for this restored snapshot; never a Main Session field.
+  retrySessionOwner?: { sessionId: string; projectId: string }
   setupSessionToken?: string
   queuedEdit?: MessageQueueEditIntent
   doc: ComposerDoc

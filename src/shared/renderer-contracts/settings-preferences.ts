@@ -172,6 +172,10 @@ export const settingsSetNetworkProxyContracts = {
     'settings:install-notebook-network',
     LOCAL
   ]),
+  'settings.cancelNotebookNetworkSetup': callable<() => Promise<boolean>>()('settings', [
+    'settings:cancel-notebook-network-setup',
+    LOCAL
+  ]),
   'settings.removeNotebookNetwork': callable<() => Promise<NotebookNetworkStatus>>()('settings', [
     'settings:remove-notebook-network',
     LOCAL

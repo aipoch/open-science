@@ -189,6 +189,7 @@ const composeAcpRuntimePromptOwners = (
       [],
     authorizeReferencedUploads: options.skillImport?.authorizeReferencedUploads,
     memory: options.memory,
+    prepareSessionReading: options.prepareSessionReading,
     isMemoryEnabledForSession: (sessionId) =>
       session.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().memoryEnabled ?? false,
     ...(options.notebook
@@ -389,13 +390,12 @@ const composeAcpRuntimePromptOwners = (
                 timestamp: event.timestamp ?? Date.now(),
                 level: event.level ?? 'info'
               } as AcpRuntimeEvent
-              options.runtimeSessions!.accept(durableEvent)
-              await options.runtimeSessions!.flush(
-                durableEvent.sessionId ?? '',
-                durableEvent.promptMessageId ?? ''
+              await options.runtimeSessions!.commitTerminal(durableEvent, (published) =>
+                session.publication.pushEvent(published)
               )
-              session.publication.pushEvent({ ...durableEvent, publicationOwner: 'main' })
-            }
+            },
+            retryTerminalCommits: (sessionId: string) =>
+              options.runtimeSessions!.retryTerminalCommits(sessionId)
           }
         : {}),
       onPromptEnded: (sessionId, turnToken) => {
@@ -445,7 +445,8 @@ const composeAcpRuntimePromptOwners = (
             planDeliveryCommandId,
             delegatedMessageId,
             applicationPrompt,
-            settlementAdmission
+            settlementAdmission,
+            approvedHandoffContinuation
           ) => {
             const scope = runtimeScope(request, executionId)
             const aggregate = session.sessionRegistry
@@ -466,9 +467,12 @@ const composeAcpRuntimePromptOwners = (
               ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
               ...(delegatedMessageId ? { delegatedMessageId } : {}),
               ...(applicationPrompt ? { applicationPrompt } : {}),
-              ...(settlementAdmission ? { settlementAdmission } : {})
+              ...(settlementAdmission ? { settlementAdmission } : {}),
+              ...(approvedHandoffContinuation ? { approvedHandoffContinuation } : {})
             })
-          }
+          },
+          assertRuntimeSessionAdmissionAvailable: (sessionId: string) =>
+            options.runtimeSessions!.assertAdmissionAvailable(sessionId)
         }
       : {}),
     onPromptStarted: (sessionId, turnToken, promptAttemptId) =>

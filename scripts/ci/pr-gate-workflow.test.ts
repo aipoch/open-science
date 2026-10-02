@@ -533,6 +533,7 @@ describe('PR Gate workflow', () => {
             'windows-e2e',
             'windows-e2e-mainline',
             'windows-process',
+            'windows-notebook-runtime',
             'e2e',
             'source-regressions',
             'macos-smoke'
@@ -1186,7 +1187,9 @@ describe('PR Gate workflow', () => {
       const producerId = `${bundle}_setup`
       const producer = workflow.jobs[producerId]
       const consumer = workflow.jobs[bundle]
-      expect(producer.needs).toBe('preflight')
+      expect(producer.needs).toEqual(
+        platform === 'windows' ? ['preflight', 'windows_notebook_runtime'] : 'preflight'
+      )
       if (platform === 'windows') {
         expect(producer.if).toBe(
           "${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}"
@@ -1414,7 +1417,8 @@ describe('PR Gate workflow', () => {
       ['policy', 'windows_e2e'],
       ['policy', 'e2e_functional_windows', 'e2e_workspace_windows', 'e2e_browser_windows']
     ],
-    ['windows-process', ['policy', 'windows_core'], ['policy', 'windows_runtime']]
+    ['windows-process', ['policy', 'windows_core'], ['policy', 'windows_runtime']],
+    ['windows-notebook-runtime', ['policy', 'windows_core'], ['policy', 'windows_runtime']]
   ])(
     'executes the focused %s plan through the real preflight script',
     (dryRunMode, bundles, lanes) => {
@@ -1472,6 +1476,12 @@ describe('PR Gate workflow', () => {
     expect(build?.run).toBe('node packages/notebook-network-sandbox/vendor/windows/build.mjs x64')
     expect(steps.indexOf(rustTest!)).toBeLessThan(steps.indexOf(build!))
     expect(steps.indexOf(build!)).toBeLessThan(steps.indexOf(smoke!))
+    expect(smoke?.run).toContain('-AfterSetup')
+    expect(smoke?.run).toContain("$env:RUN_WINDOWS_NOTEBOOK_RUNTIME = '1'")
+    expect(smoke?.run).toContain('$env:OPEN_SCIENCE_TEST_SANDBOX_INSTALLATION_ID = $installationId')
+    expect(smoke?.run).toContain('$env:OPEN_SCIENCE_TEST_SANDBOX_OWNERSHIP_ROOT = $ownershipRoot')
+    expect(smoke?.run).toContain('src/windows-notebook-runtime.integration.test.ts')
+    expect(smoke?.run).toContain('if ($LASTEXITCODE -ne 0) { throw')
   })
 
   it('carries no dead Windows accessibility lane in the workflow', () => {

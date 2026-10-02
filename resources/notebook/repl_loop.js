@@ -2789,7 +2789,28 @@ async function hostSessionsInspect(sessionId) {
   )
 }
 
-const hostSessions = Object.freeze({ list: hostSessionsList, inspect: hostSessionsInspect })
+async function hostSessionsRead(options = {}) {
+  if (arguments.length > 1)
+    throw new TypeError(
+      'host.sessions.read accepts one optional options object; the discussion Session is selected automatically'
+    )
+  const result = await sessionsRpc('read', {
+    options: remappedHostObject(options, 'host.sessions.read options', {
+      branchId: 'branchId',
+      kind: 'kind',
+      id: 'id',
+      part: 'part',
+      offset: 'offset',
+      limit: 'limit'
+    })
+  })
+  return camelCasedHostValue(result)
+}
+const hostSessions = Object.freeze({
+  list: hostSessionsList,
+  inspect: hostSessionsInspect,
+  read: hostSessionsRead
+})
 
 // host.compute: async remote-compute calls over the SAME app-local RPC endpoint as host.mcp, routed to
 // the main-process ComputeService via {method:'computeCall'}. Like host.mcp, this is only injected in

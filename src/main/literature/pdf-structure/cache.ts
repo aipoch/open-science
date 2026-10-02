@@ -105,7 +105,7 @@ export class PdfStructureCache {
   }
 
   // ponytail: serialize bounded cache I/O; use per-entry read leases only if measured contention
-  // warrants it. The structure owner already limits expensive extraction to one worker.
+  // warrants it. The structure owner bounds extraction separately; publishing stays serialized.
   private operation<T>(run: () => Promise<T>): Promise<T> {
     const result = this.tail.then(run)
     this.tail = result.then(

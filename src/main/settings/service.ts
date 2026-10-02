@@ -258,7 +258,9 @@ export type SettingsServiceOptions = {
   beforePackageMirrorCaBundleChange?: () => Promise<void>
   getNotebookNetworkStatus?: () => Promise<NotebookNetworkStatus>
   installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
+  cancelNotebookNetworkSetup?: () => boolean
   removeNotebookNetwork?: () => Promise<{ cancelled: boolean }>
+  refreshNotebookShellCapabilities?: () => Promise<void>
   wslSetup?: {
     getStatus?(): WslSetupStatus
     reconcileInterruptedOperation?(): Promise<WslSetupStatus>
@@ -449,7 +451,9 @@ class SettingsService {
   private readonly packageMirror: PackageMirrorSettingsOwner
   private readonly getNotebookNetworkStatusImpl: () => Promise<NotebookNetworkStatus>
   private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
+  private readonly cancelNotebookNetworkSetupImpl: () => boolean
   private readonly removeNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
+  private readonly refreshNotebookShellCapabilities: () => Promise<void>
   private readonly wslSetup?: SettingsServiceOptions['wslSetup']
   private readonly wslSetupSessions?: SettingsServiceOptions['wslSetupSessions']
   private readonly ensureDefaultWslSetupWorkspace?: SettingsServiceOptions['ensureDefaultWslSetupWorkspace']
@@ -525,7 +529,10 @@ class SettingsService {
       (async () => {
         throw new Error('Notebook network sandbox removal is unavailable.')
       })
+    this.cancelNotebookNetworkSetupImpl = options.cancelNotebookNetworkSetup ?? (() => false)
     this.wslSetup = options.wslSetup
+    this.refreshNotebookShellCapabilities =
+      options.refreshNotebookShellCapabilities ?? (async () => undefined)
     this.wslSetupSessions = options.wslSetupSessions
     this.ensureDefaultWslSetupWorkspace = options.ensureDefaultWslSetupWorkspace
     this.wsl2PreviewStatus = options.wsl2PreviewStatus ?? wsl2BashPreviewStatus
@@ -715,12 +722,18 @@ class SettingsService {
   }
 
   async installNotebookNetwork(): Promise<NotebookNetworkStatus> {
-    await this.installNotebookNetworkImpl()
+    const result = await this.installNotebookNetworkImpl()
+    if (!result.cancelled) await this.refreshNotebookShellCapabilities()
     return this.getNotebookNetworkStatusImpl()
   }
 
+  cancelNotebookNetworkSetup(): boolean {
+    return this.cancelNotebookNetworkSetupImpl()
+  }
+
   async removeNotebookNetwork(): Promise<NotebookNetworkStatus> {
-    await this.removeNotebookNetworkImpl()
+    const result = await this.removeNotebookNetworkImpl()
+    if (!result.cancelled) await this.refreshNotebookShellCapabilities()
     return this.getNotebookNetworkStatusImpl()
   }
 
@@ -810,10 +823,19 @@ class SettingsService {
     result: SwitchToPowerShellResult
     mutation: LocalShellRuntimeMutation
   }> {
+    const status = await this.getNotebookNetworkStatusImpl()
+    if (status.kind === 'checking' || status.kind === 'error') {
+      throw new Error(
+        'Prepare Notebook protection in Settings before switching this Session runtime.'
+      )
+    }
     const write = await this.repository.setLocalShellRuntime('powershell')
     return Object.freeze({
       result: Object.freeze({
-        runtimeBinding: Object.freeze({ kind: 'powershell', version: '5.1' }),
+        runtimeBinding: Object.freeze({
+          kind: 'powershell',
+          version: status.kind === 'ready' ? '7.6' : '5.1'
+        }),
         appliesTo: 'subsequent-executions',
         wslProfilePreserved:
           write.settings.wslSelection !== undefined ||

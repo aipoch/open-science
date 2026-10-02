@@ -311,22 +311,107 @@ describe('shared PDF parsing lifecycle', () => {
 
   it('removes cancelled queued work immediately without reserving a model', async () => {
     const test = setup()
-    const first = test.owner.acquire(reading, [1])
-    const run = await started(test)
+    const active = [1, 2, 3, 4].map((page) => test.owner.acquire(reading, [page]))
+    await started(test, 4)
     const queuedProgress = vi.fn()
-    const queued = test.owner.acquire(reading, [2], { onProgress: queuedProgress })
+    const queued = test.owner.acquire(reading, [5], { onProgress: queuedProgress })
     await vi.waitFor(() =>
       expect(queuedProgress).toHaveBeenCalledWith(expect.objectContaining({ state: 'queued' }))
     )
     queued.release()
     await expect(queued.result).rejects.toMatchObject({ name: 'AbortError' })
-    const retry = test.owner.acquire(reading, [2])
-    run.output.resolve(resultFor(run.request.identity))
-    await first.result
-    const nextRun = await started(test, 2)
+    expect(test.acquireUse).toHaveBeenCalledTimes(4)
+    const retry = test.owner.acquire(reading, [5])
+    for (const run of test.runs) run.output.resolve(resultFor(run.request.identity))
+    await Promise.all(active.map((handle) => handle.result))
+    const nextRun = await started(test, 5)
     nextRun.output.resolve(resultFor(nextRun.request.identity))
     await retry.result
-    expect(test.acquireUse).toHaveBeenCalledTimes(2)
+    expect(test.acquireUse).toHaveBeenCalledTimes(5)
+  })
+
+  it('caps shared preview and Agent work at four and deduplicates active pages', async () => {
+    const test = setup()
+    const active = [1, 2, 3, 4].map((page) => test.owner.acquire(reading, [page]))
+    await started(test, 4)
+    const shared = test.owner.acquire(agent, [1])
+    const progress = vi.fn()
+    const queued = test.owner.acquire(agent, [5], { onProgress: progress })
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled())
+    expect(test.runs).toHaveLength(4)
+    expect(test.uses()).toBe(4)
+    const first = test.runs.find((run) => run.request.identity.requestedPages[0] === 1)!
+    active[0].release()
+    await expect(active[0].result).rejects.toMatchObject({ name: 'AbortError' })
+    expect(first.request.signal.aborted).toBe(false)
+    const other = test.runs.find((run) => run !== first)!
+    const gate = deferred<void>()
+    other.stop.mockImplementation(() => gate.promise)
+    other.output.resolve(resultFor(other.request.identity))
+    await vi.waitFor(() => expect(other.stop).toHaveBeenCalled())
+    expect(test.runs).toHaveLength(4)
+    gate.resolve()
+    await started(test, 5)
+    expect(test.uses()).toBeLessThanOrEqual(4)
+    for (const run of test.runs) run.output.resolve(resultFor(run.request.identity))
+    await Promise.all([...active.slice(1), shared, queued].map((handle) => handle.result))
+    expect(test.uses()).toBe(0)
+    expect(test.writers()).toBe(0)
+  })
+
+  it('blocks queued work after one parallel worker fails cleanup while siblings drain', async () => {
+    const test = setup()
+    const active = [1, 2, 3, 4].map((page) => test.owner.acquire(reading, [page]))
+    await started(test, 4)
+    const progress = vi.fn()
+    const queued = test.owner.acquire(agent, [5], { onProgress: progress })
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled())
+    const failed = test.runs.find((run) => run.request.identity.requestedPages[0] === 1)!
+    failed.stop.mockRejectedValue(new Error('Unconfirmed cleanup'))
+    try {
+      failed.output.resolve(resultFor(failed.request.identity))
+      await expect(active[0].result).rejects.toThrow('PDF worker cleanup must finish')
+      await expect(queued.result).rejects.toThrow('PDF worker cleanup must finish')
+      expect(test.runs).toHaveLength(4)
+      for (const run of test.runs.filter((run) => run !== failed))
+        run.output.resolve(resultFor(run.request.identity))
+      await Promise.all(active.slice(1).map((handle) => handle.result))
+      expect(test.uses()).toBe(1)
+      failed.stop.mockResolvedValue(undefined)
+      const retry = test.owner.acquire(agent, [5])
+      const run = await started(test, 5)
+      run.output.resolve(resultFor(run.request.identity))
+      await retry.result
+      expect(test.uses()).toBe(0)
+    } finally {
+      failed.stop.mockResolvedValue(undefined)
+    }
+  })
+
+  it('drains every concurrent worker before clearing cached results', async () => {
+    const test = setup()
+    const active = [1, 2, 3, 4].map((page) => test.owner.acquire(reading, [page]))
+    await started(test, 4)
+    const gates = test.runs.map((run) => {
+      const gate = deferred<void>()
+      run.stop.mockImplementation(() => gate.promise)
+      return gate
+    })
+    const cleared = vi.fn()
+    const clearing = test.owner.clearCache().then(cleared)
+    await Promise.all(
+      active.map((handle) => expect(handle.result).rejects.toMatchObject({ name: 'AbortError' }))
+    )
+    await vi.waitFor(() => {
+      for (const run of test.runs) expect(run.stop).toHaveBeenCalled()
+    })
+    for (const gate of gates.slice(1)) gate.resolve()
+    await vi.waitFor(() => expect(test.uses()).toBe(1))
+    expect(cleared).not.toHaveBeenCalled()
+    gates[0].resolve()
+    await clearing
+    expect(test.uses()).toBe(0)
+    expect(test.writers()).toBe(0)
   })
 
   it('checks each consumer on delivery, even if another consumer still authorizes the same bytes', async () => {
@@ -499,10 +584,9 @@ describe('shared PDF parsing lifecycle', () => {
     await vi.waitFor(() => expect(run.stop).toHaveBeenCalledTimes(before + 1))
     expect(test.runs).toHaveLength(1)
     gate.resolve()
-    const second = await started(test, 2)
-    second.output.resolve(resultFor(second.request.identity))
-    const third = await started(test, 3)
-    third.output.resolve(resultFor(third.request.identity))
+    await started(test, 3)
+    for (const nextRun of test.runs.slice(1))
+      nextRun.output.resolve(resultFor(nextRun.request.identity))
     await expect(next.result).resolves.toMatchObject({ requestedPages: [2] })
     await expect(concurrent.result).resolves.toMatchObject({ requestedPages: [3] })
     expect(run.stop).toHaveBeenCalledTimes(before + 1)
@@ -782,16 +866,16 @@ describe('shared PDF parsing lifecycle', () => {
 
   it('fails queued stale model recipes without running or mislabeling output', async () => {
     const test = setup()
-    const first = test.owner.acquire(reading, [1])
-    const run = await started(test)
+    const active = [1, 2, 3, 4].map((page) => test.owner.acquire(reading, [page]))
+    await started(test, 4)
     const progress = vi.fn()
-    const queued = test.owner.acquire(reading, [2], { onProgress: progress })
+    const queued = test.owner.acquire(reading, [5], { onProgress: progress })
     await vi.waitFor(() => expect(progress).toHaveBeenCalled())
     test.update()
-    run.output.resolve(resultFor(run.request.identity))
-    await first.result
+    for (const run of test.runs) run.output.resolve(resultFor(run.request.identity))
+    await Promise.all(active.map((handle) => handle.result))
     await expect(queued.result).rejects.toThrow('PDF_MODEL_CHANGED')
-    expect(test.runs).toHaveLength(1)
+    expect(test.runs).toHaveLength(4)
     expect(test.uses()).toBe(0)
   })
 
@@ -1015,3 +1099,77 @@ describe('PDF result boundary', () => {
     expect(() => parsePdfStructureResult(nested, identity)).toThrow('budget')
   })
 })
+
+it.each(['upload-version', 'artifact-version'] as const)(
+  'extracts %s without session context, shares the Literature cache and rechecks source access',
+  async (sourceKind) => {
+    const managed = {
+      kind: 'managed' as const,
+      projectId: 'project-1',
+      sourceKind,
+      sourceFileId: source.sourceFileId,
+      sourceVersionId: source.sourceVersionId
+    }
+    const verifyUnchanged = vi.fn(async () => undefined),
+      close = vi.fn(async () => undefined)
+    const managedVersion: ResolvedSessionPdfVersion = {
+      ...source,
+      sourceKind,
+      sourceSessionId: 'origin-session',
+      path: 'identity-only',
+      openContent: async () => ({
+        path: 'identity-only',
+        size: content.length,
+        readRange: async (start: number, end: number) => content.subarray(start, end),
+        verifyUnchanged,
+        close
+      })
+    }
+    const resolveVersion = vi.fn(
+      async ({
+        projectId
+      }: {
+        projectId: string
+      }): Promise<ResolvedSessionPdfVersion | undefined> =>
+        projectId === 'project-1' ? managedVersion : undefined
+    )
+    const loadSessionForContinuation = vi.fn(async () => {
+      throw new Error('No message binding')
+    })
+    authority = new PdfStructureSourceAuthority({
+      literature: { resolveVersion: literature },
+      sources: { resolveVersion },
+      sessions: { loadSessionForContinuation }
+    })
+    const test = setup()
+    const job = test.owner.acquire(managed, [1])
+    const run = await started(test)
+    expect(await readFile(run.request.inputPath)).toEqual(content)
+    run.output.resolve(resultFor(run.request.identity))
+    const result = await job.result
+    expect(resolveVersion).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sourceKind,
+      sourceVersionId: managed.sourceVersionId,
+      expectedSourceFileId: managed.sourceFileId
+    })
+    expect(loadSessionForContinuation).not.toHaveBeenCalled()
+    expect(verifyUnchanged).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+    expect(await test.owner.readCached(reading, [1])).toEqual(result)
+    expect(await test.owner.acquire(managed, [1]).result).toEqual(result)
+    expect(test.engine.start).toHaveBeenCalledOnce()
+    for (const change of [
+      undefined,
+      { ...managedVersion, sourceFileId: 'wrong-file' },
+      { ...managedVersion, sourceVersionId: 'wrong-version' },
+      { ...managedVersion, openContent: undefined }
+    ]) {
+      resolveVersion.mockResolvedValueOnce(change)
+      await expect(test.owner.readCached(managed, [1])).rejects.toThrow('LINKED_PDF_UNAVAILABLE')
+    }
+    await expect(
+      test.owner.readCached({ ...managed, projectId: 'other-project' }, [1])
+    ).rejects.toThrow('LINKED_PDF_UNAVAILABLE')
+  }
+)

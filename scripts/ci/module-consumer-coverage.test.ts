@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
 import ts from 'typescript'
 import { expect, it } from 'vitest'
@@ -9,9 +9,15 @@ import { loadModuleImpactManifest } from './load-module-impact.mjs'
 // This guard supplements the explicit IPC/behavioral contracts in the manifest. It does not
 // claim that imports can discover event dispatch, filesystem protocols or dynamic strings.
 it('retains every statically reachable consumer test and declared runtime-loading edge', () => {
-  const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
-    .split('\0')
-    .filter(Boolean)
+  const files = [
+    ...new Set(
+      execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
+        encoding: 'utf8'
+      })
+        .split('\0')
+        .filter((path) => Boolean(path) && existsSync(path))
+    )
+  ]
   const tracked = new Set(files)
   const code = files.filter((path) => /\.[cm]?[jt]sx?$/.test(path))
   const reverse = new Map<string, Set<string>>()

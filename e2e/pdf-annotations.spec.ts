@@ -174,16 +174,28 @@ test('imports external notes, preserves provenance through undo, and persists an
   await notesSidebar
     .getByPlaceholder('Add a private note')
     .fill('Sidebar draft survives layout changes')
+  await app.setMainWindowSize(1280, 960)
+  await expect(resizeNotes).toBeVisible()
+  await expect(originalView).toHaveCSS('right', '368px')
   await app.setMainWindowSize(1100, 960)
-  await expect(page.getByRole('button', { name: 'Show notes sidebar', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Show notes sidebar', exact: true })).toBeDisabled()
-  await expect(notesSidebar).toHaveCount(0)
+  await expect(
+    toolbar.getByRole('button', { name: 'Hide notes sidebar', exact: true })
+  ).toBeEnabled()
+  await expect(notesSidebar).toBeVisible()
+  await expect(resizeNotes).toHaveCount(0)
+  await expect(originalView).toHaveCSS('right', '0px')
+  await expect(notesSidebar.getByPlaceholder('Add a private note')).toHaveValue(
+    'Sidebar draft survives layout changes'
+  )
+  await page.screenshot({ path: testInfo.outputPath('notes-sidebar-floating.png') })
   await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
   await expect(page.getByPlaceholder('Add a private note')).toHaveValue(
     'Sidebar draft survives layout changes'
   )
   await page.getByRole('tab', { name: 'Original PDF', exact: true }).click()
   await app.setMainWindowSize(1440, 960)
+  await expect(resizeNotes).toHaveAttribute('aria-valuenow', '368')
+  await expect(originalView).toHaveCSS('right', '368px')
   await expect(notesSidebar.getByPlaceholder('Add a private note')).toHaveValue(
     'Sidebar draft survives layout changes'
   )

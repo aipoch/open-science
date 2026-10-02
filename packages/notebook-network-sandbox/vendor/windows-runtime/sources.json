@@ -1,0 +1,18 @@
+{
+  "node": {
+    "version": "24.21.0",
+    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0.tar.xz",
+    "sha256": "a6f54defb6fd7c84f41dba13d61e78e9b4e0961712cf61f29715c05f5ced94fc"
+  },
+  "powershell": {
+    "version": "7.6.5",
+    "commit": "7acb29279dd64e646d821f75d1cc8ad59455a9a6",
+    "url": "https://codeload.github.com/PowerShell/PowerShell/tar.gz/refs/tags/v7.6.5",
+    "sha256": "fe59db50904ba4b5304adf47b0645eef24c66e0ed2d40334c984b35ac143248d"
+  },
+  "dotnet": {
+    "version": "10.0.303",
+    "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.303/dotnet-sdk-10.0.303-win-x64.zip",
+    "sha512": "ad4ef6202e55babde1c65e1be7b468c3ecb738ccc2fb8bd3c2bb408a4f45d247c8c5a5f57fedc54ebee7cb5fc4f487772997f2d053010d2e1903b974cc64216d"
+  }
+}

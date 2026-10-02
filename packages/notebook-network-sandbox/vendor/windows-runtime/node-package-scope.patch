@@ -1,0 +1,118 @@
+--- a/src/node_modules.cc
++++ b/src/node_modules.cc
+@@ -17,8 +17,45 @@
+ 
+ #include "simdjson.h"
+ 
++#ifdef _WIN32
++#include <windows.h>
++#endif
++
+ namespace node {
+ namespace modules {
++
++#ifdef _WIN32
++// An AppContainer can read a granted descendant without access to its ancestors.
++// Only terminate package-scope searches at such a boundary: direct package reads
++// and unreadable package.json files inside readable directories must still fail.
++static bool IsAppContainerPackageScopeBoundary(std::string_view package_path) {
++  static const bool is_app_container = []() {
++    HANDLE token;
++    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
++    DWORD value = 0;
++    DWORD length = sizeof(value);
++    const BOOL success = GetTokenInformation(
++        token, TokenIsAppContainer, &value, length, &length);
++    CloseHandle(token);
++    return success && value != 0;
++  }();
++  if (!is_app_container) return false;
++
++  const auto directory = std::filesystem::u8path(package_path).parent_path();
++  HANDLE handle = CreateFileW(directory.c_str(),
++                              FILE_LIST_DIRECTORY,
++                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++                              nullptr,
++                              OPEN_EXISTING,
++                              FILE_FLAG_BACKUP_SEMANTICS,
++                              nullptr);
++  if (handle == INVALID_HANDLE_VALUE) {
++    return GetLastError() == ERROR_ACCESS_DENIED;
++  }
++  CloseHandle(handle);
++  return false;
++}
++#endif
+ 
+ using v8::Array;
+ using v8::Context;
+@@ -93,7 +130,10 @@
+ }
+ 
+ const BindingData::PackageConfig* BindingData::GetPackageJSON(
+-    Realm* realm, std::string_view path, ErrorContext* error_context) {
++    Realm* realm,
++    std::string_view path,
++    ErrorContext* error_context,
++    bool* scope_boundary) {
+   auto binding_data = realm->GetBindingData<BindingData>();
+ 
+   auto cache_entry = binding_data->package_configs_.find(path.data());
+@@ -114,6 +154,15 @@
+   // No need to exclude BOM since simdjson will skip it.
+   int read_error = ReadFileSync(&package_config.raw_json, path.data());
+   if (read_error < 0) {
++#ifdef _WIN32
++    if (scope_boundary != nullptr &&
++        (read_error == UV_EACCES || read_error == UV_EPERM ||
++         read_error == UV_ENOENT || read_error == UV_ENOTDIR) &&
++        IsAppContainerPackageScopeBoundary(path)) {
++      *scope_boundary = true;
++      return nullptr;
++    }
++#endif
+     // No file at this path, a path component that is not a directory, or a
+     // "package.json" that is itself a directory all mean there is no package
+     // config here. Any other failure means a package.json is present but
+@@ -340,8 +389,12 @@
+ 
+     auto package_json_path = current_path / "package.json";
+ 
+-    auto package_json =
+-        GetPackageJSON(realm, ConvertPathToUTF8(package_json_path), nullptr);
++    bool scope_boundary = false;
++    auto package_json = GetPackageJSON(realm,
++                                      ConvertPathToUTF8(package_json_path),
++                                      nullptr,
++                                      &scope_boundary);
++    if (scope_boundary) return nullptr;
+     if (package_json != nullptr) {
+       return package_json;
+     }
+@@ -450,8 +503,12 @@
+                                   .ToLocalChecked());
+     ToNamespacedPath(realm->env(), &file_path_buf);
+     error_context.specifier = resolved.ToString();
+-    auto package_json =
+-        GetPackageJSON(realm, file_path_buf.ToStringView(), &error_context);
++    bool scope_boundary = false;
++    auto package_json = GetPackageJSON(realm,
++                                      file_path_buf.ToStringView(),
++                                      &error_context,
++                                      &scope_boundary);
++    if (scope_boundary) break;
+     if (package_json != nullptr) {
+       if constexpr (return_only_type) {
+         Local<Value> value;
+--- a/src/node_modules.h
++++ b/src/node_modules.h
+@@ -89,7 +89,8 @@
+   static const PackageConfig* GetPackageJSON(
+       Realm* realm,
+       std::string_view path,
+-      ErrorContext* error_context = nullptr);
++      ErrorContext* error_context = nullptr,
++      bool* scope_boundary = nullptr);
+   static const PackageConfig* TraverseParent(
+       Realm* realm, const std::filesystem::path& check_path);
+ };

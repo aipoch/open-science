@@ -18,7 +18,7 @@ const deferred = <T = void>(): {
 }
 
 const powerShellResult = {
-  runtimeBinding: { kind: 'powershell' as const, version: '5.1' as const },
+  runtimeBinding: { kind: 'powershell' as const, version: '7.6' as const },
   appliesTo: 'subsequent-executions' as const,
   wslProfilePreserved: true
 }

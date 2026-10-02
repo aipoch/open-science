@@ -9123,6 +9123,17 @@ const analyzePythonFileAccessTree = (
     }
     if (!call) {
       if (
+        canonicalName.includes('.') &&
+        !libraryMethodEffect &&
+        ['exec_module', 'load_module'].includes(member)
+      ) {
+        // An unmodeled loader executes arbitrary module code and may also write
+        // bytecode. Neither its I/O nor a platform-specific cache path is known.
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
+      if (
         helperScopeDepth > 0 &&
         !libraryMethodEffect &&
         (!SAFE_CALLS.has(rawName) || shadowedStaticCalls.has(rawName)) &&
@@ -9693,7 +9704,12 @@ const analyzePythonFileAccessTree = (
               ? 'pathlib.PurePath'
               : scientificObjectType(valueNode)
           const importedAlias =
-            valueNode?.type === 'Name' && valueNode.id ? importedNames.get(valueNode.id) : undefined
+            valueNode?.type === 'Name' && valueNode.id
+              ? importedNames.get(valueNode.id)
+              : valueNode?.type === 'Attribute' &&
+                  ['exec_module', 'load_module'].includes(valueNode.attr ?? '')
+                ? canonicalCallName({ type: 'Call', _fields: ['func'], func: valueNode })
+                : undefined
           const archiveAlias =
             (valueNode?.type === 'Call' && canonicalCallName(valueNode) === 'zipfile.ZipFile') ||
             (valueNode?.type === 'Name' && valueNode.id && archiveNames.has(valueNode.id))
@@ -9729,6 +9745,17 @@ const analyzePythonFileAccessTree = (
         if (target.type !== 'Name' || !target.id) continue
         if (isHelperName(target.id)) shadowedHelperNames.add(target.id)
         if (conditionalDepth > 0) {
+          if (
+            [importedAlias, importedNames.get(target.id)].some((name) =>
+              ['exec_module', 'load_module'].includes(name?.split('.').at(-1) ?? '')
+            )
+          ) {
+            // Either branch may leave a loader callable alive. Losing its exact
+            // identity cannot certify subsequent module execution as I/O-free.
+            unresolvedReads = true
+            unresolvedWrites = true
+            unsupportedExternalState = true
+          }
           // A skipped rebind leaves the old object alive through this name.
           for (const values of [collections, partialMappingKeys, partialCollectionRows]) {
             const previous = values.get(target.id)

@@ -29,7 +29,7 @@ export const mountDocxOutlineSelect = (
           onSelect(Number(value))
         }}
       >
-        <SelectTrigger aria-label={label} className="h-8 min-w-0">
+        <SelectTrigger aria-label={label} className="h-7 min-w-0 text-sm">
           <SelectValue placeholder={label} />
         </SelectTrigger>
         <SelectContent className="max-w-72">

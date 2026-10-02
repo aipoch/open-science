@@ -73,6 +73,13 @@ const validatedChannels = [
   'projects:retry-deletion-cleanup',
   'projects:update',
   'projects:update-archive',
+  'session-replay:get',
+  'session-replay:get-selection-snapshot',
+  'session-replay:list',
+  'session-replay:list-selection-snapshots',
+  'session-replay:save-selection-snapshot',
+  'session-replay:save-view',
+  'session-replay:unlink-session',
   'sessions:cancel-diagnostics',
   'sessions:delete-session',
   'sessions:edit-details',
@@ -84,6 +91,7 @@ const validatedChannels = [
   'sessions:inspect-diagnostics',
   'sessions:link-pdf-context',
   'sessions:package-operation',
+  'sessions:retry-runtime-terminal-commit',
   'sessions:set-delegation-policy',
   'sessions:unlink-pdf-context',
   'sessions:update-archive',
@@ -122,6 +130,27 @@ beforeEach(() => {
 })
 
 describe('Electron Application Command adapter', () => {
+  it('dispatches an exact terminal retry through the standard caller lease and command envelope', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined)
+    registerApplicationCommandElectronAdapter(dispatcher(invoke), { warn })
+    const request = {
+      projectId: 'project',
+      sessionId: 'session',
+      promptMessageId: 'prompt',
+      executionId: 'execution'
+    }
+    await expect(
+      handlers.get('sessions:retry-runtime-terminal-commit')?.(eventWithLease(), request)
+    ).resolves.toEqual({ ok: true, result: undefined })
+    expect(invoke).toHaveBeenCalledExactlyOnceWith(
+      'sessions:retry-runtime-terminal-commit',
+      expect.objectContaining({
+        args: [request],
+        callerLease: expect.objectContaining({ isCurrent: expect.any(Function) })
+      })
+    )
+  })
+
   it('installs the catalog-selected validated slice with caller context and lease', async () => {
     const result = [{ id: 'project-1' }]
     const invoke = vi.fn().mockResolvedValue(result)

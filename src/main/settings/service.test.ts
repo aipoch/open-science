@@ -210,6 +210,7 @@ const createService = (
     log?: Logger
     installCoordinator?: SettingsInstallCoordinator
     wslSetup?: SettingsServiceOptions['wslSetup']
+    getNotebookNetworkStatus?: SettingsServiceOptions['getNotebookNetworkStatus']
     wsl2PreviewStatus?: SettingsServiceOptions['wsl2PreviewStatus']
   } = {}
 ): InstanceType<typeof SettingsService> =>
@@ -301,6 +302,13 @@ const createService = (
     claudeSharedAuth: options.claudeSharedAuth as any,
     installCoordinator: options.installCoordinator,
     wslSetup: options.wslSetup,
+    getNotebookNetworkStatus:
+      options.getNotebookNetworkStatus ??
+      (async () => ({
+        kind: 'setupRequired',
+        platform: 'win32',
+        reasons: ['windowsProfileMissing']
+      })),
     wsl2PreviewStatus:
       options.wsl2PreviewStatus ?? (() => ({ available: true, reason: 'available' }))
   })
@@ -629,6 +637,33 @@ describe('SettingsService: Marketplace installation projection', () => {
 })
 
 describe('SettingsService: Local Shell runtime', () => {
+  it('uses Core only after protection is ready', async () => {
+    const service = createService(undefined, {
+      getNotebookNetworkStatus: async () => ({ kind: 'ready', warnings: [] })
+    })
+    expect((await service.switchLocalShellToPowerShell()).result.runtimeBinding).toEqual({
+      kind: 'powershell',
+      version: '7.6'
+    })
+  })
+
+  it.each(['error', 'checking'] as const)(
+    'preserves the selected runtime while protection is %s',
+    async (kind) => {
+      const service = createService(undefined, {
+        getNotebookNetworkStatus: async () =>
+          kind === 'error' ? { kind, reason: 'runtimeFailure' } : { kind }
+      })
+      const profile = { distro: 'fixture-distro', user: 'fixture-user' }
+      await repository.setLocalShellRuntime('wsl2-bash', profile)
+      await expect(service.switchLocalShellToPowerShell()).rejects.toThrow(
+        'Prepare Notebook protection'
+      )
+      await expect(repository.getSettings()).resolves.toMatchObject({
+        localShellRuntime: 'wsl2-bash'
+      })
+    }
+  )
   it('projects the current persisted Shell runtime into a cached WSL setup snapshot', async () => {
     const selection = { distro: 'Ubuntu-24.04', user: 'scientist' }
     let cachedRuntime: 'powershell' | 'wsl2-bash' = 'wsl2-bash'
@@ -8847,4 +8882,80 @@ describe('SettingsService: claude-shared login orchestration', () => {
     service.cancelClaudeLogin()
     expect(auth.cancelLogin).toHaveBeenCalledOnce()
   })
+})
+
+describe('Notebook protection Shell capability switch', () => {
+  it('refreshes existing conversations after setup and removal before returning status', async () => {
+    const calls: string[] = []
+    let protectedMode = false
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      installNotebookNetwork: async () => {
+        protectedMode = true
+        calls.push('install')
+        return { cancelled: false }
+      },
+      removeNotebookNetwork: async () => {
+        protectedMode = false
+        calls.push('remove')
+        return { cancelled: false }
+      },
+      refreshNotebookShellCapabilities: async () => {
+        calls.push(protectedMode ? 'refresh-7.6' : 'refresh-5.1')
+      },
+      getNotebookNetworkStatus: async () => {
+        calls.push('status')
+        return protectedMode
+          ? { kind: 'ready', warnings: [] }
+          : { kind: 'setupRequired', platform: 'win32', reasons: [] }
+      }
+    })
+    await service.installNotebookNetwork()
+    await service.removeNotebookNetwork()
+    expect(calls).toEqual(['install', 'refresh-7.6', 'status', 'remove', 'refresh-5.1', 'status'])
+  })
+
+  it.each(['installNotebookNetwork', 'removeNotebookNetwork'] as const)(
+    'does not refresh when %s is cancelled or fails',
+    async (method) => {
+      const operation = vi
+        .fn()
+        .mockResolvedValueOnce({ cancelled: true })
+        .mockRejectedValueOnce(new Error('setup failed'))
+      const refresh = vi.fn()
+      const service = new SettingsService({
+        configRoot: storageRoot,
+        repository,
+        [method]: operation,
+        refreshNotebookShellCapabilities: refresh,
+        getNotebookNetworkStatus: async () => ({
+          kind: 'setupRequired',
+          platform: 'win32',
+          reasons: []
+        })
+      })
+      await service[method]()
+      await expect(service[method]()).rejects.toThrow('setup failed')
+      expect(refresh).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['installNotebookNetwork', 'removeNotebookNetwork'] as const)(
+    'does not report %s success until capabilities have refreshed',
+    async (method) => {
+      const status = vi.fn().mockResolvedValue({ kind: 'ready' })
+      const service = new SettingsService({
+        configRoot: storageRoot,
+        repository,
+        [method]: async () => ({ cancelled: false }),
+        refreshNotebookShellCapabilities: async () => {
+          throw new Error('refresh failed')
+        },
+        getNotebookNetworkStatus: status
+      })
+      await expect(service[method]()).rejects.toThrow('refresh failed')
+      expect(status).not.toHaveBeenCalled()
+    }
+  )
 })

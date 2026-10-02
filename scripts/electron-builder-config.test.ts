@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { FileMatcher } from 'app-builder-lib/out/fileMatcher'
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
@@ -32,6 +33,23 @@ describe('macOS native privacy purpose descriptions', () => {
 })
 
 describe('electron-builder native image processing', () => {
+  it.each(['tmp/fixture-build/node.exe', 'tmp/fixture-trace.log', 'docs/internal/fixture-plan.md'])(
+    'keeps local-only %s out of the packaged application',
+    (relativePath) => {
+      const root = process.cwd()
+      const config = load(readFileSync(join(root, 'electron-builder.yml'), 'utf8')) as {
+        files?: string[]
+      }
+      const matcher = new FileMatcher(root, root, (pattern) => pattern, config.files)
+      if (matcher.containsOnlyIgnore()) matcher.prependPattern('**/*')
+      const filter = matcher.createFilter()
+      const file = statSync(join(root, 'package.json'))
+
+      expect(filter(join(root, relativePath), file)).toBe(false)
+      expect(filter(join(root, 'out/main/index.js'), file)).toBe(true)
+    }
+  )
+
   it('ships sharp and its platform binary outside the ASAR archive', () => {
     const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
       asarUnpack?: string[]

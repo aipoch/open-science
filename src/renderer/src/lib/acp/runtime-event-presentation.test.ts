@@ -109,4 +109,69 @@ describe('runtime event presentation reducer', () => {
       })
     ])
   })
+
+  it('attributes a terminal tool to the owning prompt after a routed reply without an active run', () => {
+    const store = createSessionStore()
+    const context = createRuntimePresentationContext()
+    const prompt = store.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Inspect the repository'
+    })
+    store.getState().setAgentPromptInFlight('session-1', true)
+    // The foreground runtime can own the request while the renderer holds no local run record.
+    store.setState((state) => ({
+      sessions: state.sessions.map((session) => ({ ...session, activeRun: undefined }))
+    }))
+    applyRuntimePresentationEvent(
+      event({
+        id: 'steering',
+        role: 'user',
+        messageId: 'steering-message',
+        text: 'Also check the tests',
+        promptMessageId: prompt?.messageId
+      }),
+      store,
+      context
+    )
+    expect(store.getState().sessions[0].awaitingFirstAgentOutput).toBeFalsy()
+    for (const [id, status] of [
+      ['tool-start', 'in_progress'],
+      ['tool-stop', 'completed']
+    ] as const)
+      applyRuntimePresentationEvent(
+        event({
+          id,
+          kind: 'tool',
+          toolCallId: 'bash-call',
+          providerToolName: 'Bash',
+          toolKind: 'execute',
+          title: 'npm test',
+          status,
+          promptMessageId: prompt?.messageId
+        }),
+        store,
+        context
+      )
+
+    const session = store.getState().sessions[0]
+    console.log(
+      JSON.stringify({
+        m: session.messages.map(({ id, role, responseToMessageId }) => ({
+          id,
+          role,
+          responseToMessageId
+        })),
+        a: session.activities?.map(({ id, promptMessageId, status }) => ({
+          id,
+          promptMessageId,
+          status
+        })),
+        run: session.activeRun,
+        st: session.status,
+        p: prompt
+      })
+    )
+    expect(session.messages.at(-1)?.responseToMessageId).toBe(prompt?.messageId)
+    expect(session.awaitingFirstAgentOutput).toBe(true)
+  })
 })

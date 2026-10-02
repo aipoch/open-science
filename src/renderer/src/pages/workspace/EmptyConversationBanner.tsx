@@ -6,52 +6,12 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { sessionPackageImportAvailable } from '@/components/session-package-import-menu-model'
 import { importSessionPackage } from '@/lib/session-package-import'
-import { cn } from '@/lib/utils'
 
 import { FlaskLogo } from '@/components/flask-logo'
-
-// Tracks whether any file drag is active over the window so the entry row can light up as a valid
-// drop target. The actual drop stays with the page-level ProjectPackageDropZone capture.
-const useFileDragActive = (): boolean => {
-  const depth = useRef(0)
-  const [active, setActive] = useState(false)
-  useEffect(() => {
-    const isFileDrag = (event: DragEvent): boolean =>
-      Array.from(event.dataTransfer?.types ?? []).includes('Files')
-    const onDragEnter = (event: DragEvent): void => {
-      if (!isFileDrag(event)) return
-      depth.current++
-      setActive(true)
-    }
-    const onDragLeave = (event: DragEvent): void => {
-      if (!isFileDrag(event)) return
-      depth.current = Math.max(0, depth.current - 1)
-      if (depth.current === 0) setActive(false)
-    }
-    const reset = (): void => {
-      depth.current = 0
-      setActive(false)
-    }
-    window.addEventListener('dragenter', onDragEnter)
-    window.addEventListener('dragleave', onDragLeave)
-    // ProjectPackageDropZone handles package drops during capture and stops propagation, so
-    // listen during capture as well to clear the highlight before that handler runs.
-    window.addEventListener('drop', reset, true)
-    window.addEventListener('dragend', reset, true)
-    return () => {
-      window.removeEventListener('dragenter', onDragEnter)
-      window.removeEventListener('dragleave', onDragLeave)
-      window.removeEventListener('drop', reset, true)
-      window.removeEventListener('dragend', reset, true)
-    }
-  }, [])
-  return active
-}
 
 const SessionPackageEntryRow = ({ projectId }: { projectId: string }): React.JSX.Element => {
   const { t } = useTranslation()
   const pickerRef = useRef<HTMLInputElement>(null)
-  const dragActive = useFileDragActive()
   const [guideOpen, setGuideOpen] = useState(false)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const triggerHoveredRef = useRef(false)
@@ -99,10 +59,7 @@ const SessionPackageEntryRow = ({ projectId }: { projectId: string }): React.JSX
   return (
     <div
       data-testid="session-package-entry"
-      className={cn(
-        'pointer-events-auto mt-2.5 flex w-[420px] max-w-full items-center gap-3 rounded-[10px] border-[1.5px] border-dashed border-bg-400 bg-transparent px-4 py-3 text-left transition-colors hover:border-text-300 hover:bg-bg-200/50',
-        dragActive && 'border-primary bg-primary/5 hover:border-primary hover:bg-primary/5'
-      )}
+      className="pointer-events-auto mt-2.5 flex w-[420px] max-w-full items-center gap-3 rounded-[10px] border-[1.5px] border-dashed border-bg-400 bg-transparent px-4 py-3 text-left transition-colors hover:border-text-300 hover:bg-bg-200/50"
     >
       <input
         ref={pickerRef}
@@ -116,12 +73,7 @@ const SessionPackageEntryRow = ({ projectId }: { projectId: string }): React.JSX
           if (file) void importSessionPackage(projectId, file)
         }}
       />
-      <span
-        className={cn(
-          'flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-bg-200 text-text-200 transition-colors',
-          dragActive && 'bg-primary/10 text-primary'
-        )}
-      >
+      <span className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-bg-200 text-text-200 transition-colors">
         <PackageOpen className="size-[15px]" aria-hidden="true" />
       </span>
       <button
@@ -133,7 +85,7 @@ const SessionPackageEntryRow = ({ projectId }: { projectId: string }): React.JSX
         <span className="block text-[13px] font-medium text-text-000">
           {t('Import previous research')}
         </span>
-        <span className="mt-0.5 block text-xs text-text-300">
+        <span className="mt-0.5 block text-xs text-text-100">
           {t('Drag a .science research package onto this page, or choose a file')}
         </span>
       </button>
@@ -248,9 +200,11 @@ const SessionPackageEntryRow = ({ projectId }: { projectId: string }): React.JSX
 
 const EmptyConversationBanner = ({
   onStartResearch,
+  researchTitle,
   sessionImport
 }: {
   onStartResearch?: (prompt: string) => void
+  researchTitle?: string
   sessionImport?: { projectId: string; canImport: boolean }
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -263,10 +217,14 @@ const EmptyConversationBanner = ({
       <FlaskLogo className="size-28 text-text-300 opacity-40 md:size-32 dark:opacity-80" />
       <div className="flex flex-col gap-2">
         <h2 className="text-balance text-lg font-normal text-text-000 md:text-xl">
-          {t('What will you research in Open-Science?')}
+          {researchTitle
+            ? t('What would you like to understand about this research?')
+            : t('What will you research in Open-Science?')}
         </h2>
         <p className="text-xs text-text-100">
-          {t('Attach data or papers, then describe what you want to find out.')}
+          {researchTitle
+            ? t('Play the replay on the right, or ask about the archived methods and results.')
+            : t('Attach data or papers, then describe what you want to find out.')}
         </p>
       </div>
       {onStartResearch ? (

@@ -1,6 +1,7 @@
 import { ncbiEtiquette } from './ncbi'
 import type { ToolContext, ToolDescriptor } from '../types'
 import { ENA_OMICS_TOOLS } from './omics-ena'
+import { GEO_MATRIX_TOOLS } from './omics-geo-matrix'
 import { WORKBENCH_OMICS_TOOLS } from './omics-workbench'
 
 // Public read-only endpoints for the omics data archives grouped under this connector.
@@ -1189,6 +1190,7 @@ async function prideProjectFiles(ctx: ToolContext, args: Obj): Promise<Obj> {
 // ===========================================================================
 export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
   ...ENA_OMICS_TOOLS,
+  ...GEO_MATRIX_TOOLS,
   ...WORKBENCH_OMICS_TOOLS,
   // ---- ArrayExpress (BioStudies) ----
   {
@@ -1387,7 +1389,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     id: 'geo_get_series',
     connector: 'omics-archives',
     description:
-      'Fetch structured metadata for GEO series (GSE accessions) with samples included — series title/summary/design, platforms, samples with characteristics and library info, and supplementary-file URLs. Data tables are never downloaded.',
+      'Fetch structured metadata for GEO series (GSE accessions) with samples included — series title/summary/design, platforms, samples with characteristics and library info, and supplementary-file URLs. Data tables are never downloaded. Use geo_get_matrix_files next to discover Series Matrix and NCBI-generated RNA-seq count files, then geo_preflight_matrix to check decompressed data against these samples.',
     input: {
       type: 'object',
       properties: {

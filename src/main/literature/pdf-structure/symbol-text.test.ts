@@ -116,6 +116,7 @@ it.each([
   ['AdvMT_SY', 188, '¼', '=', 770],
   ['MinionMathSymbols', 136, '�', '=', 583],
   ['TeX_CM_Bold_Maths_Symbols', 136, '¼', '=', 885],
+  ['TeX_CM_Bold_Maths_Symbols', 135, 'þ', '+', 885],
   ['AdvP7CA8', 85, 'U', '=', 833],
   ['AdvPS3FDD77', 91, '[', '=', 1000],
   ['AdvPSMP4', 91, '[', '>', 1000],

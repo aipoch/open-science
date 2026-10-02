@@ -1,3 +1,5 @@
+import { SessionReadingOwner } from '../session-replay/session-reading'
+import { SessionReplayRepository } from '../session-replay/repository'
 import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
 import { homedir } from 'node:os'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -176,7 +178,15 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   beforeSessionDelete?: (sessionId: string) => Promise<void>
   afterSessionDelete?: (sessionId: string, retained: boolean) => void
   specialistService?: SpecialistService
-  sessionPersistenceCoordinator?: SessionRuntimeContextCommands & SessionMutation & SessionCatalog
+  sessionPersistenceCoordinator?: SessionRuntimeContextCommands &
+    SessionMutation &
+    SessionCatalog &
+    Partial<
+      Pick<
+        import('../session-persistence/coordinator').SessionPersistenceCommands,
+        'recordRuntimeTerminalFailure'
+      >
+    >
   finalizeRuntimeArtifacts?: (request: {
     claimId: string
     messageId: string
@@ -328,7 +338,13 @@ const createAcpRuntime = ({
             ),
           mutateSession: (scope, mutate) =>
             sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate),
-          finalizeArtifacts: finalizeRuntimeArtifacts
+          finalizeArtifacts: finalizeRuntimeArtifacts,
+          onTerminalCommitExhausted: (_scope, event, retry, waitForWriteRelease) =>
+            sessionPersistenceCoordinator.recordRuntimeTerminalFailure?.(
+              event,
+              retry,
+              waitForWriteRelease
+            )
         })
       : undefined
   const eventBroadcast = createAcpRuntimeEventBroadcastCoalescer({
@@ -898,6 +914,14 @@ const createAcpRuntime = ({
           : {}),
         callbacks: runtimeCallbacks,
         sideChatRelays,
+        prepareSessionReading:
+          !delegatedNotebookConnection && sessionPersistenceCoordinator
+            ? (request) =>
+                new SessionReadingOwner(
+                  new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
+                  sessionPersistenceCoordinator
+                ).prepare(request)
+            : undefined,
         hasPendingCredentialRequest,
         ...(!delegatedNotebookConnection && memory ? { memory } : {}),
         permissionGrantStore,

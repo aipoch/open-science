@@ -843,7 +843,16 @@ describe('WorkspaceSidebar accessible render', () => {
         Array.from(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
         )
-      ).toEqual(['toggle-pin', 'edit', 'download-artifacts', 'view-notebook', 'archive', 'delete'])
+      ).toEqual([
+        'toggle-pin',
+        'edit',
+        'discuss',
+        'view-replay',
+        'download-artifacts',
+        'view-notebook',
+        'archive',
+        'delete'
+      ])
       expect(menu?.querySelector('[data-slot="dropdown-menu-sub-trigger"]')?.textContent).toBe(
         'Export'
       )
@@ -865,7 +874,16 @@ describe('WorkspaceSidebar accessible render', () => {
         Array.from(dropdown?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
         )
-      ).toEqual(['toggle-pin', 'edit', 'download-artifacts', 'view-notebook', 'archive', 'delete'])
+      ).toEqual([
+        'toggle-pin',
+        'edit',
+        'discuss',
+        'view-replay',
+        'download-artifacts',
+        'view-notebook',
+        'archive',
+        'delete'
+      ])
       await clickRadixMenuItem(
         dropdown?.querySelector<HTMLElement>('[data-action-id="toggle-pin"]')
       )
@@ -928,6 +946,8 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(actions.map((item) => item.dataset.actionId)).toEqual([
         'toggle-pin',
         'edit',
+        'discuss',
+        'view-replay',
         'view-notebook',
         'archive',
         'delete'

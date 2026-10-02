@@ -46,9 +46,14 @@ jobs:
         with:
           workflow-file: runtime-resource-soak.yml
 
+  windows_notebook_runtime:
+    needs: plan
+    if: needs.plan.outputs.should_test == 'true' && inputs.mode != 'package-macos-arm64'
+    uses: ./.github/workflows/windows-notebook-runtime.yml
+
   runtime_resource_soak:
     name: Windows runtime resource ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'soak' }}
-    needs: plan
+    needs: [plan, windows_notebook_runtime]
     if: needs.plan.outputs.should_test == 'true' && inputs.mode != 'package-macos-arm64'
     runs-on: windows-latest
     timeout-minutes: 70
@@ -67,6 +72,13 @@ jobs:
 
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+
+      - name: Download Windows Notebook runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          merge-multiple: true
 
       - name: Record runtime resource profile
         shell: pwsh
@@ -99,7 +111,7 @@ jobs:
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:
     name: Report scheduled outcome
-    needs: [plan, runtime_resource_soak, packaged_performance]
+    needs: [plan, windows_notebook_runtime, runtime_resource_soak, packaged_performance]
     if: ${{ always() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

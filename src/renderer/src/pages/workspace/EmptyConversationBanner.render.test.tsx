@@ -36,6 +36,7 @@ describe('EmptyConversationBanner', () => {
     expect(html).toContain('data-testid="session-package-entry"')
     expect(html).toContain('Import previous research')
     expect(html).toContain('Drag a .science research package onto this page, or choose a file')
+    expect(html).toContain('class="mt-0.5 block text-xs text-text-100"')
     expect(html).toContain('aria-label="What is a .science research package?"')
     expect(html).toContain('aria-label="Choose a .science file"')
     expect(html).toContain('accept=".science"')

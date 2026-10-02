@@ -92,6 +92,7 @@ const useWorkspaceSessionAgentConfiguration = (
   useEffect(() => {
     if (
       !activeSession ||
+      activeSession.packageOrigin ||
       activeSession.contentLoaded === false ||
       sessionAgentConfiguration?.status !== 'ready' ||
       !sessionAgentConfiguration.changed
@@ -124,6 +125,7 @@ const useWorkspaceSessionAgentConfiguration = (
   const supportsImageInput = activeModelOption?.supportsImageInput === true || visionRelayAvailable
   const changeAgentConfiguration = useCallback(
     (configuration: SessionAgentConfiguration): void => {
+      if (activeSession?.packageOrigin) return
       if (activeSession) {
         setAgentConfiguration(activeSession.id, configuration)
         return

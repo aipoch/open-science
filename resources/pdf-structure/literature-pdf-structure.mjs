@@ -17,6 +17,7 @@ import {
   startsDetachedTextColumn
 } from './literature-pdf-caption-group.mjs'
 import { collectGraphicsBounds } from './literature-pdf-graphics.mjs'
+import { recordPaintedOperationBounds } from './literature-pdf-render-bounds.mjs'
 import { getDocument, OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
 import { readingRotation } from './literature-pdf-orientation.mjs'
@@ -52,7 +53,9 @@ try {
   if (renderPages) assert(renderPages.every((page) => page <= document.numPages))
   const geometryPages =
     renderPages && adjacent === 'adjacent'
-      ? [...new Set(renderPages.flatMap((page) => [page - 1, page, page + 1]))]
+      ? // A continuation can have one intervening captionless table page. Keep
+        // native look-back bounded; auxiliary failures still cannot fail the job.
+        [...new Set(renderPages.flatMap((page) => [page - 2, page - 1, page, page + 1]))]
           .filter((page) => page > 0 && page <= document.numPages)
           .sort((a, b) => a - b)
       : renderPages
@@ -182,6 +185,7 @@ try {
           viewport: scaled,
           recordOperations: true
         })
+        recordPaintedOperationBounds(rendering)
         await rendering.promise
         Object.assign(pages.at(-1), collectGraphicsBounds(rendering, page.recordedBBoxes))
         if (mode !== 'production') {

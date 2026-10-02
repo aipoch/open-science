@@ -128,6 +128,7 @@ const dispatchQueuedSession = (
             text: item.text,
             attachments: item.snapshot?.attachments,
             annotations: item.snapshot?.annotations,
+            discussionFocus: item.snapshot?.discussionFocus,
             referencedArtifacts: item.snapshot ? docToArtifactRefs(item.snapshot.doc) : undefined,
             parts: item.snapshot ? docToMessageParts(item.snapshot.doc) : undefined,
             pdfContext: item.snapshot?.pdfContext,

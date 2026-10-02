@@ -898,7 +898,8 @@ describe('AcpPromptTurnWorkflow', () => {
       undefined,
       undefined,
       { text: request().text, attribution },
-      undefined
+      undefined,
+      false
     )
     expect(begin.mock.invocationCallOrder[0]).toBeLessThan(
       harness.executor.mock.invocationCallOrder[0]
@@ -923,7 +924,8 @@ describe('AcpPromptTurnWorkflow', () => {
       undefined,
       'message-1',
       undefined,
-      undefined
+      undefined,
+      true
     )
     expect(harness.executor).not.toHaveBeenCalled()
     expect(harness.owner.current('s1')).toBeUndefined()

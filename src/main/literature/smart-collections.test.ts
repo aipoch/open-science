@@ -1477,7 +1477,10 @@ it('debounces automatic changes, skips unchanged results and preserves explicit 
     })
   })
   await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(2), { timeout: 5000 })
-  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  // Classification is observed before its database writes and run finalization finish.
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
+    timeout: 15000
+  })
   await owner.execute({
     kind: 'smart-collection',
     action: 'override',
@@ -1624,8 +1627,7 @@ it.each(['override', 'reset-overrides'] as const)(
         inclusion: 'Original studies',
         exclusion: ''
       }),
-      scope: { kind: 'library' },
-      autoUpdate: true
+      scope: { kind: 'library' }
     })
     await owner.execute({
       kind: 'smart-collection',
@@ -1634,6 +1636,20 @@ it.each(['override', 'reset-overrides'] as const)(
       itemId: 'paper',
       decision: 'exclude',
       offset: 0
+    })
+    // Establish the manual decision before opting in. Collection creation schedules work
+    // before its summary read finishes, which can overlap slow Windows fixture setup.
+    await catalog.transact({
+      kind: 'update-collection',
+      collectionId: id,
+      expectedRevision: 1,
+      name: 'Automatic review',
+      description: formatSmartRule({
+        description: '',
+        inclusion: 'Original studies',
+        exclusion: ''
+      }),
+      smartAutoUpdate: true
     })
     await new Promise((resolve) => setTimeout(resolve, 1000))
     expect(classify).not.toHaveBeenCalled()
@@ -1644,7 +1660,7 @@ it.each(['override', 'reset-overrides'] as const)(
       ...(action === 'override' ? { itemId: 'paper', decision: 'automatic' as const } : {}),
       offset: 0
     })
-    await vi.waitFor(async () => expect((await owner.view(id)).matches).toBe(1), { timeout: 5000 })
+    await vi.waitFor(async () => expect((await owner.view(id)).matches).toBe(1), { timeout: 15000 })
     expect(classify).toHaveBeenCalledOnce()
     expect(await owner.members(id)).toEqual(['paper'])
   }

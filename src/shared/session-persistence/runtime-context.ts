@@ -1,3 +1,4 @@
+import { sessionReadingContextSchema, type SessionReadingContext } from '../session-reading'
 import {
   type SessionRuntimeContext,
   type SessionPlanRuntimeContext,
@@ -34,6 +35,7 @@ export const sanitizeSessionRuntimeContext = (
     plan?: SessionPlanRuntimeContext
     delegatedWork?: SessionDelegatedWorkRuntimeContext
     permission?: SessionPermissionRuntimeContext
+    sessionContext?: SessionReadingContext
     pdfContext?: SessionPdfContext
     sideChat?: PersistedSideChat
     sideChats?: readonly PersistedSideChat[]
@@ -75,6 +77,12 @@ export const sanitizeSessionRuntimeContext = (
         if (!delegatedWork) return undefined
         result.delegatedWork = delegatedWork
       }
+      continue
+    }
+    if (owner === 'sessionContext') {
+      const parsed = sessionReadingContextSchema.safeParse(ownerValue)
+      if (!parsed.success) return undefined
+      result.sessionContext = parsed.data
       continue
     }
     if (owner === 'sideChat') {

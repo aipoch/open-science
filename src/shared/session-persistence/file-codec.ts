@@ -23,7 +23,9 @@ import type { RuntimeCodec } from '../application-command-contract'
 
 // Wraps a session in the on-disk envelope written per file.
 export const createSessionFile = (session: PersistedChatSession): PersistedSessionFile => {
-  const materialized = materializeSessionConversationGraph(session)
+  const { recordProblems: ignored, ...durable } = session
+  void ignored
+  const materialized = materializeSessionConversationGraph(durable)
   const compactMessage = <Message extends PersistedChatMessage>(message: Message): Message =>
     message.status === 'streaming'
       ? message

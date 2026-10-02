@@ -39,6 +39,40 @@ const invocation = (session: ChatSession): SessionActionInvocation => ({
 })
 
 describe('session action menu', () => {
+  it('offers discussion and replay for ordinary running Sessions and forwards the selected source', async () => {
+    const onViewReplay = vi.fn()
+    const onDiscussSession = vi.fn(async () => undefined)
+    const bindings = createSessionActionBindings({
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      canDownloadArtifacts: false,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onViewReplay,
+      onDiscussSession
+    })
+    const context = invocation(createSession({ status: 'running' }))
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'source',
+        catalog: SESSION_ACTION_CATALOG,
+        recipe: SESSION_ACTION_RECIPE,
+        bindings
+      },
+      context
+    )
+    for (const action of ['discuss', 'view-replay'] as const) {
+      expect(
+        entries.find((entry) => entry.kind === 'action' && entry.action === action)
+      ).toMatchObject({ disabled: false })
+      await bindings[action].execute(context)
+    }
+    expect(onViewReplay).toHaveBeenCalledWith(context.session)
+    expect(onDiscussSession).toHaveBeenCalledWith(context.session)
+  })
   it('preserves the existing action order and executes every action for the invocation session', async () => {
     const session = createSession()
     const handlers = {
@@ -213,6 +247,37 @@ it('groups conversation and package exports while keeping package admission inde
   ])
   await bindings['export-package'].execute(context)
   expect(onExportPackage).toHaveBeenCalledWith(context.session)
+})
+
+it('keeps inactive Attention sessions available for fork and package export', () => {
+  const bindings = createSessionActionBindings({
+    canMutateConversations: true,
+    canDeleteConversations: false,
+    canDownloadArtifacts: true,
+    onTogglePin: vi.fn(),
+    onRenameSession: vi.fn(),
+    onDownloadArtifacts: vi.fn(),
+    onViewNotebook: vi.fn(),
+    onDeleteSession: vi.fn(),
+    onForkSession: vi.fn(async () => undefined),
+    onExportPackage: vi.fn(async () => undefined)
+  })
+  const context = invocation(
+    createSession({ status: 'error', attention: { recordProblems: ['size-limit'] } })
+  )
+  const entries = resolveActionMenuEntries(
+    {
+      identityKey: context.session.id,
+      catalog: SESSION_ACTION_CATALOG,
+      recipe: [
+        { kind: 'action', action: 'export-package' },
+        { kind: 'action', action: 'fork' }
+      ],
+      bindings
+    },
+    context
+  )
+  expect(entries).toMatchObject([{ disabled: false }, { disabled: false }])
 })
 
 it.each([

@@ -78,6 +78,7 @@ import {
   writeRReadyMarker
 } from './runtime-paths'
 import type { NotebookShellProcess } from './shell-process'
+import * as windowsNotebookRuntime from './windows-notebook-runtime'
 import { NOTEBOOK_CODE_LIMIT_BYTES } from './content-limits'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { projectNotebookDependencies, type AnalyzedNotebookRun } from './dependency-analysis'
@@ -3973,6 +3974,30 @@ describe('notebook runtime service', () => {
   })
 
   describe('executeShell', () => {
+    const restoreWindowsRuntimeMocks: Array<() => void> = []
+    afterEach(() => {
+      for (const restore of restoreWindowsRuntimeMocks.splice(0)) restore()
+    })
+
+    const mockWindowsShellRuntime = (): void => {
+      // These policy/admission tests inject the Shell process. Keep the Windows launch adapter
+      // independent of the host's files and path format; native isolation has its own suite.
+      const resolve = vi
+        .spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookRuntime')
+        .mockReturnValue({
+          root: 'C:\\fixture-runtime',
+          node: 'C:\\fixture-runtime\\node\\node.exe',
+          powershell: 'C:\\fixture-runtime\\powershell\\pwsh.exe'
+        })
+      const environment = vi
+        .spyOn(windowsNotebookRuntime, 'windowsNotebookRuntimeEnvironment')
+        .mockImplementation((environment) => ({ ...environment }))
+      restoreWindowsRuntimeMocks.push(() => {
+        environment.mockRestore()
+        resolve.mockRestore()
+      })
+    }
+
     const createShellService = (root: string): NotebookRuntimeService => {
       const service = new NotebookRuntimeService({
         configRoot: root,
@@ -4069,6 +4094,7 @@ describe('notebook runtime service', () => {
     it.each(['linux', 'win32'] as const)(
       'keeps background Shell Runs in bounded FIFO order and cancels a queued Run idempotently on %s',
       async (platform) => {
+        if (platform === 'win32') mockWindowsShellRuntime()
         const root = await createStorageRoot()
         const entered: string[] = []
         const releaseFirst = createDeferred<void>()
@@ -4141,6 +4167,7 @@ describe('notebook runtime service', () => {
     ] as const)(
       'recovers a lost background Shell receipt and idempotently cancels running work on $platform after $dispatchDelayMs ms dispatch delay',
       async ({ platform, dispatchDelayMs }) => {
+        if (platform === 'win32') mockWindowsShellRuntime()
         const root = await createStorageRoot()
         const executionStarted = createDeferred<void>()
         const dispatchAllowed = createDeferred<void>()
@@ -5301,6 +5328,8 @@ describe('notebook runtime service', () => {
       const first = service.executeShell({ ...scope, command: 'first' })
       // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
       await firstStarted.promise
+      const admittedPath = observedPaths[0]
+      expect(admittedPath).toContain(originalPath)
       const second = service.executeShell({ ...scope, command: 'second' })
       await vi.waitFor(
         async () => {
@@ -5317,7 +5346,7 @@ describe('notebook runtime service', () => {
         process.env.PATH = originalPath
       }
 
-      expect(observedPaths).toEqual([originalPath, originalPath])
+      expect(observedPaths).toEqual([admittedPath, admittedPath])
     })
 
     it('prepares queued Shell sandbox permissions before durable admission', async () => {
@@ -5609,6 +5638,7 @@ describe('notebook runtime service', () => {
       'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item conda-meta\\pwn.json',
       'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'
     ])('uses the PowerShell runtime-write policy on Windows: %s', async (command) => {
+      mockWindowsShellRuntime()
       const root = await createStorageRoot()
       // This portable unit test owns runtime-write policy, not OS parsing or process launch.
       const execute = vi.fn<NotebookShellProcess['execute']>()
@@ -6978,6 +7008,86 @@ describe('notebook runtime service', () => {
       run: { status: 'completed', text: { stdout: 'globalThis.answer = 42\n' } }
     })
   })
+
+  it.each(['rpc', 'file-context'] as const)(
+    'cancels a background REPL during %s preparation without dispatching or losing the lane',
+    async (preparation) => {
+      const root = await createStorageRoot()
+      const preparing = createDeferred<void>()
+      const release = createDeferred<void>()
+      const prepare = async (): Promise<undefined> => {
+        preparing.resolve()
+        await release.promise
+        return undefined
+      }
+      const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+        status: 'completed' as const,
+        stdout: request.code,
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      }))
+      const repository = new NotebookRunRepository(root)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository,
+        backgroundExecutionEnabled: true,
+        ...(preparation === 'rpc'
+          ? {
+              getMcpRpcConnection: async () => {
+                await prepare()
+                return { endpoint: 'http://127.0.0.1:1', token: 'test-token' }
+              }
+            }
+          : {
+              dependencyAnalyzer: {
+                project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+                sourceFileAccessContext: prepare
+              }
+            }),
+        executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+      })
+      const request = { sessionId: 'session-repl-preparation', workspaceCwd: root }
+      const receipt = await service.executeControlBackground({
+        ...request,
+        code: 'must not execute',
+        background: true
+      })
+      await preparing.promise
+      const abort = vi.spyOn(AbortController.prototype, 'abort')
+      const cancelled = service.cancelBackgroundRun({ ...request, runId: receipt.runId })
+      // Wait for the public cancel path to deliver its signal before releasing preparation.
+      try {
+        await vi.waitFor(() => expect(abort).toHaveBeenCalled())
+      } finally {
+        abort.mockRestore()
+        release.resolve()
+      }
+      await expect(cancelled).resolves.toMatchObject({
+        run: { status: 'cancelled', kernelDispatched: false }
+      })
+      expect(execute).not.toHaveBeenCalled()
+      expect(service.getProjectActivity({ projectId: 'default-project' }).kernels).toEqual([
+        expect.objectContaining({ kind: 'repl', status: 'idle' })
+      ])
+      await expect(
+        service.cancelBackgroundRun({ ...request, runId: receipt.runId })
+      ).resolves.toMatchObject({ run: { status: 'cancelled' } })
+      expect(
+        (await repository.findExisting('default-project', request.sessionId))?.runs[0]
+      ).toMatchObject({ status: 'cancelled', kernelDispatched: false })
+      await expect(
+        service.executeControl({ ...request, code: 'return 42' })
+      ).resolves.toMatchObject({
+        status: 'completed',
+        stdout: 'return 42'
+      })
+      expect(execute).toHaveBeenCalledOnce()
+    }
+  )
 
   it('cancels a background REPL idempotently and reports persistent namespace loss', async () => {
     const root = await createStorageRoot()

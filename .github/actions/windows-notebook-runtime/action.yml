@@ -1,0 +1,36 @@
+name: Windows Notebook runtime
+description: Build or restore the pinned AppContainer-compatible Node and PowerShell runtime
+runs:
+  using: composite
+  steps:
+    - name: Cache Windows Notebook runtime
+      id: runtime
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+        key: windows-notebook-runtime-x64-${{ hashFiles('packages/notebook-network-sandbox/vendor/windows-runtime/sources.json', 'packages/notebook-network-sandbox/vendor/windows-runtime/*.patch', 'packages/notebook-network-sandbox/vendor/windows-runtime/build.ps1') }}
+    - name: Build Windows Notebook runtime
+      if: steps.runtime.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: ./packages/notebook-network-sandbox/vendor/windows-runtime/build.ps1 -BuildRoot "$env:RUNNER_TEMP/os-runtime"
+    - name: Prepare bundled npm for shared Notebook tools
+      shell: pwsh
+      run: |
+        $runtime = Join-Path $env:GITHUB_WORKSPACE 'packages/notebook-network-sandbox/vendor/windows-runtime/x64'
+        & "$runtime/node/node.exe" packages/notebook-network-sandbox/vendor/windows-runtime/npm/prepare.mjs
+        if ($LASTEXITCODE -ne 0) { throw 'Bundled npm repair failed.' }
+    - name: Verify Windows Notebook runtime
+      shell: pwsh
+      run: |
+        $runtime = Join-Path $env:GITHUB_WORKSPACE 'packages/notebook-network-sandbox/vendor/windows-runtime/x64'
+        $sources = Get-Content (Join-Path $runtime '../sources.json') -Raw | ConvertFrom-Json
+        $marker = Get-Content (Join-Path $runtime 'build.json') -Raw | ConvertFrom-Json
+        if ($marker.node -ne $sources.node.version -or $marker.powershell -ne $sources.powershell.version) { throw 'Runtime build marker does not match pinned sources.' }
+        & "$runtime/node/node.exe" scripts/check-windows-notebook-runtime.mjs
+        if ($LASTEXITCODE -ne 0) { throw 'Runtime is missing a required compatibility repair.' }
+        $nodeVersion = & "$runtime/node/node.exe" --version
+        if ($LASTEXITCODE -ne 0 -or $nodeVersion -ne "v$($sources.node.version)") { throw 'Bundled Node version mismatch.' }
+        $shellVersion = & "$runtime/powershell/pwsh.exe" -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+        if ($LASTEXITCODE -ne 0 -or $shellVersion -ne $sources.powershell.version) { throw 'Bundled PowerShell version mismatch.' }
+        & "$runtime/node/node.exe" "$runtime/node/node_modules/npm/bin/npm-cli.js" --version
+        if ($LASTEXITCODE -ne 0) { throw 'Bundled npm cannot start.' }

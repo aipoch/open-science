@@ -7,13 +7,25 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { forkSessionMock } = vi.hoisted(() => ({ forkSessionMock: vi.fn(async () => undefined) }))
+const { forkSessionMock, scrollerProps } = vi.hoisted(() => ({
+  forkSessionMock: vi.fn(async () => undefined),
+  scrollerProps: { turnOutcomeActions: undefined as unknown }
+}))
 vi.mock('@/lib/session-fork', () => ({
   forkSession: forkSessionMock,
   sessionForkAvailable: () => true
 }))
 
 import { ConversationPanel } from './ConversationPanel'
+import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
+import { recordRestartTurnOutcome } from '../../../../main/session-persistence/turn-outcome-authority'
+import {
+  materializeSessionConversationGraph,
+  normalizeSessionAfterRestore
+} from '../../../../shared/session-persistence'
+import type { SessionConversationCommand } from '../../../../shared/session-conversation-command'
+import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
+import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useConversationSubmissions } from './use-conversation-submissions'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { subscribeAnnotationReveal } from './annotations/annotation-reveal'
@@ -32,6 +44,7 @@ import {
   createInitialSessionState,
   createSessionStore,
   toPersistedSession,
+  hydrateSession,
   type ChatSession
 } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
@@ -210,30 +223,49 @@ vi.mock('./WorkspaceMessageScroller', () => ({
     isResumingSession,
     visiblePermissionPending,
     pendingElicitations = [],
-    onStartResearch
+    onStartResearch,
+    activeSession,
+    turnOutcomeActions
   }: {
+    activeSession?: ChatSession
+    turnOutcomeActions?: TurnOutcomeActions
     forkSourceContent?: React.ReactNode
     credentialPending?: boolean
     isResumingSession?: boolean
     visiblePermissionPending?: boolean
     pendingElicitations?: unknown[]
     onStartResearch?: (prompt: string) => void
-  }): React.JSX.Element => (
-    <>
-      {forkSourceContent}
-      {onStartResearch ? (
-        <button onClick={() => onStartResearch('Analyze my data')}>Start research</button>
-      ) : null}
-      {isResumingSession ? (
-        <span data-testid="resume-progress-indicator">Resuming session</span>
-      ) : null}
-      <span data-testid="scroller-pending-elicitations">{pendingElicitations.length}</span>
-      <span data-testid="scroller-credential-pending">{String(credentialPending ?? false)}</span>
-      <span data-testid="scroller-visible-permission-pending">
-        {String(visiblePermissionPending ?? false)}
-      </span>
-    </>
-  )
+  }): React.JSX.Element => {
+    scrollerProps.turnOutcomeActions = turnOutcomeActions
+    return (
+      <>
+        {forkSourceContent}
+        {activeSession && turnOutcomeActions
+          ? createWorkspaceConversationTimeline(activeSession).map((item) =>
+              item.type === 'turn-outcome' ? (
+                <HistoricalTurnOutcome
+                  key={item.id}
+                  promptMessageId={item.promptMessageId}
+                  outcome={item.outcome}
+                  actions={turnOutcomeActions}
+                />
+              ) : null
+            )
+          : null}
+        {onStartResearch ? (
+          <button onClick={() => onStartResearch('Analyze my data')}>Start research</button>
+        ) : null}
+        {isResumingSession ? (
+          <span data-testid="resume-progress-indicator">Resuming session</span>
+        ) : null}
+        <span data-testid="scroller-pending-elicitations">{pendingElicitations.length}</span>
+        <span data-testid="scroller-credential-pending">{String(credentialPending ?? false)}</span>
+        <span data-testid="scroller-visible-permission-pending">
+          {String(visiblePermissionPending ?? false)}
+        </span>
+      </>
+    )
+  }
 }))
 
 // The ledger is covered by its own test file; here it is a props-reflecting sentinel so
@@ -907,13 +939,18 @@ const dispatchPaste = (files: File[]): boolean => {
   return event.defaultPrevented
 }
 
-const dispatchDrag = (type: string, dataTransferTypes: string[], files: File[] = []): void => {
+const dispatchDrag = (
+  type: string,
+  dataTransferTypes: string[],
+  files: File[] = [],
+  target = getComposerForm()
+): void => {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'dataTransfer', {
     value: { types: dataTransferTypes, files, dropEffect: 'none' }
   })
   act(() => {
-    getComposerForm().dispatchEvent(event)
+    target.dispatchEvent(event)
   })
 }
 
@@ -924,6 +961,48 @@ describe('ConversationPanel header spacing', () => {
     expect(container.textContent).toContain('Start a new conversation to keep working.')
     renderPanel({ view: { persistenceBlocked: false } })
     expect(container.textContent).not.toContain('Conversation storage limit reached')
+  })
+
+  it('keeps storage, turn and operation errors independent above the composer', () => {
+    const activeSession: ChatSession = {
+      id: 'blocked-failed-turn',
+      projectId: 'project-a',
+      title: 'Blocked failed turn',
+      cwd: '/workspace',
+      status: 'error',
+      messages: [
+        {
+          ...planOriginMessages()[0],
+          turnOutcome: {
+            kind: 'failed',
+            settledAt: 2,
+            error: 'Admitted turn failed.',
+            errorReportable: true
+          }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    renderPanel({
+      view: {
+        activeSession,
+        persistenceBlocked: true,
+        actionError: 'Independent operation failed.'
+      }
+    })
+    expect(container.textContent).toContain('Conversation storage limit reached')
+    expect(container.querySelector('[data-slot="turn-outcome-notice"]')?.textContent).toContain(
+      'Admitted turn failed.'
+    )
+    expect(container.textContent).toContain('Independent operation failed.')
+
+    renderPanel({ view: { activeSession, persistenceBlocked: false, actionError: null } })
+    expect(container.textContent).not.toContain('Conversation storage limit reached')
+    expect(container.textContent).not.toContain('Independent operation failed.')
+    expect(container.querySelector('[data-slot="turn-outcome-notice"]')?.textContent).toContain(
+      'Admitted turn failed.'
+    )
   })
 
   it('shows background export progress in New conversation and Session workspace', () => {
@@ -1110,8 +1189,19 @@ describe('ConversationPanel composer errors', () => {
       errorReportable: true,
       messages: [
         {
+          ...planOriginMessages()[0],
+          turnOutcome: {
+            kind: 'failed',
+            settledAt: 2,
+            error: 'Generated file finalization failed: disk temporarily unavailable',
+            errorReportable: true,
+            recovery: 'retry-artifact-publication'
+          }
+        },
+        {
           id: 'message-1',
           role: 'agent',
+          responseToMessageId: 'plan-origin',
           content: 'Created the report.',
           status: 'complete',
           eventIds: ['artifact-event-1'],
@@ -1151,9 +1241,41 @@ describe('ConversationPanel composer errors', () => {
     expect(report).not.toBeNull()
     expect(error?.parentElement?.classList.contains('flex-col')).toBe(true)
     expect(retry?.parentElement?.classList.contains('flex-wrap')).toBe(true)
-    expect(retry?.parentElement?.classList.contains('self-end')).toBe(true)
+    expect(container.querySelector('[data-slot="turn-outcome-notice"]')).not.toBeNull()
     act(() => retry?.click())
-    expect(request).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledExactlyOnceWith('session-artifact-retry', 'plan-origin')
+  })
+
+  it('keeps Turn Outcome actions stable across draft edits but never calls stale handlers', () => {
+    const firstRequest = vi.fn()
+    const nextRequest = vi.fn()
+    const activeSession: ChatSession = {
+      id: 'session-stable-actions',
+      projectId: 'project-a',
+      title: 'Stable actions',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2
+    }
+    renderPanel({
+      view: { activeSession },
+      workflows: { artifactFinalization: { request: firstRequest } }
+    })
+    const initial = scrollerProps.turnOutcomeActions as TurnOutcomeActions
+
+    renderPanel({
+      view: { activeSession },
+      composer: { view: { doc: docFromText('typing a new draft') } },
+      workflows: { artifactFinalization: { request: nextRequest } }
+    })
+
+    const afterDraftEdit = scrollerProps.turnOutcomeActions as TurnOutcomeActions
+    expect(afterDraftEdit).toBe(initial)
+    afterDraftEdit.onRetryArtifact('plan-origin')
+    expect(firstRequest).not.toHaveBeenCalled()
+    expect(nextRequest).toHaveBeenCalledExactlyOnceWith('session-stable-actions', 'plan-origin')
   })
 
   it('does not offer retry when Artifact provenance proof is invalid', () => {
@@ -3022,6 +3144,20 @@ describe('ConversationPanel composer intake', () => {
     expect(hasDropOverlay()).toBe(false)
   })
 
+  it.each(['workspace-file-drop-zone', 'conversation-header'])(
+    'stages files dropped on %s outside the composer',
+    (testId) => {
+      renderPanel()
+      const target = container.querySelector(`[data-testid="${testId}"]`) as HTMLElement
+      const file = new File(['data'], 'paper.pdf', { type: 'application/pdf' })
+      dispatchDrag('dragenter', ['Files'], [], target)
+      expect(hasDropOverlay()).toBe(true)
+      dispatchDrag('drop', ['Files'], [file], target)
+      expect(onStageAttachmentFiles).toHaveBeenCalledExactlyOnceWith([file])
+      expect(hasDropOverlay()).toBe(false)
+    }
+  )
+
   it('ignores plain-text drags with no overlay and no upload', () => {
     renderPanel()
 
@@ -3041,6 +3177,29 @@ describe('ConversationPanel composer intake', () => {
 
     dispatchDrag('dragenter', ['Files'])
     expect(hasDropOverlay()).toBe(false)
+    dispatchDrag('drop', ['Files'], [new File(['data'], 'data.csv')])
+    expect(onStageAttachmentFiles).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Files cannot be attached right now.')
+  })
+
+  it('does not stage workspace files while an attachment upload is in progress', () => {
+    renderPanel({ composer: { view: { isUploading: true } } })
+    const target = container.querySelector(
+      '[data-testid="workspace-file-drop-zone"]'
+    ) as HTMLElement
+    dispatchDrag('dragenter', ['Files'], [], target)
+    expect(hasDropOverlay()).toBe(false)
+    dispatchDrag('drop', ['Files'], [new File(['data'], 'data.csv')], target)
+    expect(onStageAttachmentFiles).not.toHaveBeenCalled()
+  })
+
+  it('does not stage workspace files into a composer covered by permission approval', () => {
+    renderPanel({ permissions: { requests: [{} as never] } })
+    const target = container.querySelector(
+      '[data-testid="workspace-file-drop-zone"]'
+    ) as HTMLElement
+    dispatchDrag('drop', ['Files'], [new File(['data'], 'data.csv')], target)
+    expect(onStageAttachmentFiles).not.toHaveBeenCalled()
   })
 
   it('submits on Enter through the editor with the picked skill ids', () => {
@@ -4593,6 +4752,632 @@ describe('ConversationPanel composer intake', () => {
 })
 
 describe('ConversationPanel interrupted Session recovery', () => {
+  it('keeps anchorless recovery through real Main prepare/append/start, rollback and admission', () => {
+    const original = materializeSessionConversationGraph({
+      id: 'anchorless-main-preparation',
+      projectId: 'project-a',
+      title: 'Recovery',
+      cwd: '/workspace',
+      status: 'error',
+      error: 'Session was interrupted before the app closed.',
+      resumeRecovery: { kind: 'resume-required', cause: 'app-restart' },
+      messages: [],
+      runtimeTranscriptOwner: 'main',
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const owner = new SessionPromptPreparationOwner()
+    const prepared = owner.apply(original, [
+      { id: 'prepare', kind: 'prepare-prompt', mode: 'new', promptMessageId: 'new', timestamp: 3 },
+      {
+        id: 'append',
+        kind: 'append-user',
+        preparationId: 'prepare',
+        branchId: original.conversationGraph!.frames[0].activeBranchId,
+        message: { ...planOriginMessages()[0], id: 'new', createdAt: 4 },
+        timestamp: 4
+      },
+      {
+        id: 'start',
+        kind: 'start-run',
+        preparationId: 'prepare',
+        run: { promptMessageId: 'new', startedAt: 5 },
+        timestamp: 5
+      }
+    ])
+    const projected = hydrateSession(prepared)
+    expect(projected.interrupted).toBeUndefined()
+    expect(projected.error).toBeUndefined()
+    expect(projected.resumeRecovery).toBeUndefined()
+    renderPanel({ view: { activeSession: projected } })
+    expect(container.textContent).toContain('Session was interrupted before the app closed.')
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+    ).toBe(true)
+    expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
+
+    const restored = owner.apply(prepared, [
+      { id: 'rollback', kind: 'rollback-prompt', preparationId: 'prepare', timestamp: 6 }
+    ])
+    renderPanel({
+      view: {
+        activeSession: hydrateSession(restored),
+        actionError: 'New prompt preparation failed.'
+      }
+    })
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+    ).toBe(false)
+    expect(container.textContent).toContain('New prompt preparation failed.')
+    renderPanel({ view: { activeSession: { ...projected, promptPreparation: undefined } } })
+    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    expect(container.textContent).not.toContain('Session was interrupted before the app closed.')
+    expect(container.querySelector('[data-slot="historical-turn-outcome"]')).toBeNull()
+  })
+  it('exposes Resume on the admitted prompt after a restart interrupted a turn with an in-turn reply', () => {
+    const crashed = materializeSessionConversationGraph({
+      id: 'steered-restart',
+      projectId: 'project-a',
+      title: 'Steered restart',
+      cwd: '/workspace',
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt', startedAt: 2 },
+      runtimeTranscriptOwner: 'main',
+      createdAt: 1,
+      updatedAt: 5,
+      messages: [
+        { ...planOriginMessages()[0], id: 'prompt' },
+        {
+          ...planOriginMessages()[0],
+          id: 'steering',
+          content: 'Use a log scale',
+          responseToMessageId: 'prompt',
+          createdAt: 3
+        }
+      ],
+      runtimeContext: {
+        version: 1,
+        revision: 4,
+        permission: {
+          state: 'continuing',
+          request: {
+            requestId: 'permission-1',
+            sessionId: 'steered-restart',
+            toolCallId: 'tool-1',
+            title: 'Run npm test',
+            isMcp: true,
+            options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+          },
+          originatingPromptMessageId: 'prompt',
+          fingerprint: 'a'.repeat(64),
+          createdAt: 2
+        }
+      }
+    })
+    const restored = recordRestartTurnOutcome(normalizeSessionAfterRestore(crashed), crashed)
+    expect(restored.resumeRecovery?.promptMessageId).toBe('prompt')
+
+    renderPanel({ view: { activeSession: hydrateSession(restored) } })
+
+    expect(
+      container
+        .querySelector('[data-slot="turn-outcome-notice"]')
+        ?.getAttribute('data-prompt-message-id')
+    ).toBe('prompt')
+    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
+  })
+
+  it.each(['cancelled', 'interrupted', 'legacy-failed'] as const)(
+    'preserves the original %s UI through real Main new/edit preparation',
+    (kind) => {
+      const early = { ...planOriginMessages()[0], id: 'early' }
+      const latest = {
+        ...planOriginMessages()[0],
+        id: 'latest',
+        createdAt: 2,
+        turnOutcome:
+          kind === 'legacy-failed'
+            ? undefined
+            : kind === 'cancelled'
+              ? { kind, settledAt: 3, recovery: 'resume' as const }
+              : {
+                  kind,
+                  settledAt: 3,
+                  cause: 'connection-lost' as const,
+                  recovery: 'resume' as const
+                }
+      }
+      const original = materializeSessionConversationGraph({
+        id: 'early-edit-recovery',
+        projectId: 'project-a',
+        title: 'Recovery',
+        cwd: '/workspace',
+        status: 'error',
+        error: 'Original latest error',
+        runtimeTranscriptOwner: 'main',
+        messages: [early, latest],
+        createdAt: 1,
+        updatedAt: 3,
+        resumeRecovery:
+          kind === 'legacy-failed'
+            ? undefined
+            : {
+                kind: 'resume-required',
+                cause: kind === 'cancelled' ? 'cancelled' : 'connection-lost',
+                promptMessageId: latest.id
+              }
+      })
+      for (const editing of [false, true]) {
+        const originalBranch = original.conversationGraph!.frames[0].activeBranchId
+        const commands: SessionConversationCommand[] = [
+          {
+            id: 'prepare',
+            kind: 'prepare-prompt',
+            mode: 'new',
+            promptMessageId: 'edited',
+            timestamp: 4
+          },
+          ...(editing
+            ? [
+                {
+                  id: 'fork',
+                  kind: 'fork-message' as const,
+                  preparationId: 'prepare',
+                  branchId: 'edit',
+                  parentBranchId: originalBranch,
+                  messageId: early.id,
+                  timestamp: 5
+                }
+              ]
+            : []),
+          {
+            id: 'append',
+            kind: 'append-user',
+            preparationId: 'prepare',
+            branchId: editing ? 'edit' : originalBranch,
+            parentMessageId: editing ? undefined : latest.id,
+            message: { ...early, id: 'edited', content: 'Edit the early prompt', createdAt: 6 },
+            timestamp: 6
+          },
+          {
+            id: 'start',
+            kind: 'start-run',
+            preparationId: 'prepare',
+            run: { promptMessageId: 'edited', startedAt: 7 },
+            timestamp: 7
+          }
+        ]
+        const prepared = new SessionPromptPreparationOwner().apply(original, commands)
+        if (editing) {
+          expect(
+            prepared.promptPreparation?.previousState.resumeRecovery?.promptMessageId
+          ).toBeUndefined()
+          expect(prepared.promptPreparation?.previousState.error).toBeUndefined()
+        }
+        const rendererSession = hydrateSession(prepared)
+        renderPanel({ view: { activeSession: rendererSession } })
+        expect(
+          container
+            .querySelector('[data-slot="turn-outcome-notice"]')
+            ?.getAttribute('data-prompt-message-id')
+        ).toBe(latest.id)
+        if (kind === 'legacy-failed') {
+          expect(container.textContent).toContain('Original latest error')
+        } else {
+          expect(
+            container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+          ).toBe(true)
+        }
+        renderPanel({
+          view: { activeSession: { ...rendererSession, promptPreparation: undefined } }
+        })
+        expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
+        expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+      }
+    }
+  )
+  it('preserves the attachment recovery entry for an anchorless legacy Session', async () => {
+    const resume = vi.fn().mockResolvedValue(undefined)
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'legacy-anchorless',
+          projectId: 'project-a',
+          title: 'Legacy recovery',
+          cwd: '/workspace',
+          status: 'error',
+          interrupted: true,
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      conversation: { actions: { resume } }
+    })
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.click()
+    )
+    expect(resume).toHaveBeenCalledOnce()
+  })
+
+  it('does not let an unadmitted preparation displace anchorless legacy recovery', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'legacy-anchorless-preparation',
+          projectId: 'project-a',
+          title: 'Legacy recovery preparation',
+          cwd: '/workspace',
+          status: 'error',
+          interrupted: true,
+          error: 'Session was interrupted before the app closed.',
+          resumeRecovery: { kind: 'resume-required', cause: 'app-restart' },
+          messages: [
+            {
+              ...planOriginMessages()[0],
+              id: 'prepared-prompt',
+              turnOutcome: undefined
+            }
+          ],
+          promptPreparation: {
+            id: 'legacy-preparation',
+            projectId: 'project-a',
+            sessionId: 'legacy-anchorless-preparation',
+            promptMessageId: 'prepared-prompt',
+            mode: 'resume',
+            preparedAt: 2,
+            previousState: {
+              status: 'error',
+              error: 'Session was interrupted before the app closed.',
+              resumeRecovery: { kind: 'resume-required', cause: 'app-restart' }
+            },
+            expectedState: { status: 'running' }
+          },
+          createdAt: 1,
+          updatedAt: 2
+        }
+      }
+    })
+
+    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
+    expect(container.textContent).toContain('Session was interrupted before the app closed.')
+  })
+
+  it('keeps a failed Resume Operation Error beside the original interrupted turn', () => {
+    renderPanel({
+      view: {
+        actionError: 'Resume preparation could not be saved.',
+        activeSession: {
+          id: 'resume-operation-failure',
+          projectId: 'project-a',
+          title: 'Recovery',
+          cwd: '/workspace',
+          status: 'error',
+          interrupted: true,
+          error: 'Connection lost — Resume to reconnect and continue.',
+          resumeRecovery: {
+            kind: 'resume-required',
+            promptMessageId: 'plan-origin',
+            cause: 'connection-lost'
+          },
+          messages: [
+            {
+              ...planOriginMessages()[0],
+              turnOutcome: {
+                kind: 'interrupted',
+                settledAt: 2,
+                cause: 'connection-lost',
+                recovery: 'resume'
+              }
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      }
+    })
+    expect(container.querySelector('[data-slot="turn-outcome-notice"]')?.textContent).toContain(
+      'Connection lost'
+    )
+    const composerError = Array.from(container.querySelectorAll('span')).find(
+      (node) => node.textContent === 'Resume preparation could not be saved.'
+    )
+    expect(composerError).toBeDefined()
+    expect(composerError?.closest('[data-slot="turn-outcome-notice"]')).toBeNull()
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+    ).toBe(false)
+  })
+
+  it.each(['cancelled', 'interrupted'] as const)(
+    'keeps exact %s Resume visible through new-prompt preparation, rollback and admission',
+    (kind) => {
+      const previous = {
+        ...planOriginMessages()[0],
+        turnOutcome:
+          kind === 'cancelled'
+            ? { kind, settledAt: 2, recovery: 'resume' as const }
+            : { kind, settledAt: 2, cause: 'connection-lost' as const, recovery: 'resume' as const }
+      }
+      const resumeRecovery = {
+        kind: 'resume-required' as const,
+        promptMessageId: previous.id,
+        cause: 'connection-lost' as const
+      }
+      const base: ChatSession = {
+        id: 'new-prompt-recovery',
+        projectId: 'project-a',
+        title: 'Recovery',
+        cwd: '/workspace',
+        status: 'error',
+        messages: [previous],
+        resumeRecovery,
+        createdAt: 1,
+        updatedAt: 2
+      }
+      const prepared = { ...planOriginMessages()[0], id: 'new-prompt', createdAt: 3 }
+      const preparing: ChatSession = {
+        ...base,
+        status: 'running',
+        resumeRecovery: undefined,
+        messages: [previous, prepared],
+        activeRun: { promptMessageId: prepared.id, startedAt: 4 },
+        promptPreparation: {
+          id: 'preparation',
+          projectId: base.projectId,
+          sessionId: base.id,
+          promptMessageId: prepared.id,
+          mode: 'new',
+          preparedAt: 3,
+          runStartedAt: 4,
+          previousState: { status: 'error', resumeRecovery },
+          expectedState: { status: 'running' }
+        }
+      }
+      renderPanel({ view: { activeSession: preparing } })
+      expect(
+        container
+          .querySelector('[data-slot="turn-outcome-notice"]')
+          ?.getAttribute('data-prompt-message-id')
+      ).toBe(previous.id)
+      expect(
+        container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+      ).toBe(true)
+
+      renderPanel({ view: { activeSession: base, actionError: 'New prompt preparation failed.' } })
+      expect(
+        container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+      ).toBe(false)
+      expect(container.textContent).toContain('New prompt preparation failed.')
+
+      renderPanel({ view: { activeSession: { ...preparing, promptPreparation: undefined } } })
+      expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
+      expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+      expect(container.querySelector('[data-slot="historical-turn-outcome"]')).toBeNull()
+    }
+  )
+
+  it('keeps the previous composer notice until Main admits a prepared new turn', () => {
+    const previous = {
+      ...planOriginMessages()[0],
+      turnOutcome: {
+        kind: 'failed' as const,
+        settledAt: 2,
+        error: 'Previous admitted failure.',
+        errorReportable: true
+      }
+    }
+    const prepared = {
+      ...planOriginMessages()[0],
+      id: 'prepared-prompt',
+      content: 'Prepared but not admitted',
+      createdAt: 3,
+      sortIndex: 2
+    }
+    renderPanel({
+      view: {
+        actionError: 'Preparation failed.',
+        activeSession: {
+          id: 'prepared-new-turn',
+          projectId: 'project-a',
+          title: 'Prepared new turn',
+          cwd: '/workspace',
+          status: 'running',
+          error: undefined,
+          messages: [previous, prepared],
+          activeRun: { promptMessageId: 'prepared-prompt', startedAt: 4 },
+          promptPreparation: {
+            id: 'preparation-1',
+            projectId: 'project-a',
+            sessionId: 'prepared-new-turn',
+            promptMessageId: 'prepared-prompt',
+            mode: 'new',
+            preparedAt: 3,
+            runStartedAt: 4,
+            previousState: { status: 'error', error: 'Previous admitted failure.' },
+            expectedState: { status: 'running' }
+          },
+          createdAt: 1,
+          updatedAt: 4
+        }
+      }
+    })
+
+    const notices = container.querySelectorAll('[data-slot="turn-outcome-notice"]')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].getAttribute('data-prompt-message-id')).toBe('plan-origin')
+    expect(notices[0].textContent).toContain('Previous admitted failure.')
+    expect(container.textContent).toContain('Preparation failed.')
+
+    renderPanel({
+      view: {
+        actionError: null,
+        activeSession: {
+          id: 'prepared-new-turn',
+          projectId: 'project-a',
+          title: 'Prepared new turn',
+          cwd: '/workspace',
+          status: 'running',
+          messages: [previous, prepared],
+          activeRun: { promptMessageId: 'prepared-prompt', startedAt: 4 },
+          runtimeTranscriptOwner: 'main',
+          runtimeSessionAdmissions: [
+            {
+              executionId: 'execution-2',
+              promptMessageId: 'prepared-prompt',
+              promptRuntimeSegmentId: 'prompt-segment-2',
+              rootFrameId: 'root',
+              agentFrameId: 'agent',
+              messageBranchId: 'branch',
+              runtimeSegmentId: 'runtime-2'
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 5
+        }
+      }
+    })
+
+    const historical = container.querySelector('[data-slot="historical-turn-outcome"]')
+    expect(historical?.getAttribute('data-prompt-message-id')).toBe('plan-origin')
+    expect(
+      container
+        .querySelector('[data-slot="turn-outcome-notice"]')
+        ?.closest('[data-slot="historical-turn-outcome"]')
+    ).toBe(historical)
+  })
+
+  it('keeps live terminal-write exhaustion off both the turn and composer recovery surfaces', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'live-storage-release',
+          projectId: 'project-a',
+          title: 'Live release',
+          cwd: '/workspace',
+          status: 'error',
+          interrupted: true,
+          error: 'ACP connection closed',
+          resumeRecovery: {
+            kind: 'resume-required',
+            promptMessageId: 'plan-origin',
+            cause: 'connection-lost'
+          },
+          messages: [
+            {
+              ...planOriginMessages()[0],
+              turnOutcome: {
+                kind: 'interrupted',
+                settledAt: 2,
+                cause: 'terminal-commit-failed',
+                recovery: 'resume'
+              }
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      }
+    })
+    expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    expect(container.textContent).not.toContain('ACP connection closed')
+  })
+
+  it('localizes the known Main connection-close diagnostic without changing its stored text', async () => {
+    const { i18next } = await import('../../i18n')
+    const activeSession: ChatSession = {
+      id: 'connection-close',
+      projectId: 'project-a',
+      title: 'Connection loss',
+      cwd: '/workspace',
+      status: 'error',
+      interrupted: true,
+      resumeRecovery: {
+        kind: 'resume-required',
+        promptMessageId: 'plan-origin',
+        cause: 'connection-lost'
+      },
+      messages: [
+        {
+          ...planOriginMessages()[0],
+          turnOutcome: {
+            kind: 'interrupted',
+            settledAt: 2,
+            cause: 'connection-lost',
+            recovery: 'resume',
+            error: 'ACP connection closed'
+          }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    try {
+      await act(async () => i18next.changeLanguage('zh-Hans'))
+      renderPanel({ view: { activeSession } })
+      expect(container.querySelector('[data-slot="turn-outcome-notice"]')?.textContent).toContain(
+        '连接已断开'
+      )
+      expect(activeSession.messages[0].turnOutcome).toMatchObject({
+        error: 'ACP connection closed'
+      })
+    } finally {
+      await act(async () => i18next.changeLanguage('en'))
+    }
+  })
+
+  it.each(['cancelled', 'connection-lost', 'app-restart'] as const)(
+    'retains the original Resume action after routed user messages and %s',
+    async (cause) => {
+      const onResumeSession = vi.fn().mockResolvedValue(undefined)
+      const prompt = planOriginMessages()[0]
+      const activeSession: ChatSession = {
+        id: 'session-steered-interrupted',
+        projectId: 'project-a',
+        title: 'Interrupted session with steering',
+        cwd: '/workspace',
+        status: cause === 'cancelled' ? 'idle' : 'error',
+        resumeRecovery: { kind: 'resume-required', promptMessageId: prompt.id, cause },
+        messages: [
+          {
+            ...prompt,
+            turnOutcome:
+              cause === 'cancelled'
+                ? { kind: 'cancelled', settledAt: 4, recovery: 'resume' }
+                : { kind: 'interrupted', cause, settledAt: 4, recovery: 'resume' }
+          },
+          ...['steering-1', 'steering-2'].map((id, index) => ({
+            ...prompt,
+            id,
+            content: 'Additional instruction',
+            responseToMessageId: prompt.id,
+            createdAt: 2 + index,
+            updatedAt: 2 + index
+          }))
+        ],
+        createdAt: 1,
+        updatedAt: 4
+      }
+      renderPanel({
+        view: { activeSession },
+        conversation: { actions: { resume: onResumeSession } }
+      })
+      expect(
+        container
+          .querySelector('[data-slot="turn-outcome-notice"]')
+          ?.getAttribute('data-prompt-message-id')
+      ).toBe(prompt.id)
+      const resumeButton = container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Resume session"]'
+      )
+      expect(resumeButton).not.toBeNull()
+      expect(resumeButton?.disabled).toBe(false)
+      await act(async () => resumeButton?.click())
+      expect(onResumeSession).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('shows message-area progress while the Session resume is in flight', async () => {
     let resolveResume: (() => void) | undefined
     const onResumeSession = vi.fn(
@@ -4608,6 +5393,11 @@ describe('ConversationPanel interrupted Session recovery', () => {
       cwd: '/workspace',
       status: 'idle',
       interrupted: true,
+      resumeRecovery: {
+        kind: 'resume-required',
+        promptMessageId: 'plan-origin',
+        cause: 'app-restart'
+      },
       messages: planOriginMessages(),
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -4662,6 +5452,11 @@ describe('ConversationPanel interrupted Session recovery', () => {
       cwd: '/workspace',
       status: 'idle',
       interrupted: true,
+      resumeRecovery: {
+        kind: 'resume-required',
+        promptMessageId: 'plan-origin',
+        cause: 'app-restart'
+      },
       messages: planOriginMessages(),
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -4705,7 +5500,12 @@ describe('ConversationPanel interrupted Session recovery', () => {
       cwd: '/workspace',
       status: 'error',
       interrupted: true,
-      messages: [],
+      resumeRecovery: {
+        kind: 'resume-required',
+        promptMessageId: 'plan-origin',
+        cause: 'app-restart'
+      },
+      messages: planOriginMessages(),
       createdAt: 1,
       updatedAt: 1
     })
@@ -4768,6 +5568,11 @@ describe('ConversationPanel interrupted Session recovery', () => {
       cwd: '/workspace',
       status: 'idle',
       interrupted: true,
+      resumeRecovery: {
+        kind: 'resume-required',
+        promptMessageId: 'plan-origin',
+        cause: 'app-restart'
+      },
       messages: planOriginMessages(),
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -6966,6 +7771,51 @@ describe('ConversationPanel error box + report affordance', () => {
 
   const errorBoxText = (): string => container.querySelector('.border-red-200')?.textContent ?? ''
 
+  it('reports the clicked historical failure while the current turn is non-reportable and preserves the snapshot across navigation', () => {
+    const historicalError = 'Historical opaque failure.'
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          error: 'Current provider failure.',
+          errorReportable: false,
+          messages: [
+            {
+              ...planOriginMessages()[0],
+              turnOutcome: {
+                kind: 'failed',
+                settledAt: 2,
+                error: historicalError,
+                errorReportable: true
+              }
+            },
+            {
+              ...planOriginMessages()[0],
+              id: 'later-prompt',
+              createdAt: 3,
+              sortIndex: 2,
+              turnOutcome: {
+                kind: 'failed',
+                settledAt: 4,
+                error: 'Current provider failure.',
+                errorReportable: false
+              }
+            }
+          ]
+        }
+      }
+    })
+    expect(container.querySelectorAll('[aria-label="Report this error"]')).toHaveLength(1)
+    act(() => reportButton()?.click())
+    const details = (): HTMLTextAreaElement | null =>
+      document.body.querySelector('textarea[aria-label="Error details"]')
+    expect(details()?.value).toBe(historicalError)
+    renderPanel({
+      view: { activeSession: { ...errorSession, id: 'another-session', error: 'Another failure.' } }
+    })
+    expect(details()?.value).toBe(historicalError)
+  })
+
   it('shows the error and a Report button for a failed run (status === error)', () => {
     renderPanel({
       view: {
@@ -7198,9 +8048,16 @@ describe('ConversationPanel error box + report affordance', () => {
         activeSession: {
           ...errorSession,
           interrupted: true,
-          error:
-            'Agent session resume failed: Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
-        }
+          error: 'Connection lost — Resume to reconnect and continue.',
+          messages: planOriginMessages(),
+          resumeRecovery: {
+            kind: 'resume-required',
+            promptMessageId: 'plan-origin',
+            cause: 'connection-lost'
+          }
+        },
+        actionError:
+          'Agent session resume failed: Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
       }
     })
 
@@ -7221,9 +8078,16 @@ describe('ConversationPanel error box + report affordance', () => {
         activeSession: {
           ...errorSession,
           interrupted: true,
-          error:
-            'Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
-        }
+          error: 'Connection lost — Resume to reconnect and continue.',
+          messages: planOriginMessages(),
+          resumeRecovery: {
+            kind: 'resume-required',
+            promptMessageId: 'plan-origin',
+            cause: 'connection-lost'
+          }
+        },
+        actionError:
+          'Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
       },
       conversation: { actions: { resume } }
     })
@@ -7244,7 +8108,13 @@ describe('ConversationPanel error box + report affordance', () => {
         activeSession: {
           ...errorSession,
           interrupted: true,
-          error: 'Agent session resume failed: connection reset'
+          error: 'Agent session resume failed: connection reset',
+          messages: planOriginMessages(),
+          resumeRecovery: {
+            kind: 'resume-required',
+            promptMessageId: 'plan-origin',
+            cause: 'connection-lost'
+          }
         }
       }
     })
@@ -7446,6 +8316,30 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
     button!.click()
   })
   expect(forkSessionMock).toHaveBeenCalledWith(activeSession)
+  expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  const replay = [...container.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('View replay')
+  )!
+  expect(replay).toBeDefined()
+  await act(async () => {
+    replay.click()
+  })
+  expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+  expect(usePreviewWorkbenchStore.getState().items).toContainEqual(
+    expect.objectContaining({
+      toolKind: 'replay',
+      replaySourceProjectId: 'project-a',
+      replaySourceSessionId: activeSession.id
+    })
+  )
+  await act(async () => {
+    replay.click()
+  })
+  expect(
+    usePreviewWorkbenchStore
+      .getState()
+      .items.filter((item) => item.type === 'tool' && item.toolKind === 'replay')
+  ).toHaveLength(1)
 })
 
 it('shows the branch source chat number and opens that source session', () => {

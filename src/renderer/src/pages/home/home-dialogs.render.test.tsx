@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { Children, isValidElement, type ReactElement, type ReactNode } from 'react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'

@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import * as fsPromises from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { execFile, spawn } from 'node:child_process'
@@ -107,9 +107,10 @@ const shellRequest = (root: string): NotebookShellProcessRequest => ({
   timeoutMs: POWERSHELL_PROCESS_TIMEOUT_MS
 })
 
-const runPowerShell = (command: string): ReturnType<typeof runShellCommand> =>
+const runPowerShell = (command: string, version?: '7.6'): ReturnType<typeof runShellCommand> =>
   runShellCommand({
     command,
+    ...(version ? { runtimeBinding: { kind: 'powershell' as const, version } } : {}),
     cwd: process.cwd(),
     handoffDir: process.cwd(),
     runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
@@ -122,6 +123,90 @@ const runPowerShell = (command: string): ReturnType<typeof runShellCommand> =>
   })
 
 describe.runIf(process.platform === 'win32')('Windows notebook shell integration', () => {
+  it.for([false, true])(
+    'shares npm tools across live Sessions and retains them after Session deletion (protected: %s)',
+    { timeout: 180_000 },
+    async (protectedMode, { skip }) => {
+      if (protectedMode && process.env.OPEN_SCIENCE_TEST_PROTECTED_SHELL !== '1') skip()
+      const root = await mkdtemp(join(tmpdir(), 'shell-shared-tools-目录 with spaces-'))
+      if (!protectedMode) vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+      const runtimeRoot = join(root, 'runtime')
+      const first = join(root, 'session-one')
+      const second = join(root, 'session-two')
+      await mkdir(runtimeRoot)
+      await mkdir(first)
+      await mkdir(second)
+      await mkdir(join(first, 'fixture'))
+      await writeFile(
+        join(first, 'fixture/package.json'),
+        JSON.stringify({
+          name: 'fixture-shared-cli',
+          version: '1.0.0',
+          bin: { 'fixture-cli': 'cli.js' }
+        })
+      )
+      await writeFile(
+        join(first, 'fixture/cli.js'),
+        '#!/usr/bin/env node\nprocess.stdout.write("SHARED_TOOL_READY")\n'
+      )
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+        temporaryRoot: join(root, 'commands'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      let adapter = new NotebookShellProcessAdapter('win32', owner)
+      const request = (cwd: string, command: string): NotebookShellProcessRequest => ({
+        ...shellRequest(root),
+        runtimeRoot,
+        cwd,
+        handoffDir: cwd,
+        sessionId: cwd === first ? 'fixture-session-one' : 'fixture-session-two',
+        runtimeBinding: { kind: 'powershell', version: '7.6' },
+        command
+      })
+      try {
+        expect(
+          await adapter.execute(request(second, '[Console]::Write("SESSION_READY")'))
+        ).toMatchObject({
+          exitCode: 0,
+          stdout: 'SESSION_READY'
+        })
+        const installed = await adapter.execute(
+          request(
+            first,
+            'npm.cmd install -g ./fixture --offline --install-links --ignore-scripts --no-audit --no-fund'
+          )
+        )
+        expect(installed, JSON.stringify(installed)).toMatchObject({ exitCode: 0 })
+        const shared = await adapter.execute(request(second, 'fixture-cli.cmd'))
+        expect(shared, JSON.stringify(shared)).toMatchObject({
+          exitCode: 0,
+          stdout: 'SHARED_TOOL_READY'
+        })
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+        await rm(first, { recursive: true, force: true })
+        adapter = new NotebookShellProcessAdapter('win32', owner)
+        expect(await adapter.execute(request(second, 'fixture-cli.cmd'))).toMatchObject({
+          exitCode: 0,
+          stdout: 'SHARED_TOOL_READY'
+        })
+        const tools = join(runtimeRoot, 'npm', `win32-${process.arch}`)
+        expect(
+          JSON.parse(
+            await readFile(join(tools, 'node_modules/fixture-shared-cli/package.json'), 'utf8')
+          ).name
+        ).toBe('fixture-shared-cli')
+      } finally {
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+        await owner.dispose()
+        vi.unstubAllEnvs()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.for([false, true])(
     'separates PowerShell control input through the native owner (protected: %s)',
     { timeout: 60_000 },
@@ -825,27 +910,40 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
     POWERSHELL_TEST_TIMEOUT_MS
   )
 
-  it(
-    'preserves UTF-8 output with only standard machine module paths',
-    async () => {
-      const result = await runPowerShell(`
+  it.each(['5.1', '7.6'] as const)(
+    'preserves UTF-8 output with only the selected PowerShell %s module paths',
+    async (version) => {
+      const result = await runPowerShell(
+        `
 Write-Output "分析完成"
+Write-Output "__OPEN_SCIENCE_VERSION__=$($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor)"
 Write-Output "__OPEN_SCIENCE_PSMODULEPATH__=$env:PSModulePath"
 Write-Output "__OPEN_SCIENCE_INTERNAL__=[$env:OPEN_SCIENCE_PSMODULEPATH]"
-`)
+`,
+        version === '7.6' ? version : undefined
+      )
 
       expect(result).toMatchObject({ exitCode: 0 })
       expect(result.stdout).toContain('分析完成')
-      const programFiles = process.env.ProgramFiles
-      const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR
-      expect(programFiles).toBeTruthy()
-      expect(windowsRoot).toBeTruthy()
-      if (!programFiles || !windowsRoot) throw new Error('Missing standard Windows path variables.')
+      expect(result.stdout).toContain(`__OPEN_SCIENCE_VERSION__=${version}`)
+      const modules =
+        version === '7.6'
+          ? [
+              join(
+                process.cwd(),
+                'packages/notebook-network-sandbox/vendor/windows-runtime',
+                process.arch,
+                'powershell/Modules'
+              )
+            ]
+          : [
+              join(process.env.ProgramFiles!, 'WindowsPowerShell', 'Modules'),
+              join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules')
+            ]
       const modulePath = result.stdout.match(/^__OPEN_SCIENCE_PSMODULEPATH__=(.*)$/mu)?.[1]?.trim()
-      expect(modulePath?.split(';').map((entry) => entry.toLowerCase())).toEqual([
-        `${programFiles}\\WindowsPowerShell\\Modules`.toLowerCase(),
-        `${windowsRoot}\\System32\\WindowsPowerShell\\v1.0\\Modules`.toLowerCase()
-      ])
+      expect(modulePath?.split(';').map((entry) => entry.toLowerCase())).toEqual(
+        modules.map((entry) => entry.toLowerCase())
+      )
       expect(result.stdout).toContain('__OPEN_SCIENCE_INTERNAL__=[]')
     },
     POWERSHELL_TEST_TIMEOUT_MS

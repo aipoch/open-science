@@ -27,6 +27,12 @@ const assertLocalCaller = (callerContext: CallerContext, commandName: string): v
   }
 }
 
+const notebookRunIndexCommand = defineApplicationCommand<
+  'notebook:run-index',
+  WorkflowArgs<'runIndex'>,
+  WorkflowResult<'runIndex'>
+>('notebook:run-index')
+
 const notebookStateCommand = defineApplicationCommand<
   'notebook:state',
   WorkflowArgs<'state'>,
@@ -114,6 +120,7 @@ const notebookReadInputPreviewCommand = defineApplicationCommand<
 >('notebook:read-input-preview')
 
 const notebookApplicationCommands = defineApplicationCommandGroup('notebook', [
+  notebookRunIndexCommand,
   notebookStateCommand,
   notebookProjectActivityCommand,
   notebookInspectNamespaceCommand,
@@ -140,6 +147,7 @@ const installNotebookApplicationCommands = (
   const scope = registrar.createScope()
   try {
     scope.registerGroup(notebookApplicationCommands, {
+      'notebook:run-index': (invocation) => dependencies.workflows.runIndex(invocation.args[0]),
       'notebook:state': (invocation) => dependencies.workflows.state(invocation.args[0]),
       'notebook:project-activity': (invocation) =>
         dependencies.workflows.projectActivity(invocation.args[0]),

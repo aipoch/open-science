@@ -125,8 +125,8 @@ export async function composeSettingsBootstrap({
   })
   const getAvailableShellRuntimeBinding = async (): Promise<
     Awaited<ReturnType<typeof resolveAvailableShellRuntimeBinding>>
-  > =>
-    resolveAvailableShellRuntimeBinding(
+  > => {
+    const binding = await resolveAvailableShellRuntimeBinding(
       await settingsRepository.getSettings(),
       async (selection) => {
         if (!wsl2BashPreviewStatus().available) return false
@@ -136,8 +136,13 @@ export async function composeSettingsBootstrap({
           snapshot.selection?.distro === selection.distro &&
           snapshot.selection?.user === selection.user
         )
-      }
+      },
+      process.platform
     )
+    if (binding.kind !== 'powershell' || !(await notebookNetworkSandbox.windowsProtectionReady()))
+      return binding
+    return Object.freeze({ kind: 'powershell', version: '7.6' })
+  }
   const networkProxyRuntime = new NetworkProxyRuntime({
     setProxy: (config) => session.defaultSession.setProxy(config)
   })
@@ -170,6 +175,7 @@ export async function composeSettingsBootstrap({
   }
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
+      windowsRuntimeRoot: join(resolveConfigRoot(), 'notebook-runtimes'),
       packaged: app.isPackaged,
       allowRuntimeAccessPrompt: !headless,
       resourceRoot: app.isPackaged
@@ -299,7 +305,15 @@ export async function composeSettingsBootstrap({
       },
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
+      cancelNotebookNetworkSetup: () => notebookNetworkSandbox.cancelWindowsSetup(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
+      refreshNotebookShellCapabilities: async () => {
+        const runtime = getRuntimeRef().current
+        if (!runtime) throw new Error('Shell capability lifecycle is not ready.')
+        // Reuse the global Shell switch boundary: existing conversations reconnect with the
+        // current interpreter, tool descriptions and permission qualifiers on their next turn.
+        await runtime.requestShellCapabilityRefresh()
+      },
       wslSetup,
       wslSetupSessions,
       ensureDefaultWslSetupWorkspace: async () => {

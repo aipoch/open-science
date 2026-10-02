@@ -499,6 +499,41 @@ describe('TokenUsagePanel', () => {
     ).toContain('Last 30 days')
   })
 
+  it('keeps daily inspection accessible through focus changes and Escape', async () => {
+    const now = localTime(2026, 8, 15, 18)
+    act(() => {
+      root.render(<TokenUsagePanel sessions={[createSession(now)]} projects={[]} now={now} />)
+    })
+    const bars = container.querySelectorAll<HTMLButtonElement>(
+      '[data-slot="token-usage-bars"] button'
+    )
+    await act(async () => {
+      bars[28].focus()
+      await new Promise(requestAnimationFrame)
+    })
+    const tooltip = document.querySelector('[data-slot="token-usage-inspection"]')!
+    expect(tooltip.textContent).toContain('2026-08-14')
+    expect(tooltip.textContent).toContain('Input (uncached)100')
+    expect(bars[28].getAttribute('aria-describedby')).toBe(tooltip.id)
+    await act(async () => {
+      bars[29].focus()
+      await new Promise(requestAnimationFrame)
+    })
+    const nextTooltip = document.querySelector('[data-slot="token-usage-inspection"]')!
+    expect(nextTooltip.textContent).toContain('2026-08-15')
+    expect(nextTooltip.textContent).toContain('Input (uncached)0')
+    expect(bars[28].hasAttribute('aria-describedby')).toBe(false)
+    act(() =>
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    )
+    expect(document.querySelector('[data-slot="token-usage-inspection"]')).toBeNull()
+    expect(document.activeElement).toBe(bars[29])
+    act(() => bars[29].click())
+    expect(document.querySelector('[data-slot="token-usage-inspection"]')).not.toBeNull()
+    act(() => window.dispatchEvent(new Event('resize')))
+    expect(document.querySelector('[data-slot="token-usage-inspection"]')).toBeNull()
+  })
+
   it('updates the selected period and exposes the compact heatmap metric selector', () => {
     const now = localTime(2026, 8, 15, 18)
     act(() => {

@@ -4,9 +4,21 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeJobAnalysisTransition, JobSummary } from '../../../../shared/compute'
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
+import { RuntimeSessionOwner } from '../../../../main/session-persistence/runtime-session-owner'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession,
+  type TurnOutcome
+} from '../../../../shared/session-persistence'
 import { createInitialSessionJobState, useSessionJobStore } from '../../stores/session-job-store'
-import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import {
+  createInitialSessionState,
+  toPersistedSession,
+  useSessionStore
+} from '../../stores/session-store'
+import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
+import { resetSessionPersistenceWriteFailuresForTests } from '../session-persistence/session-persistence'
 import { useJobAnalysisEffect } from './useJobAnalysisEffect'
 import { buildAnalysisPrompt } from './job-analysis-trigger'
 import { sendWorkspaceMessage } from '../acp/workspace-runtime-command-owner'
@@ -107,6 +119,8 @@ describe('useJobAnalysisEffect persistence readiness', () => {
   }
 
   beforeEach(() => {
+    resetSessionConversationIntentsForTests()
+    resetSessionPersistenceWriteFailuresForTests()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -240,7 +254,27 @@ describe('useJobAnalysisEffect persistence readiness', () => {
       resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(undefined)
     }
-    window.api.sessions.saveSession = vi.fn(async (session) => session)
+    let durable = toPersistedSession(useSessionStore.getState().sessions[0])
+    const persistence = new SessionPersistenceStateOwner({
+      repository: {
+        loadSessionWithDiagnostics: async () => ({
+          status: 'found',
+          session: structuredClone(durable)
+        }),
+        saveSession: async (candidate) => {
+          durable = { ...structuredClone(candidate), revision: (durable.revision ?? 0) + 1 }
+          return structuredClone(durable)
+        }
+      },
+      fileIndex: { syncSession: vi.fn(async () => []) },
+      assertMutable: vi.fn(),
+      notifyFilesChanged: vi.fn(),
+      notifyRuntimeContextSessionUpdated: vi.fn(),
+      notifyRuntimeTranscriptSessionUpdated: vi.fn(),
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    })
+    window.api.sessions.saveSession = (candidate, options) =>
+      persistence.saveSession(candidate, options)
     const admission = vi.fn<AnalysisSendMessage>((input) =>
       sendWorkspaceMessage(runtime, {
         ...input,
@@ -326,6 +360,150 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     expect(jobsTransitionAnalysis).not.toHaveBeenCalledWith(
       expect.objectContaining({ state: 'failed' })
     )
+  })
+
+  it.each([
+    { outcome: { kind: 'completed', settledAt: 1500 }, expected: 'succeeded' },
+    { outcome: { kind: 'failed', settledAt: 1500, error: 'Analysis failed' }, expected: 'failed' },
+    { outcome: { kind: 'cancelled', settledAt: 1500, recovery: 'resume' }, expected: 'cancelled' }
+  ] satisfies { outcome: TurnOutcome; expected: string }[])(
+    'settles a persisted $outcome.kind analysis without redispatching it while a later turn runs',
+    async ({ outcome, expected }) => {
+      const messageId = 'analysis-settled-without-text'
+      jobsPendingNotification.mockResolvedValueOnce([
+        makeCompletedJob({ analysis_state: 'dispatched', analysis_message_id: messageId })
+      ])
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          status: 'running',
+          activeRun: { promptMessageId: 'later-prompt', startedAt: 1600 },
+          messages: [
+            {
+              id: messageId,
+              role: 'user',
+              content: 'Analyze the completed job',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1400,
+              updatedAt: 1500,
+              turnOutcome: outcome
+            },
+            {
+              id: 'later-prompt',
+              role: 'user',
+              content: 'A later request',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1600,
+              updatedAt: 1600
+            }
+          ]
+        }))
+      }))
+
+      await act(async () => root.render(<Probe enabled />))
+
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+        expect.objectContaining({ messageId, state: expected })
+      )
+      expect(useSessionStore.getState().sessions[0].activeRun?.promptMessageId).toBe('later-prompt')
+    }
+  )
+
+  it('does not consume a job when Main records Artifact publication failure after a complete text reply', async () => {
+    const messageId = 'analysis-artifact-failure'
+    jobsPendingNotification.mockResolvedValueOnce([
+      makeCompletedJob({ analysis_state: 'dispatched', analysis_message_id: messageId })
+    ])
+    let durable: PersistedChatSession = materializeSessionConversationGraph({
+      ...toPersistedSession(useSessionStore.getState().sessions[0]),
+      status: 'running',
+      activeRun: { promptMessageId: messageId, startedAt: 1400 },
+      messages: [
+        {
+          id: messageId,
+          role: 'user',
+          content: 'Analyze the completed job',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1400,
+          updatedAt: 1400
+        },
+        {
+          id: 'analysis-text',
+          role: 'agent',
+          responseToMessageId: messageId,
+          content: 'Analysis complete; chart generated',
+          status: 'complete',
+          artifactIds: ['chart-version'],
+          eventIds: [],
+          createdAt: 1500,
+          updatedAt: 1500
+        }
+      ],
+      artifacts: [
+        {
+          id: 'chart-version',
+          versionId: 'chart-version',
+          kind: 'managed-file',
+          path: '/data/chart.png'
+        }
+      ]
+    })
+    const graph = durable.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+    const scope = {
+      sessionId: durable.id,
+      projectId: durable.projectId,
+      promptMessageId: messageId,
+      executionId: 'analysis-execution',
+      agentFrameId: frame.id,
+      messageBranchId: frame.activeBranchId,
+      runtimeSegmentId: graph.runtimeSegments.at(-1)!.id
+    }
+    const owner = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone(durable),
+      mutateSession: async (_scope, mutate) => {
+        durable = { ...mutate(structuredClone(durable)), runtimeTranscriptOwner: 'main' }
+        return structuredClone(durable)
+      },
+      finalizeArtifacts: async () => []
+    })
+    await owner.begin(scope)
+    await owner.commitTerminal(
+      {
+        id: 'publication-failed',
+        timestamp: 2000,
+        kind: 'error',
+        level: 'error',
+        sessionId: durable.id,
+        promptMessageId: messageId,
+        promptExecutionId: scope.executionId,
+        title: 'Artifact publication failed',
+        text: 'Artifact publication unavailable',
+        artifactFailure: true
+      },
+      vi.fn()
+    )
+    expect(durable.messages[0].turnOutcome).toMatchObject({
+      kind: 'failed',
+      recovery: 'retry-artifact-publication'
+    })
+    expect(durable.messages[1].status).toBe('complete')
+    useSessionStore.getState().hydrateSessions([durable])
+
+    await act(async () => root.render(<Probe enabled />))
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ messageId, state: 'failed' })
+    )
+    expect(jobsTransitionAnalysis).not.toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'succeeded' })
+    )
+    expect(jobsMarkConsumed).not.toHaveBeenCalled()
   })
 
   it('retries a transient recovered Session read without terminalizing the analysis', async () => {

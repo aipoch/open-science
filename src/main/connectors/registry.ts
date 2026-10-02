@@ -4,6 +4,7 @@ import { ALLIANCE_TOOLS } from './descriptors/alliance'
 import { BIOMART_TOOLS } from './descriptors/biomart'
 import { BIORXIV_TOOLS } from './descriptors/biorxiv'
 import { CANCER_MODELS_TOOLS } from './descriptors/cancer-models'
+import { CELLOSAURUS_TOOLS } from './descriptors/cellosaurus'
 import { CELLGUIDE_TOOLS } from './descriptors/cellguide'
 import { CELLXGENE_DISCOVER_TOOLS } from './descriptors/cellxgene-discover'
 import { CHEMBL_TOOLS } from './descriptors/chembl'
@@ -20,6 +21,7 @@ import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
 import { HMMER_TOOLS } from './descriptors/hmmer'
 import { INTERPROSCAN_TOOLS } from './descriptors/interproscan'
 import { LITERATURE_TOOLS } from './descriptors/literature'
+import { MONARCH_TOOLS } from './descriptors/monarch'
 import { MOLECULE_TOOLS } from './descriptors/molecule'
 import { OMICS_ARCHIVES_TOOLS } from './descriptors/omics-archives'
 import { PATHWAY_COMMONS_TOOLS } from './descriptors/pathway-commons'
@@ -39,6 +41,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...BIOMART_TOOLS,
   ...BIORXIV_TOOLS,
   ...CANCER_MODELS_TOOLS,
+  ...CELLOSAURUS_TOOLS,
   ...CELLGUIDE_TOOLS,
   ...CELLXGENE_DISCOVER_TOOLS,
   ...CHEMBL_TOOLS,
@@ -55,6 +58,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...HMMER_TOOLS,
   ...INTERPROSCAN_TOOLS,
   ...LITERATURE_TOOLS,
+  ...MONARCH_TOOLS,
   ...MOLECULE_TOOLS,
   ...OMICS_ARCHIVES_TOOLS,
   ...PATHWAY_COMMONS_TOOLS,

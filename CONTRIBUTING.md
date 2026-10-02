@@ -66,6 +66,15 @@ partially patched installation. See the upstream
 npm run dev
 ```
 
+Windows standard-mode development does not require a separate Notebook runtime.
+Enabling Notebook protection prepares verified Node and PowerShell components on demand:
+compatible official installations are preferred, and missing components are downloaded from
+the pinned CDN catalog. Prepared components are reused across Sessions and application upgrades.
+Source compilation is a maintainer workflow for changes to runtime sources or patches. See the
+[Windows runtime notes](packages/notebook-network-sandbox/vendor/windows-runtime/README.md)
+for CI artifacts and source-build procedures. Neither application packaging nor end-user setup
+compiles these components.
+
 On Windows x64, opt into the unpackaged WSL2 Bash development flow from PowerShell with:
 
 ```powershell

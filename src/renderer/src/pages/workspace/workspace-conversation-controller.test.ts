@@ -81,7 +81,11 @@ const runningSession = (): ChatSession =>
           updatedAt: 1
         }
       ],
-      messages: [],
+      messages: session().messages.map((message) => ({
+        ...message,
+        agentFrameId: 'root',
+        introducedOnBranchId: 'branch-a'
+      })),
       activities: [],
       activityGroups: [],
       runtimeSegments: []
@@ -450,6 +454,175 @@ describe('workspace conversation controller', () => {
     }
   )
 
+  it('restores an inactive failed Session draft without showing its error on another Session', async () => {
+    const input = options()
+    let rejected:
+      | NonNullable<Parameters<typeof input.runtime.sendMessage>[0]['onPreparationRejected']>
+      | undefined
+    input.runtime.sendMessage = vi.fn(async (request) => {
+      rejected = request.onPreparationRejected
+      return { sessionId: 'session-a', messageId: 'prompt-a' }
+    })
+    let composer!: ReturnType<typeof useWorkspaceComposerController>
+    let controller!: WorkspaceConversationController
+    const root = createRoot(document.createElement('div'))
+    const Harness = (): null => {
+      composer = useWorkspaceComposerController({
+        currentDraftKey: input.currentDraftKey,
+        newConversationDraftKey: input.currentDraftKey,
+        activeProjectId: input.projectId,
+        activeSession: undefined,
+        pendingCustomizePrefill: undefined,
+        onCustomizePrefillApplied: vi.fn(),
+        historyEntries: [],
+        historyPolicy: {
+          catalogSkillIds: new Set(),
+          allowedSkillIds: undefined,
+          skillCatalogReady: true,
+          refreshSkillCatalog: false,
+          specialistCatalogReady: true,
+          specialistId: undefined,
+          loadSkills: vi.fn(),
+          loadSpecialists: vi.fn()
+        },
+        canStageAttachments: true,
+        supportsImageInput: true,
+        uploads: {
+          stageLocalFile: vi.fn(),
+          beginTransfer: vi.fn(),
+          appendTransfer: vi.fn(),
+          getTransferStatus: vi.fn(),
+          finishTransfer: vi.fn(),
+          abortTransfer: vi.fn().mockResolvedValue(undefined),
+          deleteUpload: vi.fn(),
+          onTransferProgress: vi.fn(() => () => undefined)
+        }
+      })
+      controller = useWorkspaceConversationController({ ...input, composer })
+      return null
+    }
+    const render = (): void =>
+      act(() =>
+        root.render(createElement(WorkspaceComposerDraftsProvider, null, createElement(Harness)))
+      )
+    try {
+      render()
+      act(() => composer.actions.changeDoc(textDoc('Session A rejected draft')))
+      await act(async () => controller.actions.submit.draft({ forcedSkillIds: [] }))
+      input.currentDraftKey = 'session-b'
+      input.activeSession = session({ id: 'session-b' })
+      render()
+      act(() => rejected?.('Session A operation failed', 'session-a'))
+      expect(composer.view.error).toBeNull()
+      expect(composer.view.doc).toEqual({ nodes: [] })
+      input.currentDraftKey = 'session-a'
+      input.activeSession = session()
+      render()
+      expect(composer.view.doc).toEqual(textDoc('Session A rejected draft'))
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
+  it('retries a restored new-conversation snapshot only in its exact existing Session owner', async () => {
+    const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+    const snapshot = input.composer.lifecycle.captureSend()
+    snapshot.retrySessionOwner = { sessionId: 'bound-session', projectId: 'project-a' }
+    vi.mocked(input.composer.lifecycle.captureSend).mockReturnValue(snapshot)
+    input.getSession = vi.fn(() => session({ id: 'bound-session' }))
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'bound-session' })
+    )
+  })
+
+  it.each(['missing', 'wrong-project', 'archived', 'busy'] as const)(
+    'keeps a retry snapshot when its exact owner is %s',
+    async (condition) => {
+      const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+      const snapshot = input.composer.lifecycle.captureSend()
+      snapshot.retrySessionOwner = { sessionId: 'bound-session', projectId: 'project-a' }
+      vi.mocked(input.composer.lifecycle.captureSend).mockReturnValue(snapshot)
+      input.getSession = vi.fn(() =>
+        condition === 'missing'
+          ? undefined
+          : session({
+              id: 'bound-session',
+              ...(condition === 'wrong-project' ? { projectId: 'other-project' } : {}),
+              ...(condition === 'archived' ? { archivedAt: 10 } : {}),
+              ...(condition === 'busy'
+                ? { activeRun: { promptMessageId: 'other', startedAt: 2 }, status: 'running' }
+                : {})
+            })
+      )
+      const hook = renderController(input)
+      mounted.push(hook)
+      await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+      expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps the original operation error after receipt rejection restores the real composer', async () => {
+    const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+    input.runtime.sendMessage = vi.fn(async (request) => {
+      request.onPreparationRejected?.('Synthetic submission write failure')
+      return undefined
+    })
+    let composer!: ReturnType<typeof useWorkspaceComposerController>
+    let controller!: WorkspaceConversationController
+    const root = createRoot(document.createElement('div'))
+    const Harness = (): null => {
+      composer = useWorkspaceComposerController({
+        currentDraftKey: input.currentDraftKey,
+        newConversationDraftKey: input.currentDraftKey,
+        activeProjectId: input.projectId,
+        activeSession: undefined,
+        pendingCustomizePrefill: undefined,
+        onCustomizePrefillApplied: vi.fn(),
+        historyEntries: [],
+        historyPolicy: {
+          catalogSkillIds: new Set(),
+          allowedSkillIds: undefined,
+          skillCatalogReady: true,
+          refreshSkillCatalog: false,
+          specialistCatalogReady: true,
+          specialistId: undefined,
+          loadSkills: vi.fn(),
+          loadSpecialists: vi.fn()
+        },
+        canStageAttachments: true,
+        supportsImageInput: true,
+        uploads: {
+          stageLocalFile: vi.fn(),
+          beginTransfer: vi.fn(),
+          appendTransfer: vi.fn(),
+          getTransferStatus: vi.fn(),
+          finishTransfer: vi.fn(),
+          abortTransfer: vi.fn().mockResolvedValue(undefined),
+          deleteUpload: vi.fn(),
+          onTransferProgress: vi.fn(() => () => undefined)
+        }
+      })
+      controller = useWorkspaceConversationController({ ...input, composer })
+      return null
+    }
+    try {
+      act(() =>
+        root.render(createElement(WorkspaceComposerDraftsProvider, null, createElement(Harness)))
+      )
+      act(() => composer.actions.changeDoc(textDoc('Rejected message')))
+      await act(async () => controller.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(composer.view.doc).toEqual(textDoc('Rejected message'))
+      expect(composer.view.error).toBe('Synthetic submission write failure')
+      expect(composer.view.errorDetail).toBeUndefined()
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
   it('suppresses synchronous duplicate clicks after the real composer clears a new draft', () => {
     const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
     input.runtime.sendMessage = vi.fn<
@@ -587,6 +760,71 @@ describe('workspace conversation controller', () => {
     await act(async () => rejectAdmission(new Error('save failed')))
     expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledOnce()
     expect(input.composer.actions.setError).toHaveBeenCalledWith('save failed')
+  })
+
+  it('restores the complete captured draft after an asynchronous pre-admission rejection', async () => {
+    const input = options()
+    const snapshot = input.composer.lifecycle.captureSend()
+    snapshot.attachments = [
+      {
+        id: 'original-upload',
+        sessionId: '.pending',
+        name: 'research.pdf',
+        originalName: 'research.pdf',
+        path: '/data/.pending/research.pdf',
+        mimeType: 'application/pdf',
+        size: 123
+      }
+    ]
+    snapshot.pendingPdfContextAttachmentIds = ['original-upload']
+    snapshot.pendingPdfContextVersions = [
+      { sourceKind: 'artifact-version', sourceFileId: 'paper', sourceVersionId: 'paper-version' }
+    ]
+    vi.mocked(input.composer.lifecycle.captureSend).mockReturnValue(snapshot)
+    let rejected: ((message: string) => void) | undefined
+    input.runtime.sendMessage = vi.fn(async (request) => {
+      rejected = request.onPreparationRejected
+      request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'optimistic-prompt' })
+      return { sessionId: 'session-a', messageId: 'optimistic-prompt' }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
+    act(() => rejected?.('Provider admission failed'))
+    expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledExactlyOnceWith(
+      snapshot,
+      true,
+      undefined,
+      true
+    )
+    expect(snapshot.attachments[0].id).toBe('original-upload')
+    expect(snapshot.pendingPdfContextAttachmentIds).toEqual(['original-upload'])
+    expect(snapshot.pendingPdfContextVersions?.[0].sourceVersionId).toBe('paper-version')
+    expect(input.composer.actions.setError).toHaveBeenCalledWith('Provider admission failed')
+  })
+
+  it('restores through the composer that is current when the preparation is rejected', async () => {
+    const input = options()
+    let rejected: ((message: string) => void) | undefined
+    input.runtime.sendMessage = vi.fn(async (request) => {
+      rejected = request.onPreparationRejected
+      return { sessionId: 'session-a', messageId: 'optimistic-prompt' }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    const latestComposer = {
+      ...input.composer,
+      actions: { setError: vi.fn() },
+      lifecycle: { ...input.composer.lifecycle, restoreFailedSend: vi.fn(() => true) }
+    }
+    hook.rerender({ ...input, composer: latestComposer })
+    act(() => rejected?.('Provider admission failed'))
+    expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
+    expect(input.composer.actions.setError).not.toHaveBeenCalled()
+    expect(latestComposer.lifecycle.restoreFailedSend).toHaveBeenCalledOnce()
+    expect(latestComposer.actions.setError).toHaveBeenCalledWith('Provider admission failed')
   })
 
   it('branches from a completed Agent Message without consuming the composer draft', async () => {

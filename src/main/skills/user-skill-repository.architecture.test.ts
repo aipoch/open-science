@@ -389,6 +389,7 @@ describe('User Skill repository architecture', () => {
           'src/shared/renderer-contract-catalog.test.ts'
         ],
         consumer: [
+          'src/main/notebook/windows-runtime-manager.test.ts',
           'src/main/storage/wsl-npm-migration.integration.test.ts',
           'src/main/composition/notebook-environment.test.ts',
           'src/main/literature/command-owner.test.ts',
@@ -931,7 +932,15 @@ describe('User Skill repository architecture', () => {
           'src/main/notebook/r-connection-guard.test.ts',
           'src/main/notebook/dependency-analysis.lineage-regressions.test.ts',
           'src/main/session-diagnostics/export-evidence.integration.test.ts',
-          'src/main/permission-grants/connector-broker.test.ts'
+          'src/main/permission-grants/connector-broker.test.ts',
+          'src/main/session-persistence/missing-runtime-session-repro.test.ts',
+          'src/main/session-persistence/prompt-preparation-restart.test.ts',
+          'src/main/session-persistence/terminal-commit-scheduler.test.ts',
+          'src/main/session-persistence/reconciliation-renderer-parity.test.ts',
+          'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
+          'src/main/session-persistence/attention-projection.test.ts',
+          'src/main/acp/approved-handoff-outcome.integration.test.ts',
+          'src/main/acp/approved-handoff-outcome.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

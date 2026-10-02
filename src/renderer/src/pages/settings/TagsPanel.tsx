@@ -6,7 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
  * states: default · hover · focus · active · disabled · loading · error · success
  * theme: project tokens · contrast: pass · slop: pass
  */
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import {
   ChevronDown,
   BookOpenText,

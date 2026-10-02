@@ -297,10 +297,10 @@ jobs:
 
   build:
     name: Build ${{ matrix.name }}
-    needs: setup
+    needs: [setup]
     # Start as soon as the matrix is resolved. The sibling verify job remains part of this reusable
     # workflow's result, so release/nightly callers cannot reach publish if verification fails.
-    if: ${{ needs.setup.result == 'success' }}
+    if: ${{ !cancelled() && needs.setup.result == 'success' }}
     runs-on: ${{ matrix.os }}
     environment: ${{ inputs.sign_windows && matrix.platform == 'win' && 'windows-signing' || '' }}
     permissions:
@@ -500,6 +500,13 @@ jobs:
       # "unidentified developer" prompt instead of "damaged". Stable Windows tag builds use
       # Artifact Signing through the GitHub OIDC login above; all other Windows builds remain
       # unsigned. Linux packages do not use this signing service.
+      - name: Verify Windows runtime CDN availability
+        if: ${{ matrix.platform == 'win' }}
+        env:
+          CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+        run: node scripts/windows-runtime-cdn.mjs check
+
       - name: Build & package
         id: package
         shell: bash

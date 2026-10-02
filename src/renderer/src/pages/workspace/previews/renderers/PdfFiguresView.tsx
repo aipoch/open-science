@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ErrorNotice } from '@/components/error-notice'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import {
@@ -41,6 +42,7 @@ import {
 } from '../../../../../../shared/local-models'
 import {
   PDF_CLEANUP_PENDING,
+  type PdfStructureSource,
   type PdfStructureResult
 } from '../../../../../../shared/pdf-structure'
 import { copyPdfTable, pdfTableLayout } from '../../../../../../shared/pdf-table-copy'
@@ -288,7 +290,7 @@ const TableDetails = ({
 
 const CandidateDetails = ({
   selected,
-  attachmentVersionId,
+  source,
   imageCache,
   onNavigate,
   hideCaption = false,
@@ -296,7 +298,7 @@ const CandidateDetails = ({
   imageOnly = false
 }: {
   selected: Selection
-  attachmentVersionId: string
+  source: PdfStructureSource
   imageCache: PdfPreviewImageCache
   onNavigate: (page: number) => void
   hideCaption?: boolean
@@ -307,7 +309,7 @@ const CandidateDetails = ({
   const { result, element } = selected
   const table = selected.combinedTable ?? element.table
   const imageRequest = {
-    attachmentVersionId,
+    ...source,
     page: element.regions[0].page,
     extractionId: result.extractionId,
     thumbnailId: element.thumbnailId ?? ''
@@ -375,7 +377,7 @@ const CandidateDetails = ({
     if (element.thumbnailId && needsImage)
       void imageCache
         .load({
-          attachmentVersionId,
+          ...source,
           page: element.regions[0].page,
           extractionId: result.extractionId,
           thumbnailId: element.thumbnailId
@@ -392,7 +394,7 @@ const CandidateDetails = ({
     return () => {
       live = false
     }
-  }, [attachmentVersionId, element, result.extractionId, imageAttempt, imageCache, needsImage])
+  }, [source, element, result.extractionId, imageAttempt, imageCache, needsImage])
   return (
     <article className="space-y-3 text-sm">
       <div
@@ -663,13 +665,13 @@ const CandidateDetails = ({
 }
 
 export const PdfFiguresView = ({
-  attachmentVersionId,
+  source,
   pageCount,
   active: visible = true,
   onBusyChange,
   onNavigate
 }: {
-  attachmentVersionId: string
+  source: PdfStructureSource
   pageCount: number
   active?: boolean
   onBusyChange?: (busy: boolean) => void
@@ -678,6 +680,7 @@ export const PdfFiguresView = ({
   const { t, i18n } = useTranslation()
   const [model, setModel] = useState<LocalModelSnapshot>()
   const [busy, setBusy] = useState(false)
+  const [concurrency, setConcurrency] = useState<1 | 2 | 4>(1)
   const [completed, setCompleted] = useState(0)
   const [remainingSeconds, setRemainingSeconds] = useState<number>()
   const [results, setResults] = useState<PdfStructureResult[]>([])
@@ -688,8 +691,9 @@ export const PdfFiguresView = ({
   const [imageCache] = useState(() => new PdfPreviewImageCache())
   const [restoring, setRestoring] = useState(true)
   const [cacheChecked, setCacheChecked] = useState(false)
+  const returningSelectFocus = useRef(false)
   const generation = useRef(0)
-  const requestId = useRef<string | undefined>(undefined)
+  const requestIds = useRef(new Set<string>())
   const installation = useRef<Promise<void> | undefined>(undefined)
   const mounted = useRef(true)
   useEffect(() => {
@@ -709,7 +713,7 @@ export const PdfFiguresView = ({
           // Bound disk/RPC work while preserving physical page order and display limits.
           const batch = await Promise.all(
             Array.from({ length: Math.min(4, pageCount - page + 1) }, (_, offset) =>
-              window.api.pdfStructure.readCached({ attachmentVersionId, page: page + offset })
+              window.api.pdfStructure.readCached({ ...source, page: page + offset })
             )
           )
           if (!live || own !== generation.current) return
@@ -741,12 +745,12 @@ export const PdfFiguresView = ({
     return () => {
       live = false
     }
-  }, [visible, cacheChecked, attachmentVersionId, pageCount])
+  }, [visible, cacheChecked, source, pageCount])
   const cancel = (): void => {
     generation.current++
-    if (requestId.current)
-      void window.api.pdfStructure.cancel(requestId.current).catch(() => undefined)
-    requestId.current = undefined
+    for (const id of requestIds.current)
+      void window.api.pdfStructure.cancel(id).catch(() => undefined)
+    requestIds.current.clear()
     setBusy(false)
   }
   useEffect(() => {
@@ -756,8 +760,9 @@ export const PdfFiguresView = ({
       mounted.current = false
       imageCache.clear()
       taskGeneration.current++
-      if (requestId.current)
-        void window.api.pdfStructure.cancel(requestId.current).catch(() => undefined)
+      for (const id of requestIds.current)
+        void window.api.pdfStructure.cancel(id).catch(() => undefined)
+      requestIds.current.clear()
     }
   }, [imageCache])
   useEffect(() => {
@@ -799,22 +804,39 @@ export const PdfFiguresView = ({
     setLimited(false)
     let totalBytes = 0
     let totalElements = 0
-    let parsingMs = 0
+    const ids = new Set<string>()
+    requestIds.current = ids
+    let stopped = false
+    let finishStopping: (() => void) | undefined
+    const stopRequests = (): void => {
+      stopped = true
+      finishStopping?.()
+      for (const id of ids) void window.api.pdfStructure.cancel(id).catch(() => undefined)
+      ids.clear()
+    }
+    const startedAt = performance.now()
+    let installationMs = 0
+    let settled = 0
     try {
       // Join cancellation of an earlier install before starting a new one.
       await installation.current
       if (own !== generation.current) return
       const snapshot = await window.api.localModels.getSnapshot()
       if (own !== generation.current) return
-      let needsInstall = !snapshot.installedRevision || snapshot.updateAvailable
+      const needsInstall = !snapshot.installedRevision || snapshot.updateAvailable
+      let modelReady: Promise<void> | undefined
       const install = async (): Promise<void> => {
-        needsInstall = false
+        const installStartedAt = performance.now()
         const operation = async (): Promise<void> => {
           let installed = await window.api.localModels.install()
-          while (installed.availability === 'installing' && own === generation.current) {
+          while (
+            installed.availability === 'installing' &&
+            own === generation.current &&
+            !stopped
+          ) {
             setModel(installed)
             await new Promise((resolve) => setTimeout(resolve, 1000))
-            if (own !== generation.current) break
+            if (own !== generation.current || stopped) break
             installed = await window.api.localModels.getSnapshot()
           }
           if (own !== generation.current) {
@@ -823,6 +845,7 @@ export const PdfFiguresView = ({
             if (mounted.current) await window.api.localModels.cancel()
             return
           }
+          if (stopped) return
           setModel(installed)
           if (!installed.installedRevision || installed.updateAvailable)
             throw new Error('Model unavailable')
@@ -832,63 +855,93 @@ export const PdfFiguresView = ({
         try {
           await pending
         } finally {
+          installationMs += performance.now() - installStartedAt
           if (installation.current === pending) installation.current = undefined
         }
       }
-      for (let page = 1; page <= pageCount && own === generation.current; page++) {
-        let pageStartedAt = performance.now()
+      const parsePage = async (
+        page: number
+      ): Promise<{ result?: PdfStructureResult; error?: string }> => {
         const id = crypto.randomUUID()
-        requestId.current = id
+        ids.add(id)
+        let outcome: { result?: PdfStructureResult; error?: string }
         try {
-          const request = { attachmentVersionId, page, requestId: id }
-          // Cached results remain readable after the optional package is removed.
+          const request = { ...source, page, requestId: id }
+          // Try the cache first, even without a model. All misses join one installation.
           const result = await window.api.pdfStructure.parse(request).catch(async (error) => {
             const message = error instanceof Error ? error.message : ''
             if (
               !needsInstall ||
               own !== generation.current ||
+              stopped ||
               ![LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED].some((code) => message.endsWith(code))
             )
               throw error
-            await install()
-            if (own !== generation.current) throw error
-            // Model download time is not representative of page parsing throughput.
-            pageStartedAt = performance.now()
+            modelReady ??= install().catch(() => {
+              // A shared prerequisite failure must stop every page, not become a page error.
+              throw new Error(LOCAL_MODEL_NOT_INSTALLED)
+            })
+            await modelReady
+            if (own !== generation.current || stopped) throw error
             return window.api.pdfStructure.parse(request)
           })
-          if (own !== generation.current) return
-          totalBytes += JSON.stringify(result).length * 2
-          totalElements += result.elements.length
+          outcome = { result }
+        } catch (cause) {
+          outcome = { error: cause instanceof Error ? cause.message : 'unavailable' }
+        } finally {
+          ids.delete(id)
+        }
+        if (own !== generation.current || stopped) return outcome
+        settled++
+        setCompleted(settled)
+        if (
+          outcome.error &&
+          [PDF_CLEANUP_PENDING, LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED].some((code) =>
+            outcome.error!.endsWith(code)
+          )
+        ) {
+          setError(outcome.error)
+          stopRequests()
+        } else if (settled >= 2 && !installation.current) {
+          const elapsed = performance.now() - startedAt - installationMs
+          setRemainingSeconds((elapsed / settled / 1000) * (pageCount - settled))
+        }
+        return outcome
+      }
+      // A sliding window bounds both active requests and completed results waiting for an
+      // earlier page. Publish in physical order so continuations and display limits are stable.
+      const pending = new Map<number, ReturnType<typeof parsePage>>()
+      let next = 1
+      for (let page = 1; page <= pageCount && own === generation.current && !stopped; page++) {
+        while (next <= pageCount && next < page + concurrency) {
+          pending.set(next, parsePage(next))
+          next++
+        }
+        const stopping = new Promise<undefined>((resolve) => {
+          finishStopping = () => resolve(undefined)
+        })
+        const outcome = await Promise.race([pending.get(page)!, stopping])
+        finishStopping = undefined
+        pending.delete(page)
+        if (own !== generation.current || stopped || !outcome) break
+        if (outcome.result) {
+          totalBytes += JSON.stringify(outcome.result).length * 2
+          totalElements += outcome.result.elements.length
           if (totalBytes > 32 * 1024 ** 2 || totalElements > 512) {
             setLimited(true)
+            stopRequests()
             break
           }
-          setResults((current) => [...current, result])
-        } catch (cause) {
-          if (own !== generation.current) return
-          const message = cause instanceof Error ? cause.message : ''
-          if (
-            [PDF_CLEANUP_PENDING, LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED].some((code) =>
-              message.endsWith(code)
-            )
-          ) {
-            setError(message)
-            setCompleted(page)
-            break
-          }
+          setResults((current) => [...current, outcome.result!])
+        } else {
           setFailed((current) => [...current, page])
-        }
-        if (own === generation.current) {
-          parsingMs += performance.now() - pageStartedAt
-          setCompleted(page)
-          if (page >= 2) setRemainingSeconds((parsingMs / page / 1000) * (pageCount - page))
         }
       }
     } catch {
       if (own === generation.current) setError('unavailable')
     } finally {
       if (own === generation.current) {
-        requestId.current = undefined
+        stopRequests()
         setBusy(false)
       }
     }
@@ -933,6 +986,49 @@ export const PdfFiguresView = ({
               : Math.max(10, Math.ceil(remainingSeconds / 10) * 10)
           )
         })
+  const concurrencySelect = (
+    <TooltipProvider>
+      <Select
+        value={String(concurrency)}
+        onValueChange={(value) => {
+          if (value === '1' || value === '2' || value === '4')
+            setConcurrency(Number(value) as 1 | 2 | 4)
+        }}
+        disabled={busy || restoring}
+      >
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (returningSelectFocus.current || !event.currentTarget.matches(':focus-visible'))
+                event.preventDefault()
+              returningSelectFocus.current = false
+            }}
+          >
+            <SelectTrigger className="w-20 shrink-0" aria-label={t('Parallel pages')}>
+              <SelectValue />
+            </SelectTrigger>
+          </TooltipTrigger>
+          <TooltipContent>
+            {t(
+              '1x, 2x, or 4x analyzes 1, 2, or 4 pages at a time. Higher settings can be faster but use more memory. Results stay in page order.'
+            )}
+          </TooltipContent>
+        </Tooltip>
+        <SelectContent
+          onCloseAutoFocus={() => {
+            // Select can retain :focus-visible after pointer selection. Keep its focus return,
+            // but do not reopen the tooltip until the user next hovers or tabs to the control.
+            returningSelectFocus.current = true
+          }}
+        >
+          {[1, 2, 4].map((value) => (
+            <SelectItem key={value} value={String(value)}>{`${value}x`}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </TooltipProvider>
+  )
   const progressTrack = (
     <div
       role="progressbar"
@@ -971,7 +1067,7 @@ export const PdfFiguresView = ({
       className="@container flex size-full flex-col overflow-hidden bg-bg-000 text-text-000"
       data-pdf-figures-content
     >
-      {completed > 0 && (analysisComplete || entries.length > 0) ? (
+      {(completed > 0 && (analysisComplete || entries.length > 0)) || (error && !busy) ? (
         <header
           className={cn(
             'shrink-0 space-y-2 border-b border-border-200 px-3 @min-[640px]:px-4',
@@ -1009,24 +1105,27 @@ export const PdfFiguresView = ({
                         })}
               </span>
             </p>
-            {busy ? (
-              <Button size="sm" variant="outline" onClick={cancel}>
-                {model?.availability === 'installing' ? t('Cancel download') : t('Cancel')}
-              </Button>
-            ) : completed > 0 && !error ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-label={t('Analyze again')}
-                title={t('Analyze again')}
-                className="max-w-7 @min-[640px]:max-w-none"
-                disabled={!model || restoring}
-                onClick={() => void extract()}
-              >
-                <RefreshCw className="size-3.5" aria-hidden="true" />
-                <span className="hidden @min-[640px]:inline">{t('Analyze again')}</span>
-              </Button>
-            ) : null}
+            <div className="flex shrink-0 items-center gap-2">
+              {busy ? (
+                <Button size="sm" variant="outline" onClick={cancel}>
+                  {model?.availability === 'installing' ? t('Cancel download') : t('Cancel')}
+                </Button>
+              ) : completed > 0 || error ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={t('Analyze again')}
+                  title={t('Analyze again')}
+                  className="max-w-7 @min-[640px]:max-w-none"
+                  disabled={!model || restoring}
+                  onClick={() => void extract()}
+                >
+                  <RefreshCw className="size-3.5" aria-hidden="true" />
+                  <span className="hidden @min-[640px]:inline">{t('Analyze again')}</span>
+                </Button>
+              ) : null}
+              {concurrencySelect}
+            </div>
           </div>
           {busy && !restoring ? progress : null}
         </header>
@@ -1054,11 +1153,6 @@ export const PdfFiguresView = ({
             howLabel: t('Remaining pages'),
             how: t('Pages not yet attempted: {{remaining}}', { remaining: pageCount - completed })
           }}
-          primaryButton={{
-            label: t('Analyze again'),
-            onClick: () => void extract(),
-            disabled: !model || restoring
-          }}
           tone="amber"
         />
       ) : null}
@@ -1072,7 +1166,7 @@ export const PdfFiguresView = ({
       ) : null}
       {limited ? (
         <p role="status" className="px-5 py-2 text-xs">
-          {t('Display limit reached. Remaining pages were not processed.')}
+          {t('Display limit reached. Some analyzed pages are not shown.')}
         </p>
       ) : null}
       {restoring && !entries.length ? (
@@ -1230,7 +1324,7 @@ export const PdfFiguresView = ({
                     key={`${part.result.extractionId}:${part.element.id}`}
                     selected={part}
                     imageCache={imageCache}
-                    attachmentVersionId={attachmentVersionId}
+                    source={source}
                     onNavigate={onNavigate}
                     showPage={parts.length > 1}
                     hideCaption={active.combinedTable ? index > 0 : index < parts.length - 1}
@@ -1283,9 +1377,12 @@ export const PdfFiguresView = ({
               {busyLabel}
             </h3>
             {progress}
-            <Button size="sm" variant="outline" onClick={cancel}>
-              {downloading ? t('Cancel download') : t('Cancel')}
-            </Button>
+            <div className="flex items-center justify-center gap-2">
+              <Button size="sm" variant="outline" onClick={cancel}>
+                {downloading ? t('Cancel download') : t('Cancel')}
+              </Button>
+              {concurrencySelect}
+            </div>
           </div>
         </div>
       ) : analysisComplete ? (
@@ -1314,13 +1411,16 @@ export const PdfFiguresView = ({
                 : t('Browse figures, captions and copyable tables.')}
             </p>
             {!busy ? (
-              <Button disabled={!model} onClick={() => void extract()}>
-                {needsDownload
-                  ? t('Download and continue')
-                  : analysisIncomplete
-                    ? t('Analyze again')
-                    : t('Analyze PDF')}
-              </Button>
+              <div className="flex items-center justify-center gap-2">
+                <Button disabled={!model} onClick={() => void extract()}>
+                  {needsDownload
+                    ? t('Download and continue')
+                    : analysisIncomplete
+                      ? t('Analyze again')
+                      : t('Analyze PDF')}
+                </Button>
+                {concurrencySelect}
+              </div>
             ) : null}
             {needsDownload ? (
               <p className="text-xs text-text-300">

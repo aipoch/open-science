@@ -122,6 +122,7 @@ import {
 } from '../pdf-region-evidence'
 import { PdfOutlineSidebar, type PdfOutlineItem } from './PdfOutlineSidebar'
 import { PdfFiguresView } from './PdfFiguresView'
+import type { PdfStructureSource } from '../../../../../../shared/pdf-structure'
 import { PdfNotebookView } from './PdfNotebookView'
 import {
   countPdfSearchOccurrences,
@@ -164,7 +165,7 @@ const MAX_ZOOM = 3
 const ZOOM_BUTTON_STEP = 0.25
 const READING_POSITION_UPDATE_MS = 100
 const OUTLINE_DEFAULT_WIDTH = 240
-const NOTES_SIDEBAR_MIN_READER_WIDTH = 1120
+const SIDEBAR_MIN_READER_WIDTH = 1120
 const NOTES_SIDEBAR_MIN_WIDTH = 300
 const NOTES_SIDEBAR_MAX_WIDTH = 420
 // Wheel zoom is proportional to accumulated deltaY so one trackpad/pinch gesture (many small
@@ -347,16 +348,73 @@ const isPdfPageRef = (value: unknown): value is { num: number; gen: number } =>
   typeof (value as { num?: unknown }).num === 'number' &&
   typeof (value as { gen?: unknown }).gen === 'number'
 
-const resolvePdfOutlinePage = async (
+// Keep destination headings below the floating reader controls.
+const OUTLINE_TOP_INSET = 64
+const EMPTY_OUTLINE_ITEMS: readonly PdfOutlineItem[] = []
+
+// PDF destinations use bottom-left PDF coordinates. Let PDF.js handle crop boxes and rotation,
+// then retain fractions so outline navigation remains valid at any reader width/zoom.
+const resolvePdfOutlineTarget = async (
   document: PdfDocument,
   destination: PdfOutlineNode['dest']
-): Promise<number | undefined> => {
+): Promise<Pick<PdfOutlineItem, 'pageNumber' | 'position'>> => {
   const resolved =
     typeof destination === 'string' ? await document.getDestination(destination) : destination
-  const page = resolved?.[0]
-  if (typeof page === 'number') return page + 1
-  if (isPdfPageRef(page)) return (await document.getPageIndex(page)) + 1
-  return undefined
+  const ref = resolved?.[0]
+  const pageNumber =
+    typeof ref === 'number'
+      ? ref + 1
+      : isPdfPageRef(ref)
+        ? (await document.getPageIndex(ref)) + 1
+        : undefined
+  if (
+    pageNumber === undefined ||
+    !Number.isInteger(pageNumber) ||
+    pageNumber < 1 ||
+    pageNumber > document.numPages
+  )
+    return {}
+  const type = resolved?.[1]?.name
+  if (!resolved || !['XYZ', 'FitH', 'FitBH', 'FitV', 'FitBV', 'FitR'].includes(type))
+    return { pageNumber }
+  try {
+    const page = await document.getPage(pageNumber)
+    const viewport = page.getViewport({ scale: 1 })
+    const [xMin, yMin, xMax, yMax] = page.view
+    const coordinate = (value: unknown, fallback: number): number =>
+      typeof value === 'number' && Number.isFinite(value) ? value : fallback
+    let x = xMin,
+      y = yMax,
+      right = xMin,
+      bottom = yMax
+    if (type === 'XYZ') {
+      x = right = coordinate(resolved[2], xMin)
+      y = bottom = coordinate(resolved[3], yMax)
+    } else if (type === 'FitH' || type === 'FitBH') {
+      y = bottom = coordinate(resolved[2], yMax)
+    } else if (type === 'FitV' || type === 'FitBV') {
+      x = right = coordinate(resolved[2], xMin)
+      bottom = yMin
+    } else {
+      x = coordinate(resolved[2], xMin)
+      y = coordinate(resolved[3], yMin)
+      right = coordinate(resolved[4], xMax)
+      bottom = coordinate(resolved[5], yMax)
+    }
+    const first = viewport.convertToViewportPoint(x, y)
+    const last = viewport.convertToViewportPoint(right, bottom)
+    return {
+      pageNumber,
+      position: {
+        left: Math.max(0, Math.min(1, Math.min(first[0], last[0]) / viewport.width)),
+        top: Math.max(0, Math.min(1, Math.min(first[1], last[1]) / viewport.height)),
+        aspectRatio: viewport.width / viewport.height
+      }
+    }
+  } catch {
+    // An unreadable page/destination must not remove the rest of its outline branch.
+    return { pageNumber }
+  }
 }
 
 const resolvePdfOutline = async (
@@ -368,14 +426,14 @@ const resolvePdfOutline = async (
     nodes.map(async (node, index): Promise<PdfOutlineItem | undefined> => {
       const id = parentPath ? `${parentPath}.${index}` : String(index)
       const title = node.title.replaceAll('\0', '').trim()
-      const [pageNumber, children] = await Promise.all([
+      const [target, children] = await Promise.all([
         node.dest
-          ? resolvePdfOutlinePage(document, node.dest).catch(() => undefined)
-          : Promise.resolve(undefined),
+          ? resolvePdfOutlineTarget(document, node.dest).catch(() => ({}))
+          : Promise.resolve({}),
         resolvePdfOutline(document, node.items ?? [], id)
       ])
-      if (!title || (pageNumber === undefined && children.length === 0)) return undefined
-      return { id, title, pageNumber, children }
+      if (!title || (!('pageNumber' in target) && children.length === 0)) return undefined
+      return { id, title, ...target, children }
     })
   )
   return items.filter((item): item is PdfOutlineItem => item !== undefined)
@@ -1726,6 +1784,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   nativeAnnotationRevision,
   pageNumber,
   pageWidth,
+  outlineAspectRatio,
   registerDisposer,
   annotationProps,
   pdfEvidenceSource,
@@ -1744,6 +1803,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   nativeAnnotationRevision: number
   pageNumber: number
   pageWidth: number
+  outlineAspectRatio?: number
   registerDisposer: (dispose: () => void) => () => void
   annotationProps?: PreviewFileRendererProps
   pdfEvidenceSource?: PdfAnnotation['source']
@@ -1986,7 +2046,11 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
         // measured the fit width.
         pageWidth > 0 ? 'max-w-none' : 'w-full max-w-3xl'
       )}
-      style={pageWidth > 0 ? { aspectRatio, width: pageWidth } : { aspectRatio }}
+      style={
+        pageWidth > 0
+          ? { aspectRatio: outlineAspectRatio ?? aspectRatio, width: pageWidth }
+          : { aspectRatio: outlineAspectRatio ?? aspectRatio }
+      }
       data-page-number={pageNumber}
       data-pdf-page-rotation={pageRotation}
     >
@@ -2048,6 +2112,7 @@ export const PdfPreviewContent = ({
   annotationProps,
   pdfEvidenceSource,
   pdfBookmarkSource,
+  structureSource,
   pdfBookmarkSourceUnavailable = false,
   pdfRevealSource,
   nativeImportProgress,
@@ -2067,6 +2132,7 @@ export const PdfPreviewContent = ({
   onReadingPositionChange?: PreviewFileRendererProps['onPdfReadingPositionChange']
   annotationProps?: PreviewFileRendererProps
   pdfEvidenceSource?: PdfAnnotation['source']
+  structureSource?: PdfStructureSource
   pdfBookmarkSource?: PdfAnnotationSource
   pdfBookmarkSourceUnavailable?: boolean
   pdfRevealSource?: PdfAnnotation['source']
@@ -2081,6 +2147,10 @@ export const PdfPreviewContent = ({
     source === 'literature'
       ? (parseLiteratureAttachmentVersionReference(path) ?? undefined)
       : undefined
+  const figuresSource = useMemo<PdfStructureSource | undefined>(
+    () => structureSource ?? (attachmentVersionId ? { attachmentVersionId } : undefined),
+    [structureSource, attachmentVersionId]
+  )
   const requestKey = createPreviewResourceKey({
     projectId,
     sessionId,
@@ -2120,20 +2190,26 @@ export const PdfPreviewContent = ({
   const notesResizeRef = useRef<
     { pointerId: number; startX: number; startWidth: number } | undefined
   >(undefined)
-  const hasReadingTabs =
-    Boolean(attachmentVersionId || pdfBookmarkSource) && presentation !== 'search'
-  const canShowNotesSidebar =
-    presentation !== 'search' && readerWidth >= NOTES_SIDEBAR_MIN_READER_WIDTH
-  const showNotesSidebar = canShowNotesSidebar && notesOpen && readingMode === 'original'
+  const hasNotes = Boolean(attachmentVersionId || pdfBookmarkSource)
+  const hasReadingTabs = Boolean(figuresSource || pdfBookmarkSource) && presentation !== 'search'
+  const showNotesSidebar = presentation !== 'search' && notesOpen && readingMode === 'original'
+  const floatingNotes = showNotesSidebar && readerWidth < SIDEBAR_MIN_READER_WIDTH
   const maxNotesWidth = Math.min(
     NOTES_SIDEBAR_MAX_WIDTH,
     Math.max(NOTES_SIDEBAR_MIN_WIDTH, readerWidth - 752)
   )
-  const effectiveNotesWidth = Math.min(notesWidth, maxNotesWidth)
+  const effectiveNotesWidth = floatingNotes
+    ? Math.max(0, Math.min(320, readerWidth - 16))
+    : Math.min(notesWidth, maxNotesWidth)
   const resizeNotes = (width: number): void =>
     setNotesWidth(Math.max(NOTES_SIDEBAR_MIN_WIDTH, Math.min(maxNotesWidth, width)))
   const [currentPage, setCurrentPage] = useState(1)
   const currentPageRef = useRef(1)
+  const [outlinePosition, setOutlinePosition] = useState({ pageNumber: 1, top: 0 })
+  const [selectedOutline, setSelectedOutline] = useState<
+    Readonly<{ requestKey: string; id: string }> | undefined
+  >()
+  const outlineClickRef = useRef<{ top: number; left: number } | undefined>(undefined)
   const [pageLabels, setPageLabels] = useState<
     Readonly<{ requestKey: string; labels: readonly string[] | null }> | undefined
   >()
@@ -2174,6 +2250,8 @@ export const PdfPreviewContent = ({
     setNotesOpen(false)
     setNotesWidth(320)
     setCurrentPage(1)
+    setOutlinePosition({ pageNumber: 1, top: 0 })
+    setSelectedOutline(undefined)
     setSelectedEvidenceId(undefined)
     setSelectedBookmarkId(undefined)
     setSearchOpen(false)
@@ -2185,6 +2263,7 @@ export const PdfPreviewContent = ({
   useLayoutEffect(() => {
     viewportAnchorRef.current = undefined
     currentPageRef.current = 1
+    outlineClickRef.current = undefined
     searchTextCacheRef.current.clear()
   }, [requestKey])
   // The width one page fills at 100%: the content box, capped to a comfortable reading width. Owned
@@ -2427,10 +2506,32 @@ export const PdfPreviewContent = ({
     size: currentDocumentState?.status === 'ready' ? currentDocumentState.size : undefined
   })
   const pageCount = document?.numPages ?? 0
+  const outlineItems =
+    outlineState?.requestKey === requestKey ? outlineState.items : EMPTY_OUTLINE_ITEMS
+  const showNavigation = Boolean(
+    document && outlineOpen && (pageCount > 1 || outlineItems.length > 0 || attachmentVersionId)
+  )
+  const floatingNavigation =
+    showNavigation &&
+    readingMode === 'original' &&
+    readerWidth > 0 &&
+    readerWidth < SIDEBAR_MIN_READER_WIDTH
   const pageWidth = fitWidth > 0 ? Math.round(fitWidth * zoom) : 0
-  const outlineItems = outlineState?.requestKey === requestKey ? outlineState.items : []
+  const outlineAspectRatios = useMemo(() => {
+    const ratios = new Map<number, number>()
+    const visit = (items: readonly PdfOutlineItem[]): void => {
+      for (const item of items) {
+        if (item.pageNumber && item.position) ratios.set(item.pageNumber, item.position.aspectRatio)
+        visit(item.children)
+      }
+    }
+    visit(outlineItems)
+    return ratios
+  }, [outlineItems])
   const resolvedPageLabels = pageLabels?.requestKey === requestKey ? pageLabels.labels : null
   const scrollToPage = useCallback((pageNumber: number): void => {
+    outlineClickRef.current = undefined
+    setSelectedOutline(undefined)
     scrollRef.current
       ?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)
       ?.scrollIntoView({ block: 'start', behavior: 'auto' })
@@ -2454,7 +2555,30 @@ export const PdfPreviewContent = ({
     },
     [document, resourceRequestKey, searchQuery, scrollToPage]
   )
-  const navigateToPage = scrollToPage
+  const navigateToPage = (pageNumber: number, item?: PdfOutlineItem): void => {
+    scrollToPage(pageNumber)
+    const scroll = scrollRef.current
+    const page = scroll?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)
+    if (!scroll || !page || !item) return
+    if (item.position) {
+      const bounds = page.getBoundingClientRect()
+      const viewport = scroll.getBoundingClientRect()
+      scroll.scrollTop = Math.max(
+        0,
+        scroll.scrollTop +
+          bounds.top -
+          viewport.top +
+          item.position.top * bounds.height -
+          OUTLINE_TOP_INSET
+      )
+      // Leave fitting pages centered; horizontal panning is needed only for overflowing pages.
+      if (bounds.width > scroll.clientWidth) {
+        scroll.scrollLeft += bounds.left - viewport.left + item.position.left * bounds.width
+      }
+    }
+    outlineClickRef.current = { top: scroll.scrollTop, left: scroll.scrollLeft }
+    setSelectedOutline({ requestKey: resourceRequestKey, id: item.id })
+  }
   useEffect(
     () =>
       subscribeBookmarkRevealPreparation((target) => {
@@ -2660,6 +2784,32 @@ export const PdfPreviewContent = ({
       const pageNumber = nearestPage()
       currentPageRef.current = pageNumber
       setCurrentPage((current) => (current === pageNumber ? current : pageNumber))
+      if (outlineItems.length > 0) {
+        const viewport = scroll.getBoundingClientRect()
+        const topPage = pageAtViewportMidpoint(pages, {
+          ...viewport,
+          top: viewport.top + OUTLINE_TOP_INSET + 2,
+          height: 0
+        } as DOMRect)
+        const bounds = topPage?.getBoundingClientRect()
+        if (topPage && bounds && bounds.height > 0) {
+          const next = {
+            pageNumber: Number(topPage.dataset.pageNumber),
+            top: Math.max(0, (viewport.top + OUTLINE_TOP_INSET + 2 - bounds.top) / bounds.height)
+          }
+          setOutlinePosition((current) =>
+            current.pageNumber === next.pageNumber && current.top === next.top ? current : next
+          )
+        }
+      }
+      const click = outlineClickRef.current
+      if (
+        click &&
+        (Math.abs(click.top - scroll.scrollTop) > 1 || Math.abs(click.left - scroll.scrollLeft) > 1)
+      ) {
+        outlineClickRef.current = undefined
+        setSelectedOutline(undefined)
+      }
       if (lastReportedPage === pageNumber) return
       lastReportedPage = pageNumber
       onReadingPositionChange?.({ pageNumber, pageCount })
@@ -2796,16 +2946,16 @@ export const PdfPreviewContent = ({
           ['area', 'area-annotation', 'text-annotation'].includes(cursorMode)
         }
         data-preview-escape-boundary={
-          source === 'literature' && selectedBookmarkId ? '' : undefined
+          floatingNavigation || floatingNotes || (source === 'literature' && selectedBookmarkId)
+            ? ''
+            : undefined
         }
         onKeyDown={(event) => {
           // Portalled panels remain mounted during exit motion. Let their own
           // dismissal consume Escape before the surrounding PDF tool handles it.
           if (event.target instanceof Node && !event.currentTarget.contains(event.target)) return
-          const layer =
-            event.target instanceof Element
-              ? event.target.closest('[role="dialog"], [role="menu"]')
-              : null
+          const target = event.target instanceof Element ? event.target : null
+          const layer = target?.closest('[role="dialog"], [role="menu"]')
           if (layer && !layer.contains(event.currentTarget)) return
           if (
             event.key === 'Escape' &&
@@ -2816,6 +2966,27 @@ export const PdfPreviewContent = ({
             event.preventDefault()
             event.stopPropagation()
             setSelectedBookmarkId(undefined)
+            return
+          }
+          if (
+            event.key === 'Escape' &&
+            !event.nativeEvent.isComposing &&
+            floatingNavigation &&
+            (!floatingNotes ||
+              (!target?.closest('[data-pdf-notes-sidebar]') &&
+                !notesToggleRef.current?.contains(target)))
+          ) {
+            event.preventDefault()
+            event.stopPropagation()
+            setOutlineOpen(false)
+            focusPdfView()
+            return
+          }
+          if (event.key === 'Escape' && !event.nativeEvent.isComposing && floatingNotes) {
+            event.preventDefault()
+            event.stopPropagation()
+            setNotesOpen(false)
+            notesToggleRef.current?.focus()
             return
           }
           if (
@@ -2990,7 +3161,9 @@ export const PdfPreviewContent = ({
               aria-label={t('PDF reading mode')}
               className="relative flex h-8 min-w-0 shrink-0 justify-center gap-2 border-b border-border bg-bg-000 px-10"
             >
-              {document && readingMode === 'original' && (pageCount > 1 || attachmentVersionId) ? (
+              {document &&
+              readingMode === 'original' &&
+              (pageCount > 1 || outlineItems.length > 0 || attachmentVersionId) ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -3024,7 +3197,7 @@ export const PdfPreviewContent = ({
                 </Tabs.Trigger>
                 <PdfToolbarTooltip plain side="bottom" label={t('Original PDF')} />
               </Tooltip>
-              {attachmentVersionId ? (
+              {figuresSource ? (
                 <Tooltip>
                   <Tabs.Trigger
                     value="figures"
@@ -3052,49 +3225,44 @@ export const PdfPreviewContent = ({
                   <PdfToolbarTooltip plain side="bottom" label={t('Figures & Tables')} />
                 </Tooltip>
               ) : null}
-              <Tooltip>
-                <Tabs.Trigger
-                  value="notes"
-                  ref={notesTabRef}
-                  aria-controls={notebookPanelId}
-                  className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
-                  asChild
-                >
-                  <TooltipTrigger>
-                    <NotebookPen className="size-3.5 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{t('Notes & Annotations')}</span>
-                  </TooltipTrigger>
-                </Tabs.Trigger>
-                <PdfToolbarTooltip plain side="bottom" label={t('Notes & Annotations')} />
-              </Tooltip>
-              {readingMode === 'original' ? (
+              {hasNotes ? (
+                <Tooltip>
+                  <Tabs.Trigger
+                    value="notes"
+                    ref={notesTabRef}
+                    aria-controls={notebookPanelId}
+                    className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+                    asChild
+                  >
+                    <TooltipTrigger>
+                      <NotebookPen className="size-3.5 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{t('Notes & Annotations')}</span>
+                    </TooltipTrigger>
+                  </Tabs.Trigger>
+                  <PdfToolbarTooltip plain side="bottom" label={t('Notes & Annotations')} />
+                </Tooltip>
+              ) : null}
+              {hasNotes && readingMode === 'original' ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       type="button"
                       variant={showNotesSidebar ? 'secondary' : 'ghost'}
                       size="icon-sm"
-                      className="absolute right-2 top-0.5 size-7 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                      className="absolute right-2 top-0.5 size-7"
                       aria-label={
                         showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')
                       }
                       ref={notesToggleRef}
                       aria-expanded={showNotesSidebar}
                       aria-controls={notebookPanelId}
-                      aria-disabled={!canShowNotesSidebar}
-                      onClick={() => {
-                        if (canShowNotesSidebar) setNotesOpen((open) => !open)
-                      }}
+                      onClick={() => setNotesOpen((open) => !open)}
                     >
                       <PanelRight className="size-4" aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    {!canShowNotesSidebar
-                      ? t('Widen the window to show notes beside the PDF')
-                      : showNotesSidebar
-                        ? t('Hide notes sidebar')
-                        : t('Show notes sidebar')}
+                    {showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')}
                   </TooltipContent>
                 </Tooltip>
               ) : null}
@@ -3111,9 +3279,11 @@ export const PdfPreviewContent = ({
               inert={readingMode !== 'original'}
               aria-hidden={readingMode !== 'original'}
               data-pdf-original-view
-              style={showNotesSidebar ? { right: effectiveNotesWidth } : undefined}
+              style={
+                showNotesSidebar && !floatingNotes ? { right: effectiveNotesWidth } : undefined
+              }
             >
-              {document && outlineOpen && (pageCount > 1 || attachmentVersionId) ? (
+              {document && showNavigation ? (
                 <PdfOutlineSidebar
                   key={requestKey}
                   document={document}
@@ -3121,9 +3291,23 @@ export const PdfPreviewContent = ({
                   pageCount={pageCount}
                   pageLabels={resolvedPageLabels}
                   currentPage={currentPage}
-                  width={outlineWidth}
+                  position={outlinePosition}
+                  selectedId={
+                    selectedOutline?.requestKey === resourceRequestKey
+                      ? selectedOutline.id
+                      : undefined
+                  }
+                  floating={floatingNavigation}
+                  width={
+                    floatingNavigation
+                      ? Math.max(0, Math.min(outlineWidth, readerWidth - 16))
+                      : outlineWidth
+                  }
                   onWidthChange={setOutlineWidth}
-                  onClose={() => setOutlineOpen(false)}
+                  onClose={() => {
+                    setOutlineOpen(false)
+                    if (floatingNavigation) focusPdfView()
+                  }}
                   onNavigate={navigateToPage}
                 />
               ) : null}
@@ -3214,6 +3398,7 @@ export const PdfPreviewContent = ({
                           document={document}
                           pageNumber={index + 1}
                           pageWidth={pageWidth}
+                          outlineAspectRatio={outlineAspectRatios.get(index + 1)}
                           registerDisposer={registerPageDisposer}
                           annotationProps={annotationProps}
                           pdfEvidenceSource={pdfEvidenceSource}
@@ -3264,7 +3449,8 @@ export const PdfPreviewContent = ({
                       textMarkStyle={textMarkStyle}
                       onTextMarkStyleChange={setTextMarkStyle}
                       navigationAvailable={
-                        !hasReadingTabs && (pageCount > 1 || Boolean(attachmentVersionId))
+                        !hasReadingTabs &&
+                        (pageCount > 1 || outlineItems.length > 0 || Boolean(attachmentVersionId))
                       }
                       navigationOpen={outlineOpen}
                       searchOpen={searchOpen}
@@ -3308,7 +3494,7 @@ export const PdfPreviewContent = ({
               </div>
             </div>
           </Tabs.Content>
-          {attachmentVersionId && figuresVisited && document ? (
+          {figuresSource && figuresVisited && document && presentation !== 'search' ? (
             <Tabs.Content value="figures" tabIndex={-1} forceMount asChild>
               <div
                 className={cn(
@@ -3322,7 +3508,7 @@ export const PdfPreviewContent = ({
                 <PdfFiguresView
                   key={requestKey}
                   active={readingMode === 'figures'}
-                  attachmentVersionId={attachmentVersionId}
+                  source={figuresSource}
                   pageCount={pageCount}
                   onBusyChange={setFiguresBusy}
                   onNavigate={(page) => {
@@ -3345,6 +3531,7 @@ export const PdfPreviewContent = ({
                 className={cn(
                   'absolute inset-y-0 right-0',
                   showNotesSidebar ? 'border-l border-border bg-bg-000' : 'left-0',
+                  floatingNotes && 'z-50 shadow-lg',
                   readingMode !== 'notes' && !showNotesSidebar && 'invisible pointer-events-none'
                 )}
                 id={notebookPanelId}
@@ -3374,7 +3561,7 @@ export const PdfPreviewContent = ({
                   onOpenPdf={() => setReadingMode('original')}
                   pageCount={pageCount}
                 />
-                {showNotesSidebar ? (
+                {showNotesSidebar && !floatingNotes ? (
                   <button
                     type="button"
                     role="separator"
@@ -3426,7 +3613,9 @@ export const PdfPreviewContent = ({
   )
 }
 
-const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.Element => {
+const PdfPreviewRendererContent = (
+  props: PreviewFileRendererProps & { structureSource?: PdfStructureSource }
+): React.JSX.Element => {
   const target = resolvePdfContextTarget(props.item)
   const libraryAnnotations = usePdfAnnotations()
   const isLibrary = target?.sourceKind === 'literature-attachment-version'
@@ -3789,6 +3978,7 @@ const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.E
       onReadingPositionChange={props.onPdfReadingPositionChange}
       annotationProps={props}
       pdfEvidenceSource={pdfEvidenceSource}
+      structureSource={props.structureSource}
       pdfBookmarkSource={pdfBookmarkSource}
       pdfBookmarkSourceUnavailable={pdfBookmarkSourceUnavailable}
       pdfRevealSource={pdfRevealSource}
@@ -3815,8 +4005,31 @@ const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.E
 export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => {
   const parentAnnotations = usePdfAnnotations()
   const target = resolvePdfContextTarget(props.item)
+  const { projectId } = props.item
+  const sourceKind = target?.sourceKind
+  const sourceFileId = target?.sourceFileId
+  const sourceVersionId = target?.sourceVersionId
+  const structureSource = useMemo<PdfStructureSource | undefined>(() => {
+    if (!sourceKind || !sourceVersionId) return undefined
+    if (sourceKind === 'literature-attachment-version')
+      return { attachmentVersionId: sourceVersionId }
+    if (!projectId || !sourceFileId) return undefined
+    return { source: { kind: 'managed', projectId, sourceKind, sourceFileId, sourceVersionId } }
+  }, [projectId, sourceKind, sourceFileId, sourceVersionId])
+  if (props.readOnly) {
+    return (
+      <PdfAnnotationsProvider writable={false} loadAnnotations={false}>
+        <PdfPreviewContent
+          {...props.item}
+          source={props.item.source ?? 'artifact'}
+          structureSource={structureSource}
+          presentation={props.presentation}
+        />
+      </PdfAnnotationsProvider>
+    )
+  }
   if (!target || parentAnnotations.document?.versionId === target.sourceVersionId)
-    return <PdfPreviewRendererContent {...props} />
+    return <PdfPreviewRendererContent {...props} structureSource={structureSource} />
   const library = target.sourceKind === 'literature-attachment-version'
   return (
     <PdfAnnotationsProvider
@@ -3827,7 +4040,7 @@ export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.E
       versionId={target.sourceVersionId}
       writable={!parentAnnotations.scoped || parentAnnotations.available}
     >
-      <PdfPreviewRendererContent {...props} />
+      <PdfPreviewRendererContent {...props} structureSource={structureSource} />
     </PdfAnnotationsProvider>
   )
 }

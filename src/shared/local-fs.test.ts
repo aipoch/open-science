@@ -165,6 +165,9 @@ describe('local path navigation', () => {
     expect(parentLocalPath('\\\\server\\share', 'win32')).toBe('\\\\server\\share')
     expect(isLocalPathRoot('C:\\', 'win32')).toBe(true)
     expect(isLocalPathRoot('//server/share/', 'win32')).toBe(true)
+    expect(isLocalPathRoot('/fixture/..', 'linux')).toBe(true)
+    expect(isLocalPathRoot(String.raw`C:\fixture\..`, 'win32')).toBe(true)
+    expect(isLocalPathRoot(String.raw`\\server\share\fixture\..`, 'win32')).toBe(true)
     expect(isLocalPathRoot('C:\\Users', 'win32')).toBe(false)
   })
 
@@ -298,6 +301,26 @@ describe('validateGrantCandidate', () => {
       ok: false,
       reason: 'is-home'
     })
+  })
+
+  it('rejects filesystem roots after lexical normalization', () => {
+    expect(validateGrantCandidate('/fixture/..', home, 'linux')).toEqual({
+      ok: false,
+      reason: 'is-root'
+    })
+    expect(
+      validateGrantCandidate(String.raw`C:\fixture\..`, String.raw`C:\Users\roxi`, 'win32')
+    ).toEqual({
+      ok: false,
+      reason: 'is-root'
+    })
+    expect(
+      validateGrantCandidate(
+        String.raw`\\server\share\fixture\..`,
+        String.raw`C:\Users\roxi`,
+        'win32'
+      )
+    ).toEqual({ ok: false, reason: 'is-root' })
   })
 })
 

@@ -1,0 +1,27 @@
+{
+  "description": "Reduced zero-byte report left by a failed cell, followed by cross-language repair and genuine fitted-model exposure-offset recovery observed in a live count-analysis workflow. Synthetic observations; not an original model transcript.",
+  "input": "id,y,x,exposure\n1,2,0,1\n2,4,0,2\n3,4,1,1\n4,8,1,2\n5,8,2,1\n6,16,2,2\n",
+  "cells": [
+    {
+      "language": "r",
+      "status": "failed",
+      "code": "records <- read.csv('inputs/counts.csv')\nmodel <- stats::glm(y ~ x + offset(log(exposure)), data=records, family=stats::poisson(), control=stats::glm.control(epsilon=1e-12))\nstopifnot(model$converged, inherits(model, 'glm'), stats::nobs(model)==6)\nsaveRDS(model, 'outputs/model.rds')\nsaveRDS(records, 'outputs/records.rds')\nconnection <- file('outputs/report.json', 'w')\nclose(connection)\nwriteLines('{\"stage\":\"unreached\"}', connection)",
+      "reads": ["inputs/counts.csv"],
+      "writes": ["outputs/model.rds", "outputs/records.rds", "outputs/report.json"]
+    },
+    {
+      "language": "python",
+      "status": "completed",
+      "code": "from pathlib import Path\nimport json\nprevious = Path('outputs/report.json').read_bytes()\nassert previous == b''\nPath('outputs/report.json').write_text(json.dumps({'stage': 'python-repaired'}), encoding='utf-8')",
+      "reads": ["outputs/report.json"],
+      "writes": ["outputs/report.json"]
+    },
+    {
+      "language": "r",
+      "status": "completed",
+      "code": "restored <- readRDS('outputs/model.rds')\nrecords <- readRDS('outputs/records.rds')\nstopifnot(inherits(restored, 'glm'), inherits(restored, 'lm'), restored$converged, stats::nobs(restored)==6)\nnewdata <- records[1, , drop=FALSE]\noriginal <- stats::predict(restored, newdata=newdata, type='response')\nnewdata$exposure <- 2*newdata$exposure\ndoubled <- stats::predict(restored, newdata=newdata, type='response')\nstopifnot(abs(original-2)<1e-8, abs(doubled-4)<1e-8, abs(doubled/original-2)<1e-10)\nprevious <- jsonlite::fromJSON('outputs/report.json')\nstopifnot(identical(previous$stage, 'python-repaired'))\nreport <- jsonlite::toJSON(list(stage='r-restored', nobs=stats::nobs(restored), original=unname(original), doubled=unname(doubled)), auto_unbox=TRUE, digits=16)\nwriteLines(report, 'outputs/report.json')\ncat('FAILED_NATIVE_OFFSET_RECOVERY_OK\\n')",
+      "reads": ["outputs/model.rds", "outputs/records.rds", "outputs/report.json"],
+      "writes": ["outputs/report.json"]
+    }
+  ]
+}

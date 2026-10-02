@@ -1,3 +1,4 @@
+import type { ReplayRunIndex } from '../../shared/replay'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
@@ -1812,6 +1813,15 @@ class NotebookRuntimeService {
   // ensureSession(), load run.json, discover runtimes, or create an executor.
   peekHandoffContext(sessionId: string): NotebookHandoffContext | undefined {
     return this.sessionReadModel.peekHandoffContext(sessionId)
+  }
+
+  async runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]> {
+    return this.sessionLifecycle.runProjectOperation(request, () =>
+      this.repository.readSessionRunIndex(
+        resolveProjectId(request, resolveProjectId(this.options)),
+        request.sessionId
+      )
+    )
   }
 
   // Returns current live state plus the bounded recent run window used by renderer consumers.

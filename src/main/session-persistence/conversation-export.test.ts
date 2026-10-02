@@ -104,6 +104,45 @@ describe('conversation export service', () => {
       ...overrides
     } as Parameters<typeof createConversationExportService>[0])
 
+  it.each(['markdown', 'pdf'] as const)(
+    'requires durable terminal preflight before %s reads or publishes',
+    async (format) => {
+      const reserveExport = vi.fn(async () => {
+        throw new Error('retained terminal write failed')
+      })
+      await expect(
+        createService({ reserveExport }).exportConversation({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          format
+        })
+      ).rejects.toThrow('retained terminal write failed')
+      expect(reserveExport).toHaveBeenCalledWith('project-1', 'session-1')
+      expect(loadSession).not.toHaveBeenCalled()
+      expect(showSaveDialog).not.toHaveBeenCalled()
+      expect(writeExportFile).not.toHaveBeenCalled()
+      expect(printToPDF).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['markdown', 'pdf'] as const)(
+    'releases %s reservation when the native selection is cancelled',
+    async (format) => {
+      const release = vi.fn()
+      const reserveExport = vi.fn(async () => release)
+      showSaveDialog.mockResolvedValue({ canceled: true })
+      await expect(
+        createService({ reserveExport }).exportConversation({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          format
+        })
+      ).resolves.toEqual({ saved: false })
+      expect(release).toHaveBeenCalledOnce()
+      expect(writeExportFile).not.toHaveBeenCalled()
+    }
+  )
+
   it('loads the durable session and saves normalized Markdown', async () => {
     const result = await createService().exportConversation({
       projectId: 'project-1',

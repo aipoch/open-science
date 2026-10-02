@@ -8,6 +8,54 @@ import { SessionRepository } from '../session-persistence/repository'
 import { initDataRoot } from '../storage-root'
 import { SessionPackageService } from './service'
 
+// Exercise the real aggregate limit without writing hundreds of GiB in a regression test.
+const limits = vi.hoisted(() => ({ maxBytes: 256 * 1024 ** 3 }))
+vi.mock('../../shared/session-package', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/session-package')>()),
+  get PACKAGE_MAX_BYTES() {
+    return limits.maxBytes
+  }
+}))
+
+it('rejects export whose reconstructed duplicate content exceeds the import limit', async () => {
+  const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  try {
+    await fixture.client.project.create({ data: { id: 'project-1', name: 'Bounded export' } })
+    await new SessionRepository(fixture.storageRoot).saveSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Bounded export',
+      cwd: '',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const directory = join(fixture.storageRoot, 'notebooks/project-1/session-1/data')
+    await mkdir(directory, { recursive: true })
+    for (const name of ['first.bin', 'second.bin']) {
+      await writeFile(join(directory, name), Buffer.alloc(128 * 1024, 7))
+    }
+    const archive = join(fixture.storageRoot, 'bounded.science')
+    await writeFile(archive, 'previous export')
+    limits.maxBytes = 200 * 1024
+    await expect(
+      service.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+    ).rejects.toThrow(/limit/)
+    expect(await readFile(archive, 'utf8')).toBe('previous export')
+  } finally {
+    limits.maxBytes = 256 * 1024 ** 3
+    await service.close()
+    await fixture.dispose()
+    initDataRoot(undefined)
+  }
+})
+
 vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true },
   safeStorage: { isEncryptionAvailable: () => false }

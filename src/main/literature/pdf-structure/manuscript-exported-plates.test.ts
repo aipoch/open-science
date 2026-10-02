@@ -64,3 +64,51 @@ it('does not classify an inline chart reference as a caption', () => {
   expect(captionKind('Chart 1 shows the distribution of subjects.')).toBeUndefined()
   expect(captionKind('Chart 1. Distribution of subjects')).toBe('figure')
 })
+
+const indexedNativeTable = (): ReturnType<typeof JSON.parse> => ({
+  items: Array.from({ length: 8 }, (_, n) => [
+    { str: String(n + 1), height: 8, width: 4, transform: [8, 0, 0, 8, 42, 690 - n * 10] },
+    {
+      str: 'An anonymized descriptive table record.',
+      height: 8,
+      width: 210,
+      transform: [8, 0, 0, 8, 60, 690 - n * 10]
+    }
+  ]).flat()
+})
+const indexViewport = {
+  width: 595,
+  convertToViewportPoint: (x: number, y: number): number[] => [x, 800 - y]
+}
+const indexedTableProof = (): ReturnType<typeof JSON.parse> => ({
+  tableRects: [[36, 94, 286, 185]],
+  captions: [{ lines: ['Table 1', 'Descriptive records.'], rect: [42, 80, 210, 92] }],
+  rules: [
+    [42, 100, 280, 100],
+    [42, 182, 280, 182]
+  ]
+})
+
+it('preserves numbered records inside a uniquely captioned native table frame', () => {
+  const content = indexedNativeTable()
+  expect(excludePdfLineNumbers(content, indexViewport, indexedTableProof()).items).toEqual(
+    content.items
+  )
+  expect(excludePdfLineNumbers(content, indexViewport).items).toHaveLength(8)
+})
+
+it.each(['opening', 'footer', 'caption', 'model', 'competing-caption', 'outside-body'])(
+  'does not exempt a margin sequence without complete table proof: %s',
+  (mode) => {
+    const proof = indexedTableProof(),
+      content = indexedNativeTable()
+    if (mode === 'opening') proof.rules.shift()
+    if (mode === 'footer') proof.rules.pop()
+    if (mode === 'caption') proof.captions = []
+    if (mode === 'model') proof.tableRects = []
+    if (mode === 'competing-caption') proof.captions.push(structuredClone(proof.captions[0]))
+    if (mode === 'outside-body')
+      content.items.find((i: { str: string; width: number }) => i.str.length > 20).width = 300
+    expect(excludePdfLineNumbers(content, indexViewport, proof).items).toHaveLength(8)
+  }
+)

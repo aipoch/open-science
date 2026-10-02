@@ -386,6 +386,17 @@ describe('LocalFsService granted roots', () => {
     expect(store).toEqual([])
   })
 
+  it('rejects a diagnostic path that canonicalizes to a filesystem root', async () => {
+    const candidate =
+      process.platform === 'win32' ? `${root.slice(0, 3)}fixture\\..` : '/fixture/..'
+    vi.mocked(realpath).mockResolvedValueOnce(process.platform === 'win32' ? root.slice(0, 3) : '/')
+    vi.mocked(realpath).mockResolvedValueOnce(home)
+
+    await expect(grantService.grantRoot({ path: candidate, access: 'ro' })).rejects.toThrow(/root/i)
+    expect(beforeGrantedRootsChange).not.toHaveBeenCalled()
+    expect(store).toEqual([])
+  })
+
   it('grants an absolute path outside home (cross-drive granting)', async () => {
     const updated = await grantService.grantRoot({ path: outside, access: 'ro' })
 

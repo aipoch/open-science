@@ -64,6 +64,15 @@ const harness = async () => {
     },
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   })
+  vi.stubGlobal('window', {
+    api: {
+      sessions: {
+        saveSession: (session: PersistedChatSession, options?: SaveSessionOptions) =>
+          persistence.saveSession(session, options),
+        loadOne: async () => structuredClone(durable)
+      }
+    }
+  })
   const transcript = new RuntimeSessionOwner({
     loadSession: async () => structuredClone(durable),
     mutateSession: (scope, mutate) => persistence.mutateRuntimeSession(scope, mutate),
@@ -161,7 +170,10 @@ describe('workspace send while the previous Main terminal projection is queued',
     resetSessionConversationIntentsForTests()
     useSessionStore.setState(createInitialSessionState())
   })
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
 
   it('keeps a pending user intent retryable when it meets Main activeRun', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_790_000_000_000)

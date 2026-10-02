@@ -1,3 +1,4 @@
+import { setTurnOutcome } from '../../shared/session-persistence'
 import { isDeepStrictEqual } from 'node:util'
 import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
@@ -25,12 +26,18 @@ import {
 } from '../../shared/runtime-session-projection'
 import { matchPlanDelivery } from '../session-plan/plan-delivery'
 import { createLogger, diagnosticErrorFields } from '../logger'
+import { INTERRUPTED_TURN_ERROR } from '../../shared/session-persistence'
 
 const log = createLogger('session-persistence')
 
 const DEFAULT_FLUSH_INTERVAL_MS = 2_000
 const MAX_RETAINED_TURNS = 500
 const MAX_RETAINED_PUBLICATIONS = 500
+export const TERMINAL_COMMIT_MAX_ATTEMPTS = 3
+export const TERMINAL_COMMIT_RETRY_BUDGET_MS = 2_000
+export const TERMINAL_COMMIT_INITIAL_BUDGET_MS = 500
+export const TERMINAL_ADMISSION_WAIT_BUDGET_MS =
+  TERMINAL_COMMIT_INITIAL_BUDGET_MS + TERMINAL_COMMIT_RETRY_BUDGET_MS
 
 export type RuntimeSessionTurnScope = RuntimeSessionScope & {
   projectId: string
@@ -61,6 +68,7 @@ export type RuntimeSessionAdmission = {
   settlementAdmission?: SettlementAdmission
   // Main-owned application turns create their prompt and execution authority in one commit.
   applicationPrompt?: { text: string; attribution: MessageAttribution }
+  approvedHandoffContinuation?: boolean
 }
 
 export type RuntimeSessionArtifactPublicationReceipt = {
@@ -99,6 +107,12 @@ type RuntimeSessionOwnerDependencies = {
   ): Promise<PersistedChatSession>
   finalizeArtifacts(request: { claimId: string; messageId: string }): Promise<ArtifactFile[]>
   onCommitted?(session: PersistedChatSession): void
+  onTerminalCommitExhausted?(
+    scope: RuntimeSessionTurnScope,
+    event: AcpRuntimeEvent,
+    retry: () => Promise<void>,
+    waitForWriteRelease: () => Promise<void>
+  ): void
   scheduleFlush?(flush: () => void, delayMs: number): () => void
   now?: () => number
   flushIntervalMs?: number
@@ -118,7 +132,18 @@ type Turn = {
   settlementAdmission?: SettlementAdmission
   settlementDispatchStarted?: boolean
   notDispatchedCleanupPending?: boolean
+  approvedHandoffFailures?: Map<string, () => boolean>
+  approvedHandoffContinuation?: () => boolean
   elicitationReceipts: Map<string, number | undefined>
+  terminalCommit?: {
+    event: AcpRuntimeEvent
+    publish: (event: AcpRuntimeEvent) => void
+    error: unknown
+    attempts: number
+    retryStarted?: number
+    timer?: ReturnType<typeof setTimeout>
+    exhausted?: true
+  }
 }
 
 // Ownership/stage refusal is permanent for this execution; a repository failure is retryable
@@ -187,14 +212,17 @@ const assertScopeMatchesSession = (
   scope: RuntimeSessionTurnScope,
   session: PersistedChatSession,
   requireActiveRun = false,
-  promptRuntimeSegmentId = scope.runtimeSegmentId
+  promptRuntimeSegmentId = scope.runtimeSegmentId,
+  allowSupersededRun = false
 ): void => {
   if (session.id !== scope.sessionId || session.projectId !== scope.projectId) {
     throw new Error('Runtime Session scope does not match the durable Session owner.')
   }
   if (
     (requireActiveRun && session.activeRun?.promptMessageId !== scope.promptMessageId) ||
-    (session.activeRun && session.activeRun.promptMessageId !== scope.promptMessageId)
+    (!allowSupersededRun &&
+      session.activeRun &&
+      session.activeRun.promptMessageId !== scope.promptMessageId)
   ) {
     throw new Error('Runtime Session turn is unknown or superseded.')
   }
@@ -628,14 +656,94 @@ export class RuntimeSessionOwner {
     this.now = dependencies.now ?? Date.now
   }
 
+  authorizeApprovedHandoffContinuation(
+    sessionId: string,
+    promptMessageId: string,
+    executionId: string,
+    isCurrent: () => boolean
+  ): number | undefined {
+    const turn = this.turns.get(turnKey(sessionId, promptMessageId))
+    if (turn?.scope.executionId !== executionId) return undefined
+    turn.approvedHandoffContinuation = isCurrent
+    return turn.runStartedAt
+  }
+
+  private approvedHandoffRunFor(
+    session: PersistedChatSession,
+    scope: RuntimeSessionTurnScope,
+    admission: RuntimeSessionAdmission
+  ): PersistedActiveRun | undefined {
+    if (!admission.approvedHandoffContinuation || session.activeRun) return undefined
+    const previous = this.turns.get(turnKey(scope.sessionId, scope.promptMessageId))
+    const prompt = session.conversationGraph?.messages.find(
+      ({ id }) => id === scope.promptMessageId
+    )
+    const witness = session.runtimeTranscriptLastRun
+    if (
+      !previous?.approvedHandoffContinuation?.() ||
+      !previous.terminalObserved ||
+      !session.runtimeSessionAdmissions?.some(
+        (receipt) =>
+          receipt.executionId === previous.scope.executionId &&
+          receipt.promptMessageId === scope.promptMessageId &&
+          receipt.agentFrameId === scope.agentFrameId &&
+          receipt.messageBranchId === scope.messageBranchId &&
+          receipt.runtimeSegmentId === scope.runtimeSegmentId
+      ) ||
+      previous.scope.agentFrameId !== scope.agentFrameId ||
+      previous.scope.messageBranchId !== scope.messageBranchId ||
+      previous.scope.runtimeSegmentId !== scope.runtimeSegmentId ||
+      session.conversationGraph?.activeFrameId !== scope.agentFrameId ||
+      session.conversationGraph.frames.find(({ id }) => id === scope.agentFrameId)
+        ?.activeBranchId !== scope.messageBranchId ||
+      session.conversationGraph.runtimeSegments
+        .filter(({ agentFrameId }) => agentFrameId === scope.agentFrameId)
+        .at(-1)?.id !== scope.runtimeSegmentId ||
+      witness?.promptMessageId !== scope.promptMessageId ||
+      witness.startedAt !== previous.runStartedAt ||
+      (prompt?.turnOutcome?.kind !== 'cancelled' && prompt?.turnOutcome?.kind !== 'failed')
+    )
+      return undefined
+    return {
+      promptMessageId: scope.promptMessageId,
+      startedAt: Math.max(this.now(), witness.startedAt + 1)
+    }
+  }
+
+  async assertAdmissionAvailable(sessionId: string): Promise<void> {
+    const pending = [...this.turns.values()]
+      .filter(
+        (turn) =>
+          turn.scope.sessionId === sessionId &&
+          (turn.terminalCommit || (turn.terminalObserved && turn.pending.length > 0))
+      )
+      .map((turn) => turn.tail)
+    if (pending.length === 0) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        Promise.all(pending),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('Main runtime completion has not committed yet.')),
+            TERMINAL_ADMISSION_WAIT_BUDGET_MS
+          )
+        })
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   async begin(
     scope: RuntimeSessionTurnScope,
     admission: RuntimeSessionAdmission = {}
   ): Promise<PersistedChatSession> {
+    // Bound only waiting for an already-owned physical write, before queuing any admission work.
+    // A timeout cannot leave a callback that later admits an orphan turn after the caller rejected.
+    await this.assertAdmissionAvailable(scope.sessionId)
     // Detached responses are published against the stopped interaction. Plan feedback
     // then starts a different prompt, while approval/question answers reuse the old one.
-    // Drain every terminal turn in this Session before admitting either continuation;
-    // otherwise a queued feedback echo looks like a competing live turn until the timer fires.
     for (const turn of this.turns.values()) {
       if (
         !turn.notDispatchedCleanupPending ||
@@ -650,10 +758,14 @@ export class RuntimeSessionOwner {
         throw new SettlementAdmissionError('batch-facts-changed', 'invalidated')
       await this.finishSettlementNotDispatched(turn.scope)
     }
+    // A queued follow-up must not wait behind detached terminal retries. Include prior terminal
+    // batches in its admission write, preserving both transcripts in one durable mutation.
     const previousTurn = this.turns.get(turnKey(scope.sessionId, scope.promptMessageId))
+    const priorBatches: Array<{ turn: Turn; batch: AcpRuntimeEvent[] }> = []
     for (const turn of this.turns.values()) {
       if (turn.scope.sessionId === scope.sessionId && turn.terminalObserved) {
-        await this.flush(scope.sessionId, turn.scope.promptMessageId)
+        if (turn.terminalCommit) priorBatches.push({ turn, batch: turn.pending.slice() })
+        else await this.flush(scope.sessionId, turn.scope.promptMessageId)
       }
     }
     let loaded = await this.dependencies.loadSession(scope)
@@ -662,11 +774,17 @@ export class RuntimeSessionOwner {
         throw new SettlementAdmissionError('session-not-durable', 'invalidated')
       throw new Error('Runtime Session turn is not durable.')
     }
+    for (const { turn, batch } of priorBatches) loaded = this.applyTurnEvents(loaded, turn, batch)
     const sameExecution =
       previousTurn?.scope.executionId === scope.executionId &&
       previousTurn.scope.agentFrameId === scope.agentFrameId &&
       previousTurn.scope.messageBranchId === scope.messageBranchId &&
-      previousTurn.scope.runtimeSegmentId === scope.runtimeSegmentId
+      previousTurn.scope.runtimeSegmentId === scope.runtimeSegmentId &&
+      !(
+        admission.approvedHandoffContinuation &&
+        previousTurn.terminalObserved &&
+        previousTurn.approvedHandoffContinuation?.()
+      )
     if (sameExecution && admission.settlementAdmission) {
       const witness = loaded.runtimeSessionAdmissions?.find(
         ({ executionId }) => executionId === scope.executionId
@@ -679,12 +797,9 @@ export class RuntimeSessionOwner {
       loaded = admitDelegatedMessage(loaded, scope, admission, this.now())
       loaded = admitSettlement(loaded, scope, admission, this.now())
     }
-    const continuationRun = continuationRunFor(
-      loaded,
-      scope,
-      this.now(),
-      admission.planDeliveryCommandId
-    )
+    const continuationRun =
+      continuationRunFor(loaded, scope, this.now(), admission.planDeliveryCommandId) ??
+      this.approvedHandoffRunFor(loaded, scope, admission)
     const promptRuntimeSegmentId = sameExecution
       ? previousTurn.promptRuntimeSegmentId
       : admission.delegatedMessageId || admission.settlementAdmission
@@ -697,30 +812,29 @@ export class RuntimeSessionOwner {
     const key = turnKey(scope.sessionId, scope.promptMessageId)
     const existing = this.turns.get(key)
     if (existing) {
-      if (existing.scope.executionId !== scope.executionId) {
+      if (existing.scope.executionId !== scope.executionId || continuationRun) {
         const nextRunStartedAt = admittedRun?.startedAt
         if (
           !existing.terminalObserved ||
-          existing.pending.length > 0 ||
+          (existing.pending.length > 0 && !existing.terminalCommit) ||
           nextRunStartedAt === undefined ||
           nextRunStartedAt <= existing.runStartedAt
         ) {
           throw new Error('Runtime Session turn is already owned by another execution.')
         }
         existing.cancelScheduledFlush?.()
-        this.turns.delete(key)
       } else {
         return loaded
       }
     }
     for (const turn of this.turns.values()) {
+      if (turn === existing && turn.scope.executionId !== scope.executionId) continue
       if (turn.scope.sessionId === scope.sessionId) {
         if (
           turn.terminalObserved &&
-          turn.pending.length === 0 &&
+          (turn.pending.length === 0 || turn.terminalCommit) &&
           !turn.notDispatchedCleanupPending
         ) {
-          this.turns.delete(turnKey(turn.scope.sessionId, turn.scope.promptMessageId))
           continue
         }
         throw new Error('Runtime Session turn is superseded by another registered turn.')
@@ -729,17 +843,15 @@ export class RuntimeSessionOwner {
     // The coordinator stamps Main's runtime ownership in this identity mutation. Await it before
     // provider dispatch so a renderer save can never become the first durable writer for the turn.
     const session = await this.mutateSession(scope, 'begin-turn', (latest) => {
+      for (const { turn, batch } of priorBatches) latest = this.applyTurnEvents(latest, turn, batch)
       latest = admitApplicationPrompt(latest, scope, admission, this.now())
       latest = admitDelegatedMessage(latest, scope, admission, this.now())
       latest = admitSettlement(latest, scope, admission, this.now())
       // Re-derive against the durable record Main is about to write: only a still-parked turn may
       // be continued, and its re-armed run has to be newer than the run it replaces.
-      const resumedRun = continuationRunFor(
-        latest,
-        scope,
-        this.now(),
-        admission.planDeliveryCommandId
-      )
+      const resumedRun =
+        continuationRunFor(latest, scope, this.now(), admission.planDeliveryCommandId) ??
+        this.approvedHandoffRunFor(latest, scope, admission)
       if (
         !admission.delegatedMessageId &&
         !admission.settlementAdmission &&
@@ -753,12 +865,14 @@ export class RuntimeSessionOwner {
         delegatedMessageId: _delegatedMessageId,
         applicationPrompt: _applicationPrompt,
         settlementAdmission: _settlementAdmission,
+        approvedHandoffContinuation: _approvedHandoffContinuation,
         ...runtimeBinding
       } = admission
       void _planDeliveryCommandId
       void _delegatedMessageId
       void _applicationPrompt
       void _settlementAdmission
+      void _approvedHandoffContinuation
       const durableAdmission = {
         executionId: scope.executionId,
         promptMessageId: scope.promptMessageId,
@@ -778,7 +892,7 @@ export class RuntimeSessionOwner {
         )
       )
         throw new Error('Runtime Session execution conflicts with its durable admission.')
-      const next: PersistedChatSession = {
+      let next: PersistedChatSession = {
         ...latest,
         ...(resumedRun ? { activeRun: resumedRun, status: 'running' as const } : {}),
         ...runtimeBinding,
@@ -791,11 +905,31 @@ export class RuntimeSessionOwner {
         },
         updatedAt: Math.max(latest.updatedAt, this.now())
       }
+      if (next.promptPreparation?.promptMessageId === scope.promptMessageId)
+        delete next.promptPreparation
+      const rejectedPlanDelivery =
+        admission.planDeliveryCommandId &&
+        next.runtimeContext?.plan?.approval === 'rejected' &&
+        next.runtimeContext.plan.originatingPromptMessageId === scope.promptMessageId
+      if (!rejectedPlanDelivery) next = setTurnOutcome(next, scope.promptMessageId, undefined)
       if (next.resumeRecovery?.promptMessageId === scope.promptMessageId) {
         delete next.resumeRecovery
       }
       return next
     })
+    for (const { turn, batch } of priorBatches) {
+      turn.pending = turn.pending.filter((event) => !batch.some(({ id }) => id === event.id))
+      if (turn.terminalCommit && turn.pending.length === 0) {
+        clearTimeout(turn.terminalCommit.timer)
+        this.publishTerminal(
+          { ...turn.terminalCommit.event, publicationOwner: 'main' },
+          turn.terminalCommit.publish
+        )
+        turn.terminalCommit = undefined
+      }
+    }
+    existing?.cancelScheduledFlush?.()
+    if (existing?.terminalCommit) clearTimeout(existing.terminalCommit.timer)
     this.turns.set(key, {
       scope: { ...scope },
       // Admission guarantees a run: the turn already owns one, or its continuation re-armed it.
@@ -1021,6 +1155,8 @@ export class RuntimeSessionOwner {
       turn?.settlementAdmission && event.runtimeSegmentId === turn.scope.runtimeSegmentId
     if (
       !turn ||
+      (event.promptExecutionId !== undefined &&
+        event.promptExecutionId !== turn.scope.executionId) ||
       (event.runtimeSegmentId !== undefined &&
         event.runtimeSegmentId !== turn.scope.runtimeSegmentId) ||
       (!exactSettlementSegment && event.timestamp < turn.runStartedAt) ||
@@ -1043,12 +1179,290 @@ export class RuntimeSessionOwner {
       // same terminal after a successful flush has released streaming-event deduplication state.
       turn.terminalEventIds.add(event.id)
     }
-    if (!turn.cancelScheduledFlush) {
+    if (!turn.cancelScheduledFlush && !turn.terminalCommit) {
       const schedule = this.dependencies.scheduleFlush ?? defaultScheduleFlush
       turn.cancelScheduledFlush = schedule(() => {
         turn.cancelScheduledFlush = undefined
         void this.flush(turn.scope.sessionId, turn.scope.promptMessageId).catch(() => undefined)
       }, this.dependencies.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS)
+    }
+  }
+
+  // The first attempt is synchronous with finalization. Failures retain the exact event identity;
+  // their retries are explicitly activated after the coordinator releases prompt admission.
+  async commitTerminal(
+    event: AcpRuntimeEvent,
+    publish: (event: AcpRuntimeEvent) => void
+  ): Promise<void> {
+    const turn = this.turns.get(turnKey(event.sessionId ?? '', event.promptMessageId ?? ''))
+    if (!turn) throw new Error('Terminal event has no registered Runtime Session turn.')
+    if (event.promptExecutionId !== undefined && event.promptExecutionId !== turn.scope.executionId)
+      return
+    event = {
+      ...event,
+      terminalScope: {
+        projectId: turn.scope.projectId,
+        executionId: turn.scope.executionId,
+        startedAt: turn.runStartedAt,
+        agentFrameId: turn.scope.agentFrameId,
+        messageBranchId: turn.scope.messageBranchId,
+        runtimeSegmentId: turn.scope.runtimeSegmentId
+      }
+    }
+    this.accept(event)
+    try {
+      await this.flushTerminalWithin(turn, TERMINAL_COMMIT_INITIAL_BUDGET_MS, event.id)
+      this.publishTerminal({ ...event, publicationOwner: 'main' }, publish)
+    } catch (error) {
+      const previous = turn.terminalCommit
+      if (previous?.timer) clearTimeout(previous.timer)
+      turn.cancelScheduledFlush?.()
+      turn.cancelScheduledFlush = undefined
+      turn.terminalCommit = { event, publish, error, attempts: 1 }
+    }
+  }
+
+  // Only the approved handoff may replace the cancellation used to drain its originating
+  // Attempt. Ordinary late provider errors must continue to respect the cancellation fence.
+  async commitApprovedHandoffFailure(
+    event: AcpRuntimeEvent,
+    publish: (event: AcpRuntimeEvent) => void,
+    isCurrent: () => boolean,
+    originalStartedAt: number
+  ): Promise<void> {
+    const turn = this.turns.get(turnKey(event.sessionId ?? '', event.promptMessageId ?? ''))
+    if (
+      !turn ||
+      event.promptExecutionId !== turn.scope.executionId ||
+      turn.runStartedAt !== originalStartedAt ||
+      !isCurrent()
+    )
+      return
+    turn.approvedHandoffFailures ??= new Map()
+    turn.approvedHandoffFailures.set(event.id, isCurrent)
+    await this.commitTerminal(event, publish)
+    this.retryTerminalCommits(turn.scope.sessionId)
+  }
+
+  private applyTurnEvents(
+    latest: PersistedChatSession,
+    turn: Turn,
+    events: readonly AcpRuntimeEvent[]
+  ): PersistedChatSession {
+    const settleDispatch = (next: PersistedChatSession): PersistedChatSession => {
+      if (events.some(({ kind }) => kind === 'stop' || kind === 'error')) {
+        const witness = next.runtimeSessionAdmissions?.find(
+          ({ executionId }) => executionId === turn.scope.executionId
+        )?.settlement
+        if (witness && (witness.stage === 'dispatching' || witness.stage === 'accepted'))
+          witness.stage = 'terminal'
+      }
+      return next
+    }
+    if (!events.some(({ id }) => turn.approvedHandoffFailures?.has(id)))
+      return settleDispatch(applyRuntimeSessionEvents(latest, turn.scope, events))
+    let next = latest
+    let ordinary: AcpRuntimeEvent[] = []
+    const flushOrdinary = (): void => {
+      if (ordinary.length) next = applyRuntimeSessionEvents(next, turn.scope, ordinary)
+      ordinary = []
+    }
+    for (const event of events) {
+      const isCurrent = turn.approvedHandoffFailures?.get(event.id)
+      if (!isCurrent) {
+        ordinary.push(event)
+        continue
+      }
+      flushOrdinary()
+      const scope = turn.scope
+      const prompt = next.conversationGraph?.messages.find(({ id }) => id === scope.promptMessageId)
+      const witness = next.activeRun ?? next.runtimeTranscriptLastRun
+      const frame = next.conversationGraph?.frames.find(({ id }) => id === scope.agentFrameId)
+      const admission = next.runtimeSessionAdmissions?.find(
+        ({ executionId }) => executionId === scope.executionId
+      )
+      if (
+        !isCurrent() ||
+        this.turns.get(turnKey(scope.sessionId, scope.promptMessageId)) !== turn ||
+        next.conversationGraph?.activeFrameId !== scope.agentFrameId ||
+        frame?.activeBranchId !== scope.messageBranchId ||
+        next.conversationGraph.runtimeSegments
+          .filter(({ agentFrameId }) => agentFrameId === scope.agentFrameId)
+          .at(-1)?.id !== scope.runtimeSegmentId ||
+        !admission ||
+        admission.promptMessageId !== scope.promptMessageId ||
+        admission.agentFrameId !== scope.agentFrameId ||
+        admission.messageBranchId !== scope.messageBranchId ||
+        admission.runtimeSegmentId !== scope.runtimeSegmentId ||
+        !witness ||
+        witness.promptMessageId !== scope.promptMessageId ||
+        witness.startedAt !== turn.runStartedAt ||
+        (!next.activeRun && prompt?.turnOutcome?.kind !== 'cancelled')
+      )
+        continue
+      // Re-arm only in this mutation's projection, never in durable admission or provider state.
+      // That lets the ordinary terminal projection settle messages/tools and legacy fields while
+      // retaining the generic cancelled-provider guard for every other event.
+      next = applyRuntimeSessionEvents(
+        { ...next, activeRun: { ...witness }, resumeRecovery: undefined },
+        scope,
+        [event]
+      )
+    }
+    flushOrdinary()
+    return settleDispatch(next)
+  }
+
+  private publishTerminal(event: AcpRuntimeEvent, publish: (event: AcpRuntimeEvent) => void): void {
+    try {
+      publish(event)
+    } catch (error) {
+      try {
+        log.warn(
+          'Runtime terminal committed; observer publication failed.',
+          diagnosticErrorFields(error)
+        )
+      } catch {
+        /* An observer cannot turn a durable commit into a persistence failure. */
+      }
+    }
+  }
+
+  private async flushTerminalWithin(turn: Turn, budget: number, eventId: string): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    const flushed = this.flush(turn.scope.sessionId, turn.scope.promptMessageId)
+    // A write that outlives its budget may still commit. Judge it by its eventual result so a slow
+    // success publishes the real terminal instead of leaving only the uncommitted live release.
+    void flushed.then(
+      () => {
+        if (timedOut) this.publishLateCommit(turn, eventId)
+      },
+      () => undefined
+    )
+    try {
+      await Promise.race([
+        flushed,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true
+            reject(new Error('Runtime Session terminal commit timed out.'))
+          }, budget)
+        })
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  private publishLateCommit(turn: Turn, eventId: string): void {
+    const commit = turn.terminalCommit
+    if (!commit || commit.event.id !== eventId) return
+    clearTimeout(commit.timer)
+    turn.terminalCommit = undefined
+    this.publishTerminal({ ...commit.event, publicationOwner: 'main' }, commit.publish)
+  }
+
+  async retryTerminalCommitNow(
+    sessionId: string,
+    promptMessageId: string,
+    executionId: string
+  ): Promise<void> {
+    const turn = this.turns.get(turnKey(sessionId, promptMessageId))
+    const commit = turn?.terminalCommit
+    if (!turn || !commit || turn.scope.executionId !== executionId) return
+    await this.flushTerminalWithin(
+      turn,
+      TERMINAL_COMMIT_INITIAL_BUDGET_MS + TERMINAL_COMMIT_RETRY_BUDGET_MS,
+      commit.event.id
+    )
+    if (turn.terminalCommit !== commit) return
+    turn.terminalCommit = undefined
+    this.publishTerminal({ ...commit.event, publicationOwner: 'main' }, commit.publish)
+  }
+
+  retryTerminalCommits(sessionId: string): void {
+    for (const turn of this.turns.values()) {
+      const commit = turn.terminalCommit
+      if (turn.scope.sessionId !== sessionId || !commit || commit.retryStarted !== undefined)
+        continue
+      commit.retryStarted = Date.now()
+      commit.timer = setTimeout(() => {
+        this.retryTerminalCommit(turn, commit).catch((error) => {
+          this.logTerminalFailure('Runtime terminal commit retry failed.', error)
+        })
+      }, 0)
+    }
+  }
+
+  private async retryTerminalCommit(
+    turn: Turn,
+    commit: NonNullable<Turn['terminalCommit']>
+  ): Promise<void> {
+    while (turn.terminalCommit === commit && commit.attempts < TERMINAL_COMMIT_MAX_ATTEMPTS) {
+      const remaining = TERMINAL_COMMIT_RETRY_BUDGET_MS - (Date.now() - commit.retryStarted!)
+      if (remaining <= 0) break
+      commit.attempts += 1
+      try {
+        await this.flushTerminalWithin(turn, remaining, commit.event.id)
+        if (turn.terminalCommit !== commit) return
+        turn.terminalCommit = undefined
+        this.publishTerminal({ ...commit.event, publicationOwner: 'main' }, commit.publish)
+        return
+      } catch (error) {
+        commit.error = error
+      }
+    }
+    if (turn.terminalCommit !== commit) return
+    commit.exhausted = true
+    turn.cancelScheduledFlush?.()
+    turn.cancelScheduledFlush = undefined
+    // Stop background flush scheduling. Durable state remains untouched and restart recovery owns it.
+    const message = commit.error instanceof Error ? commit.error.message : String(commit.error)
+    const missing =
+      message === 'Cannot update a missing runtime Session.' ||
+      message === 'Cannot mutate a session that has been deleted.'
+    const liveEvent: AcpRuntimeEvent = {
+      id: `${commit.event.id}:uncommitted`,
+      sessionId: commit.event.sessionId,
+      promptMessageId: commit.event.promptMessageId,
+      promptExecutionId: turn.scope.executionId,
+      terminalScope: commit.event.terminalScope,
+      timestamp: commit.event.timestamp,
+      title: commit.event.title,
+      kind: 'error',
+      level: 'error',
+      text: INTERRUPTED_TURN_ERROR,
+      interruptionCause: 'terminal-commit-failed',
+      terminalCommitFailure: missing ? 'missing-record' : 'storage',
+      terminalCommitError: message,
+      errorReportable: false,
+      publicationOwner: 'main'
+    }
+    try {
+      this.dependencies.onTerminalCommitExhausted?.(
+        turn.scope,
+        liveEvent,
+        () =>
+          this.retryTerminalCommitNow(
+            turn.scope.sessionId,
+            turn.scope.promptMessageId,
+            turn.scope.executionId
+          ),
+        () => this.assertAdmissionAvailable(turn.scope.sessionId)
+      )
+    } catch (error) {
+      // The live release must still reach observers, or the Session would stay running.
+      this.logTerminalFailure('Runtime terminal exhaustion could not be recorded.', error)
+    }
+    this.publishTerminal(liveEvent, commit.publish)
+  }
+
+  private logTerminalFailure(message: string, error: unknown): void {
+    try {
+      log.error(message, diagnosticErrorFields(error))
+    } catch {
+      /* Diagnostics cannot replace the terminal outcome being handled. */
     }
   }
 
@@ -1071,15 +1485,26 @@ export class RuntimeSessionOwner {
       const batch = turn.pending.slice()
       const consumeReplay = turn.replayConsumptionPending
       committed = await this.mutateSession(turn.scope, 'flush-events', (latest) => {
-        assertScopeMatchesSession(turn.scope, latest, false, turn.promptRuntimeSegmentId)
-        const next = applyRuntimeSessionEvents(latest, turn.scope, batch)
-        if (batch.some(({ kind }) => kind === 'stop' || kind === 'error')) {
-          const witness = next.runtimeSessionAdmissions?.find(
-            ({ executionId }) => executionId === turn.scope.executionId
-          )?.settlement
-          if (witness && (witness.stage === 'dispatching' || witness.stage === 'accepted'))
-            witness.stage = 'terminal'
-        }
+        if (this.turns.get(turnKey(turn.scope.sessionId, turn.scope.promptMessageId)) !== turn)
+          return latest
+        // Admission may have included this batch while an older physical write was waiting for
+        // the Session lane. Never replay its deltas over the newly committed execution.
+        const pendingIds = new Set(turn.pending.map(({ id }) => id))
+        const remainingBatch = batch.filter(({ id }) => pendingIds.has(id))
+        if (remainingBatch.length === 0 && !consumeReplay) return latest
+        assertScopeMatchesSession(
+          turn.scope,
+          latest,
+          false,
+          turn.promptRuntimeSegmentId,
+          turn.terminalObserved
+        )
+        if (
+          latest.activeRun?.promptMessageId === turn.scope.promptMessageId &&
+          latest.activeRun.startedAt > turn.runStartedAt
+        )
+          return latest
+        const next = this.applyTurnEvents(latest, turn, remainingBatch)
         if (consumeReplay) {
           delete next.pendingHistoryReplay
           delete next.branchContextResetRequired
@@ -1111,7 +1536,9 @@ export class RuntimeSessionOwner {
         }
         return next
       })
-      turn.pending = turn.pending.slice(batch.length)
+      const committedIds = new Set(batch.map(({ id }) => id))
+      turn.pending = turn.pending.filter(({ id }) => !committedIds.has(id))
+      for (const id of committedIds) turn.approvedHandoffFailures?.delete(id)
       if (consumeReplay) turn.replayConsumptionPending = false
       this.notifyCommitted(committed)
     }

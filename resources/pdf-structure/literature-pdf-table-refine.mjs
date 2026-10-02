@@ -1,5 +1,48 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { readSourceRow } from './literature-pdf-source-records.mjs'
+import { reconcileNativeFinalCellBounds } from './literature-pdf-native-final-cell-bounds.mjs'
+import { recoverNativeHeaderOwnershipGrid } from './literature-pdf-native-header-ownership.mjs'
+import { recoverNativeMeasuredGutterTokens } from './literature-pdf-native-measured-gutters.mjs'
+import { recoverNativeScalarRecordPlan } from './literature-pdf-native-scalar-record-grid.mjs'
+import { recoverNativeTextRecordGrid } from './literature-pdf-native-text-record-grid.mjs'
+import {
+  recoverNativePairedTextRecordGrid,
+  recoverNativeOrdinalWrappedRecordGrid
+} from './literature-pdf-native-bounded-text-record-grid.mjs'
+import { recoverNativeSingleMathRecordGrid } from './literature-pdf-native-single-math-record-grid.mjs'
+import { recoverNativeRepeatedTuplePlan } from './literature-pdf-native-repeated-tuple-grid.mjs'
+import { recoverNativeSharedPairRecordGrid } from './literature-pdf-native-shared-pair-record-grid.mjs'
+import { recoverNativePairedParentRecordGrid } from './literature-pdf-native-paired-parent-record-grid.mjs'
+import { recoverNativeStackedRecordGrid } from './literature-pdf-native-stacked-records.mjs'
+import {
+  recoverNativeSegmentedScientificGrid,
+  recoverNativeWrappedCountNarrativeGrid,
+  recoverNativeSymbolDefinitionGrid,
+  recoverNativeConfigurationGrid,
+  recoverNativeCitedMeasurementGrid
+} from './literature-pdf-native-lined-record-grid.mjs'
+import {
+  recoverNativeMeasuredRecordGrid,
+  recoverNativeGroupedParameterGrid,
+  recoverNativeRuledFormulaGrid
+} from './literature-pdf-native-measured-record-grid.mjs'
+import { proveNativeCaptionRaisedGlyphOwnership } from './literature-pdf-native-caption-raised-glyphs.mjs'
+import { recoverNativeCoefficientRecordGrid } from './literature-pdf-native-coefficient-record-grid.mjs'
+import {
+  recoverNativePairedRecordGrid,
+  recoverNativeGroupedFlagRecordGrid,
+  recoverSmallCompleteRecordGrid
+} from './literature-pdf-native-complete-record-grid.mjs'
+import { proveNativeClosedMathOrder } from './literature-pdf-native-closed-math-order.mjs'
+import { recoverNativeEqualFontStackRecordGrid } from './literature-pdf-native-stacked-uncertainty.mjs'
+import {
+  proveNativeScientificLeafGutters,
+  recoverNativeScientificLeafRecordGrid
+} from './literature-pdf-native-scientific-leaf-gutters.mjs'
+import {
+  readSourceRow,
+  recoverTwoCohortSectionGrid,
+  recoverSampleQualifiedSparseCohortGrid
+} from './literature-pdf-source-records.mjs'
 import {
   recoverRuledComparisonPanel,
   recoverNestedMeasureRecords,
@@ -11,6 +54,10 @@ import {
   recoverNestedCountRecords,
   recoverNumberedModelSections,
   recoverClinicalCountSections,
+  recoverParenthesizedStubUnitCut,
+  recoverCountHeaderFrameCrop,
+  recoverResourceCohortRecords,
+  recoverWrappedCohortStatistics,
   recoverMixedCohortSummaries,
   recoverPairedOutcomeRecords,
   recoverRuledCategoricalRecords,
@@ -37,6 +84,9 @@ import {
 } from './literature-pdf-regression-grid.mjs'
 import {
   recoverNativeHeaderGrid,
+  recoverClosedNumericFrameCrop,
+  recoverCaptionSeparatedHeaderCrop,
+  recoverWrappedSampleHeaderBand,
   recoverCompactNumericHeader,
   recoverCohortSummaryRows,
   recoverCohortDistributionRecords,
@@ -54,12 +104,16 @@ import {
   recoverRepeatedCountSections
 } from './literature-pdf-native-header-grid.mjs'
 import { recoverNumberedMatrix } from './literature-pdf-numbered-matrix.mjs'
-import { recoverWrappedProportionGrid } from './literature-pdf-wrapped-proportion-grid.mjs'
+import {
+  recoverWrappedProportionGrid,
+  recoverWrappedCountPairsGrid
+} from './literature-pdf-wrapped-proportion-grid.mjs'
 import {
   recoverRuledNarrativeGrid,
   recoverQuestionnaireGrid,
   recoverStudyParagraphGrid,
-  recoverParallelCountLists
+  recoverParallelCountLists,
+  recoverSharedScoreTimepointGrid
 } from './literature-pdf-ruled-narrative-grid.mjs'
 import { recoverRuledEffectGrid } from './literature-pdf-ruled-effect-grid.mjs'
 import { recoverDeviationGrid, recoverSingleValueGrid } from './literature-pdf-deviation-grid.mjs'
@@ -88,7 +142,8 @@ import {
   mergeDuplicateSourceRows,
   removeEmptyOverlappingRows,
   reconcileRepeatedSectionHeadings,
-  splitRuledParentRow
+  splitRuledParentRow,
+  reconcileStatisticStubStarts
 } from './literature-pdf-table-row-repair.mjs'
 import {
   resolveTableCellMerges,
@@ -105,6 +160,15 @@ import {
   reconcileFragmentedCountHeaders
 } from './literature-pdf-table-cell-text.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
+import { recoverSegmentedLeafHeaderBand } from './literature-pdf-segmented-header-band.mjs'
+import { recoverRuledProgramGrid } from './literature-pdf-program-grid.mjs'
+import { recoverRuledScaleCohortGrid } from './literature-pdf-scale-cohort-grid.mjs'
+import { recoverRuledSurveyRecordGrid } from './literature-pdf-survey-record-grid.mjs'
+import {
+  recoverNativeQuestionRecordGrid,
+  recoverNativeSparseModelRecordGrid,
+  recoverNativeCohortRecordGrid
+} from './literature-pdf-long-question-record-grid.mjs'
 import { recoverRepeatedVisitGrid } from './literature-pdf-repeated-visit-grid.mjs'
 import { recoverRuledStubGrid, recoverRuledHeaderGrid } from './literature-pdf-ruled-stub-grid.mjs'
 import {
@@ -118,6 +182,7 @@ import {
 } from './literature-pdf-wrapped-summary-grid.mjs'
 import {
   recoverRecordGrid,
+  recoverRuledSparseSummaryRecords,
   recoverDemographicRecords,
   recoverBaselineComparisonGrid,
   recoverFollowupGrid,
@@ -130,20 +195,83 @@ import {
   recoverCenteredValueGrid
 } from './literature-pdf-record-grid.mjs'
 import { area, intersection as intersect } from './literature-pdf-page-geometry.mjs'
-import { inside, union, rebaseTableCrop } from './literature-pdf-table-geometry.mjs'
+import {
+  inside,
+  union,
+  rebaseTableCrop,
+  isAdjacentTableScript
+} from './literature-pdf-table-geometry.mjs'
 import {
   groupSourceRowsWithScripts,
   recoverRuledHeaderBands,
+  recoverUnderlinedCohortPairHeaderBands,
+  recoverClosedNativeHeaderBands,
+  recoverNativeHeaderHierarchy,
+  recoverSiblingHeaderBands,
+  recoverSampleQualifiedHeaderCuts,
   recoverSegmentedParentBands,
   recoverSplitBorderHeaderBands,
   recoverSegmentedCohortHeaderBands,
   recoverRepeatedHeaderHierarchy
 } from './literature-pdf-source-records.mjs'
 
+function recoverSourceHeaderTree(source, cuts, rules, top, bottom) {
+  const cohortPair = recoverUnderlinedCohortPairHeaderBands(source, cuts, rules, top, bottom)
+  if (cohortPair) return cohortPair
+  const height = Math.max(...source.map((item) => item.height))
+  const sourceTop = Math.min(...source.map((item) => item.rect[1]))
+  const nativeTops = [
+    ...new Set(
+      joinHorizontalTableRules(rules)
+        .filter(
+          (rule) =>
+            Math.abs(rule[1] - top) < height &&
+            rule[1] < sourceTop &&
+            rule[0] <= cuts[0] + height &&
+            rule[2] >= cuts.at(-1) - height
+        )
+        .map((rule) => rule[1])
+    )
+  ]
+  const headerTop = nativeTops.length === 1 ? nativeTops[0] : top
+  const partitioned = recoverRuledHeaderBands(source, cuts, rules, headerTop, bottom)
+  const parents = partitioned?.spans.filter((s) => s.row === 0 && s.colSpan >= 2) ?? []
+  if (
+    partitioned?.rows.length === 2 &&
+    parents.length >= 2 &&
+    parents.every((p) =>
+      rules.some(
+        (r) =>
+          r[0] === r[2] &&
+          Math.abs(r[0] - cuts[p.column]) < height &&
+          r[1] < sourceTop &&
+          r[3] >= partitioned.rows[0][3]
+      )
+    )
+  )
+    return partitioned
+  const hierarchy = recoverNativeHeaderHierarchy(source, cuts, rules, headerTop, bottom)
+  if (
+    hierarchy?.rows.length >= 3 &&
+    hierarchy.spans.filter((span) => span.row === 0 && span.colSpan >= 2).length >= 2 &&
+    hasNativeNestedHeader(hierarchy, cuts, rules, height, source) &&
+    joinHorizontalTableRules(rules).some(
+      (rule) =>
+        Math.abs(rule[1] - top) < height &&
+        rule[1] < Math.min(...source.map((item) => item.rect[1])) &&
+        rule[0] <= cuts[0] + height &&
+        rule[2] >= cuts.at(-1) - height
+    )
+  )
+    return hierarchy
+  const siblings = recoverSiblingHeaderBands(source, cuts, rules, top, bottom)
+  if (siblings?.spans.some((span) => span.row === 1 && span.colSpan >= 2)) return siblings
+}
+
 // Native underlines must partition a parent into independently ruled children.
 // Keep the same bounded alignment witness with a continuous bottom border or
 // a source-separated header whose bottom border is interrupted.
-function hasNativeNestedHeader(header, cuts, rules, height) {
+function hasNativeNestedHeader(header, cuts, rules, height, source = []) {
   const parents = header?.spans.filter((s) => s.row === 0 && s.colSpan >= 3) ?? []
   const partitions = parents.map((parent) => ({
     parent,
@@ -161,23 +289,48 @@ function hasNativeNestedHeader(header, cuts, rules, height) {
     header?.rows.length >= 3 &&
     // Replacing the header replaces every parent. A partial native tree must
     // not discard a correctly merged model child beside a complete peer.
-    partitions.every(
-      ({ parent, children }) =>
-        children.length >= 2 &&
-        children[0].column === parent.column &&
-        children.at(-1).column + children.at(-1).colSpan === parent.column + parent.colSpan &&
-        children.every(
-          (s, n) => !n || s.column === children[n - 1].column + children[n - 1].colSpan
+    partitions.every(({ parent, children }) => {
+      if (children.length < 2) return false
+      const occupied = new Set(
+        children.flatMap((child) =>
+          Array.from({ length: child.colSpan }, (_, n) => child.column + n)
         )
-    ) &&
-    partitions.some(({ parent, children }) =>
+      )
+      for (let c = parent.column; c < parent.column + parent.colSpan; c++) {
+        if (occupied.has(c)) continue
+        // A final independent probability leaf need not share the sibling
+        // count-pair underline. Its source label and adjacent scripts own
+        // the singleton column, with no competing descendant text.
+        const glyphs = source.filter(
+          (item) => item.rect[0] >= cuts[c] && item.rect[2] <= cuts[c + 1]
+        )
+        const label = glyphs.filter((item) => /^p$/i.test(item.text))
+        if (
+          label.length !== 1 ||
+          glyphs.some(
+            (item) =>
+              item !== label[0] &&
+              (!/^[a-z](?:,[a-z])*$/i.test(item.text) || !isAdjacentTableScript(item, label[0]))
+          ) ||
+          label[0].rect[1] < header.rows[1][1] ||
+          label[0].rect[3] > header.rows.at(-1)[3]
+        )
+          return false
+      }
+      return children.every(
+        (child, n) => !n || child.column >= children[n - 1].column + children[n - 1].colSpan
+      )
+    }) &&
+    partitions[source.length ? 'every' : 'some'](({ parent, children }) =>
       [parent, ...children].every((s) =>
         rules.some(
           (r) =>
             r[1] === r[3] &&
             Math.abs(r[1] - header.rows[s.row][3]) < 0.1 &&
-            Math.abs(r[0] - cuts[s.column]) < height &&
-            Math.abs(r[2] - cuts[s.column + s.colSpan]) < height
+            // With all native header ink owned, a model midpoint can sit
+            // inside the gutter beyond an inset population underline.
+            Math.abs(r[0] - cuts[s.column]) < height * (source.length ? 1.5 : 1) &&
+            Math.abs(r[2] - cuts[s.column + s.colSpan]) < height * (source.length ? 1.5 : 1)
         )
       )
     )
@@ -265,7 +418,35 @@ export function reconcileResolvedSpanDiagnostics({
   return true
 }
 
-export function refineTable(table, pageItems, captions = [], notes = [], rules = []) {
+export function refineTable(
+  table,
+  pageItems,
+  captions = [],
+  notes = [],
+  rules = [],
+  observedRuns = [],
+  adjacent
+) {
+  pageItems = recoverNativeMeasuredGutterTokens(table, pageItems, captions, rules, observedRuns)
+  const scalarRecordPlan = recoverNativeScalarRecordPlan(
+    table,
+    pageItems,
+    captions,
+    rules,
+    observedRuns
+  )
+  if (scalarRecordPlan) pageItems = scalarRecordPlan.pageItems
+  const repeatedTuplePlan = recoverNativeRepeatedTuplePlan(
+    table,
+    pageItems,
+    captions,
+    rules,
+    observedRuns
+  )
+  if (repeatedTuplePlan) pageItems = repeatedTuplePlan.pageItems
+  const independentTextRecords = recoverNativeTextRecordGrid(table, pageItems, captions, rules)
+  if (independentTextRecords?.cropRect)
+    table = rebaseTableCrop(table, independentTextRecords.cropRect)
   table = separateAdjacentNumericPanel(table, pageItems, rules)
   const originalCrop = table.cropRect
   const sourceRules = rules
@@ -294,7 +475,18 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
   // An inset table can have a detector edge in the neighboring prose column,
   // or through its own stub. Matching header/footer rules and a nearby caption
   // establish ownership independently of that detector edge.
+  const captionSeparatedCrop = recoverCaptionSeparatedHeaderCrop(
+    table,
+    pageItems,
+    captions,
+    sourceRules
+  )
+  if (captionSeparatedCrop) table = rebaseTableCrop(table, captionSeparatedCrop)
   const modelColumns = table.structure.objects.filter((o) => o.label === 'table column')
+  const closedNumericCrop = recoverClosedNumericFrameCrop(table, pageItems, captions, sourceRules)
+  if (closedNumericCrop) table = rebaseTableCrop(table, closedNumericCrop)
+  const countHeaderFrameCrop = recoverCountHeaderFrameCrop(table, pageItems, sourceRules)
+  if (countHeaderFrameCrop) table = rebaseTableCrop(table, countHeaderFrameCrop)
   // A page can end with a ruled category heading whose measurements continue
   // on the next page. Matching native column ends bound its clipped label and
   // probability even though there is no closing horizontal stroke.
@@ -649,6 +841,33 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
       table = rebaseTableCrop(table, cropRect)
     }
   }
+  const segmentedLeafHeader = recoverSegmentedLeafHeaderBand(
+    table,
+    pageItems,
+    captions,
+    sourceRules
+  )
+  if (segmentedLeafHeader) {
+    table = rebaseTableCrop(table, segmentedLeafHeader.cropRect)
+    table.structure.objects = table.structure.objects.filter(
+      (o) =>
+        !['table column', 'table column header'].includes(o.label) &&
+        !(
+          o.label === 'table row' &&
+          (o.rect[1] + o.rect[3]) / 2 + table.cropRect[1] < segmentedLeafHeader.headerRect[3]
+        )
+    )
+    const headerRect = segmentedLeafHeader.headerRect.map((v, n) => v - table.cropRect[n % 2])
+    table.structure.objects.push(
+      { label: 'table row', score: 1, rect: headerRect },
+      { label: 'table column header', score: 1, rect: headerRect },
+      ...segmentedLeafHeader.columnRects.map((rect) => ({
+        label: 'table column',
+        score: 1,
+        rect: rect.map((v, n) => v - table.cropRect[n % 2])
+      }))
+    )
+  }
   const demographicRecords = recoverDemographicRecords(table, pageItems, captions, rules)
   if (demographicRecords?.cropRect) table = rebaseTableCrop(table, demographicRecords.cropRect)
   const coefficientGrid = recoverSectionedCoefficientsGrid(table, pageItems, rules)
@@ -680,14 +899,27 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
   const regressionBlocks = recoverRepeatedRegressionGrid(table, pageItems, captions, rules)
   if (regressionBlocks) table = rebaseTableCrop(table, regressionBlocks.cropRect)
   const wrappedSummaryGrid = recoverWrappedSummaryGrid(table, pageItems, captions, rules)
-  const comparisonRecords = wrappedSummaryGrid
-    ? undefined
-    : recoverRuledComparisonRecords(table, pageItems, captions, rules)
+  const comparisonRecords =
+    wrappedSummaryGrid ||
+    (ruledColumnGrid?.headerRows?.length === 1 && ruledColumnGrid.spans?.length === 0)
+      ? undefined
+      : recoverRuledComparisonRecords(table, pageItems, captions, rules)
   if (comparisonRecords) table = rebaseTableCrop(table, comparisonRecords.cropRect)
   const recordCandidate = recoverRecordGrid(table, pageItems, captions, rules)
   if (recordCandidate?.cropRect) table = rebaseTableCrop(table, recordCandidate.cropRect)
   const cohortRecords = recoverCohortDistributionRecords(table, pageItems, sourceRules)
   if (cohortRecords) table = rebaseTableCrop(table, cohortRecords.cropRect)
+  const longQuestionGrid = recoverNativeQuestionRecordGrid(table, pageItems, captions, sourceRules)
+  if (longQuestionGrid?.cropRect) table = rebaseTableCrop(table, longQuestionGrid.cropRect)
+  const sparseModelGrid = recoverNativeSparseModelRecordGrid(
+    table,
+    pageItems,
+    captions,
+    sourceRules
+  )
+  if (sparseModelGrid?.cropRect) table = rebaseTableCrop(table, sparseModelGrid.cropRect)
+  const nativeCohortGrid = recoverNativeCohortRecordGrid(table, pageItems, captions, sourceRules)
+  if (nativeCohortGrid?.cropRect) table = rebaseTableCrop(table, nativeCohortGrid.cropRect)
   const questionnaireGrid = recoverQuestionnaireGrid(table, pageItems, captions, sourceRules)
   if (questionnaireGrid) table = rebaseTableCrop(table, questionnaireGrid.cropRect)
   const studyParagraphGrid = recoverStudyParagraphGrid(table, pageItems, captions, sourceRules)
@@ -699,8 +931,89 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
   const pairedIntervalGrid = recoverPairedIntervalGrid(table, pageItems, captions, sourceRules)
   if (pairedIntervalGrid) table = rebaseTableCrop(table, pairedIntervalGrid.cropRect)
   const closedCellGrid = recoverClosedCellGrid(table, pageItems, captions, sourceRules)
+  const twoCohortSections = recoverTwoCohortSectionGrid(table, pageItems, captions, sourceRules)
+  if (twoCohortSections?.cropRect) table = rebaseTableCrop(table, twoCohortSections.cropRect)
+  const programGrid = recoverRuledProgramGrid(table, pageItems, captions, sourceRules)
+  if (programGrid?.cropRect) table = rebaseTableCrop(table, programGrid.cropRect)
+  const scaleCohortGrid = recoverRuledScaleCohortGrid(table, pageItems, captions, sourceRules)
+  const surveyRecordGrid = recoverRuledSurveyRecordGrid(table, pageItems, captions, sourceRules)
+  const resourceCohortGrid = recoverResourceCohortRecords(table, pageItems, captions, sourceRules)
+  if (resourceCohortGrid?.cropRect) table = rebaseTableCrop(table, resourceCohortGrid.cropRect)
+  const wrappedCohortStatistics = recoverWrappedCohortStatistics(
+    table,
+    pageItems,
+    captions,
+    sourceRules
+  )
+  const sharedScoreGrid = recoverSharedScoreTimepointGrid(table, pageItems, captions, sourceRules)
+  if (sharedScoreGrid) table = rebaseTableCrop(table, sharedScoreGrid.cropRect)
+  const equalFontStackGrid = recoverNativeEqualFontStackRecordGrid(
+    table,
+    pageItems,
+    captions,
+    sourceRules
+  )
+  if (equalFontStackGrid?.cropRect) table = rebaseTableCrop(table, equalFontStackGrid.cropRect)
+  const scientificLeafProof = proveNativeScientificLeafGutters(
+    table,
+    pageItems,
+    captions,
+    sourceRules
+  )
+  const scientificLeafGrid = recoverNativeScientificLeafRecordGrid(
+    table,
+    pageItems,
+    captions,
+    sourceRules,
+    scientificLeafProof
+  )
   let [left, top, right, bottom] = table.cropRect
+  const coefficientRecordGrid = recoverNativeCoefficientRecordGrid(
+    table,
+    pageItems,
+    captions,
+    sourceRules
+  )
   const recordGrid =
+    scalarRecordPlan?.grid ??
+    repeatedTuplePlan?.grid ??
+    independentTextRecords ??
+    recoverNativePairedParentRecordGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeStackedRecordGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeSharedPairRecordGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativePairedTextRecordGrid(table, pageItems, captions, sourceRules, adjacent) ??
+    recoverNativeOrdinalWrappedRecordGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeSingleMathRecordGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeCitedMeasurementGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeConfigurationGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeSymbolDefinitionGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeWrappedCountNarrativeGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeSegmentedScientificGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeRuledFormulaGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeGroupedParameterGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeMeasuredRecordGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeHeaderOwnershipGrid(table, pageItems, captions, sourceRules) ??
+    recoverSmallCompleteRecordGrid(table, pageItems, captions, sourceRules) ??
+    scientificLeafGrid ??
+    equalFontStackGrid ??
+    coefficientRecordGrid ??
+    recoverNativePairedRecordGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeGroupedFlagRecordGrid(table, pageItems, captions, sourceRules) ??
+    (ruledColumnGrid?.repair === 'native-body-records-recovered' ? ruledColumnGrid : undefined) ??
+    recoverRuledSparseSummaryRecords(table, pageItems, captions, sourceRules) ??
+    longQuestionGrid ??
+    sparseModelGrid ??
+    nativeCohortGrid ??
+    (closedCellGrid?.repair === 'native-body-records-recovered' ? closedCellGrid : undefined) ??
+    recoverWrappedCountPairsGrid(table, pageItems, captions, sourceRules) ??
+    recoverSampleQualifiedSparseCohortGrid(table, pageItems, captions, sourceRules) ??
+    twoCohortSections ??
+    programGrid ??
+    scaleCohortGrid ??
+    surveyRecordGrid ??
+    resourceCohortGrid ??
+    wrappedCohortStatistics ??
+    sharedScoreGrid ??
     parallelCountLists ??
     questionnaireGrid ??
     studyParagraphGrid ??
@@ -774,7 +1087,9 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     recordCandidate ??
     closedCellGrid
   if (
-    recordGrid === closedCellGrid &&
+    (recordGrid === closedCellGrid ||
+      recordGrid?.repair === 'native-body-records-recovered' ||
+      recordGrid?.repair === 'native-count-footer-crop-recovered') &&
     recordGrid?.cropRect &&
     recordGrid.cropRect.some((v, n) => v !== table.cropRect[n])
   ) {
@@ -1040,6 +1355,13 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     externalCaptions.some((c) => intersect(item.rect, c.rect) / area(item.rect) > 0.8)
   )
   const excluded = new Set(excludedCaptionItems)
+  const raisedCaptionGlyphs = proveNativeCaptionRaisedGlyphOwnership(
+    table,
+    pageItems,
+    externalCaptions,
+    sourceRules
+  )
+  if (raisedCaptionGlyphs) for (const item of raisedCaptionGlyphs.tokens) excluded.add(item)
   // A split continuation marker below the last source row is navigation text.
   // Allow a small model-boundary overlap, not a marker within the row body.
   // Keep parentheses elsewhere, including lone zeros and incomplete source values.
@@ -1332,6 +1654,19 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     if (a[2] - b[0] > Math.min(a[2] - a[0], b[2] - b[0]) * 0.25)
       issues.add('overlapping-predicted-columns')
   }
+  const unitStubCut =
+    externalCaptions.length &&
+    recoverParenthesizedStubUnitCut(
+      items,
+      [left, ...columns.slice(1).map((c, i) => (columns[i].rect[2] + c.rect[0]) / 2), right],
+      sourceRules,
+      table.cropRect
+    )
+  if (unitStubCut) {
+    columns[0].rect[2] = unitStubCut
+    columns[1].rect[0] = unitStubCut
+    repairs.push('source-comparison-columns-recovered')
+  }
   const cuts = columns.slice(1).map((c, i) => (columns[i].rect[2] + c.rect[0]) / 2)
   const columnRects = columns.map((_, i) => [
     i ? cuts[i - 1] : left,
@@ -1339,6 +1674,27 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     i < cuts.length ? cuts[i] : right,
     bottom
   ])
+  const sampleHeaderBottom = Math.max(
+    ...objects
+      .filter((object) => object.label === 'table column header')
+      .map((object) => object.rect[3])
+  )
+  const qualifiedCuts =
+    externalCaptions.length &&
+    recoverSampleQualifiedHeaderCuts(
+      items,
+      [left, ...cuts, right],
+      top,
+      Number.isFinite(sampleHeaderBottom) ? sampleHeaderBottom : rows[0]?.rect[1]
+    )
+  if (qualifiedCuts) {
+    cuts.splice(0, cuts.length, ...qualifiedCuts.slice(1, -1))
+    columnRects.forEach((rect, column) => {
+      rect[0] = qualifiedCuts[column]
+      rect[2] = qualifiedCuts[column + 1]
+    })
+    repairs.push('sample-qualified-header-cut-recovered')
+  }
   const columnOf = (item) => columnRects.findIndex((c) => inside(c, item))
   // Compact frequency tables may have only a count heading over the value
   // column. Its wrapped lines sit above the first predicted data row.
@@ -1381,6 +1737,16 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     )
     if (group) group.push(item)
     else groups.push([item])
+  }
+  // A single ruled sample header can wrap only its cohort labels above the
+  // detector row. Native band ownership keeps all four titles in one row.
+  const wrappedSampleBand =
+    !recordGrid && rows.length
+      ? recoverWrappedSampleHeaderBand(table, pageItems, captions, sourceRules)
+      : undefined
+  if (wrappedSampleBand) {
+    rows[0].rect[1] = Math.min(rows[0].rect[1], wrappedSampleBand[1])
+    repairs.push('leading-header-line-recovered')
   }
   const clippedWrappedHeader = !recordGrid
     ? recoverClippedHeading({
@@ -5946,6 +6312,22 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
         )
       )
         continue
+      const previousRows = [...rows]
+      const sourceOwners = rows.filter((row) => {
+        const owned = items.filter((item) => inside(row.rect, item))
+        return owned.length && owned.every((item) => group.includes(item))
+      })
+      if (
+        sourceOwners.length > 1 &&
+        group.every((item) => sourceOwners.filter((row) => inside(row.rect, item)).length === 1)
+      ) {
+        sourceOwners[0].rect = [left, rect[1], right, rect[3]]
+        sourceOwners[0].section = true
+        for (const row of sourceOwners.slice(1)) rows.splice(rows.indexOf(row), 1)
+        remapSourceRowSpans(recordGrid, previousRows, rows)
+        repairs.push('wrapped-comparison-record-recovered')
+        continue
+      }
       before.rect[3] = Math.min(before.rect[3], (before.rect[3] + rect[1]) / 2)
       after.rect[1] = Math.max(after.rect[1], (rect[3] + after.rect[1]) / 2)
       const insertAt = rows.findIndex((row) => row.rect[1] > rect[1])
@@ -5954,6 +6336,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
         origin: 'source-text',
         section: true
       })
+      remapSourceRowSpans(recordGrid, previousRows, rows)
       repairs.push('missing-section-row-recovered')
     }
   }
@@ -6112,7 +6495,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     recoverUnownedSourceRows({ rows, groups, items, columnRects, repairs })
   if (!recordGrid?.completeSpans)
     recoverCitedRecordTails({ rows, items, columnRects, rules, repairs })
-  if (externalCaptions.length)
+  if (externalCaptions.length && !recordGrid?.preservePhysicalRows)
     mergeWrappedStubTails({
       rows,
       items,
@@ -6360,6 +6743,124 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     ...objects.filter((o) => o.label === 'table column header').map((o) => o.rect[3])
   )
   const cohortCuts = [columnRects[0]?.[0], ...columnRects.map((c) => c[2])]
+  // A complete native header face tree can refine a recovered body grid too.
+  // Retain the body's row objects so existing source spans survive the new
+  // header depth. Decline if replacing a predicted header would lose body ink.
+  if (
+    Number.isFinite(modelHeaderBottom) &&
+    externalCaptions.length &&
+    !(recordGrid?.completeSpans && recordGrid.headerRows?.length > 1)
+  ) {
+    const height = Math.max(...items.map((item) => item.height))
+    const edges = joinHorizontalTableRules(sourceRules)
+      .filter(
+        (rule) =>
+          rule[1] === rule[3] &&
+          rule[0] <= cohortCuts[0] + height &&
+          rule[2] >= cohortCuts.at(-1) - height &&
+          Math.abs(rule[1] - modelHeaderBottom) <= height * 2
+      )
+      .sort((a, b) => Math.abs(a[1] - modelHeaderBottom) - Math.abs(b[1] - modelHeaderBottom))
+    for (const edge of edges) {
+      const source = items.filter(
+        (item) => item.horizontal && (item.rect[1] + item.rect[3]) / 2 < edge[1]
+      )
+      // The detected crop can start just inside a closed native frame. Use
+      // its unique nearby top border only when it precedes all header ink
+      // and does not cross caption ink; the closed-face proof stays exact.
+      const sourceTop = Math.min(...source.map((item) => item.rect[1]))
+      const nativeTops = [
+        ...new Set(
+          joinHorizontalTableRules(sourceRules)
+            .filter(
+              (rule) =>
+                rule[1] === rule[3] &&
+                Math.abs(top - rule[1]) < height &&
+                rule[1] < sourceTop &&
+                rule[0] <= cohortCuts[0] + height &&
+                rule[2] >= cohortCuts.at(-1) - height &&
+                !externalCaptions.some(
+                  (caption) => caption.rect[3] > rule[1] && caption.rect[1] < sourceTop
+                )
+            )
+            .map((rule) => rule[1])
+        )
+      ]
+      const headerTop = nativeTops.length === 1 ? nativeTops[0] : top
+      const recovered =
+        recoverClosedNativeHeaderBands(source, cohortCuts, sourceRules, headerTop, edge[1]) ??
+        recoverSourceHeaderTree(source, cohortCuts, sourceRules, headerTop, edge[1])
+      if (!recovered) continue
+      const body = rows.filter((row) => (row.rect[1] + row.rect[3]) / 2 > edge[1])
+      const bodyItems = items.filter((item) => !source.includes(item))
+      if (
+        !body.length ||
+        body.some((row) => source.some((item) => inside(row.rect, item))) ||
+        bodyItems.some((item) => !body.some((row) => inside(row.rect, item)))
+      )
+        continue
+      const previous = [...rows]
+      rows.splice(
+        0,
+        rows.length,
+        ...recovered.rows.map((rect) => ({ rect, origin: 'source-header' })),
+        ...body
+      )
+      remapSourceRowSpans(recordGrid, previous, rows)
+      sourceHeaderBands = { ...recovered, bottom: edge[1] }
+      repairs.push('ruled-group-header-recovered')
+      break
+    }
+  }
+  // A native header tree may end in an ink gap instead of a full-width rule.
+  // Strict hierarchy/sibling evidence can replace only its header rows, even
+  // when the body already has a source grid. Preserve every body token/span.
+  if (
+    !sourceHeaderBands &&
+    Number.isFinite(modelHeaderBottom) &&
+    externalCaptions.length &&
+    !(recordGrid?.completeSpans && recordGrid.headerRows?.length > 1)
+  ) {
+    const height = Math.max(
+      ...items.filter((item) => item.rect[3] <= modelHeaderBottom).map((item) => item.height)
+    )
+    // The model can label the first body record as a header. Only nearby
+    // physical ink gaps are candidates; the strict tree proves its topology.
+    const ends = [...new Set(items.map((item) => item.rect[3]))]
+      .filter((end) => Math.abs(end - modelHeaderBottom) <= height * 2)
+      .sort((a, b) => Math.abs(a - modelHeaderBottom) - Math.abs(b - modelHeaderBottom))
+    for (const end of ends) {
+      const source = items.filter(
+        (item) => item.horizontal && item.rect[1] >= top && item.rect[3] <= end
+      )
+      const bodyItems = items.filter((item) => !source.includes(item))
+      const upperBottom = Math.max(...source.map((item) => item.rect[3]))
+      const lowerTop = Math.min(...bodyItems.map((item) => item.rect[1]))
+      if (source.length < 6 || lowerTop <= upperBottom || lowerTop - upperBottom >= height * 3)
+        continue
+      const bottom = (upperBottom + lowerTop) / 2
+      const recovered = recoverSourceHeaderTree(source, cohortCuts, sourceRules, top, bottom)
+      const body = rows.filter((row) => (row.rect[1] + row.rect[3]) / 2 > bottom)
+      if (
+        recovered &&
+        body.length >= 2 &&
+        !body.some((row) => source.some((item) => inside(row.rect, item))) &&
+        bodyItems.every((item) => body.some((row) => inside(row.rect, item)))
+      ) {
+        const previous = [...rows]
+        rows.splice(
+          0,
+          rows.length,
+          ...recovered.rows.map((rect) => ({ rect, origin: 'source-header' })),
+          ...body
+        )
+        remapSourceRowSpans(recordGrid, previous, rows)
+        sourceHeaderBands = { ...recovered, bottom }
+        repairs.push('ruled-group-header-recovered')
+        break
+      }
+    }
+  }
   const cohortHeight = Math.max(
     ...items.filter((i) => i.rect[3] <= modelHeaderBottom).map((i) => i.height)
   )
@@ -6381,6 +6882,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     : []
   if (
     !recordGrid &&
+    !sourceHeaderBands &&
     (captions.some((c) => captionKind(c.lines[0]) === 'table') ||
       items.some((i) =>
         /^\(Table\s+\d+\s+continues on (?:the )?next page\)$/i.test(i.text.trim())
@@ -6459,7 +6961,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
         recoverSplitBorderHeaderBands(source, sourceCuts, sourceRules, headerTop, rule[1]) ??
         recoverSegmentedParentBands(source, sourceCuts, sourceRules, headerTop, rule[1])
       const header =
-        segmented ?? recoverRuledHeaderBands(source, sourceCuts, rules, headerTop, rule[1])
+        segmented ?? recoverRuledHeaderBands(source, sourceCuts, sourceRules, headerTop, rule[1])
       const recovered =
         header?.rows.length > 1
           ? header
@@ -6538,19 +7040,19 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
           return (
             /\p{L}{3}/u.test(text) &&
             /\(?n=\d+\)/i.test(text) &&
-            [0, 1].every(
-              (n) =>
-                source
-                  .filter(
-                    (i) =>
-                      (i.rect[1] + i.rect[3]) / 2 > header.rows[0][3] &&
-                      i.rect[0] >= sourceCuts[s.column + n] &&
-                      i.rect[2] <= sourceCuts[s.column + n + 1]
-                  )
-                  .map((i) => i.text)
-                  .join('')
-                  .trim() === (n ? '%' : 'n')
-            )
+            [0, 1].every((n) => {
+              const label = source
+                .filter(
+                  (i) =>
+                    (i.rect[1] + i.rect[3]) / 2 > header.rows[0][3] &&
+                    i.rect[0] >= sourceCuts[s.column + n] &&
+                    i.rect[2] <= sourceCuts[s.column + n + 1]
+                )
+                .map((i) => i.text)
+                .join('')
+                .trim()
+              return n ? label === '%' : /^(?:n|No\.)$/i.test(label)
+            })
           )
         })
       const leftAlignedParents =
@@ -6621,7 +7123,8 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
         !ruledPeers &&
         !nestedRuledParent &&
         !segmented &&
-        !nativeParent
+        !nativeParent &&
+        !pairedCountParents
       )
         continue
       const body = rows.filter((r) => (r.rect[1] + r.rect[3]) / 2 > rule[1])
@@ -8659,6 +9162,13 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     issues,
     repairs
   })
+  const nativeMathOrder = proveNativeClosedMathOrder(
+    table,
+    pageItems,
+    captions,
+    sourceRules,
+    observedRuns
+  )
   const unassigned = populateTableCellText({
     cells,
     items,
@@ -8670,10 +9180,12 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     bottom,
     recordGrid,
     scheduleGrid,
+    nativeMathOrder,
     rotatedContinuation: table.readingRotation === 90 || table.readingRotation === 270,
     issues,
     repairs
   })
+  reconcileStatisticStubStarts({ cells, baseCells, rows, rules, repairs })
   reconcileFragmentedCountHeaders({ cells, issues, repairs })
   if (nativeParentSpans && rows[1])
     for (let index = unresolvedSpans.length - 1; index >= 0; index--) {
@@ -8754,6 +9266,19 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     issues,
     repairs
   })
+  const finalBounds = reconcileNativeFinalCellBounds({
+    table,
+    cells,
+    rows,
+    columnRects,
+    tokens: sourceItems,
+    rules: sourceRules,
+    unassigned,
+    clipped,
+    repairs
+  })
+  if (finalBounds.cropRect !== table.cropRect) table = rebaseTableCrop(table, finalBounds.cropRect)
+  if (clipped.length && !finalBounds.clipped.length) issues.delete('text-crosses-crop-boundary')
   const grid = rows.map(() => columns.map(() => ''))
   for (const cell of cells) grid[cell.row][cell.column] = cell.text
   return {
@@ -8763,7 +9288,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     cells,
     rows: rows.map(({ rect, origin }) => ({ rect, origin })),
     unassigned,
-    clipped: clipped.map((i) => ({ text: i.text, rect: i.rect })),
+    clipped: finalBounds.clipped.map((i) => ({ text: i.text, rect: i.rect })),
     excludedCaptionItems: excludedCaptionItems.map((i) => i.text),
     issues: [...issues],
     repairs,

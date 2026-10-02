@@ -1122,7 +1122,7 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
   })
 
-  it('clears the first Agent output wait when disconnect or compaction takes ownership', () => {
+  it('clears the disconnected wait but does not let compaction supersede a live run', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'Continue the foreground request'
@@ -1139,7 +1139,7 @@ describe('session store', () => {
     useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
     useSessionStore.getState().beginCompaction('transport-session-1', { supersedeActiveRun: true })
 
-    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
   })
 
   it('hydrates runtime context as a read projection but never authors it in a renderer save', () => {
@@ -2957,6 +2957,50 @@ describe('session store', () => {
     )
     expect(useSessionStore.getState().sessions[0].conversationGraph?.activities).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'root-live-tool' })])
+    )
+  })
+
+  it('keeps linked Sessions after projections and respects durable unlink', () => {
+    const binding = {
+      projectId: 'source-project',
+      sessionId: 'source',
+      contextId: 'snapshot',
+      title: 'Analysis',
+      branchId: 'main',
+      promptMessageId: 'prompt'
+    }
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'receiving',
+        projectId: 'project',
+        title: 'Conversation',
+        cwd: '',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          sessionContext: { version: 1, bindings: [binding] }
+        }
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          sessionContext: { version: 1, bindings: [], lastPromptMessageId: 'prompt' }
+        }
+      },
+      mode: 'runtime-context-authority'
+    })
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.sessionContext?.bindings).toEqual(
+      []
     )
   })
 
@@ -5067,7 +5111,7 @@ describe('session store', () => {
     })
   })
 
-  it('does not restore obsolete Ask and Plan waits after a Session resumes', () => {
+  it('keeps Main-owned Ask and Plan waits until an authoritative resume projection', () => {
     useSessionStore.setState({
       sessions: [
         {
@@ -5090,8 +5134,8 @@ describe('session store', () => {
     useSessionStore.getState().clearPermissionPending('session-restored-interactions')
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'idle',
-      interactionState: { permission: false, elicitation: false, plan: false }
+      status: 'waiting-for-user',
+      interactionState: { permission: false, elicitation: true, plan: true }
     })
   })
 
@@ -6938,7 +6982,7 @@ describe('session store', () => {
       expect(session.messages[1]).toMatchObject({ status: 'complete' })
     })
 
-    it('markResumed clears the interrupted state so the composer is usable', () => {
+    it('markResumed updates provider binding while preserving Main-owned interruption', () => {
       hydrateInterrupted({
         providerSessionId: 'provider-session-old',
         providerContinuityToken: 'bridge-generation-old',
@@ -6987,14 +7031,14 @@ describe('session store', () => {
       })
       const session = useSessionStore.getState().sessions[0]
 
-      expect(session.interrupted).toBeUndefined()
-      expect(session.error).toBeUndefined()
-      expect(session.status).toBe('idle')
+      expect(session.interrupted).toBe(true)
+      expect(session.error).toBe('Session was interrupted before the app closed.')
+      expect(session.status).toBe('error')
       expect(session.agentFrameworkId).toBe('codex')
       expect(session.agentBackendId).toBe('codex:codex-isolated')
       expect(session.providerSessionId).toBe('provider-session-new')
       expect(session.providerContinuityToken).toBe('bridge-generation-new')
-      expect(session.resumeRecovery).toBeUndefined()
+      expect(session.resumeRecovery?.promptMessageId).toBe('prompt-1')
       expect(session.pendingHistoryReplay).toEqual({
         kind: 'before-message',
         messageId: 'prompt-1'
@@ -7394,6 +7438,7 @@ describe('session store public contract', () => {
     expect(directConsumerPaths()).toEqual([
       'src/renderer/src/components/NotificationBell.tsx',
       'src/renderer/src/components/NotificationLiveToast.tsx',
+      'src/renderer/src/components/SessionPackageOperation.tsx',
       'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',
       'src/renderer/src/components/job-binding-utils.ts',
       'src/renderer/src/components/notification-inbox-presentation.ts',
@@ -7407,6 +7452,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-elicitation-runtime.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
       'src/renderer/src/lib/acp/workspace-permission-response-attempt-owner.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-preparation.ts',
       'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts',
@@ -7420,6 +7466,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
       'src/renderer/src/lib/deep-link.ts',
       'src/renderer/src/lib/preview-persistence/preview-persistence.ts',
+      'src/renderer/src/lib/replay/timeline.ts',
       'src/renderer/src/lib/session-package-export.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.ts',
       'src/renderer/src/pages/home/HomePage.tsx',
@@ -7436,9 +7483,12 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
+      'src/renderer/src/pages/workspace/SessionDiscussionDialog.tsx',
+      'src/renderer/src/pages/workspace/SessionDiscussionSource.tsx',
       'src/renderer/src/pages/workspace/SessionInfoPopover.preview.tsx',
       'src/renderer/src/pages/workspace/SessionInfoPopover.tsx',
       'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
+      'src/renderer/src/pages/workspace/SessionReplayPreview.tsx',
       'src/renderer/src/pages/workspace/SessionReproducibilityDialog.tsx',
       'src/renderer/src/pages/workspace/SideChatWorkbench.tsx',
       'src/renderer/src/pages/workspace/SubagentReleaseSurfaces.tsx',
@@ -7473,6 +7523,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
+      'src/renderer/src/pages/workspace/replay/ReplayToolRecord.tsx',
       'src/renderer/src/pages/workspace/session-action-menu.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
@@ -7501,6 +7552,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts',
       'src/renderer/src/pages/workspace/workspace-session-details-controller.ts',
+      'src/renderer/src/pages/workspace/workspace-session-discussion.ts',
       'src/renderer/src/pages/workspace/workspace-skill-load.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts',

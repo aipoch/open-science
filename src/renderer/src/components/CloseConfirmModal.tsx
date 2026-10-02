@@ -1,4 +1,4 @@
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 

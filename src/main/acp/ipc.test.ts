@@ -221,6 +221,7 @@ const registerWithFakes = (overrides?: {
   provisionedConnectorSkillNames?: string[]
   customMcpServers?: Array<{ id: string; name: string }>
   memory?: AcpTestOptions['memory']
+  sessionPersistenceCoordinator?: AcpTestOptions['sessionPersistenceCoordinator']
   delegatedNotebookConnection?: AcpTestOptions['delegatedNotebookConnection']
   delegatedRuntimeHome?: AcpTestOptions['delegatedRuntimeHome']
   fixedBackend?: AcpTestOptions['fixedBackend']
@@ -266,6 +267,7 @@ const registerWithFakes = (overrides?: {
     initializationBarrier: overrides?.initializationBarrier,
     specialistService: overrides?.specialistService as never,
     memory: overrides?.memory,
+    sessionPersistenceCoordinator: overrides?.sessionPersistenceCoordinator,
     delegatedNotebookConnection: overrides?.delegatedNotebookConnection,
     delegatedRuntimeHome: overrides?.delegatedRuntimeHome,
     fixedBackend: overrides?.fixedBackend
@@ -534,6 +536,33 @@ describe('ACP runtime composition — memory eligibility', () => {
       delegatedNotebookConnection: {} as AcpTestOptions['delegatedNotebookConnection']
     })
     expect(AcpRuntimeMock.mock.calls.at(-1)?.[0]).not.toHaveProperty('memory')
+  })
+})
+
+describe('ACP runtime composition — Session reading eligibility', () => {
+  it('prepares reading for the persisted root Session and withholds it from child runtimes', async () => {
+    const readSessionRuntimeContext = vi.fn(async () => ({ version: 1, revision: 0 }))
+    const sessionPersistenceCoordinator = {
+      readSessionRuntimeContext
+    } as unknown as AcpTestOptions['sessionPersistenceCoordinator']
+    registerWithFakes({ sessionPersistenceCoordinator })
+    const rootOptions = AcpRuntimeMock.mock.calls.at(-1)![0]
+    await expect(
+      rootOptions.prepareSessionReading?.({
+        projectId: 'project-1',
+        sessionId: 'persisted-root',
+        promptMessageId: 'root-prompt',
+        sources: []
+      })
+    ).resolves.toBeUndefined()
+    expect(readSessionRuntimeContext).toHaveBeenCalledExactlyOnceWith('project-1', 'persisted-root')
+
+    registerWithFakes({
+      sessionPersistenceCoordinator,
+      delegatedNotebookConnection: {} as AcpTestOptions['delegatedNotebookConnection']
+    })
+    expect(AcpRuntimeMock.mock.calls.at(-1)![0].prepareSessionReading).toBeUndefined()
+    expect(readSessionRuntimeContext).toHaveBeenCalledTimes(1)
   })
 })
 

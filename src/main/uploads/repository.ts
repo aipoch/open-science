@@ -107,12 +107,14 @@ class UploadRepository {
   async finalizePendingSessionUploads(
     sessionId: string,
     attachments: UploadedAttachment[],
-    projectId = DEFAULT_UPLOAD_PROJECT_ID
+    projectId = DEFAULT_UPLOAD_PROJECT_ID,
+    options: { deferVisibility?: boolean } = {}
   ): Promise<UploadedAttachment[]> {
     const finalized = await this.stagedPublicationOwner.finalizePendingSessionUploads(
       sessionId,
       attachments,
-      projectId
+      projectId,
+      options
     )
     const newlyPublished = finalized.filter((file) =>
       attachments.some((input) => input.id === file.id && input.versionId !== file.versionId)

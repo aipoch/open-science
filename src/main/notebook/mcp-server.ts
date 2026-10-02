@@ -270,7 +270,9 @@ const buildShellExecuteDoc = (
     binding.kind === 'powershell' ? '$env:OPEN_SCIENCE_HANDOFF_DIR' : '$OPEN_SCIENCE_HANDOFF_DIR'
   const platformContract =
     binding.kind === 'powershell'
-      ? 'Target Windows PowerShell 5.1; aliases are not POSIX utilities and `&&` is unavailable. Use `if ($?) { ... }` for dependent commands.'
+      ? binding.version === '5.1'
+        ? 'Target Windows PowerShell 5.1; aliases are not POSIX utilities and `&&` is unavailable. Use `if ($?) { ... }` for dependent commands.'
+        : 'Target PowerShell 7.6; aliases are not POSIX utilities. Use PowerShell syntax and inspect native program exit codes.'
       : undefined
   const exitCodeContract =
     binding.kind === 'powershell'

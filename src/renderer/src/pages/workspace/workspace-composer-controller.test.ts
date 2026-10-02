@@ -1,3 +1,5 @@
+import { useSessionReplayStore } from '@/stores/session-replay-store'
+import type { SessionDiscussionCapture } from './replay/replay-context'
 // @vitest-environment jsdom
 import { configureComposerDraftStorage, revokeComposerDraftStorage } from './composer-draft-storage'
 import { literatureItemInputSchema } from '../../../../shared/literature'
@@ -29,6 +31,7 @@ import {
 } from './composer/composer-doc'
 import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
+import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
 import type { ComposerHistoryEntry } from './composer/composer-history'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -194,6 +197,7 @@ const mounted: Array<ReturnType<typeof renderController>> = []
 const originalApi = window.api
 
 afterEach(() => {
+  useSessionReplayStore.setState({ playhead: undefined })
   for (const hook of mounted.splice(0)) hook.unmount()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   window.api = originalApi
@@ -202,6 +206,144 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('replaces a discussion source atomically, preserves ordinary annotations, and allows undo', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    const selected = (sourceSessionId: string, stepId: string): TextAnnotation =>
+      createSessionDiscussionAnnotation(
+        {
+          projectId: 'project',
+          sourceSessionId,
+          sourceTitle: sourceSessionId,
+          fingerprint: 'fp',
+          branchId: 'main',
+          stepId,
+          stepOffsetMs: 0,
+          excerpt: '',
+          evidence: [
+            { kind: 'message', id: stepId, projectId: 'project', sessionId: sourceSessionId }
+          ]
+        },
+        stepId
+      )!
+    const first = selected('source-a', 'first')
+    const second = selected('source-a', 'second')
+    const replacement = selected('source-b', 'replacement')
+    act(() => {
+      hook.result.current.actions.addAnnotation(annotation())
+      hook.result.current.actions.addAnnotation(first)
+      hook.result.current.actions.addAnnotation(second)
+    })
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first, second])
+    act(() => hook.result.current.actions.addAnnotation(replacement))
+    expect(hook.result.current.view.annotations).toEqual([annotation(), replacement])
+    act(() => hook.result.current.actions.undo())
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first, second])
+  })
+
+  it('captures the linked replay only at Send without changing the draft or an earlier snapshot', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    const context: SessionDiscussionCapture = {
+      projectId: 'project',
+      sourceSessionId: 'source',
+      sourceTitle: 'Study',
+      fingerprint: 'fp',
+      branchId: 'main',
+      stepId: 'one',
+      stepNumber: 1,
+      stepOffsetMs: 0,
+      excerpt: '',
+      evidence: [{ kind: 'message', id: 'one', projectId: 'project', sessionId: 'source' }]
+    }
+    const capture = vi.fn(() => context)
+    act(() => {
+      hook.selectSession({
+        id: 'session-a',
+        projectId: 'project',
+        runtimeContext: {
+          revision: 1,
+          sessionContext: {
+            version: 1,
+            bindings: [
+              {
+                projectId: 'project',
+                sessionId: 'source',
+                contextId: 'old',
+                title: 'Study',
+                branchId: 'main',
+                promptMessageId: 'previous'
+              }
+            ]
+          }
+        }
+      })
+      hook.result.current.actions.changeDoc(textDoc('Explain this step.'))
+      useSessionReplayStore.setState({ playhead: { ...context, capture } })
+    })
+    context.stepId = 'two'
+    context.stepNumber = 2
+    expect(capture).not.toHaveBeenCalled()
+    const sent = hook.result.current.lifecycle.captureSend()
+    context.stepId = 'three'
+    context.stepNumber = 3
+    expect(sent.discussionFocus).toMatchObject({ stepId: 'two', stepNumber: 2 })
+    expect(hook.result.current.view.annotations).toEqual([])
+    expect(docToText(hook.result.current.view.doc)).toBe('Explain this step.')
+    expect(hook.result.current.lifecycle.captureSend().discussionFocus?.stepId).toBe('three')
+    expect(hook.result.current.lifecycle.captureSend(false).discussionFocus).toBeUndefined()
+  })
+
+  it('replaces repeated Ask snapshots by logical step and keeps whole-research scope singular', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    const selected = (
+      stepId: string,
+      snapshotId: string,
+      scope?: 'session',
+      branchId = 'main'
+    ): TextAnnotation =>
+      createSessionDiscussionAnnotation(
+        {
+          projectId: 'project',
+          sourceSessionId: 'source',
+          sourceTitle: 'Study',
+          fingerprint: 'fp',
+          branchId,
+          stepId,
+          stepOffsetMs: snapshotId.length,
+          scope,
+          excerpt: '',
+          evidence: [{ kind: 'message', id: stepId, projectId: 'project', sessionId: 'source' }]
+        },
+        snapshotId
+      )!
+    const first = selected('one', 'first')
+    const repeated = selected('one', 'new-snapshot')
+    const second = selected('two', 'second')
+    act(() => {
+      hook.result.current.actions.addAnnotation(annotation())
+      hook.result.current.actions.addAnnotation(first)
+      hook.result.current.actions.addAnnotation(repeated)
+      hook.result.current.actions.addAnnotation(second)
+    })
+    expect(hook.result.current.view.annotations).toEqual([annotation(), repeated, second])
+    const whole = selected('one', 'whole', 'session')
+    const wholeAgain = selected('one', 'whole-again', 'session')
+    act(() => {
+      hook.result.current.actions.addAnnotation(whole)
+      hook.result.current.actions.addAnnotation(wholeAgain)
+    })
+    expect(hook.result.current.view.annotations).toEqual([annotation(), wholeAgain])
+    act(() => hook.result.current.actions.addAnnotation(first))
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first])
+    const alternative = selected('one', 'alternative', undefined, 'other')
+    act(() => hook.result.current.actions.addAnnotation(alternative))
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first, alternative])
+    act(() => hook.result.current.actions.undo())
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first])
+  })
+
   it('keeps first-message PDF evidence with its draft through undo, switching and failed-send recovery', () => {
     const hook = renderController(uploads(), undefined, [], null)
     mounted.push(hook)
@@ -252,6 +394,163 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.annotations).toEqual([evidence])
     act(() => hook.result.current.actions.removeAnnotation(evidence.id))
     expect(hook.result.current.lifecycle.captureSend().annotations).toEqual([])
+  })
+
+  it('restores rejected first-message draft into its bound Session without losing attachments', async () => {
+    const attachment: UploadedAttachment = {
+      id: 'upload-pdf',
+      sessionId: 'new:project',
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: 'upload-version:pdf-version',
+      mimeType: 'application/pdf',
+      size: 10,
+      versionId: 'pdf-version',
+      versionNumber: 1
+    }
+    const hook = renderController(
+      uploads(vi.fn().mockResolvedValue(attachment)),
+      undefined,
+      [],
+      null
+    )
+    mounted.push(hook)
+    hook.selectSession(undefined)
+    act(() => hook.result.current.actions.changeDoc(textDoc('Analyze this PDF')))
+    act(() => hook.result.current.actions.addAnnotation(annotation()))
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['pdf'], 'paper.pdf', { type: 'application/pdf' })
+      ])
+    )
+    await flushAsyncWork()
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    expect(snapshot.attachments).toEqual([attachment])
+    act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+    // Binding the pending Session changes WorkspacePage's draft key before dispatch rejects.
+    hook.selectSession({ id: 'bound-session', projectId: 'project' })
+    act(() => {
+      expect(hook.result.current.lifecycle.restoreFailedSend(snapshot, true, 'bound-session')).toBe(
+        true
+      )
+    })
+    expect(docToText(hook.result.current.view.doc)).toBe('Analyze this PDF')
+    expect(hook.result.current.view.annotations).toEqual(snapshot.annotations)
+    expect(hook.result.current.lifecycle.captureSend().attachments).toEqual([attachment])
+    expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toEqual(
+      snapshot.pendingPdfContextVersions
+    )
+  })
+
+  it('keeps a newer bound-Session draft and stores the rejected first message with the original draft', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    hook.selectSession(undefined)
+    act(() => hook.result.current.actions.changeDoc(textDoc('Earlier rejected message')))
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+    hook.selectSession({ id: 'bound-session', projectId: 'project' })
+    act(() => hook.result.current.actions.changeDoc(textDoc('Newer unsent message')))
+    act(() => {
+      expect(
+        hook.result.current.lifecycle.restoreFailedSend(
+          { ...snapshot, retrySessionOwner: { sessionId: 'bound-session', projectId: 'project' } },
+          true,
+          'bound-session'
+        )
+      ).toBe(false)
+    })
+    expect(docToText(hook.result.current.view.doc)).toBe('Newer unsent message')
+    hook.selectSession(undefined)
+    expect(docToText(hook.result.current.view.doc)).toBe('Earlier rejected message')
+    expect(hook.result.current.lifecycle.captureSend().retrySessionOwner).toEqual({
+      sessionId: 'bound-session',
+      projectId: 'project'
+    })
+    const restored = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.clearDraft(restored.draftKey, restored.version))
+    act(() => hook.result.current.actions.changeDoc(textDoc('Another new conversation')))
+    expect(hook.result.current.lifecycle.captureSend().retrySessionOwner).toBeUndefined()
+  })
+
+  describe('pre-admission rejection recovery from a restorer captured at submit time', () => {
+    const pdfAttachment = (sessionId: string): UploadedAttachment => ({
+      id: 'upload-pdf',
+      sessionId,
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: 'upload-version:pdf-version',
+      mimeType: 'application/pdf',
+      size: 10,
+      versionId: 'pdf-version',
+      versionNumber: 1
+    })
+    const stagePdf = async (hook: ControllerHook): Promise<void> => {
+      act(() => hook.result.current.actions.changeDoc(textDoc('Analyze this PDF')))
+      act(() =>
+        hook.result.current.actions.stageFiles([
+          new File(['pdf'], 'paper.pdf', { type: 'application/pdf' })
+        ])
+      )
+      await flushAsyncWork()
+    }
+
+    it('restores text and attachments of an existing Session after the composer was cleared', async () => {
+      const attachment = pdfAttachment('session-a')
+      const hook = renderController(uploads(vi.fn().mockResolvedValue(attachment)))
+      mounted.push(hook)
+      await stagePdf(hook)
+      const snapshot = hook.result.current.lifecycle.captureSend()
+      expect(snapshot.attachments).toEqual([attachment])
+      // The submit-time callback's render closure still sees the attachment that clearDraft removes.
+      const restoreFailedSend = hook.result.current.lifecycle.restoreFailedSend
+      act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+      expect(hook.result.current.view.attachments).toEqual([])
+      act(() => expect(restoreFailedSend(snapshot, true)).toBe(true))
+      expect(docToText(hook.result.current.view.doc)).toBe('Analyze this PDF')
+      expect(hook.result.current.view.attachments).toEqual([attachment])
+    })
+
+    it('keeps the newer draft and surfaces the earlier one when the user typed while sending', async () => {
+      const attachment = pdfAttachment('session-a')
+      const hook = renderController(uploads(vi.fn().mockResolvedValue(attachment)))
+      mounted.push(hook)
+      await stagePdf(hook)
+      const snapshot = hook.result.current.lifecycle.captureSend()
+      const restoreFailedSend = hook.result.current.lifecycle.restoreFailedSend
+      act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+      act(() => hook.result.current.actions.changeDoc(textDoc('Newer draft')))
+      act(() => expect(restoreFailedSend(snapshot, true, undefined, true)).toBe(false))
+      expect(docToText(hook.result.current.view.doc)).toBe('Newer draft')
+      expect(hook.result.current.view.attachments).toEqual([])
+      expect(hook.result.current.view.error).toBe(
+        'Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.'
+      )
+      expect(hook.result.current.view.errorDetail).toBe('Analyze this PDF\npaper.pdf')
+    })
+
+    it('restores a new conversation with attachments into the bound Session the user is viewing', async () => {
+      const attachment = pdfAttachment('new:project')
+      const hook = renderController(
+        uploads(vi.fn().mockResolvedValue(attachment)),
+        undefined,
+        [],
+        null
+      )
+      mounted.push(hook)
+      hook.selectSession(undefined)
+      await stagePdf(hook)
+      const snapshot = hook.result.current.lifecycle.captureSend()
+      const restoreFailedSend = hook.result.current.lifecycle.restoreFailedSend
+      act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+      hook.selectSession({ id: 'bound-session', projectId: 'project' })
+      act(() => expect(restoreFailedSend(snapshot, true, 'bound-session', true)).toBe(true))
+      expect(docToText(hook.result.current.view.doc)).toBe('Analyze this PDF')
+      expect(hook.result.current.view.attachments).toEqual([attachment])
+      hook.selectSession(undefined)
+      expect(docToText(hook.result.current.view.doc)).toBe('')
+      expect(hook.result.current.view.attachments).toEqual([])
+    })
   })
 
   it('keeps setup authority outside the document and clears it with the draft', () => {

@@ -56,11 +56,15 @@ test('forks local and imported research and immediately continues through the re
       const importing = page.getByRole('dialog', { name: 'Import Session package', exact: true })
       await importing.getByRole('button', { name: 'Import', exact: true }).click()
       await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
-      await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
       await page.getByRole('button', { name: 'Fork to continue', exact: true }).click()
-      await expect(page.getByRole('region', { name: 'Imported research history' })).toHaveCount(0)
+      await expect(
+        page.getByRole('region', { name: 'Research discussion', exact: true })
+      ).toHaveCount(0)
+      await expect(page.getByRole('button', { name: /^Continued from chat #\d+$/ })).toBeVisible()
     }
-    const replies = page.getByText(`Deterministic reply: ${prompt}`, { exact: true })
+    const replies = page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
     const previousReplies = await replies.count()
     await page.getByRole('textbox', { name: 'Ask anything' }).fill(followup)
     await page.getByRole('button', { name: 'Send message' }).click()
@@ -95,7 +99,9 @@ test('forks local and imported research and immediately continues through the re
       .locator('[data-slot="session-open-button"][aria-current="page"]')
       .getByRole('img', { name: 'Read-only' })
   ).toHaveCount(0)
-  const replies = restarted.getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  const replies = restarted
+    .getByRole('region', { name: 'Conversation', exact: true })
+    .getByText(`Deterministic reply: ${prompt}`, { exact: true })
   const before = await replies.count()
   await restarted.getByRole('textbox', { name: 'Ask anything' }).fill('Continue after restart')
   await restarted.getByRole('button', { name: 'Send message' }).click()

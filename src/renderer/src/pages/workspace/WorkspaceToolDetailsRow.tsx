@@ -9,6 +9,7 @@ import {
   formatNotebookRunOutputLineMeta
 } from './notebook-run-figures'
 import { NotebookToolFigureOutputs } from './NotebookToolFigureOutputs'
+import { NotebookFolderAccessNotice } from './NotebookFolderAccessNotice'
 import { notebookRunStatusLabel } from './notebook-cell-utils'
 import { useNearViewport } from './previews/useNearViewport'
 import type {
@@ -31,6 +32,7 @@ type WorkspaceToolDetailsRowProps = {
   phase?: ToolExecutionPhase
   details: ToolActivityDetails
   notebookRun?: NotebookRunRecord
+  allowFolderAccess?: boolean
   isExpanded: boolean
   onNotebookRunNearViewport?: (runId: string, isNearViewport: boolean) => void
   onToggle: (activityId: string, nextExpanded: boolean) => void
@@ -120,6 +122,7 @@ const WorkspaceToolDetailsRow = ({
   phase,
   details,
   notebookRun,
+  allowFolderAccess = false,
   isExpanded,
   onNotebookRunNearViewport,
   onToggle,
@@ -272,6 +275,7 @@ const WorkspaceToolDetailsRow = ({
       >
         {details.sections.map(renderSection)}
       </WorkspaceToolActivityRowButton>
+      {allowFolderAccess && notebookRun ? <NotebookFolderAccessNotice run={notebookRun} /> : null}
       {notebookRun ? <NotebookToolFigureOutputs run={notebookRun} /> : null}
     </>
   )

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Group by ordinate before sorting segments horizontally. Tiny PDF rounding
 // differences must not reorder the middle segment after the right segment.
-export function joinHorizontalTableRules(rules, gap = 0.01) {
+export function joinHorizontalTableRules(rules, gap = 0.01, cornerTolerance = 0) {
   const bands = []
   for (const rule of rules.filter((r) => r[1] === r[3]).sort((a, b) => a[1] - b[1])) {
     const last = bands.at(-1)
@@ -12,7 +12,19 @@ export function joinHorizontalTableRules(rules, gap = 0.01) {
     const joined = []
     for (const r of band.sort((a, b) => a[0] - b[0])) {
       const last = joined.at(-1)
-      if (last && r[0] <= last[2] + gap) last[2] = Math.max(last[2], r[2])
+      const corner =
+        last &&
+        cornerTolerance > 0 &&
+        r[0] - last[2] <= cornerTolerance &&
+        rules.some(
+          (v) =>
+            v[0] === v[2] &&
+            Math.abs(v[0] - last[2]) <= cornerTolerance &&
+            Math.abs(v[0] - r[0]) <= cornerTolerance &&
+            v[1] <= r[1] + cornerTolerance &&
+            v[3] >= r[1] - cornerTolerance
+        )
+      if (last && (r[0] <= last[2] + gap || corner)) last[2] = Math.max(last[2], r[2])
       else joined.push([r[0], band[0][1], r[2], band[0][1]])
     }
     return joined

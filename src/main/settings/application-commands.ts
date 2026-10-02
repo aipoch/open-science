@@ -98,6 +98,7 @@ type CoreSettingsCommandStore = Pick<
   | 'installCodex'
   | 'installOpencode'
   | 'installNotebookNetwork'
+  | 'cancelNotebookNetworkSetup'
   | 'installMissingWslDependencies'
   | 'installRecommendedWslDistro'
   | 'installWslPlatform'
@@ -285,6 +286,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: InstallOpencodeRequest],
     StoreResult<'installOpencode'>
   >('settings:install-opencode'),
+  cancelNotebookNetworkSetup: defineApplicationCommand<
+    'settings:cancel-notebook-network-setup',
+    [],
+    boolean
+  >('settings:cancel-notebook-network-setup'),
   installNotebookNetwork: defineApplicationCommand<
     'settings:install-notebook-network',
     readonly [],
@@ -513,6 +519,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.installCodex,
   settingsCoreApplicationCommands.installOpencode,
   settingsCoreApplicationCommands.installNotebookNetwork,
+  settingsCoreApplicationCommands.cancelNotebookNetworkSetup,
   settingsCoreApplicationCommands.removeNotebookNetwork,
   settingsCoreApplicationCommands.isEncryptionAvailable,
   settingsCoreApplicationCommands.isNpmAvailable,
@@ -655,6 +662,10 @@ const registerCoreSettingsApplicationCommands = (
         return dependencies.snapshotCommits.projectAfter(
           dependencies.service.installOpencode(args[0], dependencies.emitInstallEvent)
         )
+      },
+      'settings:cancel-notebook-network-setup': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:cancel-notebook-network-setup')
+        return dependencies.service.cancelNotebookNetworkSetup()
       },
       'settings:install-notebook-network': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-notebook-network')

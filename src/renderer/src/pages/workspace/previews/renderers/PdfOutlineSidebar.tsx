@@ -21,6 +21,7 @@ export type PdfOutlineItem = Readonly<{
   id: string
   title: string
   pageNumber?: number
+  position?: Readonly<{ left: number; top: number; aspectRatio: number }>
   children: readonly PdfOutlineItem[]
 }>
 
@@ -75,19 +76,29 @@ const flattenVisible = (
 
 const activeOutlineId = (
   items: readonly PdfOutlineItem[],
-  currentPage: number
+  currentPage: number,
+  position?: Readonly<{ pageNumber: number; top: number }>
 ): string | undefined => {
   let active: PdfOutlineItem | undefined
   let activePage = 0
+  let activeTop = -Infinity
   const visit = (children: readonly PdfOutlineItem[]): void => {
     for (const item of children) {
       if (
         item.pageNumber !== undefined &&
-        item.pageNumber <= currentPage &&
-        item.pageNumber >= activePage
+        item.pageNumber <= (position?.pageNumber ?? currentPage) &&
+        (!position ||
+          item.pageNumber < position.pageNumber ||
+          (item.position?.top ?? 0) <= position.top) &&
+        (item.pageNumber > activePage ||
+          (item.pageNumber === activePage &&
+            (!position ||
+              (item.position?.top ?? 0) > activeTop ||
+              (item.position === undefined && active?.position === undefined))))
       ) {
         active = item
         activePage = item.pageNumber
+        activeTop = item.position?.top ?? 0
       }
       visit(item.children)
     }
@@ -247,9 +258,10 @@ const PdfThumbnailList = ({
           {Array.from({ length: visibleRange.end - visibleRange.start }, (_, offset) => {
             const pageNumber = visibleRange.start + offset + 1
             const customLabel = pageLabels?.[pageNumber - 1]
-            const label = customLabel
-              ? `${t('Page {{page}}', { page: pageNumber })} · ${customLabel}`
-              : t('Page {{page}}', { page: pageNumber })
+            const label =
+              customLabel && customLabel !== String(pageNumber)
+                ? `${t('Page {{page}}', { page: pageNumber })} · ${customLabel}`
+                : t('Page {{page}}', { page: pageNumber })
             return (
               <div key={pageNumber} style={{ height: `${THUMBNAIL_ROW_HEIGHT}px` }}>
                 <PdfThumbnail
@@ -271,15 +283,19 @@ const PdfThumbnailList = ({
 const PdfOutlineTree = ({
   items,
   currentPage,
+  position,
+  selectedId,
   onNavigate
 }: {
   items: readonly PdfOutlineItem[]
   currentPage: number
-  onNavigate: (pageNumber: number) => void
+  position?: Readonly<{ pageNumber: number; top: number }>
+  selectedId?: string
+  onNavigate: (pageNumber: number, item?: PdfOutlineItem) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const parents = useMemo(() => collectParents(items), [items])
-  const activeId = useMemo(() => activeOutlineId(items, currentPage), [currentPage, items])
+  const activeId = selectedId ?? activeOutlineId(items, currentPage, position)
   const expandActiveParents = (current: ReadonlySet<string>): ReadonlySet<string> => {
     const next = new Set(current)
     let parentId = activeId ? parents.get(activeId) : undefined
@@ -373,7 +389,7 @@ const PdfOutlineTree = ({
                 onFocus={() => setFocusedId(item.id)}
                 onClick={() =>
                   item.pageNumber !== undefined
-                    ? onNavigate(item.pageNumber)
+                    ? onNavigate(item.pageNumber, item)
                     : hasChildren && toggle(item.id)
                 }
                 onKeyDown={(event) => {
@@ -386,7 +402,7 @@ const PdfOutlineTree = ({
                     if (hasChildren && isExpanded) toggle(item.id, false)
                     else focusItem(parentId)
                   } else if (event.key === 'Enter') {
-                    if (item.pageNumber !== undefined) onNavigate(item.pageNumber)
+                    if (item.pageNumber !== undefined) onNavigate(item.pageNumber, item)
                     else if (hasChildren) toggle(item.id)
                   } else return
                   event.preventDefault()
@@ -408,7 +424,10 @@ export const PdfOutlineSidebar = ({
   pageCount,
   pageLabels,
   currentPage,
+  position,
+  selectedId,
   width,
+  floating = false,
   onWidthChange,
   onClose,
   onNavigate
@@ -418,10 +437,13 @@ export const PdfOutlineSidebar = ({
   pageCount: number
   pageLabels?: readonly string[] | null
   currentPage: number
+  position?: Readonly<{ pageNumber: number; top: number }>
+  selectedId?: string
   width: number
+  floating?: boolean
   onWidthChange: (width: number) => void
   onClose: () => void
-  onNavigate: (pageNumber: number) => void
+  onNavigate: (pageNumber: number, item?: PdfOutlineItem) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [mode, setMode] = useState<PdfNavigationMode>(items.length > 0 ? 'outline' : 'pages')
@@ -434,24 +456,39 @@ export const PdfOutlineSidebar = ({
     <TooltipProvider skipDelayDuration={300}>
       <aside
         id="pdf-navigation-sidebar"
-        className="relative flex shrink-0 flex-col border-r border-border-200 bg-bg-000 text-text-000"
+        className={cn(
+          'flex shrink-0 flex-col border-r border-border-200 bg-bg-000 text-text-000',
+          floating ? 'absolute inset-y-0 left-0 z-50 shadow-lg' : 'relative'
+        )}
         style={{ width }}
         aria-label={t('PDF navigation')}
       >
         <div className="grid h-10 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_1.75rem] gap-1 border-b border-border-200 p-1">
-          <button
-            type="button"
-            className={cn(
-              'inline-flex items-center justify-center gap-1 rounded text-xs text-text-200 hover:bg-bg-200 hover:text-text-000',
-              effectiveMode === 'outline' && 'bg-bg-200 font-medium text-text-000'
-            )}
-            disabled={items.length === 0}
-            aria-pressed={effectiveMode === 'outline'}
-            onClick={() => setMode('outline')}
-          >
-            <ListTree className="size-4" aria-hidden="true" />
-            {t('Outline')}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  'inline-flex items-center justify-center gap-1 rounded text-xs text-text-200',
+                  items.length === 0
+                    ? 'cursor-not-allowed opacity-50'
+                    : 'hover:bg-bg-200 hover:text-text-000',
+                  effectiveMode === 'outline' && 'bg-bg-200 font-medium text-text-000'
+                )}
+                aria-disabled={items.length === 0}
+                aria-pressed={effectiveMode === 'outline'}
+                onClick={() => {
+                  if (items.length > 0) setMode('outline')
+                }}
+              >
+                <ListTree className="size-4" aria-hidden="true" />
+                {t('Outline')}
+              </button>
+            </TooltipTrigger>
+            {items.length === 0 ? (
+              <TooltipContent>{t('No readable outline is available for this PDF')}</TooltipContent>
+            ) : null}
+          </Tooltip>
           <button
             type="button"
             className={cn(
@@ -482,7 +519,13 @@ export const PdfOutlineSidebar = ({
         </div>
         {effectiveMode === 'outline' ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
-            <PdfOutlineTree items={items} currentPage={currentPage} onNavigate={onNavigate} />
+            <PdfOutlineTree
+              items={items}
+              currentPage={currentPage}
+              position={position}
+              selectedId={selectedId}
+              onNavigate={onNavigate}
+            />
           </div>
         ) : (
           <PdfThumbnailList
@@ -493,52 +536,54 @@ export const PdfOutlineSidebar = ({
             onNavigate={onNavigate}
           />
         )}
-        <button
-          type="button"
-          role="separator"
-          aria-label={t('Resize navigation')}
-          aria-orientation="vertical"
-          aria-valuemin={SIDEBAR_MIN_WIDTH}
-          aria-valuemax={SIDEBAR_MAX_WIDTH}
-          aria-valuenow={width}
-          className="group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none select-none focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
-            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-            event.preventDefault()
-            resizeTo(
-              width + (event.key === 'ArrowRight' ? SIDEBAR_RESIZE_STEP : -SIDEBAR_RESIZE_STEP)
-            )
-          }}
-          onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
-            if (event.button !== 0 || !event.isPrimary) return
-            event.currentTarget.setPointerCapture?.(event.pointerId)
-            resizeGestureRef.current = {
-              pointerId: event.pointerId,
-              startX: event.clientX,
-              startWidth: width
-            }
-          }}
-          onPointerMove={(event) => {
-            const gesture = resizeGestureRef.current
-            if (gesture?.pointerId === event.pointerId) {
-              resizeTo(gesture.startWidth + event.clientX - gesture.startX)
-            }
-          }}
-          onPointerUp={(event) => {
-            const gesture = resizeGestureRef.current
-            if (gesture?.pointerId !== event.pointerId) return
-            resizeGestureRef.current = undefined
-            if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId)
-            }
-            if (gesture.startWidth + event.clientX - gesture.startX < SIDEBAR_MIN_WIDTH) onClose()
-          }}
-          onPointerCancel={() => {
-            resizeGestureRef.current = undefined
-          }}
-        >
-          <span className="mx-auto block h-full w-px bg-transparent group-hover:bg-primary/50 group-focus-visible:bg-primary/60" />
-        </button>
+        {!floating ? (
+          <button
+            type="button"
+            role="separator"
+            aria-label={t('Resize navigation')}
+            aria-orientation="vertical"
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            aria-valuenow={width}
+            className="group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none select-none focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+              event.preventDefault()
+              resizeTo(
+                width + (event.key === 'ArrowRight' ? SIDEBAR_RESIZE_STEP : -SIDEBAR_RESIZE_STEP)
+              )
+            }}
+            onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
+              if (event.button !== 0 || !event.isPrimary) return
+              event.currentTarget.setPointerCapture?.(event.pointerId)
+              resizeGestureRef.current = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startWidth: width
+              }
+            }}
+            onPointerMove={(event) => {
+              const gesture = resizeGestureRef.current
+              if (gesture?.pointerId === event.pointerId) {
+                resizeTo(gesture.startWidth + event.clientX - gesture.startX)
+              }
+            }}
+            onPointerUp={(event) => {
+              const gesture = resizeGestureRef.current
+              if (gesture?.pointerId !== event.pointerId) return
+              resizeGestureRef.current = undefined
+              if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              }
+              if (gesture.startWidth + event.clientX - gesture.startX < SIDEBAR_MIN_WIDTH) onClose()
+            }}
+            onPointerCancel={() => {
+              resizeGestureRef.current = undefined
+            }}
+          >
+            <span className="mx-auto block h-full w-px bg-transparent group-hover:bg-primary/50 group-focus-visible:bg-primary/60" />
+          </button>
+        ) : null}
       </aside>
     </TooltipProvider>
   )
