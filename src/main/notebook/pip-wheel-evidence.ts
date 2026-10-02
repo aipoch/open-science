@@ -50,6 +50,8 @@ def generated_scripts(dist, site, payload):
     scripts = prefix / ("Scripts" if os.name == "nt" else "bin")
     class EvidenceScriptMaker(PipScriptMaker):
         def _write_script(self, names, shebang, script_bytes, filenames, ext):
+            if len(generated) + len(names) > 128:
+                raise ValueError("too many generated entry points")
             for name in names:
                 expected = shebang + script_bytes
                 if os.name == "nt":
@@ -83,7 +85,7 @@ def generated_scripts(dist, site, payload):
     gui = dict(config.items("gui_scripts")) if config.has_section("gui_scripts") else {}
     for group, entries in (("console_scripts", console), ("gui_scripts", gui)):
         for name, value in entries.items():
-            if not name or name in (".", "..") or "/" in name or "\\" in name or len(generated) >= 128:
+            if not name or name in (".", "..") or "/" in name or "\\" in name:
                 raise ValueError("unsupported entry point name")
             specification = name + " = " + value
             entry = get_export_entry(specification)
