@@ -492,6 +492,44 @@ describe('ConnectorService', () => {
     })
   })
 
+  it('routes descriptor-marked write-back tools through strict approval even when the connector auto-allows', async () => {
+    const requestApproval = vi.fn().mockResolvedValue('once')
+    const fetchImpl = vi.fn()
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: ['benchling'],
+        askToolIds: []
+      }),
+      resolveApiKey: () => undefined,
+      requestApproval,
+      permissionGrantRegistry: {
+        resolve: vi.fn().mockResolvedValue(undefined),
+        remember: vi.fn().mockResolvedValue(undefined)
+      } as never
+    })
+
+    await expect(
+      svc.call(
+        'benchling',
+        'create_entry',
+        { name: 'Experiment', folder_id: 'lib_abc123' },
+        { origin: 'agent', sessionId: 'session-1', projectId: 'project-1' }
+      )
+    ).rejects.toThrow(/connector_unauthenticated/)
+
+    expect(requestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connector: 'benchling',
+        method: 'create_entry',
+        approvalClass: 'write-back',
+        availableScopes: ['once', 'session']
+      })
+    )
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('does not dispatch a bundled call blocked while its approval is pending', async () => {
     const fetchImpl = vi.fn()
     let connectors = {
@@ -2169,6 +2207,47 @@ describe('ConnectorService specialist capability gate', () => {
     selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
     revision: 1,
     ...overrides
+  })
+
+  it('still requires write-back approval when a Specialist bypasses Main connector policy', async () => {
+    const current = specialist()
+    const requestApproval = vi.fn().mockResolvedValue('once')
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl: vi.fn() }),
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: ['benchling'],
+        askToolIds: []
+      }),
+      resolveApiKey: () => undefined,
+      requestApproval,
+      permissionGrantRegistry: {
+        resolve: vi.fn().mockResolvedValue(undefined),
+        remember: vi.fn().mockResolvedValue(undefined)
+      } as never,
+      resolveSpecialistProfile: async () => current
+    })
+
+    await expect(
+      svc.call(
+        'benchling',
+        'create_entry',
+        { name: 'Experiment', folder_id: 'lib_abc123' },
+        {
+          origin: 'agent',
+          sessionId: 'specialist-write-session',
+          projectId: 'project-1',
+          specialistId: current.id
+        }
+      )
+    ).rejects.toThrow(/connector_unauthenticated/)
+
+    expect(requestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        approvalClass: 'write-back',
+        availableScopes: ['once', 'session']
+      })
+    )
   })
 
   it('uses the fresh durable OpenAlex credential for Specialist calls', async () => {

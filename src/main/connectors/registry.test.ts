@@ -502,6 +502,62 @@ describe('MaveDB registration and input contracts', () => {
   })
 })
 
+describe('lab system-of-record catalog and write-back metadata', () => {
+  const expected = [
+    [
+      'benchling',
+      'Benchling',
+      [
+        'get_entry',
+        'list_custom_entities',
+        'list_assay_results',
+        'create_entry',
+        'update_entry',
+        'create_assay_results'
+      ]
+    ],
+    [
+      'protocols-io',
+      'protocols.io',
+      ['get_protocol', 'list_protocol_runs', 'create_run', 'update_run']
+    ],
+    ['labarchives', 'LabArchives', ['get_notebook_info', 'list_entries', 'create_entry']],
+    ['tenx-genomics', '10x Genomics', ['search_datasets', 'get_dataset', 'list_pipelines']]
+  ] as const
+
+  it.each(expected)(
+    'registers %s in the lab group with terms metadata',
+    (id, displayName, toolIds) => {
+      expect(CONNECTOR_CATALOG.find((entry) => entry.id === id)).toMatchObject({
+        displayName,
+        group: 'lab',
+        requiresNcbi: false,
+        termsUrl: expect.stringMatching(/^https:\/\//)
+      })
+      expect(getConnectorTools(id).map((tool) => tool.id)).toEqual(toolIds)
+    }
+  )
+
+  it('marks write-back tools explicitly and leaves read tools read-shaped', () => {
+    const writes = ['benchling', 'protocols-io', 'labarchives'].flatMap((id) =>
+      getConnectorTools(id)
+        .filter((tool) => tool.approvalClass === 'write-back')
+        .map((tool) => tool.id)
+    )
+    expect(writes).toEqual([
+      'create_entry',
+      'update_entry',
+      'create_assay_results',
+      'create_run',
+      'update_run',
+      'create_entry'
+    ])
+    for (const tool of getConnectorTools('tenx-genomics')) {
+      expect(tool.approvalClass).toBeUndefined()
+    }
+  })
+})
+
 describe('CELLxGENE Discover registration and input contracts', () => {
   const C = '9a71db9e-687f-41f0-b88e-544eb1314ef6'
   const D = '0bbf93aa-2d3a-420f-95a1-26fe384024cb'

@@ -1,0 +1,15 @@
+{
+  "ownerPaths": [
+    "src/main/connectors/descriptors/protocols-io.test.ts",
+    "src/main/connectors/descriptors/protocols-io.ts"
+  ],
+  "interfacePaths": ["src/main/connectors/descriptors/protocols-io.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/connectors/descriptors/protocols-io.test.ts"],
+    "contract": [],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

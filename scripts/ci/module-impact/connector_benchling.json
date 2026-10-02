@@ -1,0 +1,15 @@
+{
+  "ownerPaths": [
+    "src/main/connectors/descriptors/benchling.test.ts",
+    "src/main/connectors/descriptors/benchling.ts"
+  ],
+  "interfacePaths": ["src/main/connectors/descriptors/benchling.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/connectors/descriptors/benchling.test.ts"],
+    "contract": [],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

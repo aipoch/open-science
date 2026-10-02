@@ -16,7 +16,11 @@ import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { ConnectorPermissionBroker } from '../permission-grants/connector-broker'
 import type { ConnectorPermissionRequest } from '../permission-grants/connector-broker'
 import type { PermissionGrantScope } from '../../shared/permission-grants'
-import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
+import type {
+  ApprovalDecision,
+  ConnectorApprovalClass,
+  ConnectorApprovalScope
+} from '../../shared/settings'
 import {
   CONNECTOR_TOOL_PATTERN_MAX_LENGTH,
   CONNECTOR_TOOL_RULE_MAX_COUNT,
@@ -54,6 +58,7 @@ type ConnectorServiceDeps = {
       // open the right conversation.
       sessionId?: string
       availableScopes: ConnectorApprovalScope[]
+      approvalClass?: ConnectorApprovalClass
       approvalTarget?: NonNullable<ConnectorPermissionRequest['approvalTarget']>
     },
     signal?: AbortSignal
@@ -404,17 +409,21 @@ export class ConnectorService {
 
     validateToolArguments(descriptor, args)
 
-    let authorization = access.bypassMainPolicy
-      ? undefined
-      : await this.ensureAuthorized(
-          connector,
-          connector,
-          [connector],
-          method,
-          args,
-          context,
-          signal
-        )
+    let authorization: BundledAuthorization | undefined
+    if (access.bypassMainPolicy && descriptor.approvalClass === 'write-back') {
+      authorization = await this.ensureWriteBackApproval(connector, method, args, context, signal)
+    } else if (!access.bypassMainPolicy) {
+      authorization = await this.ensureAuthorized(
+        connector,
+        connector,
+        [connector],
+        method,
+        args,
+        context,
+        descriptor.approvalClass,
+        signal
+      )
+    }
 
     // Bundled tools that need privileged local behavior run here, after the same gate, instead of the
     // read-only HTTP engine.
@@ -460,6 +469,7 @@ export class ConnectorService {
         method,
         args,
         context,
+        descriptor.approvalClass,
         signal,
         authorization
       )
@@ -545,6 +555,7 @@ export class ConnectorService {
           method,
           args,
           context,
+          descriptor.approvalClass,
           signal,
           authorization
         )
@@ -825,6 +836,7 @@ export class ConnectorService {
     method: string,
     args: Record<string, unknown>,
     context: ConnectorCallContext,
+    approvalClass: ConnectorApprovalClass = 'read',
     signal?: AbortSignal,
     prior?: BundledAuthorization
   ): Promise<BundledAuthorization> {
@@ -836,15 +848,18 @@ export class ConnectorService {
       if (!this.isEnabled(connectorLabel, connectors)) {
         throw new ConnectorGateError('connector_disabled', disabledConnectorMessage(connectorLabel))
       }
-      const request = this.authorizationRequest(
-        connectorLabel,
-        capabilityServerId,
-        policyIds,
-        method,
-        args,
-        context,
-        connectors
-      )
+      const request = {
+        ...this.authorizationRequest(
+          connectorLabel,
+          capabilityServerId,
+          policyIds,
+          method,
+          args,
+          context,
+          connectors
+        ),
+        ...(approvalClass === 'write-back' ? { approvalClass: 'write-back' as const } : {})
+      }
       const policyDecision = this.permissionBroker.preflight(request)
       if (policyDecision === 'allow' || requireApprovalSatisfied) {
         return { connectors, requireApprovalSatisfied }
@@ -853,6 +868,34 @@ export class ConnectorService {
       await this.permissionBroker.authorize(request, policyDecision, { signal })
       requireApprovalSatisfied = true
     }
+  }
+
+  // Specialist access bypasses Main's connector enable/policy settings, but it must not bypass a
+  // write-back capability class. This prompt has no auto-allow policy and therefore fails closed when
+  // approval transport is unavailable or the registry cannot durably store a session grant.
+  private async ensureWriteBackApproval(
+    connector: string,
+    method: string,
+    args: Record<string, unknown>,
+    context: ConnectorCallContext,
+    signal?: AbortSignal
+  ): Promise<BundledAuthorization> {
+    const connectors = await this.currentConnectors()
+    signal?.throwIfAborted()
+    const request = {
+      ...this.authorizationRequest(
+        connector,
+        connector,
+        [connector],
+        method,
+        args,
+        context,
+        connectors
+      ),
+      approvalClass: 'write-back' as const
+    }
+    await this.permissionBroker.authorize(request, 'require_approval', { signal })
+    return { connectors, requireApprovalSatisfied: true }
   }
 
   private async authorizeCustomForCurrentPolicy(

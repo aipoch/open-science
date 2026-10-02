@@ -1,4 +1,8 @@
-import type { ApprovalDecision, ConnectorApprovalRequest } from '../../shared/settings'
+import type {
+  ApprovalDecision,
+  ConnectorApprovalRequest,
+  ConnectorApprovalScope
+} from '../../shared/settings'
 
 export type ApprovalInfo = Omit<ConnectorApprovalRequest, 'id'>
 
@@ -50,7 +54,20 @@ export class ApprovalBroker {
   request(info: ApprovalInfo, signal?: AbortSignal): Promise<ApprovalDecision> {
     signal?.throwIfAborted()
     const id = this.deps.generateId()
-    const request = { id, ...info, availableScopes: info.availableScopes ?? ['once'] }
+    const approvalClass = info.approvalClass ?? 'read'
+    const requestedScopes = info.availableScopes ?? ['once']
+    const availableScopes: ConnectorApprovalScope[] =
+      approvalClass === 'write-back'
+        ? requestedScopes.filter(
+            (scope) => scope === 'once' || (scope === 'session' && Boolean(info.sessionId))
+          )
+        : requestedScopes
+    const request: ConnectorApprovalRequest = {
+      id,
+      ...info,
+      ...(approvalClass === 'write-back' ? { approvalClass } : {}),
+      availableScopes: availableScopes.length > 0 ? availableScopes : ['once']
+    }
 
     return new Promise<ApprovalDecision>((resolve) => {
       const entry: PendingApproval = { request, resolve, remainingMs: this.timeoutMs, signal }
@@ -79,7 +96,14 @@ export class ApprovalBroker {
 
   // Called from the IPC handler when the renderer responds. Unknown ids are ignored (already settled).
   respond(id: string, decision: ApprovalDecision): void {
-    this.settle(id, decision, decision === 'deny' ? 'rejected' : 'resolved')
+    const request = this.pending.get(id)?.request
+    if (!request) return
+    const allowed = decision === 'deny' || (request.availableScopes ?? []).includes(decision)
+    this.settle(
+      id,
+      allowed ? decision : 'deny',
+      decision === 'deny' || !allowed ? 'rejected' : 'resolved'
+    )
   }
 
   pauseSession(sessionId: string): void {

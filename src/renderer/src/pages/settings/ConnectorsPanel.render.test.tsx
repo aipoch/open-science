@@ -1064,6 +1064,38 @@ describe('ConnectorsPanel (groups)', () => {
     expect(document.body.textContent).not.toContain('OpenAlex')
   })
 
+  it('renders and filters the lab system-of-record group', () => {
+    useSettingsStore.setState({
+      connectors: [
+        ...seedConnectors,
+        {
+          id: 'benchling',
+          name: 'benchling',
+          displayName: 'Benchling',
+          description: 'ELN and Registry',
+          sources: ['Benchling API'],
+          requiresNcbi: false,
+          enabled: true,
+          autoAllow: false,
+          group: 'lab' as const
+        }
+      ]
+    })
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    expect(document.body.textContent).toContain('Lab systems')
+    expect(document.body.textContent).toContain('Benchling')
+
+    openMenu('Filter connectors by group')
+    clickItemByText('option', 'Lab systems')
+
+    expect(document.body.textContent).toContain('Benchling')
+    expect(document.body.textContent).not.toContain('PubMed')
+    expect(document.body.textContent).not.toContain('My MCP')
+  })
+
   it('filters rows by the search query', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)

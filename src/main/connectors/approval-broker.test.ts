@@ -247,6 +247,58 @@ describe('ApprovalBroker', () => {
     await expect(decision).resolves.toBe('global')
   })
 
+  it('marks write-back requests and limits durable scopes to the current conversation', async () => {
+    const timer = makeTimer()
+    let broadcast: ConnectorApprovalRequest | undefined
+    const broker = new ApprovalBroker({
+      generateId: () => 'write-id',
+      broadcast: (request) => {
+        broadcast = request
+      },
+      setTimer: timer.set,
+      clearTimer: timer.clear
+    })
+
+    const decision = broker.request({
+      connector: 'benchling',
+      method: 'create_entry',
+      argsPreview: '{}',
+      sessionId: 'session-42',
+      approvalClass: 'write-back',
+      availableScopes: ['once', 'session', 'project', 'global']
+    })
+
+    expect(broadcast).toMatchObject({
+      id: 'write-id',
+      approvalClass: 'write-back',
+      sessionId: 'session-42',
+      availableScopes: ['once', 'session']
+    })
+    broker.respond('write-id', 'session')
+    await expect(decision).resolves.toBe('session')
+  })
+
+  it('fails closed when a write-back request receives a broader scope', async () => {
+    const timer = makeTimer()
+    const broker = new ApprovalBroker({
+      generateId: () => 'write-id',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear
+    })
+
+    const decision = broker.request({
+      connector: 'benchling',
+      method: 'update_entry',
+      argsPreview: '{}',
+      approvalClass: 'write-back',
+      availableScopes: ['once', 'session', 'project', 'global']
+    })
+    broker.respond('write-id', 'global')
+
+    await expect(decision).resolves.toBe('deny')
+  })
+
   it('reports allowed, denied, and timeout settlement states to durable notification adapters', async () => {
     const timer = makeTimer()
     const onSettled = vi.fn()

@@ -1,0 +1,15 @@
+{
+  "ownerPaths": [
+    "src/main/connectors/descriptors/tenx-genomics.test.ts",
+    "src/main/connectors/descriptors/tenx-genomics.ts"
+  ],
+  "interfacePaths": ["src/main/connectors/descriptors/tenx-genomics.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/connectors/descriptors/tenx-genomics.test.ts"],
+    "contract": [],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

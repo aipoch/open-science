@@ -885,6 +885,39 @@ describe('ParserEngine opt-in HTTP JSON bodies', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
 
+  it('runs an explicit JSON mutation without retrying a potentially committed write', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(Response.json({ error: 'upstream failed' }, { status: 503 }))
+    const engine = new ParserEngine({ fetchImpl, retries: 2, retryBackoffMs: 0 })
+    const mutation: ToolDescriptor = {
+      id: 'write',
+      connector: 'lab',
+      description: '',
+      input: {},
+      run: (ctx) =>
+        ctx.requestJson!(
+          'https://example.test/entries',
+          {
+            method: 'POST',
+            headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+            body: JSON.stringify({ name: 'Experiment' })
+          },
+          { retry: false }
+        )
+    }
+
+    await expect(engine.call(mutation, {}, {})).rejects.toThrow('HTTP 503')
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://example.test/entries',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ authorization: 'Bearer secret' })
+      })
+    )
+  })
+
   it('retains success status and headers with an error-status opt-in', async () => {
     const engine = new ParserEngine({
       fetchImpl: async () => Response.json({ id: 'record' }, { headers: { 'x-total': '1' } })

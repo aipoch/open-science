@@ -1,9 +1,20 @@
+import type { ConnectorApprovalClass } from '../../shared/settings'
+
 export type ConnectorCredentialId = 'openalex'
+
+export type ConnectorOAuthProvider = 'benchling' | 'protocols-io' | 'tenx-genomics'
 
 export type ConnectorCredentials = {
   ncbiEmail?: string
   ncbiApiKey?: string
   openAlexApiKey?: string
+  // Resolved in memory only. Credential values must never be included in diagnostics or tool output.
+  oauthTokens?: Partial<Record<ConnectorOAuthProvider, string>>
+  labArchives?: {
+    accessKeyId: string
+    accessPassword: string
+    apiBaseUrl?: string
+  }
 }
 
 export type ToolContext = {
@@ -23,6 +34,13 @@ export type ToolContext = {
   // POST a JSON body and parse the JSON response. Set retry:false for submissions where a
   // lost response leaves the provider job outcome unknown and replaying could create a duplicate.
   postJson(url: string, body: unknown, options?: { retry?: false }): Promise<unknown>
+  // Explicit JSON request with headers and an optional no-retry mutation boundary. The generic
+  // escape hatch keeps vendor REST APIs on the same deadline/size/cancellation path as other calls.
+  requestJson?: (
+    url: string,
+    init: RequestInit,
+    options?: { retry?: false }
+  ) => Promise<{ body: unknown; headers: Headers; status: number }>
   // Submit multipart data once and parse JSON; never retry a potentially created job.
   postForm(url: string, body: FormData): Promise<unknown>
   // Submit multipart data once and return the raw response; useful for APIs whose JSON is
@@ -50,6 +68,9 @@ export type ToolDescriptor = {
   required?: string[]
   // Code-only dispatch metadata. It is not part of the generated tool schema or persisted state.
   requiredCredential?: ConnectorCredentialId
+  // Omitted means read. Write-back descriptors are the only tools eligible for the strict mutation
+  // approval class and session-only durable grants.
+  approvalClass?: ConnectorApprovalClass
   format?: 'json' | 'text'
   // Whole-call deadline, including retries, waits and all requests in run(). Overrides the engine default.
   totalTimeoutMs?: number

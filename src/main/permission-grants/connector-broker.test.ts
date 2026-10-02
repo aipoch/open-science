@@ -165,6 +165,73 @@ describe('ConnectorPermissionBroker', () => {
     expect(remember).not.toHaveBeenCalled()
   })
 
+  it('requires explicit approval for write-back tools even when the connector auto-allows', async () => {
+    const { registry, resolve } = createRegistry()
+    const prompt = vi.fn().mockResolvedValue('once')
+    const broker = new ConnectorPermissionBroker(registry, prompt)
+    const request = createRequest({
+      approvalClass: 'write-back',
+      policy: { aliases: ['benchling'], autoAllowIds: ['benchling'] }
+    })
+
+    expect(broker.preflight(request)).toBe('require_approval')
+    await expect(broker.authorize(request)).resolves.toBeUndefined()
+    expect(resolve).toHaveBeenCalledOnce()
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        approvalClass: 'write-back',
+        availableScopes: ['once', 'session']
+      })
+    )
+  })
+
+  it('does not honor a caller-supplied allow decision for write-back tools', async () => {
+    const { registry } = createRegistry()
+    const prompt = vi.fn().mockResolvedValue('once')
+    const broker = new ConnectorPermissionBroker(registry, prompt)
+
+    await expect(
+      broker.authorize(createRequest({ approvalClass: 'write-back' }), 'allow')
+    ).resolves.toBeUndefined()
+    expect(prompt).toHaveBeenCalledOnce()
+  })
+
+  it('does not accept project or global grants for write-back tools', async () => {
+    const broad: PermissionGrantRecord = {
+      id: 'grant-global',
+      capability,
+      scope: { kind: 'global' },
+      revision: 1
+    }
+    const { registry, remember } = createRegistry(broad)
+    const prompt = vi.fn().mockResolvedValue('session')
+    const broker = new ConnectorPermissionBroker(registry, prompt)
+
+    await expect(
+      broker.authorize(createRequest({ approvalClass: 'write-back' }))
+    ).resolves.toBeUndefined()
+
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({ availableScopes: ['once', 'session'] })
+    )
+    expect(remember).toHaveBeenCalledWith({
+      capability,
+      scope: { kind: 'session', projectId: 'project-1', sessionId: 'session-1' }
+    })
+  })
+
+  it('rejects broad durable scopes for write-back tools', async () => {
+    const { registry, remember } = createRegistry()
+    const broker = new ConnectorPermissionBroker(registry, vi.fn().mockResolvedValue('global'))
+    const request = createRequest({ approvalClass: 'write-back' })
+
+    await expect(broker.authorize(request)).rejects.toThrow('tool call denied by user')
+    await expect(broker.remember(request, { kind: 'global' })).rejects.toThrow(
+      'write-back tool grants must be session-scoped'
+    )
+    expect(remember).not.toHaveBeenCalled()
+  })
+
   it('passes the caller signal to an approval prompt and stops when it aborts', async () => {
     const { registry, remember } = createRegistry()
     let observedSignal: AbortSignal | undefined

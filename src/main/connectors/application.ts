@@ -197,7 +197,7 @@ const createConnectorApplication = (
     mcpClientManager,
     permissionGrantRegistry: deps.permissionGrantRegistry,
     requestApproval: (
-      { connector, method, args, sessionId, availableScopes, approvalTarget },
+      { connector, method, args, sessionId, availableScopes, approvalClass, approvalTarget },
       signal
     ) => {
       const serializedArgs = serializeArgs(args)
@@ -210,7 +210,8 @@ const createConnectorApplication = (
           argsJson: serializedArgs.json,
           ...(serializedArgs.truncated ? { argsJsonTruncated: true } : {}),
           ...(sessionId ? { sessionId } : {}),
-          availableScopes
+          availableScopes,
+          ...(approvalClass ? { approvalClass } : {})
         },
         signal
       )

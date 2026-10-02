@@ -171,6 +171,29 @@ describe('ConnectorApprovalDialog', () => {
     )
   })
 
+  it('uses distinct write-back copy and exposes only once or conversation scope', () => {
+    useSettingsStore.setState({
+      pendingApprovals: [
+        {
+          id: 'write-r1',
+          sessionId: 'session-1',
+          connector: 'benchling',
+          method: 'create_entry',
+          argsPreview: '{"name":"Assay"}',
+          approvalClass: 'write-back',
+          availableScopes: ['once', 'session']
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorApprovalDialog />))
+
+    expect(document.body.textContent).toContain('Allow write to external system of record?')
+    expect(document.body.textContent).toContain('mutates an external system of record')
+    expect(button('Allow for this conversation')).toBeDefined()
+    expect(button('This project')).toBeUndefined()
+    expect(button('Global')).toBeUndefined()
+  })
+
   it('disambiguates a custom Connector target and exposes its full arguments', () => {
     const argsJson = JSON.stringify({ query: 'x'.repeat(400) })
     useSettingsStore.setState({

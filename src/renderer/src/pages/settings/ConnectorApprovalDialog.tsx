@@ -56,6 +56,7 @@ export function ConnectorApprovalDialog({
 
   if (!request) return null
   const availableScopes = request.availableScopes ?? ['once']
+  const isWriteBack = request.approvalClass === 'write-back'
 
   const displayName =
     request.displayName ??
@@ -124,14 +125,20 @@ export function ConnectorApprovalDialog({
             />
             <div className="min-w-0 flex-1">
               <Dialog.Title className={dialogTitleClassName}>
-                {t('Allow external request?')}
+                {isWriteBack
+                  ? t('Allow write to external system of record?')
+                  : t('Allow external request?')}
               </Dialog.Title>
               <Dialog.Description
                 className={cn(dialogDescriptionClassName, 'text-xs [text-wrap:pretty]')}
               >
-                {t(
-                  'The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.'
-                )}
+                {isWriteBack
+                  ? t(
+                      'The agent wants to call a connector tool that mutates an external system of record. Review the exact arguments and approve only if you intend to make this change.'
+                    )
+                  : t(
+                      'The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.'
+                    )}
               </Dialog.Description>
             </div>
             <Button

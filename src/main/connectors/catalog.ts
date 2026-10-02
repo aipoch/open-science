@@ -20,6 +20,57 @@ export type ConnectorMeta = {
 // Static connector metadata for the settings UI (tool lists come from the registry).
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
+    id: 'benchling',
+    displayName: 'Benchling',
+    aliases: ['Benchling ELN', 'Benchling Registry'],
+    description:
+      'Benchling ELN and Registry — notebook entries, registered entities, assay results, and approval-gated write-back.',
+    useWhen:
+      'Use when the task needs the researcher’s Benchling system of record — read notebook entries or Registry custom entities and assay results, create or update entries, or write assay results back to Benchling. OAuth credentials are required; mutating calls use a separate write-back approval and are never auto-retried.',
+    sources: ['Benchling API'],
+    termsUrl: 'https://www.benchling.com/terms-of-use',
+    requiresNcbi: false,
+    group: 'lab'
+  },
+  {
+    id: 'protocols-io',
+    displayName: 'protocols.io',
+    aliases: ['Protocols.io', 'protocols.io runs'],
+    description:
+      'protocols.io protocol metadata and recorded runs, with approval-gated run write-back.',
+    useWhen:
+      'Use when the task needs protocols.io protocols or run records — fetch a protocol, list its runs, or record and update run execution metadata. OAuth credentials are required; mutating calls use a separate write-back approval and are never auto-retried.',
+    sources: ['protocols.io API'],
+    termsUrl: 'https://www.protocols.io/terms',
+    requiresNcbi: false,
+    group: 'lab'
+  },
+  {
+    id: 'labarchives',
+    displayName: 'LabArchives',
+    aliases: ['Lab Archives', 'LabArchives ELN'],
+    description:
+      'LabArchives notebook metadata, entries, and approval-gated entry write-back through signed API requests.',
+    useWhen:
+      'Use when the task needs the researcher’s LabArchives notebook system of record — inspect notebook metadata, list entries, or create a notebook entry. The connector signs requests with configured API credentials; entry creation uses a separate write-back approval and is never auto-retried.',
+    sources: ['LabArchives API'],
+    termsUrl: 'https://www.labarchives.com/terms-of-use/',
+    requiresNcbi: false,
+    group: 'lab'
+  },
+  {
+    id: 'tenx-genomics',
+    displayName: '10x Genomics',
+    aliases: ['10x', '10x Genomics datasets', 'Cell Ranger'],
+    description: 'Public 10x Genomics dataset and pipeline metadata from the 10x catalog.',
+    useWhen:
+      'Use when you need public 10x Genomics dataset or pipeline metadata — search the dataset catalog, resolve a dataset slug, or list pipeline releases. This connector is read-only and does not start or mutate a 10x pipeline.',
+    sources: ['10x Genomics public catalog'],
+    termsUrl: 'https://www.10xgenomics.com/legal/terms-and-conditions',
+    requiresNcbi: false,
+    group: 'lab'
+  },
+  {
     id: 'alliance',
     displayName: 'Alliance Genome Resources',
     aliases: ['Alliance', 'AGR', 'model organism genes', 'model organism genomics'],

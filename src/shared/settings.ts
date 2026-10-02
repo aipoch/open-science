@@ -1544,7 +1544,7 @@ export type ConnectorToolView = {
 }
 
 // Which section a bundled connector belongs to in the settings list.
-export type ConnectorGroup = 'featured' | 'directory'
+export type ConnectorGroup = 'featured' | 'directory' | 'lab'
 
 // Renderer-safe view of one bundled connector (no tool schemas).
 export type ConnectorView = {
@@ -1818,6 +1818,8 @@ export type UpdateCustomServerRequest = {
 
 // A per-call approval request for a connector tool invocation (external data-egress gate). Sent from
 // main to the renderer, which shows an approval card and responds with a decision.
+export type ConnectorApprovalClass = 'read' | 'write-back'
+
 export type ConnectorApprovalRequest = {
   id: string
   connector: string // bundled connector id or custom server name
@@ -1832,6 +1834,9 @@ export type ConnectorApprovalRequest = {
   argsPreview: string // truncated JSON preview of the call arguments
   argsJson?: string // bounded serialized arguments, expandable in the approval dialog
   argsJsonTruncated?: boolean
+  // Read calls send data out. Write-back calls also mutate an external system of record and therefore
+  // receive a stricter approval treatment and narrower durable scopes.
+  approvalClass?: ConnectorApprovalClass
   // The session that triggered the connector call, so a desktop notification can surface and open
   // that conversation. Absent for call paths that don't carry one.
   sessionId?: string

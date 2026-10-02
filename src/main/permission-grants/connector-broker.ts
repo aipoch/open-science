@@ -1,4 +1,8 @@
-import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
+import type {
+  ApprovalDecision,
+  ConnectorApprovalClass,
+  ConnectorApprovalScope
+} from '../../shared/settings'
 import type {
   PermissionCapability,
   PermissionGrantContext,
@@ -15,6 +19,7 @@ type ConnectorPermissionPrompt = (
     args: Record<string, unknown>
     sessionId?: string
     availableScopes: ConnectorApprovalScope[]
+    approvalClass?: ConnectorApprovalClass
     approvalTarget?: ConnectorApprovalTarget
   },
   signal?: AbortSignal
@@ -41,6 +46,7 @@ type ConnectorPermissionRequest = {
   connector: string
   method: string
   args: Record<string, unknown>
+  approvalClass?: ConnectorApprovalClass
   approvalTarget?: ConnectorApprovalTarget
   policy: ConnectorPolicyInput
 }
@@ -80,6 +86,17 @@ class ConnectorPermissionBroker {
       })
       throw new Error(`tool blocked by policy: ${request.connector}/${request.method}`)
     }
+    // A connector-level Skip approvals setting is read-shaped authority. It must never silently
+    // authorize a tool that mutates an external system of record.
+    if (request.approvalClass === 'write-back') {
+      this.trace(request, {
+        stage: 'decision',
+        authority: 'connector_policy',
+        reason: 'write_back_requires_approval',
+        outcome: 'approval_required'
+      })
+      return 'require_approval'
+    }
     const skipApprovals = request.policy.aliases.some((alias) =>
       request.policy.autoAllowIds?.includes(alias)
     )
@@ -104,11 +121,15 @@ class ConnectorPermissionBroker {
     options: ConnectorAuthorizationOptions = {}
   ): Promise<PermissionGrantScope | undefined> {
     options.signal?.throwIfAborted()
-    if (policyDecision === 'allow') return undefined
+    if (policyDecision === 'allow' && request.approvalClass !== 'write-back') return undefined
 
     const requestId = randomUUID()
-    const match = await this.registry?.resolve(request.capability, request.context)
+    const resolvedMatch = await this.registry?.resolve(request.capability, request.context)
     options.signal?.throwIfAborted()
+    const match =
+      request.approvalClass === 'write-back' && resolvedMatch?.matchedScope !== 'session'
+        ? undefined
+        : resolvedMatch
     if (match) {
       this.trace(request, {
         stage: 'decision',
@@ -134,8 +155,10 @@ class ConnectorPermissionBroker {
     const availableScopes: ConnectorApprovalScope[] = ['once']
     if (this.registry) {
       if (request.context.projectId && request.context.sessionId) availableScopes.push('session')
-      if (request.context.projectId) availableScopes.push('project')
-      availableScopes.push('global')
+      if (request.approvalClass !== 'write-back' && request.context.projectId) {
+        availableScopes.push('project')
+      }
+      if (request.approvalClass !== 'write-back') availableScopes.push('global')
     }
 
     const prompt = {
@@ -144,6 +167,7 @@ class ConnectorPermissionBroker {
       args: request.args,
       ...(request.context.sessionId ? { sessionId: request.context.sessionId } : {}),
       availableScopes,
+      ...(request.approvalClass === 'write-back' ? { approvalClass: 'write-back' as const } : {}),
       ...(request.approvalTarget ? { approvalTarget: request.approvalTarget } : {})
     }
     this.trace(request, {
@@ -203,6 +227,11 @@ class ConnectorPermissionBroker {
   }
 
   async remember(request: ConnectorPermissionRequest, scope: PermissionGrantScope): Promise<void> {
+    if (request.approvalClass === 'write-back' && scope.kind !== 'session') {
+      throw new Error(
+        `write-back tool grants must be session-scoped: ${request.connector}/${request.method}`
+      )
+    }
     // Remembered authority must be durable before the current call is released.
     try {
       await this.registry!.remember({ capability: request.capability, scope })

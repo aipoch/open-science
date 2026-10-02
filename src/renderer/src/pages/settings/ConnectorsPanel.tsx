@@ -85,7 +85,7 @@ export type ConnectorsView =
   | { kind: 'import' }
   | { kind: 'export'; id: string }
 
-type GroupFilter = 'all' | 'featured' | 'directory' | 'custom'
+type GroupFilter = 'all' | 'featured' | 'directory' | 'lab' | 'custom'
 const MAIN_AGENT_FILTER = '__main-agent__'
 
 type ConnectorResourceRow<T extends { id: string; name: string; enabled: boolean }> = {
@@ -99,10 +99,11 @@ const FILTER_LABEL_KEYS = {
   all: 'All',
   featured: 'Featured',
   directory: 'Directory',
+  lab: 'Lab systems',
   custom: 'Custom'
 } as const satisfies Record<GroupFilter, string>
 
-const FILTER_ORDER: GroupFilter[] = ['all', 'featured', 'directory', 'custom']
+const FILTER_ORDER: GroupFilter[] = ['all', 'featured', 'directory', 'lab', 'custom']
 
 const includesAgent = (
   specialistFilter: string,
@@ -186,7 +187,7 @@ export function ConnectorsPanel({
   const tagAssignments = useTagStore((state) => state.assignments)
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<
-    Partial<Record<'featured' | 'directory' | 'custom', boolean>>
+    Partial<Record<'featured' | 'directory' | 'lab' | 'custom', boolean>>
   >({})
   const [retryingIds, setRetryingIds] = useState<Set<string>>(() => new Set())
   const [retryingProjection, setRetryingProjection] = useState(false)
@@ -412,6 +413,7 @@ export function ConnectorsPanel({
 
   const showFeatured = filter === 'all' || filter === 'featured'
   const showDirectory = filter === 'all' || filter === 'directory'
+  const showLab = filter === 'all' || filter === 'lab'
   const showCustom = filter === 'all' || filter === 'custom'
   const featuredConnectors = visibleConnectors.filter(
     ({ resource }) => (resource.group ?? 'featured') === 'featured'
@@ -419,12 +421,13 @@ export function ConnectorsPanel({
   const directoryConnectors = visibleConnectors.filter(
     ({ resource }) => resource.group === 'directory'
   )
+  const labConnectors = visibleConnectors.filter(({ resource }) => resource.group === 'lab')
   const customExpanded = !collapsed.custom
   const hasCachedCatalog = connectors.length > 0 || customServers.length > 0
 
   // Renders one collapsible bundled-connector section (Featured / Directory) with its rows.
   const connectorGroup = (
-    groupKey: 'featured' | 'directory',
+    groupKey: 'featured' | 'directory' | 'lab',
     label: string,
     subtitle: string,
     rows: ConnectorResourceRow<ConnectorView>[]
@@ -771,6 +774,15 @@ export function ConnectorsPanel({
             )
           : null}
 
+        {showLab
+          ? connectorGroup(
+              'lab',
+              t('Lab systems'),
+              t('Electronic lab notebooks and lab data systems'),
+              labConnectors
+            )
+          : null}
+
         {showCustom ? (
           <div data-slot="connectors-source-group" data-source="custom">
             <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 bg-card px-5 py-2">
@@ -1033,6 +1045,7 @@ export function ConnectorsPanel({
         visibleIds={[
           ...(showFeatured ? featuredConnectors.map(({ resource }) => resource.id) : []),
           ...(showDirectory ? directoryConnectors.map(({ resource }) => resource.id) : []),
+          ...(showLab ? labConnectors.map(({ resource }) => resource.id) : []),
           ...(showCustom ? visibleCustomServers.map(({ resource }) => resource.id) : [])
         ]}
       />
