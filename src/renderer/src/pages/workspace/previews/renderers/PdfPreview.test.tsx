@@ -815,6 +815,9 @@ describe('PdfPreviewContent', () => {
         )
       )
       await act(async () => phase('live'))
+      await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+      expect(container.querySelector('#pdf-navigation-sidebar')).not.toBeNull()
+      expect(container.querySelector('[data-preview-escape-boundary]')).not.toBeNull()
       await act(async () =>
         container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
       )
@@ -848,6 +851,17 @@ describe('PdfPreviewContent', () => {
       await act(async () => phase('live'))
       expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
       expect(container.querySelector('canvas')).toBeNull()
+      expect(container.querySelector('#pdf-navigation-sidebar')).toBeNull()
+      expect(container.querySelector('[data-preview-escape-boundary]')).toBeNull()
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true
+      })
+      await act(async () => {
+        scroll.dispatchEvent(escape)
+      })
+      expect(escape.defaultPrevented).toBe(false)
       // Browsers clamp the scroller when old pages disappear during the new acquisition.
       scroll.scrollTop = 0
       scroll.scrollLeft = 0
@@ -863,6 +877,8 @@ describe('PdfPreviewContent', () => {
         versionId: 'version-1'
       })
       expect(container.textContent).toContain('125%')
+      expect(container.querySelector('#pdf-navigation-sidebar')).not.toBeNull()
+      expect(container.querySelector('[data-preview-escape-boundary]')).not.toBeNull()
       expect(scroll.scrollTop).toBe(700)
       expect(scroll.scrollLeft).toBe(50)
       expect(destroyDocument).toHaveBeenCalled()

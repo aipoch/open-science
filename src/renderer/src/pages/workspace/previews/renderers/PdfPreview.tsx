@@ -2130,8 +2130,6 @@ export const PdfPreviewContent = ({
   const hasNotes = Boolean(attachmentVersionId || pdfBookmarkSource)
   const hasReadingTabs = Boolean(figuresSource || pdfBookmarkSource) && presentation !== 'search'
   const showNotesSidebar = presentation !== 'search' && notesOpen && readingMode === 'original'
-  const floatingNavigation =
-    outlineOpen && readingMode === 'original' && readerWidth < SIDEBAR_MIN_READER_WIDTH
   const floatingNotes = showNotesSidebar && readerWidth < SIDEBAR_MIN_READER_WIDTH
   const maxNotesWidth = Math.min(
     NOTES_SIDEBAR_MAX_WIDTH,
@@ -2437,6 +2435,9 @@ export const PdfPreviewContent = ({
     size: currentDocumentState?.status === 'ready' ? currentDocumentState.size : undefined
   })
   const pageCount = document?.numPages ?? 0
+  const showNavigation = Boolean(document && outlineOpen && (pageCount > 1 || attachmentVersionId))
+  const floatingNavigation =
+    showNavigation && readingMode === 'original' && readerWidth < SIDEBAR_MIN_READER_WIDTH
   const pageWidth = fitWidth > 0 ? Math.round(fitWidth * zoom) : 0
   const outlineItems = outlineState?.requestKey === requestKey ? outlineState.items : []
   const resolvedPageLabels = pageLabels?.requestKey === requestKey ? pageLabels.labels : null
@@ -3141,7 +3142,7 @@ export const PdfPreviewContent = ({
                 showNotesSidebar && !floatingNotes ? { right: effectiveNotesWidth } : undefined
               }
             >
-              {document && outlineOpen && (pageCount > 1 || attachmentVersionId) ? (
+              {document && showNavigation ? (
                 <PdfOutlineSidebar
                   key={requestKey}
                   document={document}
