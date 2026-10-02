@@ -1956,3 +1956,35 @@ it('estimates parallel throughput from wall time and resets the selector when re
     clock.mockRestore()
   }
 })
+
+it.each([1, 4] as const)(
+  'awaits explicit download cancellation during polling with %s parallel pages before retrying',
+  async (concurrency) => {
+    vi.useFakeTimers()
+    model = { ...model, availability: 'notInstalled', installedRevision: undefined }
+    api.pdfStructure.parse.mockRejectedValue(new Error(LOCAL_MODEL_NOT_INSTALLED))
+    api.localModels.install.mockResolvedValueOnce({ ...model, availability: 'installing' })
+    let finishCancel!: () => void
+    api.localModels.cancel.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCancel = () => resolve(model)
+        })
+    )
+    await startParallel(concurrency, 4)
+    expect(container.textContent).toContain('Downloading and verifying…')
+    expect(api.localModels.install).toHaveBeenCalledOnce()
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(concurrency)
+    await click('Cancel download')
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(api.localModels.cancel).toHaveBeenCalledOnce()
+    await click('Download and continue')
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(concurrency)
+    expect(api.localModels.install).toHaveBeenCalledOnce()
+    api.pdfStructure.parse.mockImplementation(async ({ page }: { page: number }) => emptyPage(page))
+    await act(async () => finishCancel())
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(concurrency + 4)
+    expect(api.localModels.cancel).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Analysis complete')
+  }
+)
