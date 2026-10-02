@@ -8,7 +8,10 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { buildSync } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -171,6 +174,53 @@ describe('Notebook filesystem policy', () => {
     expect(
       log.attach('ordinary-json', '', undefined, '{"message":"socket: Operation not permitted"}')
     ).toBe('')
+  })
+
+  it('bounds diagnostic work for unterminated escaped quotes in captured output', () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-diagnostic-budget-'))
+    try {
+      const bundle = join(root, 'violation-log.cjs')
+      buildSync({
+        entryPoints: [
+          fileURLToPath(new URL('../runtime/src/gateway/violation-log.ts', import.meta.url))
+        ],
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        outfile: bundle
+      })
+      const probe = join(root, 'probe.cjs')
+      writeFileSync(
+        probe,
+        `
+        const { ViolationLog } = require(${JSON.stringify(bundle)});
+        const output = '"' + '\\\\"'.repeat(128 * 1024);
+        const log = new ViolationLog();
+        for (const prefix of ['', 'no such file or directory: ', 'operation not permitted: ']) {
+          if (log.attach('fixture', '', undefined, prefix + output) !== '') process.exit(1);
+        }
+        const error = JSON.stringify({ message: "EPERM: operation not permitted, open '/private/fixture/token.txt'" });
+        if (!log.attach('fixture', '', undefined, output + '\\n' + error).includes('OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: /private/fixture/token.txt')) process.exit(2);
+      `
+      )
+      // A separate process makes the regression fail without hanging the test runner's event loop.
+      const result = spawnSync(process.execPath, [probe], {
+        encoding: 'utf8',
+        timeout: 5_000,
+        windowsHide: true
+      })
+      expect(result.error, result.stderr).toBeUndefined()
+      expect(result.status, result.stderr).toBe(0)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves hidden-path diagnostics when JSON Unicode escapes encode the error phrase', () => {
+    const output = String.raw`{"message":"\u006eo such file or directory: /private/fixture/input.txt"}`
+    expect(new ViolationLog().attach('fixture', '', () => true, output)).toContain(
+      'OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: /private/fixture/input.txt'
+    )
   })
 
   it('includes approval recovery in stderr even when curl discards the proxy body', () => {

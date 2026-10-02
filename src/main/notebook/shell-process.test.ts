@@ -4,7 +4,8 @@ import * as processTree from '../process-tree'
 import * as powerShellParser from './powershell-search-parser'
 import * as windowsRuntime from './windows-notebook-runtime'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -127,9 +128,17 @@ describe('notebook shell process behavior', () => {
     }
   )
 
-  it.each(['7.6', '5.1'] as const)(
-    'requires the bundled Node read grant only for PowerShell %s when preparing the sandbox',
-    async (version) => {
+  it.each(
+    (['7.6', '5.1'] as const).flatMap((version) =>
+      [false, true].map((aliased) => ({ version, aliased }))
+    )
+  )(
+    'requires the bundled Node read grant only for PowerShell $version (aliased storage: $aliased)',
+    async ({ version, aliased }) => {
+      const alias = join(portableRuntimeRoot, 'alias')
+      if (aliased)
+        await symlink(portableRuntimeRoot, alias, process.platform === 'win32' ? 'junction' : 'dir')
+      const runtimeRoot = join(aliased ? alias : portableRuntimeRoot, 'managed')
       const root = join(portableRuntimeRoot, 'bundled')
       const nodeRoot = join(root, 'node')
       const hostTools = join(portableRuntimeRoot, 'host-tools')
@@ -153,7 +162,7 @@ describe('notebook shell process behavior', () => {
           command: 'node --version',
           cwd: portableRuntimeRoot,
           handoffDir: portableRuntimeRoot,
-          runtimeRoot: join(portableRuntimeRoot, 'managed'),
+          runtimeRoot,
           environment: {
             PATH: hostTools,
             ...(version === '7.6'
@@ -171,7 +180,7 @@ describe('notebook shell process behavior', () => {
         const { filesystem, env } = wrap.mock.calls[0][0]
         if (version === '7.6') {
           expect(env.NPM_CONFIG_PREFIX).toBe(
-            shellNpmPaths(join(portableRuntimeRoot, 'managed'), 'win32').prefix
+            realpathSync.native(shellNpmPaths(runtimeRoot, 'win32').prefix)
           )
           expect(filesystem.readWriteRoots).toContain(env.NPM_CONFIG_PREFIX)
         }
