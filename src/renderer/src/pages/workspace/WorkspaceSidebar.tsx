@@ -1099,11 +1099,11 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
 
         <nav aria-label={t('Sessions')} className="flex min-h-0 flex-1 flex-col">
           {/* New stays disabled until persistence hydration has reconciled restored sessions. */}
-          <div className="flex h-9 items-center gap-1 px-2">
+          <div className="flex h-9 items-center gap-1 px-1.5">
             <button
               type="button"
               className={cn(
-                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
                 sidebarInteractiveTransitionClassName
               )}
               disabled={!canCreateConversation}
@@ -1118,11 +1118,11 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
               <span>{t('New')}</span>
             </button>
           </div>
-          <div className="flex h-9 items-center gap-1 px-2">
+          <div className="flex h-9 items-center gap-1 px-1.5">
             <button
               type="button"
               className={cn(
-                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300',
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm text-text-000 hover:bg-bg-300',
                 sidebarInteractiveTransitionClassName
               )}
               onClick={onOpenSettings}
@@ -1136,11 +1136,11 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
               <span>{t('Customize')}</span>
             </button>
           </div>
-          <div className="flex h-9 items-center gap-1 px-2">
+          <div className="flex h-9 items-center gap-1 px-1.5">
             <button
               type="button"
               className={cn(
-                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
                 isFilesOpen && 'bg-bg-300',
                 sidebarInteractiveTransitionClassName
               )}
@@ -1158,11 +1158,11 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
               <span>{t('Files')}</span>
             </button>
           </div>
-          <div className="flex h-9 items-center gap-1 px-2">
+          <div className="flex h-9 items-center gap-1 px-1.5">
             <button
               type="button"
               className={cn(
-                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
                 isComputeOpen && 'bg-bg-300',
                 sidebarInteractiveTransitionClassName
               )}
@@ -1180,11 +1180,11 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
               <span>{t('Compute')}</span>
             </button>
           </div>
-          <div className="flex h-9 items-center gap-1 px-2">
+          <div className="flex h-9 items-center gap-1 px-1.5">
             <button
               type="button"
               className={cn(
-                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
                 isLibraryOpen && 'bg-bg-300',
                 sidebarInteractiveTransitionClassName
               )}
