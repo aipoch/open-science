@@ -57,3 +57,48 @@ test('analyzes an uploaded PDF without Literature, message binding or note-write
   ).toBe(1)
   expect(errors).toEqual([])
 })
+
+test('PDF navigation explains missing outlines and floats without shrinking narrow readers', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1150, height: 850 })
+  await page.goto('/uploaded-pdf.html?navigation')
+  const navigation = page.getByRole('complementary', { name: 'PDF navigation' })
+  const scroller = page.locator('[data-pdf-cursor-mode]')
+  await page.getByRole('button', { name: 'Show navigation' }).click()
+  await expect(navigation).toBeVisible()
+  await expect(page.getByRole('separator', { name: 'Resize navigation' })).toBeVisible()
+  const outline = page.getByRole('button', { name: 'Outline', exact: true })
+  await expect(outline).toHaveAttribute('aria-disabled', 'true')
+  await outline.hover()
+  await expect(page.getByRole('tooltip')).toHaveText(
+    'No readable outline is available for this PDF'
+  )
+  await page.mouse.click(
+    ...(await outline.evaluate((el) => {
+      const rect = el.getBoundingClientRect()
+      return [rect.x + rect.width / 2, rect.y + rect.height / 2] as [number, number]
+    }))
+  )
+  await expect(page.getByRole('button', { name: 'Pages', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await page.setViewportSize({ width: 800, height: 850 })
+  await expect(page.getByRole('separator', { name: 'Resize navigation' })).toHaveCount(0)
+  await expect.poll(() => scroller.evaluate((el) => el.getBoundingClientRect().width)).toBe(800)
+  await expect(navigation).toHaveCSS('position', 'absolute')
+  await page.getByRole('button', { name: 'Page 2', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Page 2', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page'
+  )
+  await page.keyboard.press('Escape')
+  await expect(navigation).toHaveCount(0)
+  await expect(scroller).toBeFocused()
+  await page.getByRole('button', { name: 'Show navigation' }).click()
+  await page.setViewportSize({ width: 1150, height: 850 })
+  await expect(page.getByRole('separator', { name: 'Resize navigation' })).toBeVisible()
+  await expect(navigation).toHaveCSS('position', 'relative')
+  await expect.poll(() => scroller.evaluate((el) => el.getBoundingClientRect().width)).toBe(910)
+})

@@ -524,6 +524,51 @@ describe('PdfPreviewContent', () => {
     expect(destroyDocument).not.toHaveBeenCalled()
   })
 
+  it.each(['pdf', 'navigation-toggle', 'navigation', 'notes-toggle', 'notes'])(
+    'dismisses the focused floating sidebar from %s when both sidebars are open',
+    async (focus) => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            path="literature-attachment-version:version-1"
+            name="paper.pdf"
+            source="literature"
+          />
+        )
+        await flush()
+      })
+      const notesToggle = screen.getByRole('button', { name: 'Show notes sidebar' })
+      const navigationToggle = screen.getByRole('button', { name: 'Show navigation' })
+      await act(async () => notesToggle.click())
+      await act(async () => navigationToggle.click())
+      const navigation = screen.getByRole('complementary', { name: 'PDF navigation' })
+      const notes = container.querySelector<HTMLElement>('[data-pdf-notes-sidebar]')!
+      const pdf = container.querySelector<HTMLElement>('[data-pdf-cursor-mode]')!
+      const targets = {
+        pdf,
+        'navigation-toggle': navigationToggle,
+        navigation: navigation.querySelector<HTMLButtonElement>('[aria-label="Page 1"]')!,
+        'notes-toggle': notesToggle,
+        notes: notes.querySelector<HTMLButtonElement>('button')!
+      }
+      const target = targets[focus as keyof typeof targets]
+      await act(async () => target.focus())
+      await act(async () => fireEvent.keyDown(target, { key: 'Escape' }))
+      const closesNotes = focus === 'notes' || focus === 'notes-toggle'
+      expect(container.querySelector('#pdf-navigation-sidebar')).toBe(
+        closesNotes ? navigation : null
+      )
+      expect(notes.hasAttribute('inert')).toBe(closesNotes)
+      expect(document.activeElement).toBe(closesNotes ? notesToggle : pdf)
+      expect(container.querySelector('[data-preview-escape-boundary]')).not.toBeNull()
+      await act(async () => fireEvent.keyDown(document.activeElement!, { key: 'Escape' }))
+      expect(container.querySelector('#pdf-navigation-sidebar')).toBeNull()
+      expect(notes.hasAttribute('inert')).toBe(true)
+      expect(container.querySelector('[data-preview-escape-boundary]')).toBeNull()
+    }
+  )
+
   it('keeps notes docked at the default application modal width', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1150)
     await act(async () => {
@@ -770,6 +815,9 @@ describe('PdfPreviewContent', () => {
         )
       )
       await act(async () => phase('live'))
+      await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+      expect(container.querySelector('#pdf-navigation-sidebar')).not.toBeNull()
+      expect(container.querySelector('[data-preview-escape-boundary]')).not.toBeNull()
       await act(async () =>
         container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
       )
@@ -803,6 +851,17 @@ describe('PdfPreviewContent', () => {
       await act(async () => phase('live'))
       expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
       expect(container.querySelector('canvas')).toBeNull()
+      expect(container.querySelector('#pdf-navigation-sidebar')).toBeNull()
+      expect(container.querySelector('[data-preview-escape-boundary]')).toBeNull()
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true
+      })
+      await act(async () => {
+        scroll.dispatchEvent(escape)
+      })
+      expect(escape.defaultPrevented).toBe(false)
       // Browsers clamp the scroller when old pages disappear during the new acquisition.
       scroll.scrollTop = 0
       scroll.scrollLeft = 0
@@ -818,6 +877,8 @@ describe('PdfPreviewContent', () => {
         versionId: 'version-1'
       })
       expect(container.textContent).toContain('125%')
+      expect(container.querySelector('#pdf-navigation-sidebar')).not.toBeNull()
+      expect(container.querySelector('[data-preview-escape-boundary]')).not.toBeNull()
       expect(scroll.scrollTop).toBe(700)
       expect(scroll.scrollLeft).toBe(50)
       expect(destroyDocument).toHaveBeenCalled()
@@ -1422,6 +1483,7 @@ describe('PdfPreviewContent', () => {
   )
 
   it('shows a native outline, expands nested sections, and navigates to their PDF pages', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
     const getDestination = vi.fn().mockResolvedValue([{ num: 20, gen: 0 }])
     const getPageIndex = vi.fn(({ num }: { num: number }) => Promise.resolve(num / 10 - 1))
     vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
@@ -1517,6 +1579,116 @@ describe('PdfPreviewContent', () => {
     )
     expect(container.querySelector('#pdf-navigation-sidebar')).toBeNull()
     expect(outlineToggle.getAttribute('aria-label')).toBe('Show navigation')
+  })
+
+  it.each(['missing', 'rejected', 'unresolvable'])(
+    'explains an unavailable %s outline and keeps Pages selected',
+    async (reason) => {
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 2,
+          getPage,
+          getOutline: () =>
+            reason === 'rejected'
+              ? Promise.reject(new Error('Invalid outline'))
+              : Promise.resolve(
+                  reason === 'missing'
+                    ? null
+                    : [{ title: 'Broken destination', dest: 'missing', items: [] }]
+                ),
+          getDestination: () => Promise.reject(new Error('Invalid destination')),
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      await act(async () => {
+        root.render(<PdfPreviewContent path="/workspace/unavailable.pdf" name="paper.pdf" />)
+        await flush()
+      })
+      await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+      const outline = screen.getByRole('button', { name: 'Outline' })
+      expect(outline.getAttribute('aria-disabled')).toBe('true')
+      expect(outline.classList.contains('opacity-50')).toBe(true)
+      await act(async () => outline.focus())
+      expect(screen.getByRole('tooltip').textContent).toBe(
+        'No readable outline is available for this PDF'
+      )
+      await act(async () => outline.click())
+      expect(outline.getAttribute('aria-pressed')).toBe('false')
+      expect(screen.getByRole('button', { name: 'Pages' }).getAttribute('aria-pressed')).toBe(
+        'true'
+      )
+    }
+  )
+
+  it('floats navigation below 1120px and preserves its mode, document and docked width', async () => {
+    let width = 1150
+    const callbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          callbacks.push(callback)
+        }
+        observe = vi.fn()
+        disconnect = vi.fn()
+        unobserve = vi.fn()
+      }
+    )
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width)
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 2,
+        getPage,
+        getOutline: async () => [{ title: 'Introduction', dest: [0], items: [] }],
+        destroy: destroyDocument
+      }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    await act(async () => {
+      root.render(
+        <div data-slot="file-preview-dialog">
+          <PdfPreviewContent path="/workspace/responsive.pdf" name="paper.pdf" />
+        </div>
+      )
+      await flush()
+    })
+    await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+    const loadCount = vi.mocked(createManagedPdfLoadingTask).mock.calls.length
+    const sidebar = screen.getByRole('complementary', { name: 'PDF navigation' })
+    expect(sidebar.classList.contains('absolute')).toBe(false)
+    await act(async () =>
+      fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize navigation' }), {
+        key: 'ArrowRight'
+      })
+    )
+    expect(sidebar.style.width).toBe('256px')
+    await act(async () => screen.getByRole('button', { name: 'Pages' }).click())
+    const resize = async (next: number): Promise<void> => {
+      width = next
+      await act(async () => {
+        callbacks.forEach((callback) => callback([], {} as ResizeObserver))
+        await flush()
+      })
+    }
+    await resize(1119)
+    expect(sidebar.classList.contains('absolute')).toBe(true)
+    expect(screen.queryByRole('separator', { name: 'Resize navigation' })).toBeNull()
+    await resize(240)
+    expect(sidebar.style.width).toBe('224px')
+    await resize(1120)
+    expect(screen.getByRole('complementary', { name: 'PDF navigation' })).toBe(sidebar)
+    expect(sidebar.classList.contains('absolute')).toBe(false)
+    expect(sidebar.style.width).toBe('256px')
+    expect(screen.getByRole('button', { name: 'Pages' }).getAttribute('aria-pressed')).toBe('true')
+    expect(createManagedPdfLoadingTask).toHaveBeenCalledTimes(loadCount)
+    expect(destroyDocument).not.toHaveBeenCalled()
+    await resize(800)
+    expect(container.querySelector('[data-preview-escape-boundary]')).not.toBeNull()
+    await act(async () => fireEvent.keyDown(sidebar, { key: 'Escape' }))
+    expect(screen.queryByRole('complementary', { name: 'PDF navigation' })).toBeNull()
+    expect(container.querySelector('[data-preview-escape-boundary]')).toBeNull()
+    expect(document.activeElement).toBe(container.querySelector('[data-pdf-cursor-mode]'))
   })
 
   it('keeps the outline control hidden when the PDF has no native outline', async () => {

@@ -5,6 +5,11 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'cellosaurus') {
+    return t(
+      'Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.'
+    )
+  }
   if (connector.id === 'monarch') {
     return t(
       'Disease and gene phenotype associations with evidence sources via Monarch Initiative.'
@@ -58,6 +63,12 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'cellosaurus/search_cell_lines':
+      return t('Search cell lines by name or synonym.')
+    case 'cellosaurus/get_cell_line':
+      return t(
+        'Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.'
+      )
     case 'monarch/monarch_get_disease_phenotypes':
       return t('Retrieve disease–phenotype associations with evidence sources and relation types.')
     case 'monarch/monarch_get_gene_phenotypes':
