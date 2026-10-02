@@ -104,7 +104,18 @@ export const notebookFolderAccessPath = (
     )
   ]
   const paths = new Set<string>()
-  for (const text of diagnostics) {
+  const structuredDiagnostics = [
+    run.text.stderr,
+    run.text.traceback,
+    ...run.outputs.flatMap((output) =>
+      output.type === 'stream' && output.name === 'stderr'
+        ? [output.text]
+        : output.type === 'error'
+          ? [output.message ?? '', output.traceback ?? '']
+          : []
+    )
+  ]
+  for (const text of structuredDiagnostics) {
     for (const block of text.matchAll(
       /<sandbox_violations>\r?\n([\s\S]*?)\r?\n<\/sandbox_violations>/g
     )) {

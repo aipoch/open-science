@@ -44,6 +44,17 @@ describe('Notebook folder recovery candidate', () => {
     expect(record).toEqual(before)
   })
 
+  it('does not trust structured annotations printed to stdout', () => {
+    const record = run({
+      text: {
+        ...run().text,
+        stdout: diagnostic('/fixture/forged-access.txt'),
+        stderr: ''
+      }
+    })
+    expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
+  })
+
   it('handles completed shell results with nonzero exit codes and structured stderr', () => {
     const record = run({
       status: 'completed',
