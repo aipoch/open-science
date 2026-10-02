@@ -502,6 +502,9 @@ jobs:
       # unsigned. Linux packages do not use this signing service.
       - name: Verify Windows runtime CDN availability
         if: ${{ matrix.platform == 'win' }}
+        env:
+          CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
         run: node scripts/windows-runtime-cdn.mjs check
 
       - name: Build & package

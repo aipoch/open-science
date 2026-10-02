@@ -7,29 +7,101 @@ import { load } from 'js-yaml'
 
 type Workflow = {
   on: { workflow_dispatch: { inputs: { dry_run: { default: boolean } } } }
-  jobs: Record<string, { needs?: string[]; steps: { name: string; if?: string; run?: string }[] }>
+  jobs: Record<
+    string,
+    {
+      needs?: string[]
+      env?: Record<string, string>
+      steps: { name: string; if?: string; run?: string; env?: Record<string, string> }[]
+    }
+  >
 }
 import {
   checkRuntimeCdn,
   publishRuntimeArchives,
+  readRuntimeCatalog,
+  runtimeArchiveUrl,
   verifyRuntimeArchives
 } from './windows-runtime-cdn.mjs'
 
 const content = 'signed fixture archive'
 const digest = createHash('sha256').update(content).digest('hex')
+const destination = {
+  CDN_BASE_URL: 'https://cdn.fixture.test',
+  S3_BUCKET: 'fixture-bucket',
+  S3_PREFIX: 'fixture-app/app/stable'
+}
 const catalog = {
   schema: 1,
   releases: [
     {
       component: 'node',
+      architecture: 'x64',
       archive: {
-        url: `https://statics.aipoch.com/open-science/notebook-runtime/node/win32-x64/${digest}/node.tar.zst`,
+        url: `${destination.CDN_BASE_URL}/fixture-app/notebook-runtime/node/win32-x64/${digest}/node.tar.zst`,
         sha256: digest,
         size: content.length
       }
     }
   ]
 }
+
+it('validates the catalog against the configured CDN origin and application prefix', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'cdn-catalog-'))
+  const path = join(directory, 'catalog.json')
+  try {
+    await writeFile(path, JSON.stringify(catalog))
+    expect((await readRuntimeCatalog(destination, path)).releases[0].archive.url).toBe(
+      catalog.releases[0].archive.url
+    )
+    await expect(
+      readRuntimeCatalog({ ...destination, CDN_BASE_URL: 'https://other.fixture.test' }, path)
+    ).rejects.toThrow('immutable runtime URL')
+    await expect(
+      readRuntimeCatalog({ ...destination, S3_PREFIX: 'different/app/stable' }, path)
+    ).rejects.toThrow('immutable runtime URL')
+    await expect(readRuntimeCatalog({}, path)).rejects.toThrow('CDN_BASE_URL and S3_PREFIX')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it.each([
+  { CDN_BASE_URL: 'http://cdn.fixture.test' },
+  { CDN_BASE_URL: 'https://user:pass@cdn.fixture.test' },
+  { CDN_BASE_URL: 'https://cdn.fixture.test/path' },
+  { CDN_BASE_URL: 'https://cdn.fixture.test/?query=1' },
+  { CDN_BASE_URL: 'https://cdn.fixture.test/#fragment' },
+  { S3_PREFIX: '../app/stable' },
+  { S3_PREFIX: '' }
+])('rejects invalid CDN deployment configuration: %j', (override) => {
+  expect(() => runtimeArchiveUrl('node', 'x64', digest, { ...destination, ...override })).toThrow()
+})
+
+it('uses the same configured immutable URL for staging and publication', () => {
+  expect(runtimeArchiveUrl('node', 'x64', digest, destination)).toBe(
+    catalog.releases[0].archive.url
+  )
+  expect(
+    runtimeArchiveUrl('node', 'x64', digest, {
+      ...destination,
+      CDN_BASE_URL: `${destination.CDN_BASE_URL}/`
+    })
+  ).toBe(catalog.releases[0].archive.url)
+})
+
+it('rejects a mismatched publication destination before invoking object storage', async () => {
+  const invoke = vi.fn()
+  await expect(
+    publishRuntimeArchives(
+      'unused-fixture',
+      catalog,
+      { ...destination, S3_PREFIX: 'different/app/stable' },
+      invoke
+    )
+  ).rejects.toThrow('immutable runtime URL')
+  expect(invoke).not.toHaveBeenCalled()
+})
 
 it('rejects missing or wrong-sized CDN objects before application packaging', async () => {
   await expect(
@@ -54,12 +126,7 @@ it('publishes only verified archives with S3 create-only and checksum conditions
         ? { status: 1, stderr: '(404) Not Found' }
         : { status: 0, stdout: '{}' }
     )
-    await publishRuntimeArchives(
-      directory,
-      catalog,
-      { S3_BUCKET: 'fixture-bucket', S3_PREFIX: 'open-science/app/stable' },
-      invoke
-    )
+    await publishRuntimeArchives(directory, catalog, destination, invoke)
     const put = invoke.mock.calls.find(([, args]) => args.includes('put-object'))![1]
     expect(put).toEqual(
       expect.arrayContaining([
@@ -71,14 +138,9 @@ it('publishes only verified archives with S3 create-only and checksum conditions
     )
     await writeFile(join(directory, 'node.tar.zst'), 'corrupt')
     invoke.mockClear()
-    await expect(
-      publishRuntimeArchives(
-        directory,
-        catalog,
-        { S3_BUCKET: 'fixture-bucket', S3_PREFIX: 'open-science' },
-        invoke
-      )
-    ).rejects.toThrow('reviewed catalog')
+    await expect(publishRuntimeArchives(directory, catalog, destination, invoke)).rejects.toThrow(
+      'reviewed catalog'
+    )
     expect(invoke).not.toHaveBeenCalled()
   } finally {
     await rm(directory, { recursive: true, force: true })
@@ -106,12 +168,7 @@ it.each(['different', 'identical', 'denied'] as const)(
               })
             }
       )
-      const operation = publishRuntimeArchives(
-        directory,
-        catalog,
-        { S3_BUCKET: 'fixture-bucket', S3_PREFIX: 'open-science' },
-        invoke
-      )
+      const operation = publishRuntimeArchives(directory, catalog, destination, invoke)
       if (state === 'identical') await operation
       else await expect(operation).rejects.toThrow()
       expect(invoke).toHaveBeenCalledOnce()
@@ -134,8 +191,7 @@ it('reports an inspection timeout without disclosing credentials or attempting u
       directory,
       catalog,
       {
-        S3_BUCKET: 'fixture-bucket',
-        S3_PREFIX: 'open-science',
+        ...destination,
         AWS_ACCESS_KEY_ID: 'fixture-access',
         AWS_SECRET_ACCESS_KEY: 'fixture-secret',
         AWS_SESSION_TOKEN: 'fixture-token'
@@ -154,6 +210,10 @@ it('keeps CDN preparation separate from releases and defaults to a non-publishin
     await readFile('.github/workflows/windows-runtime-cdn.yml', 'utf8')
   ) as Workflow
   expect(workflow.on.workflow_dispatch.inputs.dry_run.default).toBe(true)
+  expect(workflow.jobs.stage.env).toMatchObject({
+    CDN_BASE_URL: '${{ vars.CDN_BASE_URL }}',
+    S3_PREFIX: '${{ vars.S3_PREFIX }}'
+  })
   const steps = workflow.jobs.stage.steps
   expect(steps.find((step) => step.name === 'Publish immutable CDN components').if).toBe(
     '${{ !inputs.dry_run }}'
@@ -169,6 +229,13 @@ it('keeps CDN preparation separate from releases and defaults to a non-publishin
     build.jobs.build.steps.find((step) => step.name === 'Verify Windows runtime CDN availability')
       .run
   ).toBe('node scripts/windows-runtime-cdn.mjs check')
+  expect(
+    build.jobs.build.steps.find((step) => step.name === 'Verify Windows runtime CDN availability')
+      .env
+  ).toMatchObject({
+    CDN_BASE_URL: '${{ vars.CDN_BASE_URL }}',
+    S3_PREFIX: '${{ vars.S3_PREFIX }}'
+  })
   const packaging = await readFile('electron-builder.yml', 'utf8')
   expect(packaging).not.toContain('to: notebook-runtime')
   const entry = load(await readFile('.github/workflows/stage-runtime-bundle.yml', 'utf8')) as {

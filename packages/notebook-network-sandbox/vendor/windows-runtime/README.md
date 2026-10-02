@@ -71,9 +71,16 @@ the user does not need to create a new Session.
 Maintainers prepare **already signed** runtime directories with:
 
 ```powershell
+$env:CDN_BASE_URL = '<configured CDN origin>'
+$env:S3_PREFIX = '<configured release prefix>'
 node scripts/stage-windows-notebook-components.mjs <signed-runtime-root> <output>
 node scripts/windows-runtime-cdn.mjs verify <output>
 ```
+
+Use the existing repository `CDN_BASE_URL` and `S3_PREFIX` values. The runtime
+namespace uses the application root (the first segment of `S3_PREFIX`), matching
+the Python/R runtime publisher. CDN workflows pass these values explicitly;
+missing configuration or a reviewed catalog pointing elsewhere fails closed.
 
 Staging validates source identities, repairs, every PE signature and timestamp,
 and creates Node/npm and PowerShell archives plus a candidate catalog. Review and

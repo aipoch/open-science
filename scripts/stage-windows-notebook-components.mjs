@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { createPackArchive } from './pack-archive.mjs'
+import { runtimeArchiveUrl, runtimeCdnBaseUrl } from './windows-runtime-cdn.mjs'
 
 const sha256 = async (path) => {
   const hash = createHash('sha256')
@@ -35,6 +36,7 @@ export async function inventoryRuntimeFiles(root) {
 
 export async function stageWindowsNotebookComponents(root, output) {
   if (process.platform !== 'win32') throw new Error('Stage and verify signatures on Windows.')
+  runtimeCdnBaseUrl()
   const marker = JSON.parse(
     (await readFile(join(root, 'build.json'), 'utf8')).replace(/^\uFEFF/, '')
   )
@@ -125,7 +127,7 @@ export async function stageWindowsNotebookComponents(root, output) {
       architecture: 'x64',
       source: 'patched',
       archive: {
-        url: `https://statics.aipoch.com/open-science/notebook-runtime/${component}/win32-x64/${digest}/${filename}`,
+        url: runtimeArchiveUrl(component, 'x64', digest),
         sha256: digest,
         size: (await stat(archivePath)).size
       },

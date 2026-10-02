@@ -48,6 +48,9 @@ jobs:
   stage:
     runs-on: windows-2022
     timeout-minutes: 20
+    env:
+      CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
+      S3_PREFIX: ${{ vars.S3_PREFIX }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -134,7 +137,6 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ vars.S3_REGION }}
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
-          S3_PREFIX: ${{ vars.S3_PREFIX }}
         shell: pwsh
         run: |
           $startup = [Diagnostics.Stopwatch]::StartNew()
