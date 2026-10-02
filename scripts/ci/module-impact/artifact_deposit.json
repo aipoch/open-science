@@ -1,0 +1,33 @@
+{
+  "ownerPaths": [
+    "src/main/deposit/artifact-deposit-owner.test.ts",
+    "src/main/deposit/artifact-deposit-owner.ts",
+    "src/main/deposit/artifact-deposit-source.test.ts",
+    "src/main/deposit/artifact-deposit-source.ts",
+    "src/main/deposit/deposit-provider.ts",
+    "src/main/deposit/osf-deposit.test.ts",
+    "src/main/deposit/osf-deposit.ts",
+    "src/main/deposit/zenodo-deposit.test.ts",
+    "src/main/deposit/zenodo-deposit.ts"
+  ],
+  "interfacePaths": [
+    "src/main/deposit/artifact-deposit-owner.ts",
+    "src/main/deposit/artifact-deposit-source.ts",
+    "src/main/deposit/deposit-provider.ts",
+    "src/main/deposit/osf-deposit.ts",
+    "src/main/deposit/zenodo-deposit.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/main/deposit/artifact-deposit-owner.test.ts",
+      "src/main/deposit/artifact-deposit-source.test.ts",
+      "src/main/deposit/osf-deposit.test.ts",
+      "src/main/deposit/zenodo-deposit.test.ts"
+    ],
+    "contract": [],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

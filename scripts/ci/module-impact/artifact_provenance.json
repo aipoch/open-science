@@ -204,6 +204,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/deposit/artifact-deposit-source.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/literature/command-owner.test.ts",

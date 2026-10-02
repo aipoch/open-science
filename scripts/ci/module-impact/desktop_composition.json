@@ -349,6 +349,10 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/deposit/artifact-deposit-source.test.ts",
+      "src/main/deposit/zenodo-deposit.test.ts",
+      "src/main/deposit/osf-deposit.test.ts",
+      "src/main/deposit/artifact-deposit-owner.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/literature/command-owner.test.ts",
       "src/main/delegation/escaped-descendant.test.ts",
