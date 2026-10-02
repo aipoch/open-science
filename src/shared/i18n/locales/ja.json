@@ -452,7 +452,6 @@
     "Status: Active": "状態：有効",
     "Status: Not set up": "状態：未設定",
     "Status: Setup failed": "状態：セットアップ失敗",
-    "Protected using Windows sandboxing. New Notebook sessions are protected.": "Windows サンドボックスで保護されています。新しい Notebook セッションが保護されます。",
     "Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.": "Notebook の Python、R、REPL、Bash、パッケージのダウンロードにネットワーク保護を適用し、承認済みドメインへのアクセスと制限付きの公開 HTTPS 読み取りを許可します。設定が完了するまで、Notebook は標準実行を使用します。",
     "Notebook continues using standard execution. No protected mode is active.": "Notebook は標準実行を継続します。保護モードは有効ではありません。",
     "Notebook network protection is not set up.": "Notebook のネットワーク保護は設定されていません。",
@@ -6683,6 +6682,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "プロジェクトの変更は保存されていません。変更を破棄してフォームを閉じますか？",
     "Search is partially unavailable": "検索の一部を利用できません",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "保存済みの会話の準備が整うまで、メッセージ、ファイル、ライブラリを検索できません。プロジェクトとセッションのタイトルは表示される場合があります。",
-    "Review recovery options": "復旧オプションを確認"
+    "Review recovery options": "復旧オプションを確認",
+    "Existing conversations use the selected mode on their next turn.": "既存の会話では、次のターンから選択したモードが使用されます。",
+    "Verifying {{component}}…": "{{component}} を検証中…",
+    "Checking {{component}}…": "{{component}} を確認中…",
+    "Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.": "準備をキャンセルしました。検証済みのダウンロードは保持されます。設定を再試行するか、保護を解除して標準実行に戻ってください。",
+    "Could not download {{component}}. Check your connection and try again.": "{{component}} をダウンロードできませんでした。ネットワーク接続を確認して再試行してください。",
+    "Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.": "{{component}} を準備できませんでした。設定を再試行するか、保護を解除して標準実行に戻ってください。",
+    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "不足しているコンポーネントのダウンロードは最大 {{size}} です。検証済みのコンポーネントは、別の会話やアプリ更新後も再利用されます。"
   }
 }

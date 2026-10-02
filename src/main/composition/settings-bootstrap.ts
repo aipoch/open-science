@@ -305,6 +305,7 @@ export async function composeSettingsBootstrap({
       },
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
+      cancelNotebookNetworkSetup: () => notebookNetworkSandbox.cancelWindowsSetup(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
       refreshNotebookShellCapabilities: async () => {
         const runtime = getRuntimeRef().current

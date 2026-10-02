@@ -257,6 +257,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'install-codex',
     'install-missing-wsl-dependencies',
     'install-notebook-network',
+    'cancel-notebook-network-setup',
     'install-opencode',
     'install-recommended-wsl-distro',
     'install-wsl-platform',

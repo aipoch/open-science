@@ -452,7 +452,6 @@
     "Status: Active": "狀態：已啟用",
     "Status: Not set up": "狀態：尚未設定",
     "Status: Setup failed": "狀態：設定失敗",
-    "Protected using Windows sandboxing. New Notebook sessions are protected.": "已透過 Windows 沙箱保護。新的 Notebook 工作階段將受到保護。",
     "Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.": "透過網路保護路由 Notebook Python、R、REPL、Bash 和套件下載，允許存取已核准的網域及受限的公網 HTTPS 讀取。完成設定前，Notebook 會繼續使用標準執行模式。",
     "Notebook continues using standard execution. No protected mode is active.": "Notebook 將繼續使用標準執行模式。目前未啟用保護模式。",
     "Notebook network protection is not set up.": "Notebook 網路保護尚未設定。",
@@ -6683,6 +6682,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "您對專案的修改尚未儲存。是否放棄修改並關閉表單？",
     "Search is partially unavailable": "部分搜尋功能暫時無法使用",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "已儲存的對話尚未就緒，因此無法搜尋訊息、檔案和文獻庫。專案和對話標題仍可能顯示。",
-    "Review recovery options": "檢視復原選項"
+    "Review recovery options": "檢視復原選項",
+    "Existing conversations use the selected mode on their next turn.": "現有對話將在下一輪使用所選模式。",
+    "Verifying {{component}}…": "正在驗證 {{component}}…",
+    "Checking {{component}}…": "正在檢查 {{component}}…",
+    "Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.": "準備已取消，已驗證的下載內容會保留。請重試設定，或移除保護以返回標準執行模式。",
+    "Could not download {{component}}. Check your connection and try again.": "無法下載 {{component}}。請檢查網路連線後重試。",
+    "Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.": "無法準備 {{component}}。請重試設定，或移除保護以返回標準執行模式。",
+    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "缺少的元件最多需下載 {{size}}。已驗證的元件可在不同對話及應用程式更新後重複使用。"
   }
 }

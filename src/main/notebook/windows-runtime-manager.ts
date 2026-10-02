@@ -20,6 +20,24 @@ export class WindowsNotebookRuntimeManager {
   private officialSelections: WindowsRuntimeComponentSelection[] = []
   private pending?: Promise<WindowsNotebookRuntime>
   progress?: WindowsRuntimeComponentProgress
+  failure?: Pick<WindowsRuntimeComponentProgress, 'component' | 'phase'>
+
+  get downloadBytes(): number {
+    return (['node', 'powershell'] as const).reduce(
+      (total, component) =>
+        total +
+        Math.max(
+          0,
+          ...this.releases
+            .filter(
+              (release) =>
+                release.component === component && release.architecture === this.architecture
+            )
+            .map((release) => release.archive.size)
+        ),
+      0
+    )
+  }
 
   constructor(
     private readonly root: string,
@@ -45,7 +63,7 @@ export class WindowsNotebookRuntimeManager {
           expectedSize: release.archive.size,
           signal,
           stallTimeoutMs: 60_000,
-          onProgress: (value) => progress?.(value.transferred, value.total),
+          onProgress: (value) => progress?.(value.transferred, value.total, value),
           deps: { fetchImpl: netFetchStandard }
         })
       }
@@ -78,10 +96,15 @@ export class WindowsNotebookRuntimeManager {
       signal?.throwIfAborted()
       return runtime
     }
+    this.failure = undefined
     const operation = this.prepareComponents(allowDownload, signal)
     this.pending = operation
     try {
       return await operation
+    } catch (error) {
+      if (this.progress)
+        this.failure = { component: this.progress.component, phase: this.progress.phase }
+      throw error
     } finally {
       this.pending = undefined
       this.progress = undefined

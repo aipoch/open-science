@@ -1091,8 +1091,11 @@ describe('NotebookNetworkSandboxOwner', () => {
     })
     try {
       await expect(owner.installWindows()).rejects.toThrow('download failed')
-      expect(prepare).toHaveBeenCalledWith(true)
-      await expect(owner.status()).resolves.toEqual({ kind: 'error', reason: 'runtimeFailure' })
+      expect(prepare).toHaveBeenCalledWith(true, expect.any(AbortSignal))
+      await expect(owner.status()).resolves.toMatchObject({
+        kind: 'error',
+        reason: 'runtimeFailure'
+      })
       expect(backend.removeWindows).not.toHaveBeenCalled()
       backend.installWindows.mockResolvedValueOnce({ cancelled: true })
       prepare.mockClear()
@@ -3976,3 +3979,61 @@ describe('macOS retained cleanup admission', () => {
     }
   )
 })
+
+it.each([false, true])(
+  'cancels component preparation with cleanup failure = %s',
+  async (cleanupFailure) => {
+    let started!: () => void
+    const start = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    let finishCleanup!: () => void
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve
+    })
+    const prepare = vi
+      .spyOn(WindowsNotebookRuntimeManager.prototype, 'prepare')
+      .mockImplementation(async (_download, signal) => {
+        started()
+        await new Promise<void>((resolve) =>
+          signal!.addEventListener('abort', () => resolve(), { once: true })
+        )
+        await cleanup
+        if (cleanupFailure) throw new Error('cleanup not confirmed')
+        signal!.throwIfAborted()
+        throw new Error('expected cancellation')
+      })
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      windowsRuntimeRoot: join(tmpdir(), 'cancel-runtime'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      expect(owner.cancelWindowsSetup()).toBe(false)
+      const installation = owner.installWindows()
+      const result = installation.then(
+        (value) => value,
+        (error: Error) => error
+      )
+      await start
+      expect(owner.cancelWindowsSetup()).toBe(true)
+      expect(owner.cancelWindowsSetup()).toBe(false)
+      await expect(owner.installWindows()).rejects.toThrow('already running')
+      await expect(owner.removeWindows()).rejects.toThrow('finish cancelling')
+      await expect(owner.status()).resolves.toMatchObject({
+        kind: 'checking',
+        windowsRuntimeSetup: { canCancel: false }
+      })
+      finishCleanup()
+      if (cleanupFailure) expect(await result).toMatchObject({ message: 'cleanup not confirmed' })
+      else expect(await result).toEqual({ cancelled: true })
+      expect(backend.removeWindows).not.toHaveBeenCalled()
+    } finally {
+      prepare.mockRestore()
+      await owner.dispose()
+    }
+  }
+)

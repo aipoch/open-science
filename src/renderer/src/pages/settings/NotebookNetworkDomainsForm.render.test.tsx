@@ -284,3 +284,106 @@ describe('NotebookNetworkDomainsForm', () => {
     expect(container.textContent).not.toContain('secret backend path')
   })
 })
+
+it('shows the download estimate, progress and cancellation without reporting success early', async () => {
+  vi.useFakeTimers()
+  let finish!: (value: unknown) => void
+  let current: unknown = {
+    kind: 'setupRequired',
+    platform: 'win32',
+    reasons: [],
+    windowsRuntimeSetup: { downloadBytes: 134781872, canCancel: false, cancelled: false }
+  }
+  const install = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  const cancel = vi.fn(async () => true)
+  Object.assign(window.api, {
+    platform: 'win32',
+    settings: {
+      getNotebookNetworkStatus: vi.fn(async () => current),
+      installNotebookNetwork: install,
+      cancelNotebookNetworkSetup: cancel
+    }
+  })
+  try {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    expect(container.textContent).toContain('Missing components may download up to')
+    await act(async () => button('Set up').click())
+    expect(button('Cancel').disabled).toBe(true)
+    current = {
+      kind: 'checking',
+      runtimePreparation: {
+        component: 'node',
+        phase: 'downloading',
+        download: {
+          phase: 'downloading',
+          transferred: 50,
+          total: 100,
+          percent: 50,
+          bytesPerSecond: 10,
+          attempt: 1
+        }
+      },
+      windowsRuntimeSetup: { downloadBytes: 134781872, canCancel: true, cancelled: false }
+    }
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe(
+      '50'
+    )
+    await act(async () => button('Cancel').click())
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(button('Cancelling…').disabled).toBe(true)
+    expect(container.textContent).not.toContain('Status: Active')
+    current = {
+      kind: 'error',
+      reason: 'runtimeFailure',
+      windowsRuntimeSetup: { downloadBytes: 134781872, canCancel: false, cancelled: true }
+    }
+    await act(async () => finish(current))
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Preparation cancelled'
+    )
+    expect(button('Try again').disabled).toBe(false)
+    expect(button('Remove…').disabled).toBe(false)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('restores preparation progress when settings reopens and shows safe failure guidance', async () => {
+  vi.useFakeTimers()
+  let current: unknown = {
+    kind: 'checking',
+    runtimePreparation: { component: 'powershell', phase: 'verifying' },
+    windowsRuntimeSetup: { downloadBytes: 100, canCancel: true, cancelled: false }
+  }
+  Object.assign(window.api, {
+    platform: 'win32',
+    settings: { getNotebookNetworkStatus: vi.fn(async () => current) }
+  })
+  try {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    expect(container.textContent).toContain('Verifying PowerShell')
+    current = {
+      kind: 'error',
+      reason: 'runtimeFailure',
+      windowsRuntimeSetup: {
+        downloadBytes: 100,
+        canCancel: false,
+        cancelled: false,
+        failure: { component: 'powershell', phase: 'verifying' }
+      }
+    }
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not prepare PowerShell'
+    )
+    expect(button('Try again').disabled).toBe(false)
+  } finally {
+    vi.useRealTimers()
+  }
+})

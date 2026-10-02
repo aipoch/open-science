@@ -464,7 +464,6 @@
     "Status: Active": "Состояние: активно",
     "Status: Not set up": "Состояние: не настроено",
     "Status: Setup failed": "Состояние: ошибка настройки",
-    "Protected using Windows sandboxing. New Notebook sessions are protected.": "Защита обеспечивается песочницей Windows. Новые сеансы Notebook будут защищены.",
     "Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.": "Направляйте Notebook Python, R, REPL, Bash и загрузки пакетов через защиту сети с разрешёнными доменами и ограниченным чтением из публичной сети по HTTPS. До завершения настройки Notebook продолжает использовать стандартное выполнение.",
     "Notebook continues using standard execution. No protected mode is active.": "Notebook продолжит использовать стандартное выполнение. Защищённый режим не активен.",
     "Notebook network protection is not set up.": "Сетевая защита Notebook не настроена.",
@@ -7150,6 +7149,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "Изменения проекта не сохранены. Отменить их и закрыть форму?",
     "Search is partially unavailable": "Поиск доступен частично",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "Поиск сообщений, файлов и библиотеки недоступен, пока сохранённые диалоги не готовы. Проекты и названия сеансов могут по-прежнему отображаться.",
-    "Review recovery options": "Просмотреть варианты восстановления"
+    "Review recovery options": "Просмотреть варианты восстановления",
+    "Existing conversations use the selected mode on their next turn.": "В существующих диалогах выбранный режим будет применён со следующего хода.",
+    "Verifying {{component}}…": "Проверка целостности {{component}}…",
+    "Checking {{component}}…": "Проверка {{component}}…",
+    "Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.": "Подготовка отменена. Проверенные загрузки сохранены. Повторите настройку или отключите защиту, чтобы вернуться к стандартному выполнению.",
+    "Could not download {{component}}. Check your connection and try again.": "Не удалось загрузить {{component}}. Проверьте подключение и повторите попытку.",
+    "Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.": "Не удалось подготовить {{component}}. Повторите настройку или отключите защиту, чтобы вернуться к стандартному выполнению.",
+    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "Для недостающих компонентов может потребоваться загрузка до {{size}}. Проверенные компоненты используются повторно в разных диалогах и после обновлений приложения."
   }
 }

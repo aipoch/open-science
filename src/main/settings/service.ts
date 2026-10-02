@@ -258,6 +258,7 @@ export type SettingsServiceOptions = {
   beforePackageMirrorCaBundleChange?: () => Promise<void>
   getNotebookNetworkStatus?: () => Promise<NotebookNetworkStatus>
   installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
+  cancelNotebookNetworkSetup?: () => boolean
   removeNotebookNetwork?: () => Promise<{ cancelled: boolean }>
   refreshNotebookShellCapabilities?: () => Promise<void>
   wslSetup?: {
@@ -450,6 +451,7 @@ class SettingsService {
   private readonly packageMirror: PackageMirrorSettingsOwner
   private readonly getNotebookNetworkStatusImpl: () => Promise<NotebookNetworkStatus>
   private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
+  private readonly cancelNotebookNetworkSetupImpl: () => boolean
   private readonly removeNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
   private readonly refreshNotebookShellCapabilities: () => Promise<void>
   private readonly wslSetup?: SettingsServiceOptions['wslSetup']
@@ -527,6 +529,7 @@ class SettingsService {
       (async () => {
         throw new Error('Notebook network sandbox removal is unavailable.')
       })
+    this.cancelNotebookNetworkSetupImpl = options.cancelNotebookNetworkSetup ?? (() => false)
     this.wslSetup = options.wslSetup
     this.refreshNotebookShellCapabilities =
       options.refreshNotebookShellCapabilities ?? (async () => undefined)
@@ -722,6 +725,10 @@ class SettingsService {
     const result = await this.installNotebookNetworkImpl()
     if (!result.cancelled) await this.refreshNotebookShellCapabilities()
     return this.getNotebookNetworkStatusImpl()
+  }
+
+  cancelNotebookNetworkSetup(): boolean {
+    return this.cancelNotebookNetworkSetupImpl()
   }
 
   async removeNotebookNetwork(): Promise<NotebookNetworkStatus> {

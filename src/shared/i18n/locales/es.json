@@ -460,7 +460,6 @@
     "Status: Active": "Estado: activa",
     "Status: Not set up": "Estado: sin configurar",
     "Status: Setup failed": "Estado: error de configuración",
-    "Protected using Windows sandboxing. New Notebook sessions are protected.": "Protegido mediante el sandbox de Windows. Las nuevas sesiones de Notebook estarán protegidas.",
     "Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.": "Enrute Notebook Python, R, REPL, Bash y las descargas de paquetes mediante la protección de red, con dominios aprobados y lecturas HTTPS públicas restringidas. Hasta completar la configuración, Notebook continúa utilizando la ejecución estándar.",
     "Notebook continues using standard execution. No protected mode is active.": "Notebook seguirá utilizando la ejecución estándar. No hay ningún modo protegido activo.",
     "Notebook network protection is not set up.": "La protección de red de Notebook no está configurada.",
@@ -7011,6 +7010,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "Los cambios del proyecto no se han guardado. ¿Desea descartarlos y cerrar el formulario?",
     "Search is partially unavailable": "La búsqueda no está disponible por completo",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "No se pueden buscar mensajes, archivos ni en la biblioteca hasta que las conversaciones guardadas estén listas. Los proyectos y los títulos de las sesiones pueden seguir apareciendo.",
-    "Review recovery options": "Revisar opciones de recuperación"
+    "Review recovery options": "Revisar opciones de recuperación",
+    "Existing conversations use the selected mode on their next turn.": "Las conversaciones existentes usarán el modo seleccionado en el siguiente turno.",
+    "Verifying {{component}}…": "Verificando {{component}}…",
+    "Checking {{component}}…": "Comprobando {{component}}…",
+    "Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.": "Preparación cancelada. Se conservan las descargas verificadas. Vuelva a intentar la configuración o quite la protección para volver a la ejecución estándar.",
+    "Could not download {{component}}. Check your connection and try again.": "No se pudo descargar {{component}}. Compruebe la conexión e inténtelo de nuevo.",
+    "Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.": "No se pudo preparar {{component}}. Vuelva a intentar la configuración o quite la protección para volver a la ejecución estándar.",
+    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "Los componentes que faltan pueden requerir una descarga de hasta {{size}}. Los componentes verificados se reutilizan entre conversaciones y después de actualizar la aplicación."
   }
 }

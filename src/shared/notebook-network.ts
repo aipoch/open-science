@@ -1,3 +1,5 @@
+import type { DownloadProgress } from './download-progress'
+
 export const OPEN_SCIENCE_DOMAIN_GROUP_IDS = [
   'packageRegistries',
   'nih',
@@ -40,24 +42,36 @@ export type NotebookNetworkStatusReason =
   | 'windowsOwnershipMissing'
   | 'windowsProfileMissing'
 
-export type NotebookNetworkStatus =
-  | Readonly<{
-      kind: 'checking'
-      runtimePreparation?: Readonly<{
-        component: 'node' | 'powershell'
-        phase: 'checking' | 'downloading' | 'verifying'
-        received?: number
-        total?: number
+export type NotebookRuntimeSetupPhase = 'checking' | 'downloading' | 'verifying'
+
+export type NotebookNetworkStatus = Readonly<{
+  windowsRuntimeSetup?: Readonly<{
+    downloadBytes: number
+    canCancel: boolean
+    cancelled: boolean
+    failure?: Readonly<{ component: 'node' | 'powershell'; phase: NotebookRuntimeSetupPhase }>
+  }>
+}> &
+  (
+    | Readonly<{
+        kind: 'checking'
+        runtimePreparation?: Readonly<{
+          component: 'node' | 'powershell'
+          phase: NotebookRuntimeSetupPhase
+          download?: DownloadProgress
+          received?: number
+          total?: number
+        }>
       }>
-    }>
-  | Readonly<{ kind: 'ready'; warnings: readonly NotebookNetworkStatusReason[] }>
-  | Readonly<{
-      kind: 'setupRequired'
-      platform: 'linux' | 'win32'
-      reasons: readonly NotebookNetworkStatusReason[]
-    }>
-  | Readonly<{ kind: 'unsupported'; platform: NodeJS.Platform }>
-  | Readonly<{ kind: 'error'; reason: NotebookNetworkStatusReason }>
+    | Readonly<{ kind: 'ready'; warnings: readonly NotebookNetworkStatusReason[] }>
+    | Readonly<{
+        kind: 'setupRequired'
+        platform: 'linux' | 'win32'
+        reasons: readonly NotebookNetworkStatusReason[]
+      }>
+    | Readonly<{ kind: 'unsupported'; platform: NodeJS.Platform }>
+    | Readonly<{ kind: 'error'; reason: NotebookNetworkStatusReason }>
+  )
 
 export const DEFAULT_NOTEBOOK_NETWORK_SETTINGS: NotebookNetworkSettings = Object.freeze({
   allowedDomains: [],

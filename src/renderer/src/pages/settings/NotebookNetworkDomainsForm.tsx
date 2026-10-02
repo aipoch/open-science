@@ -1,5 +1,5 @@
 import { InlineNotice } from '@/components/ui/inline-notice'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, LoaderCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -11,6 +11,10 @@ import {
   type NotebookNetworkStatusReason,
   type OpenScienceDomainGroupId
 } from '../../../../shared/notebook-network'
+import { DownloadProgressLine } from '@/components/DownloadProgressLine'
+import { ErrorNotice } from '@/components/error-notice'
+import { Notice } from '@/components/notice'
+import { formatBytes } from '../../../../shared/update'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -66,14 +70,36 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
   const [status, setStatus] = useState<NotebookNetworkStatus>({ kind: 'checking' })
   const [isInstalling, setIsInstalling] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
+  const [cancelError, setCancelError] = useState(false)
+  const preparing = isInstalling || status.kind === 'checking'
+  const busy = preparing || isRemoving
+  const preparation = status.kind === 'checking' ? status.runtimePreparation : undefined
+  const failure = status.windowsRuntimeSetup?.failure
+  const failureDescription = status.windowsRuntimeSetup?.cancelled
+    ? t(
+        'Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.'
+      )
+    : failure
+      ? failure.phase === 'downloading'
+        ? t('Could not download {{component}}. Check your connection and try again.', {
+            component: RUNTIME_COMPONENT_NAMES[failure.component]
+          })
+        : t(
+            'Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.',
+            { component: RUNTIME_COMPONENT_NAMES[failure.component] }
+          )
+      : status.kind === 'error'
+        ? statusReasonLabel(status.reason, t)
+        : ''
 
   useEffect(() => {
-    if (!isInstalling) return
+    if (!preparing) return
     let active = true
     const timer = setInterval(() => {
       void window.api.settings.getNotebookNetworkStatus().then(
         (next) => {
-          if (active && next.kind === 'checking') setStatus(next)
+          if (active && (!isInstalling || next.kind === 'checking')) setStatus(next)
         },
         () => undefined
       )
@@ -82,7 +108,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
       active = false
       clearInterval(timer)
     }
-  }, [isInstalling])
+  }, [preparing, isInstalling])
 
   useEffect(() => {
     void window.api.settings
@@ -100,17 +126,28 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
   }
 
   const installWindowsSandbox = async (): Promise<void> => {
+    if (busy) return
     setIsInstalling(true)
+    setIsCancelling(false)
+    setCancelError(false)
+    setStatus({ kind: 'checking', windowsRuntimeSetup: status.windowsRuntimeSetup })
     try {
       setStatus(await window.api.settings.installNotebookNetwork())
     } catch {
-      setStatus({ kind: 'error', reason: 'runtimeFailure' })
+      const latest = await window.api.settings.getNotebookNetworkStatus().catch(() => undefined)
+      setStatus({
+        kind: 'error',
+        reason: 'runtimeFailure',
+        windowsRuntimeSetup: latest?.windowsRuntimeSetup
+      })
     } finally {
       setIsInstalling(false)
+      setIsCancelling(false)
     }
   }
 
   const removeWindowsSandbox = async (): Promise<void> => {
+    if (busy) return
     setIsRemoving(true)
     try {
       setStatus(await window.api.settings.removeNotebookNetwork())
@@ -118,6 +155,17 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
       setStatus({ kind: 'error', reason: 'runtimeFailure' })
     } finally {
       setIsRemoving(false)
+    }
+  }
+
+  const cancelPreparation = async (): Promise<void> => {
+    setIsCancelling(true)
+    setCancelError(false)
+    try {
+      if (!(await window.api.settings.cancelNotebookNetworkSetup())) setIsCancelling(false)
+    } catch {
+      setIsCancelling(false)
+      setCancelError(true)
     }
   }
 
@@ -176,28 +224,45 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
     <div className="space-y-6 p-5">
       <section aria-label={t('Notebook network protection')}>
         <div className="rounded-xl border border-border bg-bg-10 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 basis-60">
               <p className="text-sm font-medium text-foreground">
                 {t('Notebook network protection')}
               </p>
-              {status.kind === 'checking' && status.runtimePreparation ? (
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground" role="status">
-                  {RUNTIME_COMPONENT_NAMES[status.runtimePreparation.component]}
-                  {' · '}
-                  {status.runtimePreparation.phase === 'downloading'
-                    ? status.runtimePreparation.total
-                      ? t('Downloading… {{percent}}%', {
-                          percent: Math.floor(
-                            (100 * (status.runtimePreparation.received ?? 0)) /
-                              status.runtimePreparation.total
-                          )
-                        })
-                      : t('Downloading…')
-                    : t('Checking…')}
-                </p>
+              {preparing ? (
+                <div className="mt-2" aria-live="polite">
+                  <Notice
+                    inline
+                    role="status"
+                    icon={LoaderCircle}
+                    iconClassName="animate-spin motion-reduce:animate-none"
+                    title={
+                      isCancelling
+                        ? t('Cancelling…')
+                        : preparation
+                          ? preparation.phase === 'verifying'
+                            ? t('Verifying {{component}}…', {
+                                component: RUNTIME_COMPONENT_NAMES[preparation.component]
+                              })
+                            : preparation.phase === 'checking'
+                              ? t('Checking {{component}}…', {
+                                  component: RUNTIME_COMPONENT_NAMES[preparation.component]
+                                })
+                              : RUNTIME_COMPONENT_NAMES[preparation.component]
+                          : isInstalling
+                            ? t('Setting up…')
+                            : t('Checking…')
+                    }
+                  />
+                  {preparation?.download ? (
+                    <DownloadProgressLine progress={preparation.download} />
+                  ) : null}
+                </div>
               ) : null}
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              <p
+                className="mt-1 text-xs leading-relaxed text-muted-foreground"
+                hidden={preparing || (window.api.platform === 'win32' && status.kind === 'error')}
+              >
                 {status.kind === 'checking'
                   ? t('Checking…')
                   : status.kind === 'ready'
@@ -216,7 +281,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
               </p>
               {window.api.platform === 'win32' && status.kind === 'ready' ? (
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {t('Protected using Windows sandboxing. New Notebook sessions are protected.')}
+                  {t('Existing conversations use the selected mode on their next turn.')}
                 </p>
               ) : null}
               {status.kind === 'setupRequired' && status.platform === 'win32' ? (
@@ -227,14 +292,41 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
                 </p>
               ) : null}
               {window.api.platform === 'win32' && status.kind === 'error' ? (
-                <>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    {t('Notebook network protection needs setup before notebooks can run.')}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {statusReasonLabel(status.reason, t)}
-                  </p>
-                </>
+                <ErrorNotice
+                  inline
+                  className="mt-2"
+                  role="alert"
+                  title={
+                    status.windowsRuntimeSetup?.cancelled
+                      ? t('Cancelled')
+                      : t('Status: Setup failed')
+                  }
+                  description={failureDescription}
+                />
+              ) : null}
+              {preparing && isInstalling && !preparation ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t('The Windows sandbox needs administrator setup.')}
+                </p>
+              ) : null}
+              {cancelError ? (
+                <ErrorNotice
+                  inline
+                  className="mt-2"
+                  role="alert"
+                  description={t('Could not cancel the setup.')}
+                />
+              ) : null}
+              {window.api.platform === 'win32' &&
+              !preparing &&
+              status.kind !== 'ready' &&
+              Boolean(status.windowsRuntimeSetup?.downloadBytes) ? (
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  {t(
+                    'Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.',
+                    { size: formatBytes(status.windowsRuntimeSetup!.downloadBytes) }
+                  )}
+                </p>
               ) : null}
               {status.kind === 'setupRequired' && status.reasons.length > 0 ? (
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -244,33 +336,48 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
                 </p>
               ) : null}
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {status.kind === 'setupRequired' && status.platform === 'win32' ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {preparing && window.api.platform === 'win32' ? (
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={isInstalling}
+                  disabled={!status.windowsRuntimeSetup?.canCancel || isCancelling}
+                  onClick={() => void cancelPreparation()}
+                >
+                  {isCancelling ? t('Cancelling…') : t('Cancel')}
+                </Button>
+              ) : null}
+              {!preparing && status.kind === 'setupRequired' && status.platform === 'win32' ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
                   onClick={() => void installWindowsSandbox()}
                 >
                   {isInstalling ? t('Setting up…') : t('Set up')}
                 </Button>
               ) : null}
-              {window.api.platform === 'win32' && status.kind === 'ready' ? (
+              {!preparing && window.api.platform === 'win32' && status.kind === 'ready' ? (
                 <>
-                  <Button type="button" variant="outline" onClick={() => void refreshStatus()}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => void refreshStatus()}
+                  >
                     {t('Check again')}
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
-                    disabled={isRemoving}
+                    disabled={busy}
                     onClick={() => void removeWindowsSandbox()}
                   >
                     {isRemoving ? t('Removing…') : t('Remove…')}
                   </Button>
                 </>
               ) : null}
-              {window.api.platform === 'win32' && status.kind === 'error' ? (
+              {!preparing && window.api.platform === 'win32' && status.kind === 'error' ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -286,6 +393,16 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
                     : isInstalling
                       ? t('Setting up…')
                       : t('Try again')}
+                </Button>
+              ) : null}
+              {!preparing && window.api.platform === 'win32' && status.kind === 'error' ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => void removeWindowsSandbox()}
+                >
+                  {isRemoving ? t('Removing…') : t('Remove…')}
                 </Button>
               ) : null}
             </div>

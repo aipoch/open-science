@@ -452,7 +452,6 @@
     "Status: Active": "상태: 활성",
     "Status: Not set up": "상태: 설정되지 않음",
     "Status: Setup failed": "상태: 설정 실패",
-    "Protected using Windows sandboxing. New Notebook sessions are protected.": "Windows 샌드박스로 보호됩니다. 새 Notebook 세션이 보호됩니다.",
     "Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.": "Notebook Python, R, REPL, Bash 및 패키지 다운로드에 네트워크 보호를 적용하여 승인된 도메인 접근과 제한된 공개 HTTPS 읽기를 허용합니다. 설정이 완료될 때까지 Notebook은 표준 실행을 사용합니다.",
     "Notebook continues using standard execution. No protected mode is active.": "Notebook은 표준 실행을 계속 사용합니다. 보호 모드는 활성화되어 있지 않습니다.",
     "Notebook network protection is not set up.": "Notebook 네트워크 보호가 설정되지 않았습니다.",
@@ -6681,6 +6680,13 @@
     "Your project edits have not been saved. Discard them and close the form?": "프로젝트 변경 사항이 저장되지 않았습니다. 변경 사항을 버리고 양식을 닫으시겠습니까?",
     "Search is partially unavailable": "일부 검색을 사용할 수 없습니다",
     "Messages, files and Library search are unavailable until saved conversations are ready. Projects and session titles may still appear.": "저장된 대화가 준비될 때까지 메시지, 파일 및 라이브러리를 검색할 수 없습니다. 프로젝트와 세션 제목은 계속 표시될 수 있습니다.",
-    "Review recovery options": "복구 옵션 확인"
+    "Review recovery options": "복구 옵션 확인",
+    "Existing conversations use the selected mode on their next turn.": "기존 대화는 다음 턴부터 선택한 모드를 사용합니다.",
+    "Verifying {{component}}…": "{{component}} 검증 중…",
+    "Checking {{component}}…": "{{component}} 확인 중…",
+    "Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.": "준비가 취소되었습니다. 검증된 다운로드는 유지됩니다. 설정을 다시 시도하거나 보호를 제거하여 표준 실행으로 돌아가세요.",
+    "Could not download {{component}}. Check your connection and try again.": "{{component}}을(를) 다운로드하지 못했습니다. 네트워크 연결을 확인하고 다시 시도하세요.",
+    "Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.": "{{component}}을(를) 준비하지 못했습니다. 설정을 다시 시도하거나 보호를 제거하여 표준 실행으로 돌아가세요.",
+    "Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.": "누락된 구성 요소를 최대 {{size}} 다운로드할 수 있습니다. 검증된 구성 요소는 다른 대화와 앱 업데이트 후에도 재사용됩니다."
   }
 }

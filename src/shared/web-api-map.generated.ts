@@ -245,6 +245,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.cancelDeviceCredentialAuthentication':
     'settings:cancel-device-credential-authentication',
   'settings.cancelIsolatedClaudeLogin': 'settings:cancel-isolated-claude-login',
+  'settings.cancelNotebookNetworkSetup': 'settings:cancel-notebook-network-setup',
   'settings.cancelXaiOAuthLogin': 'settings:cancel-xai-oauth-login',
   'settings.checkEnvironment': 'settings:check-environment',
   'settings.createDeviceCredential': 'settings:create-device-credential',

@@ -395,6 +395,9 @@ const registerSettingsIpcHandlers = ({
     snapshotCommits.projectAfter(service.setNotebookNetwork(request))
   )
   ipcMainHandle('settings:install-notebook-network', () => service.installNotebookNetwork())
+  ipcMainHandle('settings:cancel-notebook-network-setup', () =>
+    service.cancelNotebookNetworkSetup()
+  )
   ipcMainHandle('settings:remove-notebook-network', () => service.removeNotebookNetwork())
 
   ipcMainHandle('settings:list-skills', () => service.listSkills())

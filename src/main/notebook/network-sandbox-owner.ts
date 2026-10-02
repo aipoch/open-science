@@ -317,6 +317,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   private readonly windowsRuntime?: WindowsNotebookRuntimeManager
   private readonly releaseWindowsRuntime?: () => void
   private preparingWindowsRuntime = false
+  private windowsSetupController?: AbortController
+  private windowsSetupCancelled = false
+  private windowsSetupFailure?: WindowsNotebookRuntimeManager['failure']
 
   constructor(private readonly options: NotebookNetworkSandboxOwnerOptions) {
     this.platform = options.platform ?? process.platform
@@ -338,9 +341,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   async windowsProtectionReady(): Promise<boolean> {
     if (!(await this.windowsProtectionConfigured())) return false
     if ((await this.getOrCreateSandbox().status('win32')).kind !== 'ready')
-      throw new Error(
-        'Prepare Notebook protection in Settings before protected execution.'
-      )
+      throw new Error('Prepare Notebook protection in Settings before protected execution.')
     if (this.windowsRuntime) await this.windowsRuntime.prepare(false)
     return true
   }
@@ -366,7 +367,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async status(): Promise<NotebookNetworkStatus> {
-    if (this.preparingWindowsRuntime)
+    if (this.windowsSetupController || this.preparingWindowsRuntime)
       return this.recordStatus({
         kind: 'checking',
         runtimePreparation: this.windowsRuntime?.progress
@@ -985,7 +986,24 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     return notebookTrustBundleStatus(next)
   }
 
+  cancelWindowsSetup(): boolean {
+    if (
+      !this.preparingWindowsRuntime ||
+      !this.windowsSetupController ||
+      this.windowsSetupController.signal.aborted
+    )
+      return false
+    this.windowsSetupController.abort()
+    return true
+  }
+
   async installWindows(): Promise<{ cancelled: boolean }> {
+    if (this.windowsSetupController)
+      throw new Error('Notebook protection setup is already running.')
+    const controller = new AbortController()
+    this.windowsSetupController = controller
+    this.windowsSetupCancelled = false
+    this.windowsSetupFailure = undefined
     const operation = startDiagnosticOperation(this.log, {
       operation: 'notebook-network-windows-setup',
       fields: { platform: this.platform }
@@ -995,7 +1013,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       if (!result.cancelled && this.windowsRuntime) {
         this.preparingWindowsRuntime = true
         try {
-          await this.windowsRuntime.prepare(true)
+          await this.windowsRuntime.prepare(true, controller.signal)
         } finally {
           this.preparingWindowsRuntime = false
         }
@@ -1004,18 +1022,32 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       else operation.complete()
       return result
     } catch (error) {
+      if (controller.signal.aborted && error === controller.signal.reason) {
+        this.windowsSetupCancelled = true
+        operation.cancel()
+        return { cancelled: true }
+      }
+      this.windowsSetupFailure = this.windowsRuntime?.failure
       operation.fail(error)
       throw error
+    } finally {
+      this.windowsSetupController = undefined
     }
   }
 
   async removeWindows(): Promise<{ cancelled: boolean }> {
+    if (this.windowsSetupController)
+      throw new Error('Wait for Notebook protection setup to finish cancelling.')
     const operation = startDiagnosticOperation(this.log, {
       operation: 'notebook-network-windows-remove',
       fields: { platform: this.platform }
     })
     try {
       const result = await this.getOrCreateSandbox().removeWindows()
+      if (!result.cancelled) {
+        this.windowsSetupCancelled = false
+        this.windowsSetupFailure = undefined
+      }
       if (result.cancelled) operation.cancel()
       else operation.complete()
       return result
@@ -1484,6 +1516,18 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     status: NotebookNetworkStatus,
     extraFields: Record<string, unknown> = {}
   ): NotebookNetworkStatus {
+    if (this.windowsRuntime)
+      status = {
+        ...status,
+        windowsRuntimeSetup: {
+          downloadBytes: this.windowsRuntime.downloadBytes,
+          canCancel:
+            this.preparingWindowsRuntime &&
+            Boolean(this.windowsSetupController && !this.windowsSetupController.signal.aborted),
+          cancelled: this.windowsSetupCancelled,
+          ...(this.windowsSetupFailure ? { failure: this.windowsSetupFailure } : {})
+        }
+      }
     const signature = JSON.stringify(status)
     if (signature === this.lastStatusSignature) return status
     this.lastStatusSignature = signature

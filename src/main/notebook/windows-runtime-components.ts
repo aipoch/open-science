@@ -1,3 +1,4 @@
+import type { DownloadProgress } from '../../shared/download-progress'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises'
@@ -25,6 +26,7 @@ export type WindowsRuntimeComponentSelection = Readonly<{
 export type WindowsRuntimeComponentProgress = Readonly<{
   component: WindowsRuntimeComponent
   phase: 'checking' | 'downloading' | 'verifying'
+  download?: DownloadProgress
   received?: number
   total?: number
 }>
@@ -34,7 +36,7 @@ export type WindowsRuntimeComponentDependencies = Readonly<{
     release: WindowsRuntimeComponentRelease,
     archivePath: string,
     signal?: AbortSignal,
-    progress?: (received: number, total?: number) => void
+    progress?: (received: number, total?: number, download?: DownloadProgress) => void
   ) => Promise<void>
   extract: (archivePath: string, destination: string) => Promise<void>
   // Uses the actual AppContainer with a deadline and verified process-tree cleanup.
@@ -260,12 +262,13 @@ export class WindowsRuntimeComponentStore {
     try {
       const archivePath = join(staging, 'component.tar.zst')
       request.onProgress?.({ component: release.component, phase: 'downloading' })
-      await this.deps.download(release, archivePath, request.signal, (received, total) =>
+      await this.deps.download(release, archivePath, request.signal, (received, total, download) =>
         request.onProgress?.({
           component: release.component,
           phase: 'downloading',
           received,
-          total
+          total,
+          download
         })
       )
       request.signal?.throwIfAborted()

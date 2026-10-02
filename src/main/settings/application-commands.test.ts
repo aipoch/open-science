@@ -55,6 +55,7 @@ const expectedChannels = [
   'settings:install-codex',
   'settings:install-opencode',
   'settings:install-notebook-network',
+  'settings:cancel-notebook-network-setup',
   'settings:remove-notebook-network',
   'settings:encryption-available',
   'settings:npm-available',
@@ -498,13 +499,14 @@ describe('Settings core application commands', () => {
     expect(serviceMethod('validateProvider')).toHaveBeenCalledWith({ providerId: 'provider-1' })
   })
 
-  it('rejects all sixteen local-only commands before an owner can run', async () => {
+  it('rejects local-only commands before an owner can run', async () => {
     const { appearance, dependencies, serviceMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerCoreSettingsApplicationCommands(router.registrar, dependencies)
 
     const attempts = [
       [settingsCoreApplicationCommands.cancelClaudeLogin, []],
+      [settingsCoreApplicationCommands.cancelNotebookNetworkSetup, []],
       [settingsCoreApplicationCommands.cancelCodexLogin, []],
       [settingsCoreApplicationCommands.cancelIsolatedClaudeLogin, []],
       [settingsCoreApplicationCommands.installClaude, [{ source: 'managed' }]],
@@ -527,6 +529,7 @@ describe('Settings core application commands', () => {
         `Channel only available from the local app: ${command.name}`
       )
     }
+    expect(serviceMethod('cancelNotebookNetworkSetup')).not.toHaveBeenCalled()
     expect(serviceMethod('cancelClaudeLogin')).not.toHaveBeenCalled()
     expect(serviceMethod('cancelCodexLogin')).not.toHaveBeenCalled()
     expect(serviceMethod('cancelClaudeIsolatedLogin')).not.toHaveBeenCalled()

@@ -38,7 +38,10 @@ it('does not expose a half-prepared runtime when the second component fails', as
   const select = vi
     .spyOn(WindowsRuntimeComponentStore.prototype, 'select')
     .mockImplementation(async (releases, request) => {
-      if (request.component === 'powershell') throw new Error('component unavailable')
+      if (request.component === 'powershell') {
+        request.onProgress?.({ component: 'powershell', phase: 'verifying' })
+        throw new Error('component unavailable')
+      }
       return { release: releases[0]!, root: tmpdir(), executable: join(tmpdir(), 'node.exe') }
     })
   const manager = new WindowsNotebookRuntimeManager(
@@ -48,6 +51,8 @@ it('does not expose a half-prepared runtime when the second component fails', as
     'x64'
   )
   await expect(manager.prepare(false)).rejects.toThrow('component unavailable')
+  expect(manager.failure).toEqual({ component: 'powershell', phase: 'verifying' })
+  expect(manager.progress).toBeUndefined()
   expect(() => manager.get()).toThrow('not ready')
   expect(select.mock.calls.every(([, request]) => !request.allowDownload)).toBe(true)
 })
