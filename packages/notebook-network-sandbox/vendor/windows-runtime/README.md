@@ -143,6 +143,21 @@ restore, before verification and artifact upload. Its checksum check is idempote
 changing this JavaScript repair does not invalidate the compiler cache or require
 recompiling the unchanged Node and PowerShell sources.
 
+The same workflow also runs on pushes to `main` that change the compiler recipe,
+runtime preparation or verification, or the workflow itself. This warms the default
+branch cache for subsequent PRs: GitHub isolates caches written under a PR merge
+ref, so another PR cannot reuse them even when the recipe hash is identical.
+Ordinary application and Notebook source changes reuse the exact matching cache;
+they do not trigger the standalone warm-up. Tests still receive and verify the
+runtime on every selected run. Only a cache miss requires source compilation.
+
+To populate a missing or evicted shared cache without running the test suites,
+manually dispatch **Prepare Windows Notebook runtime** on `main`. A cold recipe
+still needs one source build on `main`, including after merging a recipe change
+already built in a PR. PRs started before warm-up finishes, or after cache eviction,
+can also compile on a miss; this cache is an optimization, not durable storage.
+See [GitHub's cache access restrictions](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache).
+
 PowerShell release archives do not include Git metadata. The builder supplies the
 pinned upstream source commit to its MSBuild version target and records that commit
 in `build.json`, so builds never infer a PowerShell commit from this application's
