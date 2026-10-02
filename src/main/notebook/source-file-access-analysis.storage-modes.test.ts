@@ -3,6 +3,217 @@ import { describe, expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
 describe('scientific storage modes', () => {
+  it.each([
+    'file.copy("inputs/data.tsv", "outputs/observed.tsv")',
+    'base::file.copy("inputs/data.tsv", "outputs/observed.tsv", overwrite=TRUE)',
+    'file.copy(to="outputs/observed.tsv", from="inputs/data.tsv", recursive=FALSE)',
+    'src <- "inputs/data.tsv"; dst <- "outputs/observed.tsv"; file.copy(src, dst)'
+  ])(
+    'retains possible base R copy paths without claiming complete filesystem coverage: %s',
+    async (source) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['inputs/data.tsv'],
+        writes: ['outputs/observed.tsv'],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('does not treat a possible copy as a successful producer for a later read', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'file.copy("inputs/data.tsv", "outputs/observed.tsv"); readLines("outputs/observed.tsv")'
+      )
+    ).toMatchObject({ reads: ['inputs/data.tsv', 'outputs/observed.tsv'], writeState: 'partial' })
+  })
+
+  it.each([
+    'file.copy <- custom; file.copy("inputs/data.tsv", "outputs/observed.tsv")',
+    'other::file.copy("inputs/data.tsv", "outputs/observed.tsv")',
+    'file.copy("inputs/data.tsv", "outputs/observed.tsv", recursive=TRUE)',
+    'file.copy(c("inputs/a.tsv", "inputs/b.tsv"), "outputs")'
+  ])(
+    'does not assign single-file copy paths to unrelated or recursive calls: %s',
+    async (source) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: [],
+        writes: [],
+        readState: 'partial',
+        writeState: 'partial'
+      })
+    }
+  )
+
+  it.each([
+    'import importlib.util\nspec = importlib.util.spec_from_file_location("helper", "outputs/helper.py")\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)',
+    'from importlib import util as u\nspec = u.spec_from_file_location("helper", "outputs/helper.py")\nmodule = u.module_from_spec(spec)\nspec.loader.exec_module(module)',
+    'import importlib.util\nspec = importlib.util.spec_from_file_location("helper", "outputs/helper.py")\nmodule = importlib.util.module_from_spec(spec)\nexecute = spec.loader.exec_module\nexecute(module)',
+    'import importlib.util\nspec = importlib.util.spec_from_file_location("helper", "outputs/helper.py")\nmodule = importlib.util.module_from_spec(spec)\nexecute = spec.loader.exec_module\nother = execute\nother(module)',
+    'import importlib.util\nspec = importlib.util.spec_from_file_location("helper", "outputs/helper.py")\nmodule = importlib.util.module_from_spec(spec)\nif True:\n    execute = spec.loader.exec_module\nexecute(module)',
+    'import importlib.util\nspec = importlib.util.spec_from_file_location("helper", "outputs/helper.py")\nmodule = importlib.util.module_from_spec(spec)\nexecute = spec.loader.exec_module\nif False:\n    execute = lambda module: None\nexecute(module)',
+    'import importlib.machinery as machinery\nloader = machinery.SourceFileLoader("helper", "outputs/helper.py")\nloader.load_module("helper")'
+  ])('keeps unmodeled Python module execution I/O uncertain: %s', async (source) => {
+    const access = await analyzeNotebookSourceFileAccess('python', source)
+    expect(access).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      writes: []
+    })
+    expect(access.reasonCodes).toContain('dynamic-path-unresolved')
+  })
+
+  it('preserves explicit paths alongside unmodeled Python module execution', async () => {
+    const access = await analyzeNotebookSourceFileAccess(
+      'python',
+      'import importlib.util\nspec = importlib.util.spec_from_file_location("helper", "outputs/helper.py")\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nwith open("inputs/data.csv") as source:\n    data = source.read()\nwith open("outputs/report.txt", "w") as target:\n    target.write(data)'
+    )
+    expect(access).toMatchObject({
+      reads: ['inputs/data.csv'],
+      writes: ['outputs/report.txt'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not treat constructing a module specification as module execution', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import importlib.util\nspec = importlib.util.spec_from_file_location("helper", "outputs/helper.py")\nmodule = importlib.util.module_from_spec(spec)'
+      )
+    ).toMatchObject({ writes: [], writeState: 'complete' })
+  })
+
+  it('does not impose loader effects on a local function with the same name', async () => {
+    const source =
+      'from pathlib import Path\ndef emit(path):\n    Path(path).write_text("done")\nemit("outputs/report.txt")'
+    expect(
+      await analyzeNotebookSourceFileAccess('python', source.replaceAll('emit', 'exec_module'))
+    ).toEqual(await analyzeNotebookSourceFileAccess('python', source))
+  })
+
+  it('does not execute a bound loader alias after it is rebound', async () => {
+    const source =
+      'import importlib.util\nspec = importlib.util.spec_from_file_location("helper", "outputs/helper.py")\nmodule = importlib.util.module_from_spec(spec)\nexecute = spec.loader.exec_module\nexecute = lambda module: None\nexecute(module)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writes: [],
+      writeState: 'complete'
+    })
+  })
+
+  it.each([
+    'write("{}", "outputs/report.json")',
+    'base::write("{}", file="outputs/report.json")',
+    'write("outputs/report.json", x="{}")',
+    'write("{}", fi="outputs/report.json")'
+  ])('recognizes base R write destinations with R argument matching: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      writes: ['outputs/report.json'],
+      writeState: 'complete'
+    })
+  })
+
+  it.each([
+    'write("next", "report.txt", append=TRUE)',
+    'base::write("next", "report.txt", 1, TRUE)',
+    'write("report.txt", x="next", app=TRUE)',
+    'con <- file("report.txt", "at"); other <- con; write("next", other)'
+  ])('retains preceding bytes for an R write append: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['report.txt'],
+      writes: ['report.txt'],
+      writeState: 'complete'
+    })
+  })
+
+  it('recognizes the base R write default file rather than console output', async () => {
+    expect(await analyzeNotebookSourceFileAccess('r', 'write("next")')).toMatchObject({
+      reads: [],
+      writes: ['data'],
+      writeState: 'complete'
+    })
+  })
+
+  it('does not require old bytes after a same-cell replacement followed by append', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'write("first", "report.txt"); write("next", "report.txt", append=TRUE)'
+      )
+    ).toMatchObject({
+      reads: [],
+      writes: ['report.txt'],
+      writeState: 'complete'
+    })
+  })
+
+  it('keeps dynamic append intent uncertain while retaining the exact destination', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess('r', 'write("next", "report.txt", append=flag)')
+    ).toMatchObject({
+      writes: ['report.txt'],
+      writeState: 'partial',
+      readState: 'partial'
+    })
+  })
+
+  it.each(['write("next", "")', 'base::write("next", "|consumer")'])(
+    'does not publish console or pipe output as a disk file: %s',
+    async (source) => {
+      const access = await analyzeNotebookSourceFileAccess('r', source)
+      expect(access.writes).toEqual([])
+      expect(access.externalState).toBe('partial')
+    }
+  )
+
+  it.each([
+    'utils::write("next", "report.txt")',
+    'unknownPackage::write("next", "report.txt")',
+    'write <- function(x, file) NULL; write("next", "report.txt")',
+    'write <- custom_writer; write("next", "report.txt")',
+    'emit <- function(x, file) utils::write(x, file); emit("next", "report.txt")'
+  ])('does not apply the base R writer contract to a different function: %s', async (source) => {
+    expect((await analyzeNotebookSourceFileAccess('r', source)).writes).toEqual([])
+  })
+
+  it('does not promote an append wrapper into a replacement contract', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'emit <- function(file) write("next", file, append=TRUE); emit("report.txt")'
+    )
+    expect(result.externalState).toBe('partial')
+    expect(result.writeState).toBe('partial')
+  })
+
+  it('retains nested readers when the R writer targets console output', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess('r', 'write(readLines("input.txt"), "")')
+    ).toMatchObject({
+      reads: ['input.txt'],
+      writes: [],
+      externalState: 'partial'
+    })
+  })
+
+  it('retains the destination without assuming custom R coercion has no hidden effects', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'x <- structure("next", class="custom"); write(x, "report.txt")'
+      )
+    ).toMatchObject({
+      writes: ['report.txt'],
+      externalState: 'partial',
+      writeState: 'partial'
+    })
+  })
+
   it('preserves the mode of an already-open R connection', async () => {
     const result = await analyzeNotebookSourceFileAccess(
       'r',
