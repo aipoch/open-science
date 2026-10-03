@@ -596,7 +596,13 @@ describe('NodeVersionFileOperator', () => {
                 ) => {
                   if (!replaceDuringRead) return target.read(buffer, offset, length, position)
                   replaceDuringRead = false
-                  await writeFile(path, 'REPLACED')
+                  const before = await target.stat({ bigint: true })
+                  // Same-tick writes can share ctime on Windows. Establish the real metadata
+                  // change this fault models before reading and restoring the original bytes.
+                  await vi.waitFor(async () => {
+                    await writeFile(path, 'REPLACED')
+                    expect((await target.stat({ bigint: true })).ctimeNs).not.toBe(before.ctimeNs)
+                  })
                   const result = await target.read(buffer, offset, length, position)
                   await writeFile(path, original)
                   await utimes(path, fixedTime, fixedTime)
