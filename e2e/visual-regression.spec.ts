@@ -226,7 +226,7 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await appVersion.getByRole('status').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
-  // The text-dense settings surface has slightly different font antialiasing on macos-15 runners.
+  // Allow slight font-antialiasing differences on hosted macOS runners for this text-dense surface.
   await expectStableScreenshot(page, 'settings-general.png', 0.004)
 })
 
