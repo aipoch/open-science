@@ -1,3 +1,4 @@
+import type { PrivateDestinationRequest } from '../../shared/notebook-network'
 import type {
   AppIconPreview,
   ClaudeInstallEvent,
@@ -85,6 +86,7 @@ type CoreSettingsCommandStore = Pick<
   | 'detectOpencode'
   | 'getConnectorDetail'
   | 'getPackageMirror'
+  | 'reviewNotebookPrivateDestination'
   | 'getNotebookNetworkStatus'
   | 'getLocalShellRuntimePreference'
   | 'getWsl2BashPreviewStatus'
@@ -231,6 +233,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'getPackageMirror'>
   >('settings:get-package-mirror'),
+  reviewNotebookPrivateDestination: defineApplicationCommand<
+    'settings:review-notebook-private-destination',
+    readonly [request: PrivateDestinationRequest],
+    StoreResult<'reviewNotebookPrivateDestination'>
+  >('settings:review-notebook-private-destination'),
   getNotebookNetworkStatus: defineApplicationCommand<
     'settings:get-notebook-network-status',
     readonly [],
@@ -507,6 +514,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getClassification,
   settingsCoreApplicationCommands.getGitHubTokenStatus,
   settingsCoreApplicationCommands.getPackageMirror,
+  settingsCoreApplicationCommands.reviewNotebookPrivateDestination,
   settingsCoreApplicationCommands.getNotebookNetworkStatus,
   settingsCoreApplicationCommands.getLocalShellRuntimePreference,
   settingsCoreApplicationCommands.getWsl2BashPreviewStatus,
@@ -623,6 +631,10 @@ const registerCoreSettingsApplicationCommands = (
         return dependencies.service.getGitHubTokenStatus()
       },
       'settings:get-package-mirror': () => dependencies.service.getPackageMirror(),
+      'settings:review-notebook-private-destination': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:review-notebook-private-destination')
+        return dependencies.service.reviewNotebookPrivateDestination(args[0])
+      },
       'settings:get-notebook-network-status': () => dependencies.service.getNotebookNetworkStatus(),
       'settings:get-local-shell-runtime-preference': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:get-local-shell-runtime-preference')

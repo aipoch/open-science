@@ -16,7 +16,10 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { isMirrorConfigured, mirrorStatusText, MIRROR_HELP_URL } from './mirror-view'
 import { NetworkProxyForm } from './NetworkProxyForm'
-import { NotebookNetworkDomainsForm } from './NotebookNetworkDomainsForm'
+import {
+  NotebookNetworkDomainsForm,
+  type NetworkEditorLeaveState
+} from './NotebookNetworkDomainsForm'
 import { SettingsSection } from './SettingsLayout'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
@@ -26,6 +29,7 @@ const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' }
 type NetworkPanelProps = {
   view: NetworkView
+  onNetworkLeaveStateChange?: (state: NetworkEditorLeaveState | null) => void
   onNavigate: (view: NetworkView) => void
   notebookNetworkAvailable?: boolean
 }
@@ -52,6 +56,7 @@ const CONNECTION_TYPE_LABELS: Partial<Record<NetworkConnectionType, string>> = {
 const NetworkPanel = ({
   view,
   onNavigate,
+  onNetworkLeaveStateChange,
   notebookNetworkAvailable = true
 }: NetworkPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -241,7 +246,8 @@ const NetworkPanel = ({
         : Network
 
   if (view.kind === 'proxy') return <NetworkProxyForm onDone={() => onNavigate({ kind: 'list' })} />
-  if (view.kind === 'domains' && notebookNetworkAvailable) return <NotebookNetworkDomainsForm />
+  if (view.kind === 'domains' && notebookNetworkAvailable)
+    return <NotebookNetworkDomainsForm onLeaveStateChange={onNetworkLeaveStateChange} />
 
   return (
     <div className="space-y-6 p-5">
@@ -293,7 +299,7 @@ const NetworkPanel = ({
         <SettingsSection
           title={t('Notebook network access')}
           description={t(
-            'Control which internet domains Notebook Python, R, REPL, and Bash can reach.'
+            'Manage public domains and trusted private services for protected Notebook and Shell execution.'
           )}
           aria-label={t('Notebook network access')}
           data-settings-anchor="network.domains"
@@ -301,12 +307,18 @@ const NetworkPanel = ({
           <div className="rounded-xl border border-border p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm text-foreground">{t('Open-Science domains')}</p>
+                <p className="text-sm text-foreground">
+                  {t('Public domains and private services')}
+                </p>
                 <p className="text-xs text-muted-foreground">
                   {t('{{count}} custom domains allowed', {
                     count: notebookNetwork.allowedDomains.length,
                     defaultValue_one: '{{count}} custom domain allowed'
                   })}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t('Trusted private services')} ·{' '}
+                  {notebookNetwork.trustedPrivateDestinations?.length ?? 0}
                 </p>
               </div>
               <Button
@@ -314,7 +326,7 @@ const NetworkPanel = ({
                 variant="outline"
                 onClick={() => onNavigate({ kind: 'domains' })}
               >
-                {t('Configure domains')}
+                {t('Manage access')}
               </Button>
             </div>
           </div>

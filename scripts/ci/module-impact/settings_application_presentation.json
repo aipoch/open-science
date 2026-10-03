@@ -134,7 +134,8 @@
     "src/renderer/src/pages/settings/validation-message.test.ts",
     "src/renderer/src/pages/settings/validation-message.ts",
     "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
-    "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
+    "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx",
+    "src/renderer/src/pages/settings/TrustedPrivateServices.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AppVersionSection.tsx",

@@ -863,7 +863,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     )
     this.settings = settings
     if (notebookNetworkSettingsAllowDomain(settings, normalized.hostname)) {
-      return this.networkAccessResult(normalized.hostname, 'alreadyAllowed', request.runtime)
+      return this.networkAccessResult(normalized.hostname, 'alreadyAllowed', request.runtime, {
+        message:
+          'Public-domain policy already allows this hostname. Address checks still apply. For private-network access, review the service and port in Settings > Network > Notebook network access.'
+      })
     }
 
     const destinationKey = blockedDestinationKey(request.sessionId, normalized.hostname)

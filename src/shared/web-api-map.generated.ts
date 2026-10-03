@@ -329,6 +329,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.respondSkillImportApproval': 'skills:conversation-import-respond',
   'settings.retryConnectorProjection': 'settings:retry-connector-projection',
   'settings.retryCustomServer': 'settings:retry-custom-server',
+  'settings.reviewNotebookPrivateDestination': 'settings:review-notebook-private-destination',
   'settings.saveGitHubToken': 'settings:save-github-token',
   'settings.saveValidatedProvider': 'settings:save-validated-provider',
   'settings.scanRepoSkills': 'settings:scan-repo-skills',

@@ -436,7 +436,7 @@ const NotebookNetworkApprovalDetail = ({
       {expanded ? (
         <p>
           {t(
-            'This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Allowed domains.',
+            'This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.',
             { domain: approval.hostname }
           )}
         </p>

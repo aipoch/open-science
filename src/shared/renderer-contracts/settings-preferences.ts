@@ -42,7 +42,12 @@ import type { PackageMirror } from '../mirror'
 
 import type { NetworkProxySettings } from '../network-proxy'
 
-import type { NotebookNetworkSettings, NotebookNetworkStatus } from '../notebook-network'
+import type {
+  PrivateDestinationRequest,
+  PrivateDestinationReview,
+  NotebookNetworkSettings,
+  NotebookNetworkStatus
+} from '../notebook-network'
 
 import { callable, EVENT, ELECTRON_EVENT, LOCAL } from './definition'
 
@@ -115,6 +120,9 @@ export const settingsGetClassificationContracts = {
 } as const
 
 export const settingsSetNetworkProxyContracts = {
+  'settings.reviewNotebookPrivateDestination': callable<
+    (request: PrivateDestinationRequest) => Promise<PrivateDestinationReview>
+  >()('settings', ['settings:review-notebook-private-destination', LOCAL]),
   'settings.setNetworkProxy': callable<
     (request: SetNetworkProxyRequest) => Promise<NetworkProxySettings>
   >()('settings', ['settings:set-network-proxy', LOCAL]),

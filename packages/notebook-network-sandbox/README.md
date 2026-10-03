@@ -27,11 +27,12 @@ signing, TLS interception, or request-body inspection.
 
 ```text
 Settings > Network
-  ├─ Open-Science domain groups
-  └─ user Allowed domains
+  ├─ built-in automatic-access groups
+  ├─ custom public domains
+  └─ trusted private services (hostname + port + reviewed addresses)
             │
             ▼
-buildNotebookNetworkPolicy() ── public-domain approval policy
+buildNotebookNetworkPolicy() ── public approval policy + private-service grants
             │
             ▼
 request_network_access       ── conversation approval / next-command grant / persist allowlist
@@ -65,16 +66,50 @@ module.
 
 Policy is evaluated in this order:
 
-1. malformed destinations and local, private, metadata, or otherwise non-public addresses are
-   denied without a prompt;
-2. enabled Open-Science domains and saved Allowed domains are forwarded;
-3. any other public hostname is denied with `OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED`;
-4. after that result, the Agent may call `request_network_access`; an approved one-time grant is
-   consumed by the next command, while an always grant is persisted and hot-applied.
+1. malformed hosts and explicit deny rules are rejected;
+2. all DNS answers are resolved. Non-public destinations require an exact trusted private-service
+   rule for that hostname and port, with every answer still in its reviewed address set;
+3. enabled built-in groups and custom public domains allow ordinary public requests. Turning off a
+   built-in rule requires approval; it does not create a hard deny, and an exact custom grant can
+   override it;
+4. unknown public destinations can use the gateway's restricted HTTPS GET/HEAD path on port 443
+   during an active execution. Request bodies, authentication/custom headers and other methods
+   require broader approval. Explicit-ask rules do not receive that read exception;
+5. the Agent may call `request_network_access` for public access. An approved one-time grant is
+   consumed by the next matching execution; an always grant is persisted and hot-applied.
 
-“Allow once” affects only the pending command. “Always allow” is persisted by the application and
-fed back through `updatePolicy()`. Any syntactically valid public hostname can use this approval
-path; non-public destinations remain unconditionally blocked.
+“Allow once” and “Always allow” never bypass address validation or create private-service grants.
+A stored public hostname is not proof of DNS eligibility, connectivity, credentials or TLS trust.
+
+### Trusted private services
+
+Only the local Settings flow can review and save private services. Review resolves DNS without
+connecting to the service. The user sees the hostname, exact port, IP addresses and installation-wide
+permission to send data before adding the rule to the draft. Save resolves new or changed rules again;
+changed answers require another review. Concurrent private editors use a baseline check, while public
+allowlist updates retain their existing delta merge. Removing a rule works offline. Policy changes
+reset active gateway connections and invalidate pending decisions.
+
+Eligible addresses are RFC 1918 IPv4 and IPv6 unique-local service addresses, excluding current host
+interfaces and AWS's IPv6 metadata address `fd00:ec2::254`. Loopback, link-local/metadata, CGNAT,
+multicast, transition encodings, literal IP inputs, wildcard hosts and unrestricted ports remain
+unsupported. Every new connection checks every DNS answer; a subset of the reviewed set is accepted,
+but any new, public, reserved or host-interface answer rejects the private exception. Connections,
+including parent-proxy tunnels, use the validated numeric address. A private rule does not implicitly
+allow the hostname if it later resolves publicly; normal public policy applies instead.
+
+Settings persists the optional `notebookNetwork.trustedPrivateDestinations` array as
+`{ hostname, port, approvedAddresses }` in the existing local `settings.json` transaction. Missing
+means no private grants. Existing public entries are never promoted; no database migration or settings
+version bump is required. Session packages and data-folder relocation do not transfer Settings.
+Manually copying the whole configuration also copies its trust grants: review or remove private
+rules before using that configuration on another machine/network. This is address-set trust, not
+cryptographic service identity; HTTPS certificate checks still apply, and raw TCP/HTTP services
+remain the user's explicit trust decision.
+
+Private rules do not authorize conversation-link previews/icons, model endpoints, Connectors, remote
+Compute hosts or agent-native tools outside the application-owned execution boundary. Rules do not
+enable Windows protection; standard execution remains outside enforcement until protection is set up.
 
 ## Security behavior
 

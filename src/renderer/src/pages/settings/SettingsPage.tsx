@@ -60,6 +60,7 @@ import type { SpecialistListItem } from '../../../../shared/specialist'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import type { SkillEditorLeaveState } from './SkillEditor'
+import type { NetworkEditorLeaveState } from './NotebookNetworkDomainsForm'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
@@ -495,6 +496,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [historyIndex, setHistoryIndex] = useState(0)
   const skillLeaveReturnFocus = useRef<HTMLElement | null>(null)
   const skillEditorLeaveState = useRef<SkillEditorLeaveState | null>(null)
+  const networkEditorLeaveState = useRef<NetworkEditorLeaveState | null>(null)
+  const [networkEditorBusy, setNetworkEditorBusy] = useState(false)
+  const onNetworkLeaveStateChange = useCallback((state: NetworkEditorLeaveState | null) => {
+    networkEditorLeaveState.current = state
+    setNetworkEditorBusy(state?.busy ?? false)
+    if (state && !state.dirty && !state.busy) setPendingSkillLeave(null)
+  }, [])
   const providerEditorLeaveState = useRef<SkillEditorLeaveState | null>(null)
   const [skillEditorBusy, setSkillEditorBusy] = useState(false)
   const [pendingSkillLeave, setPendingSkillLeave] = useState<(() => void) | null>(null)
@@ -503,7 +511,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setSkillEditorBusy(state?.busy ?? false)
   }, [])
   const requestLeave = useCallback((leave: () => void) => {
-    const state = providerEditorLeaveState.current ?? skillEditorLeaveState.current
+    const state =
+      networkEditorLeaveState.current ??
+      providerEditorLeaveState.current ??
+      skillEditorLeaveState.current
     if (state?.dirty || state?.busy) {
       const focused = document.activeElement
       if (
@@ -1740,7 +1751,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 layoutScroll
                 data-slot="settings-content-scroll"
                 data-settings-active-panel={activePanel}
-                className="min-h-0 flex-1 overflow-y-auto"
+                className={cn(
+                  'min-h-0 flex-1 overflow-y-auto',
+                  activePanel === 'network' && networkView.kind === 'domains' && 'scroll-pb-32'
+                )}
               >
                 <div
                   className={cn(
@@ -2079,11 +2093,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         }
                       />
                     ) : activePanel === 'network' ? (
-                      <NetworkPanel
-                        view={networkView}
-                        onNavigate={navigateNetwork}
-                        notebookNetworkAvailable={notebookNetworkAvailable}
-                      />
+                      open && (
+                        <NetworkPanel
+                          onNetworkLeaveStateChange={onNetworkLeaveStateChange}
+                          view={networkView}
+                          onNavigate={navigateNetwork}
+                          notebookNetworkAvailable={notebookNetworkAvailable}
+                        />
+                      )
                     ) : activePanel === 'usage' ? (
                       <TokenUsagePanel sessions={sessions} projects={projects} />
                     ) : activePanel === 'general' ? (
@@ -2341,17 +2358,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         open={open && pendingSkillLeave !== null}
         title={t('Discard unsaved changes?')}
         description={
-          isProviderFormOpen
-            ? isSaving
-              ? t('Wait for the provider save to finish before leaving.')
-              : t('Your provider edits have not been saved. Discard them and leave the editor?')
-            : skillEditorBusy
-              ? t('Wait for the current skill operation to finish before leaving.')
-              : t('Your skill edits have not been saved. Discard them and leave the editor?')
+          networkEditorLeaveState.current
+            ? t('Your network rules have not been saved. Discard them and leave?')
+            : isProviderFormOpen
+              ? isSaving
+                ? t('Wait for the provider save to finish before leaving.')
+                : t('Your provider edits have not been saved. Discard them and leave the editor?')
+              : skillEditorBusy
+                ? t('Wait for the current skill operation to finish before leaving.')
+                : t('Your skill edits have not been saved. Discard them and leave the editor?')
         }
         cancelLabel={t('Keep editing')}
         confirmLabel={t('Discard changes')}
-        loading={skillEditorBusy || (isProviderFormOpen && isSaving)}
+        loading={networkEditorBusy || skillEditorBusy || (isProviderFormOpen && isSaving)}
         loadingLabel={t('Please wait…')}
         destructive
         testId="skill-discard-confirmation"
@@ -2364,7 +2383,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           target.focus({ preventScroll: true })
         }}
         onConfirm={() => {
-          if (skillEditorLeaveState.current?.busy || providerEditorLeaveState.current?.busy) return
+          if (
+            networkEditorLeaveState.current?.busy ||
+            skillEditorLeaveState.current?.busy ||
+            providerEditorLeaveState.current?.busy
+          )
+            return
           if (isProviderFormOpen) {
             // Settings stays mounted while closed. Clear the draft and seed a fresh saved revision
             // on entry, even when closing does not change the current create/edit route.

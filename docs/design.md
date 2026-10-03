@@ -987,6 +987,18 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 ### Settings
 
+- **Network / Notebook network access** retains shared Settings history and breadcrumbs. Explain
+  restricted public HTTPS reads and broad domain grants before the custom-public-domain editor.
+  Built-in services use collapsed groups with explicit expand affordances; switches mean automatic
+  access, while disabled groups require approval and required package services remain locked.
+- Put hostname validation beside the input, distinguish Add to list from Save changes, and report
+  unsaved changes through the shared leave guard. Save blocks concurrent edits; errors retain drafts.
+  Explain that saving resets protected connections. Inactive protection gets an explicit scope notice.
+- Trusted private services have a separate local-only flow: exact hostname and port, DNS review,
+  displayed address set and installation-wide data-sending consequence, then explicit Add and Save.
+  Input edits invalidate prior reviews; late results cannot restore them. Saved rules support review
+  again and removal. DNS review does not claim connectivity. Private trust never admits link previews.
+
 - Use a large `Dialog`; the restored panel is `h-[min(688px,calc(100vh-2rem))] w-[min(960px,calc(100vw-2rem))] rounded-xl border border-border bg-card shadow-dialog`. Maximize uses `inset-4`, filling the viewport with a stable 16px margin and never shrinking the restored panel.
 - Settings consumes the global semantic palette: background `#FAFAF8`, card/popover `#FFFFFF`, muted/secondary `#ECECEA`, border/input `#DEDEDA`, foreground `#202321`, and muted foreground `#646762`. Do not scope token overrides to the dialog or use `body:has(...)`; Radix portals inherit these root tokens directly.
 - Left navigation: `w-48 shrink-0 border-r border-border bg-background`, divided into a `min-h-0 flex-1 overflow-y-auto` destination list and a fixed auxiliary footer. The destination list uses `p-3` and four labeled groups — **System** (General), **Intelligence** (Model, Agent, Skills, Specialists, Memory), **Connections** (Connectors, Network, Remote, Credentials), **Workspace** (Tags, Permissions, Runtimes, Storage, Compute, Usage, Archived); each group has a `text-xs font-medium text-muted-foreground` heading over its rows. **Archived** is the final Workspace destination rather than a pinned or singleton group. The footer keeps only the external **Feedback** action, separated from destinations by `border-t border-border` and padded with `px-3 py-2`.

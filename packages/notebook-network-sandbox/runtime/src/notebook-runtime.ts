@@ -11,7 +11,7 @@ import {
   type LocalCertificateAuthority
 } from './gateway/local-ca.js'
 
-import { DestinationPolicy } from './gateway/address-policy.js'
+import { DestinationPolicy, type TrustedPrivateDestination } from './gateway/address-policy.js'
 import {
   CommandGateway,
   type GatewayDecision,
@@ -45,6 +45,7 @@ import {
 type SandboxDependencyCheck = Readonly<{ warnings: string[]; errors: string[] }>
 
 type NetworkRuntimeConfig = Readonly<{
+  trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   askDomains?: readonly string[]
   deniedDomains: readonly string[]
@@ -169,6 +170,7 @@ const parentSettings = (config: NetworkRuntimeConfig): ParentProxySettings | und
 
 const buildPolicy = (config: NetworkRuntimeConfig): DestinationPolicy =>
   new DestinationPolicy({
+    trustedPrivateDestinations: config.trustedPrivateDestinations,
     allowedDomains: config.allowedDomains,
     askDomains: config.askDomains,
     deniedDomains: config.deniedDomains,

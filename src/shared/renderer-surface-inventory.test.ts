@@ -282,6 +282,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'remove-notebook-network',
     'retry-connector-projection',
     'retry-custom-server',
+    'review-notebook-private-destination',
     'save-github-token',
     'select-wsl-profile',
     'set-app-icon-variant',

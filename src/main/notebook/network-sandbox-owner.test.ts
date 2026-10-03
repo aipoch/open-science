@@ -4038,3 +4038,33 @@ it.each([false, true])(
     }
   }
 )
+
+it('explains that existing public policy is not private-service admission', async () => {
+  const requestDecision = vi.fn()
+  const persistAlwaysAllow = vi.fn()
+  const owner = new NotebookNetworkSandboxOwner({
+    resourceRoot: '/resources',
+    getSettings: async () => ({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      allowedDomains: ['lab.internal.example']
+    }),
+    persistAlwaysAllow,
+    requestDecision,
+    platform: 'linux'
+  })
+  await expect(
+    owner.requestNetworkAccess({
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      hostname: 'lab.internal.example',
+      reason: 'Access the research service.'
+    })
+  ).resolves.toMatchObject({
+    status: 'alreadyAllowed',
+    message: expect.stringContaining(
+      'For private-network access, review the service and port in Settings'
+    )
+  })
+  expect(requestDecision).not.toHaveBeenCalled()
+  expect(persistAlwaysAllow).not.toHaveBeenCalled()
+})

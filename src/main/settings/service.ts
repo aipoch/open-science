@@ -1,3 +1,7 @@
+import type {
+  PrivateDestinationRequest,
+  PrivateDestinationReview
+} from '../../shared/notebook-network'
 import { ClassificationUsageRecorder } from './classification-usage'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { ClassificationSettingsOwner } from './classification-settings'
@@ -707,6 +711,12 @@ class SettingsService {
 
   async setNotebookNetwork(request: SetNotebookNetworkRequest): Promise<NotebookNetworkSettings> {
     return this.notebookNetwork.set(request)
+  }
+
+  reviewNotebookPrivateDestination(
+    request: PrivateDestinationRequest
+  ): Promise<PrivateDestinationReview> {
+    return this.notebookNetwork.review(request)
   }
 
   getNotebookNetwork(): Promise<NotebookNetworkSettings> {

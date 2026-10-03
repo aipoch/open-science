@@ -51,7 +51,7 @@ const PermissionScopeConfirmationDialog = ({
       ? t('Matching actions can run without another approval for every session in this project.')
       : t('Matching actions can run without another approval for every session in every project.')
   const settingsTarget = retainedConfirmation?.settingsTarget
-    ? `${t('Settings')} → ${t('Network')} → ${t('Allowed domains')}`
+    ? `${t('Settings')} → ${t('Network')} → ${t('Notebook network access')}`
     : t('Settings → Permissions')
 
   return (

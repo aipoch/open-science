@@ -192,7 +192,7 @@ describe('NetworkPanel offline retry', () => {
       )
     })
 
-    expect(container.querySelector('[aria-label="Allowed domains"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Custom public domains"]')).toBeNull()
     expect(container.querySelector('[aria-label="Network status"]')).not.toBeNull()
     expect(onNavigate).not.toHaveBeenCalled()
   })

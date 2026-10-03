@@ -92,7 +92,7 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
     id: 'network.domains',
     panel: 'network',
     labelKey: 'Notebook network access',
-    keywords: 'domains allowlist'
+    keywords: 'allowed domains allowlist private services hostname port intranet'
   },
   {
     id: 'remote-control.app-access',

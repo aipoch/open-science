@@ -141,3 +141,27 @@ describe('notebook network policy', () => {
     expect(policy.deniedDomainReasons).toEqual({})
   })
 })
+
+describe('private trust persistence contract', () => {
+  it('preserves historical defaults and never promotes a private grant to a public domain grant', () => {
+    expect(normalizeNotebookNetworkSettings({})).toEqual(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+    const rule = { hostname: 'lab.internal.example', port: 8443, approvedAddresses: ['10.32.0.7'] }
+    const settings = normalizeNotebookNetworkSettings({ trustedPrivateDestinations: [rule] })
+    expect(buildNotebookNetworkPolicy(settings).trustedPrivateDestinations).toEqual([rule])
+    expect(notebookNetworkSettingsAllowDomain(settings, rule.hostname)).toBe(false)
+    expect(settings.allowedDomains).toEqual([])
+    expect(normalizeNotebookNetworkSettings(JSON.parse(JSON.stringify(settings)))).toEqual(settings)
+  })
+  it('fails closed for ambiguous duplicate services and malformed records', () => {
+    const rule = { hostname: 'lab.internal.example', port: 8443, approvedAddresses: ['10.32.0.7'] }
+    expect(
+      normalizeNotebookNetworkSettings({
+        trustedPrivateDestinations: [rule, { ...rule, approvedAddresses: ['10.32.0.8'] }]
+      }).trustedPrivateDestinations
+    ).toEqual([])
+    expect(
+      normalizeNotebookNetworkSettings({ trustedPrivateDestinations: [{ ...rule, port: 0 }] })
+        .trustedPrivateDestinations
+    ).toEqual([])
+  })
+})

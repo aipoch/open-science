@@ -1,5 +1,10 @@
+import { isDeepStrictEqual } from 'node:util'
+import { reviewPrivateDestination } from '@aipoch/notebook-network-sandbox'
 import {
   normalizeNotebookNetworkSettings,
+  normalizeTrustedPrivateDestinations,
+  type PrivateDestinationRequest,
+  type PrivateDestinationReview,
   type NotebookNetworkSettings
 } from '../../shared/notebook-network'
 import type { SetNotebookNetworkRequest } from '../../shared/settings'
@@ -21,6 +26,10 @@ class NotebookNetworkSettingsOwner {
     )
   }
 
+  review(request: PrivateDestinationRequest): Promise<PrivateDestinationReview> {
+    return reviewPrivateDestination(request)
+  }
+
   set(request: SetNotebookNetworkRequest): Promise<NotebookNetworkSettings> {
     return this.enqueue((current) => this.mergeRequest(current, request))
   }
@@ -33,7 +42,9 @@ class NotebookNetworkSettingsOwner {
   }
 
   private enqueue(
-    update: (current: NotebookNetworkSettings) => NotebookNetworkSettings
+    update: (
+      current: NotebookNetworkSettings
+    ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>
   ): Promise<NotebookNetworkSettings> {
     const operation = this.writeTail.then(() => this.commit(update))
     this.writeTail = operation.then(
@@ -43,11 +54,35 @@ class NotebookNetworkSettingsOwner {
     return operation
   }
 
-  private mergeRequest(
+  private async mergeRequest(
     current: NotebookNetworkSettings,
     request: SetNotebookNetworkRequest
-  ): NotebookNetworkSettings {
-    const requested = normalizeNotebookNetworkSettings(request)
+  ): Promise<NotebookNetworkSettings> {
+    let requested = normalizeNotebookNetworkSettings(request)
+    if (request.trustedPrivateDestinations === undefined) {
+      // Public-only and historical clients must not erase independently reviewed grants.
+      requested = { ...requested, trustedPrivateDestinations: current.trustedPrivateDestinations }
+    } else {
+      const rules = normalizeTrustedPrivateDestinations(request.trustedPrivateDestinations)
+      if (!isDeepStrictEqual(rules, request.trustedPrivateDestinations))
+        throw new Error('Invalid trusted private service.')
+      if (
+        !isDeepStrictEqual(
+          request.baseTrustedPrivateDestinations ?? [],
+          current.trustedPrivateDestinations ?? []
+        )
+      )
+        throw new Error('Private services changed. Reopen this page before saving.')
+      for (const rule of rules) {
+        if (
+          (current.trustedPrivateDestinations ?? []).some((saved) => isDeepStrictEqual(saved, rule))
+        )
+          continue
+        const review = await this.review(rule)
+        if (!review.ok || !isDeepStrictEqual(review.destination, rule))
+          throw new Error('Private service addresses changed. Review the service again.')
+      }
+    }
     if (request.baseAllowedDomains === undefined) return requested
 
     const baseline = normalizeNotebookNetworkSettings({
@@ -67,10 +102,12 @@ class NotebookNetworkSettingsOwner {
   }
 
   private async commit(
-    update: (current: NotebookNetworkSettings) => NotebookNetworkSettings
+    update: (
+      current: NotebookNetworkSettings
+    ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>
   ): Promise<NotebookNetworkSettings> {
     const previous = await this.get()
-    const stored = await this.options.repository.setNotebookNetwork(update(previous))
+    const stored = await this.options.repository.setNotebookNetwork(await update(previous))
     const notebookNetwork = normalizeNotebookNetworkSettings(stored.notebookNetwork)
     try {
       await this.options.apply(notebookNetwork)

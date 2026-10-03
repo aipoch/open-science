@@ -75,7 +75,7 @@ describe('PermissionApprovalControls interactions', () => {
     expect(details).toBeDefined()
     act(() => details?.click())
     expect(container.textContent).toContain(
-      'Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Allowed domains.'
+      'Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.'
     )
 
     expect(container.querySelector('[data-testid="extra-option"]')).toBeNull()
@@ -95,7 +95,7 @@ describe('PermissionApprovalControls interactions', () => {
     )
     expect(onRespond).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain('Allow data.example.org globally?')
-    expect(document.body.textContent).toContain('Settings → Network → Allowed domains')
+    expect(document.body.textContent).toContain('Settings → Network → Notebook network access')
     act(() =>
       document.body
         .querySelector<HTMLButtonElement>('[data-testid="permission-scope-confirm"]')

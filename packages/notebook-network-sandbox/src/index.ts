@@ -552,3 +552,5 @@ export type {
   NotebookSandboxedProcess,
   NotebookTrustBundle
 } from './types.js'
+
+export { reviewPrivateDestination } from '../runtime/src/gateway/address-policy.js'

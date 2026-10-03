@@ -688,6 +688,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.respondSkillImportApproval',
       'settings.retryConnectorProjection',
       'settings.retryCustomServer',
+      'settings.reviewNotebookPrivateDestination',
       'settings.saveGitHubToken',
       'settings.saveValidatedProvider',
       'settings.scanRepoSkills',

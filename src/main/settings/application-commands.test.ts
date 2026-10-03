@@ -43,6 +43,7 @@ const expectedChannels = [
   'settings:get-classification',
   'settings:get-github-token-status',
   'settings:get-package-mirror',
+  'settings:review-notebook-private-destination',
   'settings:get-notebook-network-status',
   'settings:get-local-shell-runtime-preference',
   'settings:get-wsl2-bash-preview-status',
@@ -521,7 +522,21 @@ describe('Settings core application commands', () => {
       [settingsCoreApplicationCommands.setNotificationsEnabled, [{ enabled: true }]],
       [settingsCoreApplicationCommands.setShowNotificationContent, [{ enabled: true }]],
       [settingsCoreApplicationCommands.setPackageMirror, [{}]],
-      [settingsCoreApplicationCommands.setNetworkProxy, [{ mode: 'direct' }]]
+      [settingsCoreApplicationCommands.setNetworkProxy, [{ mode: 'direct' }]],
+      [
+        settingsCoreApplicationCommands.reviewNotebookPrivateDestination,
+        [{ hostname: 'lab.internal.example', port: 8443 }]
+      ],
+      [
+        settingsCoreApplicationCommands.setNotebookNetwork,
+        [
+          {
+            allowedDomains: [],
+            disabledOpenScienceDomains: [],
+            disabledOpenScienceDomainGroups: []
+          }
+        ]
+      ]
     ] as const
 
     for (const [command, args] of attempts) {
@@ -529,6 +544,8 @@ describe('Settings core application commands', () => {
         `Channel only available from the local app: ${command.name}`
       )
     }
+    expect(serviceMethod('reviewNotebookPrivateDestination')).not.toHaveBeenCalled()
+    expect(serviceMethod('setNotebookNetwork')).not.toHaveBeenCalled()
     expect(serviceMethod('cancelNotebookNetworkSetup')).not.toHaveBeenCalled()
     expect(serviceMethod('cancelClaudeLogin')).not.toHaveBeenCalled()
     expect(serviceMethod('cancelCodexLogin')).not.toHaveBeenCalled()
