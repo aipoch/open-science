@@ -699,7 +699,7 @@ describe('post-merge Windows validation', () => {
       findStep(p0Regression, 'Run packaged P0 regression').env?.OPEN_SCIENCE_E2E_EXECUTABLE
     ).toBe('${{ steps.packaged_app.outputs.executable }}')
     expect(findStep(p0Regression, 'Upload P0 diagnostics').if).toBe('always()')
-    expect(visualRegression).toMatchObject({ needs: 'source', 'runs-on': 'macos-14' })
+    expect(visualRegression).toMatchObject({ needs: 'source', 'runs-on': 'macos-15' })
     expect(visualRegression.if).toBe(
       "${{ !cancelled() && inputs.suite != 'p0' && (inputs.suite == 'visual' || needs.source.outputs.available == 'true') }}"
     )

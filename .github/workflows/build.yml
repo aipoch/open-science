@@ -207,7 +207,7 @@ jobs:
   verify_macos:
     name: Verify macOS native behavior
     if: ${{ !inputs.skip_verify }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - name: Checkout

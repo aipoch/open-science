@@ -800,7 +800,7 @@ describe('build verification throughput', () => {
     for (const job of [verify, tests, macos]) {
       expect(job.if).toBe('${{ !inputs.skip_verify }}')
     }
-    expect(macos['runs-on']).toBe('macos-14')
+    expect(macos['runs-on']).toBe('macos-15')
     const native = step(macos, 'Test macOS native behavior and release regressions').run
     for (const path of [
       'src/main/windows.test.ts',

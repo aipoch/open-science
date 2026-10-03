@@ -29,7 +29,7 @@ jobs:
   regression:
     name: Complete source regression (macOS)
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - name: Checkout
