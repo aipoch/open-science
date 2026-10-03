@@ -16,6 +16,7 @@
 - Glissez-déposez des fichiers n'importe où dans la conversation pour les joindre. (#3224)
 - Extraction de structure pour les PDF téléversés, en complément de la prise en charge existante des PDF générés. (#3222)
 - Menus applicatifs de la barre de titre Windows pour une gestion native des fenêtres. (#3201)
+- Les règles d'accès réseau séparent l'automatisation publique des services privés revus : les autorisations privées se lient à un nom d'hôte exact, un port et un ensemble d'adresses revu, avec une nouvelle vérification DNS avant l'enregistrement. (#3249)
 
 ## 🔧 Améliorations
 
@@ -27,7 +28,7 @@
 ## 🐛 Corrections
 
 - **Relecture et sessions** — l'état du notebook est préservé et les galeries générées stabilisées dans la relecture (#3219) ; les résultats des tours et les échecs d'opérations persistent de façon fiable (#3171) ; les attentes de questions à l'utilisateur survivent aux redémarrages de l'application (#3223).
-- **Notebook et runtimes** — le démarrage et le nettoyage du REPL Windows sont renforcés (#3173) ; l'exécution du runtime Windows isolé est réparée (#3105) ; les points d'entrée générés par pip sont reconnus (#3237) ; les chemins d'E/S scientifiques et l'incertitude du chargeur sont conservés (#3216) ; des autorisations d'accès contextuelles aux dossiers sont proposées si nécessaire (#3220).
+- **Notebook et runtimes** — le démarrage et le nettoyage du REPL Windows sont renforcés (#3173) ; l'exécution du runtime Windows isolé est réparée (#3105) ; les points d'entrée générés par pip sont reconnus (#3237) ; les chemins d'E/S scientifiques et l'incertitude du chargeur sont conservés (#3216) ; des autorisations d'accès contextuelles aux dossiers sont proposées si nécessaire (#3220) ; la traversée parentale des chemins gérés est accordée sans énumération des répertoires (#3246).
 - **PDF et aperçu** — la navigation par plan est alignée sur les positions des sections (#3234) ; les plans indisponibles sont clarifiés et la navigation flotte en mode réduit (#3232) ; la barre latérale des notes flotte dans les lecteurs réduits (#3229) ; le contenu natif des figures et des tableaux est préservé quelle que soit la mise en page des articles (#3217).
 - **Agents et autorisations** — les dossiers accordés sont exposés aux sessions Codex (#3209) ; la correspondance des autorisations ACP est unifiée avec diagnostic des approbations de secours (#3189) ; les mises à jour natives des skills OpenCode se corrélationnent correctement (#3198) ; la récupération des autorisations brutes de dossiers est visible dans l'espace de travail (#3235).
 - **Espace de travail et paquets** — les objets `.science` identiques sont dédupliqués (#3206) ; les brouillons de fournisseurs et de projets sont protégés et les retours d'actions clarifiés (#3182) ; les erreurs d'arrière-plan peuvent être masquées (#3203).

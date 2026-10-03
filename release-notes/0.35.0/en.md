@@ -16,6 +16,7 @@
 - Drag and drop files anywhere across the conversation to attach them. (#3224)
 - Structure extraction for uploaded PDFs, alongside the existing generated-PDF support. (#3222)
 - Windows titlebar application menus for native window management. (#3201)
+- Network access rules separate public automation from reviewed private services: private grants bind to an exact hostname, port, and reviewed address set, with DNS rechecked before saving. (#3249)
 
 ## 🔧 Improvements
 
@@ -27,7 +28,7 @@
 ## 🐛 Bug Fixes
 
 - **Replay and sessions** — notebook state is preserved and generated galleries stabilized in replay (#3219); turn outcomes and operation failures persist reliably (#3171); ask-user waits survive app restarts (#3223).
-- **Notebook and runtimes** — Windows REPL startup and cleanup are hardened (#3173); isolated Windows runtime execution is repaired (#3105); pip-generated entry points are matched (#3237); scientific I/O paths and loader uncertainty are retained (#3216); contextual folder access grants are offered when needed (#3220).
+- **Notebook and runtimes** — Windows REPL startup and cleanup are hardened (#3173); isolated Windows runtime execution is repaired (#3105); pip-generated entry points are matched (#3237); scientific I/O paths and loader uncertainty are retained (#3216); contextual folder access grants are offered when needed (#3220); parent traversal for managed paths is granted without directory enumeration (#3246).
 - **PDF and preview** — outline navigation aligns with section positions (#3234); unavailable outlines are clarified and narrow navigation floats (#3232); the notes sidebar floats in narrow readers (#3229); native figure and table content is preserved across varied paper layouts (#3217).
 - **Agents and permissions** — granted folders are exposed to Codex sessions (#3209); ACP grant matching is unified with diagnosis of fallback approvals (#3189); native OpenCode skill updates correlate correctly (#3198); raw folder permission recovery is surfaced in the workspace (#3235).
 - **Workspace and packages** — identical `.science` objects are deduplicated (#3206); provider and Project drafts are protected and action feedback clarified (#3182); background errors are dismissible (#3203).

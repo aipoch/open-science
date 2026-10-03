@@ -16,6 +16,7 @@
 - Arrastra y suelta archivos en cualquier parte de la conversación para adjuntarlos. (#3224)
 - Extracción de estructura para PDF cargados, junto a la compatibilidad existente con PDF generados. (#3222)
 - Menús de aplicación en la barra de título de Windows para una gestión nativa de ventanas. (#3201)
+- Las reglas de acceso a la red separan la automatización pública de los servicios privados revisados: las concesiones privadas se vinculan a un nombre de host exacto, un puerto y un conjunto de direcciones revisado, con DNS reverificado antes de guardar. (#3249)
 
 ## 🔧 Mejoras
 
@@ -27,7 +28,7 @@
 ## 🐛 Correcciones
 
 - **Reproducción y sesiones** — el estado del notebook se conserva y las galerías generadas se estabilizan en la reproducción (#3219); los resultados de los turnos y los fallos de operaciones persisten de forma fiable (#3171); las esperas de preguntas al usuario sobreviven a los reinicios de la app (#3223).
-- **Notebook y tiempos de ejecución** — el inicio y la limpieza del REPL en Windows se endurecen (#3173); la ejecución aislada del tiempo de ejecución en Windows se repara (#3105); los puntos de entrada generados por pip se reconocen (#3237); las rutas de E/S científicas y la incertidumbre del cargador se conservan (#3216); los permisos contextuales de acceso a carpetas se ofrecen cuando se necesitan (#3220).
+- **Notebook y tiempos de ejecución** — el inicio y la limpieza del REPL en Windows se endurecen (#3173); la ejecución aislada del tiempo de ejecución en Windows se repara (#3105); los puntos de entrada generados por pip se reconocen (#3237); las rutas de E/S científicas y la incertidumbre del cargador se conservan (#3216); los permisos contextuales de acceso a carpetas se ofrecen cuando se necesitan (#3220); el recorrido a directorios padre para rutas gestionadas se concede sin enumeración de directorios (#3246).
 - **PDF y vista previa** — la navegación por esquema se alinea con las posiciones de las secciones (#3234); los esquemas no disponibles se aclaran y la navegación estrecha flota (#3232); la barra lateral de notas flota en lectores estrechos (#3229); el contenido nativo de figuras y tablas se conserva en distintas maquetas de artículos (#3217).
 - **Agentes y permisos** — las carpetas concedidas se exponen a las sesiones de Codex (#3209); la coincidencia de concesiones de ACP se unifica con diagnóstico de aprobaciones de respaldo (#3189); las actualizaciones de skills nativas de OpenCode se correlacionan correctamente (#3198); la recuperación de permisos de carpetas sin procesar se muestra en el espacio de trabajo (#3235).
 - **Espacio de trabajo y paquetes** — los objetos `.science` idénticos se deduplican (#3206); los borradores de proveedor y Project se protegen y la retroalimentación de acciones se aclara (#3182); los errores en segundo plano se pueden descartar (#3203).
