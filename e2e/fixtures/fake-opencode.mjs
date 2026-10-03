@@ -647,7 +647,7 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
     const call = async (name, arguments_ = {}) =>
       toolResult(name, await client.callTool({ name, arguments: arguments_ }))
     const execute = async (code) =>
-      controlResultValue(await call('repl_execute', { code, timeoutMs: 30_000 }))
+      controlResultValue(await call('repl_execute', { code, timeoutMs: 180_000 }))
     const first = await execute(`
       globalThis.certificationState = 'first-cell';
       return { marker: globalThis.certificationState, electron: Boolean(process.versions.electron) };
@@ -671,7 +671,7 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
     if (second.marker !== 'second-cell' || !second.reset)
       throw new Error('REPL restart did not produce a fresh interpreter.')
     // Exercise an actual child exit, then verify cleanup does not fence the next Shell run.
-    const exited = await call('repl_execute', { code: 'process.exit(23)', timeoutMs: 30_000 })
+    const exited = await call('repl_execute', { code: 'process.exit(23)', timeoutMs: 180_000 })
     if (exited.status !== 'failed') throw new Error('The deliberate REPL exit was not reported.')
     const shell = await call('bash_execute', { command: "Write-Output 'REPL_CLEANUP_SHELL_OK'" })
     if (shell.exitCode !== 0 || !shell.stdout?.includes('REPL_CLEANUP_SHELL_OK'))

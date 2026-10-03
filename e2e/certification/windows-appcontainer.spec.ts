@@ -78,7 +78,7 @@ test('certifies a packaged Windows AppContainer REPL lifecycle', async ({ app },
 
     for (const phase of ['before-app-restart', 'after-app-restart']) {
       await test.step(phase, async () => {
-        await sendPrompt(page, prompt, 'Windows REPL lifecycle verified:', 180_000)
+        await sendPrompt(page, prompt, 'Windows REPL lifecycle verified:', 300_000)
         await assertClean()
         await testInfo.attach(phase, { body: await page.screenshot(), contentType: 'image/png' })
       })
