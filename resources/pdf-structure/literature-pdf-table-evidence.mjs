@@ -158,7 +158,8 @@ function isDamagedNativeFormulaLayout(table, caption) {
   const ordinal = populated.some((text) =>
     /(?:^|\s)\((?:[A-Z]\.)?\d+(?:\.\d+)*\)(?:$|[,.])/u.test(text)
   )
-  const symbolicCount = (populated.join(' ').match(/[=∈≤≥⪰∥∇∑√∞∫⋆ℓβγθνξ∆⊕⊗∀∃�−+*\/^]/gu) ?? []).length
+  const symbolicCount = (populated.join(' ').match(/[=∈≤≥⪰∥∇∑√∞∫⋆ℓβγθνξ∆⊕⊗∀∃�−+*\/^]/gu) ?? [])
+    .length
   if (caption && controlGlyphs === 0 && !ordinal && symbolicCount < 3) return false
   if (
     table.grid.length <= 4 &&
@@ -204,7 +205,6 @@ function isCaptionedNarrativeCard(table, caption) {
   const measurements = table.grid
     .flat()
     .filter((cell) => /^[-+−]?\d+(?:\.\d+)?(?:\s*[%±].*)?$/.test(cell.trim()))
-  const width = Math.max(...table.grid.map((row) => row.length))
   return (
     measurements.length === 0 &&
     words >= 40 &&

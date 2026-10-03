@@ -792,10 +792,7 @@ function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
     .sort((a, b) => b.score - a.score)
   if (!ranked.length) return undefined
   const winner = ranked[0]
-  if (
-    winner.direction >= 2 &&
-    winner.items.every((item) => item.graphic.kind !== 'image')
-  )
+  if (winner.direction >= 2 && winner.items.every((item) => item.graphic.kind !== 'image'))
     return undefined
   const rect = winner.bounds
   return [
