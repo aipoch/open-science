@@ -137,7 +137,7 @@ function isNativeFormulaSystem(table, caption) {
 // replacement characters) when the crop carries a large amount of unowned
 // text.  A complete two-column parameter table remains eligible because it has
 // no crop-boundary/unassigned evidence.
-function isDamagedNativeFormulaLayout(table) {
+function isDamagedNativeFormulaLayout(table, caption) {
   if (!table.cropRect || table.grid.length < 3) return false
   const populated = table.grid
     .flat()
@@ -149,11 +149,17 @@ function isDamagedNativeFormulaLayout(table) {
     const text = row.filter(Boolean).join(' ')
     return math.test(text) && /[\p{L}α-ω]/u.test(text)
   })
+  if (caption && formulaRows.length < 2) return false
   const measuredRows = table.grid.filter(
     (row) =>
       row.filter((text) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(text.trim())).length >= 2
   )
   const controlGlyphs = populated.join(' ').match(/[\u0000-\u001f�]/gu)?.length ?? 0
+  const ordinal = populated.some((text) =>
+    /(?:^|\s)\((?:[A-Z]\.)?\d+(?:\.\d+)*\)(?:$|[,.])/u.test(text)
+  )
+  const symbolicCount = (populated.join(' ').match(/[=∈≤≥⪰∥∇∑√∞∫⋆ℓβγθνξ∆⊕⊗∀∃�−+*\/^]/gu) ?? []).length
+  if (caption && controlGlyphs === 0 && !ordinal && symbolicCount < 3) return false
   if (
     table.grid.length <= 4 &&
     controlGlyphs >= Math.max(2, Math.ceil(populated.length * 0.2)) &&
@@ -164,9 +170,6 @@ function isDamagedNativeFormulaLayout(table) {
   const damage =
     (table.unassigned?.length ?? 0) + (table.clipped?.length ?? 0) >=
     Math.max(4, populated.length * 0.45)
-  const ordinal = populated.some((text) =>
-    /(?:^|\s)\((?:[A-Z]\.)?\d+(?:\.\d+)*\)(?:$|[,.])/u.test(text)
-  )
   return damage && (ordinal || formulaRows.length >= 3 || table.grid.length <= 4)
 }
 
@@ -195,7 +198,7 @@ function isImageBackedNonTable(table, caption, sourceGraphics = []) {
 }
 
 function isCaptionedNarrativeCard(table, caption) {
-  if (!caption?.rect || !table.grid.length || !table.unassigned?.length) return false
+  if (!caption || !table.grid.length || !table.unassigned?.length) return false
   const text = table.grid.flat().join(' ')
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
   const measurements = table.grid
@@ -204,8 +207,8 @@ function isCaptionedNarrativeCard(table, caption) {
   const width = Math.max(...table.grid.map((row) => row.length))
   return (
     measurements.length === 0 &&
-    words >= 100 &&
-    table.unassigned.length >= (width <= 1 ? 8 : 7) &&
+    words >= 40 &&
+    table.unassigned.length >= 8 &&
     (table.issues?.includes('text-crosses-crop-boundary') ||
       table.issues?.includes('overlapping-predicted-columns')) &&
     table.grid.length <= 5
@@ -337,7 +340,7 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules, so
     return false
   if (isNativeSingleColumnDerivation(table, caption, pageItems, sourceRules)) return false
   if (isNativeFormulaSystem(table, caption)) return false
-  if (isDamagedNativeFormulaLayout(table)) return false
+  if (isDamagedNativeFormulaLayout(table, caption)) return false
   if (isCaptionedNarrativeCard(table, caption)) return false
   if (isImageBackedNonTable(table, caption, sourceGraphics)) return false
   if (caption) return true

@@ -704,6 +704,11 @@ function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
     .filter(({ rect }) => rect && area(rect) > 0)
     .filter(
       ({ rect }) =>
+        !(
+          rect[1] < page.height * 0.1 &&
+          rect[3] - rect[1] < page.height * 0.08 &&
+          rect[2] - rect[0] > page.width * 0.7
+        ) &&
         !tableRects.some((table) => intersection(table, rect) / area(rect) > 0.8) &&
         !otherCaptions.some((candidate) => intersection(candidate.rect, rect) / area(rect) > 0.6) &&
         intersection(caption.rect, rect) / area(rect) < 0.25
@@ -757,7 +762,7 @@ function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
     sideGraphics('right')
   ]
   const ranked = directions
-    .map((items) => {
+    .map((items, direction) => {
       if (!items.length) return undefined
       const bounds = union(items.map((item) => item.rect))
       const imageCount = items.filter((item) => item.graphic.kind === 'image').length
@@ -780,12 +785,19 @@ function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
       if (imageCount < 2 && (imageCount > 0 || maxArea < 0.02)) return undefined
       const pathCount = items.filter((item) => item.graphic.kind === 'path').length
       if (imageCount === 0 && pathCount < 3) return undefined
-      return { bounds, score: area(bounds) + maxArea * page.width * page.height }
+      if (imageCount === 0 && bounds[2] - bounds[0] < page.width * 0.45) return undefined
+      return { bounds, direction, items, score: area(bounds) + maxArea * page.width * page.height }
     })
     .filter(Boolean)
     .sort((a, b) => b.score - a.score)
   if (!ranked.length) return undefined
-  const rect = ranked[0].bounds
+  const winner = ranked[0]
+  if (
+    winner.direction >= 2 &&
+    winner.items.every((item) => item.graphic.kind !== 'image')
+  )
+    return undefined
+  const rect = winner.bounds
   return [
     Math.max(0, rect[0] - 2),
     Math.max(0, rect[1] - 2),
