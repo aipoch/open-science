@@ -84,9 +84,9 @@ jobs:
     if: ${{ needs.setup.result == 'success' && !inputs.setup_only }}
     runs-on: ${{ matrix.os }}
     environment: ${{ inputs.require_windows_signing && matrix.platform == 'win' && 'windows-signing' || '' }}
-    # Windows Notebook provisioning now runs through the installed app; leave headroom for that
-    # operation in addition to install, migration, launch, and shutdown probes.
-    timeout-minutes: ${{ matrix.platform == 'win' && 40 || 25 }}
+    # Windows certification can use a 30-minute hosted-runner ACL budget after dependency setup,
+    # artifact download, installer smoke, and post-job evidence collection.
+    timeout-minutes: ${{ matrix.platform == 'win' && 60 || 25 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
