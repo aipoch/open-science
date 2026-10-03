@@ -728,6 +728,7 @@
       "src/main/notebook/dependency-analysis.cwd-lineage.test.ts",
       "src/main/notebook/r-connection-guard.test.ts",
       "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
+      "src/main/workspace-checkpoints/owner.test.ts",
       "src/main/session-persistence/missing-runtime-session-repro.test.ts",
       "src/main/session-persistence/prompt-preparation-restart.test.ts",
       "src/main/session-persistence/terminal-commit-scheduler.test.ts",

@@ -102,6 +102,9 @@ export const sanitizeConversationGraph = (
               : {}),
             ...(asString(candidate.headMessageId)
               ? { headMessageId: asString(candidate.headMessageId) }
+              : {}),
+            ...(asString(candidate.workspaceCheckpointId)
+              ? { workspaceCheckpointId: asString(candidate.workspaceCheckpointId) }
               : {})
           }
         ]

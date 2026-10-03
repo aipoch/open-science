@@ -1,0 +1,19 @@
+{
+  "ownerPaths": [
+    "src/main/workspace-checkpoints/index.ts",
+    "src/main/workspace-checkpoints/owner.test.ts",
+    "src/main/workspace-checkpoints/owner.ts"
+  ],
+  "interfacePaths": [
+    "src/main/workspace-checkpoints/index.ts",
+    "src/main/workspace-checkpoints/owner.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/workspace-checkpoints/owner.test.ts"],
+    "contract": [],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

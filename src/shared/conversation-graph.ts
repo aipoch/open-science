@@ -49,6 +49,8 @@ export type PersistedMessageBranch = {
   forkActivityId?: string
   supersededMessageId?: string
   headMessageId?: string
+  // Additive workspace state binding. Historical graphs omit it and retain conversation-only behavior.
+  workspaceCheckpointId?: string
   createdAt: number
   updatedAt: number
 }
