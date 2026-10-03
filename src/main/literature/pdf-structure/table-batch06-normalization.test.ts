@@ -67,6 +67,8 @@ it('removes an unowned separator column while preserving a source-backed blank',
     makeCell(1, 2, ''),
     makeCell(1, 3, '3')
   ]
+  cells[3].rect = [330, 0, 400, 15]
+  cells[7].rect = [330, 20, 400, 35]
   const columnRects = [
     [0, 0, 100, 40],
     [100, 0, 200, 40],
@@ -78,6 +80,7 @@ it('removes an unowned separator column while preserving a source-backed blank',
   expect(removeEmptySeparatorColumns({ cells, columns, columnRects, items: [], repairs })).toBe(1)
   expect(columnRects).toHaveLength(3)
   expect(cells.map((cell) => cell.column)).toEqual([0, 1, 2, 0, 1, 2])
+  expect(cells.filter((cell) => cell.text === 'C')[0].rect).toEqual([300, 0, 400, 15])
   expect(repairs).toContain('empty-separator-column-removed')
 })
 

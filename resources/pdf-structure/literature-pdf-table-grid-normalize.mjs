@@ -38,15 +38,22 @@ export function removeEmptySeparatorColumns({
     )
     const populatedAfter = cells.some((cell) => cell.column > column && hasText(cell))
     if (!populatedBefore || !populatedAfter) continue
+    columnRects.splice(column, 1)
+    if (columns?.length > column) columns.splice(column, 1)
     cells.splice(
       0,
       cells.length,
       ...cells
         .filter((cell) => cell.column !== column)
-        .map((cell) => (cell.column > column ? { ...cell, column: cell.column - 1 } : cell))
+        .map((cell) => {
+          const next = cell.column > column ? { ...cell, column: cell.column - 1 } : cell
+          const first = columnRects[next.column]
+          const last = columnRects[next.column + next.colSpan - 1]
+          return first && last
+            ? { ...next, rect: [first[0], next.rect[1], last[2], next.rect[3]] }
+            : next
+        })
     )
-    columnRects.splice(column, 1)
-    if (columns?.length > column) columns.splice(column, 1)
     removed++
   }
   if (removed) repairs.push('empty-separator-column-removed')

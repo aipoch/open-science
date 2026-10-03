@@ -908,6 +908,40 @@ it('rejects a graphics-count-only listing block as a figure', () => {
   expect(figure.issue).toBe('text-dominant-graphics')
 })
 
+it('keeps a dense vector plot when labels are not listing-shaped prose', () => {
+  const graphicsBounds = Array.from({ length: 2_000 }, (_, index) => ({
+    kind: 'path',
+    normalizedRect: [
+      0.1 + (index % 40) * 0.02,
+      0.1 + Math.floor(index / 40) * 0.01,
+      0.125 + (index % 40) * 0.02,
+      0.112 + Math.floor(index / 40) * 0.01
+    ]
+  }))
+  graphicsBounds.unshift({ kind: 'path', normalizedRect: [0.1, 0.1, 0.2, 0.25] })
+  const lines = Array.from({ length: 45 }, (_, index) => ({
+    text: `label ${index} value`,
+    x: 70 + (index % 9) * 55,
+    y: 100 + Math.floor(index / 9) * 35,
+    width: 35,
+    height: 8,
+    fontSize: 8
+  }))
+  const [figure] = associateFigures(
+    {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      lines,
+      graphicsBounds
+    },
+    [{ page: 1, lines: ['Figure 3. Dense vector plot.'], rect: [60, 500, 540, 520] }]
+  )
+  expect(figure.rect).toBeDefined()
+  expect(figure.issue).toBeUndefined()
+})
+
 it('does not extend a figure into nearby column prose but retains its axis labels', () => {
   const sample = {
     ...page,

@@ -631,6 +631,19 @@ function figureGraphicArea(page, graphic) {
   return rect ? area(rect) / (page.width * page.height) : 0
 }
 
+function hasVerifiedListingEvidence(page, lines) {
+  if (lines.length < 40) return false
+  const proseLines = lines.filter(
+    (line) => line.width >= page.width * 0.45 && line.text.trim().split(/\s+/).length >= 5
+  )
+  if (proseLines.length < Math.max(30, Math.ceil(lines.length * 0.75))) return false
+  const left = Math.min(...proseLines.map((line) => line.x))
+  const aligned = proseLines.filter(
+    (line) => Math.abs(line.x - left) <= Math.max(4, page.width * 0.04)
+  )
+  return aligned.length >= Math.ceil(proseLines.length * 0.8)
+}
+
 function isTextDominantFigure(page, figure, candidates) {
   if (!figure.rect || !figure.graphicsCount || figure.graphicsCount < 100) return false
   const rect = figure.rect
@@ -658,7 +671,7 @@ function isTextDominantFigure(page, figure, candidates) {
       ) &&
       intersection(lineRect(line), rect) / area(lineRect(line)) > 0.75
   )
-  return lines.length >= 40 && area(rect) / (page.width * page.height) >= 0.35
+  return hasVerifiedListingEvidence(page, lines) && area(rect) / (page.width * page.height) >= 0.35
 }
 
 function isTextDominantPage(page, candidates) {
@@ -676,7 +689,7 @@ function isTextDominantPage(page, candidates) {
           candidate.page === page.pageNumber && intersection(lineRect(line), candidate.rect) > 0
       )
   )
-  return lines.length >= 40
+  return hasVerifiedListingEvidence(page, lines)
 }
 
 function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
