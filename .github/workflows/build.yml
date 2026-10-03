@@ -488,6 +488,49 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      # electron-builder installs this module itself during packaging, but on a cold runner the
+      # CurrentUser install can land somewhere later -NoProfile pwsh processes do not scan, and the
+      # failure only surfaces as an opaque "signing failed" deep inside the build. Install (or
+      # reuse) and verify discoverability up front so the job fails here, with a real diagnostic.
+      - name: Pre-install Azure Trusted Signing module
+        if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable -Name TrustedSigning)) {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
+            Install-Module -Name TrustedSigning -MinimumVersion 0.5.0 -Force -Repository PSGallery -Scope CurrentUser
+          }
+          if (Get-Command Invoke-TrustedSigning -ErrorAction SilentlyContinue) {
+            Write-Host "Invoke-TrustedSigning available: $((Get-Command Invoke-TrustedSigning).Source)"
+            exit 0
+          }
+          # CurrentUser installs land under the Documents folder; folder redirection can leave that
+          # directory off PSModulePath for later -NoProfile pwsh processes. Publish the real
+          # location as a user-level PSModulePath entry so the signing processes electron-builder
+          # spawns can autoload the module.
+          $candidates = @(
+            "$env:USERPROFILE\Documents\PowerShell\Modules",
+            "$env:USERPROFILE\OneDrive\Documents\PowerShell\Modules",
+            "$env:USERPROFILE\Documents\WindowsPowerShell\Modules",
+            "$env:USERPROFILE\OneDrive\Documents\WindowsPowerShell\Modules"
+          )
+          $moduleRoot = $candidates | Where-Object { Test-Path (Join-Path $_ 'TrustedSigning') } | Select-Object -First 1
+          if (-not $moduleRoot) {
+            Write-Host "PSModulePath: $env:PSModulePath"
+            throw 'TrustedSigning module installed but its directory could not be located.'
+          }
+          $userPath = [Environment]::GetEnvironmentVariable('PSModulePath', 'User')
+          if (-not $userPath) { $userPath = '' }
+          if (($userPath -split ';') -notcontains $moduleRoot) {
+            $joined = @(($userPath -split ';' | Where-Object { $_ }), $moduleRoot) -join ';'
+            [Environment]::SetEnvironmentVariable('PSModulePath', $joined, 'User')
+          }
+          $env:PSModulePath = "$env:PSModulePath;$moduleRoot"
+          if (-not (Get-Command Invoke-TrustedSigning -ErrorAction SilentlyContinue)) {
+            throw 'Invoke-TrustedSigning is still not discoverable after PSModulePath repair.'
+          }
+          Write-Host "Invoke-TrustedSigning available after PSModulePath repair: $((Get-Command Invoke-TrustedSigning).Source)"
+
       # Build the renderer + main and Web bundles, then package with electron-builder. The verify
       # job already typechecks this exact checkout once, so the four platform jobs must not repeat it.
       #
