@@ -136,9 +136,13 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Идентификация, происхождение, заболевания, сведения о качестве и связи с базами данных для клеточных линий из Cellosaurus.",
     "Search cell lines by name or synonym.": "Поиск клеточных линий по названию или синониму.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "Получение идентификации, происхождения, сведений о качестве и связей с базами данных клеточной линии по CVCL или RRID.",
+
+    "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "Поиск экспериментальных структур PDB по последовательности белка, идентичности последовательностей и покрытию последовательности запроса; получение сущностей, цепей и подробностей выравнивания.",
+
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Связи заболеваний и генов с фенотипами и источники доказательств через Monarch Initiative.",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "Получить связи заболеваний с фенотипами, источники доказательств и типы отношений.",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "Получить связи генов с фенотипами, источники доказательств и типы отношений.",

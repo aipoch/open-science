@@ -69,6 +69,11 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t(
         'Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.'
       )
+
+    case 'structures/pdb_search_sequence':
+      return t(
+        'Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.'
+      )
     case 'monarch/monarch_get_disease_phenotypes':
       return t('Retrieve disease–phenotype associations with evidence sources and relation types.')
     case 'monarch/monarch_get_gene_phenotypes':

@@ -133,9 +133,13 @@
     "More items": "更多会话"
   },
   "renderer": {
+
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "来自 Cellosaurus 的细胞系身份、来源、疾病、质量记录和数据库映射。",
     "Search cell lines by name or synonym.": "按名称或别名搜索细胞系。",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "通过 CVCL 或 RRID 获取细胞系身份、来源、质量记录和数据库映射。",
+
+    "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "根据蛋白质序列、序列一致性和查询序列覆盖率搜索 PDB 实验结构，返回实体、链和比对详情。",
+
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "通过 Monarch Initiative 查询疾病和基因的表型关联及证据来源。",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "查询疾病—表型关联及其证据来源和关系类型。",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "查询基因—表型关联及其证据来源和关系类型。",

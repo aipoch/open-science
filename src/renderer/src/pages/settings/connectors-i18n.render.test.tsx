@@ -94,6 +94,30 @@ afterEach(() => {
 
 describe('ConnectorAddForm copy', () => {
   it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
+    'renders the PDB sequence search description from the %s catalog',
+    async (locale) => {
+      await prepareI18nLocale(locale)
+      const english =
+        'Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.'
+      const fallback = 'Full API contract for the agent'
+      const id = 'structures/pdb_search_sequence'
+      const t = i18next.getFixedT(locale, 'renderer')
+      const translated = i18next.getResource(locale, 'renderer', english)
+      expect(typeof translated).toBe('string')
+      expect(translated).not.toBe('')
+      expect(translated).not.toBe(english)
+      act(() => {
+        root.render(<p>{connectorToolDescription(id, fallback, t)}</p>)
+      })
+      expect(container.querySelector('p')?.textContent).toBe(translated)
+      expect(container.textContent).not.toContain(fallback)
+      expect(connectorToolDescription(id, fallback, i18next.getFixedT('en', 'renderer'))).toBe(
+        english
+      )
+    }
+  )
+
+  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
     'localizes Monarch evidence descriptions in %s',
     async (locale) => {
       await prepareI18nLocale(locale)

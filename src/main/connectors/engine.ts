@@ -343,6 +343,7 @@ export class ParserEngine {
           },
           options?.retry === false ? 0 : this.retries
         )
+        if (options?.allowNoContent && response.status === 204) return undefined
         return bodyText === undefined ? response.json() : JSON.parse(bodyText)
       }
     }

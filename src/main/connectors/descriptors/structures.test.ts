@@ -15,6 +15,7 @@ const EXPECTED_IDS = [
   'intact_get_interaction_details',
   'intact_build_network',
   'pdb_search_structures',
+  'pdb_search_sequence',
   'pdb_get_structures',
   'pdb_get_entities',
   'pdb_get_ligands',

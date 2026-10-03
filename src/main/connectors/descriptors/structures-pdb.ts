@@ -1,7 +1,8 @@
 import type { ToolDescriptor } from '../types'
 
-// RCSB PDB search + data REST APIs. The search API (search.rcsb.org) is a POST-only attribute
-// query returning identifiers + relevance scores; the data API (data.rcsb.org) serves entry /
+// RCSB PDB search + data REST APIs. We POST to search.rcsb.org: attribute
+// and sequence queries return identifiers + relevance scores and optional alignment metadata.
+// The data API (data.rcsb.org) serves entry /
 // polymer-entity / nonpolymer-entity / chem-comp metadata by id. Metadata only — coordinate files
 // (mmCIF/PDB) are never downloaded. Shapes confirmed live against 1TUP.
 const SEARCH_URL = 'https://search.rcsb.org/rcsbsearch/v2/query'
@@ -346,7 +347,130 @@ function buildSearchQuery(a: Record<string, unknown>): Record<string, unknown> {
   return { type: 'group', logical_operator: 'and', nodes }
 }
 
-// ---- the 4 tools ----------------------------------------------------------------------------
+// Coverage is computed from inclusive query coordinates, not alignment_length (which can include
+// gaps) or query_length (the provider describes that as the aligned region's length).
+type SequenceMatch = {
+  sequence_identity?: number
+  evalue?: number
+  bitscore?: number
+  alignment_length?: number
+  mismatches?: number
+  gaps_opened?: number
+  query_beg?: number
+  query_end?: number
+  subject_beg?: number
+  subject_end?: number
+}
+type SequenceHit = SearchHit & {
+  services?: Array<{
+    service_type?: string
+    nodes?: Array<{ match_context?: SequenceMatch[] }>
+  }>
+}
+
+function proteinSequence(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('sequence must be a protein sequence string')
+  if (value.length > 50_000) throw new Error('sequence input must not exceed 50000 characters')
+  const lines = value.trim().split(/\r?\n/)
+  if (lines[0]?.startsWith('>')) lines.shift()
+  const sequence = lines.join('').replace(/\s/g, '').toUpperCase()
+  if (!/^[ACDEFGHIKLMNPQRSTVWYBXZJUO]+$/.test(sequence)) {
+    throw new Error('sequence must contain one ungapped protein sequence (raw or single-record FASTA)')
+  }
+  if (sequence.length < 25 || sequence.length > 10_000) {
+    throw new Error('sequence must contain 25..10000 amino acids')
+  }
+  return sequence
+}
+
+function sequenceNumber(
+  args: Record<string, unknown>,
+  key: string,
+  fallback: number,
+  min: number,
+  max: number,
+  integer = false
+): number {
+  const value = args[key] === undefined ? fallback : args[key]
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value < min ||
+    value > max ||
+    (integer && !Number.isInteger(value))
+  ) {
+    throw new Error(`${key} must be ${integer ? 'an integer' : 'a finite number'} in ${min}..${max}`)
+  }
+  return value
+}
+
+function queryCoverage(match: SequenceMatch, sequenceLength: number): number | null {
+  const { query_beg: begin, query_end: end } = match
+  if (
+    typeof begin !== 'number' ||
+    typeof end !== 'number' ||
+    !Number.isInteger(begin) ||
+    !Number.isInteger(end) ||
+    begin < 1 ||
+    end < begin ||
+    end > sequenceLength
+  )
+    return null
+  return (end - begin + 1) / sequenceLength
+}
+
+function sequenceResponseObject(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('invalid RCSB sequence response object')
+  }
+  return value as Record<string, unknown>
+}
+
+function parseSequenceMatch(value: unknown): SequenceMatch {
+  const match = sequenceResponseObject(value)
+  for (const key of ['sequence_identity', 'evalue', 'bitscore'] as const) {
+    const metric = match[key]
+    if (
+      typeof metric !== 'number' ||
+      !Number.isFinite(metric) ||
+      metric < 0 ||
+      (key === 'sequence_identity' && metric > 1)
+    )
+      throw new Error(`invalid RCSB sequence match ${key}`)
+  }
+  for (const key of [
+    'alignment_length', 'mismatches', 'gaps_opened',
+    'query_beg', 'query_end', 'subject_beg', 'subject_end'
+  ] as const) {
+    const metric = match[key]
+    if (metric == null) continue
+    const minimum = key === 'mismatches' || key === 'gaps_opened' ? 0 : 1
+    if (typeof metric !== 'number' || !Number.isInteger(metric) || metric < minimum) {
+      throw new Error(`invalid RCSB sequence match ${key}`)
+    }
+  }
+  return match as SequenceMatch
+}
+
+function parseSequenceEntity(value: unknown, pdbId: string, entityId: string): PolymerEntityRaw {
+  const raw = sequenceResponseObject(value)
+  const ids = sequenceResponseObject(raw.rcsb_polymer_entity_container_identifiers)
+  if (
+    ids.entry_id !== pdbId ||
+    ids.entity_id !== entityId ||
+    (raw.rcsb_id != null && raw.rcsb_id !== `${pdbId}_${entityId}`)
+  )
+    throw new Error('RCSB sequence entity metadata does not match the requested identity')
+  for (const key of ['asym_ids', 'auth_asym_ids'] as const) {
+    const chains = ids[key]
+    if (!Array.isArray(chains) || chains.some((chain) => typeof chain !== 'string' || !chain.trim())) {
+      throw new Error(`invalid RCSB sequence entity ${key}`)
+    }
+  }
+  return raw as PolymerEntityRaw
+}
+
+// ---- the 5 tools ----------------------------------------------------------------------------
 
 export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
   {
@@ -419,6 +543,169 @@ export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
         n_retrieved: records.length,
         truncated: totalCount > records.length,
         max_rows: maxRows,
+        records
+      }
+    }
+  },
+  {
+    id: 'pdb_search_sequence',
+    connector: 'structures',
+    description:
+      'Find experimental PDB protein entities from one ungapped protein sequence (25..10000 amino acids, raw or single-record FASTA; whitespace and lowercase accepted). Sequence similarity uses RCSB MMseqs2 sequence identity: identity_cutoff is a fraction 0..1, not a percentage; evalue_cutoff is the maximum E-value. min_query_coverage (0..1) filters each alignment locally using (query_end - query_beg + 1) / input sequence length; a hit needs one alignment meeting the cutoff, and only qualifying alignments are returned. This is sequence coverage, not experimentally resolved residue coverage. Scans at most max_candidates (default 100, max 1000) upstream hits in relevance order, then returns at most max_rows (default 10, max 25) entities with chain IDs and match metrics. total_count is the upstream total BEFORE coverage filtering; n_matched counts qualifying entities only among scanned candidates. truncated means more upstream candidates or qualifying records remain. Increase max_candidates to examine lower-ranked hits. Chain IDs list all deposited copies of the matching entity: asym_ids are label IDs, auth_asym_ids are author IDs. Metadata 404s retain the match with metadata_error=not_found and null chain IDs. Relevance score is not sequence identity. Experimental structures only; chain to pdb_get_structures for entry metadata. No coordinate files are downloaded.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        sequence: { type: 'string', minLength: 25, maxLength: 50_000 },
+        identity_cutoff: { type: 'number', minimum: 0, maximum: 1, default: 0.3 },
+        evalue_cutoff: { type: 'number', exclusiveMinimum: 0, default: 0.1 },
+        min_query_coverage: { type: 'number', minimum: 0, maximum: 1, default: 0 },
+        max_candidates: { type: 'integer', minimum: 1, maximum: 1000, default: 100 },
+        max_rows: { type: 'integer', minimum: 1, maximum: 25, default: 10 }
+      },
+      required: ['sequence']
+    },
+    required: ['sequence'],
+    returns:
+      '{query_length, identity_cutoff, evalue_cutoff, min_query_coverage, total_count (before coverage filtering), n_scanned, n_matched (within scanned candidates), n_returned, max_candidates, max_rows, truncated, records:[{rcsb_id, pdb_id, entity_id, score, description, asym_ids, auth_asym_ids, sequence_length, matches:[{sequence_identity, evalue, bitscore, alignment_length, mismatches, gaps_opened, query_beg, query_end, subject_beg, subject_end, query_coverage}]}]}. Coordinates are 1-based inclusive. Unavailable optional match metrics are null; unknown coverage never passes a positive cutoff. Malformed required metrics or entity metadata cause an error. metadata_error="not_found" marks missing entity metadata. Empty search returns records:[].',
+    example:
+      'const result = await host.mcp("structures", "pdb_search_sequence", {"sequence": "MTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQV", "identity_cutoff": 0.9, "min_query_coverage": 0.8, "max_rows": 10})',
+    run: async (ctx, a) => {
+      const sequence = proteinSequence(a.sequence)
+      const identity = sequenceNumber(a, 'identity_cutoff', 0.3, 0, 1)
+      const evalue = sequenceNumber(a, 'evalue_cutoff', 0.1, Number.MIN_VALUE, Number.MAX_VALUE)
+      const coverage = sequenceNumber(a, 'min_query_coverage', 0, 0, 1)
+      const maxCandidates = sequenceNumber(a, 'max_candidates', 100, 1, MAX_ROWS_LIMIT, true)
+      const maxRows = sequenceNumber(a, 'max_rows', 10, 1, PDB_MAX_IDS, true)
+      const hits: SequenceHit[] = []
+      let totalCount = 0
+      while (hits.length < maxCandidates) {
+        const rows = Math.min(PAGE_ROWS, maxCandidates - hits.length)
+        const body = (await ctx.postJson(
+          SEARCH_URL,
+          {
+            query: {
+              type: 'group',
+              logical_operator: 'and',
+              nodes: [
+                {
+                  type: 'terminal',
+                  service: 'sequence',
+                  parameters: {
+                    value: sequence,
+                    sequence_type: 'protein',
+                    identity_cutoff: identity,
+                    evalue_cutoff: evalue
+                  }
+                },
+                // results_content_type alone also includes integrative structures.
+                {
+                  type: 'terminal',
+                  service: 'text',
+                  parameters: {
+                    attribute: 'rcsb_entry_info.structure_determination_methodology',
+                    operator: 'exact_match',
+                    value: 'experimental'
+                  }
+                }
+              ]
+            },
+            return_type: 'polymer_entity',
+            request_options: {
+              paginate: { start: hits.length, rows },
+              results_content_type: ['experimental'],
+              results_verbosity: 'verbose'
+            }
+          },
+          { allowNoContent: true }
+        )) as { total_count?: number; result_set?: SequenceHit[] } | undefined
+        if (body === undefined) break // Only an actual HTTP 204 takes the no-content path.
+        if (
+          body == null ||
+          !Number.isInteger(body.total_count) ||
+          (body.total_count as number) < 0 ||
+          (body.result_set !== undefined && !Array.isArray(body.result_set))
+        )
+          throw new Error('invalid RCSB sequence search response')
+        totalCount = body.total_count as number
+        const page = body.result_set ?? []
+        hits.push(...page.slice(0, rows))
+        if (hits.length >= totalCount || page.length === 0) break
+      }
+
+      const records: Record<string, unknown>[] = []
+      let nMatched = 0
+      for (const hit of hits) {
+        const contexts = (hit.services ?? [])
+          .filter((service) => service.service_type === 'sequence')
+          .flatMap((service) => service.nodes ?? [])
+          .flatMap((node) => node.match_context ?? [])
+        if (!contexts.length) throw new Error('RCSB sequence hit is missing match context')
+        const matches = contexts
+          .map(parseSequenceMatch)
+          .map((match) => ({
+            sequence_identity: match.sequence_identity ?? null,
+            evalue: match.evalue ?? null,
+            bitscore: match.bitscore ?? null,
+            alignment_length: match.alignment_length ?? null,
+            mismatches: match.mismatches ?? null,
+            gaps_opened: match.gaps_opened ?? null,
+            query_beg: match.query_beg ?? null,
+            query_end: match.query_end ?? null,
+            subject_beg: match.subject_beg ?? null,
+            subject_end: match.subject_end ?? null,
+            query_coverage: queryCoverage(match, sequence.length)
+          }))
+          .filter((match) => coverage === 0 || (match.query_coverage ?? -1) >= coverage)
+        if (!matches.length) continue
+        nMatched++
+        if (records.length >= maxRows) continue
+        // Split at the final underscore to retain compatibility with extended PDB IDs.
+        const parts = /^(.*)_([0-9]+)$/.exec(hit.identifier ?? '')
+        if (!parts || !parts[1]) throw new Error('invalid RCSB polymer entity identifier')
+        const [, pdbId, entityId] = parts
+        const record: Record<string, unknown> = {
+          rcsb_id: hit.identifier,
+          pdb_id: pdbId,
+          entity_id: entityId,
+          score: hit.score ?? null,
+          matches
+        }
+        try {
+          const raw = parseSequenceEntity(
+            await ctx.fetchJson(`${DATA_BASE}/polymer_entity/${seg(pdbId)}/${seg(entityId)}`),
+            pdbId,
+            entityId
+          )
+          const ids = raw.rcsb_polymer_entity_container_identifiers
+          record.description = raw.rcsb_polymer_entity?.pdbx_description ?? null
+          record.asym_ids = ids?.asym_ids ?? []
+          record.auth_asym_ids = ids?.auth_asym_ids ?? []
+          record.sequence_length = raw.entity_poly?.rcsb_sample_sequence_length ?? null
+        } catch (err) {
+          if (!isNotFound(err)) throw err
+          Object.assign(record, {
+            metadata_error: 'not_found',
+            description: null,
+            asym_ids: null,
+            auth_asym_ids: null,
+            sequence_length: null
+          })
+        }
+        records.push(record)
+      }
+      return {
+        query_length: sequence.length,
+        identity_cutoff: identity,
+        evalue_cutoff: evalue,
+        min_query_coverage: coverage,
+        total_count: totalCount,
+        n_scanned: hits.length,
+        n_matched: nMatched,
+        n_returned: records.length,
+        max_candidates: maxCandidates,
+        max_rows: maxRows,
+        truncated: totalCount > hits.length || nMatched > records.length,
         records
       }
     }

@@ -133,9 +133,13 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Cellosaurus による細胞株の同定情報、由来、疾患、品質記録、外部データベースとの対応。",
     "Search cell lines by name or synonym.": "名前または別名で細胞株を検索。",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "CVCL または RRID で細胞株の同定情報、由来、品質記録、データベースとの対応を取得。",
+
+    "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "タンパク質配列、配列同一性、クエリ配列のカバレッジで PDB の実験構造を検索し、エンティティ、鎖、アラインメントの詳細を取得します。",
+
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Monarch Initiative による疾患・遺伝子と表現型の関連およびエビデンスの出典。",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "疾患と表現型の関連を、エビデンスの出典と関係の種類とともに取得します。",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "遺伝子と表現型の関連を、エビデンスの出典と関係の種類とともに取得します。",

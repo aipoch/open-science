@@ -133,9 +133,13 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Cellosaurus의 세포주 식별 정보, 유래, 질환, 품질 기록 및 데이터베이스 매핑.",
     "Search cell lines by name or synonym.": "이름 또는 동의어로 세포주 검색.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "CVCL 또는 RRID로 세포주 식별 정보, 유래, 품질 기록 및 데이터베이스 매핑 조회.",
+
+    "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "단백질 서열, 서열 동일성 및 쿼리 서열 커버리지로 PDB 실험 구조를 검색하고 엔터티, 사슬 및 정렬 세부 정보를 조회합니다.",
+
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Monarch Initiative를 통한 질병 및 유전자와 표현형의 연관성과 근거 출처.",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "질병과 표현형의 연관성, 근거 출처 및 관계 유형을 조회합니다.",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "유전자와 표현형의 연관성, 근거 출처 및 관계 유형을 조회합니다.",
