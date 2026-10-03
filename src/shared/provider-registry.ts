@@ -39,6 +39,7 @@ export type OfficialVendorId =
   | 'opencode-go'
   | 'opencode'
   | 'openrouter'
+  | 'requesty'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -1472,6 +1473,79 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         'qwen/qwen3.7-max',
         'openrouter/free',
         'google/gemma-4-31b-it:free'
+      ]
+    }
+  },
+  // Requesty is also a multi-vendor gateway, so it follows OpenRouter at the end of the picker.
+  {
+    id: 'requesty',
+    label: 'Requesty',
+    // Like OpenRouter, each curated entry declares its own capability and unknown ids stay
+    // conservative.
+    reasoningEffort: 'unsupported',
+    // Anthropic /v1/messages at the router root and the OpenAI-compatible /v1/chat/completions under
+    // `/v1`. The live catalog has hundreds of `vendor/model` ids, so ship a short curated set (no
+    // modelsListUrl) instead of a refresh that would flood the picker.
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://router.requesty.ai',
+    openaiBaseUrl: 'https://router.requesty.ai/v1',
+    apiKeyUrl: 'https://app.requesty.ai/api-keys',
+    // Ids and context windows from https://router.requesty.ai/v1/models (2026-09-28).
+    models: [
+      {
+        id: 'anthropic/claude-sonnet-5',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'anthropic/claude-opus-5-5',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'anthropic/claude-haiku-4-5',
+        contextWindow: 200_000,
+        reasoningEffort: 'unsupported'
+      },
+      {
+        id: 'openai/gpt-5.5',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'none-low-medium-high-xhigh'
+      },
+      {
+        id: 'openai/gpt-5.4',
+        contextWindow: 1_050_000,
+        reasoningEffort: 'low-medium-high-xhigh'
+      },
+      {
+        id: 'openai/gpt-5.4-mini',
+        contextWindow: 400_000,
+        reasoningEffort: 'low-medium-high-xhigh'
+      },
+      {
+        id: 'google/gemini-3.1-pro-preview',
+        contextWindow: 1_048_576,
+        reasoningEffort: 'unsupported'
+      },
+      {
+        id: 'google/gemini-3.5-flash',
+        contextWindow: 1_048_576,
+        reasoningEffort: 'unsupported'
+      },
+      { id: 'xai/grok-4.6', contextWindow: 500_000, reasoningEffort: 'unsupported' }
+    ],
+    // Curated like OpenRouter, so vision support is an explicit id list; unlisted ids stay text-only.
+    multimodal: {
+      multimodalModels: [
+        'anthropic/claude-sonnet-5',
+        'anthropic/claude-opus-5-5',
+        'anthropic/claude-haiku-4-5',
+        'openai/gpt-5.5',
+        'openai/gpt-5.4',
+        'openai/gpt-5.4-mini',
+        'google/gemini-3.1-pro-preview',
+        'google/gemini-3.5-flash',
+        'xai/grok-4.6'
       ]
     }
   }

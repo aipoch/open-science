@@ -76,6 +76,7 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('tencentcodingplan')).toBe(true)
     expect(isOfficialVendorId('tencenttokenplan')).toBe(true)
     expect(isOfficialVendorId('nvidia')).toBe(true)
+    expect(isOfficialVendorId('requesty')).toBe(true)
     expect(isOfficialVendorId(undefined)).toBe(false)
     expect(isOfficialVendorId(42)).toBe(false)
   })
@@ -713,6 +714,29 @@ describe('provider registry', () => {
     // Curated (300+ live ids would flood the picker), so refresh-from-vendor is hidden.
     expect(resolveVendorModelsUrl('openrouter')).toBeUndefined()
     expect(defaultVendorModel('openrouter')).toBe('anthropic/claude-opus-5')
+  })
+
+  it('routes Requesty through both APIs after OpenRouter with a curated catalog', () => {
+    const openRouterIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'openrouter')
+
+    expect(OFFICIAL_VENDORS[openRouterIndex + 1]?.id).toBe('requesty')
+    expect(resolveVendorApiEndpoints('requesty')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorBaseUrl('requesty')).toBe('https://router.requesty.ai')
+    expect(resolveVendorOpenAiBaseUrl('requesty')).toBe('https://router.requesty.ai/v1')
+    expect(resolveVendorApiKeyUrl('requesty')).toBe('https://app.requesty.ai/api-keys')
+    expect(resolveVendorModelsUrl('requesty')).toBeUndefined()
+    expect(usesVendorAnthropicApiKeyHeader('requesty')).toBe(false)
+    expect(defaultVendorModel('requesty')).toBe('anthropic/claude-sonnet-5')
+    expect(resolveModelContextWindow('requesty', 'openai/gpt-5.4-mini')).toBe(400_000)
+    expect(isVendorModelMultimodal('requesty', 'google/gemini-3.5-flash')).toBe(true)
+    expect(isVendorModelMultimodal('requesty', 'somevendor/unknown-model')).toBe(false)
+    expect(resolveVendorModelReasoningEffort('requesty', 'openai/gpt-5.5')).toEqual({
+      supported: true,
+      slots: ['none', 'low', 'medium', 'high', 'xhigh']
+    })
+    expect(resolveVendorModelReasoningEffort('requesty', 'anthropic/claude-haiku-4-5')).toEqual({
+      supported: false
+    })
   })
 
   it('routes Xiaomi MIMO through both APIs with a live model list', () => {

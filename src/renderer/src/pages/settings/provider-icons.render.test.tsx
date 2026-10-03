@@ -44,6 +44,15 @@ describe('ProviderKindIcon', () => {
     expect(html).toContain('#74B71B')
     expect(html).not.toContain('text-muted-foreground')
   })
+
+  it('renders the bundled Requesty provider logo', () => {
+    const html = renderToStaticMarkup(<ProviderKindIcon kindKey="official:requesty" />)
+
+    expect(html).toContain('<img')
+    expect(html).toContain('%3ctitle%3eRequesty%3c/title%3e')
+    expect(html).toContain('%231677FF')
+    expect(html).not.toContain('text-muted-foreground')
+  })
 })
 
 describe('AgentFrameworkIcon', () => {
