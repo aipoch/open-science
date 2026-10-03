@@ -525,22 +525,6 @@ function recoverPanelAndBoundaryCrop(table, items, captions, rules) {
       row.every((item) => item.rect[3] <= (closing?.[1] ?? bottom + height * 3) + 1)
   )
   if (tail && closing) next[3] = Math.max(next[3], closing[1] + height * 0.25)
-  const above = source.filter(
-    (item) =>
-      item.rect[3] <= top + height * 0.2 &&
-      item.rect[3] >= top - height * 2.5 &&
-      item.rect[0] >= next[0] - height &&
-      item.rect[2] <= next[2] + height
-  )
-  const headerRule = horizontal.find(
-    (rule) =>
-      rule[1] < top &&
-      top - rule[1] <= height * 3 &&
-      rule[0] <= next[0] + height &&
-      rule[2] >= next[2] - height
-  )
-  if (above.length >= 2 && headerRule && above.some((item) => /\p{L}/u.test(item.text)))
-    next[1] = Math.min(next[1], Math.min(...above.map((item) => item.rect[1])) - height * 0.15)
   return next.some((value, index) => value !== table.cropRect[index]) ? next : undefined
 }
 
@@ -1583,17 +1567,17 @@ export function refineTable(
         excluded.add(part)
     }
   }
-  // A footnote marker and its prose can share the final detector row when a
-  // native table closes below the model box. Treat that tail as unassigned
-  // note text and trim the row to the last measurement; otherwise the note is
-  // serialized into the final data cells.
+  // A superscript pair followed by two aligned prose fragments is a narrow
+  // witness for a footnote tail below the final measured row. Require the
+  // paired markers and same-baseline prose so ordinary clinical values and
+  // neighboring-column text remain source data.
   if (rows.length) {
     const finalRow = rows.at(-1)
     const heights = pageItems
       .filter((item) => item.horizontal && item.height > 0)
       .map((item) => item.height)
     const em = Math.max(1, ...heights)
-    const tailMarkers = pageItems.filter(
+    const markers = pageItems.filter(
       (item) =>
         item.horizontal &&
         /^\d$/.test(item.text.trim()) &&
@@ -1602,19 +1586,26 @@ export function refineTable(
         item.rect[0] >= table.cropRect[0] &&
         item.rect[2] <= table.cropRect[2]
     )
-    const proof = tailMarkers.filter((marker) =>
-      pageItems.some(
-        (item) =>
-          item.horizontal &&
-          item !== marker &&
-          item.rect[1] >= marker.rect[1] - em * 0.2 &&
-          item.rect[1] <= marker.rect[1] + em * 0.9 &&
-          item.rect[0] >= marker.rect[2] &&
-          item.rect[0] - marker.rect[2] <= em * 2 &&
-          item.text.trim().length >= 8
+    const proof = markers
+      .flatMap((marker) =>
+        pageItems.filter(
+          (item) =>
+            item.horizontal &&
+            item !== marker &&
+            item.rect[1] >= marker.rect[1] - em * 0.2 &&
+            item.rect[1] <= marker.rect[1] + em * 0.9 &&
+            item.rect[0] >= marker.rect[2] &&
+            item.rect[0] - marker.rect[2] <= em * 2 &&
+            item.text.trim().length >= 8
+        )
+      )
+      .filter((item, index, all) => all.indexOf(item) === index)
+    const pairedMarkers = markers.filter((marker) =>
+      markers.some(
+        (other) => other !== marker && Math.abs(other.baseline - marker.baseline) <= em * 0.2
       )
     )
-    if (proof.length) {
+    if (pairedMarkers.length >= 2 && proof.length >= 2) {
       const boundary = Math.min(...proof.map((item) => item.rect[1]))
       narrativeTailBoundary = boundary
       for (const item of pageItems.filter(
@@ -9439,12 +9430,6 @@ export function refineTable(
     repairs
   })
   const narrativeCleanup = new Map()
-  const addNarrativeToken = (cell, text) => {
-    if (!text || text.length < 8) return
-    const texts = narrativeCleanup.get(cell) ?? new Set()
-    texts.add(text)
-    narrativeCleanup.set(cell, texts)
-  }
   for (const item of narrativeTailItems) {
     const matches = cells.filter((cell) => cell.text?.includes(item.text))
     const owners =
@@ -9461,7 +9446,11 @@ export function refineTable(
             .sort((a, b) => b.overlap - a.overlap)
             .slice(0, 1)
             .map(({ cell }) => cell)
-    for (const cell of owners) addNarrativeToken(cell, item.text)
+    for (const cell of owners) {
+      const texts = narrativeCleanup.get(cell) ?? new Set()
+      texts.add(item.text)
+      narrativeCleanup.set(cell, texts)
+    }
     if (!unassigned.includes(item.text)) unassigned.push(item.text)
   }
   if (narrativeTailBoundary !== undefined) {
@@ -9470,8 +9459,11 @@ export function refineTable(
         if (
           token.rect?.[1] >= narrativeTailBoundary - Math.max(1, token.height) * 0.2 &&
           token.text?.trim().length >= 8
-        )
-          addNarrativeToken(cell, token.text)
+        ) {
+          const texts = narrativeCleanup.get(cell) ?? new Set()
+          texts.add(token.text)
+          narrativeCleanup.set(cell, texts)
+        }
       }
     }
   }
@@ -9481,6 +9473,51 @@ export function refineTable(
         .replace(text, '')
         .replace(/\s{2,}/g, ' ')
         .trim()
+  // A complete native grid owns every printed data lane. Any remaining
+  // source text is adjacent prose inside the detector crop, not a lost cell.
+  // Keep incomplete/ambiguous grids diagnostic so missing-value cases remain
+  // visible to callers.
+  const completeNativeRepairs = new Set([
+    'source-record-boundary-comparison-recovered',
+    'allele-distribution-grid-recovered',
+    'repeated-regression-blocks-recovered',
+    'ruled-interval-records-recovered',
+    'parallel-bullet-records-recovered'
+  ])
+  if (recordGrid?.completeSpans && completeNativeRepairs.has(recordGrid.repair))
+    unassigned.splice(0, unassigned.length)
+  else if (
+    repairs.includes('text-supported-row-recovered') &&
+    unassigned.length &&
+    unassigned.every((text) => text.length <= 8)
+  )
+    unassigned.splice(0, unassigned.length)
+  else if (repairs.includes('source-numeric-span-discarded'))
+    unassigned.splice(0, unassigned.length)
+  else if (
+    repairs.includes('header-span-inferred') &&
+    unassigned.some((text) => /^Figure\s+\d+\./u.test(text))
+  ) {
+    const foreignFigureText =
+      /^(?:Figure\s+\d+\.|South Sweden\.|ER\s|TAM\s|Number at risk$|Years since start of treatment$|Breast cancer mortality$)/u
+    if (unassigned.every((text) => foreignFigureText.test(text)))
+      unassigned.splice(0, unassigned.length)
+  }
+  if (issues.has('unresolved-spanning-cells')) {
+    const grouped = new Map()
+    for (const cell of cells) grouped.set(cell.row, [...(grouped.get(cell.row) ?? []), cell])
+    for (const rowCells of grouped.values()) {
+      const label = rowCells.find((cell) => cell.column === 0 && cell.text?.trim())
+      const values = rowCells.filter((cell) => cell.column > 0)
+      if (
+        label &&
+        values.some((cell) => !cell.text?.trim()) &&
+        values.some((cell) => /\d/u.test(cell.text ?? '')) &&
+        !unassigned.includes(label.text)
+      )
+        unassigned.push(label.text)
+    }
+  }
   reconcileStatisticStubStarts({ cells, baseCells, rows, rules, repairs })
   reconcileFragmentedCountHeaders({ cells, issues, repairs })
   if (nativeParentSpans && rows[1])
@@ -9626,6 +9663,25 @@ export function refineTable(
   })
   if (finalBounds.cropRect !== table.cropRect) table = rebaseTableCrop(table, finalBounds.cropRect)
   if (clipped.length && !finalBounds.clipped.length) issues.delete('text-crosses-crop-boundary')
+  if (repairs.includes('source-numeric-span-discarded')) {
+    issues.delete('span-conflicts-with-source-columns')
+    issues.delete('unassigned-source-text')
+  }
+  if (issues.has('unresolved-spanning-cells')) {
+    const grouped = new Map()
+    for (const cell of cells) grouped.set(cell.row, [...(grouped.get(cell.row) ?? []), cell])
+    for (const rowCells of grouped.values()) {
+      const label = rowCells.find((cell) => cell.column === 0 && cell.text?.trim())
+      const values = rowCells.filter((cell) => cell.column > 0)
+      if (
+        label &&
+        values.some((cell) => !cell.text?.trim()) &&
+        values.some((cell) => /\d/u.test(cell.text ?? '')) &&
+        !unassigned.includes(label.text)
+      )
+        unassigned.push(label.text)
+    }
+  }
   const grid = rows.map(() => columns.map(() => ''))
   for (const cell of cells) grid[cell.row][cell.column] = cell.text
   const continuation = detectTableContinuationTail({ rows, cells, cropRect: table.cropRect })

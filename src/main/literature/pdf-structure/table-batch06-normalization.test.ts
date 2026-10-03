@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { expect, it } from 'vitest'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -83,7 +84,10 @@ it('removes an unowned separator column while preserving a source-backed blank',
 it('marks an open narrative row that reaches the page crop edge', () => {
   const rows = [{ rect: [0, 0, 300, 40] }, { rect: [0, 40, 300, 100] }]
   const cells = [
-    { row: 1, text: 'The final narrative row continues into the next page without a closing sentence' }
+    {
+      row: 1,
+      text: 'The final narrative row continues into the next page without a closing sentence'
+    }
   ]
   expect(detectTableContinuationTail({ rows, cells, cropRect: [0, 0, 300, 100] })).toEqual({
     direction: 'next-page',

@@ -8,14 +8,14 @@ const { isNativeFrontMatterRegion } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-front-matter.mjs')).href
 )
 
-const token = (text, x, y, width = 80) => ({
+const token = (text: string, x: number, y: number, width = 80) => ({
   text,
   rect: [x, y, x + width, y + 10],
   baseline: y + 10,
   height: 10,
   horizontal: true
 })
-const table = (grid = []) => ({ cropRect: [0, 0, 600, 500], grid })
+const table = (grid: string[][] = []) => ({ cropRect: [0, 0, 600, 500], grid })
 
 it('rejects an uncaptioned first-page author and affiliation band', () => {
   const items = [

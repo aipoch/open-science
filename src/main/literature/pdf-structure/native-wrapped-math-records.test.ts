@@ -60,13 +60,13 @@ it('folds mathematical continuation lines into their independently anchored sour
     r = refineTable(f.table, f.tokens, f.captions, [], f.rules)
   expect(r.grid).toHaveLength(4)
   expect(r.grid[0]).toEqual(['State', 'Count', 'Configurations'])
-  expect(r.grid.slice(1).map((r) => r.slice(0, 2))).toEqual([
+  expect(r.grid.slice(1).map((r: string[]) => r.slice(0, 2))).toEqual([
     ['Item0', '10'],
     ['Item1', '11'],
     ['Item2', '12']
   ])
   expect(
-    r.grid.slice(1).every((r) => r[2].includes('a b + c d') && r[2].includes('d e + f g'))
+    r.grid.slice(1).every((r: string[]) => r[2].includes('a b + c d') && r[2].includes('d e + f g'))
   ).toBe(true)
   expect(r.unassigned).toEqual([])
 })

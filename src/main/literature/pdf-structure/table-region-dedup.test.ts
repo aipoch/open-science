@@ -54,7 +54,9 @@ it('keeps a caption-like region when the following source is too short to prove 
     structure: { objects: [] }
   }
   const caption = { page: 1, lines: ['Table 2: Note'], rect: [10, 48, 290, 60] }
-  const items = [{ text: 'One line', horizontal: true, baseline: 70, height: 8, rect: [10, 64, 80, 72] }]
+  const items = [
+    { text: 'One line', horizontal: true, baseline: 70, height: 8, rect: [10, 64, 80, 72] }
+  ]
   expect(deduplicateTableRegions([table], items, [caption])[0].cropRect).toEqual(table.cropRect)
 })
 

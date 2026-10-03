@@ -60,12 +60,21 @@ it('keeps independent measurement records and the centered shared group stub', (
   const f = input(),
     r = refineTable(f.table, f.tokens, f.captions, [], f.rules)
   expect(r.grid).toHaveLength(5)
-  expect(r.cells.filter((c) => c.column === 0).map((c) => [c.row, c.rowSpan, c.text])).toEqual([
+  expect(
+    r.cells
+      .filter((c: { column: number }) => c.column === 0)
+      .map((c: { row: number; rowSpan: number; text: string }) => [c.row, c.rowSpan, c.text])
+  ).toEqual([
     [0, 1, 'Group'],
     [1, 2, 'Alpha'],
     [3, 2, 'Beta']
   ])
-  expect(r.grid.slice(1).map((r) => r[1])).toEqual(['Train0', 'Train1', 'Train2', 'Train3'])
+  expect(r.grid.slice(1).map((r: string[]) => r[1])).toEqual([
+    'Train0',
+    'Train1',
+    'Train2',
+    'Train3'
+  ])
   expect(r.unassigned).toEqual([])
 })
 it('declines missing independent divider segments, gutter crossings and unrelated stubs', () => {

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 /*
  * Normalize the order of ordinary text lines on pages that have a clear
  * two-column layout. PDF text streams commonly interleave columns by paint

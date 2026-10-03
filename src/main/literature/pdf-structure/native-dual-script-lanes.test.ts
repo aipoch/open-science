@@ -36,7 +36,18 @@ it('keeps one continuous native lower script together below a parenthesized uppe
   const f = input(),
     before = JSON.stringify(f.items),
     x = {
-      cells: [{ row: 0, column: 0, rowSpan: 1, colSpan: 1, rect: [0, 0, 80, 55], items: [] }],
+      cells: [
+        {
+          row: 0,
+          column: 0,
+          rowSpan: 1,
+          colSpan: 1,
+          rect: [0, 0, 80, 55],
+          items: [],
+          textRuns: undefined as unknown,
+          sourceRects: [] as number[][]
+        }
+      ],
       items: f.items,
       pageItems: f.items,
       rows: [{ rect: [0, 0, 80, 55] }],

@@ -51,7 +51,7 @@ it('keeps an explicit glossary preamble with qualified wording and its definitio
   ])
   expect(
     associateTableNotes(p, [table])[0]
-      .map((n) => n.text)
+      .map((n: { text: string }) => n.text)
       .join(' ')
   ).toContain(p.lines[0].text)
 })
@@ -62,7 +62,7 @@ it('keeps source-cited dotted definitions crossing a padded crop at the native c
     line('Source. = Source data; Measure. = Measurement; Orient. = Orientation.', 50, 248, 390)
   ])
   const notes = associateTableNotes(p, [table], [[40, 246, 500, 246]])[0]
-  expect(notes.map((n) => n.text)).toEqual([p.lines[1].text])
+  expect(notes.map((n: { text: string }) => n.text)).toEqual([p.lines[1].text])
   const foreign = structuredClone(p)
   foreign.lines[0].text = 'Different unrelated table headers'
   expect(associateTableNotes(foreign, [table], [[40, 246, 500, 246]])[0]).toEqual([])
@@ -82,7 +82,7 @@ it('keeps consecutive inline numbered definitions when the next marker starts on
     'pation Level: Full—complete participation; Partial—limited participation.'
   )
   expect(notes[2].text).toContain('Type: Spec—spectra; Phot—photometry.')
-  expect(notes.map((n) => n.text).join(' ')).not.toContain('separate body')
+  expect(notes.map((n: { text: string }) => n.text).join(' ')).not.toContain('separate body')
   const ambiguous = structuredClone(p)
   ambiguous.lines.push({ ...ambiguous.lines[4] })
   expect(recoverNativeNumberedDefinitionFooter(ambiguous, [table])[0]).toBeUndefined()

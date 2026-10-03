@@ -14,7 +14,7 @@ export function detectTableContinuationTail({ rows, cells, cropRect }) {
     .trim()
   if (
     text.length < 40 ||
-    /[.!?:;\)\]\}”’]$/u.test(text) ||
+    /[.!?:;)\]…”’]$/u.test(text) ||
     row.rect[3] < cropRect[3] - Math.max(2, (row.rect[3] - row.rect[1]) * 0.35)
   )
     return undefined
