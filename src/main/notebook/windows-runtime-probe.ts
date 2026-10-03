@@ -107,8 +107,10 @@ export const probeWindowsRuntimeComponent = async (
       windowsHide: true,
       // Bound the complete native operation, including recursive ACL grants and rollback over
       // the runtime tree. The child can finish quickly while Windows is still restoring ACLs.
-      // Killing the owner after only 30 seconds can destroy its cleanup evidence on slower disks.
-      timeout: 90_000,
+      // Killing the owner early can destroy its cleanup evidence on slower disks. Hosted CI
+      // runners with antivirus scanning intermittently exceed 90s for the grant pass, so keep
+      // the budget generous; the certification job caps total wall time at a higher level.
+      timeout: 300_000,
       signal,
       maxBuffer: 1024 * 1024
     })
@@ -170,11 +172,14 @@ export const probeWindowsRuntimeComponent = async (
   signal?.throwIfAborted()
   if (failure) {
     // The selection layer may swallow incompatibility as a candidate skip, so surface the bounded
-    // probe output here before the detail is lost.
+    // probe output here before the detail is lost. Keep both ends: the head carries the failure
+    // class (spawn error, timeout kill, unclean exit) and the tail carries the probe evidence.
     const detail = failure instanceof Error ? failure.message : String(failure)
-    onDiagnostic?.(
-      `windows runtime probe (${selection.release.component}) failed: ${detail.slice(-4096)}`
-    )
+    const bounded =
+      detail.length > 8192
+        ? `${detail.slice(0, 4096)}\n…<truncated ${detail.length - 8192} chars>…\n${detail.slice(-4096)}`
+        : detail
+    onDiagnostic?.(`windows runtime probe (${selection.release.component}) failed: ${bounded}`)
     throw new WindowsRuntimeIncompatibleError(
       'Windows runtime is incompatible with protected execution.',
       { cause: failure }
