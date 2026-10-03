@@ -328,7 +328,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       this.windowsRuntime = new WindowsNotebookRuntimeManager(
         options.windowsRuntimeRoot,
         (selection, signal) =>
-          probeWindowsRuntimeComponent(selection, (request) => this.prepare(request), signal)
+          probeWindowsRuntimeComponent(
+            selection,
+            (request) => this.prepare(request),
+            signal,
+            (message) => this.log.warn(message)
+          )
       )
       this.releaseWindowsRuntime = configureWindowsNotebookRuntime(() => this.windowsRuntime!.get())
     }
@@ -1648,10 +1653,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         // Windows readers can briefly deny deletion even after the workload's Job is empty.
         // Share one bounded retry budget across the directory and its receipt. Only retry
         // fs.rm's transient error codes; process/network cleanup must already have succeeded.
+        // EACCES joins the list because Node's fs.rm retries omit it, which hosted Windows
+        // runners can surface for a recently exited probe cwd.
         if (
           this.platform !== 'win32' ||
           attempt >= 5 ||
-          !['EBUSY', 'EMFILE', 'ENFILE', 'ENOTEMPTY', 'EPERM'].includes(
+          !['EBUSY', 'EMFILE', 'ENFILE', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes(
             (error as NodeJS.ErrnoException)?.code ?? ''
           )
         )

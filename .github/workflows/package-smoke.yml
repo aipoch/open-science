@@ -149,6 +149,19 @@ jobs:
           OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT: '1'
         run: npx playwright test e2e/certification/windows-appcontainer.spec.ts --retries=0
 
+      # The gate's root cause lives in the main-process log attachment and the playwright report,
+      # which are not echoed to the console. Retain them for every outcome so a failure is
+      # diagnosable without re-running the certification.
+      - name: Upload AppContainer certification evidence
+        if: ${{ always() && !inputs.install_only && matrix.platform == 'win' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-appcontainer-cert-evidence
+          retention-days: 7
+          path: |
+            test-results/
+          if-no-files-found: ignore
+
       - name: Verify Windows Authenticode signature
         if: ${{ !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}
         shell: pwsh
