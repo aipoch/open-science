@@ -7184,6 +7184,26 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "Désactiver l’accès automatique impose une approbation, sans bloquer le service. Les règles publiques personnalisées restent applicables.",
     "Unsaved changes": "Modifications non enregistrées",
     "Your network rules have not been saved. Discard them and leave?": "Vos règles réseau n’ont pas été enregistrées. Les abandonner et quitter ?",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Cela permet au code du Notebook de lire des données depuis {{domain}} et d’en envoyer à ce domaine. N’autorisez que les domaines auxquels vous faites confiance. Vous pouvez révoquer à tout moment l’accès enregistré dans Paramètres > Réseau > Accès réseau du Notebook."
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Cela permet au code du Notebook de lire des données depuis {{domain}} et d’en envoyer à ce domaine. N’autorisez que les domaines auxquels vous faites confiance. Vous pouvez révoquer à tout moment l’accès enregistré dans Paramètres > Réseau > Accès réseau du Notebook.",
+    "Choose what to keep": "Choisir le contenu à conserver",
+    "Create reference and review sharing": "Créer une référence et vérifier le partage",
+    "Deleted or not imported": "Supprimé ou non importé",
+    "Edits and deletions will affect every linked source listed below.": "Les modifications et suppressions affecteront toutes les sources liées ci-dessous.",
+    "Keep Literature note": "Conserver la note de la bibliothèque",
+    "Keep Workspace note": "Conserver la note de l’espace de travail",
+    "Keep both as separate notes": "Conserver les deux comme notes distinctes",
+    "Keep deleted": "Maintenir la suppression",
+    "Link sources and share notes": "Lier les sources et partager les notes",
+    "Linked sources share notes, edits, tags and deletions. Independently uploaded PDFs remain separate until you link them.": "Les sources liées partagent notes, modifications, étiquettes et suppressions. Les PDF téléversés séparément restent indépendants jusqu’à leur liaison.",
+    "No comment": "Aucun commentaire",
+    "Notes are shared with linked sources. Edits and deletions apply everywhere.": "Les notes sont partagées entre les sources liées. Les modifications et suppressions s’appliquent partout.",
+    "PDF sharing could not be prepared. Check that both sources are available and contain the same PDF.": "Impossible de préparer le partage du PDF. Vérifiez que les deux sources sont disponibles et contiennent le même PDF.",
+    "References could not be loaded.": "Impossible de charger les références.",
+    "Resolve annotation conflict": "Résoudre le conflit d’annotations",
+    "Review sharing": "Vérifier le partage",
+    "Share notes with Literature": "Partager les notes avec la bibliothèque",
+    "Sharing was not completed. Review the current notes again before retrying.": "Le partage n’a pas abouti. Vérifiez les notes actuelles avant de réessayer.",
+    "These notes have conflicting edits or deletions. Choose what to keep.": "Ces notes présentent des modifications ou suppressions contradictoires. Choisissez le contenu à conserver.",
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "L’identité d’origine de cette ancienne annotation ne peut pas être vérifiée. Choisissez comment la conserver."
   }
 }

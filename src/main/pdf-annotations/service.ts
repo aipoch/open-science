@@ -187,6 +187,55 @@ class PdfAnnotationService {
     return { ok: true, source: projectDocumentSource(source.projectId, resolved) }
   }
 
+  // Retain the session barrier and verified immutable lease through the consuming operation.
+  async withVerifiedSource<T>(
+    source: PdfAnnotationSource,
+    operation: (
+      lease: { path: string; size: number; verifyUnchanged(): Promise<void> },
+      canonical: PdfAnnotationSource
+    ) => Promise<T>
+  ): Promise<T> {
+    if (source.kind === 'literature-attachment-version') {
+      const canonical = await this.librarySource(source.versionId)
+      if (!isDeepStrictEqual(canonical, source))
+        throw new Error('PDF annotation source is not available.')
+      const lease = await this.options.literature.openContent(source.versionId)
+      try {
+        await lease.verifyUnchanged()
+        return await operation(lease, canonical)
+      } finally {
+        await lease.close()
+      }
+    }
+    if (!source.projectId || !source.sessionId)
+      throw new Error('PDF annotation source is not available.')
+    return this.options.runWithSessionAuthority(source.projectId, source.sessionId, async () => {
+      await this.requireSession(source.projectId!, source.sessionId!, true)
+      const resolved = await this.options.resolveSessionPdfVersion({
+        projectId: source.projectId!,
+        sourceKind: source.kind as 'upload-version' | 'artifact-version',
+        sourceFileId: source.sourceFileId,
+        versionId: source.versionId
+      })
+      if (
+        !resolved?.openContent ||
+        resolved.sourceKind === 'literature-attachment-version' ||
+        resolved.checksum !== source.checksum
+      )
+        throw new Error('PDF annotation source is not available.')
+      const canonical = projectDocumentSource(source.projectId!, resolved)
+      if (!isDeepStrictEqual(canonical, source))
+        throw new Error('PDF annotation source is not available.')
+      const lease = await resolved.openContent()
+      try {
+        await lease.verifyUnchanged()
+        return await operation(lease, canonical)
+      } finally {
+        await lease.close()
+      }
+    })
+  }
+
   create(request: CreatePdfAnnotationRequest): Promise<PdfAnnotation> {
     if (!createPdfAnnotationRequestSchema.safeParse(request).success)
       return Promise.reject(new Error('PDF annotation source is not available.'))

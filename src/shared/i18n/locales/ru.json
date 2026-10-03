@@ -142,9 +142,7 @@
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Идентификация, происхождение, заболевания, сведения о качестве и связи с базами данных для клеточных линий из Cellosaurus.",
     "Search cell lines by name or synonym.": "Поиск клеточных линий по названию или синониму.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "Получение идентификации, происхождения, сведений о качестве и связей с базами данных клеточной линии по CVCL или RRID.",
-
     "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "Поиск экспериментальных структур PDB по последовательности белка, идентичности последовательностей и покрытию последовательности запроса; получение сущностей, цепей и подробностей выравнивания.",
-
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Связи заболеваний и генов с фенотипами и источники доказательств через Monarch Initiative.",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "Получить связи заболеваний с фенотипами, источники доказательств и типы отношений.",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "Получить связи генов с фенотипами, источники доказательств и типы отношений.",
@@ -7325,6 +7323,26 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "Отключение автоматического доступа требует утверждения, но не блокирует службу. Пользовательские публичные правила продолжают действовать.",
     "Unsaved changes": "Несохранённые изменения",
     "Your network rules have not been saved. Discard them and leave?": "Сетевые правила не сохранены. Отменить изменения и выйти?",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Это позволит коду Notebook читать данные с {{domain}} и отправлять данные на этот домен. Разрешайте только доверенные домены. Сохранённый доступ можно в любой момент отозвать в разделе «Настройки > Сеть > Сетевой доступ Notebook»."
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Это позволит коду Notebook читать данные с {{domain}} и отправлять данные на этот домен. Разрешайте только доверенные домены. Сохранённый доступ можно в любой момент отозвать в разделе «Настройки > Сеть > Сетевой доступ Notebook».",
+    "Choose what to keep": "Выбрать, что сохранить",
+    "Create reference and review sharing": "Создать источник и проверить общий доступ",
+    "Deleted or not imported": "Удалено или не импортировано",
+    "Edits and deletions will affect every linked source listed below.": "Изменения и удаления затронут все связанные источники, перечисленные ниже.",
+    "Keep Literature note": "Сохранить заметку из литературы",
+    "Keep Workspace note": "Сохранить заметку из рабочей области",
+    "Keep both as separate notes": "Сохранить обе как отдельные заметки",
+    "Keep deleted": "Оставить удалённым",
+    "Link sources and share notes": "Связать источники и открыть общий доступ к заметкам",
+    "Linked sources share notes, edits, tags and deletions. Independently uploaded PDFs remain separate until you link them.": "Связанные источники совместно используют заметки, изменения, теги и удаления. Независимо загруженные PDF остаются отдельными, пока вы их не свяжете.",
+    "No comment": "Без комментария",
+    "Notes are shared with linked sources. Edits and deletions apply everywhere.": "Заметки доступны в связанных источниках. Изменения и удаления применяются везде.",
+    "PDF sharing could not be prepared. Check that both sources are available and contain the same PDF.": "Не удалось подготовить общий доступ к PDF. Проверьте, что оба источника доступны и содержат один и тот же PDF.",
+    "References could not be loaded.": "Не удалось загрузить источники.",
+    "Resolve annotation conflict": "Разрешить конфликт аннотаций",
+    "Review sharing": "Проверить общий доступ",
+    "Share notes with Literature": "Поделиться заметками с литературой",
+    "Sharing was not completed. Review the current notes again before retrying.": "Общий доступ не настроен. Проверьте текущие заметки перед повторной попыткой.",
+    "These notes have conflicting edits or deletions. Choose what to keep.": "В этих заметках есть конфликтующие изменения или удаления. Выберите, что сохранить.",
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "Исходную идентичность этой старой аннотации нельзя проверить. Выберите способ её сохранения."
   }
 }

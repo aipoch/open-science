@@ -248,6 +248,13 @@ export const pdfAnnotationListResultSchema = z
     source: z
       .custom<PdfAnnotationSource>((value) => sanitizePdfDocumentSource(value) !== undefined)
       .optional(),
+    sourceGroups: z
+      .array(
+        z.array(
+          z.custom<PdfAnnotationSource>((value) => sanitizePdfDocumentSource(value) !== undefined)
+        )
+      )
+      .optional(),
     nextCursor: cursorSchema.optional()
   })
   .strict()
@@ -304,3 +311,68 @@ export {
   pdfNativeAnnotationImportRequestSchema,
   pdfNativeAnnotationImportResultSchema
 }
+
+// Explicit association, never a hash-based search across projects.
+export const pdfSharingDecisionSchema = z
+  .object({ key: identity, choice: z.enum(['left', 'right', 'both', 'delete']) })
+  .strict()
+export const pdfSharingRequestSchema = z
+  .object({
+    source: z.custom<PdfAnnotationSource>(
+      (value) => sanitizePdfDocumentSource(value) !== undefined
+    ),
+    itemId: identity,
+    targetVersionId: identity.optional(),
+    token: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    decisions: z.array(pdfSharingDecisionSchema).max(1000).default([])
+  })
+  .strict()
+export const pdfSharingPreviewSchema = z
+  .object({
+    token: z.string(),
+    shared: z.boolean(),
+    sourceCount: z.number(),
+    annotationCount: z.number(),
+    sources: z.array(
+      z.custom<PdfAnnotationSource>((value) => sanitizePdfDocumentSource(value) !== undefined)
+    ),
+    conflicts: z.array(
+      z.object({
+        key: z.string(),
+        unknown: z.boolean(),
+        left: z
+          .object({
+            id: z.string(),
+            note: z.string(),
+            color: z.string().optional(),
+            tagIds: z.array(z.string()),
+            quote: z.string(),
+            pageNumber: z.number().optional()
+          })
+          .nullable(),
+        right: z
+          .object({
+            id: z.string(),
+            note: z.string(),
+            color: z.string().optional(),
+            tagIds: z.array(z.string()),
+            quote: z.string(),
+            pageNumber: z.number().optional()
+          })
+          .nullable()
+      })
+    ),
+    targetVersionId: z.string().optional(),
+    committed: z.boolean().optional()
+  })
+  .strict()
+export type PdfSharingRequest = z.infer<typeof pdfSharingRequestSchema>
+export type PdfSharingDecision = z.infer<typeof pdfSharingDecisionSchema>
+export type PdfSharingPreview = z.infer<typeof pdfSharingPreviewSchema>
+export const pdfSharingContract = defineApplicationCommandContract(
+  validationCodec(z.tuple([pdfSharingRequestSchema])),
+  validationCodec(pdfSharingPreviewSchema)
+)

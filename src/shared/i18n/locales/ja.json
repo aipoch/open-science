@@ -139,9 +139,7 @@
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Cellosaurus による細胞株の同定情報、由来、疾患、品質記録、外部データベースとの対応。",
     "Search cell lines by name or synonym.": "名前または別名で細胞株を検索。",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "CVCL または RRID で細胞株の同定情報、由来、品質記録、データベースとの対応を取得。",
-
     "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "タンパク質配列、配列同一性、クエリ配列のカバレッジで PDB の実験構造を検索し、エンティティ、鎖、アラインメントの詳細を取得します。",
-
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Monarch Initiative による疾患・遺伝子と表現型の関連およびエビデンスの出典。",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "疾患と表現型の関連を、エビデンスの出典と関係の種類とともに取得します。",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "遺伝子と表現型の関連を、エビデンスの出典と関係の種類とともに取得します。",
@@ -6858,6 +6856,26 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "自動アクセスをオフにすると承認が必要になりますが、サービスはブロックされません。カスタム公開ルールは引き続き適用されます。",
     "Unsaved changes": "未保存の変更",
     "Your network rules have not been saved. Discard them and leave?": "ネットワークルールは未保存です。変更を破棄して移動しますか？",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "これにより、Notebook コードは {{domain}} からデータを読み取り、データを送信できるようになります。信頼できるドメインのみを許可してください。保存したアクセス権は、いつでも「設定 > ネットワーク > Notebook のネットワークアクセス」で取り消せます。"
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "これにより、Notebook コードは {{domain}} からデータを読み取り、データを送信できるようになります。信頼できるドメインのみを許可してください。保存したアクセス権は、いつでも「設定 > ネットワーク > Notebook のネットワークアクセス」で取り消せます。",
+    "Choose what to keep": "保持する内容を選択",
+    "Create reference and review sharing": "文献を作成して共有を確認",
+    "Deleted or not imported": "削除済みまたは未インポート",
+    "Edits and deletions will affect every linked source listed below.": "編集と削除は以下のすべての関連付け済みソースに反映されます。",
+    "Keep Literature note": "文献のノートを保持",
+    "Keep Workspace note": "ワークスペースのノートを保持",
+    "Keep both as separate notes": "別々のノートとして両方を保持",
+    "Keep deleted": "削除状態を保持",
+    "Link sources and share notes": "ソースを関連付けてノートを共有",
+    "Linked sources share notes, edits, tags and deletions. Independently uploaded PDFs remain separate until you link them.": "関連付けたソースではノート、編集、タグ、削除を共有します。個別にアップロードした PDF は関連付けるまで独立しています。",
+    "No comment": "コメントなし",
+    "Notes are shared with linked sources. Edits and deletions apply everywhere.": "ノートは関連付けたソースで共有されています。編集と削除はすべての入口に反映されます。",
+    "PDF sharing could not be prepared. Check that both sources are available and contain the same PDF.": "PDF の共有を準備できませんでした。両方のソースが利用可能で、同じ PDF を含むことを確認してください。",
+    "References could not be loaded.": "文献を読み込めませんでした。",
+    "Resolve annotation conflict": "注釈の競合を解決",
+    "Review sharing": "共有を確認",
+    "Share notes with Literature": "文献とノートを共有",
+    "Sharing was not completed. Review the current notes again before retrying.": "共有は完了しませんでした。再試行する前に現在のノートを確認してください。",
+    "These notes have conflicting edits or deletions. Choose what to keep.": "これらのノートには編集または削除の競合があります。保持する内容を選択してください。",
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "この過去の注釈は元の識別情報を検証できません。保持方法を選択してください。"
   }
 }

@@ -94,6 +94,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.journals': 'literature:journals',
   'literature.lookupMetadata': 'literature:lookup-metadata',
   'literature.search': 'literature:search',
+  'literature.sharePdf': 'literature:share-pdf',
   'literature.sources': 'literature:sources',
   'literature.transact': 'literature:transact',
   'localFs.getRoots': 'local-fs:get-roots',

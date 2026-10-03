@@ -403,3 +403,21 @@ it.each([undefined, 'session-1'])(
     expect(options.repository.create).not.toHaveBeenCalled()
   }
 )
+
+it('holds verified sharing leases inside the writable source authority and closes on failure', async () => {
+  const { options, service } = fixture()
+  const source = request.target.source
+  const resolved = (await options.resolveSessionPdfVersion(importRequest))!
+  const lease = await resolved.openContent!()
+  const operation = vi.fn(async () => {
+    throw new Error('Rollback sharing')
+  })
+  await expect(service.withVerifiedSource(source, operation)).rejects.toThrow('Rollback sharing')
+  expect(options.runWithSessionAuthority).toHaveBeenCalledOnce()
+  expect(lease.verifyUnchanged).toHaveBeenCalledOnce()
+  expect(lease.close).toHaveBeenCalledOnce()
+  await expect(
+    service.withVerifiedSource({ ...source, checksum: 'b'.repeat(64) }, operation)
+  ).rejects.toThrow('not available')
+  expect(operation).toHaveBeenCalledOnce()
+})

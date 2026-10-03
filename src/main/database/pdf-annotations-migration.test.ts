@@ -48,7 +48,8 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
         '0044_literature_smart_collections',
         '0045_literature_smart_pause_run',
         '0046_journal_attributes',
-        '0047_session_replay'
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing'
       ]
     })
     expect(await client.bookmark.findMany()).toEqual(before)
@@ -60,7 +61,11 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
     expect(columns.find(({ name }) => name === 'projectId')?.notnull).toBe(0n)
     expect(columns.find(({ name }) => name === 'sessionId')?.notnull).toBe(0n)
     expect(columns.map(({ name }) => name)).not.toContain('tagsJson')
+    await client.pdfAnnotationDocument.create({
+      data: { id: 'fixture-document', checksum: 'a'.repeat(64) }
+    })
     const row = {
+      documentId: 'fixture-document',
       id: 'library-note',
       sourceKind: 'literature-attachment-version',
       sourceFileId: 'file-1',
@@ -107,6 +112,7 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
     await client.pdfAnnotationImport.create({
       data: {
         id: 'receipt-1',
+        documentId: 'fixture-document',
         sourceKind: row.sourceKind,
         sourceFileId: row.sourceFileId,
         versionId: row.versionId,
@@ -123,6 +129,67 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
     expect(await migrateApplicationDatabase(client)).toMatchObject({ applied: [] })
     expect(await client.pdfAnnotationImport.count()).toBe(1)
     expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([])
+  } finally {
+    await client.$disconnect()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('migrates isolated historical sources and deletion-only receipts without changing user content', async () => {
+  const { pdfAnnotationsMigration } = await import('./migrations/0043-pdf-annotations')
+  const root = await mkdtemp(join(tmpdir(), 'pdf-sharing-upgrade-'))
+  const client = createProjectDbClient(root)
+  try {
+    await migrateApplicationDatabase(client)
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
+    for (const table of [
+      'pdf_annotations',
+      'pdf_annotation_imports',
+      'pdf_annotation_sources',
+      'pdf_annotation_aliases',
+      'pdf_annotation_documents'
+    ])
+      await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
+    for (const statement of pdfAnnotationsMigration.statements)
+      await client.$executeRawUnsafe(statement)
+    await client.$executeRawUnsafe(
+      "DELETE FROM _open_science_migrations WHERE id = '0048_pdf_annotation_sharing'"
+    )
+    await client.project.createMany({
+      data: [
+        { id: 'legacy-p', name: 'Legacy' },
+        { id: 'independent-p', name: 'Independent' }
+      ]
+    })
+    for (const project of ['legacy-p', 'independent-p'])
+      await client.$executeRaw`
+      INSERT INTO pdf_annotations (id, projectId, sourceKind, sourceFileId, versionId, checksum, name, path, kind, selectorJson, note, updatedAt)
+      VALUES (${project}, ${project}, 'upload-version', 'file', 'v', ${'a'.repeat(64)}, 'paper.pdf', 'upload-version:v', 'document-note', '{"version":1,"selector":{"kind":"document-note","coordinateVersion":1}}', 'Keep my edit', ${new Date('2026-09-01T00:00:00Z')})`
+    const receipt = JSON.stringify({
+      nativeRefs: [{ pageNumber: 1, id: '12R' }],
+      pageCount: 1,
+      unsupportedCount: 0,
+      truncated: false
+    })
+    await client.$executeRaw`INSERT INTO pdf_annotation_imports (id, projectId, sourceKind, sourceFileId, versionId, checksum, resultJson) VALUES ('deleted-native', 'legacy-p', 'upload-version', 'deleted-file', 'deleted-v', ${'a'.repeat(64)}, ${receipt})`
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    expect(await migrateApplicationDatabase(client)).toMatchObject({
+      applied: ['0048_pdf_annotation_sharing']
+    })
+    const rows = await client.pdfAnnotation.findMany({ orderBy: { id: 'asc' } })
+    expect(rows.map((row) => row.note)).toEqual(['Keep my edit', 'Keep my edit'])
+    expect(new Set(rows.map((row) => row.documentId)).size).toBe(2)
+    expect(rows.every((row) => row.updatedAt.toISOString() === '2026-09-01T00:00:00.000Z')).toBe(
+      true
+    )
+    expect(await client.pdfAnnotationDocument.count()).toBe(3)
+    expect(await client.pdfAnnotationSourceBinding.count()).toBe(3)
+    expect(
+      (await client.pdfAnnotationImport.findUniqueOrThrow({ where: { id: 'deleted-native' } }))
+        .resultJson
+    ).toBe(receipt)
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
+    expect(await migrateApplicationDatabase(client)).toMatchObject({ applied: [] })
   } finally {
     await client.$disconnect()
     await rm(root, { recursive: true, force: true })

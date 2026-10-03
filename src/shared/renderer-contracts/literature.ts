@@ -1,3 +1,4 @@
+import type { PdfSharingRequest, PdfSharingPreview } from '../pdf-annotations'
 import type { JournalRequest, JournalResult } from '../journal-attributes'
 
 import type {
@@ -81,6 +82,10 @@ export const contracts = {
   'literature.jobs': callable<(request: LiteratureJobRequest) => Promise<LiteratureJobsResult>>()(
     'literature',
     ['literature:jobs', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'literature.sharePdf': callable<(request: PdfSharingRequest) => Promise<PdfSharingPreview>>()(
+    'literature',
+    ['literature:share-pdf', WEB, undefined, undefined, RUNTIME_VALIDATED]
   ),
   'literature.importPdf': callable<
     (request: LiteraturePdfImportRequest) => Promise<LiteraturePdfImportReceipt>

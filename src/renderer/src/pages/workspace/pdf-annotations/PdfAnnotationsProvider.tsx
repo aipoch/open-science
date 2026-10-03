@@ -17,6 +17,7 @@ import {
 type Change = Readonly<{ before?: PdfAnnotation; after?: PdfAnnotation }>
 type Runtime = {
   scopeKey: string
+  sourceGroups: PdfAnnotationSource[][]
   active: boolean
   items: Map<string, PdfAnnotation>
   overlays: Map<string, PdfAnnotation | null>
@@ -26,6 +27,13 @@ type Runtime = {
   pending: number
 }
 const HISTORY_LIMIT = 100
+const historyKey = (runtime: Runtime, source: PdfAnnotationSource): string => {
+  const key = sourceKey(source)
+  const group = runtime.sourceGroups.find((sources) =>
+    sources.some((entry) => sourceKey(entry) === key)
+  )
+  return group?.length ? sourceKey(group[0]) : key
+}
 const changeSource = (change: Change): PdfAnnotationSource =>
   (change.after ?? change.before)!.target.source
 const sortAnnotations = (annotations: readonly PdfAnnotation[]): PdfAnnotation[] =>
@@ -45,6 +53,7 @@ type ScopeState = Readonly<{
   key: string
   annotations: readonly PdfAnnotation[]
   source?: PdfAnnotationSource
+  sourceGroups?: PdfAnnotationSource[][]
   loading: boolean
   loadError?: string
   pending: number
@@ -86,6 +95,7 @@ const PdfAnnotationsProvider = ({
     if (ref.current === null)
       ref.current = {
         scopeKey,
+        sourceGroups: [],
         active: false,
         items: new Map(),
         overlays: new Map(),
@@ -134,8 +144,12 @@ const PdfAnnotationsProvider = ({
                 ? sortAnnotations([...runtime.current.items.values()])
                 : current.annotations,
               pending: runtime.current.pending,
-              undoSources: runtime.current.undo.map((change) => sourceKey(changeSource(change))),
-              redoSources: runtime.current.redo.map((change) => sourceKey(changeSource(change)))
+              undoSources: runtime.current.undo.map((change) =>
+                historyKey(runtime.current, changeSource(change))
+              ),
+              redoSources: runtime.current.redo.map((change) =>
+                historyKey(runtime.current, changeSource(change))
+              )
             }
       )
     },
@@ -149,6 +163,7 @@ const PdfAnnotationsProvider = ({
     const load = async (): Promise<void> => {
       let cursor: { createdAt: string; id: string } | undefined
       const loaded = new Map<string, PdfAnnotation>()
+      let sourceGroups: PdfAnnotationSource[][] | undefined
       let source: PdfAnnotationSource | undefined
       do {
         const result = await window.api.pdfAnnotations.list({
@@ -159,6 +174,7 @@ const PdfAnnotationsProvider = ({
           limit: PDF_ANNOTATION_LIMITS.pageSize
         })
         if (!active) return
+        sourceGroups ??= result.sourceGroups
         source ??=
           result.source ?? (sourceFileId && versionId ? result.items[0]?.target.source : undefined)
         for (const item of result.items) loaded.set(item.id, item)
@@ -168,6 +184,7 @@ const PdfAnnotationsProvider = ({
         if (overlay) loaded.set(id, overlay)
         else loaded.delete(id)
       }
+      runtime.current.sourceGroups = sourceGroups ?? []
       // A refreshed external edit invalidates this document's local inverse commands.
       const changedSources = new Set<string>()
       let annotationsChanged = false
@@ -175,7 +192,7 @@ const PdfAnnotationsProvider = ({
         const previous = runtime.current.items.get(id)
         const current = loaded.get(id)
         if (previous?.updatedAt !== current?.updatedAt)
-          changedSources.add(sourceKey((current ?? previous)!.target.source))
+          changedSources.add(historyKey(runtime.current, (current ?? previous)!.target.source))
         // Global tag deletion can change associations without changing the note's
         // update token; repaint it without discarding compatible undo history.
         if (
@@ -185,10 +202,10 @@ const PdfAnnotationsProvider = ({
           annotationsChanged = true
       }
       runtime.current.undo = runtime.current.undo.filter(
-        (change) => !changedSources.has(sourceKey(changeSource(change)))
+        (change) => !changedSources.has(historyKey(runtime.current, changeSource(change)))
       )
       runtime.current.redo = runtime.current.redo.filter(
-        (change) => !changedSources.has(sourceKey(changeSource(change)))
+        (change) => !changedSources.has(historyKey(runtime.current, changeSource(change)))
       )
       runtime.current.items = loaded
       setState((previous) => ({
@@ -200,10 +217,15 @@ const PdfAnnotationsProvider = ({
           source === undefined || JSON.stringify(source) === JSON.stringify(previous.source)
             ? previous.source
             : source,
+        sourceGroups,
         loading: false,
         pending: runtime.current.pending,
-        undoSources: runtime.current.undo.map((change) => sourceKey(changeSource(change))),
-        redoSources: runtime.current.redo.map((change) => sourceKey(changeSource(change)))
+        undoSources: runtime.current.undo.map((change) =>
+          historyKey(runtime.current, changeSource(change))
+        ),
+        redoSources: runtime.current.redo.map((change) =>
+          historyKey(runtime.current, changeSource(change))
+        )
       }))
     }
     void load().catch((error: unknown) => {
@@ -299,12 +321,12 @@ const PdfAnnotationsProvider = ({
         )
           return
         if (previous?.updatedAt !== next?.updatedAt) {
-          const key = sourceKey((next ?? previous)!.target.source)
+          const key = historyKey(runtime.current, (next ?? previous)!.target.source)
           runtime.current.undo = runtime.current.undo.filter(
-            (change) => sourceKey(changeSource(change)) !== key
+            (change) => historyKey(runtime.current, changeSource(change)) !== key
           )
           runtime.current.redo = runtime.current.redo.filter(
-            (change) => sourceKey(changeSource(change)) !== key
+            (change) => historyKey(runtime.current, changeSource(change)) !== key
           )
         }
         if (next) runtime.current.items.set(event.id, next)
@@ -381,7 +403,9 @@ const PdfAnnotationsProvider = ({
       const change = { before, after }
       runtime.current.undo = [...runtime.current.undo, change].slice(-HISTORY_LIMIT)
       runtime.current.redo = runtime.current.redo.filter(
-        (entry) => sourceKey(changeSource(entry)) !== sourceKey(changeSource(change))
+        (entry) =>
+          historyKey(runtime.current, changeSource(entry)) !==
+          historyKey(runtime.current, changeSource(change))
       )
     },
     [runtime]
@@ -456,7 +480,9 @@ const PdfAnnotationsProvider = ({
       enqueue(async () => {
         const stack = runtime.current[direction]
         const index = stack.findLastIndex(
-          (change) => sourceKey(changeSource(change)) === sourceKey(source)
+          (change) =>
+            historyKey(runtime.current, changeSource(change)) ===
+            historyKey(runtime.current, source)
         )
         const change = stack[index]
         if (!change) return
@@ -531,7 +557,10 @@ const PdfAnnotationsProvider = ({
     [enqueue, runtime, scope, commit]
   )
 
-  const index = useMemo(() => indexPdfAnnotations(state.annotations), [state.annotations])
+  const index = useMemo(
+    () => indexPdfAnnotations(state.annotations, state.sourceGroups),
+    [state.annotations, state.sourceGroups]
+  )
   const value = useMemo<PdfAnnotationPort>(
     () => ({
       document:
@@ -542,6 +571,10 @@ const PdfAnnotationsProvider = ({
       sessionId,
       source: state.key === scopeKey ? state.source : undefined,
       available: Boolean(scopeKey) && writable,
+      shared: (source) =>
+        !!state.sourceGroups?.some((group) =>
+          group.some((entry) => sourceKey(entry) === sourceKey(source))
+        ),
       annotations: state.key === scopeKey ? state.annotations : [],
       forSource: (source) =>
         source
@@ -555,8 +588,8 @@ const PdfAnnotationsProvider = ({
       loading: state.key === scopeKey ? state.loading : Boolean(scopeKey) && loadAnnotations,
       loadError: state.key === scopeKey ? state.loadError : undefined,
       history: (source) => ({
-        canUndo: state.undoSources.includes(sourceKey(source)),
-        canRedo: state.redoSources.includes(sourceKey(source)),
+        canUndo: state.undoSources.includes(historyKey(runtime.current, source)),
+        canRedo: state.redoSources.includes(historyKey(runtime.current, source)),
         busy: state.pending > 0
       }),
       undo: (source) => replay(source, 'undo'),
@@ -571,6 +604,7 @@ const PdfAnnotationsProvider = ({
       sessionId,
       writable,
       state,
+      runtime,
       index,
       replay,
       retryLoad,

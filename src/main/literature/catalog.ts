@@ -75,9 +75,11 @@ type LiteratureCatalogClient = Pick<
   | 'literatureCollection'
   | 'literatureInboxCandidate'
   | 'literatureItem'
+  | 'project'
   | 'projectLiterature'
   | 'projectDeletionIntent'
   | 'tagAssignment'
+  | 'pdfAnnotationSourceBinding'
   | 'pdfAnnotation'
 >
 
@@ -1263,12 +1265,12 @@ class LiteratureCatalog {
       const needle = query.toLowerCase()
       const notePredicates = [
         Prisma.sql`(a.note <> '' OR ${quote} <> '')`,
-        Prisma.sql`(
-        (a."sourceKind" = 'literature-attachment-version' AND EXISTS (
+        Prisma.sql`EXISTS (SELECT 1 FROM "pdf_annotation_sources" annotationSource WHERE annotationSource."documentId" = a."documentId" AND (
+        (annotationSource."sourceKind" = 'literature-attachment-version' AND EXISTS (
           SELECT 1 FROM "LiteratureAttachmentVersion" v
           JOIN "LiteratureAttachment" attachment ON attachment.id = v."attachmentId"
           JOIN "LiteratureItem" item ON item.id = attachment."itemId"
-          WHERE v.id = a."versionId" AND attachment.id = a."sourceFileId"
+          WHERE v.id = annotationSource."versionId" AND attachment.id = annotationSource."sourceFileId"
             AND item."deletedAt" IS NULL AND item."mergedIntoItemId" IS NULL
             ${
               projectId
@@ -1278,13 +1280,13 @@ class LiteratureCatalog {
                 AND project."deletedAt" IS NULL AND NOT EXISTS (SELECT 1 FROM "ProjectDeletionIntent" d WHERE d."projectId" = project.id))`
                 : Prisma.empty
             }
-        )) OR (a."sourceKind" <> 'literature-attachment-version' AND EXISTS (
+        )) OR (annotationSource."sourceKind" <> 'literature-attachment-version' AND EXISTS (
           SELECT 1 FROM "Project" project
-          WHERE project.id = a."projectId"
+          WHERE project.id = annotationSource."projectId"
             AND project."deletedAt" IS NULL
             AND NOT EXISTS (SELECT 1 FROM "ProjectDeletionIntent" d WHERE d."projectId" = project.id)
             ${projectId ? Prisma.sql`AND project.id = ${projectId}` : Prisma.empty}
-        )))`
+        ))))`
       ]
       if (needle)
         notePredicates.push(
@@ -1394,7 +1396,8 @@ class LiteratureCatalog {
         (noteIds.length
           ? await readAnnotations(
               client,
-              await client.pdfAnnotation.findMany({ where: { id: { in: noteIds } } })
+              await client.pdfAnnotation.findMany({ where: { id: { in: noteIds } } }),
+              projectId
             )
           : []
         ).map((annotation) => [annotation.id, { id: annotation.id, annotation }])
@@ -1650,7 +1653,13 @@ class LiteratureCatalog {
     return updated
   }
 
-  async attachContent(input: AttachLiteratureContentInput): Promise<AttachedLiteratureContent> {
+  async attachContent(
+    input: AttachLiteratureContentInput,
+    onAttached?: (
+      transaction: Prisma.TransactionClient,
+      result: AttachedLiteratureContent
+    ) => Promise<void>
+  ): Promise<AttachedLiteratureContent> {
     const provenanceJson = input.provenance
       ? canonicalJson(literaturePdfProvenanceSchema.parse(input.provenance))
       : null
@@ -1678,6 +1687,12 @@ class LiteratureCatalog {
     return this.commit(
       client,
       async (transaction) => {
+        const finish = async (
+          result: AttachedLiteratureContent
+        ): Promise<AttachedLiteratureContent> => {
+          await onAttached?.(transaction, result)
+          return result
+        }
         const [item, blob] = await Promise.all([
           transaction.literatureItem.findFirst({
             where: { id: itemId, deletedAt: null },
@@ -1708,10 +1723,10 @@ class LiteratureCatalog {
             select: { id: true, attachmentId: true }
           })
           if (existingItemVersion) {
-            return {
+            return finish({
               attachmentId: existingItemVersion.attachmentId,
               versionId: existingItemVersion.id
-            }
+            })
           }
         }
 
@@ -1737,7 +1752,7 @@ class LiteratureCatalog {
           },
           select: { id: true }
         })
-        if (existing) return { attachmentId: attachment.id, versionId: existing.id }
+        if (existing) return finish({ attachmentId: attachment.id, versionId: existing.id })
         const latest = await transaction.literatureAttachmentVersion.findFirst({
           where: { attachmentId: attachment.id },
           orderBy: { versionNumber: 'desc' },
@@ -1757,7 +1772,7 @@ class LiteratureCatalog {
           },
           select: { id: true }
         })
-        return { attachmentId: attachment.id, versionId: version.id }
+        return finish({ attachmentId: attachment.id, versionId: version.id })
       },
       { itemIds: [itemId] }
     )

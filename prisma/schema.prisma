@@ -40,8 +40,6 @@ model Project {
   memoryEntries        MemoryEntry[]
   literatureItems      ProjectLiterature[]
   bookmarks            Bookmark[]
-  pdfAnnotations       PdfAnnotation[]
-  pdfAnnotationImports PdfAnnotationImport[]
 }
 
 // A private, Session-scoped saved source location. Session identity deliberately has no foreign key:
@@ -66,13 +64,25 @@ model Bookmark {
   @@map("bookmarks")
 }
 
-// PDF annotations belong to a managed file version. sessionId records creation context only.
-// They are owned independently from generic Bookmarks. The selector is versioned JSON
-// so future mark kinds and coordinate systems can be added without changing Bookmark semantics.
-model PdfAnnotation {
-  id              String   @id
+// Multiple explicitly associated source versions can share one annotation document.
+// Equal content alone does not grant access or merge independently uploaded notes.
+model PdfAnnotationDocument {
+  id          String                       @id
+  checksum    String
+  sizeBytes   BigInt?
+  revision    Int                          @default(0)
+  sources     PdfAnnotationSourceBinding[]
+  annotations PdfAnnotation[]
+  imports     PdfAnnotationImport[]
+  aliases     PdfAnnotationAlias[]
+
+  @@map("pdf_annotation_documents")
+}
+
+model PdfAnnotationSourceBinding {
+  id              String                @id
+  documentId      String
   projectId       String?
-  sessionId       String?
   sourceSessionId String?
   sourceKind      String
   sourceFileId    String
@@ -80,26 +90,65 @@ model PdfAnnotation {
   checksum        String
   name            String
   path            String
-  kind            String
-  selectorJson    String
-  color           String?
-  origin          String   @default("user")
-  externalSubtype String?
-  note            String   @default("")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  project         Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  document        PdfAnnotationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  @@index([projectId, sourceFileId, versionId])
+  @@index([documentId])
+  @@map("pdf_annotation_sources")
+}
+
+// Aliases preserve old links after explicit duplicate reconciliation. A null target is a deletion.
+model PdfAnnotationAlias {
+  id           String                @id
+  documentId   String
+  annotationId String?
+  document     PdfAnnotationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([annotationId])
+  @@map("pdf_annotation_aliases")
+}
+
+// PDF annotations belong to a shared document. Original source columns record provenance. sessionId records creation context only.
+// They are owned independently from generic Bookmarks. The selector is versioned JSON
+// so future mark kinds and coordinate systems can be added without changing Bookmark semantics.
+model PdfAnnotation {
+  documentId         String
+  nativeKey          String?
+  nativeBaselineJson String?
+  document           PdfAnnotationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  id                 String                @id
+  projectId          String?
+  sessionId          String?
+  sourceSessionId    String?
+  sourceKind         String
+  sourceFileId       String
+  versionId          String
+  checksum           String
+  name               String
+  path               String
+  kind               String
+  selectorJson       String
+  color              String?
+  origin             String                @default("user")
+  externalSubtype    String?
+  note               String                @default("")
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  @@unique([documentId, nativeKey])
   @@index([projectId, createdAt, id])
   @@index([projectId, sourceFileId, versionId, createdAt, id])
   @@index([projectId, sourceKind, sourceFileId, versionId, createdAt, id])
   @@index([sourceKind, sourceFileId, versionId, createdAt, id])
+  @@index([documentId, createdAt, id])
   @@map("pdf_annotations")
 }
 
 // Receipt survives individual annotation deletion, so exports can remove only imported originals.
 model PdfAnnotationImport {
-  id           String   @id
+  documentId   String                @unique
+  document     PdfAnnotationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  id           String                @id
   projectId    String?
   sessionId    String?
   sourceKind   String
@@ -107,7 +156,6 @@ model PdfAnnotationImport {
   versionId    String
   checksum     String
   resultJson   String
-  project      Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId, sessionId])
   @@index([sourceKind, sourceFileId, versionId])
@@ -304,12 +352,12 @@ model ProjectPreviewState {
 
 // Per-Session playback position and presentation settings; independent of the rebuildable index.
 model SessionReplayProgress {
-  projectId   String
-  sessionId   String
-  stateJson   String?
-  revision    Int      @default(0)
-  updatedAt   DateTime @default(now()) @updatedAt
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  sessionId String
+  stateJson String?
+  revision  Int      @default(0)
+  updatedAt DateTime @default(now()) @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@id([projectId, sessionId])
 }

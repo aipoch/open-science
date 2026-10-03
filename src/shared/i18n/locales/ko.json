@@ -139,9 +139,7 @@
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Cellosaurus의 세포주 식별 정보, 유래, 질환, 품질 기록 및 데이터베이스 매핑.",
     "Search cell lines by name or synonym.": "이름 또는 동의어로 세포주 검색.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "CVCL 또는 RRID로 세포주 식별 정보, 유래, 품질 기록 및 데이터베이스 매핑 조회.",
-
     "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "단백질 서열, 서열 동일성 및 쿼리 서열 커버리지로 PDB 실험 구조를 검색하고 엔터티, 사슬 및 정렬 세부 정보를 조회합니다.",
-
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Monarch Initiative를 통한 질병 및 유전자와 표현형의 연관성과 근거 출처.",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "질병과 표현형의 연관성, 근거 출처 및 관계 유형을 조회합니다.",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "유전자와 표현형의 연관성, 근거 출처 및 관계 유형을 조회합니다.",
@@ -6856,6 +6854,26 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "자동 접근을 끄면 승인이 필요하지만 서비스가 차단되지는 않습니다. 사용자 지정 공개 규칙은 계속 적용됩니다.",
     "Unsaved changes": "저장하지 않은 변경 사항",
     "Your network rules have not been saved. Discard them and leave?": "네트워크 규칙을 저장하지 않았습니다. 변경 사항을 버리고 나가시겠습니까?",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "이렇게 하면 Notebook 코드가 {{domain}}에서 데이터를 읽고 해당 도메인으로 데이터를 보낼 수 있습니다. 신뢰하는 도메인만 허용하세요. 저장된 액세스 권한은 언제든지 설정 > 네트워크 > Notebook 네트워크 액세스에서 취소할 수 있습니다."
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "이렇게 하면 Notebook 코드가 {{domain}}에서 데이터를 읽고 해당 도메인으로 데이터를 보낼 수 있습니다. 신뢰하는 도메인만 허용하세요. 저장된 액세스 권한은 언제든지 설정 > 네트워크 > Notebook 네트워크 액세스에서 취소할 수 있습니다.",
+    "Choose what to keep": "유지할 내용 선택",
+    "Create reference and review sharing": "문헌을 만들고 공유 검토",
+    "Deleted or not imported": "삭제되었거나 가져오지 않음",
+    "Edits and deletions will affect every linked source listed below.": "편집과 삭제는 아래 나열된 모든 연결된 출처에 적용됩니다.",
+    "Keep Literature note": "문헌 노트 유지",
+    "Keep Workspace note": "워크스페이스 노트 유지",
+    "Keep both as separate notes": "별도 노트로 둘 다 유지",
+    "Keep deleted": "삭제 상태 유지",
+    "Link sources and share notes": "출처를 연결하고 노트 공유",
+    "Linked sources share notes, edits, tags and deletions. Independently uploaded PDFs remain separate until you link them.": "연결된 출처는 노트, 편집, 태그와 삭제를 공유합니다. 별도로 업로드한 PDF는 연결하기 전까지 독립적으로 유지됩니다.",
+    "No comment": "댓글 없음",
+    "Notes are shared with linked sources. Edits and deletions apply everywhere.": "노트가 연결된 출처와 공유됩니다. 편집과 삭제는 모든 진입점에 적용됩니다.",
+    "PDF sharing could not be prepared. Check that both sources are available and contain the same PDF.": "PDF 공유를 준비할 수 없습니다. 두 출처를 모두 사용할 수 있고 동일한 PDF가 포함되어 있는지 확인하세요.",
+    "References could not be loaded.": "문헌을 불러올 수 없습니다.",
+    "Resolve annotation conflict": "주석 충돌 해결",
+    "Review sharing": "공유 검토",
+    "Share notes with Literature": "문헌과 노트 공유",
+    "Sharing was not completed. Review the current notes again before retrying.": "공유가 완료되지 않았습니다. 다시 시도하기 전에 현재 노트를 검토하세요.",
+    "These notes have conflicting edits or deletions. Choose what to keep.": "이 노트에는 편집 또는 삭제 충돌이 있습니다. 유지할 내용을 선택하세요.",
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "이 이전 주석의 원래 식별 정보를 확인할 수 없습니다. 유지 방법을 선택하세요."
   }
 }

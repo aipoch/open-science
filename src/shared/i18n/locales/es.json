@@ -141,9 +141,7 @@
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Identidad, origen, enfermedades, registros de calidad y correspondencias en bases de datos de líneas celulares de Cellosaurus.",
     "Search cell lines by name or synonym.": "Buscar líneas celulares por nombre o sinónimo.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "Obtener la identidad, el origen, los registros de calidad y las correspondencias en bases de datos de una línea celular mediante CVCL o RRID.",
-
     "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "Buscar estructuras experimentales de PDB por secuencia de proteína, identidad de secuencia y cobertura de la secuencia de consulta; obtener entidades, cadenas y detalles del alineamiento.",
-
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Asociaciones de enfermedades y genes con fenotipos y fuentes de evidencia mediante Monarch Initiative.",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "Obtener asociaciones enfermedad–fenotipo con fuentes de evidencia y tipos de relación.",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "Obtener asociaciones gen–fenotipo con fuentes de evidencia y tipos de relación.",
@@ -7186,6 +7184,26 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "Al desactivar el acceso automático se requiere aprobación. El servicio no se bloquea. Las reglas públicas personalizadas siguen aplicándose.",
     "Unsaved changes": "Cambios sin guardar",
     "Your network rules have not been saved. Discard them and leave?": "No se han guardado las reglas de red. ¿Descartar los cambios y salir?",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Esto permite que el código de Notebook lea datos de {{domain}} y envíe datos a ese dominio. Permita solo dominios de confianza. Puede revocar el acceso guardado en cualquier momento en Configuración > Red > Acceso de red de Notebook."
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Esto permite que el código de Notebook lea datos de {{domain}} y envíe datos a ese dominio. Permita solo dominios de confianza. Puede revocar el acceso guardado en cualquier momento en Configuración > Red > Acceso de red de Notebook.",
+    "Choose what to keep": "Elegir qué conservar",
+    "Create reference and review sharing": "Crear referencia y revisar el uso compartido",
+    "Deleted or not imported": "Eliminado o sin importar",
+    "Edits and deletions will affect every linked source listed below.": "Las ediciones y eliminaciones afectarán a todas las fuentes vinculadas que se indican a continuación.",
+    "Keep Literature note": "Conservar la nota de Literatura",
+    "Keep Workspace note": "Conservar la nota del espacio de trabajo",
+    "Keep both as separate notes": "Conservar ambas como notas independientes",
+    "Keep deleted": "Mantener eliminado",
+    "Link sources and share notes": "Vincular fuentes y compartir notas",
+    "Linked sources share notes, edits, tags and deletions. Independently uploaded PDFs remain separate until you link them.": "Las fuentes vinculadas comparten notas, ediciones, etiquetas y eliminaciones. Los PDF cargados por separado permanecen independientes hasta que se vinculan.",
+    "No comment": "Sin comentario",
+    "Notes are shared with linked sources. Edits and deletions apply everywhere.": "Las notas se comparten con las fuentes vinculadas. Las ediciones y eliminaciones se aplican en todas ellas.",
+    "PDF sharing could not be prepared. Check that both sources are available and contain the same PDF.": "No se pudo preparar el uso compartido del PDF. Compruebe que ambas fuentes estén disponibles y contengan el mismo PDF.",
+    "References could not be loaded.": "No se pudieron cargar las referencias.",
+    "Resolve annotation conflict": "Resolver el conflicto de anotaciones",
+    "Review sharing": "Revisar el uso compartido",
+    "Share notes with Literature": "Compartir notas con Literatura",
+    "Sharing was not completed. Review the current notes again before retrying.": "No se completó el uso compartido. Revise las notas actuales antes de volver a intentarlo.",
+    "These notes have conflicting edits or deletions. Choose what to keep.": "Estas notas presentan conflictos de edición o eliminación. Elija qué conservar.",
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "No se puede verificar la identidad original de esta anotación antigua. Elija cómo conservarla."
   }
 }

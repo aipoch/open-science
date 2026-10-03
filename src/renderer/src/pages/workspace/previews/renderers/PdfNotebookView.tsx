@@ -1,3 +1,5 @@
+import { pdfAnnotationSourceKey } from '../../pdf-annotations/pdf-annotation-index'
+import { PdfSharingDialog } from '../../pdf-annotations/PdfSharingDialog'
 import type { PdfAnnotation, PdfAnnotationSource } from '../../../../../../shared/pdf-annotations'
 import type { TagView } from '../../../../../../shared/tags'
 import { useTagStore } from '@/stores/tag-store'
@@ -758,6 +760,18 @@ const PdfNotebookView = ({
       }
     >
       <header className="shrink-0 border-b border-border bg-bg-000 px-3 py-2.5">
+        {annotationPort.shared?.(source) ? (
+          <p className="mb-2 text-xs text-muted-foreground">
+            {t('Notes are shared with linked sources. Edits and deletions apply everywhere.')}
+          </p>
+        ) : null}
+        {annotationPort.available ? (
+          <PdfSharingDialog
+            key={pdfAnnotationSourceKey(source)}
+            source={source}
+            onChanged={annotationPort.retryLoad}
+          />
+        ) : null}
         {sidebar ? (
           <TooltipProvider>
             <div className="mb-2 flex min-w-0 items-center gap-1">

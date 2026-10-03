@@ -770,3 +770,24 @@ it('projects deleted Tags without reloading notes or applying stale assignment s
   expect(port.annotations[0].tagIds).toEqual([])
   expect(window.api.pdfAnnotations.list).toHaveBeenCalledTimes(1)
 })
+
+it('shares undo history across linked source indexes', async () => {
+  const items = installStore([annotation])
+  const other = { ...annotation.target.source, sourceFileId: 'linked', versionId: 'linked' }
+  vi.mocked(window.api.pdfAnnotations.list).mockImplementation(async () => ({
+    items: [...items.values()],
+    total: items.size,
+    sourceGroups: [[annotation.target.source, other]]
+  }))
+  await mount()
+  await act(async () => {
+    await port.update(annotation.id, { note: 'Shared edit' })
+  })
+  expect(port.forSource(other).map((row) => row.note)).toEqual(['Shared edit'])
+  expect(port.history(other).canUndo).toBe(true)
+  await act(async () => {
+    await port.undo(other)
+  })
+  expect(port.forSource(annotation.target.source).map((row) => row.note)).toEqual(['Saved'])
+  expect(port.history(other).canRedo).toBe(true)
+})

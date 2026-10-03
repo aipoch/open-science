@@ -1,3 +1,5 @@
+import { PdfAnnotationRepository } from '../pdf-annotations/repository'
+import type { PdfAnnotationSource } from '../../shared/pdf-annotations'
 import { initDataRoot } from '../storage-root'
 import { createHash } from 'node:crypto'
 import { parseLiteratureDeletionError } from '../../shared/literature-deletion'
@@ -63,6 +65,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 vi.mock('../uploads/atomic-no-replace-publisher', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../uploads/atomic-no-replace-publisher')>()
   return { ...actual, removeAnchoredFile: vi.fn(actual.removeAnchoredFile) }
+})
+
+vi.mock('../pdf-annotations/native-import', async () => {
+  const core = await import('../pdf-annotations/native-import-core')
+  return { ...core, parseNativePdfAnnotations: core.parseNativePdfAnnotationsOnCurrentThread }
 })
 
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
@@ -151,6 +158,100 @@ describe('Literature PDF attachment reliability', () => {
       authority: new LiteratureAttachmentAuthority({ getClient: async () => client!, content })
     }
   }
+
+  it('shares a verified Workspace PDF atomically and reuses the attachment on reopening', async () => {
+    const { request, path, content, catalog, authority } = await setup()
+    await client!.project.create({ data: { id: 'workspace', name: 'Workspace' } })
+    const annotations = new PdfAnnotationRepository(async () => client!)
+    const bytes = await readFile(path)
+    const source: PdfAnnotationSource = {
+      kind: 'upload-version',
+      projectId: 'workspace',
+      sessionId: 'session',
+      sourceFileId: 'upload',
+      versionId: 'workspace-version',
+      checksum: createHash('sha256').update(bytes).digest('hex'),
+      name: 'paper.pdf',
+      path: 'upload-version:workspace-version'
+    }
+    await annotations.create({
+      id: 'workspace-note',
+      projectId: source.projectId!,
+      sessionId: source.sessionId,
+      kind: 'document-note',
+      note: 'Keep my work',
+      tagIds: [],
+      target: { source, selector: { kind: 'document-note', coordinateVersion: 1 } }
+    })
+    let rejectFinalVerification = false
+    const importer = new LiteraturePdfImporter({
+      catalog,
+      content,
+      uploads: { resolveManagedUploadPath: async () => path, deleteUpload: async () => undefined },
+      sharing: {
+        annotations,
+        sources: {
+          async withVerifiedSource(selected, operation) {
+            if (selected.kind === 'literature-attachment-version') {
+              const lease = await authority.openContent(selected.versionId)
+              try {
+                await lease.verifyUnchanged()
+                return await operation(
+                  {
+                    ...lease,
+                    verifyUnchanged: async () => {
+                      if (rejectFinalVerification) throw new Error('Target bytes changed')
+                      await lease.verifyUnchanged()
+                    }
+                  },
+                  selected
+                )
+              } finally {
+                await lease.close()
+              }
+            }
+            const verifyUnchanged = async (): Promise<void> => {
+              expect(
+                createHash('sha256')
+                  .update(await readFile(path))
+                  .digest('hex')
+              ).toBe(selected.checksum)
+            }
+            await verifyUnchanged()
+            return operation({ path, size: bytes.length, verifyUnchanged }, selected)
+          }
+        }
+      }
+    })
+    const input = { source, itemId: request.itemId, decisions: [] }
+    const preview = await importer.share(input)
+    expect((await catalog.get(request.itemId))!.attachments).toHaveLength(0)
+    const commit = annotations.commitSharing.bind(annotations)
+    vi.spyOn(annotations, 'commitSharing').mockImplementationOnce(async (...args) => {
+      await commit(...args)
+      throw new Error('Injected failure after linking')
+    })
+    await expect(importer.share({ ...input, token: preview.token })).rejects.toThrow(
+      'Injected failure'
+    )
+    expect((await catalog.get(request.itemId))!.attachments).toHaveLength(0)
+    expect(await client!.pdfAnnotationSourceBinding.count()).toBe(1)
+    const committed = await importer.share({ ...input, token: preview.token })
+    expect(committed.committed).toBe(true)
+    const library = await annotations.list({ literatureVersionId: committed.targetVersionId! })
+    expect(library.items.map((note) => note.id)).toEqual(['workspace-note'])
+    const reopened = await importer.share(input)
+    expect(reopened.shared).toBe(true)
+    rejectFinalVerification = true
+    await expect(importer.share({ ...input, token: reopened.token })).rejects.toThrow(
+      'Target bytes changed'
+    )
+    expect((await catalog.get(request.itemId))!.attachments).toHaveLength(1)
+    expect(await client!.pdfAnnotation.count()).toBe(1)
+    rejectFinalVerification = false
+    await importer.share({ ...input, token: reopened.token })
+    expect((await catalog.get(request.itemId))!.attachments[0].versions).toHaveLength(1)
+  })
 
   it.each(['unlink', 'sweep'] as const)(
     'reports pending cleanup when permanent deletion commits before a %s failure',

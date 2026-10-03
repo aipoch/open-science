@@ -454,6 +454,7 @@ describe('LiteratureLibraryPage', () => {
           formatDocument: vi.fn(),
           formatReferences,
           importPdf,
+          sharePdf: vi.fn(),
           cancelPdfImport: vi.fn().mockResolvedValue({ cancelled: true }),
           importRecords
         },

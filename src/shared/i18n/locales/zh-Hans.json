@@ -139,9 +139,7 @@
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "来自 Cellosaurus 的细胞系身份、来源、疾病、质量记录和数据库映射。",
     "Search cell lines by name or synonym.": "按名称或别名搜索细胞系。",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "通过 CVCL 或 RRID 获取细胞系身份、来源、质量记录和数据库映射。",
-
     "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "根据蛋白质序列、序列一致性和查询序列覆盖率搜索 PDB 实验结构，返回实体、链和比对详情。",
-
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "通过 Monarch Initiative 查询疾病和基因的表型关联及证据来源。",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "查询疾病—表型关联及其证据来源和关系类型。",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "查询基因—表型关联及其证据来源和关系类型。",
@@ -6858,6 +6856,26 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "关闭自动访问后需要审批，并不意味着阻止该服务。自定义公共域名规则仍然适用。",
     "Unsaved changes": "有未保存的更改",
     "Your network rules have not been saved. Discard them and leave?": "网络规则尚未保存。要放弃更改并离开吗？",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "这将允许 Notebook 代码从 {{domain}} 读取数据并向其发送数据。仅允许您信任的域名。您可以随时在“设置 > 网络 > Notebook 网络访问”中撤销已保存的访问权限。"
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "这将允许 Notebook 代码从 {{domain}} 读取数据并向其发送数据。仅允许您信任的域名。您可以随时在“设置 > 网络 > Notebook 网络访问”中撤销已保存的访问权限。",
+    "Choose what to keep": "选择保留内容",
+    "Create reference and review sharing": "创建文献并检查共享",
+    "Deleted or not imported": "已删除或未导入",
+    "Edits and deletions will affect every linked source listed below.": "编辑和删除会影响下面列出的所有关联来源。",
+    "Keep Literature note": "保留文献库笔记",
+    "Keep Workspace note": "保留工作区笔记",
+    "Keep both as separate notes": "保留为两条独立笔记",
+    "Keep deleted": "保持删除",
+    "Link sources and share notes": "关联来源并共享笔记",
+    "Linked sources share notes, edits, tags and deletions. Independently uploaded PDFs remain separate until you link them.": "关联来源共享笔记、编辑、标签和删除操作。独立上传的 PDF 在主动关联前保持独立。",
+    "No comment": "无评论",
+    "Notes are shared with linked sources. Edits and deletions apply everywhere.": "笔记已与关联来源共享。编辑和删除会在所有入口生效。",
+    "PDF sharing could not be prepared. Check that both sources are available and contain the same PDF.": "无法准备 PDF 共享。请确认两个来源均可用且包含相同的 PDF。",
+    "References could not be loaded.": "无法加载文献。",
+    "Resolve annotation conflict": "解决批注冲突",
+    "Review sharing": "检查共享",
+    "Share notes with Literature": "与文献库共享笔记",
+    "Sharing was not completed. Review the current notes again before retrying.": "未完成共享。重试前请重新检查当前笔记。",
+    "These notes have conflicting edits or deletions. Choose what to keep.": "这些笔记存在编辑或删除冲突。请选择保留内容。",
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "无法验证此历史批注的原始身份。请选择保留方式。"
   }
 }

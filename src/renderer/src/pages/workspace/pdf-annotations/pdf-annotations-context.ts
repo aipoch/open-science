@@ -10,6 +10,7 @@ type PdfAnnotationPort = Readonly<{
   document?: Readonly<{ sourceFileId?: string; versionId: string }>
   sessionId?: string
   source?: PdfAnnotationSource
+  shared?: (source: PdfAnnotationSource) => boolean
   scoped: boolean
   available: boolean
   annotations: readonly PdfAnnotation[]

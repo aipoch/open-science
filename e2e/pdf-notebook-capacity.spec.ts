@@ -32,6 +32,9 @@ test('measures large notebooks in the full reader and sidebar', async ({ app }, 
   const results: unknown[] = []
   try {
     const version = await db.literatureAttachmentVersion.findFirstOrThrow()
+    const binding = await db.pdfAnnotationSourceBinding.findFirstOrThrow({
+      where: { versionId: version.id }
+    })
     for (const count of (process.env.PDF_NOTES_COUNTS ?? '500,2000,10000').split(',').map(Number)) {
       await db.pdfAnnotation.deleteMany()
       for (let start = 0; start < count; start += 250) {
@@ -41,6 +44,7 @@ test('measures large notebooks in the full reader and sidebar', async ({ app }, 
             const exact = `Evidence ${n}: a representative quoted passage for notebook capacity testing.`
             return {
               id: `capacity-${n}`,
+              documentId: binding.documentId,
               sourceKind: 'literature-attachment-version',
               sourceFileId: version.attachmentId,
               versionId: version.id,
