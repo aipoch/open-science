@@ -225,6 +225,21 @@ fn merge_acl_grant(grants: &mut BTreeMap<String, AclGrant>, path: String, access
     grants.insert(path, access);
 }
 
+fn is_windows_volume_root(path: &Path) -> bool {
+    let value = path.to_string_lossy();
+    value.len() == 3 && value.as_bytes().get(1) == Some(&b':')
+}
+
+fn is_windows_profile_boundary(path: &Path) -> bool {
+    let is_users_root = path
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("Users"))
+        && path.parent().is_some_and(is_windows_volume_root);
+    let is_current_profile = std::env::var_os("USERPROFILE")
+        .is_some_and(|profile| paths_equal(&profile.to_string_lossy(), path));
+    is_users_root || is_current_profile
+}
+
 fn plan_writable_acl_grants(spec: &LaunchSpec) -> Result<BTreeMap<String, AclGrant>> {
     let mut grants = plan_required_path_acl_grants(spec)?;
     for root in &spec.read_write_roots {
@@ -277,20 +292,13 @@ fn plan_required_path_acl_grants(spec: &LaunchSpec) -> Result<BTreeMap<String, A
             if path.parent().is_some_and(|ancestor| ancestor != path)
                 && path.is_dir()
                 && !explicit_read_only_root
-                // Windows grants AppContainer traversal through the direct children of a
-                // volume root (for example C:\\Users). They are also commonly protected from
-                // per-user DACL writes, so never try to lease an ACL on those shared roots.
-                && !path.parent().is_some_and(|ancestor| {
-                    let is_volume_child = {
-                        let value = ancestor.to_string_lossy();
-                        value.len() == 3 && value.as_bytes().get(1) == Some(&b':')
-                    };
-                    let is_profile_root = ancestor.parent().is_some_and(|volume| {
-                        let value = volume.to_string_lossy();
-                        value.len() == 3 && value.as_bytes().get(1) == Some(&b':')
-                    });
-                    is_volume_child || is_profile_root
-                })
+                // Windows grants AppContainer traversal through the shared profile root and the
+                // current profile directory. Do not generalize this exemption to arbitrary
+                // volume children such as D:\\workspace, which may require an explicit lease.
+                && !is_windows_profile_boundary(path)
+                && !path
+                    .parent()
+                    .is_some_and(is_windows_profile_boundary)
             {
                 merge_acl_grant(
                     &mut grants,
@@ -2533,7 +2541,7 @@ mod windows_host {
         if !inserted {
             unsafe { AddAccessAllowedAceEx(target, ACL_REVISION_DS, ACE_FLAGS(flags), mask, sid) }?;
         }
-        if !non_inheriting {
+        if !protect && !non_inheriting {
             unsafe {
                 SetNamedSecurityInfoW(
                     PCWSTR(name.as_ptr()),
@@ -3715,6 +3723,12 @@ mod windows_host {
     mod tests {
         use super::*;
         use crate::WINDOWS_ACL_TARGET_MISSING_MARKER;
+
+        #[test]
+        fn profile_boundary_exemption_does_not_cover_arbitrary_volume_children() {
+            assert!(crate::is_windows_profile_boundary(Path::new(r"C:\Users")));
+            assert!(!crate::is_windows_profile_boundary(Path::new(r"D:\workspace")));
+        }
 
         #[test]
         fn pending_launch_is_not_a_terminal_never_started_proof() {
@@ -5160,6 +5174,30 @@ mod windows_host {
             restore_acl_snapshot(&original).unwrap();
             fs::remove_dir_all(&root).unwrap();
             assert_eq!(after_grant, child_original);
+        }
+
+        #[test]
+        fn protected_boundary_sets_dacl_protected_without_traversal_ace() {
+            let root = unique_test_root("protected-boundary-clean-acl");
+            let child = root.join("denied");
+            fs::create_dir_all(&child).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let child_path = child.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&path).unwrap();
+            let capability = CommandCapability::new(format!(
+                "open-science.test.{}",
+                new_resource_key().unwrap()
+            ))
+            .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+
+            apply_acl_grant(&path, &identity, AclGrant::ReadOnlyTree).unwrap();
+            update_command_acl_native(&child_path, &identity, None, true).unwrap();
+            let protected = capture_acl_snapshot(&child_path).unwrap();
+            restore_acl_snapshot(&original).unwrap();
+            fs::remove_dir_all(&root).unwrap();
+
+            assert!(protected.dacl_protected);
         }
 
         #[test]
