@@ -865,6 +865,28 @@ it('keeps a vertically adjacent figure crop inside the caption lane', () => {
   expect(figure.rect).toEqual([58, 78, 182, 242])
 })
 
+it('does not merge a neighboring side-column graphic during conservative recovery', () => {
+  const sideColumns = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [
+      { kind: 'path', normalizedRect: [0.05, 0.32, 0.2, 0.47] },
+      { kind: 'image', normalizedRect: [0.38, 0.32, 0.52, 0.47] },
+      { kind: 'image', normalizedRect: [0.48, 0.32, 0.58, 0.47] },
+      { kind: 'path', normalizedRect: [0.7, 0.05, 0.75, 0.2] },
+      { kind: 'path', normalizedRect: [0.76, 0.05, 0.81, 0.2] },
+      { kind: 'path', normalizedRect: [0.82, 0.05, 0.87, 0.2] }
+    ]
+  }
+  const [figure] = associateFigures(sideColumns, [
+    { page: 1, lines: ['Figure 3. Side-column result.'], rect: [400, 330, 550, 430] }
+  ])
+  expect(figure.rect).toEqual([226, 254, 350, 378])
+})
+
 it('rejects a graphics-count-only listing block as a figure', () => {
   const lines = Array.from({ length: 60 }, (_, index) => ({
     text: `Listing instruction line ${index} with enough words to resemble prose rather than a plot label.`,

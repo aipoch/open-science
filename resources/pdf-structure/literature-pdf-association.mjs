@@ -720,6 +720,30 @@ function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
     const narrowerWidth = Math.min(rect[2] - rect[0], caption.rect[2] - caption.rect[0])
     return narrowerWidth > 0 && overlap / narrowerWidth >= 0.35
   })
+  const sideGraphics = (side) => {
+    const items = graphics.filter(({ rect }) => {
+      const verticalOverlap =
+        Math.min(rect[3], caption.rect[3]) - Math.max(rect[1], caption.rect[1])
+      return (
+        (side === 'left'
+          ? rect[2] <= caption.rect[0] + edgeTolerance &&
+            caption.rect[0] - rect[2] <= maximumCaptionGap
+          : rect[0] >= caption.rect[2] - edgeTolerance &&
+            rect[0] - caption.rect[2] <= maximumCaptionGap) &&
+        verticalOverlap >= Math.min(rect[3] - rect[1], caption.rect[3] - caption.rect[1]) * 0.35
+      )
+    })
+    if (!items.length) return []
+    const gap = (rect) => (side === 'left' ? caption.rect[0] - rect[2] : rect[0] - caption.rect[2])
+    const nearest = Math.min(...items.map(({ rect }) => gap(rect)))
+    const anchor = items.find(({ rect }) => gap(rect) === nearest)?.rect
+    if (!anchor) return []
+    return items.filter(({ rect }) => {
+      const overlap = Math.max(0, Math.min(rect[2], anchor[2]) - Math.max(rect[0], anchor[0]))
+      const narrowerWidth = Math.min(rect[2] - rect[0], anchor[2] - anchor[0])
+      return narrowerWidth > 0 && overlap / narrowerWidth >= 0.35
+    })
+  }
   const directions = [
     laneGraphics.filter(
       ({ rect }) =>
@@ -729,20 +753,8 @@ function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
       ({ rect }) =>
         rect[1] >= caption.rect[3] - edgeTolerance && rect[1] - caption.rect[3] <= maximumCaptionGap
     ),
-    graphics.filter(
-      ({ rect }) =>
-        rect[2] <= caption.rect[0] + edgeTolerance &&
-        caption.rect[0] - rect[2] <= maximumCaptionGap &&
-        Math.min(rect[3], caption.rect[3]) - Math.max(rect[1], caption.rect[1]) >=
-          Math.min(rect[3] - rect[1], caption.rect[3] - caption.rect[1]) * 0.35
-    ),
-    graphics.filter(
-      ({ rect }) =>
-        rect[0] >= caption.rect[2] - edgeTolerance &&
-        rect[0] - caption.rect[2] <= maximumCaptionGap &&
-        Math.min(rect[3], caption.rect[3]) - Math.max(rect[1], caption.rect[1]) >=
-          Math.min(rect[3] - rect[1], caption.rect[3] - caption.rect[1]) * 0.35
-    )
+    sideGraphics('left'),
+    sideGraphics('right')
   ]
   const ranked = directions
     .map((items) => {
