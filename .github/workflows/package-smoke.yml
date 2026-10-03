@@ -160,6 +160,7 @@ jobs:
           retention-days: 7
           path: |
             test-results/
+            playwright-report/
           if-no-files-found: ignore
 
       - name: Verify Windows Authenticode signature
