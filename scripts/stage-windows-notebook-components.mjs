@@ -51,7 +51,7 @@ export async function stageWindowsNotebookComponents(root, output) {
   )
   const repairs = [
     'libuv-f46e4246b5277fe1c5888b88b24d8b78020dd4f8',
-    'node-appcontainer-package-scope-v1',
+    'node-appcontainer-package-scope-v2',
     'powershell-appcontainer-v1',
     'powershell-source-archive-metadata-v1',
     'npm-appcontainer-shared-prefix-v1'

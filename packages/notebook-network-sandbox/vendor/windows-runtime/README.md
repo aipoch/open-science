@@ -7,8 +7,9 @@ AppContainer remains the execution boundary. It requires these runtime repairs:
   AppContainer child stdio pipes must use the `LOCAL` namespace. The previous
   libuv implementation can block synchronously before the child timeout starts.
 - Node package-scope traversal: stop CommonJS and ESM ancestor searches when a
-  package config cannot be read and its directory cannot be listed inside
-  AppContainer. A readable package config remains authoritative, including its
+  package config cannot be read and its directory metadata cannot be queried
+  inside AppContainer. Ancestor grants intentionally allow traversal and
+  metadata reads without directory listing. A readable package config remains authoritative, including its
   `type`, `imports` and `exports`. An unreadable config inside a readable directory,
   or malformed JSON, still fails. Direct package reads keep upstream error handling.
   This repair does not grant ancestor ACLs, create workspace package files, or
