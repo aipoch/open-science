@@ -133,7 +133,9 @@
     "More items": "更多会话"
   },
   "renderer": {
-
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "获取 GEO 系列的元数据、样本和补充文件链接。",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "查找 GEO Series Matrix 和 NCBI RNA-seq 计数文件的链接，以便手动下载。",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "在分析前检查解压后的 GEO 矩阵结构、维度和样本对应关系。",
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "来自 Cellosaurus 的细胞系身份、来源、疾病、质量记录和数据库映射。",
     "Search cell lines by name or synonym.": "按名称或别名搜索细胞系。",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "通过 CVCL 或 RRID 获取细胞系身份、来源、质量记录和数据库映射。",
@@ -5991,6 +5993,7 @@
     "Use a new API key": "使用新的 API 密钥",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "移除此服务会保留共用的账户和密钥。技能和连接器将恢复默认选择方式。",
     "OpenRouter": "OpenRouter",
+    "OpenCode Zen": "OpenCode Zen",
     "Add to Specialist": "添加到专家",
     "Always enabled": "始终启用",
     "Changes saved.": "更改已保存。",
@@ -6823,6 +6826,13 @@
     "Folder access was updated. Run the command again when you are ready.": "文件夹访问权限已更新。准备好后，请手动重新运行命令。",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "此文件夹权限跨会话生效，直到您在“文件”中撤销。命令不会自动运行。",
     "Drop files to attach or import a .science package": "拖放文件以添加附件，或导入 .science 研究包",
-    "Files cannot be attached right now.": "当前无法添加附件。"
+    "Files cannot be attached right now.": "当前无法添加附件。",
+    "This turn was interrupted. Resume to continue.": "此轮操作已中断。恢复以继续。",
+    "Connection lost — Resume to reconnect and continue.": "连接已断开 — 恢复以重新连接并继续。",
+    "Session was interrupted before the app closed.": "应用关闭前，会话已中断。",
+    "The run failed with no error message.": "运行失败，未提供错误信息。",
+    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "未发送的消息无法回滚（{{failure}}）。请重新发送或停止运行后重试。",
+    "The unsent Session could not be removed ({{failure}}).": "未发送的会话无法移除（{{failure}}）。",
+    "Agent Session cleanup did not complete.": "智能体会话清理未完成。"
   }
 }

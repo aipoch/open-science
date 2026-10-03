@@ -2,6 +2,9 @@ import { type PermissionProfileId } from '../../shared/permission-profiles'
 import { createSessionBranchSource } from '../../shared/session-branch-source'
 import {
   SESSION_DETAILS_TITLE_MAX_LENGTH,
+  latestOutcomePrompt,
+  resolveTurnOutcome,
+  type PersistedChatMessage,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 
@@ -27,6 +30,22 @@ export const nextForkTitle = (sourceTitle: string, existingTitles: readonly stri
   }
 }
 
+// Fork clears the source's live status, error and recovery fields, so a legacy failed latest turn
+// would otherwise lose its failure. Persist it on the copied Message to keep it as history.
+// Interrupted/cancelled legacy turns have no historical presentation and stay unmaterialized.
+// The Artifact publication retry is dropped: it targets the source's pending files, not the copies.
+const withLegacyFailedOutcome = <T extends PersistedChatMessage>(
+  copiedMessages: readonly T[],
+  sourceMessages: readonly PersistedChatMessage[],
+  anchorId: string,
+  outcome: PersistedChatMessage['turnOutcome']
+): T[] => {
+  const index = sourceMessages.findIndex((message) => message.id === anchorId)
+  return copiedMessages.map((message, copiedIndex) =>
+    copiedIndex === index ? { ...message, turnOutcome: outcome } : message
+  )
+}
+
 // The package copier owns data identities and evidence; this policy owns the new Session's
 // execution state. Historical operations stay historical and never acquire live handles.
 export const createForkSession = (
@@ -36,6 +55,25 @@ export const createForkSession = (
   title: string
 ): PersistedChatSession => {
   const now = Date.now()
+  const anchor = latestOutcomePrompt(source)
+  const legacyOutcome =
+    anchor && !anchor.turnOutcome ? resolveTurnOutcome(source, anchor.id) : undefined
+  if (anchor && legacyOutcome?.kind === 'failed') {
+    const failure: PersistedChatMessage['turnOutcome'] = {
+      kind: 'failed',
+      settledAt: legacyOutcome.settledAt,
+      error: legacyOutcome.error,
+      errorReportable: legacyOutcome.errorReportable
+    }
+    copied.messages = withLegacyFailedOutcome(copied.messages, source.messages, anchor.id, failure)
+    if (copied.conversationGraph && source.conversationGraph)
+      copied.conversationGraph.messages = withLegacyFailedOutcome(
+        copied.conversationGraph.messages,
+        source.conversationGraph.messages,
+        anchor.id,
+        failure
+      )
+  }
   const graph = copied.conversationGraph
   if (graph) {
     graph.messages = graph.messages.map((message, index) => ({
@@ -82,6 +120,7 @@ export const createForkSession = (
     providerContinuityToken: undefined,
     status: 'idle',
     activeRun: undefined,
+    promptPreparation: undefined,
     resumeRecovery: undefined,
     taskRunCommitId: undefined,
     error: undefined,

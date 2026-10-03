@@ -195,6 +195,7 @@ test('replaces the discussion Session without replacing the draft or changing so
     })
     // The width probes move the controls under the pointer; leave the tooltip's
     // pointer-grace area before testing a fresh hover on the source.
+    await editor.focus()
     await page.mouse.move(0, 0)
     await expect(page.getByRole('tooltip')).toHaveCount(0)
     await stepChip.getByRole('button').first().hover()

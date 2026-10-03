@@ -8,6 +8,7 @@ type SessionInterruptedBannerProps = {
   isDisabled: boolean
   isResuming: boolean
   onResume: () => void
+  showResume?: boolean
 }
 
 const resumeButtonClassName =
@@ -19,29 +20,32 @@ const SessionInterruptedBanner = ({
   message,
   isDisabled,
   isResuming,
-  onResume
+  onResume,
+  showResume = true
 }: SessionInterruptedBannerProps): React.JSX.Element => {
   const { t } = useTranslation()
 
   return (
     <div className="mb-2 flex items-center gap-3 rounded-lg bg-bg-200/50 px-3 py-2">
       <p className="min-w-0 flex-1 break-words text-sm leading-5 text-text-000">{message}</p>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className={resumeButtonClassName}
-        onClick={onResume}
-        disabled={isDisabled || isResuming}
-        aria-label={t('Resume session')}
-      >
-        {isResuming ? (
-          <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
-        ) : (
-          <Play className="size-3.5" strokeWidth={2} aria-hidden="true" />
-        )}
-        {isResuming ? t('Resuming…') : t('Resume')}
-      </Button>
+      {showResume ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={resumeButtonClassName}
+          onClick={onResume}
+          disabled={isDisabled || isResuming}
+          aria-label={t('Resume session')}
+        >
+          {isResuming ? (
+            <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
+          ) : (
+            <Play className="size-3.5" strokeWidth={2} aria-hidden="true" />
+          )}
+          {isResuming ? t('Resuming…') : t('Resume')}
+        </Button>
+      ) : null}
     </div>
   )
 }

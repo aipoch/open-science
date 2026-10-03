@@ -33,6 +33,7 @@ import { CODEX_SUBSCRIPTION_PROVIDER_ID, isCodexSubscriptionProvider } from '../
 import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../settings/codex-paths'
 import { CODEX_VERSION, spawnCodexWithInstallAdmission } from '../settings/managed-codex'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
 import { registerOwnedPosixProcessGroup } from '../process-tree'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
@@ -230,6 +231,22 @@ const buildCodexModelOptions = (input: {
   }
 }
 
+const codexSandboxWriteConfig = (
+  grantedLocalRoots: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[] | undefined
+): Record<string, unknown> => {
+  const writableRoots = [
+    ...new Set(
+      (grantedLocalRoots ?? [])
+        .filter((root) => root.access === 'rw')
+        .map((root) => root.path.trim())
+        .filter(Boolean)
+    )
+  ]
+  return writableRoots.length > 0
+    ? { sandbox_workspace_write: { writable_roots: writableRoots } }
+    : {}
+}
+
 const buildCodexConfig = (provider: {
   baseUrl?: string
   preserveBaseUrl?: boolean
@@ -237,6 +254,7 @@ const buildCodexConfig = (provider: {
   contextWindow?: number
   key?: string
   reasoningEffort?: ModelReasoningEffort
+  grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
 }): Record<string, unknown> => {
   const baseUrl = normalizeResponsesBaseUrl(provider.baseUrl, {
     appendVersionPath: !provider.preserveBaseUrl
@@ -259,6 +277,7 @@ const buildCodexConfig = (provider: {
           )
         }
       : {}),
+    ...codexSandboxWriteConfig(provider.grantedLocalRoots),
     model_provider: CODEX_PROVIDER_ID,
     model_providers: {
       [CODEX_PROVIDER_ID]: {
@@ -555,6 +574,7 @@ export const createCodexFramework = ({
         agents: { enabled: false },
         features: CODEX_DISABLED_NATIVE_FEATURES,
         memories: CODEX_DISABLED_NATIVE_MEMORY,
+        ...codexSandboxWriteConfig(ctx.grantedLocalRoots),
         ...(persistentSystemPrompt ? { developer_instructions: persistentSystemPrompt } : {})
       }
       const codexConfigJson =
@@ -625,7 +645,8 @@ export const createCodexFramework = ({
         baseUrl: responsesBaseUrl,
         preserveBaseUrl: Boolean(provider.responsesBaseUrl?.trim()) && !useLocalResponsesEndpoint,
         key: useLocalResponsesEndpoint ? undefined : provider.key,
-        reasoningEffort: ctx.reasoningEffort
+        reasoningEffort: ctx.reasoningEffort,
+        grantedLocalRoots: ctx.grantedLocalRoots
       }),
       ...(useChatBridge ? { features: CODEX_CHAT_BRIDGE_FEATURES } : {}),
       ...(modelCatalogPath ? { model_catalog_json: modelCatalogPath } : {}),

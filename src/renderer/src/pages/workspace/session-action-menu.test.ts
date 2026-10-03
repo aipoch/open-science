@@ -249,6 +249,37 @@ it('groups conversation and package exports while keeping package admission inde
   expect(onExportPackage).toHaveBeenCalledWith(context.session)
 })
 
+it('keeps inactive Attention sessions available for fork and package export', () => {
+  const bindings = createSessionActionBindings({
+    canMutateConversations: true,
+    canDeleteConversations: false,
+    canDownloadArtifacts: true,
+    onTogglePin: vi.fn(),
+    onRenameSession: vi.fn(),
+    onDownloadArtifacts: vi.fn(),
+    onViewNotebook: vi.fn(),
+    onDeleteSession: vi.fn(),
+    onForkSession: vi.fn(async () => undefined),
+    onExportPackage: vi.fn(async () => undefined)
+  })
+  const context = invocation(
+    createSession({ status: 'error', attention: { recordProblems: ['size-limit'] } })
+  )
+  const entries = resolveActionMenuEntries(
+    {
+      identityKey: context.session.id,
+      catalog: SESSION_ACTION_CATALOG,
+      recipe: [
+        { kind: 'action', action: 'export-package' },
+        { kind: 'action', action: 'fork' }
+      ],
+      bindings
+    },
+    context
+  )
+  expect(entries).toMatchObject([{ disabled: false }, { disabled: false }])
+})
+
 it.each([
   'idle',
   'running',

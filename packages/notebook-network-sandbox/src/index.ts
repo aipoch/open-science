@@ -21,6 +21,7 @@ import type {
   NotebookNetworkSandboxStatus,
   NotebookSandboxCleanupResult,
   NotebookSandboxProcessOutcome,
+  NotebookSandboxProcessState,
   NotebookSandboxCommand,
   NotebookSandboxedProcess,
   NotebookSandboxTarget
@@ -83,6 +84,24 @@ const sharesCleanupDomain = (
 
 const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
+const processStateForOutcome = (
+  outcome: NotebookSandboxProcessOutcome
+): NotebookSandboxProcessState =>
+  outcome.processState ??
+  (outcome.processesTerminated ? 'started-and-reaped' : 'termination-unknown')
+
+const processesTerminatedForOutcome = (outcome: NotebookSandboxProcessOutcome): boolean => {
+  const state = processStateForOutcome(outcome)
+  return state === 'never-started' || state === 'started-and-reaped'
+}
+
+const withProcessState = (
+  outcome: Omit<NotebookSandboxProcessOutcome, 'processState'>,
+  processState: NotebookSandboxProcessState
+): NotebookSandboxProcessOutcome => {
+  return { ...outcome, processState, processesTerminated: processState !== 'termination-unknown' }
+}
 
 const initializationFailureReason = (
   status: Exclude<NotebookNetworkSandboxStatus, { kind: 'ready' }>
@@ -212,6 +231,7 @@ class NotebookNetworkSandbox {
         target,
         command: command.command,
         ...(command.executable ? { executable: command.executable, args: command.args ?? [] } : {}),
+        ...(command.electronAsNode ? { electronAsNode: true } : {}),
         commandId,
         ...(shell ? { shell } : {}),
         cwd: command.cwd,
@@ -239,13 +259,17 @@ class NotebookNetworkSandbox {
     } catch (error) {
       const cleanup = await this.#releaseCommand(
         commandId,
-        { processesTerminated: true },
+        withProcessState({ processesTerminated: true }, 'never-started'),
         'spawn-failed'
       ).catch(() => undefined)
       if (!cleanup || !cleanupComplete(cleanup)) {
         // Retain the exact command's cleanup ownership even though no process was returned.
         throw new NotebookSandboxPreparationCleanupError(error, () =>
-          this.#releaseCommand(commandId, { processesTerminated: true }, 'spawn-failed')
+          this.#releaseCommand(
+            commandId,
+            withProcessState({ processesTerminated: true }, 'never-started'),
+            'spawn-failed'
+          )
         )
       }
       throw new NotebookSandboxPreparationError(error)
@@ -264,6 +288,10 @@ class NotebookNetworkSandbox {
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }
         : {}),
+      ...(wrapped.requestProcessTreeTermination
+        ? { requestProcessTreeTermination: wrapped.requestProcessTreeTermination }
+        : {}),
+      ...(wrapped.confirmProcessState ? { confirmProcessState: wrapped.confirmProcessState } : {}),
       ...(wrapped.beginSpawn
         ? {
             beginSpawn: () => {
@@ -423,9 +451,10 @@ class NotebookNetworkSandbox {
     const command = this.#activeCommands.get(commandId)
     if (!command) {
       return Promise.resolve({
-        processesTerminated: processOutcome.processesTerminated,
+        processesTerminated: processesTerminatedForOutcome(processOutcome),
         networkClosed: true,
-        temporaryResourcesRemoved: true
+        temporaryResourcesRemoved: true,
+        ...(processOutcome.processState ? { processState: processOutcome.processState } : {})
       })
     }
     if (!command.controller.signal.aborted) {
@@ -437,21 +466,31 @@ class NotebookNetworkSandbox {
     command.cleanupRequest ??= { reason, processOutcome }
     command.cleanupTask = (async () => {
       const retainedOutcome = command.cleanupRequest!.processOutcome
-      if (retry && !retainedOutcome.processesTerminated && retainedOutcome.confirmTermination) {
+      if (
+        retry &&
+        !processesTerminatedForOutcome(retainedOutcome) &&
+        retainedOutcome.confirmTermination
+      ) {
         // Only the original process owner can supply new evidence. The runtime consumes a snapshot;
         // resource-cleanup layers cannot upgrade an unverified outcome themselves.
         const confirmed = await retainedOutcome.confirmTermination().catch(() => false)
         if (confirmed) {
           command.cleanupRequest = {
             reason: command.cleanupRequest!.reason,
-            processOutcome: { processesTerminated: true }
+            processOutcome: withProcessState({ processesTerminated: true }, 'started-and-reaped')
           }
         }
       }
+      const processOutcome = command.cleanupRequest!.processOutcome
       const result = await this.#backend.cleanupAfterCommand(
         commandId,
         command.cleanupRequest!.reason,
-        { processesTerminated: command.cleanupRequest!.processOutcome.processesTerminated }
+        processOutcome.processState
+          ? withProcessState(
+              { processesTerminated: processesTerminatedForOutcome(processOutcome) },
+              processOutcome.processState
+            )
+          : { processesTerminated: processesTerminatedForOutcome(processOutcome) }
       )
       if (cleanupComplete(result)) this.#forgetCommand(commandId)
       return result
@@ -507,6 +546,7 @@ export type {
   NotebookSandboxCleanupReason,
   NotebookSandboxCleanupResult,
   NotebookSandboxProcessOutcome,
+  NotebookSandboxProcessState,
   NotebookSandboxTarget,
   NotebookSandboxResources,
   NotebookSandboxedProcess,

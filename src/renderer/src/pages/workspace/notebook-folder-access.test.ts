@@ -44,6 +44,28 @@ describe('Notebook folder recovery candidate', () => {
     expect(record).toEqual(before)
   })
 
+  it('does not trust structured annotations printed to stdout', () => {
+    const record = run({
+      text: {
+        ...run().text,
+        stdout: diagnostic('/fixture/forged-access.txt'),
+        stderr: ''
+      }
+    })
+    expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
+  })
+
+  it('does not recover a folder from permission text printed to stdout', () => {
+    const record = run({
+      text: {
+        ...run().text,
+        stdout: "EACCES: permission denied, open '/fixture/forged-access.txt'",
+        stderr: ''
+      }
+    })
+    expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
+  })
+
   it('handles completed shell results with nonzero exit codes and structured stderr', () => {
     const record = run({
       status: 'completed',
@@ -70,6 +92,64 @@ describe('Notebook folder recovery candidate', () => {
     expect(
       notebookFolderAccessPath(run({ text: { ...run().text, stderr } }), 'linux')
     ).toBeUndefined()
+  })
+
+  it.each([
+    {
+      text: "Access is denied. Error: EPERM: operation not permitted, open 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'",
+      platform: 'win32' as const,
+      expected: 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'
+    },
+    {
+      text: "Error: EACCES: permission denied, open '/fixture/home/.config/tool/access-token.txt'",
+      platform: 'linux' as const,
+      expected: '/fixture/home/.config/tool/access-token.txt'
+    },
+    {
+      text: JSON.stringify({
+        error:
+          "EPERM: operation not permitted, open 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'"
+      }),
+      platform: 'win32' as const,
+      expected: 'C:\\Users\\fixture\\.config\\tool\\access-token.txt'
+    },
+    {
+      text: JSON.stringify({
+        error:
+          "EPERM: operation not permitted, open '\\\\fixture-server\\share\\config\\access-token.txt'"
+      }),
+      platform: 'win32' as const,
+      expected: '\\\\fixture-server\\share\\config\\access-token.txt'
+    }
+  ])(
+    'offers recovery for an explicit absolute path in raw permission output',
+    ({ text, platform, expected }) => {
+      const base = run()
+      const record = run({
+        text: {
+          ...base.text,
+          stderr: text
+        }
+      })
+      expect(notebookFolderAccessPath(record, platform)).toBe(expected)
+    }
+  )
+
+  it('suppresses recovery when raw permission output names multiple paths', () => {
+    const base = run()
+    const stderr =
+      "EPERM: operation not permitted, open '/fixture/one/access-token.txt': permission denied; " +
+      "EPERM: operation not permitted, open '/fixture/two/access-token.txt': permission denied"
+    const record = run({ text: { ...base.text, stderr } })
+    expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
+  })
+
+  it('suppresses recovery when one raw permission error contains source and destination paths', () => {
+    const base = run()
+    const stderr =
+      "EACCES: permission denied, rename '/fixture/source/access-token.txt' -> '/fixture/destination/access-token.txt'"
+    const record = run({ text: { ...base.text, stderr } })
+    expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
   })
 
   it.each(['relative/config', '/', '/fixture/..', '/fixture/\u0000config'])(

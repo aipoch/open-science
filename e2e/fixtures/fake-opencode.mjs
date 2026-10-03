@@ -642,6 +642,47 @@ const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
     return `Notebook lifecycle verified for ${initial.sessionId}.`
   })
 
+const verifyWindowsReplLifecycle = async (sessionId) =>
+  withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    const call = async (name, arguments_ = {}) =>
+      toolResult(name, await client.callTool({ name, arguments: arguments_ }))
+    const execute = async (code) =>
+      controlResultValue(await call('repl_execute', { code, timeoutMs: 30_000 }))
+    const first = await execute(`
+      globalThis.certificationState = 'first-cell';
+      return { marker: globalThis.certificationState, electron: Boolean(process.versions.electron) };
+    `)
+    if (first.marker !== 'first-cell') throw new Error('First REPL cell did not execute.')
+    if (process.env.OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT === '1') {
+      if (first.electron) throw new Error('Protected REPL did not use the prepared Node runtime.')
+      const deniedPath = process.env.OPEN_SCIENCE_E2E_APPCONTAINER_DENIED_FILE
+      if (!deniedPath) throw new Error('Missing AppContainer filesystem isolation witness.')
+      const denied = await execute(`
+        try { require('node:fs').readFileSync(${JSON.stringify(deniedPath)}); return { denied: false }; }
+        catch (error) { return { denied: ['EACCES', 'EPERM'].includes(error.code) }; }
+      `)
+      if (!denied.denied) throw new Error('AppContainer allowed reading outside the granted roots.')
+    }
+    const restarted = await call('notebook_restart', { kernel: 'repl' })
+    if (restarted.status !== 'restarted') throw new Error('REPL restart did not confirm cleanup.')
+    const second = await execute(`
+      return { marker: 'second-cell', reset: typeof globalThis.certificationState === 'undefined' };
+    `)
+    if (second.marker !== 'second-cell' || !second.reset)
+      throw new Error('REPL restart did not produce a fresh interpreter.')
+    // Exercise an actual child exit, then verify cleanup does not fence the next Shell run.
+    const exited = await call('repl_execute', { code: 'process.exit(23)', timeoutMs: 30_000 })
+    if (exited.status !== 'failed') throw new Error('The deliberate REPL exit was not reported.')
+    const shell = await call('bash_execute', { command: "Write-Output 'REPL_CLEANUP_SHELL_OK'" })
+    if (shell.exitCode !== 0 || !shell.stdout?.includes('REPL_CLEANUP_SHELL_OK'))
+      throw new Error('Shell remained blocked after REPL exit.')
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const shutdown = await call('notebook_shutdown')
+      if (shutdown.status !== 'shutdown') throw new Error('Repeated Notebook cleanup failed.')
+    }
+    return 'Windows REPL lifecycle verified: first cell, fresh restart, second cell, process exit, Shell recovery, repeated cleanup.'
+  })
+
 const verifyGlobalNpmTools = async (sessionId, mode) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     const execute = async (command) => {
@@ -1445,6 +1486,73 @@ if (process.argv.includes('--version')) {
         return { stopReason: 'end_turn' }
       }
       if (prompt.includes(PROVIDER_RUNTIME_FAILURE_PROMPT)) await rejectThroughProviderBridge()
+      // Outcome journeys escape the ordinary successful-reply catch below. These checkpoints
+      // let the isolated Electron fixture arm an exact write fault before a terminal response.
+      if (prompt.includes('Fail the turn outcome fixture.')) {
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text: 'Turn outcome failure checkpoint.' }
+          }
+        })
+        throw acp.RequestError.internalError({}, 'Synthetic turn outcome failure.')
+      }
+      if (prompt.includes('Hold the turn outcome fixture.')) {
+        const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: {
+              type: 'text',
+              text: resumed
+                ? 'Turn outcome resumed successfully.'
+                : 'Turn outcome cancellation checkpoint.'
+            }
+          }
+        })
+        if (resumed) return { stopReason: 'end_turn' }
+        await waitForSessionCancellation(context.params.sessionId)
+        return { stopReason: 'cancelled' }
+      }
+      if (prompt.includes('Create the turn outcome retry artifact.')) {
+        const publication = await createProvenanceArtifact(context.params.sessionId)
+        const captureRoot = process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT
+        if (!captureRoot) throw new Error('The outcome fixture capture root is unavailable.')
+        const gate = join(captureRoot, 'turn-outcome-artifact-release.json')
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text: `${publication}\nTurn outcome artifact checkpoint.` }
+          }
+        })
+        let gateClosed = false
+        const result = await Promise.race([
+          (async () => {
+            // A finite wait also permits fixture shutdown when a failed test never releases it.
+            for (let attempt = 0; attempt < 1_800 && !gateClosed; attempt++) {
+              try {
+                if (JSON.parse(await readFile(gate, 'utf8')).sessionId === context.params.sessionId)
+                  return 'released'
+              } catch (error) {
+                if (error.code !== 'ENOENT') throw error
+              }
+              await delay(100)
+            }
+            if (!gateClosed) throw new Error('The outcome Artifact gate was not released.')
+            return 'cancelled'
+          })(),
+          waitForSessionCancellation(context.params.sessionId).then(() => 'cancelled')
+        ]).finally(() => {
+          gateClosed = true
+        })
+        return { stopReason: result === 'cancelled' ? 'cancelled' : 'end_turn' }
+      }
       // Use the supported mid-response interruption wrapper: generic provider errors are terminal
       // failures and intentionally do not offer Resume. Let this escape the reply fixture catch.
       if (
@@ -2184,6 +2292,8 @@ if (process.argv.includes('--version')) {
             withMcpClient,
             toolResult
           )
+        } else if (prompt.includes('Verify Windows REPL lifecycle.')) {
+          reply = await verifyWindowsReplLifecycle(context.params.sessionId)
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
         } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {

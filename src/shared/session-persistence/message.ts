@@ -1,3 +1,4 @@
+import type { TurnOutcome } from './turn-outcome'
 import {
   type AcpMessageImage,
   type AcpTurnTokenUsage,
@@ -166,6 +167,8 @@ export type PersistedChatMessage = {
   // Immutable PDF context captured when this user turn was admitted. It remains independent from
   // the Session's mutable binding so queue, retry, edit-resend, and interrupted resume cannot drift.
   pdfContext?: MessagePdfContextSnapshot
+  // Settled result of the turn this user Message anchors; absent until Main settles it.
+  turnOutcome?: TurnOutcome
   // Closed turn identity needed to reconstruct an interrupted turn after an app restart. Ordinary
   // messages omit it; unknown values are discarded by the persistence sanitizer.
   turnIntent?: 'plan-first' | 'save-as-skill'

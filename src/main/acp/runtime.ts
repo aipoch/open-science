@@ -251,6 +251,7 @@ type AcpRuntimeOptions = {
   resolveBackend?: (context: {
     forcedSkillIds: string[]
     systemPromptAppends: string[]
+    grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
   }) => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
   artifacts?: AcpRuntimeArtifactOptions
   runtimeSessions?: RuntimeSessionOwner
@@ -575,6 +576,35 @@ const errorMessage = (error: unknown): string => {
 }
 
 const log = createLogger('acp')
+
+const safePromptJson = (value: unknown): string =>
+  JSON.stringify(value)
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e')
+    .replaceAll('&', '\\u0026')
+
+const grantedLocalRootsSystemPromptAppend = (
+  roots: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
+): string | undefined => {
+  const normalized = [
+    ...new Map(
+      roots
+        .map(({ path, access }) => ({ path: path.trim(), access }))
+        .filter(({ path }) => path.length > 0)
+        .map((root) => [`${root.access}\0${root.path}`, root] as const)
+    ).values()
+  ].sort(
+    (left, right) => left.path.localeCompare(right.path) || left.access.localeCompare(right.access)
+  )
+  if (normalized.length === 0) return undefined
+
+  return [
+    '<open_science_granted_local_roots>',
+    'The user has authorized the following local roots for this session. Access mode "ro" permits reads only; "rw" permits reads and writes. Use the exact paths when the task requires them. These entries grant no access beyond the stated root and access mode.',
+    `Authorized roots (JSON): ${safePromptJson(normalized)}`,
+    '</open_science_granted_local_roots>'
+  ].join('\n')
+}
 const literatureLog = createLogger('literature-reading-context')
 
 const PERMISSION_DENIED_CONTINUATION_TEXT =
@@ -879,6 +909,8 @@ class AcpRuntime {
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: (request) => this.connect(request),
       disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
+      onPromptEnded: (sessionId, turnToken) =>
+        this.nativeFollowUp.releaseTurn(sessionId, turnToken),
       clearPromptResources: () => this.nativeFollowUp.clear(),
       openAgentConnection: (attempt, onFrameworkResolved) =>
         this.openAgentConnection(attempt, onFrameworkResolved)
@@ -1118,14 +1150,50 @@ class AcpRuntime {
     return this.handoffContinuity.createClaudeContinuation(input)
   }
 
-  reportApprovedHandoffFailure(sessionId: string): void {
-    this.pushEvent({
-      kind: 'error',
-      level: 'error',
+  authorizeApprovedHandoffContinuation(
+    sessionId: string,
+    promptMessageId: string,
+    executionId: string,
+    isCurrent: () => boolean
+  ): number | undefined {
+    return this.options.runtimeSessions?.authorizeApprovedHandoffContinuation(
       sessionId,
+      promptMessageId,
+      executionId,
+      isCurrent
+    )
+  }
+
+  async reportApprovedHandoffFailure(
+    sessionId: string,
+    promptMessageId: string,
+    executionId: string,
+    isCurrent: () => boolean,
+    originalStartedAt?: number
+  ): Promise<void> {
+    const event = {
+      id: this.publication.nextEventId(),
+      timestamp: Date.now(),
+      kind: 'error' as const,
+      level: 'error' as const,
+      sessionId,
+      promptMessageId,
+      promptExecutionId: executionId,
       title: 'Specialist handoff failed',
       text: 'The approved specialist could not continue the current task.'
-    })
+    }
+    if (this.options.runtimeSessions && originalStartedAt !== undefined) {
+      await this.options.runtimeSessions.commitApprovedHandoffFailure(
+        event,
+        (published) => {
+          this.pushEvent(published)
+        },
+        isCurrent,
+        originalStartedAt
+      )
+    } else if (!this.options.runtimeSessions && isCurrent()) {
+      this.pushEvent(event)
+    }
   }
 
   private getInFlightSessionIds(): string[] {
@@ -1634,12 +1702,21 @@ class AcpRuntime {
       {
         epoch: identity.epoch,
         resolveBackend: async () => {
+          let grantedLocalRoots: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[] = []
+          try {
+            grantedLocalRoots = (await this.options.grantedRoots?.list?.()) ?? []
+          } catch (error) {
+            log.warn('granted local roots unavailable for backend context', errorLogFields(error))
+          }
+          const grantedRootsAppend = grantedLocalRootsSystemPromptAppend(grantedLocalRoots)
           const backend: ResolvedAgentBackend | undefined = this.options.resolveBackend
             ? await this.options.resolveBackend({
                 forcedSkillIds: [...this.turnSkills.backendPreparation().forcedSkillIds],
                 systemPromptAppends: [
-                  ...(await this.sessionEnvironment.backendSystemPromptAppends())
-                ]
+                  ...(await this.sessionEnvironment.backendSystemPromptAppends()),
+                  ...(grantedRootsAppend ? [grantedRootsAppend] : [])
+                ],
+                grantedLocalRoots
               })
             : this.spawnAgent
               ? { framework: this.framework, executablePath: '', env: {} }

@@ -2314,6 +2314,7 @@ it('checks sandbox spawn admission before launching the R process', async () => 
     expect(existsSync(marker)).toBe(false)
     expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
       processesTerminated: true,
+      processState: 'never-started',
       confirmTermination: expect.any(Function)
     })
   } finally {

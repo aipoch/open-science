@@ -1,8 +1,14 @@
+import { initI18n, prepareI18nLocale } from '../../i18n'
+import { useWorkspaceOperationErrors } from './workspace-operation-error'
 import { RuntimeSessionOwner } from '../../../../main/session-persistence/runtime-session-owner'
-import { applySessionConversationCommands } from '../../../../shared/session-conversation-command'
+import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
+import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
 import type { RuntimeSessionScope } from '../../../../shared/runtime-session-projection'
 import type { SaveSessionOptions } from '../../../../shared/session-persistence'
-import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
+import {
+  pendingSessionConversationCommands,
+  resetSessionConversationIntentsForTests
+} from '../../stores/session-conversation-intents'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import { SessionPdfContextOwner } from '../../../../main/session-persistence/pdf-context-owner'
 import { inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
@@ -20,11 +26,11 @@ import type {
 import {
   createSessionFile,
   normalizeSessionFile,
+  materializeSessionConversationGraph,
   SessionSizeLimitError,
-  SessionRevisionConflictError
+  SessionRevisionConflictError,
+  setTurnOutcome
 } from '../../../../shared/session-persistence'
-import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
-import { IMAGE_ANNOTATION_SOURCE_UNAVAILABLE_MESSAGE } from '../../pages/workspace/annotations/image-annotation-source-validation'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import {
   MAX_COMPOSER_ATTACHMENTS,
@@ -50,7 +56,6 @@ import {
   clearLinkedPendingPdfContext,
   createWorkspaceRuntimeEventProcessor,
   getResumeFailureMessage,
-  markRunningSessionsDisconnectedOnDrop,
   pendingWorkspacePermissions,
   processVisibleWorkspaceRuntimeEvents,
   revealLinkedPdfContext,
@@ -119,8 +124,100 @@ const createDeferred = <Value>(): {
   return { promise, resolve }
 }
 
+const testPreparationBaselines = new Map<string, PersistedChatSession>()
+const testDurableSessions = new Map<string, PersistedChatSession>()
+// Legacy renderer fixtures treat submitted snapshots as their native authority. This adapter only
+// supplies a durable preparation witness, receipt acknowledgement and scoped compensation so
+// these tests exercise renderer calls. Even legacy transcripts get a new Main-owned witness.
+// Actual conditional rollback is covered by workspace-prompt-preparation.test.ts and the real Main
+// owner used below in the Main-owned overflow retry tests.
+const acknowledgeTestSessionCommands = (
+  session: PersistedChatSession,
+  options?: SaveSessionOptions
+): PersistedChatSession => {
+  const commands = options?.conversationCommands ?? []
+  for (const command of commands)
+    if (command.kind === 'prepare-prompt')
+      testPreparationBaselines.set(command.id, structuredClone(session))
+  const rollback = commands.find((command) => command.kind === 'rollback-prompt')
+  const baseline = rollback?.preparationId
+    ? testPreparationBaselines.get(rollback.preparationId)
+    : undefined
+  const result = materializeSessionConversationGraph(
+    baseline
+      ? {
+          ...session,
+          status: baseline.status,
+          error: baseline.error,
+          errorReportable: baseline.errorReportable,
+          activeRun: baseline.activeRun,
+          resumeRecovery: baseline.resumeRecovery,
+          // Provider reset/open-segment is an ambient Main fact, outside the tagged prompt undo.
+          pendingHistoryReplay: session.pendingHistoryReplay,
+          branchContextResetRequired: session.branchContextResetRequired,
+          messages: baseline.messages,
+          conversationGraph:
+            baseline.conversationGraph && session.conversationGraph
+              ? {
+                  ...baseline.conversationGraph,
+                  runtimeSegments: session.conversationGraph.runtimeSegments
+                }
+              : baseline.conversationGraph
+        }
+      : session
+  )
+  for (const command of commands) {
+    if (command.kind === 'prepare-prompt') {
+      const previousState = {
+        status: result.status,
+        error: result.error,
+        errorReportable: result.errorReportable,
+        resumeRecovery: result.resumeRecovery
+      }
+      result.promptPreparation = {
+        id: command.id,
+        projectId: result.projectId,
+        sessionId: result.id,
+        promptMessageId: command.promptMessageId,
+        mode: command.mode,
+        preparedAt: command.timestamp,
+        previousState: structuredClone(previousState),
+        expectedState: structuredClone(previousState)
+      }
+    } else if (
+      command.kind === 'rollback-prompt' &&
+      result.promptPreparation?.id === command.preparationId
+    ) {
+      delete result.promptPreparation
+    }
+  }
+  const currentOverlay = useSessionStore.getState().sessions.find(({ id }) => id === session.id)
+  const acknowledged = {
+    ...result,
+    ...(result.runtimeContext
+      ? {}
+      : currentOverlay?.runtimeContext
+        ? { runtimeContext: currentOverlay.runtimeContext }
+        : {}),
+    ...(useSessionStore.getState().sessions.find(({ id }) => id === session.id)
+      ?.delegationPolicyAuthorityPending && testDurableSessions.has(session.id)
+      ? { delegationPolicy: testDurableSessions.get(session.id)!.delegationPolicy }
+      : {}),
+    runtimeConversationCommandIds: [
+      ...new Set([
+        ...(session.runtimeConversationCommandIds ?? []),
+        ...(options?.conversationCommands?.map(({ id }) => id) ?? [])
+      ])
+    ]
+  }
+  testDurableSessions.set(session.id, acknowledged)
+  return structuredClone(acknowledged)
+}
+
 const createSessionPolicyApi = (): {
-  saveSession: Mock<(session: PersistedChatSession) => Promise<PersistedChatSession>>
+  saveSession: Mock<
+    (session: PersistedChatSession, options?: SaveSessionOptions) => Promise<PersistedChatSession>
+  >
   setDelegationPolicy: Mock<
     (
       projectId: string,
@@ -128,22 +225,129 @@ const createSessionPolicyApi = (): {
       policy: DelegationPolicy
     ) => Promise<PersistedChatSession>
   >
+  loadOne: Mock<(request: { sessionId: string }) => Promise<PersistedChatSession | undefined>>
 } => ({
-  saveSession: vi.fn(async (session: PersistedChatSession) => session),
+  loadOne: vi.fn(async ({ sessionId }) => {
+    const durable = testDurableSessions.get(sessionId)
+    const source = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
+    return durable && (!source || durable.createdAt === source.createdAt)
+      ? structuredClone(durable)
+      : source
+        ? toPersistedSession(source)
+        : undefined
+  }),
+  saveSession: vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+    acknowledgeTestSessionCommands(session, options)
+  ),
   setDelegationPolicy: vi.fn(
     async (_projectId: string, sessionId: string, policy: DelegationPolicy) => {
       const session = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === sessionId)
       if (!session) throw new Error(`Session not found: ${sessionId}`)
-      return {
+      const authority = {
         ...toPersistedSession(session),
         revision: (session.revision ?? 0) + 1,
         delegationPolicy: policy
       }
+      testDurableSessions.set(sessionId, authority)
+      return authority
     }
   )
 })
+
+// IPC success for a continuation means Main observed the provider's first update. Model that
+// authority explicitly; resolving an adapter promise alone must never clear recovery in renderer.
+const acceptTestMainContinuation = async (
+  { sessionId, promptMessageId }: { sessionId: string; promptMessageId: string },
+  terminal?: Partial<AcpRuntimeEvent>
+): Promise<AcpStateSnapshot> => {
+  const source = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)!
+  let durable = acknowledgeTestSessionCommands(toPersistedSession(source), {
+    conversationCommands: pendingSessionConversationCommands(sessionId)
+  })
+  const graph = durable.conversationGraph!
+  const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+  const scope = {
+    sessionId,
+    projectId: source.projectId,
+    promptMessageId,
+    executionId: crypto.randomUUID(),
+    rootFrameId: graph.rootFrameId,
+    agentFrameId: frame.id,
+    messageBranchId: frame.activeBranchId,
+    runtimeSegmentId: graph.runtimeSegments
+      .filter(({ agentFrameId }) => agentFrameId === frame.id)
+      .at(-1)!.id
+  }
+  const owner = new RuntimeSessionOwner({
+    loadSession: async () => durable,
+    mutateSession: async (_scope, mutate) => {
+      durable = { ...mutate(durable), runtimeTranscriptOwner: 'main' }
+      testDurableSessions.set(sessionId, durable)
+      return durable
+    },
+    finalizeArtifacts: async () => []
+  })
+  await owner.begin(scope)
+  // Main's accepted continuation releases the legacy recovery aliases alongside admission.
+  durable = {
+    ...durable,
+    error: undefined,
+    errorReportable: undefined,
+    resumeRecovery: undefined,
+    pendingHistoryReplay: undefined
+  }
+  owner.accept(
+    createEvent({
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      kind: 'raw',
+      sessionId,
+      promptMessageId,
+      raw: { runState: 'active' }
+    })
+  )
+  await owner.flush(sessionId, promptMessageId)
+  if (terminal)
+    await owner.commitTerminal(
+      createEvent({
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        sessionId,
+        promptMessageId,
+        ...terminal
+      }),
+      () => undefined
+    )
+  testDurableSessions.set(sessionId, durable)
+  const current = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
+  if (current)
+    useSessionStore.getState().applyDurableSessionProjection({
+      source: current,
+      session: durable,
+      mode: 'runtime-transcript-authority'
+    })
+  return createSnapshot([sessionId])
+}
+
+const projectTestMainAttachment = (sessionId: string): void => {
+  const source = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)!
+  const authority = {
+    ...toPersistedSession(source),
+    status: 'idle' as const,
+    error: undefined,
+    errorReportable: undefined,
+    resumeRecovery: undefined,
+    runtimeTranscriptOwner: 'main' as const
+  }
+  testDurableSessions.set(sessionId, authority)
+  useSessionStore.getState().applyDurableSessionProjection({
+    source,
+    session: authority,
+    mode: 'runtime-transcript-authority'
+  })
+}
 
 const createAttachment = (overrides: Partial<UploadedAttachment> = {}): UploadedAttachment => ({
   id: 'upload-1',
@@ -157,13 +361,17 @@ const createAttachment = (overrides: Partial<UploadedAttachment> = {}): Uploaded
 })
 
 const flushRuntimeTasks = async (): Promise<void> => {
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
+  // Receipt admission crosses several persistence boundaries before dispatch.
+  for (let turn = 0; turn < 120; turn += 1) await Promise.resolve()
 }
 
 beforeEach(() => {
+  testPreparationBaselines.clear()
+  testDurableSessions.clear()
+  resetSessionConversationIntentsForTests()
   resetSessionPersistenceWriteFailuresForTests()
+  useWorkspaceOperationErrors.setState({ errors: {} })
+  vi.stubGlobal('window', { api: { sessions: createSessionPolicyApi() } })
 })
 
 describe('A03 unavailable permission downgrade projection', () => {
@@ -1907,7 +2115,7 @@ describe('workspace durable elicitation', () => {
       )
     }))
     const shutdown = vi.fn().mockResolvedValue({ status: 'shutdown' })
-    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    vi.stubGlobal('window', { api: { sessions: createSessionPolicyApi(), notebook: { shutdown } } })
     const resetSessionContext = vi.fn().mockResolvedValue({
       sessionId: session.id,
       cwd: session.cwd,
@@ -2129,7 +2337,7 @@ describe('workspace durable elicitation', () => {
       )
     }))
     const shutdown = vi.fn().mockResolvedValue({ status: 'shutdown' })
-    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    vi.stubGlobal('window', { api: { sessions: createSessionPolicyApi(), notebook: { shutdown } } })
     const resetSessionContext = vi.fn().mockResolvedValue({
       sessionId: session.id,
       cwd: session.cwd,
@@ -2475,7 +2683,7 @@ describe('workspace agent message sending', () => {
       }
 
       await expect(sendWorkspaceMessage(runtime, input, lifecycle)).resolves.toBeUndefined()
-      expect(useSessionStore.getState().sessions[0].error).toContain(
+      expect(useWorkspaceOperationErrors.getState().errors['transport-session-1']).toContain(
         'Session revision conflict: expected 117, actual 119'
       )
       const firstAttempt = useSessionStore.getState().sessions[0].messages.map(({ id }) => id)
@@ -2572,9 +2780,10 @@ describe('workspace agent message sending', () => {
         ]
       })
       const persisted = createDeferred<PersistedChatSession>()
-      const saveSession = vi.fn((session: PersistedChatSession) => {
-        void session
-        return persisted.promise
+      const saveSession = vi.fn((session: PersistedChatSession, options?: SaveSessionOptions) => {
+        if (options?.conversationCommands?.some((command) => command.kind === 'prepare-prompt'))
+          return Promise.resolve(acknowledgeTestSessionCommands(session, options))
+        return persisted.promise.then((value) => acknowledgeTestSessionCommands(value, options))
       })
       vi.stubGlobal('window', { api: { sessions: { saveSession } } })
       const runtime = {
@@ -2595,8 +2804,8 @@ describe('workspace agent message sending', () => {
 
       const sending = sendWorkspaceMessage(runtime, input)
 
-      await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
-      expect(saveSession.mock.calls[0]?.[0].messages).toEqual([
+      await vi.waitFor(() => expect(saveSession).toHaveBeenCalledTimes(2))
+      expect(saveSession.mock.calls[1]?.[0].messages).toEqual([
         expect.objectContaining({
           id: 'automatic-analysis-message-1',
           role: 'user',
@@ -2605,7 +2814,7 @@ describe('workspace agent message sending', () => {
       ])
       expect(runtime.sendPrompt).not.toHaveBeenCalled()
 
-      persisted.resolve(saveSession.mock.calls[0]![0])
+      persisted.resolve(saveSession.mock.calls[1]![0])
       await expect(sending).resolves.toEqual({
         sessionId: 'transport-session-1',
         messageId: 'automatic-analysis-message-1'
@@ -2616,7 +2825,7 @@ describe('workspace agent message sending', () => {
         sessionId: 'transport-session-1',
         messageId: 'automatic-analysis-message-1'
       })
-      expect(saveSession).toHaveBeenCalledOnce()
+      expect(saveSession).toHaveBeenCalledTimes(2)
       expect(runtime.sendPrompt).toHaveBeenCalledOnce()
     }
   )
@@ -2636,7 +2845,9 @@ describe('workspace agent message sending', () => {
           : session
       )
     }))
-    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const saveSession = vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+      acknowledgeTestSessionCommands(session, options)
+    )
     vi.stubGlobal('window', { api: { sessions: { saveSession } } })
     const runtime = {
       state: createSnapshot(['transport-session-1']),
@@ -2660,8 +2871,8 @@ describe('workspace agent message sending', () => {
       messageId: 'automatic-analysis-message-1'
     })
 
-    expect(saveSession).toHaveBeenCalledOnce()
-    expect(saveSession.mock.calls[0]?.[0]).toMatchObject({
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1]?.[0]).toMatchObject({
       status: 'running',
       activeRun: { promptMessageId: 'automatic-analysis-message-1' },
       messages: [
@@ -2737,7 +2948,9 @@ describe('workspace agent message sending', () => {
       )
     ).toHaveLength(1)
 
-    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const saveSession = vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+      acknowledgeTestSessionCommands(session, options)
+    )
     vi.stubGlobal('window', { api: { sessions: { saveSession } } })
     const runtime = {
       state: createSnapshot(['transport-session-1']),
@@ -2792,9 +3005,10 @@ describe('workspace agent message sending', () => {
       ]
     })
     const persisted = createDeferred<PersistedChatSession>()
-    const saveSession = vi.fn((session: PersistedChatSession) => {
-      void session
-      return persisted.promise
+    const saveSession = vi.fn((session: PersistedChatSession, options?: SaveSessionOptions) => {
+      if (options?.conversationCommands?.some((command) => command.kind === 'prepare-prompt'))
+        return Promise.resolve(acknowledgeTestSessionCommands(session, options))
+      return persisted.promise.then((value) => acknowledgeTestSessionCommands(value, options))
     })
     vi.stubGlobal('window', { api: { sessions: { saveSession } } })
     const runtime = {
@@ -2814,7 +3028,7 @@ describe('workspace agent message sending', () => {
       agentFrameworkId: 'claude-code'
     })
 
-    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledTimes(2))
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === 'transport-session-1'
@@ -2822,7 +3036,7 @@ describe('workspace agent message sending', () => {
           : session
       )
     }))
-    persisted.resolve(saveSession.mock.calls[0]![0])
+    persisted.resolve(saveSession.mock.calls[1]![0])
 
     await expect(sending).resolves.toBeUndefined()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
@@ -3222,7 +3436,9 @@ describe('workspace agent message sending', () => {
       version: 1
     })
     const release = vi.fn().mockResolvedValue(undefined)
-    vi.stubGlobal('window', { api: { previewResources: { acquire, release } } })
+    vi.stubGlobal('window', {
+      api: { sessions: createSessionPolicyApi(), previewResources: { acquire, release } }
+    })
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     const runtime = {
       state: createSnapshot(['transport-session-1']),
@@ -3306,7 +3522,10 @@ describe('workspace agent message sending', () => {
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     const acquire = vi.fn().mockRejectedValue(new Error('Permission denied'))
     vi.stubGlobal('window', {
-      api: { previewResources: { acquire, release: vi.fn().mockResolvedValue(undefined) } }
+      api: {
+        sessions: createSessionPolicyApi(),
+        previewResources: { acquire, release: vi.fn().mockResolvedValue(undefined) }
+      }
     })
     const runtime = {
       state: createSnapshot(['transport-session-1']),
@@ -3510,6 +3729,7 @@ describe('workspace agent message sending', () => {
           }
         },
         sessions: {
+          ...createSessionPolicyApi(),
           readSessionRuntimeContext: vi.fn(),
           patchSessionRuntimeContext: vi.fn()
         }
@@ -3530,7 +3750,10 @@ describe('workspace agent message sending', () => {
             linkPdfContext: vi
               .fn()
               .mockResolvedValue({ version: 1, revision: 1, pdfContext: linkedContext }),
-            saveSession: vi.fn(async (session: PersistedChatSession) => session)
+            saveSession: vi.fn(
+              async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+                acknowledgeTestSessionCommands(session, options)
+            )
           }
         }
       })
@@ -3620,7 +3843,9 @@ describe('workspace agent message sending', () => {
       api: {
         sessions: {
           linkPdfContext,
-          saveSession: vi.fn(async (session: PersistedChatSession) => session),
+          saveSession: vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+            acknowledgeTestSessionCommands(session, options)
+          ),
           filterPdfContextCandidates: vi.fn().mockResolvedValue({
             sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-2' }],
             pendingAttachmentIds: []
@@ -3744,7 +3969,10 @@ describe('workspace agent message sending', () => {
           uploads: { finalizeSession: vi.fn().mockResolvedValue([finalizedPdf]) },
           sessions: {
             linkPdfContext,
-            saveSession: vi.fn(async (session: PersistedChatSession) => session),
+            saveSession: vi.fn(
+              async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+                acknowledgeTestSessionCommands(session, options)
+            ),
             filterPdfContextCandidates: vi.fn().mockResolvedValue({
               sources: eligibleSources.filter(
                 ({ sourceKind }) => sourceKind === 'artifact-version'
@@ -3866,7 +4094,9 @@ describe('workspace agent message sending', () => {
         uploads: { finalizeSession: vi.fn().mockResolvedValue([finalizedPdf]) },
         sessions: {
           linkPdfContext,
-          saveSession: vi.fn(async (session: PersistedChatSession) => session),
+          saveSession: vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+            acknowledgeTestSessionCommands(session, options)
+          ),
           filterPdfContextCandidates: vi.fn().mockResolvedValue({
             sources: [
               {
@@ -4028,7 +4258,10 @@ describe('workspace agent message sending', () => {
               pendingAttachmentIds: []
             }),
             linkPdfContext,
-            saveSession: vi.fn(async (session: PersistedChatSession) => session)
+            saveSession: vi.fn(
+              async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+                acknowledgeTestSessionCommands(session, options)
+            )
           }
         }
       })
@@ -4109,7 +4342,9 @@ describe('workspace agent message sending', () => {
         sessions: {
           filterPdfContextCandidates,
           linkPdfContext,
-          saveSession: vi.fn(async (session: PersistedChatSession) => session)
+          saveSession: vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+            acknowledgeTestSessionCommands(session, options)
+          )
         }
       }
     })
@@ -4164,6 +4399,7 @@ describe('workspace agent message sending', () => {
     useSessionStore.getState().finishRun('transport-session-1')
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         uploads: {
           finalizeSession: vi.fn().mockRejectedValue(new Error('attachment finalization failed'))
         }
@@ -4188,10 +4424,13 @@ describe('workspace agent message sending', () => {
     expect(result).toBeUndefined()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: 'attachment finalization failed',
+      status: 'idle',
+      error: undefined,
       messages: [expect.objectContaining({ content: 'Existing prompt' })]
     })
+    expect(useWorkspaceOperationErrors.getState().errors['transport-session-1']).toBe(
+      'attachment finalization failed'
+    )
   })
 
   it.each([
@@ -4509,7 +4748,10 @@ describe('workspace agent message sending', () => {
     useSessionStore.getState().markSpecialistSwitchResetRequired('transport-session-1')
     const snapshot = createSnapshot(['transport-session-1'])
     vi.stubGlobal('window', {
-      api: { acp: { getState: vi.fn().mockResolvedValue(snapshot) } }
+      api: {
+        sessions: createSessionPolicyApi(),
+        acp: { getState: vi.fn().mockResolvedValue(snapshot) }
+      }
     })
     const runtime = {
       state: snapshot,
@@ -4584,7 +4826,7 @@ describe('workspace agent message sending', () => {
       sessionId: 'transport-session-1',
       status: 'shutdown'
     })
-    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    vi.stubGlobal('window', { api: { sessions: createSessionPolicyApi(), notebook: { shutdown } } })
     const resetSessionContext = vi.fn().mockResolvedValue({
       sessionId: 'transport-session-1',
       cwd: '/workspace/project',
@@ -4688,7 +4930,7 @@ describe('workspace agent message sending', () => {
       sessionId: 'transport-session-1',
       status: 'shutdown'
     })
-    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    vi.stubGlobal('window', { api: { sessions: createSessionPolicyApi(), notebook: { shutdown } } })
     const resetSessionContext = vi.fn().mockResolvedValue({
       sessionId: 'transport-session-1',
       cwd: '/workspace/project',
@@ -4775,7 +5017,7 @@ describe('workspace agent message sending', () => {
       sessionId: 'transport-session-1',
       status: 'shutdown'
     })
-    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    vi.stubGlobal('window', { api: { sessions: createSessionPolicyApi(), notebook: { shutdown } } })
     const resumeCanFinish = createDeferred<{
       sessionId: string
       cwd: string
@@ -5008,6 +5250,7 @@ describe('workspace agent message sending', () => {
     }))
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) },
         acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1'])) }
       }
@@ -5053,7 +5296,10 @@ describe('workspace agent message sending', () => {
       }))
     }))
     vi.stubGlobal('window', {
-      api: { notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) } }
+      api: {
+        sessions: createSessionPolicyApi(),
+        notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) }
+      }
     })
     const agentConfiguration = {
       providerId: 'provider-1',
@@ -5132,7 +5378,10 @@ describe('workspace agent message sending', () => {
       }))
     }))
     vi.stubGlobal('window', {
-      api: { notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) } }
+      api: {
+        sessions: createSessionPolicyApi(),
+        notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) }
+      }
     })
     const runtime = {
       state: createSnapshot(['transport-session-1']),
@@ -5208,6 +5457,7 @@ describe('workspace agent message sending', () => {
     await Promise.resolve()
     await Promise.resolve()
 
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
     expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: 'transport-session-1',
@@ -5291,10 +5541,17 @@ describe('workspace agent message sending', () => {
       ]
     }
     const readingPosition = { pageNumber: 3, pageCount: 14 }
-    const saveSession = vi.fn(async (session: PersistedChatSession) =>
-      saveSession.mock.calls.length === 1
-        ? { ...session, runtimeContext: { version: 1 as const, revision: 3 } }
-        : session
+    const saveSession = vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+      acknowledgeTestSessionCommands(
+        {
+          ...session,
+          runtimeContext: {
+            ...(session.runtimeContext ?? { version: 1 as const }),
+            revision: 3
+          }
+        },
+        options
+      )
     )
     const linkPdfContext = vi.fn().mockResolvedValue({
       version: 1,
@@ -5418,7 +5675,7 @@ describe('workspace agent message sending', () => {
       })
     ])
     const session = useSessionStore.getState().sessions[0]
-    expect(session.runtimeContext?.pdfContext).toEqual(pdfContext)
+    expect(session.runtimeContext?.revision).toBe(3)
     expect(session.messages.find((message) => message.id === sent?.messageId)?.annotations).toEqual(
       [evidence]
     )
@@ -5433,7 +5690,16 @@ describe('workspace agent message sending', () => {
       activeBindingId: 'binding-1',
       readingPosition
     })
-    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(
+      saveSession.mock.calls.filter(([, options]) =>
+        options?.conversationCommands?.some(({ kind }) => kind === 'prepare-prompt')
+      )
+    ).toHaveLength(1)
+    expect(
+      saveSession.mock.calls.filter(([, options]) =>
+        options?.conversationCommands?.some(({ kind }) => kind === 'start-run')
+      )
+    ).toHaveLength(1)
   })
 
   it('does not provision Literature when every staged PDF candidate is single-page', async () => {
@@ -5458,7 +5724,7 @@ describe('workspace agent message sending', () => {
     vi.stubGlobal('window', {
       api: {
         uploads: { finalizeSession: vi.fn().mockResolvedValue([finalizedPdf]) },
-        sessions: { filterPdfContextCandidates, linkPdfContext }
+        sessions: { ...createSessionPolicyApi(), filterPdfContextCandidates, linkPdfContext }
       }
     })
     const runtime = {
@@ -5536,10 +5802,12 @@ describe('workspace agent message sending', () => {
 
   it('persists enabled Compute Hosts before dispatching a new Session prompt', async () => {
     const persisted = createDeferred<PersistedChatSession>()
-    const saveSession = vi.fn((session: PersistedChatSession) => {
-      void session
-      return persisted.promise
-    })
+    const saveSession = vi.fn(
+      async (session: PersistedChatSession, options?: SaveSessionOptions) => {
+        void session
+        return acknowledgeTestSessionCommands(await persisted.promise, options)
+      }
+    )
     vi.stubGlobal('window', { api: { sessions: { saveSession } } })
     const runtime = {
       state: createSnapshot(),
@@ -5573,10 +5841,12 @@ describe('workspace agent message sending', () => {
   it('materializes a denied new Session and confirms policy authority before dispatch', async () => {
     const materialized = createDeferred<PersistedChatSession>()
     const authorized = createDeferred<PersistedChatSession>()
-    const saveSession = vi.fn((session: PersistedChatSession) => {
-      void session
-      return materialized.promise
-    })
+    const saveSession = vi.fn(
+      async (session: PersistedChatSession, options?: SaveSessionOptions) => {
+        void session
+        return acknowledgeTestSessionCommands(await materialized.promise, options)
+      }
+    )
     const setDelegationPolicy = vi.fn(() => authorized.promise)
     vi.stubGlobal('window', {
       api: { sessions: { saveSession, setDelegationPolicy } }
@@ -5631,10 +5901,12 @@ describe('workspace agent message sending', () => {
 
   it('materializes an explicit allow projection before a new Session prompt', async () => {
     const persisted = createDeferred<PersistedChatSession>()
-    const saveSession = vi.fn((session: PersistedChatSession) => {
-      void session
-      return persisted.promise
-    })
+    const saveSession = vi.fn(
+      async (session: PersistedChatSession, options?: SaveSessionOptions) => {
+        void session
+        return acknowledgeTestSessionCommands(await persisted.promise, options)
+      }
+    )
     const setDelegationPolicy = vi.fn(async () => ({
       ...saveSession.mock.calls[0]![0],
       revision: 2,
@@ -5687,10 +5959,12 @@ describe('workspace agent message sending', () => {
       updatedAt: source.updatedAt + 1
     })
     let materialized!: PersistedChatSession
-    const saveSession = vi.fn(async (session: PersistedChatSession) => {
-      materialized = session
-      return session
-    })
+    const saveSession = vi.fn(
+      async (session: PersistedChatSession, options?: SaveSessionOptions) => {
+        materialized = session
+        return acknowledgeTestSessionCommands(await session, options)
+      }
+    )
     const setDelegationPolicy = vi.fn(async () => ({
       ...materialized,
       revision: (materialized.revision ?? 0) + 1,
@@ -5720,7 +5994,11 @@ describe('workspace agent message sending', () => {
     )
 
     expect(sent?.sessionId).toBe('branched-runtime-session')
-    expect(saveSession).toHaveBeenCalledOnce()
+    expect(
+      saveSession.mock.calls.map(
+        ([, options]) => options?.conversationCommands?.map(({ kind }) => kind) ?? []
+      )
+    ).toEqual([[], ['prepare-prompt'], ['append-user', 'start-run'], []])
     expect(saveSession.mock.calls[0]?.[0]).toMatchObject({ delegationPolicy: 'allow' })
     expect(setDelegationPolicy).toHaveBeenCalledWith(
       'project-1',
@@ -5812,7 +6090,9 @@ describe('workspace agent message sending', () => {
   })
 
   it('reports a denied new Session preparation failure without dispatching its prompt', async () => {
-    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const saveSession = vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+      acknowledgeTestSessionCommands(session, options)
+    )
     const setDelegationPolicy = vi.fn().mockRejectedValue(new Error('Policy authority unavailable'))
     vi.stubGlobal('window', {
       api: { sessions: { saveSession, setDelegationPolicy } }
@@ -5845,18 +6125,10 @@ describe('workspace agent message sending', () => {
     expect(deleteSession).toHaveBeenCalledWith('transport-session-denied')
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: 'Policy authority unavailable',
-      delegationPolicy: 'deny',
-      delegationPolicyAuthorityPending: true
+      status: 'idle',
+      delegationPolicy: 'allow'
     })
 
-    const failed = useSessionStore.getState().sessions[0]
-    setDelegationPolicy.mockResolvedValueOnce({
-      ...toPersistedSession(failed),
-      revision: (failed.revision ?? 0) + 1,
-      delegationPolicy: 'deny'
-    })
     runtime.state = createSnapshot(['transport-session-denied'])
 
     const retried = await sendWorkspaceMessage(runtime, {
@@ -5867,19 +6139,17 @@ describe('workspace agent message sending', () => {
     })
 
     expect(retried).toBeDefined()
-    expect(setDelegationPolicy).toHaveBeenLastCalledWith(
-      'project-1',
-      'transport-session-denied',
-      'deny'
-    )
-    expect(setDelegationPolicy.mock.invocationCallOrder.at(-1)).toBeLessThan(
-      runtime.sendPrompt.mock.invocationCallOrder[0]
-    )
+    expect(setDelegationPolicy).toHaveBeenCalledOnce()
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toBeUndefined()
   })
 
   it('confirms denied authority before PDF linking and keeps retry fail-closed after link failure', async () => {
-    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const saveSession = vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+      acknowledgeTestSessionCommands(session, options)
+    )
     const setDelegationPolicy = vi.fn(async () => {
       const session = useSessionStore.getState().sessions[0]
       return {
@@ -5943,9 +6213,12 @@ describe('workspace agent message sending', () => {
     )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       delegationPolicy: 'deny',
-      delegationPolicyAuthorityPending: undefined,
-      status: 'error'
+      status: 'idle'
     })
+    expect(useSessionStore.getState().sessions[0].delegationPolicyAuthorityPending).toBeUndefined()
+    expect(useWorkspaceOperationErrors.getState().errors['transport-session-pdf-denied']).toContain(
+      'persistence limit'
+    )
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(onSessionSizeLimit).toHaveBeenCalledWith('transport-session-pdf-denied')
 
@@ -5960,6 +6233,9 @@ describe('workspace agent message sending', () => {
     expect(retried).toBeDefined()
     expect(setDelegationPolicy).toHaveBeenCalledOnce()
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toBeUndefined()
   })
 
   it('deletes a new runtime Session when enabled Compute Host persistence fails', async () => {
@@ -5990,12 +6266,16 @@ describe('workspace agent message sending', () => {
       enabledComputeHosts: ['ssh:cluster']
     })
 
-    await vi.waitFor(() => expect(deleteSession).toHaveBeenCalledWith('transport-session-1'))
+    await flushRuntimeTasks()
+    expect(deleteSession).not.toHaveBeenCalled()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: 'Session write failed'
+      status: 'idle',
+      activeRun: undefined
     })
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toBe('Session write failed')
   })
 
   it('retains Plan first while a new Session waits for ACP creation', async () => {
@@ -6135,13 +6415,15 @@ describe('workspace agent message sending', () => {
       bindings: [{ ...pdfContext.bindings[0], bindingId: 'branched-binding' }]
     }
     let materialized!: PersistedChatSession
-    const saveSession = vi.fn(async (session: PersistedChatSession) => {
-      materialized = {
-        ...session,
-        runtimeContext: { version: 1 as const, revision: 3 }
+    const saveSession = vi.fn(
+      async (session: PersistedChatSession, options?: SaveSessionOptions) => {
+        materialized = {
+          ...session,
+          runtimeContext: { version: 1 as const, revision: 3 }
+        }
+        return acknowledgeTestSessionCommands(await materialized, options)
       }
-      return materialized
-    })
+    )
     const setDelegationPolicy = vi.fn(async (_projectId, _sessionId, policy: DelegationPolicy) => ({
       ...materialized,
       revision: (materialized.revision ?? 0) + 1,
@@ -6228,11 +6510,16 @@ describe('workspace agent message sending', () => {
       content: 'Later answer'
     })
     useSessionStore.getState().finishRun('source-session')
-    const saveSession = vi.fn(async (session: PersistedChatSession) => ({
-      ...session,
-      revision: 4,
-      delegationPolicy: 'allow' as const
-    }))
+    const saveSession = vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+      acknowledgeTestSessionCommands(
+        await {
+          ...session,
+          revision: 4,
+          delegationPolicy: 'allow' as const
+        },
+        options
+      )
+    )
     const setDelegationPolicy = vi.fn(async () => ({
       ...saveSession.mock.calls[0]![0],
       revision: 5,
@@ -6316,7 +6603,9 @@ describe('workspace agent message sending', () => {
     })
     useSessionStore.getState().finishRun('source-session')
     const created = createDeferred<{ sessionId: string; cwd?: string }>()
-    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const saveSession = vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+      acknowledgeTestSessionCommands(session, options)
+    )
     vi.stubGlobal('window', {
       api: {
         sessions: { saveSession, setDelegationPolicy: createSessionPolicyApi().setDelegationPolicy }
@@ -6703,21 +6992,22 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: branched?.sessionId,
       isPending: true,
-      status: 'error',
+      status: 'idle',
       messages: [
         expect.objectContaining({ content: 'Inspect the original data' }),
-        expect.objectContaining({ content: 'The original analysis is complete.' }),
-        expect.objectContaining({
-          content: 'Try a different interpretation',
-          uploads: [expect.objectContaining({ id: attachment.id, path: attachment.path })]
-        })
+        expect.objectContaining({ content: 'The original analysis is complete.' })
       ]
     })
 
+    expect(useWorkspaceOperationErrors.getState().errors[branched!.sessionId]).toBe(
+      'Provider unavailable'
+    )
     const retried = await sendWorkspaceMessage(runtime, {
       sessionId: branched?.sessionId,
-      text: 'Try a different interpretation'
+      text: 'Try a different interpretation',
+      attachments: [attachment]
     })
+    await vi.waitFor(() => expect(runtime.createSession).toHaveBeenCalledTimes(2))
     await flushRuntimeTasks()
 
     const child = useSessionStore.getState().sessions[0]
@@ -6793,7 +7083,7 @@ describe('workspace agent message sending', () => {
         .mockResolvedValueOnce(createSnapshot(['branched-runtime-session']))
     }
 
-    const branched = await sendWorkspaceMessage(runtime, {
+    await sendWorkspaceMessage(runtime, {
       branchSourceSessionId: 'source-session',
       text: 'Try a different interpretation',
       attachments: [attachment]
@@ -6805,14 +7095,23 @@ describe('workspace agent message sending', () => {
       expect(useSessionStore.getState().sessions[0]).toMatchObject({
         id: 'branched-runtime-session',
         isPending: false,
-        status: 'error',
-        pendingContextReplayMessageId: branched?.messageId
+        status: 'idle',
+        activeRun: undefined
       })
     )
 
+    expect(useWorkspaceOperationErrors.getState().errors['branched-runtime-session']).toBe(
+      'Provider unavailable'
+    )
+    expect(useSessionStore.getState().sessions[0].messages.map(({ content }) => content)).toEqual([
+      'Inspect the original data',
+      'The original analysis is complete.'
+    ])
     const retried = await sendWorkspaceMessage(runtime, {
       sessionId: 'branched-runtime-session',
       text: 'Try a different interpretation',
+      attachments: [finalizedAttachment],
+      forceHistoryReplay: true,
       supportsImageInput: false
     })
     await flushRuntimeTasks()
@@ -6889,9 +7188,11 @@ describe('workspace agent message sending', () => {
       id: sent?.sessionId,
       isPending: true,
       cwd: '',
-      status: 'error',
-      error: 'Agent session did not return a workspace.'
+      status: 'idle'
     })
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('keeps the selected run subject when initial session creation rejects', async () => {
@@ -6915,12 +7216,14 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: sent?.sessionId,
       isPending: true,
-      status: 'error',
-      error: 'Authentication failed',
+      status: 'idle',
       agentFrameworkId: 'codex',
       agentBackendId: 'codex:builtin-codex-subscription',
       agentModel: 'gpt-5.6-sol'
     })
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('uses a generic creation error when IPC supplies no downstream detail', async () => {
@@ -6941,9 +7244,12 @@ describe('workspace agent message sending', () => {
     })
     await flushRuntimeTasks()
 
-    expect(useSessionStore.getState().sessions[0]?.error).toBe(
-      'Agent session could not be created.'
-    )
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toBe('Agent session could not be created.')
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('surfaces the main-process Claude version gate as actionable setup guidance', async () => {
@@ -6968,9 +7274,14 @@ describe('workspace agent message sending', () => {
     })
     await flushRuntimeTasks()
 
-    expect(useSessionStore.getState().sessions[0]?.error).toBe(
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toBe(
       'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
     )
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('unwraps an IPC-wrapped config failure at session start and marks it non-reportable', async () => {
@@ -7001,11 +7312,14 @@ describe('workspace agent message sending', () => {
 
     const session = useSessionStore.getState().sessions[0]
     // The IPC wrapper is stripped, leaving the app's own setup guidance verbatim.
-    expect(session.error).toBe(
+    expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBe(
       "The active model isn't compatible with Codex. Open Settings → Model to pick a compatible model or switch the agent framework."
     )
     // A wrong-config start failure hides the report button.
-    expect(session.errorReportable).toBe(false)
+    expect(session.errorReportable).toBeUndefined()
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('sends attachments when creating a new runtime session', async () => {
@@ -7018,6 +7332,7 @@ describe('workspace agent message sending', () => {
 
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         uploads: {
           finalizeSession
         }
@@ -7091,6 +7406,7 @@ describe('workspace agent message sending', () => {
     })
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         uploads: {
           finalizeSession: vi.fn().mockResolvedValue([finalizedAttachment])
         }
@@ -7151,14 +7467,14 @@ describe('workspace agent message sending', () => {
     })
     const pendingSessionId = first?.sessionId ?? ''
 
-    await Promise.resolve()
-    await Promise.resolve()
+    await flushRuntimeTasks()
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: pendingSessionId,
       isPending: true,
-      status: 'error',
-      error: 'Agent session could not be created.'
+      status: 'idle',
+      activeRun: undefined,
+      messages: []
     })
 
     const retry = await sendWorkspaceMessage(runtime, {
@@ -7167,8 +7483,7 @@ describe('workspace agent message sending', () => {
       cwd: '/workspace/project'
     })
 
-    await Promise.resolve()
-    await Promise.resolve()
+    await flushRuntimeTasks()
 
     expect(runtime.resumeSession).not.toHaveBeenCalled()
     expect(runtime.createSession).toHaveBeenCalledTimes(2)
@@ -7192,10 +7507,6 @@ describe('workspace agent message sending', () => {
       id: 'transport-session-1',
       isPending: false,
       messages: [
-        expect.objectContaining({
-          id: first?.messageId,
-          content: 'Help me inspect this notebook'
-        }),
         expect.objectContaining({
           id: retry?.messageId,
           content: 'Try again'
@@ -7239,8 +7550,7 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       id: first?.sessionId,
       isPending: true,
-      status: 'error',
-      error: 'Second provider failed',
+      status: 'idle',
       agentFrameworkId: 'codex',
       agentBackendId: 'codex:builtin-codex-subscription',
       agentModel: 'gpt-5.6-sol'
@@ -7258,12 +7568,14 @@ describe('workspace agent message sending', () => {
     expect(session).toMatchObject({
       id: first?.sessionId,
       isPending: true,
-      status: 'error',
-      error: 'No provider selected',
+      status: 'idle',
       agentFrameworkId: 'codex'
     })
     expect(session.agentBackendId).toBeUndefined()
     expect(session.agentModel).toBeUndefined()
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('does not fall back to the runtime home directory when retrying managed workspace creation', async () => {
@@ -7317,7 +7629,7 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -7340,6 +7652,7 @@ describe('workspace agent message sending', () => {
   it('shows the Resume banner when a prompt fails during a live connection drop', async () => {
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         acp: {
           getState: vi
             .fn()
@@ -7353,7 +7666,19 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockRejectedValue(new Error('Connection timeout'))
+      sendPrompt: vi.fn(async (sessionId: string, ...args: unknown[]) => {
+        const promptMessageId = (args[8] as RuntimeSessionScope).promptMessageId
+        await acceptTestMainContinuation(
+          { sessionId, promptMessageId },
+          {
+            kind: 'error',
+            level: 'error',
+            text: 'Connection timeout',
+            interruptionCause: 'connection-lost'
+          }
+        )
+        throw new Error('Connection timeout')
+      })
     }
 
     useSessionStore.getState().appendUserMessage({
@@ -7375,13 +7700,14 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
       interrupted: true,
-      error: 'Connection timeout — Resume to reconnect and continue.'
+      error: 'Connection timeout'
     })
   })
 
   it('shows a plain error, not the Resume banner, when a prompt fails but the connection is up', async () => {
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         acp: {
           getState: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
         }
@@ -7393,7 +7719,18 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockRejectedValue(new Error('Invalid API key'))
+      sendPrompt: vi.fn(async (sessionId: string, ...args: unknown[]) => {
+        const promptMessageId = (args[8] as RuntimeSessionScope).promptMessageId
+        await acceptTestMainContinuation(
+          { sessionId, promptMessageId },
+          {
+            kind: 'error',
+            level: 'error',
+            text: 'Invalid API key'
+          }
+        )
+        throw new Error('Invalid API key')
+      })
     }
 
     useSessionStore.getState().appendUserMessage({
@@ -7420,6 +7757,7 @@ describe('workspace agent message sending', () => {
   it('uses the session owner status when a prompt fails on an old runtime', async () => {
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         acp: {
           getState: vi.fn().mockResolvedValue({
             ...createSnapshot(['session-1']),
@@ -7434,7 +7772,19 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockRejectedValue(new Error('Old runtime exited'))
+      sendPrompt: vi.fn(async (sessionId: string, ...args: unknown[]) => {
+        const promptMessageId = (args[8] as RuntimeSessionScope).promptMessageId
+        await acceptTestMainContinuation(
+          { sessionId, promptMessageId },
+          {
+            kind: 'error',
+            level: 'error',
+            text: 'Old runtime exited',
+            interruptionCause: 'connection-lost'
+          }
+        )
+        throw new Error('Old runtime exited')
+      })
     }
 
     await sendWorkspaceMessage(runtime, {
@@ -7448,13 +7798,14 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
       interrupted: true,
-      error: 'Old runtime exited — Resume to reconnect and continue.'
+      error: 'Old runtime exited'
     })
   })
 
   it('does not treat a healthy old runtime failure as an active runtime disconnect', async () => {
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         acp: {
           getState: vi.fn().mockResolvedValue({
             ...createSnapshot(['session-1']),
@@ -7469,7 +7820,14 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockRejectedValue(new Error('Invalid API key'))
+      sendPrompt: vi.fn(async (sessionId: string, ...args: unknown[]) => {
+        const promptMessageId = (args[8] as RuntimeSessionScope).promptMessageId
+        await acceptTestMainContinuation(
+          { sessionId, promptMessageId },
+          { kind: 'error', level: 'error', text: 'Invalid API key' }
+        )
+        throw new Error('Invalid API key')
+      })
     }
 
     await sendWorkspaceMessage(runtime, {
@@ -7503,6 +7861,7 @@ describe('workspace agent message sending', () => {
     }
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         acp: {
           getState: vi
             .fn()
@@ -7516,7 +7875,14 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockRejectedValue(new Error('Invalid API key'))
+      sendPrompt: vi.fn(async (sessionId: string, ...args: unknown[]) => {
+        const promptMessageId = (args[8] as RuntimeSessionScope).promptMessageId
+        await acceptTestMainContinuation(
+          { sessionId, promptMessageId },
+          { kind: 'error', level: 'error', text: 'Invalid API key', providerError: true }
+        )
+        throw new Error('Invalid API key')
+      })
     }
 
     useSessionStore.getState().appendUserMessage({
@@ -7553,6 +7919,7 @@ describe('workspace agent message sending', () => {
     }
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         acp: {
           getState: vi
             .fn()
@@ -7566,7 +7933,14 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockRejectedValue(new Error('Something unexpected broke'))
+      sendPrompt: vi.fn(async (sessionId: string, ...args: unknown[]) => {
+        const promptMessageId = (args[8] as RuntimeSessionScope).promptMessageId
+        await acceptTestMainContinuation(
+          { sessionId, promptMessageId },
+          { kind: 'error', level: 'error', text: 'Something unexpected broke' }
+        )
+        throw new Error('Something unexpected broke')
+      })
     }
 
     useSessionStore.getState().appendUserMessage({
@@ -7592,6 +7966,7 @@ describe('workspace agent message sending', () => {
   it('uses fallback message when error is empty or whitespace-only', async () => {
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         acp: {
           getState: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
         }
@@ -7622,9 +7997,10 @@ describe('workspace agent message sending', () => {
     await flushRuntimeTasks()
 
     const session = useSessionStore.getState().sessions[0]
-    expect(session.status).toBe('error')
+    expect(session.status).toBe('idle')
     expect(session.interrupted).toBeFalsy()
-    expect(session.error).toBe('Agent run failed')
+    expect(session.error).toBeUndefined()
+    expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBe('Agent run failed')
   })
 
   it('blocks duplicate submits while adoption finishes before opening the restored run', async () => {
@@ -7678,7 +8054,10 @@ describe('workspace agent message sending', () => {
 
   it('admits only one local user Message when two sends race an attached idle Session', async () => {
     vi.stubGlobal('window', {
-      api: { acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) } }
+      api: {
+        sessions: createSessionPolicyApi(),
+        acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) }
+      }
     })
 
     useSessionStore.getState().appendUserMessage({
@@ -7791,10 +8170,12 @@ describe('workspace agent message sending', () => {
     await flushRuntimeTasks()
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: 'Session workspace is missing; start a new conversation.'
+      status: 'idle'
     })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('keeps the underlying cause visible when resume fails for an unexpected reason', async () => {
@@ -7827,10 +8208,12 @@ describe('workspace agent message sending', () => {
 
     // The IPC wrapper is stripped and the real cause is appended rather than swallowed.
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: 'Agent session resume failed: agent process crashed'
+      status: 'idle'
     })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('reports a distinct message when the agent build cannot resume sessions', async () => {
@@ -7859,10 +8242,12 @@ describe('workspace agent message sending', () => {
     await flushRuntimeTasks()
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: 'This agent build cannot resume sessions; start a new conversation.'
+      status: 'idle'
     })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('softens the model↔framework incompatibility message instead of an alarming resume failure', async () => {
@@ -7895,11 +8280,13 @@ describe('workspace agent message sending', () => {
 
     // No "Agent session resume failed" prefix — the fix lives in settings, which now flags this early.
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error:
-        "The active model isn't compatible with this agent framework. Open Settings → Model to pick a compatible model or switch frameworks."
+      status: 'idle',
+      error: undefined
     })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('reports a distinct message when the agent connection cannot be re-established', async () => {
@@ -7925,10 +8312,12 @@ describe('workspace agent message sending', () => {
     })
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: 'Could not reconnect to the agent; check it is installed, then click Resume to retry.'
+      status: 'idle'
     })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 })
 
@@ -7966,7 +8355,7 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
     seedDetachedSession()
@@ -7996,6 +8385,8 @@ describe('resuming an interrupted session on demand', () => {
       agentTarget,
       true
     )
+    expect(useSessionStore.getState().sessions[0].status).toBe('error')
+    projectTestMainAttachment('session-1')
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
     expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
@@ -8015,8 +8406,9 @@ describe('resuming an interrupted session on demand', () => {
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
-      error: 'Agent session resume failed: unexpected agent state'
+      error: 'Session was interrupted before the app closed.'
     })
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toEqual(expect.any(String))
   })
 
   it('just clears the banner without re-resuming an already-attached session', async () => {
@@ -8032,6 +8424,8 @@ describe('resuming an interrupted session on demand', () => {
     await resumeInterruptedWorkspaceSession(runtime, 'session-1')
 
     expect(runtime.resumeSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].status).toBe('error')
+    projectTestMainAttachment('session-1')
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
   })
 
@@ -8044,7 +8438,9 @@ describe('resuming an interrupted session on demand', () => {
         delegationPolicyAuthorityPending: true
       }))
     }))
-    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const saveSession = vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+      acknowledgeTestSessionCommands(session, options)
+    )
     const setDelegationPolicy = vi.fn(async () => {
       const session = useSessionStore.getState().sessions[0]
       return {
@@ -8091,150 +8487,9 @@ describe('resuming an interrupted session on demand', () => {
     expect(runtime.resumeSession).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
-      error: 'Session workspace is missing; start a new conversation.'
+      error: 'Session was interrupted before the app closed.'
     })
-  })
-
-  it('flags a running session as disconnected when the connection drops', () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      content: 'Keep working',
-      cwd: '/workspace/project',
-      projectId: 'default-project'
-    })
-    expect(useSessionStore.getState().sessions[0].status).toBe('running')
-
-    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
-
-    const session = useSessionStore.getState().sessions[0]
-
-    expect(session.status).toBe('error')
-    expect(session.interrupted).toBe(true)
-    expect(session.error).toBe('Connection lost — Resume to reconnect and continue.')
-  })
-
-  it('flags a compacting session as interrupted when the connection drops', () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      content: 'Keep the compacted context',
-      cwd: '/workspace/project',
-      projectId: 'default-project'
-    })
-    useSessionStore.getState().finishRun('session-1')
-    useSessionStore.getState().beginCompaction('session-1')
-
-    expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'idle',
-      compacting: true
-    })
-
-    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
-
-    expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      interrupted: true,
-      compacting: undefined,
-      error: 'Connection lost — Resume to reconnect and continue.'
-    })
-  })
-
-  it('uses the owning runtime status instead of another generation global status', () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      content: 'Keep working',
-      cwd: '/workspace/project',
-      projectId: 'default-project'
-    })
-
-    markRunningSessionsDisconnectedOnDrop(
-      'connected',
-      'connected',
-      { 'session-1': 'connected' },
-      { 'session-1': 'closed' }
-    )
-
-    expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      interrupted: true
-    })
-  })
-
-  it('does not disconnect a running old-generation session when only the active runtime drops', () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      content: 'Keep working',
-      cwd: '/workspace/project',
-      projectId: 'default-project'
-    })
-
-    markRunningSessionsDisconnectedOnDrop(
-      'connected',
-      'closed',
-      { 'session-1': 'connected' },
-      { 'session-1': 'connected' }
-    )
-
-    expect(useSessionStore.getState().sessions[0].status).toBe('running')
-  })
-
-  it('does not flag an idle session on drop so provider/skills reconnects stay silent', () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      content: 'All done',
-      cwd: '/workspace/project'
-    })
-    useSessionStore.getState().finishRun('session-1')
-
-    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
-
-    expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
-    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
-  })
-
-  it('keeps a durable user-choice wait actionable when the connection drops', () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      content: 'Help me choose',
-      cwd: '/workspace/project'
-    })
-    useSessionStore.getState().setElicitationPending('session-1', true)
-
-    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
-
-    const session = useSessionStore.getState().sessions[0]
-    expect(session.status).toBe('waiting-for-user')
-    expect(session.interrupted).toBeUndefined()
-  })
-
-  it('keeps a durable permission wait actionable when the connection drops', () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      content: 'Run the verification',
-      cwd: '/workspace/project'
-    })
-    useSessionStore.getState().setPermissionPending('session-1')
-
-    markRunningSessionsDisconnectedOnDrop('connected', 'closed', {}, {}, new Set(['session-1']))
-
-    const session = useSessionStore.getState().sessions[0]
-    expect(session.status).toBe('waiting-permission')
-    expect(session.interrupted).toBeUndefined()
-  })
-
-  it('interrupts a non-durable permission wait when the connection drops', () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      content: 'Approve an in-memory action',
-      cwd: '/workspace/project'
-    })
-    useSessionStore.getState().setPermissionPending('session-1')
-
-    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
-
-    expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      interrupted: true
-    })
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toEqual(expect.any(String))
   })
 
   it('reconnects and continues the interrupted turn without duplicating its user message', async () => {
@@ -8256,7 +8511,7 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
     await resumeInterruptedWorkspaceSession(runtime, 'session-1')
@@ -8276,7 +8531,7 @@ describe('resuming an interrupted session on demand', () => {
     expect(userMessages).toHaveLength(1)
     expect(userMessages[0].id).toBe(originalUserMessageId)
     expect(userMessages[0].content).toBe('Continue the analysis')
-    expect(userMessages[0].interrupted).toBe(true)
+    expect(userMessages[0].interrupted).toBeUndefined()
     expect(session.activeRun?.promptMessageId).toBe(originalUserMessageId)
     expect(session.interrupted).toBeUndefined()
   })
@@ -8297,7 +8552,7 @@ describe('resuming an interrupted session on demand', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -8335,7 +8590,7 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -8383,7 +8638,12 @@ describe('resuming an interrupted session on demand', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn(() => providerFirstUpdate.promise),
+      continueInterruptedTurn: vi.fn(
+        async (request: Parameters<typeof acceptTestMainContinuation>[0]) => {
+          await providerFirstUpdate.promise
+          return acceptTestMainContinuation(request)
+        }
+      ),
       sendPrompt: vi.fn()
     }
 
@@ -8439,7 +8699,7 @@ describe('resuming an interrupted session on demand', () => {
       status: 'error',
       interrupted: true,
       resumeRecovery: { promptMessageId: originalMessageId },
-      error: 'Agent session resume failed: provider rejected continuation'
+      error: 'Connection lost — Resume to reconnect and continue.'
     })
     expect(useSessionStore.getState().sessions[0].messages).toEqual([
       expect.objectContaining({
@@ -8449,6 +8709,9 @@ describe('resuming an interrupted session on demand', () => {
         interrupted: true
       })
     ])
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toBe(
+      'Agent session resume failed: provider rejected continuation'
+    )
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
@@ -8468,7 +8731,7 @@ describe('resuming an interrupted session on demand', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(() => resumeGate.promise),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -8505,7 +8768,7 @@ describe('resuming an interrupted session on demand', () => {
         .mockRejectedValueOnce(new Error('provider resume failed'))
         .mockResolvedValueOnce({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn()
     }
 
@@ -8572,7 +8835,7 @@ describe('resuming an interrupted session on demand', () => {
         })
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -8631,7 +8894,7 @@ describe('resuming an interrupted session on demand', () => {
       continueInterruptedTurn: vi
         .fn()
         .mockRejectedValueOnce(new Error('provider rejected continuation'))
-        .mockResolvedValueOnce(createSnapshot(['session-1'])),
+        .mockImplementationOnce(acceptTestMainContinuation),
       sendPrompt: vi.fn()
     }
 
@@ -8640,7 +8903,7 @@ describe('resuming an interrupted session on demand', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       interrupted: true,
       resumeRecovery: { promptMessageId: interrupted?.messageId },
-      pendingHistoryReplay: { kind: 'before-message', messageId: interrupted?.messageId }
+      pendingHistoryReplay: { kind: 'all' }
     })
     const firstRuntimeSegmentId =
       runtime.continueInterruptedTurn.mock.calls[0]?.[0].contextReset?.runtimeSegmentId
@@ -8696,7 +8959,7 @@ describe('resuming an interrupted session on demand', () => {
         cwd: '/workspace/project',
         contextReset: true
       }),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -8736,12 +8999,10 @@ describe('resuming an interrupted session on demand', () => {
     })
     useSessionStore.getState().finishRun('session-1')
     useSessionStore.getState().beginCompaction('session-1')
-    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
 
-    expect(useSessionStore.getState().sessions[0].resumeRecovery).toEqual({
-      kind: 'resume-required',
-      cause: 'connection-lost'
-    })
+    expect(useSessionStore.getState().sessions[0].resumeRecovery).toBeUndefined()
+    // Main's control-terminal projection releases the compaction gate.
+    useSessionStore.getState().finishCompaction('session-1')
 
     const runtime = {
       state: createSnapshot([]),
@@ -8752,7 +9013,7 @@ describe('resuming an interrupted session on demand', () => {
         contextReset: true
       }),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -8798,7 +9059,7 @@ describe('resuming an interrupted session on demand', () => {
         })
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -8848,7 +9109,7 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
-      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -9633,6 +9894,8 @@ describe('resuming an interrupted session on demand', () => {
 
     expect(runtime.resumeSession).toHaveBeenCalledTimes(1)
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].status).toBe('error')
+    projectTestMainAttachment('session-1')
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
   })
 })
@@ -9685,6 +9948,12 @@ describe('recovering from a request-size overflow', () => {
       annotations
     })
     useSessionStore.getState().failRun('session-1', 'Request too large (max 32MB)')
+    // This fixture starts after Main's overflow commit, rather than with unsaved renderer intents.
+    resetSessionConversationIntentsForTests()
+    testDurableSessions.set('session-1', {
+      ...toPersistedSession(useSessionStore.getState().sessions[0]),
+      runtimeTranscriptOwner: 'main'
+    })
   }
 
   describe('A04 retry admission failures', () => {
@@ -9756,7 +10025,10 @@ describe('recovering from a request-size overflow', () => {
       async ({ native, failure }) => {
         const acquire = vi.fn().mockRejectedValue(new Error('Fixed version is inaccessible'))
         vi.stubGlobal('window', {
-          api: { previewResources: { acquire, release: vi.fn() } }
+          api: {
+            sessions: createSessionPolicyApi(),
+            previewResources: { acquire, release: vi.fn() }
+          }
         })
         seedOverflowedConversation(false, undefined, [
           failure === 'vision' ? regionAnnotation : imageAnnotation
@@ -9791,6 +10063,17 @@ describe('recovering from a request-size overflow', () => {
             }))
           }))
         }
+        const source = useSessionStore.getState().sessions[0]
+        const durable = toPersistedSession(source)
+        durable.conversationGraph = {
+          ...durable.conversationGraph!,
+          messages: durable.conversationGraph!.messages.map((node) => ({
+            ...node,
+            ...durable.messages.find(({ id }) => id === node.id)
+          }))
+        }
+        testDurableSessions.set('session-1', durable)
+        resetSessionConversationIntentsForTests()
         const original = useSessionStore.getState().sessions[0].messages.at(-1)!
         const runtime = retryRuntime(native)
         const result = await recoverContextOverflowWorkspaceSession(
@@ -9807,19 +10090,17 @@ describe('recovering from a request-size overflow', () => {
           expect(result.value).toBe(false)
           expect(acquire).not.toHaveBeenCalled()
         } else {
-          const errorText = result.error instanceof Error ? result.error.message : session.error
-          expect(errorText).toContain(
-            failure === 'source'
-              ? IMAGE_ANNOTATION_SOURCE_UNAVAILABLE_MESSAGE
-              : VISION_MODEL_NOT_CONFIGURED_MESSAGE
-          )
+          expect(session.error).toBe('Request too large (max 32MB)')
           if (failure === 'source') expect(acquire).toHaveBeenCalledOnce()
           else expect(acquire).not.toHaveBeenCalled()
         }
 
-        expect
-          .soft(session.messages.find((message) => message.id === original.id))
-          .toEqual(original)
+        expect.soft(session.messages.find((message) => message.id === original.id)).toMatchObject({
+          id: original.id,
+          role: original.role,
+          content: original.content,
+          uploads: original.uploads
+        })
         expect.soft(session.compacting).not.toBe(true)
         expect.soft(session.status).toBe('error')
         expect.soft(session.error).toEqual(expect.any(String))
@@ -9835,6 +10116,7 @@ describe('recovering from a request-size overflow', () => {
       const original = useSessionStore.getState().sessions[0].messages.at(-1)!
       vi.stubGlobal('window', {
         api: {
+          sessions: createSessionPolicyApi(),
           previewResources: {
             acquire: vi.fn().mockRejectedValue(new Error('Unavailable')),
             release: vi.fn()
@@ -9905,7 +10187,10 @@ describe('recovering from a request-size overflow', () => {
           throw new Error('Fixed version disappeared')
         })
         vi.stubGlobal('window', {
-          api: { previewResources: { acquire, release: vi.fn() } }
+          api: {
+            sessions: createSessionPolicyApi(),
+            previewResources: { acquire, release: vi.fn() }
+          }
         })
         seedOverflowedConversation(false, undefined, [imageAnnotation])
         const original = useSessionStore.getState().sessions[0].messages.at(-1)!
@@ -9941,7 +10226,10 @@ describe('recovering from a request-size overflow', () => {
         expect.soft(result.error).toBeUndefined()
         expect.soft(result.value).toBe(false)
         if (terminal === 'disconnect') expect(session.error).toContain('Connection closed')
-        else expect.soft(session.status).toBe('idle')
+        else {
+          expect.soft(session.status).toBe('error')
+          expect(session.error).toBe('Request too large (max 32MB)')
+        }
         expect(runtime.sendPrompt).not.toHaveBeenCalled()
       }
     )
@@ -9954,7 +10242,9 @@ describe('recovering from a request-size overflow', () => {
         const admission = createDeferred<{ id: string }>()
         const acquire = vi.fn(() => admission.promise)
         const release = vi.fn().mockResolvedValue(undefined)
-        vi.stubGlobal('window', { api: { previewResources: { acquire, release } } })
+        vi.stubGlobal('window', {
+          api: { sessions: createSessionPolicyApi(), previewResources: { acquire, release } }
+        })
         seedOverflowedConversation(false, undefined, [
           {
             id: 'point-1',
@@ -10089,10 +10379,10 @@ describe('recovering from a request-size overflow', () => {
         expect.soft(session.status).toBe('error')
         expect.soft(session.activeRun).toBeUndefined()
         expect.soft(session.compacting).not.toBe(true)
-        expect
-          .soft(session.error)
-          .toContain(
-            failure === 'replay' ? 'immutable Version identity' : 'Synchronous dispatch failed'
+        expect.soft(session.error).toBe('Request too large (max 32MB)')
+        if (failure === 'dispatch')
+          expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBe(
+            'Synchronous dispatch failed'
           )
         expect(session.messages).toContainEqual(original)
         if (failure === 'replay') expect(runtime.sendPrompt).not.toHaveBeenCalled()
@@ -10124,55 +10414,9 @@ describe('recovering from a request-size overflow', () => {
 
     it('ignores an old asynchronous overlapping rejection after recovery rearms the question', async () => {
       seedOverflowedConversation()
-      const rejection = createDeferred<void>()
-      const runtime = {
-        state: createSnapshot(['session-1']),
-        createSession: vi.fn(),
-        resumeSession: vi.fn(),
-        resetSessionContext: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
-        sendPrompt: vi
-          .fn()
-          .mockImplementationOnce(async () => {
-            await rejection.promise
-            throw new Error('An ACP prompt is already running for this session')
-          })
-          .mockResolvedValue(createSnapshot(['session-1']))
-      }
-      vi.stubGlobal('window', {
-        api: { acp: { getState: vi.fn().mockResolvedValue(runtime.state) } }
-      })
-      expect(
-        await sendWorkspaceMessage(runtime, {
-          sessionId: 'session-1',
-          text: 'Question whose original dispatch is still settling'
-        })
-      ).toBeDefined()
-      const originalRun = useSessionStore.getState().sessions[0].activeRun
-      useSessionStore.getState().failRun('session-1', 'Context window exceeded')
-      expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(true)
-      expect(runtime.sendPrompt).toHaveBeenCalledTimes(2)
-      const recoveredRun = useSessionStore.getState().sessions[0].activeRun
-      expect(recoveredRun).toBeDefined()
-      expect(recoveredRun).not.toBe(originalRun)
-
-      rejection.resolve(undefined)
-      await flushRuntimeTasks()
-      await flushRuntimeTasks()
-
-      const session = useSessionStore.getState().sessions[0]
-      expect.soft(session.status).toBe('running')
-      expect.soft(session.activeRun).toBe(recoveredRun)
-      expect.soft(session.error).toBeUndefined()
-    })
-
-    it.each(['connected', 'closed'] as const)(
-      'preserves a newer run while asynchronous recovery failure awaits a %s snapshot',
-      async (status) => {
-        seedOverflowedConversation()
+      const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 100)
+      try {
         const rejection = createDeferred<void>()
-        const snapshot = createDeferred<AcpStateSnapshot>()
-        const getState = vi.fn(() => snapshot.promise)
-        vi.stubGlobal('window', { api: { acp: { getState } } })
         const runtime = {
           state: createSnapshot(['session-1']),
           createSession: vi.fn(),
@@ -10186,32 +10430,109 @@ describe('recovering from a request-size overflow', () => {
             })
             .mockResolvedValue(createSnapshot(['session-1']))
         }
-        expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(true)
-        rejection.resolve(undefined)
-        await vi.waitFor(() => expect(getState).toHaveBeenCalledOnce())
-
-        // The failure still owns its run when getState starts. Another public send takes over
-        // during that await; neither a connected nor closed old snapshot may settle the new run.
-        useSessionStore.getState().finishRun('session-1')
+        vi.stubGlobal('window', {
+          api: {
+            sessions: createSessionPolicyApi(),
+            acp: { getState: vi.fn().mockResolvedValue(runtime.state) }
+          }
+        })
         expect(
           await sendWorkspaceMessage(runtime, {
             sessionId: 'session-1',
-            text: 'New question while the old failure snapshot is pending'
+            text: 'Question whose original dispatch is still settling'
           })
         ).toBeDefined()
-        await flushRuntimeTasks()
-        const newerSession = useSessionStore.getState().sessions[0]
-        expect(newerSession.status).toBe('running')
+        const originalRun = useSessionStore.getState().sessions[0].activeRun
+        const originalPreparation = useSessionStore.getState().sessions[0].promptPreparation
+        expect(originalPreparation).toBeDefined()
+        useSessionStore.getState().failRun('session-1', 'Context window exceeded')
+        expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(true)
         expect(runtime.sendPrompt).toHaveBeenCalledTimes(2)
+        const recoveredRun = useSessionStore.getState().sessions[0].activeRun
+        expect(recoveredRun).toBeDefined()
+        expect(recoveredRun).not.toBe(originalRun)
+        // Distinct preparations can rearm the same Message in the same millisecond.
+        expect(recoveredRun?.startedAt).toBe(originalRun?.startedAt)
+        expect(useSessionStore.getState().sessions[0].promptPreparation?.id).not.toBe(
+          originalPreparation?.id
+        )
 
-        snapshot.resolve({ ...runtime.state, status })
+        rejection.resolve(undefined)
+        await flushRuntimeTasks()
         await flushRuntimeTasks()
 
         const session = useSessionStore.getState().sessions[0]
         expect.soft(session.status).toBe('running')
-        expect.soft(session.activeRun).toBe(newerSession.activeRun)
+        expect.soft(session.activeRun).toBe(recoveredRun)
         expect.soft(session.error).toBeUndefined()
+        expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBeUndefined()
+      } finally {
+        now.mockRestore()
+      }
+    })
+
+    it.each(['connected', 'closed'] as const)(
+      'preserves a newer run while asynchronous recovery failure awaits a %s snapshot',
+      async (status) => {
+        seedOverflowedConversation()
+        const rejection = createDeferred<void>()
+        const rollback = createDeferred<void>()
+        const rollbackStarted = vi.fn()
+        const api = createSessionPolicyApi()
+        const saveSession = vi.fn(
+          async (submitted: PersistedChatSession, options?: SaveSessionOptions) => {
+            if (options?.conversationCommands?.some(({ kind }) => kind === 'rollback-prompt')) {
+              rollbackStarted()
+              await rollback.promise
+              // Main's conditional receipt sees a newer concurrent result and preserves its run/graph.
+              const authority = toPersistedSession(useSessionStore.getState().sessions[0])
+              return {
+                ...authority,
+                runtimeConversationCommandIds: [
+                  ...(authority.runtimeConversationCommandIds ?? []),
+                  ...options.conversationCommands.map(({ id }) => id)
+                ]
+              }
+            }
+            return acknowledgeTestSessionCommands(submitted, options)
+          }
+        )
+        vi.stubGlobal('window', {
+          api: {
+            sessions: { ...api, saveSession },
+            acp: {
+              getState: vi.fn().mockResolvedValue({ ...createSnapshot(['session-1']), status })
+            }
+          }
+        })
+        const runtime = {
+          state: createSnapshot(['session-1']),
+          createSession: vi.fn(),
+          resumeSession: vi.fn(),
+          resetSessionContext: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+          sendPrompt: vi.fn(async () => {
+            await rejection.promise
+            throw new Error('An ACP prompt is already running for this session')
+          })
+        }
+        expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(true)
+        rejection.resolve(undefined)
+        await vi.waitFor(() => expect(rollbackStarted).toHaveBeenCalledOnce())
+        useSessionStore.getState().finishRun('session-1')
+        useSessionStore.getState().appendUserMessage({
+          sessionId: 'session-1',
+          content: 'New question while Main rollback is pending'
+        })
+        const newerSession = useSessionStore.getState().sessions[0]
+        expect(newerSession.status).toBe('running')
+        rollback.resolve(undefined)
+        await flushRuntimeTasks()
+        const session = useSessionStore.getState().sessions[0]
+        expect(session.status).toBe('running')
+        expect(session.activeRun).toEqual(newerSession.activeRun)
+        expect(session.error).toBeUndefined()
         expect(session.messages).toEqual(newerSession.messages)
+        expect(runtime.sendPrompt).toHaveBeenCalledOnce()
       }
     )
 
@@ -10231,11 +10552,15 @@ describe('recovering from a request-size overflow', () => {
           })
         }
         vi.stubGlobal('window', {
-          api: { acp: { getState: vi.fn().mockResolvedValue(runtime.state) } }
+          api: {
+            sessions: createSessionPolicyApi(),
+            acp: { getState: vi.fn().mockResolvedValue(runtime.state) }
+          }
         })
         expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(true)
         const source = useSessionStore.getState().sessions[0]
         expect(source.activeRun).toBeDefined()
+        expect(source.promptPreparation).toBeDefined()
         if (projection === 'save acknowledgement') {
           // IPC returns a distinct object for the same durable run. A save acknowledgement is
           // not a new dispatch, and must not revoke the current dispatch's failure ownership.
@@ -10247,6 +10572,12 @@ describe('recovering from a request-size overflow', () => {
             mode: 'replace-persisted-if-current'
           })
           expect(useSessionStore.getState().sessions[0].activeRun).toEqual(source.activeRun)
+          expect(useSessionStore.getState().sessions[0].promptPreparation).not.toBe(
+            source.promptPreparation
+          )
+          expect(useSessionStore.getState().sessions[0].promptPreparation?.id).toBe(
+            source.promptPreparation?.id
+          )
         } else {
           useSessionStore.getState().appendAgentMessageChunk({
             sessionId: 'session-1',
@@ -10263,7 +10594,10 @@ describe('recovering from a request-size overflow', () => {
 
         const session = useSessionStore.getState().sessions[0]
         expect.soft(session.status).toBe('error')
-        expect.soft(session.error).toBe('Current dispatch failed')
+        expect.soft(session.error).toBe('Request too large (max 32MB)')
+        expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBe(
+          'Current dispatch failed'
+        )
         expect.soft(session.activeRun).toBeUndefined()
         expect(session.messages).toContainEqual(source.messages.at(-1))
         expect(runtime.sendPrompt).toHaveBeenCalledOnce()
@@ -10328,7 +10662,8 @@ describe('recovering from a request-size overflow', () => {
       await vi.waitFor(() => expect(active.size).toBe(0))
       const session = useSessionStore.getState().sessions[0]
       expect(session.compacting).not.toBe(true)
-      expect(session.error).toBe('Recovery setup failed')
+      expect(session.error).toBe('Request too large (max 32MB)')
+      expect(recover).toHaveBeenCalledOnce()
       expect(cooldown.has('session-1')).toBe(true)
     })
 
@@ -10350,14 +10685,12 @@ describe('recovering from a request-size overflow', () => {
       const first = recoverContextOverflowWorkspaceSession(runtime, 'session-1')
       const second = recoverContextOverflowWorkspaceSession(runtime, 'session-1')
       firstReset.resolve({ sessionId: 'session-1', providerSessionId: 'obsolete-provider' })
-      expect(await first).toBe(false)
-      expect(runtime.sendPrompt).not.toHaveBeenCalled()
-      expect(useSessionStore.getState().sessions[0].providerSessionId).not.toBe('obsolete-provider')
-      expect(useSessionStore.getState().sessions[0].compacting).toBe(true)
-      secondReset.resolve({ sessionId: 'session-1', providerSessionId: 'current-provider' })
-      expect(await second).toBe(true)
+      expect(await second).toBe(false)
+      expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
+      expect(await first).toBe(true)
       expect(runtime.sendPrompt).toHaveBeenCalledOnce()
-      expect(useSessionStore.getState().sessions[0].providerSessionId).toBe('current-provider')
+      expect(useSessionStore.getState().sessions[0].providerSessionId).toBe('obsolete-provider')
+      expect(useSessionStore.getState().sessions[0].compacting).not.toBe(true)
     })
   })
 
@@ -10539,6 +10872,9 @@ describe('recovering from a request-size overflow', () => {
       sessionId: 'session-1',
       cwd: '/workspace/project'
     })
+    useSessionStore.getState().failRun('session-1', 'Request too large (max 32MB)')
+    resetSessionConversationIntentsForTests()
+    testDurableSessions.set('session-1', toPersistedSession(useSessionStore.getState().sessions[0]))
     owner.recordPromptAdmission({
       sessionId: 'session-1',
       agentTarget: admittedTarget
@@ -10652,7 +10988,10 @@ describe('recovering from a request-size overflow', () => {
 
   it('persists the reset provider identity and re-sends the failed turn with a text preamble', async () => {
     vi.stubGlobal('window', {
-      api: { acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) } }
+      api: {
+        sessions: createSessionPolicyApi(),
+        acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) }
+      }
     })
     seedOverflowedConversation(true)
     useSessionStore.setState((state) => ({
@@ -10777,6 +11116,78 @@ describe('recovering from a request-size overflow', () => {
     })
   })
 
+  it('does not compensate or report a preparation error after Main consumes its witness', async () => {
+    seedOverflowedConversation()
+    resetSessionConversationIntentsForTests()
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        runtimeTranscriptOwner: 'main' as const
+      }))
+    }))
+    let durable = toPersistedSession(useSessionStore.getState().sessions[0])
+    const preparations = new SessionPromptPreparationOwner()
+    const saveSession = vi.fn(
+      async (_submitted: PersistedChatSession, options?: SaveSessionOptions) => {
+        durable = preparations.apply(durable, options?.conversationCommands ?? [])
+        return structuredClone(durable)
+      }
+    )
+    vi.stubGlobal('window', {
+      api: { sessions: { saveSession, loadOne: async () => structuredClone(durable) } }
+    })
+    const owner = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone(durable),
+      mutateSession: async (_scope, mutate) => (durable = mutate(durable)),
+      finalizeArtifacts: async () => []
+    })
+    const rejection = createDeferred<void>()
+    const admission = createDeferred<void>()
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+      sendPrompt: vi.fn(async (...args: unknown[]) => {
+        expect(durable.promptPreparation).toBeDefined()
+        const provenance = args[9] as RuntimeSessionScope
+        await owner.begin({
+          ...provenance,
+          sessionId: 'session-1',
+          projectId: durable.projectId,
+          executionId: 'admitted-before-dispatch-rejection'
+        })
+        const source = useSessionStore.getState().sessions[0]
+        useSessionStore.getState().applyDurableSessionProjection({
+          source,
+          session: structuredClone(durable),
+          mode: 'runtime-transcript-authority'
+        })
+        admission.resolve(undefined)
+        await rejection.promise
+        throw new Error('Admitted provider execution failed')
+      })
+    }
+    expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(true)
+    await admission.promise
+    const admitted = useSessionStore.getState().sessions[0]
+    expect(admitted.promptPreparation).toBeUndefined()
+    expect(admitted.runtimeSessionAdmissions?.at(-1)?.executionId).toBe(
+      'admitted-before-dispatch-rejection'
+    )
+    expect(admitted.activeRun).toBeDefined()
+    rejection.resolve(undefined)
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+    expect(useSessionStore.getState().sessions[0]).toBe(admitted)
+    expect(useWorkspaceOperationErrors.getState().errors[admitted.id]).toBeUndefined()
+    expect(
+      saveSession.mock.calls.some(([, options]) =>
+        options?.conversationCommands?.some(({ kind }) => kind === 'rollback-prompt')
+      )
+    ).toBe(false)
+  })
+
   it.each([true, false])(
     'persists the Main-owned overflow retry before dispatch (native=%s)',
     async (native) => {
@@ -10791,14 +11202,17 @@ describe('recovering from a request-size overflow', () => {
       let durable = toPersistedSession(useSessionStore.getState().sessions[0])
       const originalSegmentIds = durable.conversationGraph!.runtimeSegments.map(({ id }) => id)
       const gate = createDeferred<void>()
+      const preparations = new SessionPromptPreparationOwner()
       const saveSession = vi.fn(
         async (_submitted: PersistedChatSession, options?: SaveSessionOptions) => {
           await gate.promise
-          durable = applySessionConversationCommands(durable, options?.conversationCommands ?? [])
+          durable = preparations.apply(durable, options?.conversationCommands ?? [])
           return structuredClone(durable)
         }
       )
-      vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+      vi.stubGlobal('window', {
+        api: { sessions: { saveSession, loadOne: async () => structuredClone(durable) } }
+      })
       const owner = new RuntimeSessionOwner({
         loadSession: async () => structuredClone(durable),
         mutateSession: async (_scope, mutate) => (durable = mutate(durable)),
@@ -10843,6 +11257,104 @@ describe('recovering from a request-size overflow', () => {
       )
     }
   )
+
+  it('rolls back only the unadmitted retry when cancellation arrives during Main preparation', async () => {
+    seedOverflowedConversation()
+    resetSessionConversationIntentsForTests()
+    const original = useSessionStore.getState().sessions[0]
+    const prompt = original.messages.at(-1)!
+    const outcome = {
+      kind: 'failed' as const,
+      settledAt: original.updatedAt,
+      error: original.error
+    }
+    let durable = setTurnOutcome(toPersistedSession(original), prompt.id, outcome)
+    durable.runtimeTranscriptOwner = 'main'
+    const graph = durable.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.rootFrameId)!
+    durable.runtimeSessionAdmissions = [
+      {
+        executionId: 'original-admitted-execution',
+        promptMessageId: prompt.id,
+        promptRuntimeSegmentId: graph.messages.find(({ id }) => id === prompt.id)!
+          .runtimeSegmentId!,
+        rootFrameId: graph.rootFrameId,
+        agentFrameId: frame.id,
+        messageBranchId: frame.activeBranchId,
+        runtimeSegmentId: graph.runtimeSegments.at(-1)!.id
+      }
+    ]
+    useSessionStore.getState().hydrateSessions([durable])
+    const baseline = structuredClone(durable)
+    const gate = createDeferred<void>()
+    const persistence = new SessionPersistenceStateOwner({
+      repository: {
+        loadSessionWithDiagnostics: async () => ({
+          status: 'found',
+          session: structuredClone(durable)
+        }),
+        saveSession: async (candidate) => {
+          durable = { ...structuredClone(candidate), revision: (durable.revision ?? 0) + 1 }
+          return structuredClone(durable)
+        }
+      },
+      fileIndex: { syncSession: vi.fn(async () => []) },
+      assertMutable: vi.fn(),
+      notifyFilesChanged: vi.fn(),
+      notifyRuntimeContextSessionUpdated: vi.fn(),
+      notifyRuntimeTranscriptSessionUpdated: vi.fn(),
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    })
+    const saveSession = vi.fn(
+      async (candidate: PersistedChatSession, options?: SaveSessionOptions) => {
+        if (options?.conversationCommands?.some(({ kind }) => kind === 'prepare-prompt'))
+          await gate.promise
+        return persistence.saveSession(candidate, options)
+      }
+    )
+    vi.stubGlobal('window', {
+      api: { sessions: { saveSession, loadOne: async () => structuredClone(durable) } }
+    })
+    const cancelledSessionIds = new Set<string>()
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+      sendPrompt: vi.fn()
+    }
+    const recovery = recoverContextOverflowWorkspaceSession(
+      runtime,
+      'session-1',
+      undefined,
+      cancelledSessionIds
+    )
+    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+    await cancelWorkspaceRun(
+      { cancel: vi.fn().mockResolvedValue(runtime.state) },
+      'session-1',
+      cancelledSessionIds
+    )
+    gate.resolve(undefined)
+
+    expect(await recovery).toBe(false)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(durable.promptPreparation).toBeUndefined()
+    expect(durable.activeRun).toBeUndefined()
+    expect(durable.runtimeSessionAdmissions).toEqual(baseline.runtimeSessionAdmissions)
+    expect(durable.messages).toEqual(baseline.messages)
+    expect(durable.conversationGraph?.branches).toEqual(
+      baseline.conversationGraph?.branches.map((branch) => ({
+        ...branch,
+        updatedAt: expect.any(Number)
+      }))
+    )
+    const current = useSessionStore.getState().sessions[0]
+    expect(current.status).toBe(baseline.status)
+    expect(current.error).toBe(baseline.error)
+    expect(current.messages.at(-1)?.turnOutcome).toEqual(outcome)
+    expect(current.compacting).toBeUndefined()
+  })
 
   it('uses native framework compaction and retries without replaying app-owned history', async () => {
     seedOverflowedConversation()
@@ -11072,7 +11584,7 @@ describe('recovering from a request-size overflow', () => {
     expect(runtime.resetSessionContext).not.toHaveBeenCalled()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'idle',
+      status: 'error',
       compacting: undefined
     })
     expect(useSessionStore.getState().sessions[0].messages.at(-1)?.content).toBe(
@@ -11096,6 +11608,38 @@ describe('recovering from a request-size overflow', () => {
     expect(recovered).toBe(false)
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]?.status).toBe('error')
+  })
+
+  it('preserves Main failure state when overflow retry is cancelled during provider reattachment', async () => {
+    seedOverflowedConversation()
+    const before = useSessionStore.getState().sessions[0]
+    const cancelledSessionIds = new Set<string>()
+    const reattachment = createDeferred<{ sessionId: string }>()
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(() => reattachment.promise),
+      resetSessionContext: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+      sendPrompt: vi.fn()
+    }
+    const recovery = recoverContextOverflowWorkspaceSession(
+      runtime,
+      'session-1',
+      undefined,
+      cancelledSessionIds
+    )
+    await vi.waitFor(() => expect(runtime.resumeSession).toHaveBeenCalledOnce())
+    cancelledSessionIds.add('session-1')
+    reattachment.resolve({ sessionId: 'session-1' })
+
+    expect(await recovery).toBe(false)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    const current = useSessionStore.getState().sessions[0]
+    expect(current.compacting).toBeUndefined()
+    expect(current.status).toBe(before.status)
+    expect(current.error).toBe(before.error)
+    expect(current.errorReportable).toBe(before.errorReportable)
+    expect(current.messages).toEqual(before.messages)
   })
 
   it('restores the overflowed user turn when retry preparation fails', async () => {
@@ -11373,10 +11917,39 @@ describe('manual native context compaction', () => {
     await expect(compactWorkspaceSession(runtime, 'session-1')).resolves.toBe(false)
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: 'Context compaction failed.',
+      status: 'idle',
       compacting: undefined
     })
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toBe('Context compaction failed')
+  })
+
+  it('localizes the compaction failure with the existing activity catalog entry', async () => {
+    await prepareI18nLocale('zh-Hans')
+    initI18n('zh-Hans')
+    try {
+      const snapshot = {
+        ...createSnapshot(['session-1']),
+        nativeContextCompactionSessionIds: ['session-1']
+      }
+      await compactWorkspaceSession(
+        {
+          state: snapshot,
+          createSession: vi.fn(),
+          resumeSession: vi.fn(),
+          resetSessionContext: vi.fn(),
+          compactSession: vi.fn().mockResolvedValue(undefined),
+          sendPrompt: vi.fn()
+        },
+        'session-1'
+      )
+      expect(
+        useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+      ).toBe('上下文压缩失败')
+    } finally {
+      initI18n('en')
+    }
   })
 
   it('refuses sessions whose framework does not expose native compaction', async () => {
@@ -11440,9 +12013,11 @@ describe('manual native context compaction', () => {
       'Agent cancellation failed'
     )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: 'Agent cancellation failed'
+      status: 'idle'
     })
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 })
 
@@ -11794,7 +12369,9 @@ describe('resendEditedWorkspaceMessage', () => {
     const finalizeSession = vi.fn(
       async ({ attachments }: FinalizeUploadSessionRequest) => attachments
     )
-    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    vi.stubGlobal('window', {
+      api: { sessions: createSessionPolicyApi(), uploads: { finalizeSession } }
+    })
     const runtime = {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
@@ -11872,7 +12449,9 @@ describe('resendEditedWorkspaceMessage', () => {
       ],
       selectedSessionId: 'session-1'
     })
-    vi.stubGlobal('window', { api: { uploads: { finalizeSession: vi.fn() } } })
+    vi.stubGlobal('window', {
+      api: { sessions: createSessionPolicyApi(), uploads: { finalizeSession: vi.fn() } }
+    })
     const runtime = {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
@@ -11964,7 +12543,9 @@ describe('resendEditedWorkspaceMessage', () => {
       ],
       selectedSessionId: 'session-1'
     })
-    vi.stubGlobal('window', { api: { uploads: { finalizeSession: vi.fn() } } })
+    vi.stubGlobal('window', {
+      api: { sessions: createSessionPolicyApi(), uploads: { finalizeSession: vi.fn() } }
+    })
     const runtime = {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
@@ -12032,7 +12613,9 @@ describe('resendEditedWorkspaceMessage', () => {
         checksum: 'legacy-checksum'
       }
     ])
-    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    vi.stubGlobal('window', {
+      api: { sessions: createSessionPolicyApi(), uploads: { finalizeSession } }
+    })
     const runtime = {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
@@ -12062,10 +12645,10 @@ describe('resendEditedWorkspaceMessage', () => {
     const originalRevision = editedSession.conversationGraph?.messages.find(
       (message) => message.id === 'user-2'
     )
+    // The original Branch remains immutable; only the edited prompt receives the finalized Version.
     expect(originalRevision?.uploads).toEqual([
-      expect.objectContaining({ versionId: 'legacy-upload-version-1' })
+      expect.objectContaining({ path: legacyUpload.path })
     ])
-    expect(originalRevision?.uploads?.[0]).not.toHaveProperty('path')
     expect(editedSession.messages.at(-1)?.uploads).toEqual([
       expect.objectContaining({ versionId: 'legacy-upload-version-1' })
     ])
@@ -12099,6 +12682,7 @@ describe('resendEditedWorkspaceMessage', () => {
     }))
     vi.stubGlobal('window', {
       api: {
+        sessions: createSessionPolicyApi(),
         uploads: { finalizeSession: vi.fn().mockResolvedValue([]) }
       }
     })
@@ -12123,10 +12707,13 @@ describe('resendEditedWorkspaceMessage', () => {
       originalMessageIds
     )
     expect(useSessionStore.getState().sessions[0].conversationGraph?.branches).toHaveLength(1)
-    expect(useSessionStore.getState().sessions[0].error).toContain(
-      'Upload finalization did not return the attachment: upload-source'
-    )
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toContain('Upload finalization did not return the attachment: upload-source')
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('keeps the transcript intact when the context reset fails', async () => {
@@ -12155,7 +12742,10 @@ describe('resendEditedWorkspaceMessage', () => {
       'agent-2',
       'user-3'
     ])
-    expect(useSessionStore.getState().sessions[0]?.status).toBe('error')
+    expect(useSessionStore.getState().sessions[0]?.status).toBe('idle')
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toEqual(expect.any(String))
   })
 
   it('refuses an edited resend before truncating while runtime compaction is in flight', async () => {
@@ -12613,7 +13203,10 @@ describe('edit resend reply streaming', () => {
     seedEditableConversation()
     const acquire = vi.fn().mockRejectedValue(new Error('missing fixed version'))
     vi.stubGlobal('window', {
-      api: { previewResources: { acquire, release: vi.fn().mockResolvedValue(undefined) } }
+      api: {
+        sessions: createSessionPolicyApi(),
+        previewResources: { acquire, release: vi.fn().mockResolvedValue(undefined) }
+      }
     })
     const runtime = {
       state: createSnapshot(['session-1']),

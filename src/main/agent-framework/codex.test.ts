@@ -1217,6 +1217,43 @@ describe('codexFramework', () => {
     expect(config.persistentSystemPrompt).toBe('Stable subscription guidance.')
   })
 
+  it('adds only read-write granted local roots to Codex writable roots', () => {
+    const framework = createCodexFramework()
+    const grantedLocalRoots = [
+      { path: 'D:\\OpenScience\\read-write', access: 'rw' as const },
+      { path: 'D:\\OpenScience\\read-only', access: 'ro' as const },
+      { path: 'D:\\OpenScience\\read-write', access: 'rw' as const }
+    ]
+    const apiConfig = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5.6-sol'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        grantedLocalRoots
+      }
+    )
+    const subscriptionConfig = framework.prepareModelConfig(
+      { type: 'codex-isolated', apiEndpoints: ['responses'], model: 'gpt-5.6-terra' },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        grantedLocalRoots
+      }
+    )
+
+    expect(JSON.parse(apiConfig.env?.CODEX_CONFIG ?? '{}')).toMatchObject({
+      sandbox_workspace_write: { writable_roots: ['D:\\OpenScience\\read-write'] }
+    })
+    expect(JSON.parse(subscriptionConfig.env?.CODEX_CONFIG ?? '{}')).toMatchObject({
+      sandbox_workspace_write: { writable_roots: ['D:\\OpenScience\\read-write'] }
+    })
+  })
+
   it.each([
     ['ask', 'read-only'],
     ['auto', 'agent'],

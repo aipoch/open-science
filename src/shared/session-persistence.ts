@@ -23,6 +23,7 @@ export type {
   PersistedSessionStatus,
   SessionWaitReason,
   PersistedActiveRun,
+  PersistedPromptPreparation,
   PersistedSessionResumeRecovery,
   PersistedPendingHistoryReplay,
   DelegationPolicy,
@@ -86,6 +87,7 @@ export type {
   LoadAllSessionsResult,
   ListSessionSummariesResult,
   LoadSessionRequest,
+  RetryRuntimeTerminalCommitRequest,
   OpenSessionRecoveryFolderRequest,
   DeleteSessionRequest,
   SessionDeletionResult,
@@ -123,6 +125,7 @@ export {
 export {
   INTERRUPTED_SESSION_ERROR,
   INTERRUPTED_TURN_ERROR,
+  normalizeSessionAfterRestore,
   rearmUnacceptedElicitationContinuations
 } from './session-persistence/restore'
 export {
@@ -155,3 +158,37 @@ export {
   normalizeSessionFile,
   persistedChatSessionCodec
 } from './session-persistence/file-codec'
+
+export {
+  isInLatestTurn,
+  isInheritedForkTurn,
+  isTurnAnchor,
+  latestTurnAnchor,
+  turnAnchorInterval
+} from './session-persistence/turn-anchor'
+export type { TurnOutcome } from './session-persistence/turn-outcome'
+export {
+  resolveTurnOutcome,
+  latestOutcomePrompt,
+  legacySessionStateForOutcome,
+  setTurnOutcome
+} from './session-persistence/turn-outcome'
+export type {
+  SessionAttention,
+  SessionAttentionFacts,
+  SessionAttentionTurn,
+  SessionRecordProblem
+} from './session-persistence/attention'
+export {
+  deriveSessionAttention,
+  latestVisibleTurn,
+  projectSessionAttention
+} from './session-persistence/attention'
+
+export { sanitizeSession } from './session-persistence/session-codec'
+export { retryRuntimeTerminalCommitRequestSchema } from './session-persistence/commands'
+
+export {
+  isPreparedSessionRun,
+  resolvePreparationNoticeBaseline
+} from './session-persistence/prompt-preparation'

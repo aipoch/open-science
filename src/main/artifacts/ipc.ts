@@ -137,6 +137,10 @@ type ArtifactHandlerDependencies = {
     sessionId: string,
     mutation: () => Promise<Result>
   ) => Promise<Result>
+  commitRecoveredArtifacts?: (
+    request: ReconcilePendingArtifactsRequest,
+    artifacts: ArtifactFile[]
+  ) => Promise<void>
   recoverPendingArtifacts?: (
     request: ReconcilePendingArtifactsRequest
   ) => Promise<{ artifacts: ArtifactFile[]; nativeRunIds: string[] } | undefined>
@@ -255,13 +259,17 @@ const createArtifactHandlers = (
 
             const compatibilityArtifacts = await reconcileCompatibility(compatibilityPaths)
             const nativePaths = new Set(recovered.artifacts.map((artifact) => artifact.path))
-            return [
+            const result = [
               ...recovered.artifacts,
               ...compatibilityArtifacts.filter((artifact) => !nativePaths.has(artifact.path))
             ]
+            await dependencies.commitRecoveredArtifacts?.(request, result)
+            return result
           }
         }
-        return reconcileCompatibility(request.pendingPaths)
+        const result = await reconcileCompatibility(request.pendingPaths)
+        await dependencies.commitRecoveredArtifacts?.(request, result)
+        return result
       }),
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.

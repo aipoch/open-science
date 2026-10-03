@@ -1,6 +1,7 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 
 import {
+  ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
   ACP_PROMPT_FAILED_EVENT_TITLE,
   type AcpModelCallUsage,
   type AcpRuntimeEventInput,
@@ -9,6 +10,7 @@ import {
 } from '../../shared/acp'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import { isExpectedRunFailure } from '../../shared/run-error-classification'
 import { createLogger, errorLogFields } from '../logger'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
@@ -49,6 +51,7 @@ export type AcpPromptFinalizationHandles = Readonly<{
   errorKind: (error: unknown) => string | undefined
   pushEvent: (event: RuntimeEventInput) => void
   commitTerminal?: (event: RuntimeEventInput) => Promise<void>
+  retryTerminalCommits?: () => void
   emitState: () => void
   beforeInteractionRelease: () => void
   afterInteractionRelease: () => Promise<void>
@@ -173,7 +176,7 @@ export class AcpPromptOutcomeFinalizer {
     const sessionId = handles.sessionId
     const { context, interaction, interactions, permission } = handles
     const eventIdentity = handles.promptMessageId
-      ? { promptMessageId: handles.promptMessageId }
+      ? { promptMessageId: handles.promptMessageId, promptExecutionId: interaction.turnToken }
       : {}
     const interactionCurrent = (): boolean => interactions.current(sessionId) === interaction
     const logFields = (data: LogFields): LogFields => ({ sessionId, ...data })
@@ -245,7 +248,15 @@ export class AcpPromptOutcomeFinalizer {
         ...(observedStop.terminalContextWindow
           ? { terminalContextWindow: observedStop.terminalContextWindow }
           : {}),
-        ...(failure === undefined ? { raw: observedStop.response } : {})
+        ...(failure === undefined ? { raw: observedStop.response } : {}),
+        ...(failure === undefined
+          ? {}
+          : {
+              artifactFailure: true,
+              errorReportable: !isExpectedRunFailure(
+                describePromptError(failure, { model: handles.model })
+              )
+            })
       } as RuntimeEventInput
       if (handles.commitTerminal) await handles.commitTerminal(event)
       else handles.pushEvent(event)
@@ -382,13 +393,14 @@ export class AcpPromptOutcomeFinalizer {
           stopFailure = error
           skillOutcome = 'failed'
         }
+        // Cleanup is not Artifact publication: it must not settle or rewrite the Turn Outcome.
         safeCleanup('Artifact cleanup event failed', () =>
           handles.pushEvent({
-            kind: 'error',
-            level: 'error',
+            kind: 'system',
+            level: 'warning',
             sessionId,
             ...eventIdentity,
-            title: 'Artifact cleanup failed',
+            title: ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
             text: handles.errorMessage(error)
           })
         )
@@ -402,11 +414,16 @@ export class AcpPromptOutcomeFinalizer {
       safeCleanup('interaction cleanup failed', () => interactions.release(interaction))
       if (ownsInteraction) {
         safeCleanup('prompt-end callback failed', handles.onPromptEnded)
+        safeCleanup('terminal retry scheduling failed', () => handles.retryTerminalCommits?.())
         try {
           await handles.afterInteractionRelease()
         } catch (error) {
           safeLog('error', 'interaction post-release failed', errorLogFields(error))
         }
+      } else if (!interactions.current(sessionId)) {
+        // A connection close already released this interaction and its admission while the turn's
+        // terminal commit was retained. A newer interaction schedules retries when it releases.
+        safeCleanup('terminal retry scheduling failed', () => handles.retryTerminalCommits?.())
       }
       safeCleanup('emitState after prompt turn failed', handles.emitState)
       safeCleanup('prompt skill cleanup failed', () => handles.skill.close(skillOutcome))

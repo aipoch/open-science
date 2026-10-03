@@ -411,6 +411,15 @@ const dataContentApplicationCommands = Object.freeze({
   ),
   sessionLoadAll: sessionCommand('sessions:load-all', 'loadAll'),
   sessionLoadOne: sessionCommand('sessions:load-one', 'loadOne'),
+  sessionListRuntimeTerminalFailures: sessionCommand(
+    'sessions:list-runtime-terminal-failures',
+    'listRuntimeTerminalFailures'
+  ),
+  sessionRetryRuntimeTerminalCommit: sessionCommand(
+    'sessions:retry-runtime-terminal-commit',
+    'retryRuntimeTerminalCommit',
+    SessionPersistence.sessionApplicationCommandContracts.retryRuntimeTerminalCommit
+  ),
   sessionSearchMessages: sessionCommand('sessions:search-messages', 'searchMessages'),
   sessionLoadUsage: sessionCommand('sessions:load-usage', 'loadUsage'),
   sessionSaveManifest: sessionCommand(
@@ -565,6 +574,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionList,
     dataContentApplicationCommands.sessionLoadAll,
     dataContentApplicationCommands.sessionLoadOne,
+    dataContentApplicationCommands.sessionListRuntimeTerminalFailures,
+    dataContentApplicationCommands.sessionRetryRuntimeTerminalCommit,
     dataContentApplicationCommands.sessionSearchMessages,
     dataContentApplicationCommands.sessionLoadUsage,
     dataContentApplicationCommands.sessionSaveManifest,
@@ -890,6 +901,12 @@ const registerDataContentApplicationCommands = (
         ),
       'sessions:load-one': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadOne(args[0])),
+      'sessions:list-runtime-terminal-failures': () =>
+        dependencies.sessions.listRuntimeTerminalFailures(),
+      'sessions:retry-runtime-terminal-commit': ({ args }) =>
+        dependencies.withDataRootWrite(() =>
+          dependencies.sessions.retryRuntimeTerminalCommit(args[0])
+        ),
       'sessions:search-messages': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.searchMessages(args[0])),
       'sessions:load-usage': () =>

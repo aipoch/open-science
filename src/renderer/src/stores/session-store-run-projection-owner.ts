@@ -631,16 +631,11 @@ export const createSessionRunProjectionOwner = <
       )
     },
 
-    // Clears the interrupted/error state after a successful resume so the composer is usable again.
+    // Runtime attachment changes provider identity; Main admission owns the original recovery state.
     markResumed: (sessionId, update, options) => {
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) => ({
           ...session,
-          status: 'idle',
-          error: undefined,
-          errorReportable: undefined,
-          interrupted: undefined,
-          resumeRecovery: undefined,
           specialistBindingPending: undefined,
           agentFrameworkId: update?.agentFrameworkId ?? session.agentFrameworkId,
           agentBackendId: update?.agentBackendId ?? session.agentBackendId,
@@ -717,12 +712,10 @@ export const createSessionRunProjectionOwner = <
       }))
     },
 
-    beginCompaction: (sessionId, options) => {
-      setSessionState((state) =>
-        projectTerminalRun(state, sessionId, (session) =>
-          projectCompactionStarted(session, options?.supersedeActiveRun)
-        )
-      )
+    beginCompaction: (sessionId) => {
+      setSessionState((state) => ({
+        sessions: projectSession(state.sessions, sessionId, projectCompactionStarted)
+      }))
     },
 
     finishCompaction: (sessionId) => {

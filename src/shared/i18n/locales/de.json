@@ -134,7 +134,9 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
-
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "Metadaten, Proben und Links zu ergänzenden Dateien einer GEO-Serie abrufen.",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "Links zu GEO Series Matrix-Dateien und NCBI-RNA-seq-Zähldateien zum manuellen Herunterladen finden.",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "Struktur, Dimensionen und Probenzuordnung einer dekomprimierten GEO-Matrix vor der Analyse prüfen.",
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Identität, Herkunft, Krankheiten, Qualitätsdaten und Datenbankzuordnungen von Zelllinien aus Cellosaurus.",
     "Search cell lines by name or synonym.": "Zelllinien nach Namen oder Synonym suchen.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "Identität, Herkunft, Qualitätsdaten und Datenbankzuordnungen einer Zelllinie über CVCL oder RRID abrufen.",
@@ -6147,6 +6149,7 @@
     "Use a new API key": "Neuen API-Schlüssel verwenden",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "Beim Entfernen dieses Dienstes bleiben das gemeinsam genutzte Konto und der Schlüssel erhalten. Fähigkeiten und Konnektoren werden wieder mit der Standardmethode ausgewählt.",
     "OpenRouter": "OpenRouter",
+    "OpenCode Zen": "OpenCode Zen",
     "Add to Specialist": "Zu Spezialist hinzufügen",
     "Always enabled": "Immer aktiviert",
     "Changes saved.": "Änderungen gespeichert.",
@@ -6983,6 +6986,13 @@
     "Folder access was updated. Run the command again when you are ready.": "Der Ordnerzugriff wurde aktualisiert. Führen Sie den Befehl erneut aus, wenn Sie bereit sind.",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "Diese Ordnerberechtigung gilt sitzungsübergreifend, bis Sie sie unter Dateien widerrufen. Befehle werden nicht automatisch ausgeführt.",
     "Drop files to attach or import a .science package": "Dateien zum Anhängen oder ein .science-Paket zum Importieren ablegen",
-    "Files cannot be attached right now.": "Dateien können derzeit nicht angehängt werden."
+    "Files cannot be attached right now.": "Dateien können derzeit nicht angehängt werden.",
+    "This turn was interrupted. Resume to continue.": "Diese Interaktion wurde unterbrochen. Setzen Sie sie fort, um weiterzumachen.",
+    "Connection lost — Resume to reconnect and continue.": "Verbindung verloren — Setzen Sie die Sitzung fort, um die Verbindung wiederherzustellen und weiterzumachen.",
+    "Session was interrupted before the app closed.": "Die Sitzung wurde unterbrochen, bevor die App geschlossen wurde.",
+    "The run failed with no error message.": "Der Lauf ist ohne Fehlermeldung fehlgeschlagen.",
+    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "Die nicht gesendete Nachricht konnte nicht zurückgesetzt werden ({{failure}}). Senden Sie sie erneut oder beenden Sie die Ausführung, um es noch einmal zu versuchen.",
+    "The unsent Session could not be removed ({{failure}}).": "Die nicht gesendete Sitzung konnte nicht entfernt werden ({{failure}}).",
+    "Agent Session cleanup did not complete.": "Die Bereinigung der Agentensitzung wurde nicht abgeschlossen."
   }
 }

@@ -14,6 +14,7 @@ import {
   NO_ACTIVE_PROVIDER_MESSAGE
 } from '../../shared/run-error-classification'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import {
   getAgentFramework,
   releaseResolvedAgentBackendLeases,
@@ -62,6 +63,7 @@ export type AdmittedAgentBackendTarget = ExplicitAgentBackendTarget &
 export type AgentBackendResolutionContext = {
   forcedSkillIds?: string[]
   systemPromptAppends?: string[]
+  grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
   includeSkillAndConnectorContext?: boolean
   forceCodexNativeResponsesCompatibility?: boolean
 }
@@ -445,6 +447,9 @@ export class AgentBackendResolver {
       const modelConfig = framework.prepareModelConfig(provider, {
         storageRoot: this.storageRoot,
         executablePath,
+        ...(context.grantedLocalRoots?.length
+          ? { grantedLocalRoots: context.grantedLocalRoots }
+          : {}),
         ...(codexNativeVersion ? { nativeVersion: codexNativeVersion } : {}),
         responsesBridge,
         reasoningEffort: sessionEffort,

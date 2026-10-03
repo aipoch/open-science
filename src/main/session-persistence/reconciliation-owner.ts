@@ -1,11 +1,24 @@
+import { recordRestartTurnOutcome } from './turn-outcome-authority'
 import { basename, dirname } from 'node:path'
 
-import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
-import { ARTIFACT_FINALIZATION_INVALID_PROOF, artifactCreatedAtMs } from '../../shared/artifacts'
+import type {
+  ArtifactVersionFile,
+  ArtifactVersionDescriptor
+} from '../../shared/artifact-provenance'
+import {
+  ARTIFACT_FINALIZATION_INVALID_PROOF,
+  artifactCreatedAtMs,
+  type ArtifactFile
+} from '../../shared/artifacts'
 import type { ProjectFileSource } from '../../shared/project-files'
 import {
   materializeSessionConversationGraph,
   sessionRevision,
+  setTurnOutcome,
+  legacySessionStateForOutcome,
+  latestOutcomePrompt,
+  turnAnchorInterval,
+  resolveTurnOutcome,
   type LoadAllSessionsResult,
   type PersistedArtifact,
   type PersistedChatSession
@@ -16,6 +29,13 @@ import { hasLegacySessionUpload } from './legacy-upload'
 import { saveSessionWithRevision } from './save-session'
 
 type SessionReconciliationRepository = {
+  loadSessionWithDiagnostics?(
+    projectId: string,
+    sessionId: string,
+    options: { preserveRuntimeState: true }
+  ): Promise<
+    { status: 'found'; session: PersistedChatSession } | { status: 'missing' | 'unreadable' }
+  >
   saveSession(session: PersistedChatSession): Promise<PersistedChatSession>
   saveSessionWithBindingRepair?(
     session: PersistedChatSession,
@@ -55,6 +75,11 @@ type SessionUploadPersistence = {
 }
 
 type ArtifactStorageReconciler = {
+  resolveVersionDescriptors?(request: {
+    projectId: string
+    appSessionId: string
+    versionIds: string[]
+  }): Promise<ArtifactVersionDescriptor[]>
   prepareProjectReconciliation(projectId: string): Promise<ArtifactProjectReconciliationSnapshot>
   reconcileSession(
     projectId: string,
@@ -86,6 +111,8 @@ type PendingArtifactFinalizationRecovery = {
 }
 
 type SessionPersistenceReconciliationOwnerOptions = {
+  onSessionCommitted?: (session: PersistedChatSession) => void
+  ownsPromptPreparation?: (session: PersistedChatSession) => boolean
   repository: SessionReconciliationRepository
   fileIndex: SessionReconciliationFileIndex
   provenance?: SessionReconciliationProvenance
@@ -105,9 +132,13 @@ type ReconcileLoadedSessionsOutcome =
   | { status: 'ready'; result: LoadAllSessionsResult }
   | { status: 'degraded'; result: LoadAllSessionsResult; failure: unknown }
 
-type RecoveredMessageArtifacts = { messageId: string; artifacts: ArtifactVersionFile[] }
+type RecoveredMessageArtifacts = {
+  messageId: string
+  artifacts: ArtifactFile[]
+  pendingPaths?: string[]
+}
 
-const toPersistedArtifact = (artifact: ArtifactVersionFile): PersistedArtifact => {
+const toPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => {
   const createdAt = artifactCreatedAtMs(artifact.createdAt)
   return {
     id: artifact.id,
@@ -185,8 +216,19 @@ const attachRecoveredMessageArtifacts = (
   const messages = materialized.messages.map((message) => {
     const artifacts = recoveredByMessage.get(message.id)
     if (!artifacts) return message
-    const artifactIds = appendUnique(message.artifactIds, [...artifacts.keys()])
-    if (artifactIds.length === (message.artifactIds?.length ?? 0)) return message
+    const recovered = recoveries.flatMap((recovery) =>
+      recovery.messageId === message.id ? recovery.artifacts : []
+    )
+    const artifactIds = appendUnique(
+      preserveUnrecoveredArtifactIds(
+        message.artifactIds,
+        materialized,
+        recovered,
+        recoveries.find((recovery) => recovery.messageId === message.id)?.pendingPaths
+      ),
+      [...artifacts.keys()]
+    )
+    if (JSON.stringify(artifactIds) === JSON.stringify(message.artifactIds ?? [])) return message
     flatMessagesChanged = true
     return { ...message, artifactIds, updatedAt: now }
   })
@@ -197,8 +239,20 @@ const attachRecoveredMessageArtifacts = (
         messages: materialized.conversationGraph.messages.map((message) => {
           const artifacts = recoveredByMessage.get(message.id)
           if (!artifacts) return message
-          const artifactIds = appendUnique(message.artifactIds, [...artifacts.keys()])
-          if (artifactIds.length === (message.artifactIds?.length ?? 0)) return message
+          const recovered = recoveries.flatMap((recovery) =>
+            recovery.messageId === message.id ? recovery.artifacts : []
+          )
+          const artifactIds = appendUnique(
+            preserveUnrecoveredArtifactIds(
+              message.artifactIds,
+              materialized,
+              recovered,
+              recoveries.find((recovery) => recovery.messageId === message.id)?.pendingPaths
+            ),
+            [...artifacts.keys()]
+          )
+          if (JSON.stringify(artifactIds) === JSON.stringify(message.artifactIds ?? []))
+            return message
           graphMessagesChanged = true
           return { ...message, artifactIds, updatedAt: now }
         })
@@ -216,7 +270,104 @@ const attachRecoveredMessageArtifacts = (
   }
 }
 
+const preserveUnrecoveredArtifactIds = (
+  ids: string[] | undefined,
+  session: PersistedChatSession,
+  recovered: ArtifactFile[],
+  pendingPaths: readonly string[] = []
+): string[] => {
+  return (ids ?? []).filter((id) => {
+    const artifact = session.artifacts?.find((candidate) => candidate.id === id)
+    const parts = artifact?.path.split(/[\\/]/) ?? []
+    const index = parts.lastIndexOf('.pending')
+    if (!artifact || index < 0) return true
+    return !recovered.some(
+      (confirmed) =>
+        (artifact.versionId && artifact.versionId === confirmed.versionId) ||
+        (confirmed.runId === parts[index + 1] && confirmed.name === parts.at(-1)) ||
+        (confirmed.name === parts.at(-1) &&
+          pendingPaths.includes(artifact.path) &&
+          pendingPaths.filter((path) => path.split(/[\\/]/).at(-1) === confirmed.name).length === 1)
+    )
+  })
+}
+
+const settleRecoveredArtifactOutcomes = (
+  session: PersistedChatSession,
+  recovered: ArtifactFile[],
+  priorPublished: readonly string[] = [],
+  previous: PersistedChatSession = session
+): PersistedChatSession => {
+  const confirmed = new Set([
+    ...priorPublished,
+    ...recovered
+      .filter((artifact) => artifact.isPublished && artifact.versionId)
+      .map(({ versionId }) => versionId)
+  ])
+  let next = session
+  const messages = session.conversationGraph?.messages ?? session.messages
+  for (const prompt of messages) {
+    const priorOutcome = resolveTurnOutcome(previous, prompt.id)
+    if (
+      prompt.role !== 'user' ||
+      priorOutcome?.kind !== 'failed' ||
+      priorOutcome.recovery !== 'retry-artifact-publication'
+    )
+      continue
+    const legacyResponseIds = new Set<string>()
+    if (!prompt.turnOutcome && latestOutcomePrompt(previous)?.id === prompt.id) {
+      for (const message of turnAnchorInterval(previous.messages, prompt.id)) {
+        if (message.role === 'agent' && !message.responseToMessageId)
+          legacyResponseIds.add(message.id)
+      }
+    }
+    const responses = messages.filter(
+      (message) =>
+        message.role === 'agent' &&
+        (message.responseToMessageId === prompt.id || legacyResponseIds.has(message.id))
+    )
+    const artifactIds = responses.flatMap((message) => message.artifactIds ?? [])
+    const artifacts = responses.flatMap((message) =>
+      (message.artifactIds ?? []).flatMap((id) => {
+        const artifact = session.artifacts?.find((candidate) => candidate.id === id)
+        return artifact ? [artifact] : []
+      })
+    )
+    if (
+      artifacts.length === 0 ||
+      artifactIds.length !== artifacts.length ||
+      artifacts.some(
+        (artifact) =>
+          artifact.path.split(/[\\/]/).includes('.pending') ||
+          (artifact.kind === 'managed-file' &&
+            (artifact.versionId
+              ? !confirmed.has(artifact.versionId)
+              : !recovered.some(
+                  (file) =>
+                    !file.versionId && file.id === artifact.id && file.path === artifact.path
+                )))
+      )
+    )
+      continue
+    const outcome = {
+      kind: 'completed' as const,
+      settledAt: Math.max(session.updatedAt, priorOutcome.settledAt, Date.now())
+    }
+    next = setTurnOutcome(next, prompt.id, outcome)
+    // Completing historical Artifact repair cannot replace a newer turn's live state.
+    if (
+      !next.activeRun &&
+      (next.runtimeTranscriptLastRun?.promptMessageId ?? latestOutcomePrompt(next)?.id) ===
+        prompt.id
+    )
+      next = { ...next, ...legacySessionStateForOutcome(outcome, prompt.id) }
+  }
+  return next
+}
+
 class SessionPersistenceReconciliationOwner {
+  private readonly onSessionCommitted: ((session: PersistedChatSession) => void) | undefined
+  private readonly ownsPromptPreparation: ((session: PersistedChatSession) => boolean) | undefined
   private readonly repository: SessionReconciliationRepository
   private readonly fileIndex: SessionReconciliationFileIndex
   private readonly provenance: SessionReconciliationProvenance | undefined
@@ -225,6 +376,8 @@ class SessionPersistenceReconciliationOwner {
   private readonly permissionGrants: SessionPermissionGrantReconciliation | undefined
 
   constructor(options: SessionPersistenceReconciliationOwnerOptions) {
+    this.onSessionCommitted = options.onSessionCommitted
+    this.ownsPromptPreparation = options.ownsPromptPreparation
     this.repository = options.repository
     this.fileIndex = options.fileIndex
     this.provenance = options.provenance
@@ -257,6 +410,8 @@ class SessionPersistenceReconciliationOwner {
     )
     const nativeFinalizationRunIds = artifactRecovery?.nativeFinalizationRunIds
     if (!nativeFinalizationRunIds) {
+      if (artifacts.length > 0)
+        await this.commitRecoveredArtifacts(session, request.messageId, artifacts)
       return artifacts.length > 0 ? { artifacts, nativeRunIds: [] } : undefined
     }
 
@@ -276,7 +431,88 @@ class SessionPersistenceReconciliationOwner {
       throw new Error('Native Artifact finalization remains unresolved.')
     }
 
+    const versionIds = new Set(
+      artifacts.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
+    )
+    if (request.artifactVersionIds?.some((id) => !versionIds.has(id)))
+      throw new Error('Artifact finalization did not resolve all native Versions.')
+    await this.commitRecoveredArtifacts(session, request.messageId, artifacts)
     return { artifacts, nativeRunIds }
+  }
+
+  async commitRecoveredArtifacts(
+    session: PersistedChatSession,
+    messageId: string,
+    artifacts: ArtifactFile[],
+    pendingPaths: readonly string[] = []
+  ): Promise<void> {
+    if (
+      artifacts.some(
+        (artifact) =>
+          artifact.projectId !== session.projectId ||
+          artifact.sessionId !== session.id ||
+          (artifact.messageId !== undefined && artifact.messageId !== messageId)
+      )
+    )
+      throw new Error('Artifact recovery changed its Session or Message owner.')
+    const attached = attachRecoveredMessageArtifacts(session, [
+      { messageId, artifacts, pendingPaths: [...pendingPaths] }
+    ])
+    const recovered = settleRecoveredArtifactOutcomes(
+      attached,
+      artifacts,
+      await this.confirmPublishedVersions(attached),
+      session
+    )
+    if (recovered === session) return
+    const persisted = await saveSessionWithRevision(
+      this.repository,
+      recovered,
+      sessionRevision(session)
+    )
+    this.onSessionCommitted?.(persisted)
+    await this.provenance?.captureFinalizedMessages(persisted)
+    await this.fileIndex.syncSession(persisted)
+  }
+
+  private async confirmPublishedVersions(session: PersistedChatSession): Promise<string[]> {
+    if (!this.artifactStorage?.resolveVersionDescriptors) return []
+    const failedPrompts = new Set(
+      (session.conversationGraph?.messages ?? session.messages)
+        .filter((message) => {
+          const outcome = resolveTurnOutcome(session, message.id)
+          return outcome?.kind === 'failed' && outcome.recovery === 'retry-artifact-publication'
+        })
+        .map(({ id }) => id)
+    )
+    const referencedIds = new Set(
+      (session.conversationGraph?.messages ?? session.messages)
+        .filter(
+          (message) => message.responseToMessageId && failedPrompts.has(message.responseToMessageId)
+        )
+        .flatMap((message) => message.artifactIds ?? [])
+    )
+    const versionIds = [
+      ...new Set(
+        (session.artifacts ?? []).flatMap((artifact) =>
+          referencedIds.has(artifact.id) && artifact.versionId ? [artifact.versionId] : []
+        )
+      )
+    ]
+    const published: string[] = []
+    for (let offset = 0; offset < versionIds.length; offset += 100) {
+      const descriptors = await this.artifactStorage.resolveVersionDescriptors({
+        projectId: session.projectId,
+        appSessionId: session.id,
+        versionIds: versionIds.slice(offset, offset + 100)
+      })
+      published.push(
+        ...descriptors
+          .filter((descriptor) => descriptor.state === 'finalized' && descriptor.isPublished)
+          .map(({ versionId }) => versionId)
+      )
+    }
+    return published
   }
 
   async reconcileLoadedSessions(
@@ -365,7 +601,15 @@ class SessionPersistenceReconciliationOwner {
         }
       }
       for (let index = 0; index < sessions.length; index += 1) {
-        const session = sessions[index]
+        let session = sessions[index]
+        const authority =
+          session.promptPreparation || session.resumeRecovery?.cause === 'app-restart'
+            ? await this.repository.loadSessionWithDiagnostics?.(session.projectId, session.id, {
+                preserveRuntimeState: true
+              })
+            : undefined
+        if (authority?.status === 'found' && !this.ownsPromptPreparation?.(authority.session))
+          session = recordRestartTurnOutcome(session, authority.session)
         const artifactRecovery = await this.artifactStorage?.reconcileSession(
           session.projectId,
           session.id,
@@ -379,10 +623,16 @@ class SessionPersistenceReconciliationOwner {
           session,
           artifactRecovery?.recoveredMessageArtifacts ?? []
         )
-        const recoveredSession = repairHistoricalArtifactAliases(attachedSession, {
+        const settledSession = settleRecoveredArtifactOutcomes(
+          attachedSession,
+          (artifactRecovery?.recoveredMessageArtifacts ?? []).flatMap(({ artifacts }) => artifacts),
+          await this.confirmPublishedVersions(attachedSession),
+          session
+        )
+        const recoveredSession = repairHistoricalArtifactAliases(settledSession, {
           advanceFilesRevision: attachedSession === session
         })
-        if (recoveredSession !== session) {
+        if (recoveredSession !== sessions[index]) {
           // Capture immutable Message evidence before JSON so a failure leaves an attachment witness.
           sessions = sessions.map((candidate, candidateIndex) =>
             candidateIndex === index ? recoveredSession : candidate

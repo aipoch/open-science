@@ -964,7 +964,20 @@ describe('Artifact Provenance repository architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts',
       'src/main/acp/library-auto-policy.test.ts',
       'src/main/reviewer/correction-resume.test.ts',
-      'src/main/literature/journal-attributes.test.ts'
+      'src/main/literature/journal-attributes.test.ts',
+      'src/main/session-persistence/missing-runtime-session-repro.test.ts',
+      'src/main/session-persistence/prompt-preparation-restart.test.ts',
+      'src/main/session-persistence/terminal-commit-scheduler.test.ts',
+      'src/main/session-persistence/reconciliation-renderer-parity.test.ts',
+      'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
+      'src/main/session-persistence/prompt-preparation-owner.test.ts',
+      'src/main/session-persistence/session-state-authority.test.ts',
+      'src/main/session-persistence/terminal-live-projection.test.ts',
+      'src/main/session-persistence/attention-projection.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts',
+      'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
+      'src/main/acp/approved-handoff-outcome.integration.test.ts',
+      'src/main/acp/approved-handoff-outcome.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

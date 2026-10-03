@@ -19,7 +19,7 @@ const storedBindingSchema = z.object({ serviceId: id, modelId: model.optional() 
 export const classificationServiceSchema = z
   .object({
     id,
-    adapter: z.enum(['typesafe', 'openrouter', 'custom']),
+    adapter: z.enum(['typesafe', 'openrouter', 'opencode', 'custom']),
     name: z.string().trim().min(1).max(80),
     models: z.array(model).min(1).max(16),
     baseUrl: baseUrl.optional(),

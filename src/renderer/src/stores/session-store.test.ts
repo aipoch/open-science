@@ -1122,7 +1122,7 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
   })
 
-  it('clears the first Agent output wait when disconnect or compaction takes ownership', () => {
+  it('clears the disconnected wait but does not let compaction supersede a live run', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'Continue the foreground request'
@@ -1139,7 +1139,7 @@ describe('session store', () => {
     useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
     useSessionStore.getState().beginCompaction('transport-session-1', { supersedeActiveRun: true })
 
-    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
   })
 
   it('hydrates runtime context as a read projection but never authors it in a renderer save', () => {
@@ -5111,7 +5111,7 @@ describe('session store', () => {
     })
   })
 
-  it('does not restore obsolete Ask and Plan waits after a Session resumes', () => {
+  it('keeps Main-owned Ask and Plan waits until an authoritative resume projection', () => {
     useSessionStore.setState({
       sessions: [
         {
@@ -5134,8 +5134,8 @@ describe('session store', () => {
     useSessionStore.getState().clearPermissionPending('session-restored-interactions')
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'idle',
-      interactionState: { permission: false, elicitation: false, plan: false }
+      status: 'waiting-for-user',
+      interactionState: { permission: false, elicitation: true, plan: true }
     })
   })
 
@@ -6982,7 +6982,7 @@ describe('session store', () => {
       expect(session.messages[1]).toMatchObject({ status: 'complete' })
     })
 
-    it('markResumed clears the interrupted state so the composer is usable', () => {
+    it('markResumed updates provider binding while preserving Main-owned interruption', () => {
       hydrateInterrupted({
         providerSessionId: 'provider-session-old',
         providerContinuityToken: 'bridge-generation-old',
@@ -7031,14 +7031,14 @@ describe('session store', () => {
       })
       const session = useSessionStore.getState().sessions[0]
 
-      expect(session.interrupted).toBeUndefined()
-      expect(session.error).toBeUndefined()
-      expect(session.status).toBe('idle')
+      expect(session.interrupted).toBe(true)
+      expect(session.error).toBe('Session was interrupted before the app closed.')
+      expect(session.status).toBe('error')
       expect(session.agentFrameworkId).toBe('codex')
       expect(session.agentBackendId).toBe('codex:codex-isolated')
       expect(session.providerSessionId).toBe('provider-session-new')
       expect(session.providerContinuityToken).toBe('bridge-generation-new')
-      expect(session.resumeRecovery).toBeUndefined()
+      expect(session.resumeRecovery?.promptMessageId).toBe('prompt-1')
       expect(session.pendingHistoryReplay).toEqual({
         kind: 'before-message',
         messageId: 'prompt-1'
@@ -7452,6 +7452,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-elicitation-runtime.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
       'src/renderer/src/lib/acp/workspace-permission-response-attempt-owner.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-preparation.ts',
       'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts',

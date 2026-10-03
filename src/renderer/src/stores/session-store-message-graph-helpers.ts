@@ -31,6 +31,7 @@ import { formatSessionDetailsTitle } from '../../../shared/session-details'
 
 export type AppendUserMessageInput = {
   sessionId: string
+  preparationId?: string
   messageId?: string
   // Reuses a matching persisted Message as the owner of a restarted application prompt.
   rearmExisting?: boolean
@@ -90,6 +91,8 @@ export type BindPendingSessionInput = {
   providerSessionId?: PersistedChatSession['providerSessionId']
   providerContinuityToken?: PersistedChatSession['providerContinuityToken']
   wslSetup?: true
+  preparationId?: string
+  preparationBaseline?: PersistedChatSession
 }
 
 export type AppendMessageResult = {
@@ -126,7 +129,8 @@ export type SessionMessageGraphActions = {
           'agentFrameworkId' | 'agentBackendId' | 'providerSessionId' | 'providerContinuityToken'
         >
       | undefined,
-    contextReset: boolean
+    contextReset: boolean,
+    preparationId?: string
   ) => { runtimeSegmentId?: string } | undefined
   appendUserMessage: (input: AppendUserMessageInput) => AppendMessageResult | undefined
   appendRoutedUserMessage: (input: AppendRoutedUserMessageInput) => AppendMessageResult | undefined
@@ -137,7 +141,7 @@ export type SessionMessageGraphActions = {
   bindPendingSession: (input: BindPendingSessionInput) => BranchInNewSessionResult | undefined
   clearPendingContextReplay: (sessionId: string, messageId: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
-  truncateSessionFromMessage: (sessionId: string, messageId: string) => void
+  truncateSessionFromMessage: (sessionId: string, messageId: string, preparationId?: string) => void
   reviseSessionFromElicitation: (sessionId: string, activityId: string) => boolean
   setElicitationHistoryReplayRequest: (sessionId: string, requestId?: string) => void
   activateMessageBranch: (sessionId: string, branchId: string) => void

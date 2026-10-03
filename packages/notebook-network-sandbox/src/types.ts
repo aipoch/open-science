@@ -38,8 +38,12 @@ export type NotebookSandboxTarget =
 
 export type NotebookSandboxCleanupReason = 'exit' | 'cancel' | 'timeout' | 'spawn-failed'
 
+export type NotebookSandboxProcessState =
+  'never-started' | 'started-and-reaped' | 'termination-unknown'
+
 export type NotebookSandboxCleanupResult = Readonly<{
   processesTerminated: boolean
+  processState?: NotebookSandboxProcessState
   networkClosed: boolean
   temporaryResourcesRemoved: boolean
   /** Omitted means blocked; never substitutes for complete process cleanup. */
@@ -48,6 +52,8 @@ export type NotebookSandboxCleanupResult = Readonly<{
 
 export type NotebookSandboxProcessOutcome = Readonly<{
   processesTerminated: boolean
+  /** Explicit child lifecycle evidence; older callers may rely on the boolean projection. */
+  processState?: NotebookSandboxProcessState
   /** Retained by the command owner; rechecks the same owned tree, never a replacement PID. */
   confirmTermination?: () => Promise<boolean>
 }>
@@ -80,6 +86,7 @@ export type NotebookSandboxCommand = Readonly<{
   // AppContainer's working drive before the requested process can start.
   executable?: string
   args?: readonly string[]
+  electronAsNode?: boolean
   cwd: string
   env?: NodeJS.ProcessEnv
   pathEnvironment?: NodeJS.ProcessEnv
@@ -104,6 +111,8 @@ export type NotebookSandboxedProcess = Readonly<{
   env: NodeJS.ProcessEnv
   // Only launchers backed by a kill-on-close Job Object may provide this proof check.
   confirmProcessTreeTermination?: () => Promise<boolean>
+  requestProcessTreeTermination?: () => Promise<boolean>
+  confirmProcessState?: () => Promise<NotebookSandboxProcessState>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
   annotateStderr: (stderr: string, stdout?: string) => string
   setExecutionActive: (active: boolean) => void

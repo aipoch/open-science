@@ -323,7 +323,13 @@ describe('durable restart recovery before runtime attachment', () => {
       expect(saved.status).toBe(restored.session.status)
       expect(saved.activeRun).toEqual(restored.session.activeRun)
       expect(saved.resumeRecovery).toEqual(restored.session.resumeRecovery)
-      expect(saved.conversationGraph).toEqual(restored.session.conversationGraph)
+      if (live) expect(saved.conversationGraph).toEqual(restored.session.conversationGraph)
+      else
+        expect(saved.messages[0].turnOutcome).toMatchObject({
+          kind: 'interrupted',
+          cause: 'app-restart',
+          recovery: 'resume'
+        })
       const persisted = await h.raw()
       if (persisted.status !== 'found') throw new Error('Missing saved fixture')
       expect(persisted.session.status).toBe(saved.status)

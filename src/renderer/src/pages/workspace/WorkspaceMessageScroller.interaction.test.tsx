@@ -5052,7 +5052,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       )
     })
 
-    expect(graphRoleReads).toBeLessThanOrEqual(itemCount * 4)
+    // Attention reads the latest two role markers in three activity selectors. Those six
+    // constant reads do not grow with history; the traversal budget remains four full passes.
+    expect(graphRoleReads).toBeLessThanOrEqual(itemCount * 4 + 6)
   })
 
   it('prefetches older transcript items before upward scrolling reaches the top edge', async () => {

@@ -1,3 +1,4 @@
+import { isPreparedSessionRun } from './prompt-preparation'
 import type { PersistedChatSession } from './session'
 import type { SessionPermissionRuntimeContext } from '../session-runtime-context'
 import {
@@ -7,8 +8,9 @@ import {
 } from '../conversation-graph'
 import type { PersistedToolActivity, PersistedChatMessage, PersistedActivityGroup } from './message'
 import { isPersistedNotebookRunActivity } from './tool-activity'
+import { latestTurnAnchor } from './turn-anchor'
 
-// Restored interrupted sessions carry this error verbatim; the renderer keys its resume banner off it.
+// Restored interrupted sessions carry this error verbatim; the resume banner itself is driven by the Turn Outcome cause.
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
 
 export const INTERRUPTED_TURN_ERROR = 'This turn was interrupted. Resume to continue.'
@@ -107,6 +109,12 @@ const markInterruptedPrompt = (
   )
 }
 
+// Recovery targets the turn's admitted prompt; routed replies never own a Resume.
+const latestTurnAnchorId = (messages: PersistedChatMessage[]): string | undefined =>
+  latestTurnAnchor(messages)?.id
+
+// Deliberately NOT the turn anchor: a durable question revision continues under its routed reply
+// Message, so rearm must target (and require) the literal latest user message.
 const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefined =>
   [...messages].reverse().find((message) => message.role === 'user')?.id
 
@@ -254,7 +262,7 @@ const recoverInterruptedPermissionAfterRestore = (
   if (!persistedRuntimeContext) return session
   const runtimeContext = { ...persistedRuntimeContext }
   delete runtimeContext.permission
-  const promptMessageId = latestUserMessageId(session.messages)
+  const promptMessageId = latestTurnAnchorId(session.messages)
   return {
     ...session,
     status: 'error',
@@ -280,6 +288,8 @@ export const normalizeSessionAfterRestore = (
     reconcileCompletedRecovery?: boolean
   } = {}
 ): PersistedChatSession => {
+  // Main releases unadmitted preparations; ordinary reads must retain their exact run witness.
+  if (isPreparedSessionRun(session)) return session
   const persistedRuntimeContext = session.runtimeContext
   const continuingPermission = persistedRuntimeContext?.permission
   if (options.deferPermissionValidation && continuingPermission) {
@@ -360,7 +370,7 @@ export const normalizeSessionAfterRestore = (
       session.resumeRecovery === undefined && session.error === INTERRUPTED_SESSION_ERROR
     const promptMessageId =
       session.resumeRecovery?.promptMessageId ??
-      (legacyInterrupted ? latestUserMessageId(session.messages) : undefined)
+      (legacyInterrupted ? latestTurnAnchorId(session.messages) : undefined)
     const resumeRecovery =
       session.resumeRecovery ??
       (legacyInterrupted

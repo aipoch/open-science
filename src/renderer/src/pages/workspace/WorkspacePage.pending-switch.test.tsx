@@ -252,8 +252,19 @@ describe('WorkspacePage pending-switch broadcast', () => {
         title: id,
         messages: [
           {
+            id: `prompt-${id}`,
+            role: 'user',
+            content: 'Create the file',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 0,
+            updatedAt: 0,
+            turnOutcome: { kind: 'failed', settledAt: 2, recovery: 'retry-artifact-publication' }
+          },
+          {
             id: `message-${id}`,
             role: 'agent',
+            responseToMessageId: `prompt-${id}`,
             content: 'result',
             status: 'complete',
             eventIds: [],
@@ -295,14 +306,24 @@ describe('WorkspacePage pending-switch broadcast', () => {
     await renderPage(root)
 
     await act(async () => {
-      conversationProps.workflows.artifactFinalization.request()
+      conversationProps.workflows.artifactFinalization.request('sess-a', 'prompt-sess-a')
       await Promise.resolve()
     })
     expect(conversationProps.workflows.artifactFinalization.running).toBe(true)
+    expect(conversationProps.workflows.artifactFinalization.retryingPromptMessageId).toBe(
+      'prompt-sess-a'
+    )
+    expect(reconcilePendingArtifacts).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'proj-1',
+      sessionId: 'sess-a',
+      messageId: 'message-sess-a',
+      pendingPaths: ['/artifacts/storage-sess-a/.pending/run-sess-a/result.txt']
+    })
 
     act(() => useSessionStore.setState({ selectedSessionId: 'sess-b' }))
 
     expect(conversationProps.view.activeSession?.id).toBe('sess-b')
+    expect(conversationProps.workflows.artifactFinalization.retryingPromptMessageId).toBeUndefined()
     expect(conversationProps.workflows.artifactFinalization.running).toBe(true)
 
     await act(async () => {

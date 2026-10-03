@@ -67,7 +67,8 @@
       "src/main/session-package/file-open.test.ts",
       "src/main/settings/bootstrap.integration.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/session-persistence/ipc.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

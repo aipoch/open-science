@@ -78,7 +78,8 @@ describe('managed shell npm storage', () => {
       )
       expect(existsSync(join(second.NPM_CONFIG_CACHE!, 'download'))).toBe(false)
       const paths = shellNpmPaths(root, platform)
-      expect(second.PATH).toBe(`${paths.bin}${platform === 'win32' ? ';' : ':'}existing-path`)
+      const bin = platform === 'win32' ? realpathSync.native(paths.bin) : paths.bin
+      expect(second.PATH).toBe(`${bin}${platform === 'win32' ? ';' : ':'}existing-path`)
       expect(second.NPM_CONFIG_GLOBAL).toBeUndefined()
       expect(second.OPEN_SCIENCE_CANONICAL_NPM_PREFIX).toBe(
         platform === 'win32' ? realpathSync.native(paths.prefix) : undefined

@@ -136,12 +136,17 @@ describe('provider registry', () => {
     expect(zenModels).toEqual([
       'kimi-k2.7-code',
       'gpt-6-astra',
+      'gpt-6.1-sol',
+      'gpt-6-sol',
+      'gpt-6-luna',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
       'claude-fable-5-1',
       'claude-fable-5',
+      'claude-opus-5-5',
       'claude-opus-5',
+      'claude-sonnet-5-5',
       'claude-sonnet-5',
       'grok-4.7',
       'grok-4.6',
@@ -168,6 +173,7 @@ describe('provider registry', () => {
       'grok-build-0.1',
       'muse-spark-1.3',
       'muse-spark-1.2',
+      'qwen3.8-max',
       'qwen3.8-flash',
       'qwen3.7-max',
       'qwen3.7-plus',
@@ -175,6 +181,7 @@ describe('provider registry', () => {
       'kimi-k3',
       'kimi-k2.6',
       'deepseek-v4.1-flash',
+      'deepseek-v4-flash-vision-exp',
       'deepseek-v4-flash',
       'deepseek-v4-pro',
       'minimax-m3',
@@ -212,6 +219,28 @@ describe('provider registry', () => {
     expect(resolveVendorModelApiEndpoints('opencode', 'minimax-m3')).toEqual(['openai'])
     expect(isVendorModelMultimodal('opencode-go', 'glm-5.3-flash')).toBe(true)
     expect(isVendorModelMultimodal('opencode', 'gpt-5.3-codex-spark')).toBe(false)
+  })
+
+  it.each([
+    ['gpt-6.1-sol', 'responses', 1_050_000, ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['gpt-6-sol', 'responses', 1_050_000, ['none', 'low', 'medium', 'high', 'max']],
+    ['gpt-6-luna', 'responses', 1_050_000, ['none', 'low', 'medium', 'high', 'max']],
+    ['claude-opus-5-5', 'anthropic', 1_000_000, ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['claude-sonnet-5-5', 'anthropic', 1_000_000, ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['qwen3.8-max', 'openai', 262_144, ['none', 'high', 'high', 'high', 'high']],
+    ['deepseek-v4-flash-vision-exp', 'openai', 1_000_000, ['low', 'high', 'max', 'max', 'max']]
+  ] as const)('exposes the verified Zen capabilities for %s', (model, endpoint, context, slots) => {
+    // Protocol: opencode.ai/docs/zen; availability: opencode.ai/zen/v1/models;
+    // context, vision, effort, and Sonnet 5.5 SDK: models.dev/api.json (opencode), 2026-10-03.
+    expect(resolveVendorModelApiEndpoints('opencode', model)).toEqual([endpoint])
+    expect(resolveModelContextWindow('opencode', model)).toBe(context)
+    expect(resolveVendorModelReasoningEffort('opencode', model)).toEqual({
+      supported: true,
+      slots
+    })
+    expect(isVendorModelMultimodal('opencode', model)).toBe(true)
+    expect(getOfficialVendor('opencode')?.models.map(({ id }) => id)).not.toContain('jev-1.13')
+    expect(getOfficialVendor('opencode')?.models.map(({ id }) => id)).not.toContain('jev-1.13-free')
   })
 
   it('exposes the 2026-09 OpenCode Zen additions with their documented capabilities', () => {

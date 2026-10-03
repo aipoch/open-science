@@ -73,7 +73,23 @@
     "src/main/session-persistence/runtime-writer.test.ts",
     "src/main/session-persistence/runtime-writer.ts",
     "src/main/session-persistence/runtime-resume-recovery.test.ts",
-    "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
+    "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+    "src/main/session-persistence/missing-runtime-session-repro.test.ts",
+    "src/main/session-persistence/prompt-preparation-owner.test.ts",
+    "src/main/session-persistence/prompt-preparation-owner.ts",
+    "src/main/session-persistence/prompt-preparation-restart.test.ts",
+    "src/main/session-persistence/reconciliation-renderer-parity.test.ts",
+    "src/main/session-persistence/runtime-attachment-recovery.test.ts",
+    "src/main/session-persistence/runtime-attachment-recovery.ts",
+    "src/main/session-persistence/session-state-authority.test.ts",
+    "src/main/session-persistence/terminal-commit-recovery.test.ts",
+    "src/main/session-persistence/terminal-commit-scheduler.test.ts",
+    "src/main/session-persistence/terminal-live-projection.test.ts",
+    "src/main/session-persistence/turn-outcome-authority.ts",
+    "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
+    "src/main/session-persistence/record-facts.ts",
+    "src/main/session-persistence/attention-projection.test.ts",
+    "src/main/session-persistence/turn-outcome-authority.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-persistence/coordinator.ts",
@@ -133,7 +149,19 @@
       "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/session-persistence/runtime-writer.test.ts",
       "src/main/session-persistence/runtime-resume-recovery.test.ts",
-      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/session-persistence/missing-runtime-session-repro.test.ts",
+      "src/main/session-persistence/prompt-preparation-owner.test.ts",
+      "src/main/session-persistence/prompt-preparation-restart.test.ts",
+      "src/main/session-persistence/reconciliation-renderer-parity.test.ts",
+      "src/main/session-persistence/runtime-attachment-recovery.test.ts",
+      "src/main/session-persistence/session-state-authority.test.ts",
+      "src/main/session-persistence/terminal-commit-recovery.test.ts",
+      "src/main/session-persistence/terminal-commit-scheduler.test.ts",
+      "src/main/session-persistence/terminal-live-projection.test.ts",
+      "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
+      "src/main/session-persistence/attention-projection.test.ts",
+      "src/main/session-persistence/turn-outcome-authority.test.ts"
     ],
     "contract": [
       "src/shared/session-persistence.test.ts",
@@ -569,7 +597,16 @@
       "src/main/notebook/real-notebook-lineage.integration.test.ts",
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
       "src/main/notebook/r-connection-guard.test.ts",
-      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
+      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
+      "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
+      "src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
+      "src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts",
+      "src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx",
+      "src/main/acp/approved-handoff-outcome.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx",
+      "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

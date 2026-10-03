@@ -136,7 +136,9 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
-
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "Получить метаданные серии GEO, образцы и ссылки на дополнительные файлы.",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "Найти ссылки на файлы GEO Series Matrix и файлы счётчиков RNA-seq от NCBI для скачивания вручную.",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "Проверить структуру, размерность и соответствие образцов распакованной матрицы GEO перед анализом.",
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Идентификация, происхождение, заболевания, сведения о качестве и связи с базами данных для клеточных линий из Cellosaurus.",
     "Search cell lines by name or synonym.": "Поиск клеточных линий по названию или синониму.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "Получение идентификации, происхождения, сведений о качестве и связей с базами данных клеточной линии по CVCL или RRID.",
@@ -6446,6 +6448,7 @@
     "Use a new API key": "Использовать новый API-ключ",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "При удалении этого сервиса общий аккаунт и ключ сохраняются. Для выбора возможностей снова используется способ по умолчанию.",
     "OpenRouter": "OpenRouter",
+    "OpenCode Zen": "OpenCode Zen",
     "Add to Specialist": "Добавить специалисту",
     "Always enabled": "Всегда включено",
     "Changes saved.": "Изменения сохранены.",
@@ -7290,6 +7293,13 @@
     "Folder access was updated. Run the command again when you are ready.": "Доступ к папке обновлён. Запустите команду повторно, когда будете готовы.",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "Это разрешение для папки действует во всех сессиях, пока вы не отзовёте его в разделе «Файлы». Команды не будут запускаться автоматически.",
     "Drop files to attach or import a .science package": "Перетащите файлы для прикрепления или пакет .science для импорта",
-    "Files cannot be attached right now.": "Сейчас невозможно прикрепить файлы."
+    "Files cannot be attached right now.": "Сейчас невозможно прикрепить файлы.",
+    "This turn was interrupted. Resume to continue.": "Этот ход был прерван. Возобновите его, чтобы продолжить.",
+    "Connection lost — Resume to reconnect and continue.": "Соединение потеряно — Возобновите работу, чтобы переподключиться и продолжить.",
+    "Session was interrupted before the app closed.": "Сеанс был прерван до закрытия приложения.",
+    "The run failed with no error message.": "Выполнение завершилось с ошибкой без сообщения об ошибке.",
+    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "Не удалось откатить неотправленное сообщение ({{failure}}). Отправьте его снова или остановите выполнение, чтобы повторить попытку.",
+    "The unsent Session could not be removed ({{failure}}).": "Не удалось удалить неотправленную сессию ({{failure}}).",
+    "Agent Session cleanup did not complete.": "Очистка сессии агента не завершена."
   }
 }

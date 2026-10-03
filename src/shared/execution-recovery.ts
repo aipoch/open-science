@@ -7,7 +7,7 @@ export type NotebookExecutionRecovery = Readonly<{
     environment?: string
     exitCode: number | null
     signal: string | null
-    cause: 'os-memory-pressure' | 'unknown'
+    cause: 'os-memory-pressure' | 'nul-initialization-unavailable' | 'unknown'
     cleanup: 'verified' | 'unverified'
   }>
 }>

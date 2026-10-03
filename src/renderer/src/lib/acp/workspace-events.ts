@@ -1,4 +1,6 @@
+import { reportWorkspaceOperationError } from './workspace-operation-error'
 import {
+  ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
   ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
@@ -10,7 +12,6 @@ import {
   type AcpTurnTokenUsage
 } from '../../../../shared/acp'
 import {
-  ARTIFACT_FINALIZATION_INVALID_PROOF,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
   type FinalizeRunArtifactsRequest,
@@ -22,6 +23,7 @@ import {
   INTERRUPTED_TURN_ERROR,
   isHiddenControlMessage,
   isReviewerCorrectionAttribution,
+  latestTurnAnchor,
   sanitizeMessageAttribution,
   sessionRevision,
   type PersistedChatSession
@@ -146,8 +148,7 @@ const hasPendingDurableUserChoice = (
   }) === true
 
 const getCurrentPromptMessageId = (session: ChatSession): string | undefined =>
-  session.activeRun?.promptMessageId ??
-  session.messages.findLast((message) => message.role === 'user')?.id
+  session.activeRun?.promptMessageId ?? latestTurnAnchor(session.messages)?.id
 
 const ownsForegroundPrompt = (session: ChatSession): boolean =>
   Boolean(
@@ -210,10 +211,6 @@ const getTerminalContextWindowSample = (
       }
     : undefined
 
-// Normalizes IPC/finalization failures into storeable session error text.
-const getErrorText = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
-
 // A terminal message and its Branch projection are persisted by separate runtime events. Retry only
 // the main process's explicit persistence-race code; proof identity and publication failures remain
 // terminal regardless of their human-readable wording.
@@ -261,12 +258,6 @@ const finalizeRunArtifacts = async (
   throw error
 }
 
-const isArtifactFinalizationProofError = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  'code' in error &&
-  error.code === ARTIFACT_FINALIZATION_INVALID_PROOF
-
 // Artifact finalization and auto-review both require the latest renderer-selected Message graph to be
 // durable before Main reads it. Persist explicitly instead of racing the asynchronous store saver.
 const saveSessionInRuntimeOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
@@ -309,6 +300,8 @@ const finalizeArtifactEvent = async (
   const session = useSessionStore
     .getState()
     .sessions.find((candidate) => candidate.id === event.sessionId)
+  // Main owns attachment confirmation and its terminal outcome, including crash recovery.
+  if (event.publicationOwner === 'main' || session?.runtimeTranscriptOwner === 'main') return true
   const persistLatestSession = async (): Promise<void> => {
     if (dependencies.canProject?.() === false) return
     const attachedSession = useSessionStore
@@ -338,11 +331,6 @@ const finalizeArtifactEvent = async (
     ...(session?.conversationGraph?.messages ?? [])
   ].find((message) => message.eventIds.includes(event.id) && ownsArtifactPrompt(message))
   const appliedArtifactIds = new Set(appliedMessage?.artifactIds ?? [])
-  const sessionReferencesOnly = (resolvedArtifactIds: ReadonlySet<string>): boolean =>
-    [...(session?.messages ?? []), ...(session?.conversationGraph?.messages ?? [])].every(
-      (message) =>
-        (message.artifactIds ?? []).every((artifactId) => resolvedArtifactIds.has(artifactId))
-    )
   const artifactVersionIds = event.artifacts.flatMap((artifact) =>
     artifact.versionId ? [artifact.versionId] : []
   )
@@ -380,33 +368,14 @@ const finalizeArtifactEvent = async (
           artifacts: result,
           preserveArtifactIds: appliedMessage.artifactIds
         })
-        const resolvedArtifactIds = new Set([
-          ...event.artifacts.map((artifact) => artifact.id),
-          ...result.map((artifact) => artifact.id)
-        ])
-        if (
-          session?.artifactErrorEventIds?.includes(event.id) ||
-          sessionReferencesOnly(resolvedArtifactIds)
-        ) {
-          useSessionStore.getState().clearArtifactError(event.sessionId, event.id)
-        }
         return true
       }
       throw new Error('Artifact reconciliation did not resolve all native Versions.')
     } catch (error) {
       if (dependencies.canProject?.() === false) return true
-      useSessionStore
-        .getState()
-        .recordArtifactError(
-          event.sessionId,
-          getErrorText(error),
-          !isArtifactFinalizationProofError(error),
-          event.id
-        )
       throw error
     }
   }
-  const resolvedCompatibilityArtifactIds = new Set<string>()
   const eventArtifactsAreFinalized = event.artifacts.every((pendingArtifact) => {
     const finalizedArtifact = session?.artifacts?.find(
       (artifact) =>
@@ -417,16 +386,9 @@ const finalizeArtifactEvent = async (
         !pendingArtifact.versionId &&
         !artifact.path.split(/[\\/]/).includes('.pending')
     )
-    if (finalizedArtifact) resolvedCompatibilityArtifactIds.add(finalizedArtifact.id)
     return Boolean(finalizedArtifact)
   })
   if (appliedMessage && eventArtifactsAreFinalized) {
-    if (
-      session?.artifactErrorEventIds?.includes(event.id) ||
-      sessionReferencesOnly(resolvedCompatibilityArtifactIds)
-    ) {
-      useSessionStore.getState().clearArtifactError(event.sessionId, event.id)
-    }
     return true
   }
 
@@ -435,7 +397,6 @@ const finalizeArtifactEvent = async (
   if (!attached) return true
 
   const store = useSessionStore.getState()
-  let artifactsFinalized = false
 
   try {
     await persistLatestSession()
@@ -457,14 +418,12 @@ const finalizeArtifactEvent = async (
       finalizedArtifacts = await finalize(finalizeRequest)
     }
     if (dependencies.canProject?.() === false) return true
-    artifactsFinalized = true
 
     store.replaceMessageArtifacts({
       sessionId: event.sessionId,
       messageId: attached.messageId,
       artifacts: finalizedArtifacts
     })
-    store.clearArtifactError(event.sessionId, event.id)
     openMoleculePreviews(event.sessionId, finalizedArtifacts)
     // Auto-review and every main-process provenance reader load the durable Session, not renderer
     // memory. Persist the checksum-bearing finalized Version descriptors before the stop handler may
@@ -474,14 +433,6 @@ const finalizeArtifactEvent = async (
     return true
   } catch (error) {
     if (dependencies.canProject?.() === false) return true
-    if (!artifactsFinalized) {
-      store.recordArtifactError(
-        event.sessionId,
-        getErrorText(error),
-        !isArtifactFinalizationProofError(error),
-        event.id
-      )
-    }
     throw error
   }
 }
@@ -1059,7 +1010,8 @@ const applyWorkspaceRuntimeEvent = async (
       if (event.status === 'completed' || event.status === 'cancelled') {
         store.finishCompaction(event.sessionId)
       } else if (event.status === 'failed') {
-        store.failCompaction(event.sessionId, getEventErrorText(event))
+        reportWorkspaceOperationError(event.sessionId, getEventErrorText(event))
+        store.finishCompaction(event.sessionId)
       }
     }
     // For overflow recovery, the recovery flow owns the terminal Session transition: the activity row
@@ -1107,7 +1059,6 @@ const applyWorkspaceRuntimeEvent = async (
           artifacts: event.artifacts,
           preserveArtifactIds: event.artifacts.map((artifact) => artifact.versionId ?? artifact.id)
         })
-        useSessionStore.getState().clearArtifactError(event.sessionId, event.id)
       }
       return true
     }
@@ -1143,6 +1094,19 @@ const applyWorkspaceRuntimeEvent = async (
     // recovery started (a repeat failure inside the cooldown, nothing to replay, or a detached session),
     // so surface a normal error instead of leaving a stuck "Compacting…".
     const activeSession = store.sessions.find((session) => session.id === event.sessionId)
+    if (event.publicationOwner === 'main' || activeSession?.runtimeTranscriptOwner === 'main') {
+      deferredArtifactEventsBySession.delete(event.sessionId)
+      const prompt = event.promptMessageId
+        ? (activeSession?.conversationGraph?.messages.find(
+            ({ id }) => id === event.promptMessageId
+          ) ?? activeSession?.messages.find(({ id }) => id === event.promptMessageId))
+        : undefined
+      // Hidden controls have no transcript notice or Attention. Provider acceptance resolves the
+      // command early, so its later Main-authored failure needs the initiating operation surface.
+      if (prompt && isHiddenControlMessage(prompt) && !event.terminalCommitFailure)
+        reportWorkspaceOperationError(event.sessionId, getEventErrorText(event))
+      return true
+    }
     const isCompacting = activeSession?.compacting
     // Same overflow detection the recovery effect uses (marker first, message as a fallback), so the two
     // agree on which errors are recoverable.
@@ -1192,6 +1156,16 @@ const applyWorkspaceRuntimeEvent = async (
     if (failedSession?.conversationGraphSyncBlocked) {
       deferredArtifactEventsBySession.delete(event.sessionId)
     }
+    return true
+  }
+
+  // Cleanup after a settled turn is an Operation Error, never a Turn Outcome.
+  if (
+    event.kind === 'system' &&
+    event.title === ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE &&
+    event.sessionId
+  ) {
+    reportWorkspaceOperationError(event.sessionId, getEventErrorText(event))
     return true
   }
 

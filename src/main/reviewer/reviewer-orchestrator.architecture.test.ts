@@ -842,7 +842,15 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/literature/smart-collections.test.ts',
           'src/main/notebook/runtime-service.macos-isolation.integration.test.ts',
           'src/main/acp/library-auto-policy.test.ts',
-          'src/main/literature/journal-attributes.test.ts'
+          'src/main/literature/journal-attributes.test.ts',
+          'src/main/session-persistence/reconciliation-renderer-parity.test.ts',
+          'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
+          'src/main/session-persistence/missing-runtime-session-repro.test.ts',
+          'src/main/session-persistence/prompt-preparation-restart.test.ts',
+          'src/main/session-persistence/terminal-commit-scheduler.test.ts',
+          'src/main/session-persistence/attention-projection.test.ts',
+          'src/main/acp/approved-handoff-outcome.integration.test.ts',
+          'src/main/acp/approved-handoff-outcome.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

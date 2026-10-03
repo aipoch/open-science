@@ -924,7 +924,11 @@ describe('notebook shell process behavior', () => {
     })
 
     await vi.waitFor(
-      () => expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: true }),
+      () =>
+        expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
+          processesTerminated: true,
+          processState: 'never-started'
+        }),
       { timeout: 5_000 }
     )
     expect(completed).toBe(false)
@@ -995,7 +999,10 @@ describe('notebook shell process behavior', () => {
         })
       ).resolves.toMatchObject({ cancelled: true, exitCode: null })
       expect(beginSpawn).not.toHaveBeenCalled()
-      expect(cleanup).toHaveBeenCalledWith('cancel', { processesTerminated: true })
+      expect(cleanup).toHaveBeenCalledWith('cancel', {
+        processesTerminated: true,
+        processState: 'never-started'
+      })
     }
   )
 
@@ -1012,6 +1019,7 @@ describe('notebook shell process behavior', () => {
         args: ['-e', 'process.stdout.write("finished")'],
         env: invocation.env,
         annotateStderr: (stderr: string) => stderr,
+        confirmProcessState: async () => 'started-and-reaped' as const,
         cleanup
       }))
     }
@@ -1038,7 +1046,10 @@ describe('notebook shell process behavior', () => {
         recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
       })
       expect(cleanup).toHaveBeenCalledOnce()
-      expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: true })
+      expect(cleanup).toHaveBeenCalledWith('exit', {
+        processesTerminated: true,
+        processState: 'started-and-reaped'
+      })
     } finally {
       await rm(runtimeRoot, { recursive: true, force: true })
     }
@@ -1065,6 +1076,7 @@ describe('notebook shell process behavior', () => {
         args: ['-e', 'process.stdout.write("finished")'],
         env: invocation.env,
         annotateStderr: (stderr: string) => stderr,
+        confirmProcessState: async () => 'started-and-reaped' as const,
         cleanup
       }))
     }
@@ -1091,8 +1103,14 @@ describe('notebook shell process behavior', () => {
         })
       ).resolves.toEqual({ stdout: 'finished', stderr: '', exitCode: 0 })
       expect(cleanup).toHaveBeenCalledTimes(2)
-      expect(cleanup).toHaveBeenNthCalledWith(1, 'exit', { processesTerminated: true })
-      expect(cleanup).toHaveBeenNthCalledWith(2, 'exit', { processesTerminated: true })
+      expect(cleanup).toHaveBeenNthCalledWith(1, 'exit', {
+        processesTerminated: true,
+        processState: 'started-and-reaped'
+      })
+      expect(cleanup).toHaveBeenNthCalledWith(2, 'exit', {
+        processesTerminated: true,
+        processState: 'started-and-reaped'
+      })
     } finally {
       await rm(runtimeRoot, { recursive: true, force: true })
     }
@@ -1405,7 +1423,10 @@ describe('notebook shell process behavior', () => {
       expect(beginExecution).toHaveBeenCalledOnce()
       expect(endExecution).toHaveBeenCalledOnce()
       expect(cleanup).toHaveBeenCalledOnce()
-      expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: true })
+      expect(cleanup).toHaveBeenCalledWith('exit', {
+        processesTerminated: true,
+        processState: 'started-and-reaped'
+      })
     })
 
     it('waits for exit-tree inspection and reports an incomplete outcome exactly', async () => {
@@ -1458,7 +1479,8 @@ describe('notebook shell process behavior', () => {
       })
       expect(cleanup).toHaveBeenCalledWith('exit', {
         processesTerminated: false,
-        confirmTermination: expect.any(Function)
+        confirmTermination: expect.any(Function),
+        processState: 'termination-unknown'
       })
     })
 
@@ -1510,7 +1532,10 @@ describe('notebook shell process behavior', () => {
         })
 
         expect(cleanup).toHaveBeenCalledOnce()
-        expect(cleanup).toHaveBeenCalledWith(reason, { processesTerminated: true })
+        expect(cleanup).toHaveBeenCalledWith(reason, {
+          processesTerminated: true,
+          processState: 'started-and-reaped'
+        })
       }
     )
 
@@ -1567,6 +1592,7 @@ describe('notebook shell process behavior', () => {
       await expect(completion).resolves.toMatchObject({ exitCode: null })
       expect(cleanup).toHaveBeenCalledWith('timeout', {
         processesTerminated: reaped,
+        processState: reaped ? 'started-and-reaped' : 'termination-unknown',
         ...(!reaped ? { confirmTermination: expect.any(Function) } : {})
       })
     })
@@ -1601,7 +1627,10 @@ describe('notebook shell process behavior', () => {
       ).resolves.toMatchObject({ exitCode: null })
 
       expect(cleanup).toHaveBeenCalledOnce()
-      expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: true })
+      expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
+        processesTerminated: true,
+        processState: 'never-started'
+      })
     })
 
     it('reports bounded spawn-failure teardown failure without assuming termination', async () => {
@@ -1633,8 +1662,8 @@ describe('notebook shell process behavior', () => {
       })
 
       expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
-        processesTerminated: false,
-        confirmTermination: expect.any(Function)
+        processesTerminated: true,
+        processState: 'never-started'
       })
     })
 

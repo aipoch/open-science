@@ -510,6 +510,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ...(this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
           ? { executable: invocation.executable, args: invocation.args }
           : {}),
+        ...(invocation.electronAsNode ? { electronAsNode: true } : {}),
         windowsProtectionRequired: invocation.windowsProtectionRequired,
         windowsRuntimeAccessRequired: invocation.windowsRuntimeAccessRequired,
         cwd: invocation.cwd,
@@ -592,7 +593,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       }
       if (wrapped) {
         const cleanup = await wrapped
-          .cleanup('spawn-failed', { processesTerminated: true })
+          .cleanup('spawn-failed', {
+            processesTerminated: true,
+            processState: 'never-started'
+          })
           .catch(() => undefined)
         if (!cleanup || !cleanupComplete(cleanup)) {
           throw new Error(
@@ -727,6 +731,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         }
         const result: NotebookSandboxCleanupResult = {
           ...(admission ? { admission } : {}),
+          ...(sandboxCleanup.status === 'fulfilled' && sandboxCleanup.value.processState
+            ? { processState: sandboxCleanup.value.processState }
+            : {}),
           processesTerminated:
             sandboxCleanup.status === 'fulfilled' && sandboxCleanup.value.processesTerminated,
           networkClosed:
@@ -776,7 +783,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
     const [executable, ...args] = wrapped.argv
     if (!executable) {
-      await cleanup('spawn-failed', { processesTerminated: true })
+      await cleanup('spawn-failed', {
+        processesTerminated: true,
+        processState: 'never-started'
+      })
       throw new Error('Notebook network sandbox returned an empty command.')
     }
     return {
@@ -786,6 +796,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }
         : {}),
+      ...(wrapped.requestProcessTreeTermination
+        ? { requestProcessTreeTermination: wrapped.requestProcessTreeTermination }
+        : {}),
+      ...(wrapped.confirmProcessState ? { confirmProcessState: wrapped.confirmProcessState } : {}),
       ...(this.platform === 'win32' && invocation.windowsProtectionRequired !== undefined
         ? {
             beginSpawn: () => {

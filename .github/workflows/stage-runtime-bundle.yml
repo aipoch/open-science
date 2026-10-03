@@ -70,8 +70,8 @@ jobs:
           SUBDIR: ${{ inputs.subdir }}
         run: |
           platforms='[
-            {"subdir":"osx-arm64","os":"macos-14","runner_subdir":"osx-arm64"},
-            {"subdir":"osx-64","os":"macos-14","runner_subdir":"osx-arm64"},
+            {"subdir":"osx-arm64","os":"macos-15","runner_subdir":"osx-arm64"},
+            {"subdir":"osx-64","os":"macos-15","runner_subdir":"osx-arm64"},
             {"subdir":"linux-64","os":"ubuntu-latest","runner_subdir":"linux-64"},
             {"subdir":"linux-aarch64","os":"ubuntu-24.04-arm","runner_subdir":"linux-aarch64"},
             {"subdir":"win-64","os":"windows-latest","runner_subdir":"win-64"}

@@ -1,3 +1,4 @@
+import { sanitizePromptPreparation, resolvePreparationNoticeBaseline } from './prompt-preparation'
 import {
   type PersistedSessionStatus,
   type PersistedActiveRun,
@@ -276,6 +277,8 @@ export const sanitizeSession = (
   if (taskRunCommitId) sanitized.taskRunCommitId = taskRunCommitId
   if (session.runtimeTranscriptOwner === 'main') {
     sanitized.runtimeTranscriptOwner = 'main'
+    const preparation = sanitizePromptPreparation(session.promptPreparation, sanitized)
+    if (preparation) sanitized.promptPreparation = preparation
     const reviewOwner = session.runtimeTranscriptReviewOwner
     if (
       isRecord(reviewOwner) &&
@@ -485,6 +488,17 @@ export const sanitizeSession = (
     session.sessionDetailsGeneration === undefined
   ) {
     sanitized.sessionDetailsGenerationEligible = true
+  }
+
+  if (sanitized.promptPreparation) {
+    const preparation = sanitized.promptPreparation
+    if (preparation.noticeBaseline && !resolvePreparationNoticeBaseline(sanitized))
+      delete preparation.noticeBaseline
+    const ownsPrompt = sanitized.messages.some(
+      (message) => message.id === preparation.promptMessageId && message.role === 'user'
+    )
+    if (!ownsPrompt && (preparation.mode !== 'new' || preparation.runStartedAt !== undefined))
+      delete sanitized.promptPreparation
   }
 
   // Normalize only after resolving the canonical active Branch. Recovery references and the durable

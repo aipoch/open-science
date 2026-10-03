@@ -133,7 +133,9 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
-
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "GEO 시리즈의 메타데이터, 샘플 및 보충 파일 링크를 가져옵니다.",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "수동 다운로드를 위한 GEO Series Matrix 및 NCBI RNA-seq 카운트 파일 링크를 찾습니다.",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "분석 전에 압축 해제된 GEO 행렬의 구조, 차원 및 샘플 대응 관계를 확인합니다.",
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Cellosaurus의 세포주 식별 정보, 유래, 질환, 품질 기록 및 데이터베이스 매핑.",
     "Search cell lines by name or synonym.": "이름 또는 동의어로 세포주 검색.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "CVCL 또는 RRID로 세포주 식별 정보, 유래, 품질 기록 및 데이터베이스 매핑 조회.",
@@ -5989,6 +5991,7 @@
     "Use a new API key": "새 API 키 사용",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "이 서비스를 삭제해도 공유 계정과 키는 유지됩니다. 스킬 및 커넥터 선택은 기본 방식으로 돌아갑니다.",
     "OpenRouter": "OpenRouter",
+    "OpenCode Zen": "OpenCode Zen",
     "Add to Specialist": "스페셜리스트에 추가",
     "Always enabled": "항상 활성화",
     "Changes saved.": "변경 사항을 저장했습니다.",
@@ -6821,6 +6824,13 @@
     "Folder access was updated. Run the command again when you are ready.": "폴더 액세스 권한이 업데이트되었습니다. 준비가 되면 명령을 다시 실행하세요.",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "이 폴더 권한은 파일에서 취소할 때까지 모든 세션에 적용됩니다. 명령은 자동으로 실행되지 않습니다.",
     "Drop files to attach or import a .science package": "파일을 놓아 첨부하거나 .science 패키지 가져오기",
-    "Files cannot be attached right now.": "지금은 파일을 첨부할 수 없습니다."
+    "Files cannot be attached right now.": "지금은 파일을 첨부할 수 없습니다.",
+    "This turn was interrupted. Resume to continue.": "이번 턴이 중단되었습니다. 계속하려면 재개하세요.",
+    "Connection lost — Resume to reconnect and continue.": "연결이 끊어졌습니다 — 재개하여 다시 연결하고 계속하세요.",
+    "Session was interrupted before the app closed.": "앱이 종료되기 전에 세션이 중단되었습니다.",
+    "The run failed with no error message.": "실행이 오류 메시지 없이 실패했습니다.",
+    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "전송되지 않은 메시지를 롤백하지 못했습니다({{failure}}). 다시 보내거나 실행을 중지한 후 다시 시도하세요.",
+    "The unsent Session could not be removed ({{failure}}).": "전송되지 않은 세션을 제거하지 못했습니다({{failure}}).",
+    "Agent Session cleanup did not complete.": "에이전트 세션 정리가 완료되지 않았습니다."
   }
 }

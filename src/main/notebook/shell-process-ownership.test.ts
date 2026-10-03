@@ -169,6 +169,52 @@ describe('Shell process ownership receipt lifecycle', () => {
     20_000
   )
 
+  it.runIf(process.platform === 'win32')(
+    'forwards the owned shell command through the Windows process host',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-host-forwarding-'))
+      roots.push(root)
+      const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
+        runId: 'forwarding',
+        projectId: 'project',
+        sessionId: 'session',
+        platform: 'win32',
+        hosted: true
+      }).host!
+      const marker = join(root, 'forwarded.json')
+      const script = [
+        "const fs = require('node:fs');",
+        `fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ argv: process.argv.slice(1), electron: process.env.ELECTRON_RUN_AS_NODE }))`
+      ].join('')
+      const child = spawn(
+        process.execPath,
+        [
+          host.path,
+          host.pendingPath,
+          host.receiptId,
+          '--restore-electron-run-as-node',
+          JSON.stringify('1'),
+          process.execPath,
+          '-e',
+          script,
+          'shell-forwarded-a',
+          'shell-forwarded-b'
+        ],
+        { windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
+      )
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject)
+        child.once('close', resolve)
+      })
+
+      expect(exitCode).toBe(0)
+      expect(JSON.parse(await readFile(marker, 'utf8'))).toEqual({
+        argv: ['shell-forwarded-a', 'shell-forwarded-b'],
+        electron: '1'
+      })
+    }
+  )
+
   it('cancels a pending hosted launch before a delayed host can start its command', async () => {
     const root = await mkdtemp(join(tmpdir(), 'shell-delayed-host-'))
     roots.push(root)

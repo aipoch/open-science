@@ -6258,11 +6258,12 @@ describe('ACP runtime session management', () => {
       onPrompt: () => promptGate.promise
     })
     const events: AcpRuntimeEvent[] = []
+    const onPromptEnded = vi.fn()
     const runtime = new AcpRuntime({
       appVersion: '0.2.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      callbacks: { onEvent: (event) => events.push(event) }
+      callbacks: { onEvent: (event) => events.push(event), onPromptEnded }
     })
     const session = await runtime.createSession({ cwd: '/workspace' })
     const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stay pending' })
@@ -6272,6 +6273,7 @@ describe('ACP runtime session management', () => {
     process.stdout.end()
 
     await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
+    expect(onPromptEnded).toHaveBeenCalledOnce()
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: 'error',
@@ -6281,6 +6283,8 @@ describe('ACP runtime session management', () => {
       })
     )
     promptGate.resolve()
+    await prompt.catch(() => undefined)
+    expect(onPromptEnded).toHaveBeenCalledOnce()
   })
 
   it('does not attribute a resumed session event to a prompt from a closed connection', async () => {
@@ -11872,6 +11876,53 @@ describe('ACP runtime session management', () => {
       expect.stringMatching(/Current agent: Main Agent\.[\s\S]+summarize the results$/)
     ])
     expect(fakeAgent.prompts.every(({ text }) => !text.includes(persistentInstructions))).toBe(true)
+  })
+
+  it('passes current granted local roots into backend context and prompt guidance', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['granted-context-session'], {
+      modes: {
+        currentModeId: 'agent',
+        availableModes: ['read-only', 'agent', 'agent-full-access'].map((id) => ({ id, name: id }))
+      }
+    })
+    const grantedLocalRoots = [
+      { path: 'D:\\Data & <research>', access: 'rw' as const },
+      { path: 'D:\\ReadOnly', access: 'ro' as const }
+    ]
+    let resolvedContext:
+      | {
+          grantedLocalRoots?: readonly { path: string; access: 'ro' | 'rw' }[]
+          systemPromptAppends?: string[]
+        }
+      | undefined
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      grantedRoots: {
+        list: async () => grantedLocalRoots,
+        resolveRoot: async () => grantedLocalRoots[0]
+      },
+      resolveBackend: (context) => {
+        resolvedContext = context
+        return {
+          framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/codex-acp',
+          env: {},
+          persistentSystemPrompt: 'Stable Codex developer instructions.'
+        }
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    expect(resolvedContext?.grantedLocalRoots).toEqual(grantedLocalRoots)
+    const grantedGuidance = resolvedContext?.systemPromptAppends?.find((append) =>
+      append.includes('<open_science_granted_local_roots>')
+    )
+    expect(grantedGuidance).toContain('D:\\\\Data \\u0026 \\u003cresearch\\u003e')
+    expect(grantedGuidance).toContain('"access":"rw"')
+    expect(grantedGuidance).toContain('"access":"ro"')
   })
 
   it('forwards resolved Claude session options on create and resume', async () => {

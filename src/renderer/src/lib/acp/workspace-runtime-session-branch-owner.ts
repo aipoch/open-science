@@ -1,3 +1,4 @@
+import { reportWorkspaceOperationError } from './workspace-operation-error'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import {
   MAX_COMPOSER_ATTACHMENTS,
@@ -204,9 +205,10 @@ export const branchWorkspaceSessionFromMessage = async (
       }).catch(() => undefined)
       if (result?.status !== 'deleted') {
         // Keep failed compensation visible so the user can retry deletion; never hide a saved child.
-        useSessionStore
-          .getState()
-          .failRun(failedSessionId, error instanceof Error ? error.message : String(error))
+        reportWorkspaceOperationError(
+          failedSessionId,
+          error instanceof Error ? error.message : String(error)
+        )
         throw error
       }
     } else if (createdSessionId && runtime.deleteSession) {

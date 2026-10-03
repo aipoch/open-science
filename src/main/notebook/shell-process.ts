@@ -8,11 +8,12 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 
 import { protectManagedRuntimeWrites, detectManagedRuntimeMutation } from './managed-runtime-guard'
 import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
-import type {
-  NotebookProcessSandbox,
-  NotebookSandboxCleanupReason,
-  NotebookSandboxCleanupResult,
-  NotebookSandboxProcessOutcome
+import {
+  type NotebookProcessSandbox,
+  type NotebookSandboxCleanupReason,
+  type NotebookSandboxCleanupResult,
+  type NotebookSandboxProcessOutcome,
+  withNotebookSandboxProcessState
 } from './process-sandbox'
 import {
   assertProcessTreeSupport,
@@ -544,7 +545,12 @@ const prepareShellLaunchOptions = async (
 
 const disposePreparedShellLaunch = (prepared: PreparedShellLaunch): void => {
   prepared.endSandboxExecution?.()
-  void prepared.sandboxed?.cleanup('cancel', { processesTerminated: true }).catch(() => undefined)
+  void prepared.sandboxed
+    ?.cleanup(
+      'cancel',
+      withNotebookSandboxProcessState({ processesTerminated: true }, 'never-started')
+    )
+    .catch(() => undefined)
 }
 
 const runShellCommand = (
@@ -628,7 +634,10 @@ const runShellCommand = (
       endSandboxExecution?.()
       let cleanupResult: NotebookSandboxCleanupResult | undefined
       try {
-        cleanupResult = await cleanupSandboxWithRetry('cancel', { processesTerminated: true })
+        cleanupResult = await cleanupSandboxWithRetry(
+          'cancel',
+          withNotebookSandboxProcessState({ processesTerminated: true }, 'never-started')
+        )
       } catch {
         cleanupResult = undefined
       }
@@ -683,7 +692,10 @@ const runShellCommand = (
       let complete = false
       try {
         complete = cleanupCompleted(
-          await cleanupSandboxWithRetry('spawn-failed', { processesTerminated: true })
+          await cleanupSandboxWithRetry(
+            'spawn-failed',
+            withNotebookSandboxProcessState({ processesTerminated: true }, 'never-started')
+          )
         )
       } catch {
         // The stable cleanup failure below preserves the executor's never-reject contract.
@@ -722,10 +734,10 @@ const runShellCommand = (
           child.once('error', () => undefined)
           let reaped = false
           // A failed spawn has no process to signal; a no-PID handle must never reach POSIX kill.
-          const termination =
-            child.pid === undefined
-              ? Promise.resolve({ reaped: true })
-              : terminateProcessTree(child)
+          const childNeverStarted = child.pid === undefined
+          const termination = childNeverStarted
+            ? Promise.resolve({ reaped: true })
+            : terminateProcessTree(child)
           void termination
             .then((result) => {
               reaped = result.reaped
@@ -739,7 +751,17 @@ const runShellCommand = (
               try {
                 if (reaped)
                   reaped = cleanupCompleted(
-                    await cleanupSandboxWithRetry('spawn-failed', { processesTerminated: reaped })
+                    await cleanupSandboxWithRetry(
+                      'spawn-failed',
+                      withNotebookSandboxProcessState(
+                        { processesTerminated: reaped },
+                        childNeverStarted
+                          ? 'never-started'
+                          : reaped
+                            ? 'started-and-reaped'
+                            : 'termination-unknown'
+                      )
+                    )
                   )
               } catch {
                 reaped = false
@@ -787,38 +809,56 @@ const runShellCommand = (
         const stderr = sandboxed ? sandboxed.annotateStderr(normalized, result.stdout) : normalized
         let complete = false
         try {
-          const processesTerminated = sandboxed?.confirmProcessTreeTermination
-            ? (await sandboxed.confirmProcessTreeTermination().catch(() => false)) ||
-              processOutcome.processesTerminated
-            : processOutcome.processesTerminated
+          const nativeProcessState =
+            processOutcome.processState === 'never-started'
+              ? processOutcome.processState
+              : await sandboxed?.confirmProcessState?.().catch(() => undefined)
+          const processesTerminated =
+            nativeProcessState !== undefined
+              ? nativeProcessState !== 'termination-unknown'
+              : sandboxed?.confirmProcessTreeTermination
+                ? await sandboxed.confirmProcessTreeTermination().catch(() => false)
+                : processOutcome.processesTerminated
           // Retain the original native owner's one-time proof for late reconciliation. Once
           // verified, receipt removal may retry without consuming that proof or signalling a PID.
           let nativeTreeReaped = processesTerminated
           const confirmNativeTermination = sandboxed?.confirmProcessTreeTermination
-          const cleanupOutcome: NotebookSandboxProcessOutcome = {
-            processesTerminated,
-            ...(!processesTerminated && confirmNativeTermination
-              ? {
-                  confirmTermination: async () => {
-                    nativeTreeReaped ||= await confirmNativeTermination()
-                    if (nativeTreeReaped) releaseProcessOwnership?.()
-                    return nativeTreeReaped
-                  }
-                }
-              : !processesTerminated && runtimeBinding.kind === 'native-posix'
+          const cleanupOutcome: NotebookSandboxProcessOutcome = withNotebookSandboxProcessState(
+            {
+              processesTerminated,
+              ...(!processesTerminated && confirmNativeTermination
                 ? {
                     confirmTermination: async () => {
-                      const { reaped } = await terminateShellOnTimeout(
-                        child,
-                        platform,
-                        options.terminateTree
-                      )
-                      if (reaped) releaseProcessOwnership?.()
-                      return reaped
+                      nativeTreeReaped ||= await confirmNativeTermination()
+                      if (nativeTreeReaped) releaseProcessOwnership?.()
+                      return nativeTreeReaped
                     }
                   }
-                : {})
-          }
+                : !processesTerminated && runtimeBinding.kind === 'native-posix'
+                  ? {
+                      confirmTermination: async () => {
+                        const { reaped } = await terminateShellOnTimeout(
+                          child,
+                          platform,
+                          options.terminateTree
+                        )
+                        if (reaped) releaseProcessOwnership?.()
+                        return reaped
+                      }
+                    }
+                  : {})
+            },
+            processesTerminated
+              ? nativeProcessState === 'never-started' ||
+                processOutcome.processState === 'never-started'
+                ? 'never-started'
+                : sandboxed?.confirmProcessState
+                  ? 'started-and-reaped'
+                  : !sandboxed || runtimeBinding.kind === 'native-posix'
+                    ? 'started-and-reaped'
+                    : 'termination-unknown'
+              : 'termination-unknown'
+          )
           const retryCleanup = async (): Promise<boolean> => {
             const done = cleanupCompleted(
               await cleanupSandboxWithRetry(cleanupReason, cleanupOutcome)
@@ -843,8 +883,34 @@ const runShellCommand = (
         result: NotebookShellResult,
         cleanupReason: 'cancel' | 'timeout'
       ): void => {
-        void terminateShellOnTimeout(child, platform, options.terminateTree).then(({ reaped }) => {
-          void finish(result, cleanupReason, { processesTerminated: reaped })
+        // Let the original native supervisor terminate its own Job first. taskkill can kill that
+        // supervisor before it publishes the Job-empty proof, which must remain unknown.
+        const nativeTeardown = sandboxed?.requestProcessTreeTermination
+          ? sandboxed.requestProcessTreeTermination().catch(() => false)
+          : Promise.resolve(false)
+        void nativeTeardown.then((nativeReaped) => {
+          if (nativeReaped) {
+            void finish(
+              result,
+              cleanupReason,
+              withNotebookSandboxProcessState({ processesTerminated: true }, 'started-and-reaped')
+            )
+            return
+          }
+          void terminateShellOnTimeout(child, platform, options.terminateTree).then(
+            ({ reaped }) => {
+              void finish(
+                result,
+                cleanupReason,
+                withNotebookSandboxProcessState(
+                  { processesTerminated: reaped },
+                  reaped && !sandboxed?.confirmProcessTreeTermination
+                    ? 'started-and-reaped'
+                    : 'termination-unknown'
+                )
+              )
+            }
+          )
         })
       }
 
@@ -930,7 +996,14 @@ const runShellCommand = (
               ...(truncated ? { truncated: true } : {})
             },
             'spawn-failed',
-            { processesTerminated: reaped }
+            withNotebookSandboxProcessState(
+              { processesTerminated: reaped },
+              child.pid === undefined
+                ? 'never-started'
+                : reaped
+                  ? 'started-and-reaped'
+                  : 'termination-unknown'
+            )
           )
         })
       })
@@ -944,7 +1017,7 @@ const runShellCommand = (
           void finish(
             { stdout, stderr, exitCode: code, ...(truncated ? { truncated: true } : {}) },
             'exit',
-            { processesTerminated: false }
+            withNotebookSandboxProcessState({ processesTerminated: false }, 'termination-unknown')
           )
           return
         }
@@ -958,7 +1031,10 @@ const runShellCommand = (
           void finish(
             { stdout, stderr, exitCode: code, ...(truncated ? { truncated: true } : {}) },
             'exit',
-            { processesTerminated }
+            withNotebookSandboxProcessState(
+              { processesTerminated },
+              processesTerminated ? 'started-and-reaped' : 'termination-unknown'
+            )
           )
         })
       })

@@ -1,8 +1,10 @@
+import type { AcpRuntimeEvent } from '../../../../shared/acp'
 import {
-  ensureRuntimeWriter,
-  isRuntimeWriter,
-  runtimeWriterSaveOptions
-} from '../acp/runtime-writer-client'
+  reportWorkspaceOperationError,
+  clearWorkspaceOperationError,
+  useWorkspaceOperationErrors
+} from '../acp/workspace-operation-error'
+import { isRuntimeWriter, runtimeWriterSaveOptions } from '../acp/runtime-writer-client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { shallow } from 'zustand/vanilla/shallow'
@@ -28,12 +30,15 @@ import {
   SessionRevisionConflictError,
   isSessionSizeLimitError,
   isSessionRevisionConflictError,
+  latestTurnAnchor,
   sessionRevision,
+  turnAnchorInterval,
   type DeleteSessionRequest,
   type DelegationPolicy,
   type LoadAllSessionsResult,
   type ListSessionSummariesResult,
   type LoadSessionRequest,
+  type PersistedChatMessage,
   type PersistedChatSession,
   type SaveSessionOptions,
   type SessionConflictRebaseField,
@@ -45,7 +50,6 @@ import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
   hydrateSession,
-  isArtifactFinalizationError,
   isExternallyHydratedSession,
   toPersistedSession,
   useSessionStore
@@ -58,7 +62,8 @@ import type {
 import { projectRendererFailure } from '../../renderer-diagnostics'
 import {
   acknowledgeSessionConversationCommands,
-  pendingSessionConversationCommands
+  pendingSessionConversationCommands,
+  retainActivePreparationCommands
 } from '../../stores/session-conversation-intents'
 
 type SessionPersistenceApi = {
@@ -875,6 +880,16 @@ const deferExportedSessionSave = (target: string): void => {
 // Serializes every renderer-originated Session write through one ordering seam. Store snapshots at
 // the queue tail use latest-wins coalescing; explicit Session and Manifest writes remain barriers, so
 // Artifact finalization cannot be overtaken by an older store snapshot.
+const activePreparationSaveOptions = (
+  options: SaveSessionOptions | undefined
+): SaveSessionOptions | undefined =>
+  options?.conversationCommands
+    ? {
+        ...options,
+        conversationCommands: retainActivePreparationCommands(options.conversationCommands)
+      }
+    : options
+
 const createOrderedSessionPersistence = (
   api: Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
 ): OrderedSessionPersistence => {
@@ -942,7 +957,7 @@ const createOrderedSessionPersistence = (
     options: SaveSessionOptions | undefined,
     durable: PersistedChatSession
   ): void => {
-    const commands = options?.conversationCommands
+    const commands = activePreparationSaveOptions(options)?.conversationCommands
     if (!commands || commands.length === 0) return
     const acknowledged = new Set(durable.runtimeConversationCommandIds ?? [])
     if (commands.some(({ id }) => !acknowledged.has(id)))
@@ -1025,6 +1040,7 @@ const createOrderedSessionPersistence = (
       sessionRevision(submitted),
       acknowledgedRevisions.get(submitted.id) ?? 0
     )
+    options = activePreparationSaveOptions(options)
     const durable = options
       ? await api.saveSession(submitted, options)
       : await api.saveSession(submitted)
@@ -1074,6 +1090,7 @@ const createOrderedSessionPersistence = (
       if (entry.generation !== hydrationGeneration) {
         throw new SessionPersistenceGenerationChangedError()
       }
+      entry.options = activePreparationSaveOptions(entry.options)
       const durable = await entry.task(entry.options)
       acknowledgeSession(durable)
       trackConversationCommandOutcome(entry.target, entry.options, durable)
@@ -1311,33 +1328,51 @@ type ArtifactReconcileApi = {
 const invalidArtifactFinalizationProofError = (message: string): Error =>
   Object.assign(new Error(message), { code: ARTIFACT_FINALIZATION_INVALID_PROOF })
 
-const isInvalidArtifactFinalizationProofError = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  'code' in error &&
-  error.code === ARTIFACT_FINALIZATION_INVALID_PROOF
-
 // A crash between persisting a pending artifact reference and finalizing it strands the file in
 // `.pending/<run>/`. The path segment is stable across OSes, so detect it structurally.
 const isPendingArtifactPath = (path: string | undefined): path is string =>
   typeof path === 'string' && path.split(/[\\/]/).includes('.pending')
 
-const pendingArtifactRunId = (path: string | undefined): string | undefined => {
-  if (!path) return undefined
-  const parts = path.split(/[\\/]/)
-  const pendingIndex = parts.lastIndexOf('.pending')
-  return pendingIndex >= 0 ? parts[pendingIndex + 1] : undefined
+type ArtifactRetrySession = Pick<ChatSession, 'artifacts' | 'conversationGraph' | 'messages'>
+
+const artifactRetryResponseIds = (
+  session: ArtifactRetrySession,
+  promptMessageId: string
+): Set<string> => {
+  const messages = session.conversationGraph?.messages ?? session.messages
+  if (!messages.some((message) => message.id === promptMessageId && message.role === 'user'))
+    return new Set()
+  const responseIds = new Set(
+    messages
+      .filter(
+        (message) => message.role === 'agent' && message.responseToMessageId === promptMessageId
+      )
+      .map(({ id }) => id)
+  )
+  const activeMessages: readonly PersistedChatMessage[] = session.conversationGraph
+    ? resolveActiveConversationMessages(session.conversationGraph)
+    : session.messages
+  // Untagged legacy replies can only belong to the latest eligible prompt on this branch.
+  // A relay or later prompt ends that interval; the turn's own routed replies do not.
+  if (latestTurnAnchor(activeMessages)?.id === promptMessageId) {
+    for (const message of turnAnchorInterval(activeMessages, promptMessageId)) {
+      if (message.role === 'agent' && !message.responseToMessageId) responseIds.add(message.id)
+    }
+  }
+  return responseIds
 }
 
 const pendingArtifactRequests = (
-  session: ChatSession,
-  includeNativeVersions = false
+  session: ArtifactRetrySession,
+  includeNativeVersions = false,
+  responseMessageIds?: ReadonlySet<string>
 ): Array<{ messageId: string; pendingPaths: string[]; artifactVersionIds?: string[] }> => {
   const artifactsById = new Map(
     (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
   )
   const messages = session.conversationGraph?.messages ?? session.messages
   return messages.flatMap((message) => {
+    if (responseMessageIds && !responseMessageIds.has(message.id)) return []
     const artifacts = (message.artifactIds ?? []).flatMap((id) => {
       const artifact = artifactsById.get(id)
       return artifact ? [artifact] : []
@@ -1362,128 +1397,53 @@ const pendingArtifactRequests = (
   })
 }
 
-const reconcileSessionPendingArtifacts = async (
-  session: ChatSession,
-  api: ArtifactReconcileApi,
-  includeNativeVersions = false
-): Promise<void> => {
-  if (session.isPending || !session.projectId) return
-
-  let firstFailure: unknown
-  for (const request of pendingArtifactRequests(session, includeNativeVersions)) {
-    try {
-      const result = await api.reconcilePendingArtifacts({
-        projectId: session.projectId,
-        sessionId: session.id,
-        ...request
-      })
-      if (!Array.isArray(result)) throw invalidArtifactFinalizationProofError(result.message)
-      const finalized = result
-      const recoveredVersionIds = new Set(
-        finalized.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
-      )
-      if (request.artifactVersionIds?.some((versionId) => !recoveredVersionIds.has(versionId))) {
-        throw new Error('Artifact finalization did not resolve all native Versions.')
-      }
-      if (finalized.length > 0) {
-        const current = useSessionStore
-          .getState()
-          .sessions.find((candidate) => candidate.id === session.id)
-        const message = (current?.conversationGraph?.messages ?? current?.messages ?? []).find(
-          (candidate) => candidate.id === request.messageId
-        )
-        const artifactsById = new Map(
-          (current?.artifacts ?? []).map((artifact) => [artifact.id, artifact])
-        )
-        const recoveredRunIds = new Set(
-          finalized.flatMap((artifact) => (artifact.runId ? [artifact.runId] : []))
-        )
-        const recoveredCompatibilityNames = new Set(
-          finalized.flatMap((artifact) => (!artifact.versionId ? [artifact.name] : []))
-        )
-        const preserveArtifactIds = (message?.artifactIds ?? []).filter((artifactId) => {
-          const artifact = artifactsById.get(artifactId)
-          if (!isPendingArtifactPath(artifact?.path)) return true
-          const runId = pendingArtifactRunId(artifact.path)
-          const name = artifact.name ?? artifact.path.split(/[\\/]/).at(-1)
-          return (
-            (!runId || !recoveredRunIds.has(runId)) &&
-            (!name || !recoveredCompatibilityNames.has(name))
-          )
-        })
-        useSessionStore.getState().replaceMessageArtifacts({
-          sessionId: session.id,
-          messageId: request.messageId,
-          artifacts: finalized,
-          preserveArtifactIds
-        })
-      }
-    } catch (error) {
-      firstFailure ??= error
-    }
-  }
-  if (firstFailure) throw firstFailure
-}
-
 const retryPendingArtifactFinalization = async (
   sessionId: string,
-  api: ArtifactReconcileApi = window.api.artifacts
+  api: ArtifactReconcileApi = window.api.artifacts,
+  options: { promptMessageId?: string } = {}
 ): Promise<void> => {
   const session = useSessionStore
     .getState()
     .sessions.find((candidate) => candidate.id === sessionId)
-  if (!session) throw new Error('Session not found.')
-
+  if (!session?.projectId) throw new Error('Session not found.')
+  clearWorkspaceOperationError(sessionId)
   try {
-    if (pendingArtifactRequests(session, true).length === 0) {
+    const responseMessageIds = options.promptMessageId
+      ? artifactRetryResponseIds(session, options.promptMessageId)
+      : undefined
+    const requests = pendingArtifactRequests(session, true, responseMessageIds)
+    if (requests.length === 0)
       throw new Error('No pending Artifact references are available to retry.')
+    for (const request of requests) {
+      const result = await api.reconcilePendingArtifacts({
+        projectId: session.projectId,
+        sessionId,
+        ...request
+      })
+      if (!Array.isArray(result)) throw invalidArtifactFinalizationProofError(result.message)
     }
-    await reconcileSessionPendingArtifacts(session, api, true)
-    const current = useSessionStore
-      .getState()
-      .sessions.find((candidate) => candidate.id === sessionId)
-    if (current && pendingArtifactRequests(current).length > 0) {
+    // Main owns Artifact publication and outcome repair. The command result is only file metadata;
+    // refresh its committed Session instead of reconstructing a competing renderer settlement.
+    const authority = await loadPersistedSession({ projectId: session.projectId, sessionId })
+    if (!authority) throw new Error('Session not found.')
+    useSessionStore.getState().applyDurableSessionProjection({
+      source: session,
+      session: authority,
+      mode: 'runtime-transcript-authority'
+    })
+    const remainingResponseIds = options.promptMessageId
+      ? new Set([
+          ...responseMessageIds!,
+          ...artifactRetryResponseIds(authority, options.promptMessageId)
+        ])
+      : undefined
+    if (pendingArtifactRequests(authority, false, remainingResponseIds).length > 0) {
       throw new Error('Artifact finalization did not resolve all pending files.')
     }
-    useSessionStore.getState().clearArtifactError(sessionId)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    useSessionStore
-      .getState()
-      .recordArtifactError(sessionId, message, !isInvalidArtifactFinalizationProofError(error))
+    reportWorkspaceOperationError(sessionId, error instanceof Error ? error.message : String(error))
     reportPersistenceError(error, 'artifact-reconcile')
     throw error
-  }
-}
-
-// Re-finalizes artifacts a prior crash left in `.pending` after the in-memory finalize claim was lost.
-// For each hydrated message still referencing a pending path, ask the main process to complete the
-// move (idempotent) and replace the message's stale references with the finalized files. Runs once at
-// startup after the store saver is subscribed, so each replacement is persisted. Per-message failures
-// are isolated and never block the rest; an empty result leaves references untouched so a file still
-// readable at its pending path is never dropped.
-const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<void> => {
-  if (!(await ensureRuntimeWriter())) return
-  for (const session of useSessionStore.getState().sessions) {
-    try {
-      await reconcileSessionPendingArtifacts(
-        session,
-        api,
-        isArtifactFinalizationError(session.error)
-      )
-      const current = useSessionStore
-        .getState()
-        .sessions.find((candidate) => candidate.id === session.id)
-      if (
-        current &&
-        isArtifactFinalizationError(current.error) &&
-        pendingArtifactRequests(current).length === 0
-      ) {
-        useSessionStore.getState().clearArtifactError(session.id)
-      }
-    } catch (error) {
-      reportPersistenceError(error, 'artifact-reconcile')
-    }
   }
 }
 
@@ -1772,6 +1732,7 @@ const hasStagedUploads = (session: ChatSession): boolean =>
 const withoutMainOwnedOrTransientSessionMetadata = (session: ChatSession): ChatSession => ({
   ...session,
   branchSwitchBlocked: undefined,
+  compacting: undefined,
   activePlanProjection: undefined,
   interactionState: undefined,
   agentPromptInFlight: undefined,
@@ -2215,7 +2176,10 @@ const createStoreSaver = (
                     let recoveredRevisionConflict = false
                     try {
                       durableSession = coalescedOptions
-                        ? await api.saveSession(persisted, coalescedOptions)
+                        ? await api.saveSession(
+                            persisted,
+                            activePreparationSaveOptions(coalescedOptions)
+                          )
                         : await api.saveSession(persisted)
                     } catch (error) {
                       try {
@@ -2347,6 +2311,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
   >([])
   const [loadAttempt, setLoadAttempt] = useState(0)
   const retrySelection = useRef<SessionHydrationSelection | undefined>(undefined)
+  const terminalWriteFailures = useRef(new Map<string, AcpRuntimeEvent>())
+  const terminalFailureQuery = useRef(0)
+  const terminalObserverMounted = useRef(false)
   const failedWriteTargets = useRef(new Set<string>())
   const failedConflictRebaseFields = useRef(new Map<string, SessionConflictRebaseField[]>())
   const revisionConflictTargets = useRef(new Set<string>())
@@ -2359,7 +2326,12 @@ const useSessionPersistence = (): SessionPersistenceState => {
       setWriteErrorRetryable(true)
       return
     }
-    if ([...failedWriteTargets.current].some((target) => !sizeLimitTargets.current.has(target))) {
+    if (
+      [...terminalWriteFailures.current.values()].some(
+        (event) => event.terminalCommitFailure === 'storage'
+      ) ||
+      [...failedWriteTargets.current].some((target) => !sizeLimitTargets.current.has(target))
+    ) {
       setWriteError(SAFE_SESSION_WRITE_ERROR)
       setWriteErrorRetryable(true)
       return
@@ -2372,6 +2344,149 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setWriteError(undefined)
     setWriteErrorRetryable(true)
   }, [])
+  // Main retains the exact failed execution. The global storage alert owns its Retry, while
+  // missing records use the existing Session-local unavailable notice.
+  const refreshTerminalWriteFailures = useCallback(async (): Promise<void> => {
+    const list = window.api.sessions.listRuntimeTerminalFailures
+    if (!list) return
+    const query = ++terminalFailureQuery.current
+    const events = await list()
+    if (!terminalObserverMounted.current || query !== terminalFailureQuery.current) return
+    const previous = terminalWriteFailures.current
+    const next = new Map<string, AcpRuntimeEvent>()
+    const unavailable = translateRef.current('This session was deleted or is unavailable.')
+    for (const event of events) {
+      if (!event.sessionId || !event.terminalScope || !event.promptMessageId) continue
+      next.set(event.terminalScope.executionId, event)
+      if (event.terminalCommitFailure === 'missing-record') {
+        reportWorkspaceOperationError(event.sessionId, unavailable)
+      }
+    }
+    for (const [executionId, event] of previous) {
+      if (
+        next.has(executionId) ||
+        event.terminalCommitFailure !== 'missing-record' ||
+        !event.sessionId
+      )
+        continue
+      if (useWorkspaceOperationErrors.getState().errors[event.sessionId] === unavailable) {
+        clearWorkspaceOperationError(event.sessionId)
+      }
+    }
+    terminalWriteFailures.current = next
+    presentOutstandingWriteFailures()
+    // Exhaustion deliberately has no durable Session write notification. Fetch Main's live
+    // interrupted overlay so the renderer releases the run while raw disk still says running.
+    const authorities = await Promise.all(
+      [...next.values()]
+        .filter(
+          (event) =>
+            ['storage', 'missing-record'].includes(event.terminalCommitFailure ?? '') &&
+            Boolean(event.sessionId && event.terminalScope)
+        )
+        .map(async (event) => {
+          const authority = await loadPersistedSession({
+            projectId: event.terminalScope!.projectId,
+            sessionId: event.sessionId!
+          })
+          return { event, authority }
+        })
+    )
+    if (!terminalObserverMounted.current || query !== terminalFailureQuery.current) return
+    for (const { event, authority } of authorities) {
+      const source = useSessionStore.getState().sessions.find(({ id }) => id === event.sessionId)
+      const scope = event.terminalScope!
+      if (
+        !source ||
+        source.projectId !== scope.projectId ||
+        source.activeRun?.promptMessageId !== event.promptMessageId ||
+        source.activeRun?.startedAt !== scope.startedAt
+      )
+        continue
+      // Ordinary sends have no renderer-only Resume segment alias. Match Main's admission
+      // instead, and never let an old failed execution release a newer attempt on this prompt.
+      const admission = (
+        source.runtimeSessionAdmissions ?? authority?.runtimeSessionAdmissions
+      )?.findLast((candidate) => candidate.promptMessageId === event.promptMessageId)
+      if (
+        admission
+          ? admission.executionId !== scope.executionId ||
+            admission.agentFrameId !== scope.agentFrameId ||
+            admission.messageBranchId !== scope.messageBranchId ||
+            admission.runtimeSegmentId !== scope.runtimeSegmentId
+          : event.terminalCommitFailure !== 'missing-record'
+      )
+        continue
+      if (!authority) {
+        // Missing Session record (`missing-record`): Main has lost the durable Session record.
+        // Release the local composer gate so the existing unavailable-session Operation Error
+        // can be acted on; no outcome is synthesized.
+        const messageIds = new Set(source.messages.map(({ id }) => id))
+        useSessionStore.setState((state) => ({
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === source.id
+              ? {
+                  ...candidate,
+                  recordProblems: [
+                    ...new Set([...(candidate.recordProblems ?? []), 'missing-record' as const])
+                  ],
+                  status: 'idle',
+                  activeRun: undefined,
+                  activeRunRuntimeSegmentId: undefined,
+                  agentStatus: undefined,
+                  awaitingFirstAgentOutput: undefined,
+                  agentPromptInFlight: undefined,
+                  compacting: undefined,
+                  interactionState: undefined,
+                  updatedAt: Date.now()
+                }
+              : candidate
+          ),
+          streamingMessages: Object.fromEntries(
+            Object.entries(state.streamingMessages).filter(
+              ([messageId]) => !messageIds.has(messageId)
+            )
+          )
+        }))
+        continue
+      }
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: authority,
+        mode: 'runtime-transcript-authority'
+      })
+    }
+  }, [presentOutstandingWriteFailures])
+  useEffect(() => {
+    let mounted = true
+    terminalObserverMounted.current = true
+    const seen = new Set<string>()
+    const observe = (events: readonly AcpRuntimeEvent[]): void => {
+      if (!mounted) return
+      const changed = events.some((event) => {
+        // Fork/export and other windows can retry the retained result too. Re-read Main's
+        // failure registry after its committed terminal publication, never infer success locally.
+        const committedTerminal =
+          event.publicationOwner === 'main' &&
+          (event.kind === 'stop' || event.kind === 'error') &&
+          event.terminalScope !== undefined
+        if ((!event.terminalCommitFailure && !committedTerminal) || seen.has(event.id)) return false
+        seen.add(event.id)
+        return true
+      })
+      if (changed) void refreshTerminalWriteFailures().catch(reportPersistenceError)
+    }
+    void refreshTerminalWriteFailures().catch(reportPersistenceError)
+    const removeEvent = window.api.acp?.onEvent?.(observe)
+    const removeState = window.api.acp?.onState?.((snapshot) => observe(snapshot.events ?? []))
+    return () => {
+      mounted = false
+      terminalObserverMounted.current = false
+      terminalFailureQuery.current += 1
+      removeEvent?.()
+      removeState?.()
+    }
+  }, [refreshTerminalWriteFailures])
   const reportSessionSizeLimit = useCallback(
     (sessionId: string): void => {
       const target = `session:${sessionId}`
@@ -2421,6 +2536,31 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
   const retryWrites = useCallback(() => {
+    const terminalFailures = [...terminalWriteFailures.current.values()]
+    if (terminalFailures.some((event) => event.terminalCommitFailure === 'storage')) {
+      void (async () => {
+        for (const event of terminalFailures) {
+          if (
+            event.terminalCommitFailure !== 'storage' ||
+            !event.terminalScope ||
+            !event.sessionId ||
+            !event.promptMessageId
+          )
+            continue
+          try {
+            await window.api.sessions.retryRuntimeTerminalCommit({
+              projectId: event.terminalScope.projectId,
+              sessionId: event.sessionId,
+              promptMessageId: event.promptMessageId,
+              executionId: event.terminalScope.executionId
+            })
+          } catch (error) {
+            reportPersistenceError(error)
+          }
+        }
+        await refreshTerminalWriteFailures()
+      })().catch(reportPersistenceError)
+    }
     if (revisionConflictTargets.current.size > 0) {
       retryLoad()
       return
@@ -2453,7 +2593,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       ),
       conflictRebaseFieldsByTarget: new Map(failedConflictRebaseFields.current)
     }).catch(reportPersistenceError)
-  }, [presentOutstandingWriteFailures, retryLoad])
+  }, [presentOutstandingWriteFailures, refreshTerminalWriteFailures, retryLoad])
 
   useEffect(() => {
     let isMounted = true
@@ -2539,15 +2679,6 @@ const useSessionPersistence = (): SessionPersistenceState => {
         return
       }
 
-      let hasStartedPendingArtifactReconciliation = false
-      const startPendingArtifactReconciliation = (): void => {
-        if (hasStartedPendingArtifactReconciliation) return
-        hasStartedPendingArtifactReconciliation = true
-        // Runs after the saver subscribes so finalized references are persisted. A failed startup
-        // manifest write defers this until that retry succeeds and persistence becomes ready.
-        void reconcilePendingArtifacts(window.api.artifacts)
-      }
-
       // Snapshot the hydrated state as the diff baseline so hydration itself is not re-saved.
       const save = createStoreSaver(
         window.api.sessions,
@@ -2623,7 +2754,6 @@ const useSessionPersistence = (): SessionPersistenceState => {
             if (target === 'manifest' && retryManifestWritePending.current) {
               retryManifestWritePending.current = false
               setIsReady(true)
-              startPendingArtifactReconciliation()
             }
             if (removedFailedTarget) presentOutstandingWriteFailures()
           }
@@ -2763,7 +2893,6 @@ const useSessionPersistence = (): SessionPersistenceState => {
       setIsLoading(false)
       if (retryManifestWritePending.current) return
       setIsReady(true)
-      startPendingArtifactReconciliation()
     }
 
     void startPersistence()
@@ -2805,7 +2934,6 @@ export {
   hydratePersistedSessionIfPresent,
   loadPersistedSession,
   loadPersistedSessions,
-  reconcilePendingArtifacts,
   retryPendingArtifactFinalization,
   resetSessionPersistenceWriteFailuresForTests,
   deriveSessionCatalogRecovery,

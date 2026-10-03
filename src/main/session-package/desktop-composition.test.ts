@@ -155,6 +155,22 @@ afterEach(async (): Promise<void> => {
 })
 
 describe('Session package desktop composition baseline', () => {
+  it.each(['export', 'fork'] as const)(
+    'does not publish %s when terminal preflight rejects persistence reservation',
+    async (kind) => {
+      persistence.reserveSessionExport.mockRejectedValueOnce(
+        new Error('retained terminal write failed')
+      )
+      const fork = vi.fn<SessionPackageService['fork']>()
+      Object.assign(service, { fork })
+      await expect(desktop[kind](identity)).rejects.toThrow()
+      expect(service.exportTo).not.toHaveBeenCalled()
+      expect(fork).not.toHaveBeenCalled()
+      expect(releasePersistence).not.toHaveBeenCalled()
+      expect(releaseExport).not.toHaveBeenCalled()
+    }
+  )
+
   it('reads handoff, migration-copy and migration-pending gates after construction', async (): Promise<void> => {
     for (const gate of ['handoff', 'migration-copy', 'migration-pending']) {
       vi.clearAllMocks()

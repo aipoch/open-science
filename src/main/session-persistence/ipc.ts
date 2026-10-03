@@ -1,4 +1,5 @@
 import type { RuntimeWriterOwner } from './runtime-writer'
+import type { AcpRuntimeEvent } from '../../shared/acp'
 import { createMessageSearch } from './message-search'
 import type { MessageSearchRequest, MessageSearchPage } from '../../shared/message-search'
 import { ipcMainHandle } from '../ipc-handler-registry'
@@ -6,6 +7,7 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 import type { ApplicationCommandOutcome } from '../../shared/application-command-contract'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import {
+  retryRuntimeTerminalCommitRequestSchema,
   isSessionSizeLimitError,
   isSessionRevisionConflictError,
   SESSION_SIZE_LIMIT_ERROR_CODE,
@@ -17,6 +19,7 @@ import type {
   LoadAllSessionsResult,
   ListSessionSummariesResult,
   LoadSessionRequest,
+  RetryRuntimeTerminalCommitRequest,
   OpenSessionRecoveryFolderRequest,
   DelegationPolicy,
   PersistedChatSession,
@@ -26,6 +29,7 @@ import type {
   UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
 import { broadcastLifecycleEvent, getLifecycleClientId } from '../lifecycle-broadcast'
+import { callerLeaseForEvent } from '../caller-lifecycle'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { resolveConfigRoot } from '../storage-root'
 import { SessionRepository } from './repository'
@@ -40,6 +44,8 @@ import { canReconcileSessionAbsences, withProjectDeletionRecoveryStatus } from '
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 
 type SessionPersistenceBackend = {
+  listRuntimeTerminalFailures?: () => AcpRuntimeEvent[]
+  retryRuntimeTerminalCommit?: (request: RetryRuntimeTerminalCommitRequest) => Promise<void>
   loadAll: () => Promise<LoadAllSessionsResult>
   list?: () => Promise<ListSessionSummariesResult>
   loadUsage?: () => Promise<SessionUsageProjection>
@@ -60,6 +66,8 @@ type SessionPersistenceBackend = {
 }
 
 type SessionPersistenceHandlers = {
+  listRuntimeTerminalFailures: () => Promise<AcpRuntimeEvent[]>
+  retryRuntimeTerminalCommit: (request: RetryRuntimeTerminalCommitRequest) => Promise<void>
   searchMessages: (request: MessageSearchRequest) => Promise<MessageSearchPage>
   loadAll: () => Promise<LoadAllSessionsResult>
   list: () => Promise<ListSessionSummariesResult>
@@ -178,6 +186,14 @@ const createSessionPersistenceHandlersWithAttributionAuthority = (
   // call it because Reviews belong to retained provenance.
   void reviewRepository
   return {
+    listRuntimeTerminalFailures: async () => repository.listRuntimeTerminalFailures?.() ?? [],
+    retryRuntimeTerminalCommit: async (request) => {
+      if (!repository.retryRuntimeTerminalCommit)
+        throw new Error('Session persistence is unavailable.')
+      await repository.retryRuntimeTerminalCommit(
+        retryRuntimeTerminalCommitRequestSchema.parse(request)
+      )
+    },
     searchMessages: createMessageSearch({
       list: async () => {
         if (!repository.list) throw new Error('Session summary projection is unavailable.')
@@ -351,6 +367,11 @@ const registerSessionPersistenceIpcHandlers = (
   ipcMainHandle('sessions:load-one', (_event, request: LoadSessionRequest) =>
     withDataRootWrite(() => handlers.loadOne(request))
   )
+  ipcMainHandle('sessions:list-runtime-terminal-failures', () =>
+    handlers.listRuntimeTerminalFailures()
+  )
+  // Terminal retries use the standard Application Command adapter, which owns validation,
+  // caller leases and the response envelope. Registering that mutation here would double-install it.
   ipcMainHandle(
     'sessions:save-session',
     async (
@@ -363,9 +384,18 @@ const registerSessionPersistenceIpcHandlers = (
       try {
         const persist = async (): Promise<PersistedChatSession> => {
           const rendererOptions = sanitizeRendererSaveSessionOptions(options, session)
-          const result = rendererOptions
-            ? await handlers.saveSession(session, rendererOptions)
-            : await handlers.saveSession(session)
+          // A preparation receipt lives exactly as long as the renderer that issued it.
+          const preparesPrompt = rendererOptions?.conversationCommands?.some(
+            ({ kind }) => kind === 'prepare-prompt'
+          )
+          const result = preparesPrompt
+            ? await handlers.saveSession(session, rendererOptions, {
+                taskRunCommit: false,
+                callerSignal: callerLeaseForEvent(event).signal
+              })
+            : rendererOptions
+              ? await handlers.saveSession(session, rendererOptions)
+              : await handlers.saveSession(session)
           broadcastLifecycleEvent(
             result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
             {

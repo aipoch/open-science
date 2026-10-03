@@ -1,7 +1,7 @@
 name: Desktop Regression
 
 # Advisory desktop behavior checks. Packaged P0 consumes the immutable ARM64 release artifact while
-# visual regression uses the same macos-14 source-build environment that owns the canonical Darwin
+# visual regression uses the same macos-15 source-build environment that owns the canonical Darwin
 # baselines. Release and Nightly call this reusable workflow inside their existing low-privilege run,
 # so the independent jobs can be retried without a privileged workflow_run checkout boundary.
 on:
@@ -169,12 +169,12 @@ jobs:
           if-no-files-found: ignore
 
   visual:
-    name: visual (canonical macos-14 source build)
+    name: visual (canonical macos-15 source build)
     needs: source
     # An explicit status check allows visual-only runs after source is skipped.
     if: ${{ !cancelled() && inputs.suite != 'p0' && (inputs.suite == 'visual' || needs.source.outputs.available == 'true') }}
     continue-on-error: ${{ inputs.allow_failure == true }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - name: Checkout source revision

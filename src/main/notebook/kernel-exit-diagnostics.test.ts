@@ -29,4 +29,14 @@ describe('kernel exit diagnosis', () => {
     expect(await diagnoseKernelExit({ ...exit, platform: 'linux' }, read)).toBe('unknown')
     expect(read).not.toHaveBeenCalled()
   })
+  it('normalizes the restricted Electron NUL initialization failure', async () => {
+    expect(
+      await diagnoseKernelExit({
+        pid: 42,
+        signal: null,
+        platform: 'win32',
+        stderr: 'Unable to open nul device needed for initialization'
+      })
+    ).toBe('nul-initialization-unavailable')
+  })
 })

@@ -50,6 +50,11 @@ class ClassificationRequestError extends Error {
     super('Classification request failed.')
   }
 }
+const CLASSIFICATION_ENDPOINTS = {
+  typesafe: 'https://api.typesafe.ai/v1/systemone',
+  openrouter: 'https://openrouter.ai/api/alpha/decisions',
+  opencode: 'https://opencode.ai/zen/v1/systemone'
+} satisfies Record<Exclude<Service['adapter'], 'custom'>, string>
 const empty = (): StoredClassificationSettings => ({ revision: 0, services: [] })
 type Service = z.infer<typeof classificationServiceSchema>
 const bindingFor = (state: StoredClassificationSettings): ClassificationBinding | undefined => {
@@ -68,13 +73,14 @@ const credentialsFor = (
   settings: StoredSettings
 ): { keyRef?: string; keyMask?: string } => {
   if (!service.providerId) return { keyRef: service.keyRef, keyMask: service.keyMask }
+  if (service.adapter !== 'openrouter' && service.adapter !== 'opencode') return {}
   const provider = settings.providers.find(
     (item) =>
-      item.id === service.providerId && item.type === 'official' && item.vendorId === 'openrouter'
+      item.id === service.providerId &&
+      item.type === 'official' &&
+      item.vendorId === service.adapter
   )
-  return service.adapter === 'openrouter'
-    ? { keyRef: provider?.keyRef, keyMask: provider?.keyMask }
-    : {}
+  return { keyRef: provider?.keyRef, keyMask: provider?.keyMask }
 }
 const displayKey = (keyRef?: string, keyMask?: string): string | undefined => {
   if (!keyRef) return undefined
@@ -86,6 +92,14 @@ const modelOptionsFor = (service: Service): ReturnType<typeof classificationMode
   classificationModelsForService({ adapter: service.adapter, models: service.models })
 const modelIdsFor = (service: Service): readonly string[] =>
   modelOptionsFor(service).map((model) => model.id)
+const preferredModelIdFor = (service: Service, state: StoredClassificationSettings): string => {
+  const models = modelIdsFor(service)
+  const binding = [bindingFor(state), state.smartCollections].find(
+    (binding) =>
+      binding?.serviceId === service.id && (!binding.modelId || models.includes(binding.modelId))
+  )
+  return binding?.modelId ?? models[0]
+}
 const view = (settings: StoredSettings): ClassificationSnapshot => {
   const state = settings.classification ?? empty()
   const binding = bindingFor(state)
@@ -103,6 +117,7 @@ const view = (settings: StoredSettings): ClassificationSnapshot => {
         ...(service.adapter === 'custom'
           ? { baseUrl: service.baseUrl, modelId: service.models[0] }
           : {}),
+        ...(service.adapter === 'opencode' ? { modelId: modelIdsFor(service)[0] } : {}),
         providerId: service.providerId,
         configured:
           Boolean(keyRef) ||
@@ -124,11 +139,14 @@ const view = (settings: StoredSettings): ClassificationSnapshot => {
     availableProviders: settings.providers
       .filter(
         (provider) =>
-          provider.type === 'official' && provider.vendorId === 'openrouter' && provider.keyRef
+          provider.type === 'official' &&
+          (provider.vendorId === 'openrouter' || provider.vendorId === 'opencode') &&
+          provider.keyRef
       )
-      .map(({ id, name, keyRef, keyMask }) => ({
+      .map(({ id, name, vendorId, keyRef, keyMask }) => ({
         id,
         name,
+        vendorId: vendorId as 'openrouter' | 'opencode',
         maskedKey: displayKey(keyRef, keyMask)
       }))
   }
@@ -169,16 +187,23 @@ export class ClassificationSettingsOwner {
         throw new Error('Custom classification endpoint is invalid.')
       if (!update.modelId) throw new Error('A classification model is required.')
     }
+    if (
+      update.kind === 'save' &&
+      update.adapter === 'opencode' &&
+      update.modelId &&
+      !CLASSIFICATION_MODELS.opencode.some((model) => model.id === update.modelId)
+    )
+      throw new Error('Classification model is unavailable.')
     if (update.kind === 'save' && update.providerId) {
       const provider = settings.providers.find((item) => item.id === update.providerId)
       if (
-        update.adapter !== 'openrouter' ||
+        (update.adapter !== 'openrouter' && update.adapter !== 'opencode') ||
         update.apiKey ||
         provider?.type !== 'official' ||
-        provider.vendorId !== 'openrouter' ||
+        provider.vendorId !== update.adapter ||
         !provider.keyRef
       )
-        throw new Error('OpenRouter account is unavailable.')
+        throw new Error('Classification provider account is unavailable.')
     }
     let draft: Service | undefined
     let validatedCredential: string | undefined
@@ -202,7 +227,15 @@ export class ClassificationSettingsOwner {
         models:
           update.adapter === 'custom'
             ? [update.modelId!]
-            : CLASSIFICATION_MODELS[update.adapter].map((model) => model.id),
+            : classificationModelsForService({
+                adapter: update.adapter,
+                modelId:
+                  update.modelId ??
+                  (update.adapter === 'opencode' && previous?.adapter === update.adapter
+                    ? preferredModelIdFor(previous, original)
+                    : undefined),
+                models: previous?.adapter === update.adapter ? previous.models : undefined
+              }).map((model) => model.id),
         ...(update.adapter === 'custom' ? { baseUrl: update.baseUrl } : {}),
         providerId: update.providerId,
         keyRef,
@@ -215,11 +248,8 @@ export class ClassificationSettingsOwner {
               : undefined
       }
       validatedCredential = credentialsFor(draft, settings).keyRef
-      const binding = bindingFor(original)
       const modelId =
-        binding?.serviceId === draft.id
-          ? (binding.modelId ?? modelIdsFor(draft)[0])
-          : modelIdsFor(draft)[0]
+        draft.adapter === 'opencode' ? modelIdsFor(draft)[0] : preferredModelIdFor(draft, original)
       const validation = await this.validate(draft, modelId, original.revision, 'save-validation')
       if (!validation.ok) return { ...(await this.snapshot()), validation }
     }
@@ -302,9 +332,7 @@ export class ClassificationSettingsOwner {
     if (!target) return { ok: false }
     const validation = await this.validate(
       target,
-      bindingFor(state)?.serviceId === target.id
-        ? (bindingFor(state)?.modelId ?? modelIdsFor(target)[0])
-        : modelIdsFor(target)[0],
+      preferredModelIdFor(target, state),
       state.revision,
       'probe'
     )
@@ -811,9 +839,7 @@ export class ClassificationSettingsOwner {
             this.fetchImpl,
             target.adapter === 'custom'
               ? target.baseUrl!
-              : target.adapter === 'openrouter'
-                ? 'https://openrouter.ai/api/alpha/decisions'
-                : 'https://api.typesafe.ai/v1/systemone',
+              : CLASSIFICATION_ENDPOINTS[target.adapter],
             {
               method: 'POST',
               headers,

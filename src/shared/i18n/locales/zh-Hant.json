@@ -133,7 +133,9 @@
     "More items": "更多會話"
   },
   "renderer": {
-
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "取得 GEO 系列的中繼資料、樣本與補充檔案連結。",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "尋找 GEO Series Matrix 與 NCBI RNA-seq 計數檔案的連結，以便手動下載。",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "在分析前檢查解壓縮後的 GEO 矩陣結構、維度與樣本對應關係。",
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "來自 Cellosaurus 的細胞系身分、來源、疾病、品質紀錄和資料庫對應。",
     "Search cell lines by name or synonym.": "依名稱或別名搜尋細胞系。",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "透過 CVCL 或 RRID 取得細胞系身分、來源、品質紀錄和資料庫對應。",
@@ -5991,6 +5993,7 @@
     "Use a new API key": "使用新的 API 金鑰",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "移除此服務會保留共用的帳戶和金鑰。技能和連接器將恢復預設選擇方式。",
     "OpenRouter": "OpenRouter",
+    "OpenCode Zen": "OpenCode Zen",
     "Add to Specialist": "新增至專家",
     "Always enabled": "一律啟用",
     "Changes saved.": "變更已儲存。",
@@ -6823,6 +6826,13 @@
     "Folder access was updated. Run the command again when you are ready.": "資料夾存取權限已更新。準備好後，請手動重新執行命令。",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "此資料夾權限適用於各個工作階段，直到您在「檔案」中撤銷。命令不會自動執行。",
     "Drop files to attach or import a .science package": "拖放檔案以新增附件，或匯入 .science 研究套件",
-    "Files cannot be attached right now.": "目前無法新增附件。"
+    "Files cannot be attached right now.": "目前無法新增附件。",
+    "This turn was interrupted. Resume to continue.": "此輪操作已中斷。恢復以繼續。",
+    "Connection lost — Resume to reconnect and continue.": "連線已中斷 — 恢復以重新連線並繼續。",
+    "Session was interrupted before the app closed.": "應用程式關閉前，工作階段已中斷。",
+    "The run failed with no error message.": "執行失敗，未提供錯誤訊息。",
+    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "未傳送的訊息無法還原（{{failure}}）。請重新傳送，或停止執行後再試。",
+    "The unsent Session could not be removed ({{failure}}).": "未傳送的工作階段無法移除（{{failure}}）。",
+    "Agent Session cleanup did not complete.": "智能體工作階段清理未完成。"
   }
 }

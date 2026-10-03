@@ -235,10 +235,14 @@ const OPEN_DIALOG_SELECTOR =
 const getPresentedSessionStatus = (
   session: ChatSession,
   credentialPendingSessionIds: ReadonlySet<string>
-): SessionStatus =>
-  projectPresentedSessionActionability(session, {
+): SessionStatus => {
+  const projection = projectPresentedSessionActionability(session, {
     credentialPending: credentialPendingSessionIds.has(session.id)
-  }).presentedStatus
+  })
+  return projection.activity === 'inactive' && projection.attention
+    ? 'error'
+    : projection.presentedStatus
+}
 
 const isLiveSession = (
   session: ChatSession,

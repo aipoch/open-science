@@ -1,7 +1,19 @@
+import {
+  attemptWorkspacePromptRollback,
+  describeWorkspacePromptRollbackFailure,
+  hasPendingWorkspacePromptRollback,
+  prepareWorkspacePrompt,
+  retryPendingWorkspacePromptRollback,
+  type WorkspacePromptPreparation
+} from './workspace-prompt-preparation'
+import {
+  clearWorkspaceOperationError,
+  reportWorkspaceOperationError
+} from './workspace-operation-error'
 import { useCallback, useRef, useState } from 'react'
 
 import type { AcpSaveAsSkillRequest } from '../../../../shared/acp'
-import { useSessionStore } from '../../stores/session-store'
+import { toPersistedSession, useSessionStore } from '../../stores/session-store'
 import { flushSessionPersistence } from '../session-persistence/session-persistence'
 import type { useAcpRuntime } from './useAcpRuntime'
 import { prepareExistingWorkspacePrompt } from './workspace-runtime-prompt-preparation-owner'
@@ -32,9 +44,26 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
     async (request: Omit<AcpSaveAsSkillRequest, 'promptMessageId'>): Promise<void> => {
       if (inFlightRef.current.has(request.sessionId)) return
       inFlightRef.current.add(request.sessionId)
+      clearWorkspaceOperationError(request.sessionId)
       setSaveAsSkillInFlightSessionIds((current) => [...current, request.sessionId])
+      let preparation: WorkspacePromptPreparation | undefined
       let controlMessageId: string | undefined
+      // The user withdrew this command; only a failed rollback needs to be surfaced.
+      const abandonPreparation = async (abandoned: WorkspacePromptPreparation): Promise<void> => {
+        const { failure } = await attemptWorkspacePromptRollback(abandoned)
+        if (failure !== undefined) {
+          reportWorkspaceOperationError(
+            request.sessionId,
+            describeWorkspacePromptRollbackFailure(undefined, failure)
+          )
+        }
+      }
       try {
+        if (hasPendingWorkspacePromptRollback(request.sessionId)) {
+          // A failed earlier rollback still owns the Session in Main and in the renderer.
+          const { failure } = await retryPendingWorkspacePromptRollback(request.sessionId)
+          if (failure !== undefined) throw new Error(failure)
+        }
         const initialSession = useSessionStore
           .getState()
           .sessions.find((candidate) => candidate.id === request.sessionId)
@@ -116,8 +145,22 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         ) {
           throw new Error('Save as skill Runtime Segment could not be created.')
         }
+        const preparedMessageId = `skill-control-${crypto.randomUUID()}`
+        preparation = await prepareWorkspacePrompt(
+          toPersistedSession(
+            useSessionStore.getState().sessions.find(({ id }) => id === session.id) ?? session
+          ),
+          preparedMessageId,
+          'new'
+        )
+        if (!isCurrent()) {
+          await abandonPreparation(preparation)
+          return
+        }
         const controlMessage = useSessionStore.getState().appendUserMessage({
           sessionId: session.id,
+          messageId: preparedMessageId,
+          preparationId: preparation.id,
           content: 'Save as skill',
           turnIntent: 'save-as-skill',
           agentModel: selected.agentModel
@@ -125,7 +168,10 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         if (!controlMessage) throw new Error('Save as skill control message could not be created.')
         controlMessageId = controlMessage.messageId
         await flushSessionPersistence()
-        if (!isCurrent()) return
+        if (!isCurrent()) {
+          await abandonPreparation(preparation)
+          return
+        }
         await window.api.acp.saveAsSkill({
           ...request,
           ...(selected.supportsImageRelay ? { supportsImageRelay: true } : {}),
@@ -136,19 +182,16 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           useSessionStore.getState().clearPendingHistoryReplay(session.id, { kind: 'all' })
         }
       } catch (error) {
-        const current = useSessionStore
-          .getState()
-          .sessions.find((candidate) => candidate.id === request.sessionId)
-        if (controlMessageId && current?.activeRun?.promptMessageId === controlMessageId) {
-          useSessionStore
-            .getState()
-            .interruptRun(
-              request.sessionId,
-              'connection-lost',
-              error instanceof Error ? error.message : String(error),
-              controlMessageId
-            )
-        }
+        const message = error instanceof Error ? error.message : String(error)
+        const rollbackFailure = preparation
+          ? (await attemptWorkspacePromptRollback(preparation)).failure
+          : undefined
+        reportWorkspaceOperationError(
+          request.sessionId,
+          rollbackFailure === undefined
+            ? message
+            : describeWorkspacePromptRollbackFailure(message, rollbackFailure)
+        )
         throw error
       } finally {
         inFlightRef.current.delete(request.sessionId)

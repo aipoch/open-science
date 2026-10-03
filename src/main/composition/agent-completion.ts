@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import type { AcpSessionAgentTarget } from '../../shared/acp'
 import { SPECIALIST_IPC } from '../../shared/specialist'
+import { withApprovedHandoffOutcome } from '../acp/approved-handoff-outcome'
 import { ArtifactCodeReconstructionRunner } from '../acp/artifact-code-reconstruction-runner'
 import { createCodexCompletionGateRuntime } from '../acp/codex-completion-handoff'
 import { createAcpCreateSessionWorkflow } from '../acp/create-session-workflow'
@@ -11,7 +12,7 @@ import { createAcpRuntime } from '../acp/runtime-composition'
 import { type SessionAgentTargetResolver } from '../acp/session-agent-target'
 import { createAcpTaskAgentPort } from '../acp/task-agent-port'
 import { createProductionAppHandoffRuntime } from '../agents/app-handoff-runtime'
-import { registerClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
+import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
 import {
   CompletionGateCoordinator,
   CompletionGateRuntimeRegistry,
@@ -37,6 +38,7 @@ import { type SessionAuxiliaryTurnUsageRecord } from '../session-persistence/aux
 import { createPersistedClaudeReplayPreparer } from '../session-persistence/claude-replay'
 import type { SessionPersistenceCommands } from '../session-persistence/coordinator'
 import { createDefaultSessionRepository } from '../session-persistence/ipc'
+import { clearUnanchoredAttachmentRecovery } from '../session-persistence/runtime-attachment-recovery'
 import { SettingsService } from '../settings/service'
 import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
 import { SpecialistService } from '../specialist/service'
@@ -132,7 +134,7 @@ export async function composeAgentWorkflows({
   permissionGrantRegistry: Awaited<ReturnType<typeof createPermissionGrantRegistry>>
   sessionPersistenceCoordinator: Pick<
     SessionPersistenceCommands,
-    'prepareRuntimeResume' | 'sessionProjectId'
+    'prepareRuntimeResume' | 'sessionProjectId' | 'mutateRuntimeSession'
   >
   archiveCoordinator: ArchiveCoordinator
   specialistService: SpecialistService
@@ -208,7 +210,15 @@ export async function composeAgentWorkflows({
     {
       loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
       prepareRuntimeResume: (projectId, sessionId) =>
-        sessionPersistenceCoordinator.prepareRuntimeResume(projectId, sessionId)
+        sessionPersistenceCoordinator.prepareRuntimeResume(projectId, sessionId),
+      completeRuntimeAttachment: async (projectId, sessionId) => {
+        const current = await sessionRepository.loadSession(projectId, sessionId)
+        if (!current || clearUnanchoredAttachmentRecovery(current) === current) return
+        await sessionPersistenceCoordinator.mutateRuntimeSession(
+          { projectId, sessionId },
+          clearUnanchoredAttachmentRecovery
+        )
+      }
     },
     (sessionId) => {
       if (sideChatRuntime.hasForParent(sessionId)) {
@@ -225,15 +235,21 @@ export async function composeAgentWorkflows({
     resolveDefaultSessionAgentTarget
   )
   {
+    const registerHandoff = (adapter: Parameters<typeof withApprovedHandoffOutcome>[1]): void => {
+      completionGateRuntimeRegistry.register(withApprovedHandoffOutcome(runtime, adapter))
+    }
     // Framework-specific adapters declare their own session selector. The registry resolves those
     // selectors before its generic fallback, so registration order cannot route a Codex/OpenCode
     // completion through the wrong continuation path.
-    completionGateRuntimeRegistry.register(
+    registerHandoff(
       createCodexCompletionGateRuntime({
         runtime: {
           isSessionUsingFramework: (sessionId, frameworkId) =>
             runtime.isSessionUsingFramework(sessionId, frameworkId),
-          cancelPrompt: (request) => runtime.cancelPrompt(request),
+          cancelPrompt: async (request) => {
+            await runtime.stopPromptForHandoff(request.sessionId)
+            return runtime.getState()
+          },
           waitForPromptRelease: (sessionId) => runtime.waitForPromptRelease(sessionId),
           switchSpecialist: (sessionId, specialistId) =>
             sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
@@ -243,12 +259,15 @@ export async function composeAgentWorkflows({
         resolveApprovedSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId)
       })
     )
-    completionGateRuntimeRegistry.register(
+    registerHandoff(
       createOpenCodeImmediateHandoffRuntime({
         runtime: {
           getSessionFramework: (sessionId) => runtime.getSessionFramework(sessionId),
           capturePromptForHandoff: (sessionId) => runtime.capturePromptForHandoff(sessionId),
-          cancelPrompt: (request) => runtime.cancelPrompt(request),
+          cancelPrompt: async (request) => {
+            await runtime.stopPromptForHandoff(request.sessionId)
+            return runtime.getState()
+          },
           waitForPromptOwnershipRelease: (sessionId) =>
             runtime.waitForPromptOwnershipRelease(sessionId),
           switchSpecialist: (sessionId, specialistId) =>
@@ -256,14 +275,16 @@ export async function composeAgentWorkflows({
           startContinuation: (request) => runtime.startContinuation(request)
         },
         resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
-        reportHandoffFailure: async (failure) =>
-          runtime.reportApprovedHandoffFailure(failure.sessionId)
+        reportHandoffFailure: async () => undefined
       })
     )
-    completionGateRuntimeRegistry.register(
+    registerHandoff(
       createProductionAppHandoffRuntime({
         runtime: {
-          cancelPrompt: (request) => runtime.cancelPrompt(request),
+          cancelPrompt: async (request) => {
+            await runtime.stopPromptForHandoff(request.sessionId)
+            return runtime.getState()
+          },
           waitForPromptOwnershipRelease: (sessionId) =>
             runtime.waitForPromptOwnershipRelease(sessionId),
           switchSpecialist: (sessionId, specialistId) =>
@@ -276,41 +297,48 @@ export async function composeAgentWorkflows({
   }
   // Claude's Specialist identity is baked into agent session creation. Its selector joins the Codex
   // and OpenCode selectors above; the generic runtime remains fallback-only.
-  registerClaudeCodeCompletionGateRuntime(completionGateRuntimeRegistry, {
-    sessionFramework: (sessionId) => runtime.getSessionFramework(sessionId),
-    cancelPrompt: (request) => runtime.cancelPrompt(request),
-    waitForPromptOwnershipRelease: (sessionId) => runtime.waitForPromptOwnershipRelease(sessionId),
-    resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
-    resolveSwitchReadBack: async (sessionId, targetName) => {
-      const specialistId = sessionBindingService.getBinding(sessionId)
-      const revision = specialistId
-        ? (await specialistService.resolveRunnableById(specialistId)).revision
-        : undefined
-      return {
-        status: 'approved',
-        operation: 'switch',
-        binding: {
-          sessionId,
-          specialistId,
-          targetName,
-          ...(revision === undefined ? {} : { revision })
-        }
-      }
-    },
-    prepareReplayContext: createPersistedClaudeReplayPreparer({
-      repository: sessionRepository,
-      coordinator: sessionPersistenceCoordinator,
-      prepareReplay: (input) => runtime.prepareClaudeCodeHandoffReplay(input)
-    }),
-    discardReplayContext: async (sessionId) => runtime.discardClaudeCodeHandoffReplay(sessionId),
-    switchSpecialist: (sessionId, specialistId) =>
-      sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
-    createContinuationRequest: (input) => runtime.createClaudeCodeContinuationRequest(input),
-    sendAppContinuation: (request) => runtime.sendAppContinuation(request),
-    reportHandoffFailure: async (_error, _handoff, context) => {
-      runtime.reportApprovedHandoffFailure(context.sessionId)
-    }
-  })
+  completionGateRuntimeRegistry.register(
+    withApprovedHandoffOutcome(
+      runtime,
+      createClaudeCodeCompletionGateRuntime({
+        sessionFramework: (sessionId) => runtime.getSessionFramework(sessionId),
+        cancelPrompt: async (request) => {
+          await runtime.stopPromptForHandoff(request.sessionId)
+          return runtime.getState()
+        },
+        waitForPromptOwnershipRelease: (sessionId) =>
+          runtime.waitForPromptOwnershipRelease(sessionId),
+        resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
+        resolveSwitchReadBack: async (sessionId, targetName) => {
+          const specialistId = sessionBindingService.getBinding(sessionId)
+          const revision = specialistId
+            ? (await specialistService.resolveRunnableById(specialistId)).revision
+            : undefined
+          return {
+            status: 'approved',
+            operation: 'switch',
+            binding: {
+              sessionId,
+              specialistId,
+              targetName,
+              ...(revision === undefined ? {} : { revision })
+            }
+          }
+        },
+        prepareReplayContext: createPersistedClaudeReplayPreparer({
+          repository: sessionRepository,
+          coordinator: sessionPersistenceCoordinator,
+          prepareReplay: (input) => runtime.prepareClaudeCodeHandoffReplay(input)
+        }),
+        discardReplayContext: async (sessionId) =>
+          runtime.discardClaudeCodeHandoffReplay(sessionId),
+        switchSpecialist: (sessionId, specialistId) =>
+          sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
+        createContinuationRequest: (input) => runtime.createClaudeCodeContinuationRequest(input),
+        sendAppContinuation: (request) => runtime.sendAppContinuation(request)
+      })
+    )
+  )
   void completionHandoffLifecycle.recover().catch((error: unknown) => {
     createLogger('completion-handoff').error(
       'failed to recover approved handoffs',

@@ -10,7 +10,8 @@ import type {
 } from '../../../../shared/acp'
 import {
   materializeSessionConversationGraph,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type SaveSessionOptions
 } from '../../../../shared/session-persistence'
 import {
   acknowledgeSessionConversationCommands,
@@ -18,11 +19,14 @@ import {
   resetSessionConversationIntentsForTests
 } from '../../stores/session-conversation-intents'
 import { toPersistedSession, useSessionStore, type ChatSession } from '../../stores/session-store'
+import { resetWorkspacePromptRollbacksForTests } from './workspace-prompt-preparation'
+import { useWorkspaceOperationErrors } from './workspace-operation-error'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
+import { sendWorkspaceMessage } from './workspace-runtime-command-owner'
 
 // Exercise the renderer intent boundary and Main admission against the same durable authority.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-const harness = (contextReset = false) => {
+const harness = (contextReset = false, withRoutedMessages = false) => {
   let durable: PersistedChatSession = materializeSessionConversationGraph({
     id: 'session-1',
     projectId: 'project-1',
@@ -43,7 +47,19 @@ const harness = (contextReset = false) => {
         eventIds: [],
         createdAt: 1,
         updatedAt: 1
-      }
+      },
+      ...(withRoutedMessages
+        ? ['steering-1', 'steering-2'].map((id, index) => ({
+            id,
+            role: 'user' as const,
+            content: 'Additional instruction',
+            responseToMessageId: 'prompt-1',
+            status: 'complete' as const,
+            eventIds: [],
+            createdAt: 2 + index,
+            updatedAt: 2 + index
+          }))
+        : [])
     ],
     createdAt: 1,
     updatedAt: 2
@@ -71,6 +87,15 @@ const harness = (contextReset = false) => {
     notifyRuntimeContextSessionUpdated: vi.fn(),
     notifyRuntimeTranscriptSessionUpdated: vi.fn(),
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+  })
+  vi.stubGlobal('window', {
+    api: {
+      sessions: {
+        saveSession: (session: PersistedChatSession, options?: SaveSessionOptions) =>
+          persistence.saveSession(session, options),
+        loadOne: async () => structuredClone(durable)
+      }
+    }
   })
   const admission = new RuntimeSessionOwner({
     loadSession: async () => structuredClone(durable),
@@ -154,14 +179,96 @@ const harness = (contextReset = false) => {
     flush,
     saveSession,
     receiveSaveResponse,
+    admission,
     resume: (drain = async (): Promise<void> => {}) =>
       owner.resume(runtime as never, 'session-1', drain, { flushPersistence: flush })
   }
 }
 
 describe('interrupted workspace recovery across renderer and Main authority', () => {
-  beforeEach(() => resetSessionConversationIntentsForTests())
-  afterEach(() => vi.restoreAllMocks())
+  beforeEach(() => {
+    resetWorkspacePromptRollbacksForTests()
+    resetSessionConversationIntentsForTests()
+    useWorkspaceOperationErrors.setState({ errors: {} })
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it.each([false, true])(
+    'resumes the owning prompt after routed replies with contextReset=%s',
+    async (contextReset) => {
+      const h = harness(contextReset, true)
+      await h.resume()
+      expect(h.continuation).toHaveBeenCalledOnce()
+      expect(h.providerDispatch).toHaveBeenCalledOnce()
+      expect(h.providerDispatch.mock.calls[0][0].provenanceContext?.promptMessageId).toBe(
+        'prompt-1'
+      )
+      expect(
+        h
+          .durable()
+          .messages.filter(({ role }) => role === 'user')
+          .map(({ id }) => id)
+      ).toEqual(['prompt-1', 'steering-1', 'steering-2'])
+      expect(h.durable().activeRun?.promptMessageId).toBe('prompt-1')
+      expect(h.durable().promptPreparation).toBeUndefined()
+    }
+  )
+
+  it('releases an abandoned Resume preparation before the next stable submission', async () => {
+    const h = harness()
+    const originalSave = window.api.sessions.saveSession
+    let editedBranchId: string | undefined
+    window.api.sessions.saveSession = async (session, options) => {
+      const saved = await originalSave(session, options)
+      if (options?.conversationCommands?.some((command) => command.kind === 'prepare-prompt')) {
+        useSessionStore.getState().truncateSessionFromMessage('session-1', 'prompt-1')
+        const graph = useSessionStore.getState().sessions[0].conversationGraph!
+        editedBranchId = graph.frames.find(({ id }) => id === graph.activeFrameId)!.activeBranchId
+        window.api.sessions.saveSession = originalSave
+      }
+      return saved
+    }
+
+    await h.resume()
+    expect(h.continuation).not.toHaveBeenCalled()
+    h.runtime.state.sessionIds = ['session-1']
+    h.runtime.sendPrompt.mockImplementationOnce(async (...args: unknown[]) => {
+      const provenance = args[9] as NonNullable<AcpPromptRequest['provenanceContext']>
+      await h.admission.begin({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        promptMessageId: provenance.promptMessageId,
+        agentFrameId: provenance.agentFrameId!,
+        messageBranchId: provenance.messageBranchId!,
+        runtimeSegmentId: provenance.runtimeSegmentId!,
+        executionId: 'next-execution'
+      })
+    })
+    // Application-owned stable submissions do not rely on an unrelated metadata preflush.
+    const submitted = await sendWorkspaceMessage(
+      h.runtime as never,
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        messageId: 'next-prompt',
+        text: 'Revised research question'
+      },
+      { flushPersistence: h.flush, awaitPromptAdmission: true }
+    )
+    expect(submitted).toEqual({ sessionId: 'session-1', messageId: 'next-prompt' })
+    expect(h.runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(h.durable().activeRun?.promptMessageId).toBe('next-prompt')
+    expect(h.durable().promptPreparation).toBeUndefined()
+    const graph = h.durable().conversationGraph!
+    expect(graph.frames.find(({ id }) => id === graph.activeFrameId)!.activeBranchId).toBe(
+      editedBranchId
+    )
+    expect(graph.messages.some(({ id }) => id === 'prompt-1')).toBe(true)
+    expect(h.durable().messages.map(({ id }) => id)).toEqual(['next-prompt'])
+  })
 
   it.each(['attach', 'drain', 'attached'] as const)(
     'recovers the prompt restored after a stale metadata acknowledgement during %s',
@@ -253,7 +360,7 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     }
   )
 
-  it('retains attachment-only recovery when no prompt marker exists before or after attachment', async () => {
+  it('preserves Main outcome when attachment has no recovery marker', async () => {
     const h = harness(true)
     delete h.durable().resumeRecovery
     useSessionStore.setState({
@@ -262,7 +369,7 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     await h.resume()
     expect(h.runtime.resumeSession).toHaveBeenCalledOnce()
     expect(h.continuation).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+    expect(useSessionStore.getState().sessions[0].status).toBe('error')
   })
 
   it('coalesces concurrent recovery requests until dispatch settles', async () => {
@@ -328,9 +435,7 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     expect(h.providerDispatch).not.toHaveBeenCalled()
     expect(h.continuation).not.toHaveBeenCalled()
     expect(h.durable().activeRun).toBeUndefined()
-    expect(
-      pendingSessionConversationCommands('session-1').some(({ kind }) => kind === 'resume-run')
-    ).toBe(true)
+    expect(pendingSessionConversationCommands('session-1')).toEqual([])
     expect(useSessionStore.getState().sessions[0].resumeRecovery?.promptMessageId).toBe('prompt-1')
     await h.resume()
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
@@ -342,16 +447,65 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     const h = harness(true)
     h.receiveSaveResponse.mockRejectedValueOnce(new Error('response lost'))
     await h.resume()
-    expect(h.durable().activeRun?.promptMessageId).toBe('prompt-1')
+    expect(h.durable().activeRun).toBeUndefined()
     expect(h.providerDispatch).not.toHaveBeenCalled()
     expect(h.continuation).not.toHaveBeenCalled()
-    const committedRun = h.durable().activeRun
-    expect(pendingSessionConversationCommands('session-1').length).toBeGreaterThan(0)
+    expect(h.durable().resumeRecovery?.promptMessageId).toBe('prompt-1')
+    expect(h.durable().promptPreparation).toBeUndefined()
+    expect(pendingSessionConversationCommands('session-1')).toEqual([])
     await h.resume()
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
     expect(h.providerDispatch).toHaveBeenCalledOnce()
     expect(pendingSessionConversationCommands('session-1')).toEqual([])
-    expect(h.durable().activeRun).toEqual(committedRun)
-    expect(useSessionStore.getState().sessions[0].activeRun).toEqual(committedRun)
+    expect(h.durable().activeRun?.promptMessageId).toBe('prompt-1')
+    expect(useSessionStore.getState().sessions[0].activeRun).toEqual(h.durable().activeRun)
+  })
+
+  it('keeps the original Resume failure when its rollback also fails and retries the exact rollback', async () => {
+    const h = harness()
+    h.continuation.mockRejectedValueOnce(new Error('Provider unreachable'))
+    const originalSave = window.api.sessions.saveSession
+    let failRollback = true
+    window.api.sessions.saveSession = async (session, options) => {
+      if (
+        failRollback &&
+        options?.conversationCommands?.some((command) => command.kind === 'rollback-prompt')
+      ) {
+        throw new Error('No space left on device')
+      }
+      return originalSave(session, options)
+    }
+    await h.resume()
+    const reported = useWorkspaceOperationErrors.getState().errors['session-1']
+    expect(reported).toContain('Provider unreachable')
+    expect(reported).toContain('No space left on device')
+    expect(reported).toMatch(/rolled back/i)
+    expect(h.durable().promptPreparation).toBeDefined()
+    failRollback = false
+    await h.resume()
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toBeUndefined()
+    expect(h.durable().promptPreparation).toBeUndefined()
+    expect(h.providerDispatch).toHaveBeenCalledOnce()
+  })
+
+  it('does not report an admitted Resume as failed when only the authority refresh fails', async () => {
+    const h = harness()
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const originalSave = window.api.sessions.saveSession
+    const rollbackCommands: string[] = []
+    window.api.sessions.saveSession = async (session, options) => {
+      for (const command of options?.conversationCommands ?? [])
+        if (command.kind === 'rollback-prompt') rollbackCommands.push(command.id)
+      return originalSave(session, options)
+    }
+    window.api.sessions.loadOne = async () => {
+      throw new Error('Session read unavailable')
+    }
+    await h.resume()
+    expect(h.providerDispatch).toHaveBeenCalledOnce()
+    expect(h.durable().activeRun?.promptMessageId).toBe('prompt-1')
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toBeUndefined()
+    expect(rollbackCommands).toEqual([])
+    expect(h.durable().promptPreparation).toBeUndefined()
   })
 })

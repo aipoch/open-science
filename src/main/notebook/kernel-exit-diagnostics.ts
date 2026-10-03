@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
+import { classifyWindowsLaunchDiagnostic } from './windows-launch-diagnostics'
 
 type KernelExit = { pid?: number; signal: string | null; platform: NodeJS.Platform }
 type ExitCause = NonNullable<NotebookExecutionRecovery['kernel']>['cause']
@@ -28,9 +29,14 @@ const readMemoryKillLog = (pid: number): Promise<string> =>
   })
 
 export const diagnoseKernelExit = async (
-  exit: KernelExit,
+  exit: KernelExit & { stderr?: string },
   read: (pid: number) => Promise<string> = readMemoryKillLog
 ): Promise<ExitCause> => {
+  const windowsCause = classifyWindowsLaunchDiagnostic({
+    platform: exit.platform,
+    stderr: exit.stderr
+  })
+  if (windowsCause === 'nul-initialization-unavailable') return windowsCause
   if (exit.platform !== 'darwin' || exit.signal !== 'SIGKILL' || !exit.pid) return 'unknown'
   try {
     const output = await read(exit.pid)

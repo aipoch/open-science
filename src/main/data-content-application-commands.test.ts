@@ -98,7 +98,12 @@ const createDependencies = () => {
     finalizeRunArtifacts: vi.fn(async () => []),
     reconcilePendingArtifacts: vi.fn(async () => []),
     openFile: vi.fn(async () => undefined),
-    readPreview: vi.fn(async () => ({ content: '', encoding: 'utf8', size: 0, truncated: false })),
+    readPreview: vi.fn(async () => ({
+      content: '',
+      encoding: 'utf8' as const,
+      size: 0,
+      truncated: false
+    })),
     getLineage: vi.fn(async () => undefined),
     getVersionProvenance: vi.fn(),
     getVersionLiterature: vi.fn(),
@@ -166,6 +171,8 @@ const createDependencies = () => {
     messages: []
   }
   const sessions = {
+    listRuntimeTerminalFailures: vi.fn(async () => []),
+    retryRuntimeTerminalCommit: vi.fn(async () => undefined),
     searchMessages: vi.fn(),
     editDetails: vi.fn(async () => session),
     filterPdfContextCandidates: vi.fn(async () => ({
@@ -281,6 +288,8 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionList',
   'sessionLoadAll',
   'sessionLoadOne',
+  'sessionListRuntimeTerminalFailures',
+  'sessionRetryRuntimeTerminalCommit',
   'sessionSearchMessages',
   'sessionLoadUsage',
   'sessionSaveManifest',
@@ -319,6 +328,37 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
+  it('routes explicit terminal retries to their exact Main execution and rejects malformed identity', async () => {
+    const deps = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const request = {
+      projectId: 'project',
+      sessionId: 'session',
+      promptMessageId: 'prompt',
+      executionId: 'execution'
+    }
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionListRuntimeTerminalFailures,
+        invocation([])
+      )
+    ).resolves.toEqual([])
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionRetryRuntimeTerminalCommit,
+        invocation([request])
+      )
+    ).resolves.toBeUndefined()
+    expect(deps.sessions.retryRuntimeTerminalCommit).toHaveBeenCalledExactlyOnceWith(request)
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionRetryRuntimeTerminalCommit,
+        invocation([{ ...request, executionId: '' }])
+      )
+    ).rejects.toThrow()
+    expect(deps.sessions.retryRuntimeTerminalCommit).toHaveBeenCalledOnce()
+  })
   it('owns exactly the current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
@@ -374,6 +414,8 @@ describe('Data and content application commands', () => {
         'sessions:list',
         'sessions:load-all',
         'sessions:load-one',
+        'sessions:list-runtime-terminal-failures',
+        'sessions:retry-runtime-terminal-commit',
         'sessions:search-messages',
         'sessions:load-usage',
         'sessions:save-manifest',

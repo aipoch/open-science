@@ -308,6 +308,7 @@ describe('application command composition', () => {
       'sessions:inspect-diagnostics',
       'sessions:link-pdf-context',
       'sessions:package-operation',
+      'sessions:retry-runtime-terminal-commit',
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',

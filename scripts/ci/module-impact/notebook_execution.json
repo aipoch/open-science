@@ -39,6 +39,8 @@
     "src/main/notebook/kernel-executor.ts",
     "src/main/notebook/kernel-exit-diagnostics.test.ts",
     "src/main/notebook/kernel-exit-diagnostics.ts",
+    "src/main/notebook/windows-launch-diagnostics.test.ts",
+    "src/main/notebook/windows-launch-diagnostics.ts",
     "src/main/notebook/kernel-process-lifecycle.test.ts",
     "src/main/notebook/kernel-process-lifecycle.windows-posix.ts",
     "src/main/notebook/kernel-protocol.test.ts",
@@ -303,6 +305,7 @@
       "src/main/notebook/external-environment-lock.test.ts",
       "src/main/notebook/kernel-executor.test.ts",
       "src/main/notebook/kernel-exit-diagnostics.test.ts",
+      "src/main/notebook/windows-launch-diagnostics.test.ts",
       "src/main/notebook/kernel-process-lifecycle.test.ts",
       "src/main/notebook/kernel-protocol.test.ts",
       "src/main/notebook/kernel-startup-retry.integration.test.ts",
@@ -936,7 +939,15 @@
       "src/main/notebook/dependency-analysis.cwd-lineage.test.ts",
       "src/main/notebook/real-notebook-lineage.integration.test.ts",
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
-      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
+      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
+      "src/main/session-persistence/reconciliation-renderer-parity.test.ts",
+      "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
+      "src/main/session-persistence/missing-runtime-session-repro.test.ts",
+      "src/main/session-persistence/prompt-preparation-restart.test.ts",
+      "src/main/session-persistence/terminal-commit-scheduler.test.ts",
+      "src/main/session-persistence/attention-projection.test.ts",
+      "src/main/acp/approved-handoff-outcome.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

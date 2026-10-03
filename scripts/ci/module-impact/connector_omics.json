@@ -5,19 +5,23 @@
     "src/main/connectors/descriptors/omics-ena.ts",
     "src/main/connectors/descriptors/omics-ena.test.ts",
     "src/main/connectors/descriptors/omics-workbench.ts",
-    "src/main/connectors/descriptors/omics-workbench.test.ts"
+    "src/main/connectors/descriptors/omics-workbench.test.ts",
+    "src/main/connectors/descriptors/omics-geo-matrix.ts",
+    "src/main/connectors/descriptors/omics-geo-matrix.test.ts"
   ],
   "interfacePaths": [
     "src/main/connectors/descriptors/omics-archives.ts",
     "src/main/connectors/descriptors/omics-ena.ts",
-    "src/main/connectors/descriptors/omics-workbench.ts"
+    "src/main/connectors/descriptors/omics-workbench.ts",
+    "src/main/connectors/descriptors/omics-geo-matrix.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
       "src/main/connectors/descriptors/omics-archives.test.ts",
       "src/main/connectors/descriptors/omics-ena.test.ts",
-      "src/main/connectors/descriptors/omics-workbench.test.ts"
+      "src/main/connectors/descriptors/omics-workbench.test.ts",
+      "src/main/connectors/descriptors/omics-geo-matrix.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -197,7 +201,10 @@
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
       "src/main/notebook/runtime-service.rpc-retirement.test.ts",
-      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts"
+      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/acp/approved-handoff-outcome.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.test.ts"
     ]
   },
   "capabilityOverlays": [],

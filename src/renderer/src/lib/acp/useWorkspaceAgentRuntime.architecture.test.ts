@@ -501,6 +501,7 @@ const hookKeys = [
   'resolveSessionRuntimeSelection'
 ] as const
 const sendIntentKeys = [
+  'onPreparationRejected',
   'expectedFrameworkId',
   'sessionId',
   'messageId',
@@ -628,8 +629,7 @@ describe('workspace runtime architecture', () => {
       'processWorkspaceRuntimeEvents',
       'syncWorkspaceElicitationState',
       'syncWorkspacePermissionState',
-      'syncWorkspaceContextUsage',
-      'markRunningSessionsDisconnectedOnDrop'
+      'syncWorkspaceContextUsage'
     ]) {
       expect(
         effects.some((body) => body.includes(responsibility)),
@@ -879,7 +879,14 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts',
       'src/renderer/src/lib/acp/runtime-observer.test.ts',
       'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts',
-      'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts'
+      'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
+      'src/renderer/src/lib/acp/workspace-operation-error.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-admission.test.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-preparation.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts',
+      'src/renderer/src/lib/handled-failure-diagnostics.ts'
     ])
     expect(workspaceRuntime.interfacePaths).toEqual([
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',

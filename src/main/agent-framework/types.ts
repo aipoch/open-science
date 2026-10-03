@@ -16,6 +16,7 @@ import type {
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { AcpModelStepTokenUsage } from '../../shared/acp'
 import type { ResolvedProvider } from '../settings/provider-env'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type {
   ResponsesBridgeConnection,
   ResponsesBridgeModelTarget,
@@ -141,6 +142,9 @@ export type AgentModelChangeTarget = Readonly<{
 export type ModelConfigContext = {
   // App storage root; frameworks derive their config dir/location beneath it.
   storageRoot: string
+  // Current GUI-authorized local roots. Frameworks may translate write-capable roots into their
+  // native sandbox configuration; access remains advisory to the model, never an authorization.
+  grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
   // Absolute path to the detected framework executable (claude / opencode).
   executablePath: string
   // Detected version of the native CLI behind an adapter. Codex uses this to trust bundled model

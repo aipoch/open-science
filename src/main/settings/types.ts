@@ -3,7 +3,7 @@ type StoredClassificationService = {
   id: string
   adapter: ClassificationAdapter
   name: string
-  /** Stored catalog; actual selectable models are validated against the shared catalog. */
+  /** Stored catalog; Zen keeps its selected default first. Selectable models use the shared allowlist. */
   models: string[]
   /** Full HTTP endpoint for custom TypeSafe-compatible classification services. */
   baseUrl?: string

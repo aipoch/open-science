@@ -1,13 +1,32 @@
+import {
+  attemptWorkspacePromptRollback,
+  describeWorkspacePromptRollbackFailure,
+  hasPendingWorkspacePromptRollback,
+  prepareWorkspacePrompt,
+  retryPendingWorkspacePromptRollback
+} from './workspace-prompt-preparation'
+import {
+  reportWorkspaceOperationError,
+  clearWorkspaceOperationError
+} from './workspace-operation-error'
 import type { AcpRuntimeEvent, AcpSessionAgentTarget } from '../../../../shared/acp'
+import { reportHandledRendererFailure } from '../handled-failure-diagnostics'
+import { i18next } from '../../i18n'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
-import { useSessionStore, type ChatMessage, type ChatSession } from '../../stores/session-store'
+import {
+  toPersistedSession,
+  useSessionStore,
+  type ChatMessage,
+  type ChatSession
+} from '../../stores/session-store'
 import {
   confirmPendingDelegationPolicyAuthority,
-  flushSessionPersistence
+  flushSessionPersistence,
+  loadPersistedSession
 } from '../session-persistence/session-persistence'
 import type { useAcpRuntime } from './useAcpRuntime'
 import { resolveHistoryReplayTarget, type HistoryReplayDescriptor } from './history-preamble'
@@ -39,6 +58,11 @@ type WorkspaceMessageRuntime = Pick<
 type WorkspaceCancellationRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'cancel'>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+// Carries a user-visible message that already combines the Resume failure with its failed rollback,
+// so the generic Resume classifier cannot reinterpret it.
+class ResumeRollbackFailedError extends Error {}
+const resumeOperationMessage = (error: unknown): string =>
+  error instanceof ResumeRollbackFailedError ? error.message : getResumeFailureMessage(error)
 const workspaceSession = (sessionId: string): ChatSession | undefined =>
   useSessionStore.getState().sessions.find((session) => session.id === sessionId)
 const findUnansweredUserTurn = (messages: ChatMessage[]): ChatMessage | undefined => {
@@ -63,6 +87,7 @@ const ensureWorkspaceSessionReady = async (
   agentTarget?: AcpSessionAgentTarget
 ): Promise<boolean> => {
   if (runtime.state.sessionIds.includes(sessionId) && !agentTarget) return false
+  clearWorkspaceOperationError(sessionId)
   const session = workspaceSession(sessionId)
   if (!session) throw new Error(`Session not found: ${sessionId}`)
   const cwd = session.cwd || runtime.state.cwd
@@ -106,46 +131,119 @@ const continueInterruptedWorkspaceTurn = async (
     ReturnType<typeof useSessionStore.getState>['prepareInterruptedTurnContinuation']
   >[2]
 ): Promise<boolean> => {
-  const prepared = useSessionStore
-    .getState()
-    .prepareInterruptedTurnContinuation(sessionId, promptMessageId, update, contextReset)
-  if (!prepared) return false
-
-  const session = workspaceSession(sessionId)
-  if (!session?.projectId) throw new Error('Interrupted Session project is unavailable.')
-  if (contextReset && !prepared.runtimeSegmentId) {
-    throw new Error('Interrupted Session Runtime Segment could not be created.')
-  }
-
-  // Persist the recovery marker, original prompt, and any fresh Runtime Segment before Main reads
-  // them. If the app exits before provider acceptance, the same recovery remains retryable.
-  await (options?.flushPersistence ?? flushSessionPersistence)()
-  if (!runtime.continueInterruptedTurn) {
-    throw new Error('Interrupted turn continuation is not available.')
-  }
-  await runtime.continueInterruptedTurn({
-    sessionId,
-    projectId: session.projectId,
-    promptMessageId,
-    ...(contextReset && prepared.runtimeSegmentId
-      ? {
-          contextReset: {
-            runtimeSegmentId: prepared.runtimeSegmentId,
-            historyReplayTarget:
-              options?.historyReplayDescriptor?.target ??
-              resolveHistoryReplayTarget(session.agentFrameworkId),
-            ...(options?.historyReplayDescriptor?.contextWindow
-              ? { contextWindow: options.historyReplayDescriptor.contextWindow }
-              : {}),
-            ...(options?.supportsImageInput === undefined
-              ? {}
-              : { supportsImageInput: options.supportsImageInput })
+  const source = workspaceSession(sessionId)
+  if (!source) return false
+  // Capture provider adoption and replay intent before the asynchronous Main preparation witness.
+  // If that write fails, the renderer can retry the same attached runtime with the original
+  // provider identity and history target still recorded in its local projection.
+  if (update || contextReset) {
+    useSessionStore.getState().markResumed(
+      sessionId,
+      update
+        ? {
+            ...update,
+            ...(contextReset
+              ? {
+                  pendingHistoryReplay: source.pendingHistoryReplay ?? ({ kind: 'all' } as const)
+                }
+              : {})
           }
-        }
-      : {})
-  })
-  useSessionStore.getState().completeInterruptedTurnResume(sessionId)
-  return true
+        : contextReset
+          ? { pendingHistoryReplay: source.pendingHistoryReplay ?? { kind: 'all' } }
+          : undefined
+    )
+  }
+  const preparedSource = workspaceSession(sessionId)
+  if (!preparedSource) return false
+  let preparation: Awaited<ReturnType<typeof prepareWorkspacePrompt>> | undefined
+  try {
+    preparation = await prepareWorkspacePrompt(
+      toPersistedSession(preparedSource),
+      promptMessageId,
+      'resume'
+    )
+    const prepared = useSessionStore
+      .getState()
+      .prepareInterruptedTurnContinuation(
+        sessionId,
+        promptMessageId,
+        update,
+        contextReset,
+        preparation.id
+      )
+    if (!prepared) {
+      const { failure } = await attemptWorkspacePromptRollback(preparation)
+      if (failure !== undefined) {
+        throw new ResumeRollbackFailedError(
+          describeWorkspacePromptRollbackFailure(undefined, failure)
+        )
+      }
+      return false
+    }
+
+    clearWorkspaceOperationError(sessionId)
+    const session = workspaceSession(sessionId)
+    if (!session?.projectId) throw new Error('Interrupted Session project is unavailable.')
+    if (contextReset && !prepared.runtimeSegmentId) {
+      throw new Error('Interrupted Session Runtime Segment could not be created.')
+    }
+
+    // Persist the recovery marker, original prompt, and any fresh Runtime Segment before Main reads
+    // them. If the app exits before provider acceptance, the same recovery remains retryable.
+    await (options?.flushPersistence ?? flushSessionPersistence)()
+    if (!runtime.continueInterruptedTurn) {
+      throw new Error('Interrupted turn continuation is not available.')
+    }
+    await runtime.continueInterruptedTurn({
+      sessionId,
+      projectId: session.projectId,
+      promptMessageId,
+      ...(contextReset && prepared.runtimeSegmentId
+        ? {
+            contextReset: {
+              runtimeSegmentId: prepared.runtimeSegmentId,
+              historyReplayTarget:
+                options?.historyReplayDescriptor?.target ??
+                resolveHistoryReplayTarget(session.agentFrameworkId),
+              ...(options?.historyReplayDescriptor?.contextWindow
+                ? { contextWindow: options.historyReplayDescriptor.contextWindow }
+                : {}),
+              ...(options?.supportsImageInput === undefined
+                ? {}
+                : { supportsImageInput: options.supportsImageInput })
+            }
+          }
+        : {})
+    })
+    // Main admitted the continuation. A failed refresh is display lag, never a Resume failure.
+    try {
+      const authority = await loadPersistedSession({ projectId: session.projectId, sessionId })
+      if (authority)
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: session,
+          session: authority,
+          mode: 'runtime-transcript-authority'
+        })
+    } catch (error) {
+      reportHandledRendererFailure(
+        'Session refresh after an admitted Resume failed',
+        error,
+        'session-load'
+      )
+    }
+    return true
+  } catch (error) {
+    if (error instanceof ResumeRollbackFailedError) throw error
+    if (preparation) {
+      const { failure } = await attemptWorkspacePromptRollback(preparation)
+      if (failure !== undefined) {
+        throw new ResumeRollbackFailedError(
+          describeWorkspacePromptRollbackFailure(resumeOperationMessage(error), failure)
+        )
+      }
+    }
+    throw error
+  }
 }
 
 const resumeInterruptedWorkspaceSession = async (
@@ -154,6 +252,14 @@ const resumeInterruptedWorkspaceSession = async (
   drainRuntimeEvents?: RuntimeEventDrain,
   options?: ResumeInterruptedWorkspaceSessionOptions
 ): Promise<void> => {
+  clearWorkspaceOperationError(sessionId)
+  if (hasPendingWorkspacePromptRollback(sessionId)) {
+    const { failure } = await retryPendingWorkspacePromptRollback(sessionId)
+    if (failure !== undefined) {
+      reportWorkspaceOperationError(sessionId, failure)
+      return
+    }
+  }
   const session = workspaceSession(sessionId)
 
   if (!session) return
@@ -161,7 +267,7 @@ const resumeInterruptedWorkspaceSession = async (
     try {
       await confirmPendingDelegationPolicyAuthority(session)
     } catch (error) {
-      useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+      reportWorkspaceOperationError(sessionId, getResumeFailureMessage(error))
       return
     }
   }
@@ -233,7 +339,7 @@ const resumeInterruptedWorkspaceSession = async (
         useSessionStore.getState().markResumed(sessionId)
       }
     } catch (error) {
-      useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+      reportWorkspaceOperationError(sessionId, resumeOperationMessage(error))
     }
     return
   }
@@ -241,7 +347,7 @@ const resumeInterruptedWorkspaceSession = async (
   const resumeCwd = session.cwd || runtime.state.cwd
 
   if (!resumeCwd) {
-    useSessionStore.getState().failRun(sessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
+    reportWorkspaceOperationError(sessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
     return
   }
 
@@ -310,7 +416,7 @@ const resumeInterruptedWorkspaceSession = async (
       )
     }
   } catch (error) {
-    useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+    reportWorkspaceOperationError(sessionId, resumeOperationMessage(error))
   }
 }
 
@@ -331,6 +437,7 @@ const compactWorkspaceSession = async (
     return false
   }
 
+  clearWorkspaceOperationError(sessionId)
   const session = workspaceSession(sessionId)
   if (
     !session ||
@@ -353,12 +460,13 @@ const compactWorkspaceSession = async (
     // IPC helpers convert transport failures to an undefined snapshot. Record a session-scoped
     // failure before releasing the local gate so a late main-process event cannot be the only path
     // to a visible error.
-    useSessionStore.getState().failCompaction(sessionId, 'Context compaction failed.')
+    reportWorkspaceOperationError(sessionId, i18next.t('Context compaction failed'))
     return false
   } catch (error) {
-    useSessionStore
-      .getState()
-      .failCompaction(sessionId, getErrorMessage(error).trim() || 'Context compaction failed.')
+    reportWorkspaceOperationError(
+      sessionId,
+      getErrorMessage(error).trim() || i18next.t('Context compaction failed')
+    )
     return false
   } finally {
     // Terminal events normally settle this first. This is also the transport-failure safety net when
@@ -370,6 +478,29 @@ const compactWorkspaceSession = async (
 // One live recovery may own a Session's compaction projection. Entries never leave renderer memory.
 const contextOverflowRecoveryAttempts = new Map<string, object>()
 
+// Called from failure handlers, so it must never throw: the compaction gate is released first and a
+// failed authority read is reported instead of escaping as an unhandled rejection.
+const restoreMainOverflowOutcome = async (sessionId: string): Promise<void> => {
+  const source = workspaceSession(sessionId)
+  if (!source?.projectId) return
+  useSessionStore.getState().finishCompaction(sessionId)
+  try {
+    const authority = await loadPersistedSession({ projectId: source.projectId, sessionId })
+    if (authority)
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: authority,
+        mode: 'runtime-transcript-authority'
+      })
+  } catch (error) {
+    reportHandledRendererFailure(
+      'Session refresh after context overflow recovery failed',
+      error,
+      'session-load'
+    )
+  }
+}
+
 const recoverContextOverflowWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string,
@@ -380,16 +511,44 @@ const recoverContextOverflowWorkspaceSession = async (
   supportsImageRelay?: boolean,
   options?: { skipNativeCompaction?: boolean }
 ): Promise<boolean> => {
-  const session = workspaceSession(sessionId)
+  clearWorkspaceOperationError(sessionId)
+  let session = workspaceSession(sessionId)
   if (!session) return false
   const resumeCwd = session.cwd || runtime.state.cwd
   if (!resumeCwd) return false
   const interruptedTurn = findUnansweredUserTurn(session.messages)
   if (!interruptedTurn) return false
 
+  if (contextOverflowRecoveryAttempts.has(sessionId)) return false
   const attempt = {}
   contextOverflowRecoveryAttempts.set(sessionId, attempt)
-  useSessionStore.getState().beginCompaction(sessionId, { supersedeActiveRun: true })
+  // Main's terminal commit must release the overflowing run before a control command can start.
+  // Do not locally clear an active run to make recovery appear admissible.
+  if (session.activeRun && session.projectId) {
+    try {
+      const authority = await loadPersistedSession({ projectId: session.projectId, sessionId })
+      if (authority)
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: session,
+          session: authority,
+          mode: 'runtime-transcript-authority'
+        })
+    } catch (error) {
+      reportHandledRendererFailure(
+        'Session authority read before context overflow recovery failed',
+        error,
+        'session-load'
+      )
+      contextOverflowRecoveryAttempts.delete(sessionId)
+      return false
+    }
+    session = workspaceSession(sessionId)
+  }
+  if (!session || session.activeRun) {
+    contextOverflowRecoveryAttempts.delete(sessionId)
+    return false
+  }
+  useSessionStore.getState().beginCompaction(sessionId)
   const frameId = session.conversationGraph?.activeFrameId
   const branchId = session.conversationGraph?.frames.find(
     (frame) => frame.id === frameId
@@ -448,9 +607,9 @@ const recoverContextOverflowWorkspaceSession = async (
           session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
           session.memoryEnabled !== false
         )
-      } catch (error) {
+      } catch {
         if (!finishCancelledRecovery() && isCurrent()) {
-          useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+          await restoreMainOverflowOutcome(sessionId)
         }
         return false
       }
@@ -511,15 +670,27 @@ const recoverContextOverflowWorkspaceSession = async (
       { isCurrent }
     )
     if (finishCancelledRecovery()) return false
+    if (cancelledSessionIds?.has(sessionId)) {
+      cancelledSessionIds.delete(sessionId)
+      if (workspaceSession(sessionId)?.compacting)
+        useSessionStore.getState().finishCompaction(sessionId)
+      return false
+    }
     if (!retried && isCurrent()) {
-      useSessionStore.getState().failCompaction(sessionId, 'Agent run failed')
+      await restoreMainOverflowOutcome(sessionId)
     }
     return Boolean(retried)
   } catch (error) {
-    if (!finishCancelledRecovery() && isCurrent()) {
-      useSessionStore
-        .getState()
-        .failCompaction(sessionId, getErrorMessage(error).trim() || 'Agent run failed')
+    if (finishCancelledRecovery()) return false
+    if (cancelledSessionIds?.has(sessionId)) {
+      cancelledSessionIds.delete(sessionId)
+      if (workspaceSession(sessionId)?.compacting)
+        useSessionStore.getState().finishCompaction(sessionId)
+      return false
+    }
+    reportHandledRendererFailure('Context overflow recovery failed', error, 'session-load')
+    if (isCurrent()) {
+      await restoreMainOverflowOutcome(sessionId)
     }
     return false
   } finally {
@@ -535,6 +706,17 @@ const cancelWorkspaceRun = async (
   sessionId: string,
   cancelledSessionIds?: Set<string>
 ): Promise<void> => {
+  clearWorkspaceOperationError(sessionId)
+  // A run that only exists because a failed rollback kept its preparation was never admitted, so
+  // there is nothing for the provider to cancel; releasing the exact preparation is the stop.
+  if (hasPendingWorkspacePromptRollback(sessionId)) {
+    const retained = await retryPendingWorkspacePromptRollback(sessionId)
+    if (retained.failure !== undefined) {
+      reportWorkspaceOperationError(sessionId, retained.failure)
+      throw new Error(retained.failure)
+    }
+    if (retained.rolledBack) return
+  }
   const session = workspaceSession(sessionId)
   // Pending Sessions have no ACP identity yet. Settle their local run immediately; every startup
   // await revalidates activeRun before it may create, bind, or prompt a runtime Session.
@@ -549,7 +731,7 @@ const cancelWorkspaceRun = async (
 
   if (!snapshot) {
     cancelledSessionIds?.delete(sessionId)
-    useSessionStore.getState().failRun(sessionId, 'Agent cancellation failed')
+    reportWorkspaceOperationError(sessionId, 'Agent cancellation failed')
     throw new Error('Agent cancellation failed')
   }
 }
@@ -609,8 +791,9 @@ const processContextOverflowRecovery = (
       } catch (error) {
         // The recovery owner handles expected failures. Contain unexpected setup/recovery errors
         // without allowing this scheduler fallback to alter a newer Session projection.
+        reportHandledRendererFailure('Context overflow recovery failed', error, 'session-load')
         if (workspaceSession(sessionId) === recoverySession) {
-          useSessionStore.getState().failCompaction(sessionId, getErrorMessage(error))
+          await restoreMainOverflowOutcome(sessionId)
         }
       } finally {
         activeRecoverySessionIds.delete(sessionId)

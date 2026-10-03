@@ -124,9 +124,57 @@ describe('NotebookNetworkSandbox', () => {
     const second = await sandbox.wrap(command)
     expect(confirmTermination).toHaveBeenCalledTimes(2)
     expect(backend.cleanupAfterCommand).toHaveBeenLastCalledWith(expect.any(String), 'exit', {
-      processesTerminated: true
+      processesTerminated: true,
+      processState: 'started-and-reaped'
     })
     await second.cleanup('exit', { processesTerminated: true })
+    await sandbox.dispose()
+  })
+
+  it('releases a never-started command without retaining a process fence', async () => {
+    const sandbox = new NotebookNetworkSandbox(options())
+    vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+    await sandbox.initialize()
+    const command = { command: 'true', cwd: '/workspace', onNetworkAccessRequest: denyNetwork }
+    const wrapped = await sandbox.wrap(command)
+    await expect(
+      wrapped.cleanup('spawn-failed', {
+        processesTerminated: true,
+        processState: 'never-started'
+      })
+    ).resolves.toMatchObject({ processesTerminated: true })
+    expect(backend.cleanupAfterCommand.mock.lastCall?.[2]).toMatchObject({
+      processesTerminated: true
+    })
+    expect(backend.cleanupAfterCommand.mock.lastCall?.[2].processState).toBe('never-started')
+    const next = await sandbox.wrap(command)
+    await next.cleanup('exit', { processesTerminated: true })
+    await sandbox.dispose()
+  })
+
+  it('keeps termination-unknown fenced until the owning proof succeeds', async () => {
+    const sandbox = new NotebookNetworkSandbox(options())
+    vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+    await sandbox.initialize()
+    const command = { command: 'true', cwd: '/workspace', onNetworkAccessRequest: denyNetwork }
+    const wrapped = await sandbox.wrap(command)
+    await expect(
+      wrapped.cleanup('exit', {
+        processesTerminated: false,
+        processState: 'termination-unknown'
+      })
+    ).resolves.toMatchObject({ processesTerminated: false })
+    await expect(sandbox.wrap(command)).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+    expect(backend.cleanupAfterCommand.mock.calls.at(-1)?.[2].processState).toBe(
+      'termination-unknown'
+    )
+    backend.cleanupAfterCommand.mockResolvedValue({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
     await sandbox.dispose()
   })
   it('keeps native execution blocked without new termination evidence', async () => {
@@ -266,7 +314,8 @@ describe('NotebookNetworkSandbox', () => {
     await expect(disposal).resolves.toBeUndefined()
     expect(backend.cleanupAfterCommand).toHaveBeenCalledOnce()
     expect(backend.cleanupAfterCommand).toHaveBeenCalledWith(expect.any(String), 'spawn-failed', {
-      processesTerminated: true
+      processesTerminated: true,
+      processState: 'never-started'
     })
   })
 

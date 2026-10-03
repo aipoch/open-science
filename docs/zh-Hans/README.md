@@ -51,7 +51,7 @@ AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材
 
 已完成的研究会话还可以导出为可移植的 `.science` 研究包，用于审阅、交接和归档，并携带所选的对话分支、文件版本、Notebook 记录和验证证据。
 
-> 💡 **[AIPOCH Open-Science v0.34.1 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.34.1 新增 CELLxGENE Discover 与 Alliance of Genome Resources 连接器，并扩充 MaveDB 和 Metabolomics Workbench 数据源；工作区图书馆预览带来收件箱标签页，同时新增 gpt-6.1-sol 模型选项。修复内容包括：跨单元格保留笔记本解释器状态、恢复 Linux KWallet 启动，以及允许 Windows 在移除旧父级安装后重新安装。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.35.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 10 月）_。AIPOCH Open-Science v0.35.0 引入会话回放——逐步回放录制的会话并与你的代理讨论——新增 Cellosaurus 和 Monarch 连接器，并在组学中加入 GEO 矩阵发现；为上传的 PDF 带来结构提取，同时新增原生 Windows 标题栏菜单。修复内容包括：加固 Windows 笔记本运行时、统一权限授权，并持久化会话结果。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />

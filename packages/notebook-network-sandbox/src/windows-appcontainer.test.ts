@@ -3,7 +3,15 @@ import { once } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { createConnection } from 'node:net'
 import { open, type FileHandle } from 'node:fs/promises'
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -16,6 +24,10 @@ import {
   windowsSupervisedLaunch,
   windowsStandardLaunch
 } from '../runtime/src/platform/windows-appcontainer.js'
+import {
+  applyElectronAsNodeLaunchPolicy,
+  ELECTRON_NO_STDIO_INIT
+} from '../runtime/src/platform/electron-as-node-launch-policy.js'
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -87,6 +99,8 @@ describe.runIf(process.platform === 'win32')('Windows native Shell control pipe'
             Array.from({ length: 20 }, (_, i) => `${i}:${'x'.repeat(3000)}`).join('') + ':True'
           )
         expect(await launch.confirmProcessTreeTermination()).toBe(true)
+        expect(await launch.requestProcessTreeTermination()).toBe(true)
+        await expect(launch.confirmProcessState?.()).resolves.toBe('started-and-reaped')
         const socket = createConnection(`\\\\.\\pipe\\${name}`)
         try {
           await expect(once(socket, 'connect')).rejects.toMatchObject({ code: 'ENOENT' })
@@ -193,6 +207,47 @@ describe('Windows AppContainer elevation', () => {
 })
 
 describe('Windows AppContainer launch', () => {
+  it.each([
+    [
+      'restricted Windows Electron-as-Node',
+      { platform: 'win32' as NodeJS.Platform, restricted: true, electronAsNode: true },
+      [ELECTRON_NO_STDIO_INIT, 'repl_loop.js']
+    ],
+    [
+      'ordinary Windows launch',
+      { platform: 'win32' as NodeJS.Platform, restricted: false, electronAsNode: true },
+      ['repl_loop.js']
+    ],
+    [
+      'unrestricted Electron-as-Node launch',
+      { platform: 'win32' as NodeJS.Platform, restricted: false, electronAsNode: true },
+      ['repl_loop.js']
+    ],
+    [
+      'non-Windows Electron-as-Node launch',
+      { platform: 'linux' as NodeJS.Platform, restricted: true, electronAsNode: true },
+      ['repl_loop.js']
+    ],
+    [
+      'Windows Python/R launch',
+      { platform: 'win32' as NodeJS.Platform, restricted: true, electronAsNode: false },
+      ['repl_loop.js']
+    ]
+  ])('applies the NUL compatibility switch only to %s', (_name, intent, expected) => {
+    expect(applyElectronAsNodeLaunchPolicy({ ...intent, args: ['repl_loop.js'] })).toEqual(expected)
+  })
+
+  it('does not duplicate the NUL compatibility switch when a caller already supplied it', () => {
+    expect(
+      applyElectronAsNodeLaunchPolicy({
+        platform: 'win32',
+        restricted: true,
+        electronAsNode: true,
+        args: [ELECTRON_NO_STDIO_INIT, 'repl_loop.js']
+      })
+    ).toEqual([ELECTRON_NO_STDIO_INIT, 'repl_loop.js'])
+  })
+
   it('keeps nested optional PATH candidates until their individual permissions are checked', () => {
     const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'optional-path-')))
     const parent = join(root, 'tools')
@@ -249,6 +304,7 @@ describe('Windows AppContainer launch', () => {
 
     expect(launch.argv.slice(0, 2)).toEqual([request.hostPath, 'supervise'])
     expect(launch.confirmProcessTreeTermination).toBeTypeOf('function')
+    expect(launch.requestProcessTreeTermination).toBeTypeOf('function')
     expect(specification).toMatchObject({
       executable: 'powershell.exe',
       arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command],
@@ -257,6 +313,91 @@ describe('Windows AppContainer launch', () => {
       terminationProofToken: expect.any(String)
     })
   })
+
+  it('retries a termination request after its temporary directory becomes available', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-proof-retry-'))
+    const temporary = join(root, 'initially-missing')
+    const launch = windowsSupervisedLaunch({
+      command: 'unused',
+      cwd: root,
+      hostPath: join(root, 'host.exe'),
+      gatewayPort: 49700,
+      gatewayCredentials: { username: 'unused', password: 'unused' },
+      env: { TEMP: temporary }
+    })
+    const spec = JSON.parse(Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8'))
+    try {
+      await expect(launch.requestProcessTreeTermination()).resolves.toBe(false)
+      mkdirSync(temporary)
+      const retry = launch.requestProcessTreeTermination()
+      await expect.poll(() => existsSync(spec.terminationRequestPath), { timeout: 500 }).toBe(true)
+      expect(readFileSync(spec.terminationRequestPath, 'utf8')).toBe(spec.terminationProofToken)
+      writeFileSync(
+        spec.terminationProofPath,
+        JSON.stringify({
+          version: 1,
+          token: spec.terminationProofToken,
+          processState: 'started-and-reaped'
+        })
+      )
+      await expect(retry).resolves.toBe(true)
+      await expect(launch.requestProcessTreeTermination()).resolves.toBe(true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  describe.each(['never-started', 'started-and-reaped'] as const)(
+    'terminal process proof: %s',
+    (terminalState) => {
+      it.each([
+        'foreign token',
+        'unsupported version',
+        'preparation pending',
+        'unrecognized state',
+        'malformed JSON',
+        'null JSON'
+      ] as const)('rejects %s and accepts later matching evidence', async (invalidProof) => {
+        const root = mkdtempSync(join(tmpdir(), 'os-proof-validation-'))
+        const launch = windowsSupervisedLaunch({
+          command: 'unused',
+          cwd: root,
+          hostPath: join(root, 'host.exe'),
+          gatewayPort: 49700,
+          gatewayCredentials: { username: 'unused', password: 'unused' },
+          env: { TEMP: root }
+        })
+        const spec = JSON.parse(Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8'))
+        const proof = {
+          version: 1,
+          token: spec.terminationProofToken,
+          processState: terminalState
+        }
+        const invalidContents = {
+          'foreign token': JSON.stringify({ ...proof, token: 'another-launch' }),
+          'unsupported version': JSON.stringify({ ...proof, version: 2 }),
+          'preparation pending': JSON.stringify({ ...proof, processState: 'termination-unknown' }),
+          'unrecognized state': JSON.stringify({ ...proof, processState: 'finished' }),
+          'malformed JSON': '{',
+          'null JSON': 'null'
+        }
+        try {
+          writeFileSync(spec.terminationProofPath, invalidContents[invalidProof])
+          await expect(launch.confirmProcessState()).resolves.toBe('termination-unknown')
+          await expect(launch.confirmProcessTreeTermination()).resolves.toBe(false)
+          expect(existsSync(spec.terminationProofPath)).toBe(true)
+
+          writeFileSync(spec.terminationProofPath, JSON.stringify(proof))
+          await expect(launch.confirmProcessState()).resolves.toBe(terminalState)
+          expect(existsSync(spec.terminationProofPath)).toBe(false)
+          await expect(launch.confirmProcessTreeTermination()).resolves.toBe(true)
+          await expect(launch.confirmProcessState()).resolves.toBe(terminalState)
+        } finally {
+          rmSync(root, { recursive: true, force: true })
+        }
+      })
+    }
+  )
 
   it('launches a structured standard-mode executable directly to preserve persistent stdio', () => {
     const request = {
@@ -333,7 +474,37 @@ describe('Windows AppContainer launch', () => {
       cwd: '/workspace'
     })
     expect(launch.confirmProcessTreeTermination).toBeTypeOf('function')
+    expect(launch.requestProcessTreeTermination).toBeTypeOf('function')
   })
+
+  it.runIf(process.platform === 'win32')(
+    'adds Electron no-stdio-init only to a restricted Electron-as-Node child',
+    () => {
+      const launch = windowsLaunch({
+        command: 'unused',
+        executable: process.execPath,
+        args: ['repl_loop.js'],
+        electronAsNode: true,
+        cwd: 'C:\\workspace',
+        gatewayPort: 49700,
+        gatewayCredentials: { username: 'command', password: 'secret' },
+        env: { ELECTRON_RUN_AS_NODE: '1' },
+        filesystem: {
+          readOnlyRoots: ['C:\\runtime'],
+          readWriteRoots: ['C:\\workspace'],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        },
+        hostPath: 'C:\\resources\\notebook-sandbox-host.exe',
+        installationId: '0123456789abcdef01234567',
+        ownershipRoot: 'C:\\sandbox'
+      })
+      const specification = JSON.parse(
+        Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
+      ) as { arguments: string[] }
+      expect(specification.arguments).toEqual([ELECTRON_NO_STDIO_INIT, 'repl_loop.js'])
+    }
+  )
 
   it('launches a structured batch-file shim through cmd.exe', () => {
     const launch = windowsLaunch({

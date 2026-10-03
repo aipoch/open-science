@@ -12,7 +12,6 @@ import {
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
   MAX_ACP_RUNTIME_EVENTS,
   isDurableAgentUserChoiceRequest,
-  type AcpConnectionStatus,
   type AcpContextUsage,
   type AcpPermissionRequest,
   type AcpRuntimeEvent,
@@ -793,45 +792,6 @@ const useWorkspaceRuntimeEventIngest = <Runtime extends WorkspaceRuntimeEventIng
   return Boolean(subscribeRuntimeEvents)
 }
 
-// Flags sessions with a live Agent operation as disconnected on a transition into a dropped
-// connection state. Durable permission waits are intentionally quiescent: their provider RPC can
-// disappear while the persisted card remains actionable after a later resume.
-const markRunningSessionsDisconnectedOnDrop = (
-  previousStatus: AcpConnectionStatus,
-  currentStatus: AcpConnectionStatus,
-  previousSessionStatuses: Partial<Record<string, AcpConnectionStatus>> = {},
-  currentSessionStatuses: Partial<Record<string, AcpConnectionStatus>> = {},
-  durablePermissionSessionIds: ReadonlySet<string> = new Set()
-): void => {
-  if (!isRuntimeWriter()) return
-  const { sessions, markDisconnected } = useSessionStore.getState()
-
-  for (const session of sessions) {
-    const isPermissionWait = session.status === 'waiting-permission'
-    const isDurablePermissionWait = isPermissionWait && durablePermissionSessionIds.has(session.id)
-    if (session.status !== 'running' && !isPermissionWait && !session.compacting) {
-      continue
-    }
-
-    if (isDurablePermissionWait) continue
-
-    const previousOwnedStatus = previousSessionStatuses[session.id]
-    const currentOwnedStatus = currentSessionStatuses[session.id]
-    const hasOwningRuntimeStatus =
-      previousOwnedStatus !== undefined || currentOwnedStatus !== undefined
-    const previous = hasOwningRuntimeStatus
-      ? (previousOwnedStatus ?? currentOwnedStatus ?? previousStatus)
-      : previousStatus
-    const current = hasOwningRuntimeStatus
-      ? (currentOwnedStatus ?? previousOwnedStatus ?? currentStatus)
-      : currentStatus
-    const droppedNow =
-      (current === 'closed' || current === 'error') && previous !== 'closed' && previous !== 'error'
-
-    if (droppedNow) markDisconnected(session.id)
-  }
-}
-
 // Copies live context usage into the durable Session. Missing usage clears only attached sessions.
 const syncWorkspaceContextUsage = (
   sessionIds: readonly string[],
@@ -886,7 +846,6 @@ const useWorkspaceRuntimeEventDrain = (
 export {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
-  markRunningSessionsDisconnectedOnDrop,
   processIncrementalWorkspaceRuntimeEvents,
   processVisibleWorkspaceRuntimeEvents,
   processWorkspaceRuntimeEvents,

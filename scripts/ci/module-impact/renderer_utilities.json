@@ -511,7 +511,11 @@
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
       "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx",
       "src/renderer/src/components/WindowsTitleBar.test.tsx",
-      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
+      "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
+      "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts"
     ]
   },
   "capabilityOverlays": [],

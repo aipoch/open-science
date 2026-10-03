@@ -77,6 +77,8 @@ describe('omics-archives tool set', () => {
         'ena_query_runs',
         'ena_get_submitted_files',
         'geo_get_series',
+        'geo_get_matrix_files',
+        'geo_preflight_matrix',
         'geo_search_series',
         'metabolights_get_studies',
         'metabolights_get_study_files',

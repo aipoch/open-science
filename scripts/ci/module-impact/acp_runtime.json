@@ -220,7 +220,10 @@
     "src/main/acp/turn-skill-owner.test.ts",
     "src/main/acp/turn-skill-owner.ts",
     "src/main/acp/workspace-path.test.ts",
-    "src/main/acp/workspace-path.ts"
+    "src/main/acp/workspace-path.ts",
+    "src/main/acp/approved-handoff-outcome.ts",
+    "src/main/acp/approved-handoff-outcome.integration.test.ts",
+    "src/main/acp/approved-handoff-outcome.test.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",
@@ -261,7 +264,8 @@
     "src/main/acp/session-interaction-owner.ts",
     "src/main/acp/side-chat-relay-owner.ts",
     "src/main/acp/task-agent-port.ts",
-    "src/main/acp/workspace-path.ts"
+    "src/main/acp/workspace-path.ts",
+    "src/main/acp/approved-handoff-outcome.ts"
   ],
   "consumerModules": [
     "reviewer_orchestrator",
@@ -386,7 +390,9 @@
       "src/main/acp/vision-evidence-repository.test.ts",
       "src/main/acp/workspace-path.test.ts",
       "src/main/delegation/process-ownership.test.ts",
-      "src/main/process-tree.windows.integration.test.ts"
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/app-mcp-names.test.ts",
@@ -787,7 +793,13 @@
       "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
       "src/main/literature/journal-attributes.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
-      "src/main/permission-grants/connector-broker.test.ts"
+      "src/main/permission-grants/connector-broker.test.ts",
+      "src/main/session-persistence/missing-runtime-session-repro.test.ts",
+      "src/main/session-persistence/prompt-preparation-restart.test.ts",
+      "src/main/session-persistence/terminal-commit-scheduler.test.ts",
+      "src/main/session-persistence/reconciliation-renderer-parity.test.ts",
+      "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
+      "src/main/session-persistence/attention-projection.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

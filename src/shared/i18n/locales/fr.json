@@ -135,6 +135,9 @@
     "More items": "Plus de sessions"
   },
   "renderer": {
+    "Retrieve GEO series metadata, samples and supplementary-file links.": "Récupérer les métadonnées, les échantillons et les liens vers les fichiers supplémentaires d’une série GEO.",
+    "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "Rechercher les liens vers les fichiers Series Matrix de GEO et les fichiers de comptages RNA-seq du NCBI pour un téléchargement manuel.",
+    "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "Vérifier la structure, les dimensions et la correspondance des échantillons d’une matrice GEO décompressée avant l’analyse.",
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Identité, origine, maladies, données de qualité et correspondances dans les bases de données des lignées cellulaires de Cellosaurus.",
     "Search cell lines by name or synonym.": "Rechercher des lignées cellulaires par nom ou synonyme.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "Récupérer l’identité, l’origine, les données de qualité et les correspondances dans les bases de données d’une lignée cellulaire via CVCL ou RRID.",
@@ -6308,6 +6311,7 @@
     "Use a new API key": "Utiliser une nouvelle clé API",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "La suppression de ce service conserve le compte partagé et sa clé. La sélection des compétences et connecteurs revient à la méthode par défaut.",
     "OpenRouter": "OpenRouter",
+    "OpenCode Zen": "OpenCode Zen",
     "Add to Specialist": "Ajouter à un spécialiste",
     "Always enabled": "Toujours activé",
     "Changes saved.": "Modifications enregistrées.",
@@ -7148,6 +7152,13 @@
     "Folder access was updated. Run the command again when you are ready.": "L’accès au dossier a été mis à jour. Relancez la commande lorsque vous le souhaitez.",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "Cette autorisation de dossier s’applique à toutes les sessions jusqu’à sa révocation dans Fichiers. Les commandes ne seront pas exécutées automatiquement.",
     "Drop files to attach or import a .science package": "Déposez des fichiers à joindre ou un paquet .science à importer",
-    "Files cannot be attached right now.": "Impossible de joindre des fichiers pour le moment."
+    "Files cannot be attached right now.": "Impossible de joindre des fichiers pour le moment.",
+    "This turn was interrupted. Resume to continue.": "Ce tour a été interrompu. Reprenez pour continuer.",
+    "Connection lost — Resume to reconnect and continue.": "Connexion perdue — Reprenez pour vous reconnecter et continuer.",
+    "Session was interrupted before the app closed.": "La session a été interrompue avant la fermeture de l’application.",
+    "The run failed with no error message.": "L’exécution a échoué sans message d’erreur.",
+    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "Impossible d’annuler le message non envoyé ({{failure}}). Renvoyez-le ou arrêtez l’exécution pour réessayer.",
+    "The unsent Session could not be removed ({{failure}}).": "Impossible de supprimer la session non envoyée ({{failure}}).",
+    "Agent Session cleanup did not complete.": "Le nettoyage de la session de l’agent n’a pas abouti."
   }
 }

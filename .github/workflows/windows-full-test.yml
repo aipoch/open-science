@@ -224,6 +224,8 @@ jobs:
           src/main/settings/service.test.ts
           src/main/compute/concurrency-integration.test.ts
           src/main/compute/ambiguous-dispatch-recovery.integration.test.ts
+          src/main/notebook/runtime-service.rpc-retirement.test.ts
+          src/main/notebook/shell-npm-environment.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
 
   notebook_sandbox:

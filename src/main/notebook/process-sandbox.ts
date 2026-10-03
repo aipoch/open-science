@@ -13,8 +13,20 @@ export type NotebookSandboxTarget =
 
 export type NotebookSandboxCleanupReason = 'exit' | 'cancel' | 'timeout' | 'spawn-failed'
 
+/**
+ * Evidence about the child process owned by a sandbox request.
+ *
+ * `never-started` is stronger than a failed termination attempt: no child was
+ * created, so releasing command resources cannot strand a process tree.
+ * `termination-unknown` is deliberately conservative and keeps the owning
+ * cleanup fence in place until the original owner supplies new proof.
+ */
+export type NotebookSandboxProcessState =
+  'never-started' | 'started-and-reaped' | 'termination-unknown'
+
 export type NotebookSandboxCleanupResult = Readonly<{
   processesTerminated: boolean
+  processState?: NotebookSandboxProcessState
   networkClosed: boolean
   temporaryResourcesRemoved: boolean
   admission?: 'blocked' | 'independent-command-allowed'
@@ -22,14 +34,25 @@ export type NotebookSandboxCleanupResult = Readonly<{
 
 export type NotebookSandboxProcessOutcome = Readonly<{
   processesTerminated: boolean
+  /** Explicit child lifecycle evidence. Omitted by older callers and inferred from the boolean. */
+  processState?: NotebookSandboxProcessState
   /** Retained by the command owner; rechecks the same owned tree, never a replacement PID. */
   confirmTermination?: () => Promise<boolean>
 }>
+
+/** Attach lifecycle evidence while retaining the legacy termination projection. */
+export const withNotebookSandboxProcessState = (
+  outcome: Omit<NotebookSandboxProcessOutcome, 'processState'>,
+  processState: NotebookSandboxProcessState
+): NotebookSandboxProcessOutcome => {
+  return { ...outcome, processState, processesTerminated: processState !== 'termination-unknown' }
+}
 
 export type NotebookSandboxInvocation = Readonly<{
   target?: NotebookSandboxTarget
   executable: string
   args: readonly string[]
+  electronAsNode?: boolean
   env: NodeJS.ProcessEnv
   pathEnvironment?: NodeJS.ProcessEnv
   cwd: string
@@ -64,8 +87,10 @@ export type NotebookSandboxedSpawn = Readonly<{
   executable: string
   args: readonly string[]
   env: NodeJS.ProcessEnv
-  // Validates the native launcher's one-time proof that its Job Object is empty.
+  // Validates launch-bound evidence that no workload remains: never started or Job Object empty.
   confirmProcessTreeTermination?: () => Promise<boolean>
+  requestProcessTreeTermination?: () => Promise<boolean>
+  confirmProcessState?: () => Promise<NotebookSandboxProcessState>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
   beginExecution?: (request?: { commandText: string }) => () => void
   annotateStderr: (stderr: string, stdout?: string) => string

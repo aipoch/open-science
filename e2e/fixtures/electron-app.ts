@@ -401,6 +401,12 @@ const launchEnvironment = (
   environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
   environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode
+  if (environment.OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT === '1') {
+    environment.OPEN_SCIENCE_E2E_APPCONTAINER_DENIED_FILE = join(
+      dirname(storageRoot),
+      'outside-granted-roots.txt'
+    )
+  }
   if (process.platform === 'win32' && environment.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS) {
     // The production runner caches resolved tools under LocalAppData. Keep the controlled process
     // fixture isolated from any micromamba selected by an ordinary Open-Science session.
@@ -617,7 +623,14 @@ class ElectronAppHarness implements ElectronApp {
     windowMode: E2eWindowMode,
     testInfo: Pick<TestInfo, 'attach'>
   ): Promise<ElectronAppHarness> {
-    const testRoot = await mkdtemp(join(tmpdir(), 'open-science-electron-e2e-'))
+    const testRoot = await mkdtemp(
+      join(
+        tmpdir(),
+        process.env.OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT === '1'
+          ? 'open-science-electron-e2e-程序-한글-'
+          : 'open-science-electron-e2e-'
+      )
+    )
     const harness = new ElectronAppHarness(
       testRoot,
       {
@@ -631,6 +644,9 @@ class ElectronAppHarness implements ElectronApp {
     )
     try {
       await mkdir(harness.roots.storageRoot, { recursive: true })
+      if (process.env.OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT === '1') {
+        await writeFile(join(testRoot, 'outside-granted-roots.txt'), 'isolation witness', 'utf8')
+      }
       await writeFile(harness.roots.fakeRemoteItState, JSON.stringify({ services: [] }), 'utf8')
       await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
       await writeFakeRemoteItCommands(harness.roots.fakeRemoteItRoot)
@@ -1138,16 +1154,34 @@ class ElectronAppHarness implements ElectronApp {
   async captureFindOverlay(): Promise<Buffer> {
     // Capture the child WebContentsView with Electron's native API. The CDP screenshot
     // path can fail for this independently composited view on macOS runners.
-    const png = await this.runningApplication.evaluate(async ({ webContents }) => {
-      const overlay = webContents
-        .getAllWebContents()
-        .find((contents) => !contents.isDestroyed() && contents.getURL().includes('/find-overlay/'))
-      if (!overlay) throw new Error('Find overlay was not found.')
-      const image = await overlay.capturePage(undefined, { stayHidden: true, stayAwake: true })
-      if (image.isEmpty()) throw new Error('Find overlay capture was empty.')
-      return image.toPNG().toString('base64')
-    })
-    return Buffer.from(png, 'base64')
+    const capture = (): Promise<string> =>
+      this.runningApplication.evaluate(async ({ webContents }) => {
+        const overlay = webContents
+          .getAllWebContents()
+          .find(
+            (contents) => !contents.isDestroyed() && contents.getURL().includes('/find-overlay/')
+          )
+        if (!overlay) throw new Error('Find overlay was not found.')
+        const image = await overlay.capturePage(undefined, { stayHidden: true, stayAwake: true })
+        if (image.isEmpty()) throw new Error('Find overlay capture was empty.')
+        return image.toPNG().toString('base64')
+      })
+    // Viz may reject a copy during a compositor update even after the DOM is ready.
+    // Retry only that native capture error; persistent or unrelated failures still fail.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return Buffer.from(await capture(), 'base64')
+      } catch (error) {
+        if (
+          attempt >= 2 ||
+          !(error instanceof Error) ||
+          !error.message.includes('UnknownVizError')
+        ) {
+          throw error
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    }
   }
 
   async showMainWindow(): Promise<void> {

@@ -15,7 +15,7 @@ const passing = [
   { name: 'package-smoke / Smoke linux-x64', conclusion: 'success' },
   { name: 'regression / Resolve source build', conclusion: 'success' },
   { name: 'regression / p0 (macos-arm64 artifact)', conclusion: 'success' },
-  { name: 'regression / visual (canonical macos-14 source build)', conclusion: 'success' },
+  { name: 'regression / visual (canonical macos-15 source build)', conclusion: 'success' },
   { name: 'Prepare nightly publish artifact', conclusion: 'success' }
 ]
 
@@ -86,11 +86,11 @@ describe('nightly publication gates', () => {
     const summary = formatNightlyPublishGates({
       ok: false,
       blocking: [
-        { name: 'regression / visual (canonical macos-14 source build)', conclusion: 'failure' },
+        { name: 'regression / visual (canonical macos-15 source build)', conclusion: 'failure' },
         { name: 'runtime-certification', conclusion: 'skipped' }
       ]
     })
-    expect(summary).toContain('- regression / visual (canonical macos-14 source build): failure')
+    expect(summary).toContain('- regression / visual (canonical macos-15 source build): failure')
     expect(summary).toContain('- runtime-certification: skipped')
   })
 
@@ -102,7 +102,7 @@ describe('nightly publication gates', () => {
       writeFileSync(
         jobsPath,
         JSON.stringify(
-          withConclusion('regression / visual (canonical macos-14 source build)', 'failure')
+          withConclusion('regression / visual (canonical macos-15 source build)', 'failure')
         )
       )
       writeFileSync(outputPath, '')
@@ -112,7 +112,7 @@ describe('nightly publication gates', () => {
         { encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: outputPath } }
       )
       expect(run.status).toBe(0)
-      expect(run.stdout).toContain('regression / visual (canonical macos-14 source build): failure')
+      expect(run.stdout).toContain('regression / visual (canonical macos-15 source build): failure')
       expect(readFileSync(outputPath, 'utf8')).toBe('ok=false\n')
     } finally {
       rmSync(root, { recursive: true, force: true })
