@@ -725,7 +725,10 @@ const SkillsPanel = ({
                                 <span className="block truncate text-sm text-foreground">
                                   {skill.displayName}
                                 </span>
-                                <span className="block line-clamp-2 text-xs leading-5 text-muted-foreground">
+                                <span
+                                  className="block truncate text-xs leading-5 text-muted-foreground"
+                                  title={skillDescription(skill, t)}
+                                >
                                   {skillDescription(skill, t)}
                                 </span>
                               </button>
