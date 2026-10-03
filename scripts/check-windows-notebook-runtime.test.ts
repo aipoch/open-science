@@ -57,12 +57,12 @@ describe('Windows development runtime setup', () => {
       expect(() => checkWindowsNotebookRuntime(options)).toThrow('out of date')
       writeFileSync(
         join(runtime, 'x64/build.json'),
-        JSON.stringify({ ...versions, patches: ['node-appcontainer-package-scope-v2'] })
+        JSON.stringify({ ...versions, patches: ['node-appcontainer-package-scope-v1'] })
       )
       expect(() => checkWindowsNotebookRuntime(options)).toThrow('out of date')
       const patches = [
         'libuv-f46e4246b5277fe1c5888b88b24d8b78020dd4f8',
-        'node-appcontainer-package-scope-v2',
+        'node-appcontainer-package-scope-v1',
         'powershell-appcontainer-v1',
         'powershell-source-archive-metadata-v1',
         'npm-appcontainer-shared-prefix-v1'

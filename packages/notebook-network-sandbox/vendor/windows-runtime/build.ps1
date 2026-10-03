@@ -21,7 +21,7 @@ if ($SkipNode -or $SkipPowerShell) {
     $existing = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
     if ($SkipNode -and ($existing.node -ne $sources.node.version -or
         $existing.patches -notcontains 'libuv-f46e4246b5277fe1c5888b88b24d8b78020dd4f8' -or
-        $existing.patches -notcontains 'node-appcontainer-package-scope-v2')) {
+        $existing.patches -notcontains 'node-appcontainer-package-scope-v1')) {
         throw 'The existing Node runtime is missing a required repair; rebuild Node without -SkipNode.'
     }
     if ($SkipPowerShell -and ($existing.powershell -ne $sources.powershell.version -or
@@ -177,5 +177,5 @@ foreach ($file in @('node/node.exe', 'node/node_modules/npm/bin/npm-cli.js', 'po
 }
 @{ node = $sources.node.version; powershell = $sources.powershell.version;
     powershellSourceCommit = $sources.powershell.commit;
-    patches = @('libuv-f46e4246b5277fe1c5888b88b24d8b78020dd4f8', 'node-appcontainer-package-scope-v2', 'powershell-appcontainer-v1', 'powershell-source-archive-metadata-v1')
+    patches = @('libuv-f46e4246b5277fe1c5888b88b24d8b78020dd4f8', 'node-appcontainer-package-scope-v1', 'powershell-appcontainer-v1', 'powershell-source-archive-metadata-v1')
 } | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding utf8
