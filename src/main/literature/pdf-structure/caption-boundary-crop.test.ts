@@ -45,3 +45,14 @@ it('moves a merged crop below an interior caption for the following table', () =
     50, 164.5, 450, 300
   ])
 })
+
+it('ignores rows outside the detector crop when proving an interior boundary', () => {
+  const table = { cropRect: [50, 100, 450, 300] }
+  const items = [
+    token('above-a', 60, 60),
+    token('above-b', 180, 60),
+    token('below-a', 60, 320),
+    token('below-b', 180, 320)
+  ]
+  expect(recoverCaptionBoundaryCrop(table, items, [caption(150)], [])).toBeUndefined()
+})

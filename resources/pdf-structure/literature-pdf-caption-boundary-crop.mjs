@@ -15,8 +15,19 @@ const overlap = (a, b) =>
 export function recoverCaptionBoundaryCrop(table, items, captions, rules) {
   if (!table?.cropRect || !Array.isArray(captions) || !Array.isArray(items)) return
   const [left, top, right, bottom] = table.cropRect
+  // Boundary evidence must come from complete native items owned by this
+  // detector crop.  Looking only at horizontal overlap admits unrelated
+  // prose from the same page (and, on a two-column page, a neighboring lane)
+  // into the before/after row counts below.  Those rows can satisfy the
+  // minimum evidence threshold and make us trim a valid crop around an
+  // unrelated caption.
   const source = items.filter(
-    (item) => item?.horizontal !== false && item.rect?.[2] > left && item.rect?.[0] < right
+    (item) =>
+      item?.horizontal !== false &&
+      item.rect?.[0] >= left &&
+      item.rect?.[2] <= right &&
+      item.rect?.[1] >= top &&
+      item.rect?.[3] <= bottom
   )
   const heights = source
     .map((item) => item.height)

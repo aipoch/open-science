@@ -1551,6 +1551,7 @@ export function refineTable(
   )
   const excluded = new Set(excludedCaptionItems)
   const narrativeTailItems = []
+  let narrativeTailBoundary
   const raisedCaptionGlyphs = proveNativeCaptionRaisedGlyphOwnership(
     table,
     pageItems,
@@ -1615,6 +1616,7 @@ export function refineTable(
     )
     if (proof.length) {
       const boundary = Math.min(...proof.map((item) => item.rect[1]))
+      narrativeTailBoundary = boundary
       for (const item of pageItems.filter(
         (candidate) =>
           candidate.horizontal &&
@@ -9436,14 +9438,49 @@ export function refineTable(
     issues,
     repairs
   })
+  const narrativeCleanup = new Map()
+  const addNarrativeToken = (cell, text) => {
+    if (!text || text.length < 8) return
+    const texts = narrativeCleanup.get(cell) ?? new Set()
+    texts.add(text)
+    narrativeCleanup.set(cell, texts)
+  }
   for (const item of narrativeTailItems) {
-    for (const cell of cells)
-      cell.text = cell.text
-        .replace(item.text, '')
-        .replace(/\s{2,}/g, ' ')
-        .trim()
+    const matches = cells.filter((cell) => cell.text?.includes(item.text))
+    const owners =
+      matches.length <= 1
+        ? matches
+        : matches
+            .map((cell) => ({
+              cell,
+              overlap:
+                cell.rect?.length === 4 && item.rect?.length === 4
+                  ? intersect(cell.rect, item.rect) / Math.max(1, area(item.rect))
+                  : 0
+            }))
+            .sort((a, b) => b.overlap - a.overlap)
+            .slice(0, 1)
+            .map(({ cell }) => cell)
+    for (const cell of owners) addNarrativeToken(cell, item.text)
     if (!unassigned.includes(item.text)) unassigned.push(item.text)
   }
+  if (narrativeTailBoundary !== undefined) {
+    for (const cell of cells) {
+      for (const token of cell.sourceTokens ?? []) {
+        if (
+          token.rect?.[1] >= narrativeTailBoundary - Math.max(1, token.height) * 0.2 &&
+          token.text?.trim().length >= 8
+        )
+          addNarrativeToken(cell, token.text)
+      }
+    }
+  }
+  for (const [cell, texts] of narrativeCleanup)
+    for (const text of texts)
+      cell.text = cell.text
+        .replace(text, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
   reconcileStatisticStubStarts({ cells, baseCells, rows, rules, repairs })
   reconcileFragmentedCountHeaders({ cells, issues, repairs })
   if (nativeParentSpans && rows[1])
@@ -9491,14 +9528,12 @@ export function refineTable(
   reconcileRuledLeafHeaderSpans({ rows, cells, items, rules, repairs })
   reconcileSharedReferenceFields({ cells, items, rules, headerRows, unassigned, repairs })
   reconcileCategoricalComparisons({ cells, items, rules, headerRows, unassigned, repairs })
-  for (const item of narrativeTailItems) {
-    for (const cell of cells)
+  for (const [cell, texts] of narrativeCleanup)
+    for (const text of texts)
       cell.text = cell.text
-        .replace(item.text, '')
+        .replace(text, '')
         .replace(/\s{2,}/g, ' ')
         .trim()
-    for (const cell of cells) cell.text = cell.text.replace(/(\)\s+)[A-Za-z][\s\S]*$/u, '$1').trim()
-  }
   removeEmptySeparatorColumns({
     cells,
     columns,

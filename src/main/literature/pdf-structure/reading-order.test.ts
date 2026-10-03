@@ -52,6 +52,26 @@ it('preserves pages without clear two-column evidence', () => {
   expect(normalizePageLineOrder(page)).toEqual(page.lines)
 })
 
+it('does not treat overlapping indented paragraphs as two columns', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    lines: [
+      { text: 'Intro', x: 50, y: 40, width: 260, height: 10 },
+      { text: 'Indented one', x: 190, y: 54, width: 250, height: 10 },
+      { text: 'Continuation', x: 50, y: 68, width: 260, height: 10 },
+      { text: 'Indented two', x: 190, y: 82, width: 250, height: 10 },
+      { text: 'Continuation', x: 50, y: 96, width: 260, height: 10 },
+      { text: 'Indented three', x: 190, y: 110, width: 250, height: 10 },
+      { text: 'Continuation', x: 50, y: 124, width: 260, height: 10 },
+      { text: 'Indented four', x: 190, y: 138, width: 250, height: 10 }
+    ]
+  }
+  expect(hasClearTwoColumnLayout(page)).toBe(false)
+  expect(normalizePageLineOrder(page)).toEqual(page.lines)
+})
+
 it('keeps a full-width heading ahead of reordered columns', () => {
   const page = fixture()
   page.lines.unshift({ text: 'Section heading', x: 50, y: 20, width: 500, height: 12 })

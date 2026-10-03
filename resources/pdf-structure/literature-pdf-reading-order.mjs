@@ -43,6 +43,36 @@ const splitColumns = (page, lines) => {
   const right = candidates.filter((line) => line.x >= split.threshold + 4)
   if (left.length < 3 || right.length < 3) return
   if (Math.min(left.length, right.length) < candidates.length * 0.2) return
+  const band = (group) => ({
+    left: Math.min(...group.map((line) => line.x)),
+    right: Math.max(...group.map((line) => line.x + line.width)),
+    startSpread:
+      Math.max(...group.map((line) => line.x)) - Math.min(...group.map((line) => line.x)),
+    medianWidth: [...group.map((line) => line.width)].sort((a, b) => a - b)[
+      Math.floor(group.length / 2)
+    ],
+    top: Math.min(...group.map((line) => line.y)),
+    bottom: Math.max(...group.map((line) => line.y + line.height))
+  })
+  const leftBand = band(left)
+  const rightBand = band(right)
+  const gutter = rightBand.left - leftBand.right
+  const verticalOverlap =
+    Math.min(leftBand.bottom, rightBand.bottom) - Math.max(leftBand.top, rightBand.top)
+  const shorterRun = Math.min(leftBand.bottom - leftBand.top, rightBand.bottom - rightBand.top)
+  // Hanging paragraphs and indented lists can produce two x-start clusters
+  // while remaining one overlapping text band. Require stable, non-overlapping
+  // column bands, a real gutter, and comparable vertical runs before treating
+  // the page as column-major.
+  if (
+    gutter < Math.max(12, page.width * 0.04) ||
+    leftBand.startSpread > page.width * 0.08 ||
+    rightBand.startSpread > page.width * 0.08 ||
+    leftBand.medianWidth < page.width * 0.08 ||
+    rightBand.medianWidth < page.width * 0.08 ||
+    verticalOverlap < shorterRun * 0.35
+  )
+    return
   return { left, right, threshold: split.threshold }
 }
 
