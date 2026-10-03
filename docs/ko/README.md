@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **[AIPOCH Open-Science v0.34.1 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 9월 업데이트)_. AIPOCH Open-Science v0.34.1는 CELLxGENE Discover와 Alliance of Genome Resources 커넥터를 새로 추가하고 MaveDB와 Metabolomics Workbench 데이터 소스를 확장하며, 워크스페이스 라이브러리 미리보기에 인박스 탭을 도입하고 gpt-6.1-sol 모델 옵션을 지원합니다. 또한 노트북 인터프리터 상태가 셀 간에 유지되고, 리눅스 KWallet 시작이 복원되며, 윈도우에서는 이전 상위 설치를 제거한 후 재설치할 수 있습니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v0.35.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 업데이트)_. AIPOCH Open-Science v0.35.0은 세션 리플레이를 도입하여 기록된 세션을 단계별로 다시 보고 에이전트와 함께 논의할 수 있게 하고, omics의 GEO 매트릭스 탐색과 함께 Cellosaurus 및 Monarch 커넥터를 추가하며, 업로드된 PDF에 대한 구조 추출을 제공하고, 네이티브 Windows 타이틀바 메뉴를 지원합니다. 버그 수정은 Windows 노트북 런타임을 강화하고, 권한 부여를 통합하며, 세션 결과를 지속 저장합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
