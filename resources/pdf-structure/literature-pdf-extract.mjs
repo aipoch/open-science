@@ -1366,7 +1366,7 @@ try {
           caption: captionValue(resolveFigureCaption(candidate.caption, captions, geometry.pages)),
           region: rect ? normalize(rect, pageGeometry.width, pageGeometry.height) : undefined,
           thumbnail: rect ? await crop(rect, id) : undefined,
-          issue: candidate.reason,
+          issue: candidate.issue ?? candidate.reason,
           graphicsCount: candidate.graphicsCount
         })
       }
