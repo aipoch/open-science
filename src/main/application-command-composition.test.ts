@@ -260,6 +260,7 @@ describe('application command composition', () => {
       'literature:journals',
       'literature:lookup-metadata',
       'literature:search',
+      'literature:share-pdf',
       'literature:sources',
       'literature:transact',
       'memory:clear-all',

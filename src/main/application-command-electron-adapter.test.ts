@@ -43,6 +43,7 @@ const validatedChannels = [
   'literature:journals',
   'literature:lookup-metadata',
   'literature:search',
+  'literature:share-pdf',
   'literature:sources',
   'literature:transact',
   'memory:clear-all',
