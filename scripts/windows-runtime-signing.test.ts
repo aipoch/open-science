@@ -22,7 +22,10 @@ type Workflow = {
 const readWorkflow = async (): Promise<Workflow> =>
   load(await readFile('.github/workflows/windows-runtime-sign.yml', 'utf8')) as Workflow
 
-const findStep = (steps: Workflow['jobs']['sign']['steps'], name: string) => {
+const findStep = (
+  steps: Workflow['jobs']['sign']['steps'],
+  name: string
+): Workflow['jobs']['sign']['steps'][number] => {
   const step = steps.find((candidate) => candidate.name === name)
   if (!step) throw new Error(`Missing workflow step: ${name}`)
   return step
