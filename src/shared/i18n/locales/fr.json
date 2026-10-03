@@ -7204,6 +7204,13 @@
     "Share notes with Literature": "Partager les notes avec la bibliothèque",
     "Sharing was not completed. Review the current notes again before retrying.": "Le partage n’a pas abouti. Vérifiez les notes actuelles avant de réessayer.",
     "These notes have conflicting edits or deletions. Choose what to keep.": "Ces notes présentent des modifications ou suppressions contradictoires. Choisissez le contenu à conserver.",
-    "This historical annotation has no verifiable original identity. Choose how to retain it.": "L’identité d’origine de cette ancienne annotation ne peut pas être vérifiée. Choisissez comment la conserver."
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "L’identité d’origine de cette ancienne annotation ne peut pas être vérifiée. Choisissez comment la conserver.",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "Épitopes immunitaires, essais de cellules T/B et de CMH, antigènes et preuves bibliographiques de l’IEDB.",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "Rechercher des épitopes immunitaires par séquence, hôte, antigène et CMH.",
+    "Search epitope source antigens and UniProt references.": "Rechercher les antigènes sources des épitopes et les références UniProt.",
+    "Retrieve T cell experiments, measurements and literature evidence.": "Récupérer les expériences sur les cellules T, les mesures et les preuves bibliographiques.",
+    "Retrieve B cell experiments, measurements and literature evidence.": "Récupérer les expériences sur les cellules B, les mesures et les preuves bibliographiques.",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "Récupérer les expériences de liaison au CMH et d’élution de ligands avec leurs méthodes et unités.",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "Trouver les références IEDB et les identifiants PubMed des preuves expérimentales."
   }
 }

@@ -6876,6 +6876,13 @@
     "Share notes with Literature": "與文獻庫共用筆記",
     "Sharing was not completed. Review the current notes again before retrying.": "尚未完成共用。重試前請重新檢查目前的筆記。",
     "These notes have conflicting edits or deletions. Choose what to keep.": "這些筆記存在編輯或刪除衝突。請選擇保留內容。",
-    "This historical annotation has no verifiable original identity. Choose how to retain it.": "無法驗證此歷史批註的原始身分。請選擇保留方式。"
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "無法驗證此歷史批註的原始身分。請選擇保留方式。",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "IEDB 的免疫表位、T/B 細胞與 MHC 實驗、抗原及文獻證據。",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "依序列、宿主、抗原和 MHC 搜尋免疫表位。",
+    "Search epitope source antigens and UniProt references.": "搜尋表位來源抗原及 UniProt 參照。",
+    "Retrieve T cell experiments, measurements and literature evidence.": "取得 T 細胞實驗、測量結果和文獻證據。",
+    "Retrieve B cell experiments, measurements and literature evidence.": "取得 B 細胞實驗、測量結果和文獻證據。",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "取得 MHC 結合與配體洗脫實驗，包括方法和單位。",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "尋找實驗支持證據的 IEDB 文獻記錄和 PubMed 識別碼。"
   }
 }

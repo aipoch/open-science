@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { wsl2Launch, type Wsl2Launch } from '../runtime/src/platform/wsl2-isolation.js'
+import {
+  mapWslUncPath,
+  wsl2Launch,
+  type Wsl2Launch
+} from '../runtime/src/platform/wsl2-isolation.js'
 import { notebookWorkloadCacheEnv } from '../../../src/main/notebook/notebook-workload-cache-paths.js'
 
 const mapped = new Map([
@@ -662,5 +666,69 @@ describe('WSL2 sandbox adapter', () => {
         mapPath: async (path) => `/mnt/c/${path.slice(3).replaceAll('\\', '/')}`
       })
     ).rejects.toThrow('WSL2 sandbox path environment key is reserved')
+  })
+})
+
+describe('mapWslUncPath', () => {
+  it('maps Explorer-style distro paths straight to the guest', () => {
+    expect(mapWslUncPath('\\\\wsl.localhost\\Ubuntu\\home\\researcher\\project', 'Ubuntu')).toBe(
+      '/home/researcher/project'
+    )
+    expect(mapWslUncPath('\\\\wsl$\\Ubuntu\\home\\researcher\\Documents\\archive', 'Ubuntu')).toBe(
+      '/home/researcher/Documents/archive'
+    )
+  })
+
+  it('is case-insensitive on the host and distro segments', () => {
+    expect(mapWslUncPath('\\\\WSL.LOCALHOST\\UBUNTU\\home\\researcher', 'ubuntu')).toBe(
+      '/home/researcher'
+    )
+  })
+
+  it('maps distro roots and rejects drive-letter paths and other distros', () => {
+    expect(mapWslUncPath('E:\\OpenScience\\data', 'Ubuntu')).toBeUndefined()
+    expect(mapWslUncPath('\\\\wsl.localhost\\Debian\\home\\researcher', 'Ubuntu')).toBeUndefined()
+    expect(mapWslUncPath('\\\\wsl.localhost\\Ubuntu', 'Ubuntu')).toBe('/')
+    expect(mapWslUncPath('\\\\wsl.localhost\\Ubuntu\\', 'Ubuntu')).toBe('/')
+    expect(mapWslUncPath('/home/researcher', 'Ubuntu')).toBeUndefined()
+  })
+
+  it('authorizes same-distro UNC path environment values before mapping them', async () => {
+    const unc = '\\\\wsl.localhost\\Ubuntu\\home\\researcher\\data'
+    const mapPath = vi.fn(async (path: string) => mapWslUncPath(path, 'Ubuntu') ?? path)
+    const launch = await wsl2Launch({
+      target: {
+        kind: 'wsl2',
+        profileId: 'unc-profile',
+        distro: 'Ubuntu',
+        user: 'open-science-spike'
+      },
+      command: 'pwd',
+      cwd: unc,
+      env: {},
+      pathEnvironment: { OPEN_SCIENCE_INPUT_DIR: unc },
+      filesystem: {
+        readOnlyRoots: [unc],
+        readWriteRoots: [],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      },
+      reconcileGuest: reconciled,
+      mapPath,
+      gatewayPort: 4312,
+      gatewayCredentials: { username: 'command-user', password: 'command-secret' },
+      openBridge: async () => ({
+        socketPath: '/tmp/open-science-network-command/gateway.sock',
+        close: async () => ({ networkClosed: true, temporaryResourcesRemoved: true })
+      })
+    })
+    try {
+      expect(launch.argv).toEqual(
+        expect.arrayContaining(['--setenv', 'OPEN_SCIENCE_INPUT_DIR', '/home/researcher/data'])
+      )
+      expect(launch.argv).toEqual(expect.arrayContaining(['--chdir', '/home/researcher/data']))
+    } finally {
+      await launch.release()
+    }
   })
 })

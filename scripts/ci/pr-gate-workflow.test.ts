@@ -1481,6 +1481,9 @@ describe('PR Gate workflow', () => {
     expect(smoke?.run).toContain('$env:OPEN_SCIENCE_TEST_SANDBOX_INSTALLATION_ID = $installationId')
     expect(smoke?.run).toContain('$env:OPEN_SCIENCE_TEST_SANDBOX_OWNERSHIP_ROOT = $ownershipRoot')
     expect(smoke?.run).toContain('src/windows-notebook-runtime.integration.test.ts')
+    expect(smoke?.run).toContain(
+      '--testNamePattern "imports from Node|rejects a .* package config|retains readable .* workspace package|executes .* at the requested workspace"'
+    )
     expect(smoke?.run).toContain('if ($LASTEXITCODE -ne 0) { throw')
   })
 

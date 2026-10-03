@@ -488,6 +488,77 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      # Prepare the module before packaging, and export its search path to later steps. Verify
+      # autoloading from a separate Bash step, matching electron-builder's parent shell.
+      - name: Pre-install Azure Trusted Signing module
+        if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
+        shell: pwsh
+        run: |
+          $requiredVersion = [Version]'0.5.0'
+          $availableModule = Get-Module -ListAvailable -Name TrustedSigning |
+            Where-Object { $_.Version -ge $requiredVersion } |
+            Sort-Object Version -Descending |
+            Select-Object -First 1
+          if (-not $availableModule) {
+            # Best effort: hosted runners already carry the NuGet provider, and the gallery fetch
+            # behind this bootstrap intermittently fails — it must not block the module install
+            # (electron-builder wraps this same call for the same reason).
+            try {
+              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
+            } catch {
+              Write-Host "NuGet provider bootstrap skipped: $($_.Exception.Message)"
+            }
+            if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+              Register-PSRepository -Default
+            }
+            $installed = $false
+            for ($attempt = 1; $attempt -le 3 -and -not $installed; $attempt++) {
+              try {
+                Install-Module -Name TrustedSigning -MinimumVersion 0.5.0 -Force -Repository PSGallery -Scope CurrentUser
+                $installed = $true
+              } catch {
+                Write-Host "Install-Module attempt $attempt failed: $($_.Exception.Message)"
+                if ($attempt -lt 3) { Start-Sleep -Seconds 15 }
+              }
+            }
+            if (-not $installed) {
+              throw 'TrustedSigning module could not be installed from PSGallery after 3 attempts.'
+            }
+          }
+          $command = Get-Command Invoke-TrustedSigning -ErrorAction SilentlyContinue
+          # CurrentUser installs land under the Documents folder; folder redirection can leave that
+          # directory off PSModulePath. Export the full effective path through GITHUB_ENV so the
+          # later packaging step and its signing subprocesses inherit it without registry edits.
+          $documents = [Environment]::GetFolderPath('MyDocuments')
+          $candidates = @(
+            if ($documents) {
+              Join-Path $documents 'PowerShell\Modules'
+              Join-Path $documents 'WindowsPowerShell\Modules'
+            }
+            "$env:USERPROFILE\Documents\PowerShell\Modules",
+            "$env:USERPROFILE\OneDrive\Documents\PowerShell\Modules",
+            "$env:USERPROFILE\Documents\WindowsPowerShell\Modules",
+            "$env:USERPROFILE\OneDrive\Documents\WindowsPowerShell\Modules"
+          )
+          $moduleRoot = $candidates | Where-Object { Test-Path (Join-Path $_ 'TrustedSigning') } | Select-Object -First 1
+          if (-not $moduleRoot -and -not $command) {
+            Write-Host "PSModulePath: $env:PSModulePath"
+            throw 'TrustedSigning module installed but its directory could not be located.'
+          }
+          $pathEntries = @($env:PSModulePath -split ';' | Where-Object { $_ })
+          if ($moduleRoot -and $pathEntries -notcontains $moduleRoot) {
+            $pathEntries += $moduleRoot
+          }
+          $env:PSModulePath = ($pathEntries | Select-Object -Unique) -join ';'
+          "PSModulePath=$env:PSModulePath" >> $env:GITHUB_ENV
+          Write-Host "PSModulePath for signing: $env:PSModulePath"
+
+      - name: Verify Azure Trusted Signing module in packaging environment
+        if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
+        shell: bash
+        run: |
+          pwsh -NoProfile -NonInteractive -Command 'Get-Command Invoke-TrustedSigning -ErrorAction Stop | Format-List Name, Source, Version'
+
       # Build the renderer + main and Web bundles, then package with electron-builder. The verify
       # job already typechecks this exact checkout once, so the four platform jobs must not repeat it.
       #

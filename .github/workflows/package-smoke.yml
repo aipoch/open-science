@@ -84,9 +84,9 @@ jobs:
     if: ${{ needs.setup.result == 'success' && !inputs.setup_only }}
     runs-on: ${{ matrix.os }}
     environment: ${{ inputs.require_windows_signing && matrix.platform == 'win' && 'windows-signing' || '' }}
-    # Windows Notebook provisioning now runs through the installed app; leave headroom for that
-    # operation in addition to install, migration, launch, and shutdown probes.
-    timeout-minutes: ${{ matrix.platform == 'win' && 40 || 25 }}
+    # Windows certification can use a 30-minute hosted-runner ACL budget after dependency setup,
+    # artifact download, installer smoke, and post-job evidence collection.
+    timeout-minutes: ${{ matrix.platform == 'win' && 60 || 25 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
@@ -143,11 +143,27 @@ jobs:
       # Hosted Windows runners are elevated; missing runtime/setup prerequisites fail this gate.
       - name: Run packaged Windows AppContainer REPL certification gate
         if: ${{ !inputs.install_only && matrix.platform == 'win' }}
-        timeout-minutes: 15
+        # The certification runs the full REPL lifecycle twice; hosted-runner ACL latency can push
+        # total wall time past 15 minutes even when every step succeeds.
+        timeout-minutes: 30
         shell: pwsh
         env:
           OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT: '1'
         run: npx playwright test e2e/certification/windows-appcontainer.spec.ts --retries=0
+
+      # The gate's root cause lives in the main-process log attachment and the playwright report,
+      # which are not echoed to the console. Retain them for every outcome so a failure is
+      # diagnosable without re-running the certification.
+      - name: Upload AppContainer certification evidence
+        if: ${{ always() && !inputs.install_only && matrix.platform == 'win' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-appcontainer-cert-evidence
+          retention-days: 7
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
 
       - name: Verify Windows Authenticode signature
         if: ${{ !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}

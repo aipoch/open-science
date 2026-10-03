@@ -17,7 +17,9 @@ const entriesOrMissing = async (path: string): Promise<string[]> => {
 }
 
 test('certifies a packaged Windows AppContainer REPL lifecycle', async ({ app }, testInfo) => {
-  test.setTimeout(720_000)
+  // Hosted runners pay 30-130s per AppContainer launch (antivirus-scanned ACL grants), and the
+  // certification runs the full lifecycle twice (before/after app restart).
+  test.setTimeout(1_500_000)
   expect(process.platform, 'Certification requires Windows x64.').toBe('win32')
   expect(process.arch).toBe('x64')
   expect(
@@ -78,7 +80,7 @@ test('certifies a packaged Windows AppContainer REPL lifecycle', async ({ app },
 
     for (const phase of ['before-app-restart', 'after-app-restart']) {
       await test.step(phase, async () => {
-        await sendPrompt(page, prompt, 'Windows REPL lifecycle verified:', 180_000)
+        await sendPrompt(page, prompt, 'Windows REPL lifecycle verified:', 300_000)
         await assertClean()
         await testInfo.attach(phase, { body: await page.screenshot(), contentType: 'image/png' })
       })

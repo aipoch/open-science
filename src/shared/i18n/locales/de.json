@@ -7036,6 +7036,13 @@
     "Share notes with Literature": "Notizen mit Literatur teilen",
     "Sharing was not completed. Review the current notes again before retrying.": "Die Freigabe wurde nicht abgeschlossen. Prüfen Sie vor einem erneuten Versuch die aktuellen Notizen.",
     "These notes have conflicting edits or deletions. Choose what to keep.": "Diese Notizen enthalten widersprüchliche Bearbeitungen oder Löschungen. Wählen Sie den zu behaltenden Inhalt.",
-    "This historical annotation has no verifiable original identity. Choose how to retain it.": "Die ursprüngliche Identität dieser älteren Anmerkung ist nicht überprüfbar. Wählen Sie, wie sie erhalten bleiben soll."
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "Die ursprüngliche Identität dieser älteren Anmerkung ist nicht überprüfbar. Wählen Sie, wie sie erhalten bleiben soll.",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "Immunepitope, T-/B-Zell- und MHC-Assays, Antigene und Literaturbelege aus IEDB.",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "Immunepitope nach Sequenz, Wirt, Antigen und MHC suchen.",
+    "Search epitope source antigens and UniProt references.": "Ursprungsantigene von Epitopen und UniProt-Verweise suchen.",
+    "Retrieve T cell experiments, measurements and literature evidence.": "T-Zell-Experimente, Messwerte und Literaturbelege abrufen.",
+    "Retrieve B cell experiments, measurements and literature evidence.": "B-Zell-Experimente, Messwerte und Literaturbelege abrufen.",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "MHC-Bindungs- und Ligandenelutionsexperimente mit Methoden und Einheiten abrufen.",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "IEDB-Literatur und PubMed-Kennungen für experimentelle Belege finden."
   }
 }

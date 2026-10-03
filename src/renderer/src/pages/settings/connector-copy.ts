@@ -5,6 +5,11 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'iedb') {
+    return t(
+      'Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.'
+    )
+  }
   if (connector.id === 'cellosaurus') {
     return t(
       'Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.'
@@ -63,6 +68,18 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'iedb/search_epitopes':
+      return t('Search immune epitopes by sequence, host, antigen and MHC.')
+    case 'iedb/search_antigens':
+      return t('Search epitope source antigens and UniProt references.')
+    case 'iedb/search_tcell_assays':
+      return t('Retrieve T cell experiments, measurements and literature evidence.')
+    case 'iedb/search_bcell_assays':
+      return t('Retrieve B cell experiments, measurements and literature evidence.')
+    case 'iedb/search_mhc_assays':
+      return t('Retrieve MHC binding and ligand elution experiments with methods and units.')
+    case 'iedb/search_references':
+      return t('Find IEDB references and PubMed identifiers for experimental evidence.')
     case 'cellosaurus/search_cell_lines':
       return t('Search cell lines by name or synonym.')
     case 'cellosaurus/get_cell_line':

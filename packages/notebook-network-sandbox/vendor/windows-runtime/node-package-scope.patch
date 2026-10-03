@@ -1,6 +1,6 @@
 --- a/src/node_modules.cc
 +++ b/src/node_modules.cc
-@@ -17,8 +17,45 @@
+@@ -17,8 +17,49 @@
  
  #include "simdjson.h"
  
@@ -13,8 +13,12 @@
 +
 +#ifdef _WIN32
 +// An AppContainer can read a granted descendant without access to its ancestors.
-+// Only terminate package-scope searches at such a boundary: direct package reads
-+// and unreadable package.json files inside readable directories must still fail.
++// The native host grants ancestor directories only FILE_TRAVERSE,
++// FILE_READ_ATTRIBUTES and SYNCHRONIZE. Request FILE_LIST_DIRECTORY to
++// distinguish those traversal-only ancestors from readable directories.
++// Only terminate package-scope searches at such a boundary: direct package
++// reads and unreadable package.json files inside readable directories must
++// still fail.
 +static bool IsAppContainerPackageScopeBoundary(std::string_view package_path) {
 +  static const bool is_app_container = []() {
 +    HANDLE token;
@@ -30,7 +34,7 @@
 +
 +  const auto directory = std::filesystem::u8path(package_path).parent_path();
 +  HANDLE handle = CreateFileW(directory.c_str(),
-+                              FILE_LIST_DIRECTORY,
++                              FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
 +                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 +                              nullptr,
 +                              OPEN_EXISTING,

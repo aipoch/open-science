@@ -14,6 +14,107 @@ import { WORKBENCH_OMICS_TOOLS } from './descriptors/omics-workbench'
 import { VARIANTS_MAVEDB_TOOLS } from './descriptors/variants-mavedb'
 
 describe('registry + catalog', () => {
+  it('registers bounded IEDB evidence searches and documents UniProt/PDB handoffs', () => {
+    expect(getConnectorTools('iedb').map((tool) => tool.id)).toEqual([
+      'search_epitopes',
+      'search_antigens',
+      'search_tcell_assays',
+      'search_bcell_assays',
+      'search_mhc_assays',
+      'search_references'
+    ])
+    const epitope = getDescriptor('iedb', 'search_epitopes')!
+    expect(() =>
+      validateToolArguments(epitope, {
+        sequence: 'SIINFEKL',
+        host_taxonomy_id: 9606,
+        uniprot_accession: 'P01012'
+      })
+    ).not.toThrow()
+    for (const args of [
+      { limit: 0 },
+      { limit: 101 },
+      { limit: 1.5 },
+      { offset: -1 },
+      { offset: 1000001 },
+      { host_taxonomy_id: '9606' },
+      { epitope_id: '1VAC' },
+      { sequence: 'SIINFEKL\n' },
+      { antigen_iri: 'UNIPROT:P01012', uniprot_accession: 'P01012' },
+      { uniprot_accession: 'P01012\n' },
+      { antigen_iri: 'UNIPROT:P01012&limit=999' },
+      { mhc_class: 'III' },
+      { pdb_id: '../x' },
+      { url: 'https://example.org/' },
+      { pubmed_id: '1234' }
+    ])
+      expect(() => validateToolArguments(epitope, { sequence: 'SIINFEKL', ...args })).toThrow(
+        /invalid_arguments/
+      )
+    expect(() =>
+      validateToolArguments(getDescriptor('iedb', 'search_mhc_assays')!, {
+        assay_id: 1406346,
+        qualitative_measure: 'Negative'
+      })
+    ).not.toThrow()
+    expect(() =>
+      validateToolArguments(getDescriptor('iedb', 'search_references')!, { pubmed_id: '22504645' })
+    ).not.toThrow()
+    const doc = renderSkillDoc('iedb')
+    for (const phrase of [
+      'get_uniprot_entries',
+      'pdb_get_structures',
+      'next_offset',
+      'not predictions',
+      'different experiments',
+      'curated antigen',
+      'assay__units',
+      'elution_id'
+    ]) {
+      expect(doc).toContain(phrase)
+    }
+  })
+
+  it.each([
+    ['search_epitopes', { sequence: 'SIINFEKL' }],
+    ['search_antigens', { antigen_name: 'ovalbumin' }],
+    ['search_tcell_assays', { assay_id: 1957578 }],
+    ['search_bcell_assays', { assay_id: 1854962 }],
+    ['search_mhc_assays', { assay_id: 1406346 }],
+    ['search_references', { pubmed_id: '22504645' }]
+  ] as const)(
+    'requires a biological or evidence filter in the %s input schema',
+    (method, filter) => {
+      const descriptor = getDescriptor('iedb', method)!
+      for (const args of [{}, { limit: 20 }, { offset: 0 }, { limit: 20, offset: 0 }]) {
+        expect(() => validateToolArguments(descriptor, args)).toThrow(/invalid_arguments/)
+      }
+      expect(() =>
+        validateToolArguments(descriptor, { ...filter, limit: 20, offset: 0 })
+      ).not.toThrow()
+      expect(() => validateToolArguments(descriptor, { host_taxonomy_id: 9606 })).not.toThrow()
+    }
+  )
+
+  it.each([
+    'search_epitopes',
+    'search_antigens',
+    'search_tcell_assays',
+    'search_bcell_assays',
+    'search_mhc_assays',
+    'search_references'
+  ])('validates mutually exclusive antigen filters in the %s input schema', (method) => {
+    const descriptor = getDescriptor('iedb', method)!
+    expect(() => validateToolArguments(descriptor, { antigen_iri: 'UNIPROT:P01012' })).not.toThrow()
+    expect(() => validateToolArguments(descriptor, { uniprot_accession: 'P01012' })).not.toThrow()
+    expect(() =>
+      validateToolArguments(descriptor, {
+        antigen_iri: 'UNIPROT:P01012',
+        uniprot_accession: 'P01012'
+      })
+    ).toThrow(/invalid_arguments/)
+  })
+
   it('exposes PDB sequence search through the registry and generated skill with strict cutoffs', () => {
     const tool = getDescriptor('structures', 'pdb_search_sequence')!
     expect(tool).toBeDefined()

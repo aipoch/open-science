@@ -6876,6 +6876,13 @@
     "Share notes with Literature": "文献とノートを共有",
     "Sharing was not completed. Review the current notes again before retrying.": "共有は完了しませんでした。再試行する前に現在のノートを確認してください。",
     "These notes have conflicting edits or deletions. Choose what to keep.": "これらのノートには編集または削除の競合があります。保持する内容を選択してください。",
-    "This historical annotation has no verifiable original identity. Choose how to retain it.": "この過去の注釈は元の識別情報を検証できません。保持方法を選択してください。"
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "この過去の注釈は元の識別情報を検証できません。保持方法を選択してください。",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "IEDB の免疫エピトープ、T/B 細胞および MHC アッセイ、抗原、文献エビデンス。",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "配列、宿主、抗原、MHC で免疫エピトープを検索します。",
+    "Search epitope source antigens and UniProt references.": "エピトープの由来抗原と UniProt 参照を検索します。",
+    "Retrieve T cell experiments, measurements and literature evidence.": "T 細胞の実験、測定結果、文献エビデンスを取得します。",
+    "Retrieve B cell experiments, measurements and literature evidence.": "B 細胞の実験、測定結果、文献エビデンスを取得します。",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "MHC 結合およびリガンド溶出実験を、方法と単位を含めて取得します。",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "実験エビデンスの IEDB 文献と PubMed 識別子を検索します。"
   }
 }

@@ -6876,6 +6876,13 @@
     "Share notes with Literature": "与文献库共享笔记",
     "Sharing was not completed. Review the current notes again before retrying.": "未完成共享。重试前请重新检查当前笔记。",
     "These notes have conflicting edits or deletions. Choose what to keep.": "这些笔记存在编辑或删除冲突。请选择保留内容。",
-    "This historical annotation has no verifiable original identity. Choose how to retain it.": "无法验证此历史批注的原始身份。请选择保留方式。"
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "无法验证此历史批注的原始身份。请选择保留方式。",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "IEDB 的免疫表位、T/B 细胞与 MHC 实验、抗原及文献证据。",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "按序列、宿主、抗原和 MHC 搜索免疫表位。",
+    "Search epitope source antigens and UniProt references.": "搜索表位来源抗原及 UniProt 引用。",
+    "Retrieve T cell experiments, measurements and literature evidence.": "获取 T 细胞实验、测量结果和文献证据。",
+    "Retrieve B cell experiments, measurements and literature evidence.": "获取 B 细胞实验、测量结果和文献证据。",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "获取 MHC 结合与配体洗脱实验，包括方法和单位。",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "查找实验支持证据的 IEDB 文献记录和 PubMed 标识符。"
   }
 }

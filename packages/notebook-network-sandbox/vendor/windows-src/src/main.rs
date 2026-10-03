@@ -249,6 +249,21 @@ fn merge_acl_grant(grants: &mut BTreeMap<String, AclGrant>, path: String, access
     grants.insert(path, access);
 }
 
+fn is_windows_volume_root(path: &Path) -> bool {
+    let value = path.to_string_lossy();
+    value.len() == 3 && value.as_bytes().get(1) == Some(&b':')
+}
+
+fn is_windows_profile_boundary(path: &Path) -> bool {
+    let is_users_root = path
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("Users"))
+        && path.parent().is_some_and(is_windows_volume_root);
+    let is_current_profile = std::env::var_os("USERPROFILE")
+        .is_some_and(|profile| paths_equal(&profile.to_string_lossy(), path));
+    is_users_root || is_current_profile
+}
+
 fn plan_writable_acl_grants(spec: &LaunchSpec) -> Result<BTreeMap<String, AclGrant>> {
     let mut grants = plan_required_path_acl_grants(spec)?;
     for root in &spec.read_write_roots {
@@ -301,6 +316,13 @@ fn plan_required_path_acl_grants(spec: &LaunchSpec) -> Result<BTreeMap<String, A
             if path.parent().is_some_and(|ancestor| ancestor != path)
                 && path.is_dir()
                 && !explicit_read_only_root
+                // Windows grants AppContainer traversal through the shared profile root and the
+                // current profile directory. Do not generalize this exemption to arbitrary
+                // volume children such as D:\\workspace, which may require an explicit lease.
+                && !is_windows_profile_boundary(path)
+                && !path
+                    .parent()
+                    .is_some_and(is_windows_profile_boundary)
             {
                 merge_acl_grant(
                     &mut grants,
@@ -354,6 +376,7 @@ mod windows_host {
         GetTokenInformation, INHERITED_ACE, InitializeAcl, InitializeSecurityDescriptor,
         OBJECT_INHERIT_ACE, OBJECT_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
         PSECURITY_DESCRIPTOR, PSID, SE_DACL_AUTO_INHERIT_REQ, SE_DACL_AUTO_INHERITED,
+        SE_DACL_DEFAULTED,
         SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, SECURITY_DESCRIPTOR,
         SECURITY_DESCRIPTOR_CONTROL, SID_AND_ATTRIBUTES, SetFileSecurityW,
         SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_APPCONTAINER_INFORMATION,
@@ -2452,6 +2475,10 @@ mod windows_host {
             )
         })?;
         let _descriptor = LocalAllocation(descriptor.0);
+        let mut original_control = 0u16;
+        let mut revision = 0u32;
+        unsafe { GetSecurityDescriptorControl(descriptor, &mut original_control, &mut revision) }
+            .context("read command ACL inheritance")?;
         if dacl.is_null() {
             bail!(
                 "{}: command ACL has no concrete DACL",
@@ -2468,6 +2495,7 @@ mod windows_host {
             )
         }
         .context("read command ACL entries")?;
+        let mut non_inheriting = matches!(grant, Some(AclGrant::ReadOnlyDirectory));
         let mut aces = Vec::new();
         for index in 0..info.AceCount {
             let mut ace = std::ptr::null_mut();
@@ -2480,16 +2508,22 @@ mod windows_host {
                     super::WINDOWS_ACL_OPERATION_FAILED_MARKER
                 );
             }
-            let matches_identity = if header.AceType <= 1
+            let owned_mask = if header.AceType <= 1
                 && (header.AceSize as usize) >= size_of::<ACCESS_ALLOWED_ACE>()
             {
                 let entry = unsafe { ace.cast::<ACCESS_ALLOWED_ACE>().as_ref() };
                 let entry_sid = PSID((&entry.SidStart as *const u32).cast_mut().cast());
-                unsafe { EqualSid(sid, entry_sid) }.is_ok()
+                unsafe { EqualSid(sid, entry_sid) }
+                    .is_ok()
+                    .then_some(entry.Mask)
             } else {
-                false
+                None
             };
+            let matches_identity = owned_mask.is_some();
             if matches_identity && header.AceFlags & INHERITED_ACE.0 as u8 == 0 {
+                if owned_mask == Some(DIRECTORY_TRAVERSAL_ACCESS) {
+                    non_inheriting = true;
+                }
                 continue;
             }
             aces.push(unsafe {
@@ -2534,7 +2568,20 @@ mod windows_host {
                 ACL_REVISION_DS,
             )
         }?;
+        let mut inserted = grant.is_none();
         for ace in &aces {
+            if !inserted && ace[1] & INHERITED_ACE.0 as u8 != 0 {
+                unsafe {
+                    AddAccessAllowedAceEx(
+                        target,
+                        ACL_REVISION_DS,
+                        ACE_FLAGS(flags),
+                        mask,
+                        sid,
+                    )
+                }?;
+                inserted = true;
+            }
             unsafe {
                 AddAce(
                     target,
@@ -2545,25 +2592,81 @@ mod windows_host {
                 )
             }?;
         }
-        if grant.is_some() {
+        if !inserted {
             unsafe { AddAccessAllowedAceEx(target, ACL_REVISION_DS, ACE_FLAGS(flags), mask, sid) }?;
         }
-        let mut information = DACL_SECURITY_INFORMATION;
-        if protect {
-            information |= PROTECTED_DACL_SECURITY_INFORMATION;
+        if !protect && !non_inheriting {
+            unsafe {
+                SetNamedSecurityInfoW(
+                    PCWSTR(name.as_ptr()),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    None,
+                    None,
+                    Some(target.cast_const()),
+                    None,
+                )
+            }
+            .ok()
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "{}: write command ACL",
+                    super::acl_error_marker(error.code().0 as u32)
+                )
+            })?;
+            return Ok(());
         }
+
+        // SetFileSecurityW performs a direct directory DACL update. Preserve the original
+        // inheritance control bits so Windows does not recalculate or propagate the ACL into
+        // descendants while adding an ancestor-only traversal grant.
+        let mut updated = SECURITY_DESCRIPTOR::default();
+        let updated_ptr = PSECURITY_DESCRIPTOR(
+            (&mut updated as *mut SECURITY_DESCRIPTOR).cast::<std::ffi::c_void>(),
+        );
         unsafe {
-            SetNamedSecurityInfoW(
-                PCWSTR(name.as_ptr()),
-                SE_FILE_OBJECT,
-                information,
-                None,
-                None,
-                Some(target.cast_const()),
-                None,
+            InitializeSecurityDescriptor(updated_ptr, SECURITY_DESCRIPTOR_REVISION)
+                .context("initialize command ACL")?;
+            SetSecurityDescriptorDacl(
+                updated_ptr,
+                true,
+                Some(target),
+                original_control & SE_DACL_DEFAULTED.0 != 0,
             )
+            .context("attach command ACL")?;
+            let mask = SE_DACL_AUTO_INHERITED.0 | SE_DACL_AUTO_INHERIT_REQ.0 | SE_DACL_PROTECTED.0;
+            let inheritance_request = if original_control & SE_DACL_AUTO_INHERITED.0 != 0 {
+                SE_DACL_AUTO_INHERIT_REQ.0
+            } else {
+                0
+            };
+            let mut control_bits = original_control & mask;
+            if protect || non_inheriting {
+                control_bits |= SE_DACL_PROTECTED.0;
+            }
+            SetSecurityDescriptorControl(
+                updated_ptr,
+                SECURITY_DESCRIPTOR_CONTROL(mask),
+                SECURITY_DESCRIPTOR_CONTROL(control_bits | inheritance_request),
+            )
+            .context("preserve command ACL inheritance")?;
+            if SetFileSecurityW(PCWSTR(name.as_ptr()), DACL_SECURITY_INFORMATION, updated_ptr)
+                .as_bool()
+            {
+                Ok(())
+            } else {
+                SetNamedSecurityInfoW(
+                    PCWSTR(name.as_ptr()),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    None,
+                    None,
+                    Some(target.cast_const()),
+                    None,
+                )
+                .ok()
+            }
         }
-        .ok()
         .map_err(|error| {
             anyhow::anyhow!(
                 "{}: write command ACL",
@@ -2654,7 +2757,21 @@ mod windows_host {
 
     fn apply_acl_grant(path: &str, capability_sid: &str, grant: AclGrant) -> Result<()> {
         update_command_acl_native(path, capability_sid, Some(grant), false)
-            .map_err(|error| anyhow::anyhow!("grant AppContainer access to: {error:#}"))
+            .map_err(|error| anyhow::anyhow!("grant AppContainer access to {path}: {error:#}"))
+    }
+
+    fn apply_acl_lease_grants(record: &AclLeaseRecord) -> Result<()> {
+        if record.grants.iter().any(|grant| grant.protected_boundary) {
+            let mut protected = true;
+            for grant in record.grants.iter().filter(|grant| grant.protected_boundary) {
+                update_command_acl_native(&grant.path, &record.capability_sid, None, protected)?;
+                protected = false;
+            }
+        }
+        for grant in &record.grants {
+            apply_acl_grant(&grant.path, &record.capability_sid, grant.access)?;
+        }
+        Ok(())
     }
 
     fn refresh_owned_runtime_acl_snapshots(installation_id: &str, root: &Path) -> Result<()> {
@@ -3052,6 +3169,7 @@ mod windows_host {
                     state.snapshots.push(capture_acl_snapshot(&grant.path)?);
                 }
             }
+            let had_existing_leases = !state.leases.is_empty();
             state.leases.push(record.clone());
             state
                 .leases
@@ -3062,7 +3180,11 @@ mod windows_host {
             let changes_permissions = !record.grants.is_empty();
             if let Err(error) = write_acl_record(&path, &record).and_then(|()| {
                 if changes_permissions {
-                    rebuild_acl_state(&mut state, ownership_root)
+                    if had_existing_leases {
+                        rebuild_acl_state(&mut state, ownership_root)
+                    } else {
+                        apply_acl_lease_grants(&record)
+                    }
                 } else {
                     Ok(())
                 }
@@ -3666,6 +3788,12 @@ mod windows_host {
     mod tests {
         use super::*;
         use crate::WINDOWS_ACL_TARGET_MISSING_MARKER;
+
+        #[test]
+        fn profile_boundary_exemption_does_not_cover_arbitrary_volume_children() {
+            assert!(crate::is_windows_profile_boundary(Path::new(r"C:\Users")));
+            assert!(!crate::is_windows_profile_boundary(Path::new(r"D:\workspace")));
+        }
 
         #[test]
         fn pending_launch_is_not_a_terminal_never_started_proof() {
@@ -5087,6 +5215,54 @@ mod windows_host {
             assert_eq!(expected_child.len(), 1);
             assert_eq!(actual_root, expected_root);
             assert_eq!(actual_child, expected_child);
+        }
+
+        #[test]
+        fn command_traversal_does_not_rewrite_descendant_acls() {
+            let root = unique_test_root("command-traversal-descendants");
+            let child = root.join("unrelated-child");
+            fs::create_dir_all(&child).unwrap();
+            let path = root.to_string_lossy();
+            let child_path = child.to_string_lossy();
+            let original = capture_acl_snapshot(&path).unwrap();
+            let mut legacy = capture_acl_snapshot(&child_path).unwrap();
+            legacy.dacl_auto_inherited = false;
+            legacy.dacl_auto_inherit_requested = false;
+            restore_acl_snapshot(&legacy).unwrap();
+            let child_original = capture_acl_snapshot(&child_path).unwrap();
+            let capability = CommandCapability::new(format!(
+                "open-science.test.{}", new_resource_key().unwrap()
+            )).unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            apply_acl_grant(&path, &identity, AclGrant::ReadOnlyDirectory).unwrap();
+            let after_grant = capture_acl_snapshot(&child_path).unwrap();
+            restore_acl_snapshot(&original).unwrap();
+            fs::remove_dir_all(&root).unwrap();
+            assert_eq!(after_grant, child_original);
+        }
+
+        #[test]
+        fn protected_boundary_sets_dacl_protected_without_traversal_ace() {
+            let root = unique_test_root("protected-boundary-clean-acl");
+            let child = root.join("denied");
+            fs::create_dir_all(&child).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let child_path = child.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&path).unwrap();
+            let capability = CommandCapability::new(format!(
+                "open-science.test.{}",
+                new_resource_key().unwrap()
+            ))
+            .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+
+            apply_acl_grant(&path, &identity, AclGrant::ReadOnlyTree).unwrap();
+            update_command_acl_native(&child_path, &identity, None, true).unwrap();
+            let protected = capture_acl_snapshot(&child_path).unwrap();
+            restore_acl_snapshot(&original).unwrap();
+            fs::remove_dir_all(&root).unwrap();
+
+            assert!(protected.dacl_protected);
         }
 
         #[test]

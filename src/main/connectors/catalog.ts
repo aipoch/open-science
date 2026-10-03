@@ -20,6 +20,19 @@ export type ConnectorMeta = {
 // Static connector metadata for the settings UI (tool lists come from the registry).
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
+    id: 'iedb',
+    displayName: 'IEDB',
+    aliases: ['Immune Epitope Database', 'immune epitopes', 'immunology assays'],
+    description:
+      'Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.',
+    useWhen:
+      'Use for experimental immunology evidence in the Immune Epitope Database (IEDB): search epitopes, T cell responses, B cell antibody assays, MHC binding and ligand elution experiments, host species, antigen sources and references. Preserve methods, quantitative measurements, units, inequalities and negative results. These are database observations, not predictions. Parent UniProt antigens can differ from the curated antigen sequence. Follow explicit UniProt accessions through Genes & Ontologies and PDB identifiers through Structures & Interactions; follow PMIDs through PubMed. Public read-only IQ-API; no credentials required.',
+    sources: ['IEDB'],
+    termsUrl: 'https://www.iedb.org/',
+    requiresNcbi: false,
+    group: 'directory'
+  },
+  {
     id: 'monarch',
     displayName: 'Monarch Initiative',
     aliases: ['Monarch', 'phenotype evidence', 'disease phenotype associations'],
