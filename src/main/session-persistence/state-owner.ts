@@ -195,6 +195,20 @@ const sessionBindingTopologyHash = (session: PersistedChatSession): string => {
   return createHash('sha256').update(JSON.stringify(topology)).digest('hex')
 }
 
+const hasCompletedAgentResponse = (
+  session: PersistedChatSession,
+  promptMessageId: string
+): boolean => {
+  const graph = materializeSessionConversationGraph(session).conversationGraph
+  const messages = graph ? resolveActiveConversationMessages(graph) : session.messages
+  return messages.some(
+    (message) =>
+      message.role === 'agent' &&
+      message.status === 'complete' &&
+      message.responseToMessageId === promptMessageId
+  )
+}
+
 const delegatedSubtreeFrameIds = (graph: PersistedConversationGraph): Set<string> => {
   const result = new Set(
     graph.frames.filter((frame) => frame.kind === 'delegate').map(({ id }) => id)
@@ -1561,21 +1575,33 @@ class SessionPersistenceStateOwner {
     if (authority) delete rendererOwnedSession.delegationPolicy
     if (authority) delete rendererOwnedSession.computeConcurrencyLimit
     let conversationAuthority: PersistedChatSession | undefined
-    if (authority && options.conversationCommands?.length) {
-      try {
-        conversationAuthority = preserveMainTurnOutcomes(
-          this.promptPreparations.apply(
+    if (authority) {
+      if (options.conversationCommands?.length) {
+        try {
+          conversationAuthority = preserveMainTurnOutcomes(
+            this.promptPreparations.apply(
+              authority,
+              options.conversationCommands,
+              saveAuthority.callerSignal
+            ),
             authority,
-            options.conversationCommands,
-            saveAuthority.callerSignal
-          ),
-          authority,
-          false
-        )
-      } catch (error) {
-        if (!(error instanceof SessionConversationCommandDeferredError)) throw error
-        // The optimistic renderer graph must not bypass a command deferred by an active run.
-        // Preserve independent preference intent while the pending commands await settlement.
+            false
+          )
+        } catch (error) {
+          if (!(error instanceof SessionConversationCommandDeferredError)) throw error
+          // The optimistic renderer graph must not bypass a command deferred by an active run.
+          // Preserve independent preference intent while the pending commands await settlement.
+          conversationAuthority = authority
+        }
+      } else if (
+        !mainTurnAdmission &&
+        (authority.resumeRecovery ||
+          authority.runtimeTranscriptLastRun ||
+          (authority.activeRun &&
+            !submittedSession.activeRun &&
+            !hasCompletedAgentResponse(submittedSession, authority.activeRun.promptMessageId)))
+      ) {
+        // A passive renderer save cannot erase Main's live or recoverable runtime state.
         conversationAuthority = authority
       }
     }

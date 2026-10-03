@@ -7,6 +7,7 @@ vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: tru
 
 import { applyRuntimeSessionEvents } from '../../shared/runtime-session-projection'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
+import type { SessionConversationCommand } from '../../shared/session-conversation-command'
 import { initDataRoot } from '../storage-root'
 import { loadSessionMutationAuthority, SessionRepository } from './repository'
 import { SessionPersistenceStateOwner } from './state-owner'
@@ -171,6 +172,128 @@ it('exports runtime mutation failure diagnostics without changing the missing Se
 })
 
 describe('durable restart recovery before runtime attachment', () => {
+  it('keeps the first renderer active run before durable authority exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'runtime-first-run-'))
+    roots.push(root)
+    initDataRoot(root)
+    const repository = new SessionRepository(root)
+    const owner = new SessionPersistenceStateOwner({
+      repository,
+      fileIndex: { syncSession: vi.fn(async () => []) },
+      assertMutable: vi.fn(),
+      notifyFilesChanged: vi.fn(),
+      notifyRuntimeContextSessionUpdated: vi.fn(),
+      notifyRuntimeTranscriptSessionUpdated: vi.fn(),
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    })
+    const userMessage = {
+      id: 'prompt-first',
+      role: 'user' as const,
+      content: 'First prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const candidate = materializeSessionConversationGraph({
+      id: 'session-first',
+      projectId: 'project-first',
+      title: 'First run',
+      cwd: '/workspace',
+      status: 'running',
+      activeRun: { promptMessageId: userMessage.id, startedAt: 2 },
+      messages: [userMessage],
+      createdAt: 1,
+      updatedAt: 2
+    })
+
+    const saved = await owner.saveSession(candidate, {
+      conversationCommands: [
+        {
+          id: 'start-first',
+          kind: 'start-run',
+          timestamp: 2,
+          run: { promptMessageId: userMessage.id, startedAt: 2 }
+        } satisfies SessionConversationCommand
+      ]
+    })
+
+    expect(saved).toMatchObject({
+      // Main owns Session status; the unadopted renderer run remains available for admission.
+      status: 'idle',
+      activeRun: { promptMessageId: userMessage.id, startedAt: 2 }
+    })
+  })
+
+  it('preserves a prepared run when a stale renderer save lands before runtime adoption', async () => {
+    const h = await harness(false)
+    const unadopted = await h.repository.saveSession(
+      materializeSessionConversationGraph({
+        ...h.initial,
+        runtimeTranscriptOwner: undefined,
+        status: 'error',
+        activeRun: undefined,
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        }
+      })
+    )
+    const graph = unadopted.conversationGraph!
+    const scopeWithTurn = {
+      ...scope,
+      promptMessageId: 'prompt-1',
+      executionId: 'execution-1',
+      agentFrameId: graph.activeFrameId,
+      messageBranchId: graph.frames[0].activeBranchId,
+      runtimeSegmentId: graph.runtimeSegments[0].id
+    }
+
+    await h.owner.saveSession(
+      {
+        ...unadopted,
+        title: 'Renamed before adoption'
+      },
+      {
+        conflictRebaseFields: ['title'],
+        conversationCommands: [
+          {
+            id: 'resume-before-adoption',
+            kind: 'resume-run',
+            timestamp: 10,
+            run: { promptMessageId: 'prompt-1', startedAt: 10 }
+          } satisfies SessionConversationCommand
+        ]
+      }
+    )
+
+    const runtime = new RuntimeSessionOwner({
+      loadSession: async () => {
+        const loaded = await h.repository.loadSessionWithDiagnostics(
+          scope.projectId,
+          scope.sessionId,
+          { preserveRuntimeState: true }
+        )
+        return loaded.status === 'found' ? loaded.session : undefined
+      },
+      mutateSession: (identity, mutate) => h.owner.mutateRuntimeSession(identity, mutate),
+      finalizeArtifacts: vi.fn(async () => [])
+    })
+
+    await expect(runtime.begin(scopeWithTurn)).resolves.toMatchObject({
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 10 }
+    })
+    const prepared = await h.raw()
+    expect(prepared).toMatchObject({
+      status: 'found',
+      session: { activeRun: { promptMessageId: 'prompt-1', startedAt: 10 } }
+    })
+    const persisted = await h.raw()
+    expect(persisted.status).toBe('found')
+    if (persisted.status !== 'found') throw new Error('Expected persisted Session')
+    expect(persisted.session.activeRun).toEqual({ promptMessageId: 'prompt-1', startedAt: 10 })
+  })
   it.each([
     { live: false, status: 'running' as const, activeRun: true },
     { live: false, status: 'running' as const, activeRun: false },

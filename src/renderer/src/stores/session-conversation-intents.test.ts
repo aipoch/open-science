@@ -84,6 +84,34 @@ describe('Session conversation intents', () => {
     expect(pendingSessionConversationCommands(before.id)).toEqual([])
   })
 
+  it('captures a resume run before runtime transcript adoption', () => {
+    const before: PersistedChatSession = {
+      ...fixture(),
+      runtimeTranscriptOwner: undefined,
+      status: 'error',
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: 'prompt-1'
+      }
+    }
+    const after: PersistedChatSession = {
+      ...before,
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 2 },
+      updatedAt: 2
+    }
+
+    captureSessionConversationIntents(before, after, 'resume-run')
+
+    const commands = pendingSessionConversationCommands(before.id)
+    expect(commands.map(({ kind }) => kind)).toEqual(['resume-run'])
+    expect(applySessionConversationCommands(before, commands).activeRun).toEqual({
+      promptMessageId: 'prompt-1',
+      startedAt: 2
+    })
+  })
+
   it.each([undefined, 'main'] as const)(
     'captures append and run admission with owner %s while keeping stable identities until acknowledgement',
     (runtimeTranscriptOwner) => {

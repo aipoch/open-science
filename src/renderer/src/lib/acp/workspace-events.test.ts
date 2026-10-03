@@ -29,7 +29,11 @@ import {
   useSessionStore
 } from '../../stores/session-store'
 import { buildWorkspaceHistoryReplay } from './history-preamble'
-import { saveSessionInOrder } from '../session-persistence/session-persistence'
+import {
+  resetSessionPersistenceWriteFailuresForTests,
+  saveSessionInOrder
+} from '../session-persistence/session-persistence'
+import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
 import { useWorkspaceOperationErrors } from './workspace-operation-error'
 import {
   applyWorkspaceRuntimeEvent,
@@ -171,6 +175,8 @@ describe('workspace runtime events', () => {
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     resetDeferredArtifactEventsForTests()
     resetWorkspaceRuntimeEventOwnerForTests()
+    resetSessionConversationIntentsForTests()
+    resetSessionPersistenceWriteFailuresForTests()
     useSessionStore.setState(createInitialSessionState())
     useWorkspaceOperationErrors.setState({ errors: {} })
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
