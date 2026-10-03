@@ -63,12 +63,12 @@ it('signs a verified runtime artifact without granting CDN publication access', 
   expect(findStep(steps, 'Sign runtime PE files')).toMatchObject({
     uses: 'azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82',
     with: expect.objectContaining({
-      'files-folder': '${{ github.workspace }}\\runtime-to-sign',
       'files-catalog': '${{ github.workspace }}\\runtime-signing-files.txt',
-      'files-folder-recurse': true,
       'timestamp-rfc3161': 'http://timestamp.acs.microsoft.com'
     })
   })
+  expect(findStep(steps, 'Sign runtime PE files').with).not.toHaveProperty('files-folder')
+  expect(findStep(steps, 'Sign runtime PE files').with).not.toHaveProperty('files-folder-recurse')
   expect(findStep(steps, 'Sign runtime PE files').with).not.toHaveProperty('files-folder-filter')
   expect(findStep(steps, 'Upload signed runtime artifact').with).toMatchObject({
     'retention-days': 7,

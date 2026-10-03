@@ -175,9 +175,7 @@ jobs:
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
-          files-folder: ${{ github.workspace }}\runtime-to-sign
           files-catalog: ${{ github.workspace }}\runtime-signing-files.txt
-          files-folder-recurse: true
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
