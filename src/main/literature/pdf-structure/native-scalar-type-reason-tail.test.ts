@@ -120,3 +120,19 @@ it.each([
   ).toBeUndefined()
   expect(repairs).toEqual([])
 })
+
+it('declines a native tail when an equal-width separator crosses it', () => {
+  const f = input(),
+    repairs: string[] = []
+  f.rules.splice(2, 0, [0, 90, 900, 90])
+  recoverNativeScalarTypeReasonTail({
+    rows: f.rows,
+    items: f.items,
+    columnRects: f.columnRects,
+    rules: f.rules,
+    repairs
+  })
+  expect(f.rows[3].rect[3]).toBe(80)
+  expect(f.rows[4].rect[1]).toBe(80)
+  expect(repairs).toEqual([])
+})

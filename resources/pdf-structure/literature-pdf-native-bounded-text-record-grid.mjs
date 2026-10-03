@@ -194,7 +194,7 @@ export function recoverNativeScalarTypeReasonTail({ rows, items, columnRects, ru
         rule[1] === rule[3] &&
         rule[1] > a &&
         rule[1] < b &&
-        rule[2] - rule[0] > columnRects.at(-1)[2] - columnRects[0][0]
+        rule[2] - rule[0] >= columnRects.at(-1)[2] - columnRects[0][0]
     )
   for (let n = 0; n < anchors.length - 1; n++) {
     const current = anchors[n],
