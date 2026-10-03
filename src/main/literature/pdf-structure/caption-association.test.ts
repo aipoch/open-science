@@ -839,6 +839,32 @@ it('recovers a conservative crop when paired graphics leave caption direction am
   expect(figure.rect).toEqual([58, 78, 542, 242])
 })
 
+it('keeps a vertically adjacent figure crop inside the caption lane', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [
+      { kind: 'image', normalizedRect: [0.1, 0.1, 0.19, 0.3] },
+      { kind: 'image', normalizedRect: [0.21, 0.1, 0.3, 0.3] },
+      { kind: 'image', normalizedRect: [0.7, 0.1, 0.9, 0.3] },
+      { kind: 'image', normalizedRect: [0.1, 0.7, 0.19, 0.9] },
+      { kind: 'image', normalizedRect: [0.21, 0.7, 0.3, 0.9] },
+      { kind: 'image', normalizedRect: [0.7, 0.7, 0.9, 0.9] }
+    ]
+  }
+  const [figure] = associateFigures(page, [
+    {
+      page: 1,
+      lines: ['Figure 2. A caption belonging to the left column.'],
+      rect: [60, 370, 250, 390]
+    }
+  ])
+  expect(figure.rect).toEqual([58, 78, 182, 242])
+})
+
 it('rejects a graphics-count-only listing block as a figure', () => {
   const lines = Array.from({ length: 60 }, (_, index) => ({
     text: `Listing instruction line ${index} with enough words to resemble prose rather than a plot label.`,

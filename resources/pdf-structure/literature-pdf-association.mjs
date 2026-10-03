@@ -695,12 +695,24 @@ function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
         !otherCaptions.some((candidate) => intersection(candidate.rect, rect) / area(rect) > 0.6) &&
         intersection(caption.rect, rect) / area(rect) < 0.25
     )
+  // Above/below recovery must stay in the caption's horizontal lane. A
+  // neighboring column can be equally close vertically, but it must not be
+  // unioned into this figure's crop. Compare with the narrower projection so
+  // a short caption under a wide plate still supplies meaningful lane proof.
+  const laneGraphics = graphics.filter(({ rect }) => {
+    const overlap = Math.max(
+      0,
+      Math.min(rect[2], caption.rect[2]) - Math.max(rect[0], caption.rect[0])
+    )
+    const narrowerWidth = Math.min(rect[2] - rect[0], caption.rect[2] - caption.rect[0])
+    return narrowerWidth > 0 && overlap / narrowerWidth >= 0.35
+  })
   const directions = [
-    graphics.filter(
+    laneGraphics.filter(
       ({ rect }) =>
         rect[3] <= caption.rect[1] + edgeTolerance && caption.rect[1] - rect[3] <= maximumCaptionGap
     ),
-    graphics.filter(
+    laneGraphics.filter(
       ({ rect }) =>
         rect[1] >= caption.rect[3] - edgeTolerance && rect[1] - caption.rect[3] <= maximumCaptionGap
     ),
