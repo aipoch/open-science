@@ -216,10 +216,10 @@ directory are exercised. It also covers CommonJS and ESM package imports through
 eval, explicit module eval, print and stdin with inaccessible CommonJS and ESM
 ancestor scopes, rejects malformed and unreadable configs inside readable
 directories, and preserves readable workspace `type`, `imports` and `exports`.
-The PR Gate Windows core lane runs the three protected workspace execution cases inside the
-native lifecycle smoke's owned test installation. Setup and final removal remain owned by that
-smoke. The package-scope and shared-tool matrix remains available through the full integration
-test invocation for scheduled or manual validation.
+The PR Gate Windows core lane runs the package-scope and protected workspace execution cases
+inside the native lifecycle smoke's owned test installation. Setup and final removal remain owned
+by that smoke. The shared-tool matrix remains available through the full integration test
+invocation for scheduled or manual validation.
 This does not certify arbitrary native addons, online
 registry access, or a clean installed application.
 

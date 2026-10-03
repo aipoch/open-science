@@ -987,10 +987,10 @@ jobs:
             $env:RUN_WINDOWS_NOTEBOOK_RUNTIME = '1'
             $env:OPEN_SCIENCE_TEST_SANDBOX_INSTALLATION_ID = $installationId
             $env:OPEN_SCIENCE_TEST_SANDBOX_OWNERSHIP_ROOT = $ownershipRoot
-            # Keep PR validation focused on the three end-to-end workspace execution probes.
+            # Keep PR validation focused on AppContainer package resolution and lifecycle probes.
             # The native smoke below still owns setup, ACL, network, process-tree, and removal
-            # coverage; the package-scope and shared-tool matrix is reserved for full validation.
-            npx vitest run packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts --testNamePattern "executes .* at the requested workspace"
+            # coverage; the shared npm-tool matrix is reserved for full validation.
+            npx vitest run packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts --testNamePattern "imports from Node|rejects a .* package config|retains readable .* workspace package|executes .* at the requested workspace"
             if ($LASTEXITCODE -ne 0) { throw 'Protected Windows Notebook runtime regression failed.' }
           }
       - name: Test Windows path portability

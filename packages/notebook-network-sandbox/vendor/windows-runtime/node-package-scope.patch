@@ -1,6 +1,6 @@
 --- a/src/node_modules.cc
 +++ b/src/node_modules.cc
-@@ -17,8 +17,45 @@
+@@ -17,8 +17,50 @@
  
  #include "simdjson.h"
  
