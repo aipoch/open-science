@@ -143,7 +143,9 @@ jobs:
       # Hosted Windows runners are elevated; missing runtime/setup prerequisites fail this gate.
       - name: Run packaged Windows AppContainer REPL certification gate
         if: ${{ !inputs.install_only && matrix.platform == 'win' }}
-        timeout-minutes: 15
+        # The certification runs the full REPL lifecycle twice; hosted-runner ACL latency can push
+        # total wall time past 15 minutes even when every step succeeds.
+        timeout-minutes: 30
         shell: pwsh
         env:
           OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT: '1'

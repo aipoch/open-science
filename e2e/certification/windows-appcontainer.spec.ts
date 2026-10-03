@@ -17,7 +17,9 @@ const entriesOrMissing = async (path: string): Promise<string[]> => {
 }
 
 test('certifies a packaged Windows AppContainer REPL lifecycle', async ({ app }, testInfo) => {
-  test.setTimeout(720_000)
+  // Hosted runners pay 30-130s per AppContainer launch (antivirus-scanned ACL grants), and the
+  // certification runs the full lifecycle twice (before/after app restart).
+  test.setTimeout(1_500_000)
   expect(process.platform, 'Certification requires Windows x64.').toBe('win32')
   expect(process.arch).toBe('x64')
   expect(
