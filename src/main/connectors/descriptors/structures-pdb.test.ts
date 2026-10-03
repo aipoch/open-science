@@ -254,15 +254,20 @@ describe('pdb_search_sequence', () => {
   }
 
   it('normalizes a single FASTA and returns entity, distinct chain ID schemes, and match metrics', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(
-      jsonRes({ total_count: 1, result_set: [hit('1TUP_3')] })
-    ).mockResolvedValueOnce(jsonRes(entity))
-    const out = (await run('pdb_search_sequence', {
-      sequence: `  >query\r\n${sequence.slice(0, 40).toLowerCase()}\r\n ${sequence.slice(40)}  `,
-      identity_cutoff: 0.9,
-      evalue_cutoff: 1e-5,
-      min_query_coverage: 0.8
-    }, fetchImpl)) as Result
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes({ total_count: 1, result_set: [hit('1TUP_3')] }))
+      .mockResolvedValueOnce(jsonRes(entity))
+    const out = (await run(
+      'pdb_search_sequence',
+      {
+        sequence: `  >query\r\n${sequence.slice(0, 40).toLowerCase()}\r\n ${sequence.slice(40)}  `,
+        identity_cutoff: 0.9,
+        evalue_cutoff: 1e-5,
+        min_query_coverage: 0.8
+      },
+      fetchImpl
+    )) as Result
     const [url, init] = fetchImpl.mock.calls[0]
     expect(url).toBe('https://search.rcsb.org/rcsbsearch/v2/query')
     expect(init.method).toBe('POST')
@@ -295,32 +300,73 @@ describe('pdb_search_sequence', () => {
       return_type: 'polymer_entity',
       request_options: {
         paginate: { start: 0, rows: 100 },
-        results_content_type: ['experimental'], results_verbosity: 'verbose'
+        results_content_type: ['experimental'],
+        results_verbosity: 'verbose'
       }
     })
-    expect(fetchImpl.mock.calls[1][0]).toBe('https://data.rcsb.org/rest/v1/core/polymer_entity/1TUP/3')
-    expect(out).toMatchObject({ total_count: 1, n_scanned: 1, n_matched: 1, n_returned: 1, truncated: false })
+    expect(fetchImpl.mock.calls[1][0]).toBe(
+      'https://data.rcsb.org/rest/v1/core/polymer_entity/1TUP/3'
+    )
+    expect(out).toMatchObject({
+      total_count: 1,
+      n_scanned: 1,
+      n_matched: 1,
+      n_returned: 1,
+      truncated: false
+    })
     expect(out.records[0]).toEqual({
-      rcsb_id: '1TUP_3', pdb_id: '1TUP', entity_id: '3', score: 0.72,
-      description: 'Protein', asym_ids: ['C', 'D', 'E'], auth_asym_ids: ['A', 'B', 'C'],
+      rcsb_id: '1TUP_3',
+      pdb_id: '1TUP',
+      entity_id: '3',
+      score: 0.72,
+      description: 'Protein',
+      asym_ids: ['C', 'D', 'E'],
+      auth_asym_ids: ['A', 'B', 'C'],
       sequence_length: 120,
-      matches: [{
-        sequence_identity: 0.95, evalue: 1e-30, bitscore: 120,
-        alignment_length: 90, mismatches: 4, gaps_opened: 1,
-        query_beg: 11, query_end: 90, subject_beg: 3, subject_end: 82,
-        query_coverage: 0.8
-      }]
+      matches: [
+        {
+          sequence_identity: 0.95,
+          evalue: 1e-30,
+          bitscore: 120,
+          alignment_length: 90,
+          mismatches: 4,
+          gaps_opened: 1,
+          query_beg: 11,
+          query_end: 90,
+          subject_beg: 3,
+          subject_end: 82,
+          query_coverage: 0.8
+        }
+      ]
     })
   })
 
   it('filters individual alignments before fetching metadata and retains the upstream total', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ total_count: 3, result_set: [
-      hit('1TUP_1', [{ ...match, query_end: 89 }]),
-      hit('1TUP_2', [{ ...match, query_beg: undefined }]),
-      hit('1TUP_3', [{ ...match, query_end: 89 }, match])
-    ] })).mockResolvedValueOnce(jsonRes(entity))
-    const out = (await run('pdb_search_sequence', { sequence, min_query_coverage: 0.8 }, fetchImpl)) as Result
-    expect(out).toMatchObject({ total_count: 3, n_scanned: 3, n_matched: 1, n_returned: 1, truncated: false })
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonRes({
+          total_count: 3,
+          result_set: [
+            hit('1TUP_1', [{ ...match, query_end: 89 }]),
+            hit('1TUP_2', [{ ...match, query_beg: undefined }]),
+            hit('1TUP_3', [{ ...match, query_end: 89 }, match])
+          ]
+        })
+      )
+      .mockResolvedValueOnce(jsonRes(entity))
+    const out = (await run(
+      'pdb_search_sequence',
+      { sequence, min_query_coverage: 0.8 },
+      fetchImpl
+    )) as Result
+    expect(out).toMatchObject({
+      total_count: 3,
+      n_scanned: 3,
+      n_matched: 1,
+      n_returned: 1,
+      truncated: false
+    })
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(out.records[0].entity_id).toBe('3')
     expect(out.records[0].matches).toHaveLength(1)
@@ -328,22 +374,43 @@ describe('pdb_search_sequence', () => {
 
   it('continues past a fully filtered page, respecting the candidate cap and upstream offsets', async () => {
     const fetchImpl = vi.fn().mockImplementation((url: string, init: { body: string }) => {
-      if (url.includes('/polymer_entity/')) return Promise.resolve(jsonRes({
-        ...entity,
-        rcsb_polymer_entity_container_identifiers: {
-          ...entity.rcsb_polymer_entity_container_identifiers,
-          entity_id: url.split('/').pop()
-        }
-      }))
+      if (url.includes('/polymer_entity/'))
+        return Promise.resolve(
+          jsonRes({
+            ...entity,
+            rcsb_polymer_entity_container_identifiers: {
+              ...entity.rcsb_polymer_entity_container_identifiers,
+              entity_id: url.split('/').pop()
+            }
+          })
+        )
       const { start, rows } = JSON.parse(init.body).request_options.paginate
-      return Promise.resolve(jsonRes({ total_count: 200, result_set: Array.from({ length: rows }, (_, i) =>
-        hit(`1TUP_${start + i + 1}`, [{ ...match, query_end: start === 0 ? 50 : 90 }])
-      ) }))
+      return Promise.resolve(
+        jsonRes({
+          total_count: 200,
+          result_set: Array.from({ length: rows }, (_, i) =>
+            hit(`1TUP_${start + i + 1}`, [{ ...match, query_end: start === 0 ? 50 : 90 }])
+          )
+        })
+      )
     })
-    const out = (await run('pdb_search_sequence', {
-      sequence, min_query_coverage: 0.8, max_candidates: 102, max_rows: 1
-    }, fetchImpl)) as Result
-    expect(out).toMatchObject({ total_count: 200, n_scanned: 102, n_matched: 2, n_returned: 1, truncated: true })
+    const out = (await run(
+      'pdb_search_sequence',
+      {
+        sequence,
+        min_query_coverage: 0.8,
+        max_candidates: 102,
+        max_rows: 1
+      },
+      fetchImpl
+    )) as Result
+    expect(out).toMatchObject({
+      total_count: 200,
+      n_scanned: 102,
+      n_matched: 2,
+      n_returned: 1,
+      truncated: true
+    })
     expect(out.records[0].entity_id).toBe('101')
     for (const [, init] of fetchImpl.mock.calls.slice(0, 2)) {
       expect(JSON.parse(init.body).query).toMatchObject({
@@ -362,20 +429,35 @@ describe('pdb_search_sequence', () => {
         ])
       })
     }
-    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).request_options.paginate).toEqual({ start: 100, rows: 2 })
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).request_options.paginate).toEqual({
+      start: 100,
+      rows: 2
+    })
     expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
 
   it('flags result truncation even when every upstream candidate was scanned', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ total_count: 2, result_set: [hit('1TUP_3'), hit('1TSR_3')] }))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonRes({ total_count: 2, result_set: [hit('1TUP_3'), hit('1TSR_3')] })
+      )
       .mockResolvedValueOnce(jsonRes(entity))
     const out = (await run('pdb_search_sequence', { sequence, max_rows: 1 }, fetchImpl)) as Result
-    expect(out).toMatchObject({ total_count: 2, n_scanned: 2, n_matched: 2, n_returned: 1, truncated: true })
+    expect(out).toMatchObject({
+      total_count: 2,
+      n_scanned: 2,
+      n_matched: 2,
+      n_returned: 1,
+      truncated: true
+    })
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
   it('stops on an unexpectedly empty page without claiming complete results', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ total_count: 5, result_set: [hit('1TUP_3')] }))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes({ total_count: 5, result_set: [hit('1TUP_3')] }))
       .mockResolvedValueOnce(jsonRes({ total_count: 5, result_set: [] }))
       .mockResolvedValueOnce(jsonRes(entity))
     const out = (await run('pdb_search_sequence', { sequence }, fetchImpl)) as Result
@@ -387,55 +469,87 @@ describe('pdb_search_sequence', () => {
   it('returns an empty result for HTTP 204', async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(res204())
     expect(await run('pdb_search_sequence', { sequence }, fetchImpl)).toMatchObject({
-      total_count: 0, n_scanned: 0, n_matched: 0, n_returned: 0, truncated: false, records: []
+      total_count: 0,
+      n_scanned: 0,
+      n_matched: 0,
+      n_returned: 0,
+      truncated: false,
+      records: []
     })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
   it('keeps matches with explicit unknown metadata on a data-API 404', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ total_count: 1, result_set: [hit('1TUP_3')] }))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes({ total_count: 1, result_set: [hit('1TUP_3')] }))
       .mockResolvedValueOnce(errRes(404))
     const out = (await run('pdb_search_sequence', { sequence }, fetchImpl)) as Result
     expect(out.records[0]).toMatchObject({
-      pdb_id: '1TUP', entity_id: '3', metadata_error: 'not_found', asym_ids: null, auth_asym_ids: null
+      pdb_id: '1TUP',
+      entity_id: '3',
+      metadata_error: 'not_found',
+      asym_ids: null,
+      auth_asym_ids: null
     })
     expect(out.records[0].matches).toHaveLength(1)
   })
 
   it('rejects hits without sequence match context instead of reporting false zero matches', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({
-      total_count: 1, result_set: [hit('1TUP_3', [])]
-    }))
-    await expect(run('pdb_search_sequence', { sequence }, fetchImpl)).rejects.toThrow('missing match context')
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      jsonRes({
+        total_count: 1,
+        result_set: [hit('1TUP_3', [])]
+      })
+    )
+    await expect(run('pdb_search_sequence', { sequence }, fetchImpl)).rejects.toThrow(
+      'missing match context'
+    )
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
   it.each([400, 429, 500])('propagates HTTP %s from search and metadata', async (status) => {
-    await expect(run('pdb_search_sequence', { sequence }, vi.fn().mockResolvedValue(errRes(status))))
-      .rejects.toThrow(`HTTP ${status}`)
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ total_count: 1, result_set: [hit('1TUP_3')] }))
+    await expect(
+      run('pdb_search_sequence', { sequence }, vi.fn().mockResolvedValue(errRes(status)))
+    ).rejects.toThrow(`HTTP ${status}`)
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes({ total_count: 1, result_set: [hit('1TUP_3')] }))
       .mockResolvedValueOnce(errRes(status))
-    await expect(run('pdb_search_sequence', { sequence }, fetchImpl)).rejects.toThrow(`HTTP ${status}`)
+    await expect(run('pdb_search_sequence', { sequence }, fetchImpl)).rejects.toThrow(
+      `HTTP ${status}`
+    )
   })
 
   it('does not turn transport failures or malformed JSON into no matches', async () => {
-    for (const error of [new TypeError('fetch failed'), new SyntaxError('Unexpected token <'), new SyntaxError('Unexpected end of JSON input')]) {
-      await expect(run('pdb_search_sequence', { sequence }, vi.fn().mockRejectedValue(error))).rejects.toBe(error)
+    for (const error of [
+      new TypeError('fetch failed'),
+      new SyntaxError('Unexpected token <'),
+      new SyntaxError('Unexpected end of JSON input')
+    ]) {
+      await expect(
+        run('pdb_search_sequence', { sequence }, vi.fn().mockRejectedValue(error))
+      ).rejects.toBe(error)
     }
-    await expect(run('pdb_search_sequence', { sequence }, vi.fn().mockResolvedValue(jsonRes({}))))
-      .rejects.toThrow('invalid RCSB sequence search response')
+    await expect(
+      run('pdb_search_sequence', { sequence }, vi.fn().mockResolvedValue(jsonRes({})))
+    ).rejects.toThrow('invalid RCSB sequence search response')
   })
 
   it.each(['', '  ', '{', '<html>'])(
-    'rejects malformed HTTP 200 search bodies instead of reporting zero hits (%j)', async (body) => {
+    'rejects malformed HTTP 200 search bodies instead of reporting zero hits (%j)',
+    async (body) => {
       const fetchImpl = vi.fn().mockResolvedValue(new Response(body, { status: 200 }))
-      await expect(run('pdb_search_sequence', { sequence }, fetchImpl)).rejects.toBeInstanceOf(SyntaxError)
+      await expect(run('pdb_search_sequence', { sequence }, fetchImpl)).rejects.toBeInstanceOf(
+        SyntaxError
+      )
       expect(fetchImpl).toHaveBeenCalledOnce()
     }
   )
 
   it('preserves prior totals and marks incomplete results if a later page is HTTP 204', async () => {
-    const fetchImpl = vi.fn()
+    const fetchImpl = vi
+      .fn()
       .mockResolvedValueOnce(jsonRes({ total_count: 2, result_set: [hit('1TUP_3')] }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(jsonRes(entity))
@@ -444,69 +558,133 @@ describe('pdb_search_sequence', () => {
   })
 
   it.each([
-    { sequence_identity: '0.9' }, { sequence_identity: -0.1 }, { sequence_identity: 1.1 },
-    { sequence_identity: undefined }, { evalue: -1 }, { evalue: NaN }, { evalue: null },
-    { bitscore: '120' }, { bitscore: Infinity }, { bitscore: -1 },
-    { alignment_length: -1 }, { mismatches: 0.5 }, { gaps_opened: '1' },
-    { query_beg: 0 }, { query_beg: 1.5 }, { subject_end: '82' }
+    { sequence_identity: '0.9' },
+    { sequence_identity: -0.1 },
+    { sequence_identity: 1.1 },
+    { sequence_identity: undefined },
+    { evalue: -1 },
+    { evalue: NaN },
+    { evalue: null },
+    { bitscore: '120' },
+    { bitscore: Infinity },
+    { bitscore: -1 },
+    { alignment_length: -1 },
+    { mismatches: 0.5 },
+    { gaps_opened: '1' },
+    { query_beg: 0 },
+    { query_beg: 1.5 },
+    { subject_end: '82' }
   ])('rejects invalid match metrics before metadata retrieval (case %#)', async (metrics) => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({
-      total_count: 1, result_set: [hit('1TUP_3', [{ ...match, ...metrics }])]
-    }))
-    await expect(run('pdb_search_sequence', { sequence }, fetchImpl)).rejects.toThrow(/invalid RCSB sequence match/)
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      jsonRes({
+        total_count: 1,
+        result_set: [hit('1TUP_3', [{ ...match, ...metrics }])]
+      })
+    )
+    await expect(run('pdb_search_sequence', { sequence }, fetchImpl)).rejects.toThrow(
+      /invalid RCSB sequence match/
+    )
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('preserves valid zero E-values and identity at the boundaries', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({
-      total_count: 1, result_set: [hit('1TUP_3', [{ ...match, evalue: 0, sequence_identity: 1 }])]
-    })).mockResolvedValueOnce(jsonRes(entity))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonRes({
+          total_count: 1,
+          result_set: [hit('1TUP_3', [{ ...match, evalue: 0, sequence_identity: 1 }])]
+        })
+      )
+      .mockResolvedValueOnce(jsonRes(entity))
     const out = (await run('pdb_search_sequence', { sequence }, fetchImpl)) as Result
-    expect(out.records[0].matches).toEqual([expect.objectContaining({ evalue: 0, sequence_identity: 1 })])
+    expect(out.records[0].matches).toEqual([
+      expect.objectContaining({ evalue: 0, sequence_identity: 1 })
+    ])
   })
 
   it.each([
-    {}, null,
+    {},
+    null,
     { ...entity, rcsb_id: '1TSR_3' },
     ...[
-      { entry_id: '1TSR' }, { entity_id: '2' }, { entity_id: 3 },
-      { asym_ids: undefined }, { asym_ids: 'A' }, { asym_ids: [1] },
-      { auth_asym_ids: undefined }, { auth_asym_ids: [''] }
+      { entry_id: '1TSR' },
+      { entity_id: '2' },
+      { entity_id: 3 },
+      { asym_ids: undefined },
+      { asym_ids: 'A' },
+      { asym_ids: [1] },
+      { auth_asym_ids: undefined },
+      { auth_asym_ids: [''] }
     ].map((ids) => ({
       ...entity,
-      rcsb_polymer_entity_container_identifiers: { ...entity.rcsb_polymer_entity_container_identifiers, ...ids }
+      rcsb_polymer_entity_container_identifiers: {
+        ...entity.rcsb_polymer_entity_container_identifiers,
+        ...ids
+      }
     }))
   ])('rejects malformed or mismatched entity metadata (case %#)', async (metadata) => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ total_count: 1, result_set: [hit('1TUP_3')] }))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes({ total_count: 1, result_set: [hit('1TUP_3')] }))
       .mockResolvedValueOnce(jsonRes(metadata))
-    await expect(run('pdb_search_sequence', { sequence }, fetchImpl)).rejects.toThrow(/RCSB sequence/)
+    await expect(run('pdb_search_sequence', { sequence }, fetchImpl)).rejects.toThrow(
+      /RCSB sequence/
+    )
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
   it.each([
-    '', 'M'.repeat(24), 'M'.repeat(10_001), '>header', '>one\n' + sequence + '\n>two\n' + sequence,
-    sequence + '*', sequence + '-', sequence + '1', 123, ['M'.repeat(25)]
+    '',
+    'M'.repeat(24),
+    'M'.repeat(10_001),
+    '>header',
+    '>one\n' + sequence + '\n>two\n' + sequence,
+    sequence + '*',
+    sequence + '-',
+    sequence + '1',
+    123,
+    ['M'.repeat(25)]
   ])('rejects invalid sequence input before any request (case %#)', async (value) => {
     const fetchImpl = vi.fn()
-    await expect(run('pdb_search_sequence', { sequence: value }, fetchImpl)).rejects.toThrow(/sequence/)
+    await expect(run('pdb_search_sequence', { sequence: value }, fetchImpl)).rejects.toThrow(
+      /sequence/
+    )
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it.each([
-    ['identity_cutoff', -0.1], ['identity_cutoff', 90], ['identity_cutoff', '0.9'],
-    ['min_query_coverage', 1.1], ['min_query_coverage', null], ['min_query_coverage', NaN],
-    ['evalue_cutoff', 0], ['evalue_cutoff', -1], ['evalue_cutoff', Infinity],
-    ['max_rows', 0], ['max_rows', 26], ['max_rows', 1.5],
-    ['max_candidates', 0], ['max_candidates', 1001], ['max_candidates', 1.5]
+    ['identity_cutoff', -0.1],
+    ['identity_cutoff', 90],
+    ['identity_cutoff', '0.9'],
+    ['min_query_coverage', 1.1],
+    ['min_query_coverage', null],
+    ['min_query_coverage', NaN],
+    ['evalue_cutoff', 0],
+    ['evalue_cutoff', -1],
+    ['evalue_cutoff', Infinity],
+    ['max_rows', 0],
+    ['max_rows', 26],
+    ['max_rows', 1.5],
+    ['max_candidates', 0],
+    ['max_candidates', 1001],
+    ['max_candidates', 1.5]
   ])('rejects invalid %s=%j before any request', async (key, value) => {
     const fetchImpl = vi.fn()
-    await expect(run('pdb_search_sequence', { sequence, [key as string]: value }, fetchImpl)).rejects.toThrow(String(key))
+    await expect(
+      run('pdb_search_sequence', { sequence, [key as string]: value }, fetchImpl)
+    ).rejects.toThrow(String(key))
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it.each([{ query_end: 101 }, { query_beg: 91 }, { query_end: undefined }])(
-    'never fabricates coverage from invalid or missing coordinates: %j', async (coords) => {
-      const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ total_count: 1, result_set: [hit('1TUP_3', [{ ...match, ...coords }])] }))
+    'never fabricates coverage from invalid or missing coordinates: %j',
+    async (coords) => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonRes({ total_count: 1, result_set: [hit('1TUP_3', [{ ...match, ...coords }])] })
+        )
         .mockResolvedValueOnce(jsonRes(entity))
       const out = (await run('pdb_search_sequence', { sequence }, fetchImpl)) as Result
       expect(out.records[0].matches).toEqual([expect.objectContaining({ query_coverage: null })])

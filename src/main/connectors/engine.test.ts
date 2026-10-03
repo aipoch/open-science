@@ -425,7 +425,10 @@ describe('ParserEngine declarative path', () => {
     async (allowNoContent) => {
       const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
       const descriptor: ToolDescriptor = {
-        id: 't', connector: 'c', description: '', input: {},
+        id: 't',
+        connector: 'c',
+        description: '',
+        input: {},
         run: (ctx) => ctx.postJson('https://example.test/query', {}, { allowNoContent })
       }
       const result = new ParserEngine({ fetchImpl, retries: 0 }).call(descriptor, {}, {})
@@ -440,23 +443,35 @@ describe('ParserEngine declarative path', () => {
     async (body) => {
       const fetchImpl = vi.fn().mockResolvedValue(new Response(body, { status: 200 }))
       const descriptor: ToolDescriptor = {
-        id: 't', connector: 'c', description: '', input: {},
+        id: 't',
+        connector: 'c',
+        description: '',
+        input: {},
         run: (ctx) => ctx.postJson('https://example.test/query', {}, { allowNoContent: true })
       }
-      await expect(new ParserEngine({ fetchImpl, retries: 0 }).call(descriptor, {}, {}))
-        .rejects.toBeInstanceOf(SyntaxError)
+      await expect(
+        new ParserEngine({ fetchImpl, retries: 0 }).call(descriptor, {}, {})
+      ).rejects.toBeInstanceOf(SyntaxError)
       expect(fetchImpl).toHaveBeenCalledOnce()
     }
   )
 
-  it.each([null, { total_count: 0 }])('postJson preserves HTTP 200 JSON with allowNoContent (%j)', async (body) => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
-    const descriptor: ToolDescriptor = {
-      id: 't', connector: 'c', description: '', input: {},
-      run: (ctx) => ctx.postJson('https://example.test/query', {}, { allowNoContent: true })
+  it.each([null, { total_count: 0 }])(
+    'postJson preserves HTTP 200 JSON with allowNoContent (%j)',
+    async (body) => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+      const descriptor: ToolDescriptor = {
+        id: 't',
+        connector: 'c',
+        description: '',
+        input: {},
+        run: (ctx) => ctx.postJson('https://example.test/query', {}, { allowNoContent: true })
+      }
+      await expect(new ParserEngine({ fetchImpl }).call(descriptor, {}, {})).resolves.toEqual(body)
     }
-    await expect(new ParserEngine({ fetchImpl }).call(descriptor, {}, {})).resolves.toEqual(body)
-  })
+  )
 
   it.each([undefined, false] as const)(
     'fetchText retry=%s preserves the default and supports one-shot GET',

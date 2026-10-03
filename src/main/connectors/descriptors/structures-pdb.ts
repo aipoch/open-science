@@ -375,7 +375,9 @@ function proteinSequence(value: unknown): string {
   if (lines[0]?.startsWith('>')) lines.shift()
   const sequence = lines.join('').replace(/\s/g, '').toUpperCase()
   if (!/^[ACDEFGHIKLMNPQRSTVWYBXZJUO]+$/.test(sequence)) {
-    throw new Error('sequence must contain one ungapped protein sequence (raw or single-record FASTA)')
+    throw new Error(
+      'sequence must contain one ungapped protein sequence (raw or single-record FASTA)'
+    )
   }
   if (sequence.length < 25 || sequence.length > 10_000) {
     throw new Error('sequence must contain 25..10000 amino acids')
@@ -399,7 +401,9 @@ function sequenceNumber(
     value > max ||
     (integer && !Number.isInteger(value))
   ) {
-    throw new Error(`${key} must be ${integer ? 'an integer' : 'a finite number'} in ${min}..${max}`)
+    throw new Error(
+      `${key} must be ${integer ? 'an integer' : 'a finite number'} in ${min}..${max}`
+    )
   }
   return value
 }
@@ -439,8 +443,13 @@ function parseSequenceMatch(value: unknown): SequenceMatch {
       throw new Error(`invalid RCSB sequence match ${key}`)
   }
   for (const key of [
-    'alignment_length', 'mismatches', 'gaps_opened',
-    'query_beg', 'query_end', 'subject_beg', 'subject_end'
+    'alignment_length',
+    'mismatches',
+    'gaps_opened',
+    'query_beg',
+    'query_end',
+    'subject_beg',
+    'subject_end'
   ] as const) {
     const metric = match[key]
     if (metric == null) continue
@@ -463,7 +472,10 @@ function parseSequenceEntity(value: unknown, pdbId: string, entityId: string): P
     throw new Error('RCSB sequence entity metadata does not match the requested identity')
   for (const key of ['asym_ids', 'auth_asym_ids'] as const) {
     const chains = ids[key]
-    if (!Array.isArray(chains) || chains.some((chain) => typeof chain !== 'string' || !chain.trim())) {
+    if (
+      !Array.isArray(chains) ||
+      chains.some((chain) => typeof chain !== 'string' || !chain.trim())
+    ) {
       throw new Error(`invalid RCSB sequence entity ${key}`)
     }
   }

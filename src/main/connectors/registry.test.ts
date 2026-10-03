@@ -18,12 +18,19 @@ describe('registry + catalog', () => {
     const tool = getDescriptor('structures', 'pdb_search_sequence')!
     expect(tool).toBeDefined()
     const sequence = 'MTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQV'
-    expect(() => validateToolArguments(tool, { sequence, identity_cutoff: 0.9, min_query_coverage: 0.8 })).not.toThrow()
+    expect(() =>
+      validateToolArguments(tool, { sequence, identity_cutoff: 0.9, min_query_coverage: 0.8 })
+    ).not.toThrow()
     for (const args of [
-      {}, { sequence, identity_cutoff: 90 }, { sequence, min_query_coverage: -1 },
-      { sequence, evalue_cutoff: 0 }, { sequence, max_rows: 26 },
-      { sequence, max_candidates: 1001 }, { sequence, include_computed_models: true }
-    ]) expect(() => validateToolArguments(tool, args)).toThrow(/invalid_arguments/)
+      {},
+      { sequence, identity_cutoff: 90 },
+      { sequence, min_query_coverage: -1 },
+      { sequence, evalue_cutoff: 0 },
+      { sequence, max_rows: 26 },
+      { sequence, max_candidates: 1001 },
+      { sequence, include_computed_models: true }
+    ])
+      expect(() => validateToolArguments(tool, args)).toThrow(/invalid_arguments/)
     const doc = renderSkillDoc('structures')
     expect(doc).toContain('### pdb_search_sequence')
     expect(doc).toContain('min_query_coverage')
