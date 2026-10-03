@@ -7018,6 +7018,13 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "Ohne automatischen Zugriff ist eine Freigabe erforderlich. Der Dienst wird nicht gesperrt. Eigene öffentliche Regeln gelten weiterhin.",
     "Unsaved changes": "Ungespeicherte Änderungen",
     "Your network rules have not been saved. Discard them and leave?": "Ihre Netzwerkregeln wurden nicht gespeichert. Verwerfen und verlassen?",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Dadurch kann Notebook-Code Daten von {{domain}} lesen und dorthin senden. Lassen Sie nur Domains zu, denen Sie vertrauen. Gespeicherten Zugriff können Sie jederzeit unter Einstellungen > Netzwerk > Notebook-Netzwerkzugriff widerrufen."
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Dadurch kann Notebook-Code Daten von {{domain}} lesen und dorthin senden. Lassen Sie nur Domains zu, denen Sie vertrauen. Gespeicherten Zugriff können Sie jederzeit unter Einstellungen > Netzwerk > Notebook-Netzwerkzugriff widerrufen.",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "Immunepitope, T-/B-Zell- und MHC-Assays, Antigene und Literaturbelege aus IEDB.",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "Immunepitope nach Sequenz, Wirt, Antigen und MHC suchen.",
+    "Search epitope source antigens and UniProt references.": "Ursprungsantigene von Epitopen und UniProt-Verweise suchen.",
+    "Retrieve T cell experiments, measurements and literature evidence.": "T-Zell-Experimente, Messwerte und Literaturbelege abrufen.",
+    "Retrieve B cell experiments, measurements and literature evidence.": "B-Zell-Experimente, Messwerte und Literaturbelege abrufen.",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "MHC-Bindungs- und Ligandenelutionsexperimente mit Methoden und Einheiten abrufen.",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "IEDB-Literatur und PubMed-Kennungen für experimentelle Belege finden."
   }
 }

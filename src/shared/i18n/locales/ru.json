@@ -7325,6 +7325,13 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "Отключение автоматического доступа требует утверждения, но не блокирует службу. Пользовательские публичные правила продолжают действовать.",
     "Unsaved changes": "Несохранённые изменения",
     "Your network rules have not been saved. Discard them and leave?": "Сетевые правила не сохранены. Отменить изменения и выйти?",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Это позволит коду Notebook читать данные с {{domain}} и отправлять данные на этот домен. Разрешайте только доверенные домены. Сохранённый доступ можно в любой момент отозвать в разделе «Настройки > Сеть > Сетевой доступ Notebook»."
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Это позволит коду Notebook читать данные с {{domain}} и отправлять данные на этот домен. Разрешайте только доверенные домены. Сохранённый доступ можно в любой момент отозвать в разделе «Настройки > Сеть > Сетевой доступ Notebook».",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "Иммунные эпитопы, анализы T/B-клеток и MHC, антигены и литературные свидетельства из IEDB.",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "Поиск иммунных эпитопов по последовательности, хозяину, антигену и MHC.",
+    "Search epitope source antigens and UniProt references.": "Поиск исходных антигенов эпитопов и ссылок UniProt.",
+    "Retrieve T cell experiments, measurements and literature evidence.": "Получение экспериментов с T-клетками, измерений и литературных данных.",
+    "Retrieve B cell experiments, measurements and literature evidence.": "Получение экспериментов с B-клетками, измерений и литературных данных.",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "Получение экспериментов по связыванию MHC и элюции лигандов с методами и единицами измерения.",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "Поиск ссылок IEDB и идентификаторов PubMed для экспериментальных данных."
   }
 }

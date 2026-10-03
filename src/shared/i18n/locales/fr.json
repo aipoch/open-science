@@ -7184,6 +7184,13 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "Désactiver l’accès automatique impose une approbation, sans bloquer le service. Les règles publiques personnalisées restent applicables.",
     "Unsaved changes": "Modifications non enregistrées",
     "Your network rules have not been saved. Discard them and leave?": "Vos règles réseau n’ont pas été enregistrées. Les abandonner et quitter ?",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Cela permet au code du Notebook de lire des données depuis {{domain}} et d’en envoyer à ce domaine. N’autorisez que les domaines auxquels vous faites confiance. Vous pouvez révoquer à tout moment l’accès enregistré dans Paramètres > Réseau > Accès réseau du Notebook."
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Cela permet au code du Notebook de lire des données depuis {{domain}} et d’en envoyer à ce domaine. N’autorisez que les domaines auxquels vous faites confiance. Vous pouvez révoquer à tout moment l’accès enregistré dans Paramètres > Réseau > Accès réseau du Notebook.",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "Épitopes immunitaires, essais de cellules T/B et de CMH, antigènes et preuves bibliographiques de l’IEDB.",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "Rechercher des épitopes immunitaires par séquence, hôte, antigène et CMH.",
+    "Search epitope source antigens and UniProt references.": "Rechercher les antigènes sources des épitopes et les références UniProt.",
+    "Retrieve T cell experiments, measurements and literature evidence.": "Récupérer les expériences sur les cellules T, les mesures et les preuves bibliographiques.",
+    "Retrieve B cell experiments, measurements and literature evidence.": "Récupérer les expériences sur les cellules B, les mesures et les preuves bibliographiques.",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "Récupérer les expériences de liaison au CMH et d’élution de ligands avec leurs méthodes et unités.",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "Trouver les références IEDB et les identifiants PubMed des preuves expérimentales."
   }
 }

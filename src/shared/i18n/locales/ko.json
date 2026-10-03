@@ -6856,6 +6856,13 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "자동 접근을 끄면 승인이 필요하지만 서비스가 차단되지는 않습니다. 사용자 지정 공개 규칙은 계속 적용됩니다.",
     "Unsaved changes": "저장하지 않은 변경 사항",
     "Your network rules have not been saved. Discard them and leave?": "네트워크 규칙을 저장하지 않았습니다. 변경 사항을 버리고 나가시겠습니까?",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "이렇게 하면 Notebook 코드가 {{domain}}에서 데이터를 읽고 해당 도메인으로 데이터를 보낼 수 있습니다. 신뢰하는 도메인만 허용하세요. 저장된 액세스 권한은 언제든지 설정 > 네트워크 > Notebook 네트워크 액세스에서 취소할 수 있습니다."
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "이렇게 하면 Notebook 코드가 {{domain}}에서 데이터를 읽고 해당 도메인으로 데이터를 보낼 수 있습니다. 신뢰하는 도메인만 허용하세요. 저장된 액세스 권한은 언제든지 설정 > 네트워크 > Notebook 네트워크 액세스에서 취소할 수 있습니다.",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "IEDB의 면역 에피토프, T/B 세포 및 MHC 실험, 항원 및 문헌 근거입니다.",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "서열, 숙주, 항원 및 MHC로 면역 에피토프를 검색합니다.",
+    "Search epitope source antigens and UniProt references.": "에피토프 유래 항원과 UniProt 참조를 검색합니다.",
+    "Retrieve T cell experiments, measurements and literature evidence.": "T 세포 실험, 측정 결과 및 문헌 근거를 가져옵니다.",
+    "Retrieve B cell experiments, measurements and literature evidence.": "B 세포 실험, 측정 결과 및 문헌 근거를 가져옵니다.",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "방법과 단위를 포함한 MHC 결합 및 리간드 용출 실험을 가져옵니다.",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "실험 근거에 대한 IEDB 문헌과 PubMed 식별자를 찾습니다."
   }
 }

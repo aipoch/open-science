@@ -6858,6 +6858,13 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "自動アクセスをオフにすると承認が必要になりますが、サービスはブロックされません。カスタム公開ルールは引き続き適用されます。",
     "Unsaved changes": "未保存の変更",
     "Your network rules have not been saved. Discard them and leave?": "ネットワークルールは未保存です。変更を破棄して移動しますか？",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "これにより、Notebook コードは {{domain}} からデータを読み取り、データを送信できるようになります。信頼できるドメインのみを許可してください。保存したアクセス権は、いつでも「設定 > ネットワーク > Notebook のネットワークアクセス」で取り消せます。"
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "これにより、Notebook コードは {{domain}} からデータを読み取り、データを送信できるようになります。信頼できるドメインのみを許可してください。保存したアクセス権は、いつでも「設定 > ネットワーク > Notebook のネットワークアクセス」で取り消せます。",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "IEDB の免疫エピトープ、T/B 細胞および MHC アッセイ、抗原、文献エビデンス。",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "配列、宿主、抗原、MHC で免疫エピトープを検索します。",
+    "Search epitope source antigens and UniProt references.": "エピトープの由来抗原と UniProt 参照を検索します。",
+    "Retrieve T cell experiments, measurements and literature evidence.": "T 細胞の実験、測定結果、文献エビデンスを取得します。",
+    "Retrieve B cell experiments, measurements and literature evidence.": "B 細胞の実験、測定結果、文献エビデンスを取得します。",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "MHC 結合およびリガンド溶出実験を、方法と単位を含めて取得します。",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "実験エビデンスの IEDB 文献と PubMed 識別子を検索します。"
   }
 }

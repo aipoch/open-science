@@ -94,6 +94,43 @@ afterEach(() => {
 
 describe('ConnectorAddForm copy', () => {
   it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
+    'localizes IEDB discovery and evidence tools in %s',
+    async (locale) => {
+      await prepareI18nLocale(locale)
+      const t = i18next.getFixedT(locale, 'renderer')
+      const description =
+        'Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.'
+      const translated = connectorDescription({ id: 'iedb', description }, t)
+      expect(translated).toBe(i18next.getResource(locale, 'renderer', description))
+      expect(translated).not.toBe(description)
+      for (const [method, english] of [
+        ['search_epitopes', 'Search immune epitopes by sequence, host, antigen and MHC.'],
+        ['search_antigens', 'Search epitope source antigens and UniProt references.'],
+        [
+          'search_tcell_assays',
+          'Retrieve T cell experiments, measurements and literature evidence.'
+        ],
+        [
+          'search_bcell_assays',
+          'Retrieve B cell experiments, measurements and literature evidence.'
+        ],
+        [
+          'search_mhc_assays',
+          'Retrieve MHC binding and ligand elution experiments with methods and units.'
+        ],
+        [
+          'search_references',
+          'Find IEDB references and PubMed identifiers for experimental evidence.'
+        ]
+      ]) {
+        const copy = connectorToolDescription(`iedb/${method}`, english, t)
+        expect(copy).toBe(i18next.getResource(locale, 'renderer', english))
+        expect(copy).not.toBe(english)
+      }
+    }
+  )
+
+  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
     'renders the PDB sequence search description from the %s catalog',
     async (locale) => {
       await prepareI18nLocale(locale)

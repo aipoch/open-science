@@ -6858,6 +6858,13 @@
     "Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.": "关闭自动访问后需要审批，并不意味着阻止该服务。自定义公共域名规则仍然适用。",
     "Unsaved changes": "有未保存的更改",
     "Your network rules have not been saved. Discard them and leave?": "网络规则尚未保存。要放弃更改并离开吗？",
-    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "这将允许 Notebook 代码从 {{domain}} 读取数据并向其发送数据。仅允许您信任的域名。您可以随时在“设置 > 网络 > Notebook 网络访问”中撤销已保存的访问权限。"
+    "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "这将允许 Notebook 代码从 {{domain}} 读取数据并向其发送数据。仅允许您信任的域名。您可以随时在“设置 > 网络 > Notebook 网络访问”中撤销已保存的访问权限。",
+    "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "IEDB 的免疫表位、T/B 细胞与 MHC 实验、抗原及文献证据。",
+    "Search immune epitopes by sequence, host, antigen and MHC.": "按序列、宿主、抗原和 MHC 搜索免疫表位。",
+    "Search epitope source antigens and UniProt references.": "搜索表位来源抗原及 UniProt 引用。",
+    "Retrieve T cell experiments, measurements and literature evidence.": "获取 T 细胞实验、测量结果和文献证据。",
+    "Retrieve B cell experiments, measurements and literature evidence.": "获取 B 细胞实验、测量结果和文献证据。",
+    "Retrieve MHC binding and ligand elution experiments with methods and units.": "获取 MHC 结合与配体洗脱实验，包括方法和单位。",
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "查找实验支持证据的 IEDB 文献记录和 PubMed 标识符。"
   }
 }
