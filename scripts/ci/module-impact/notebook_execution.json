@@ -288,6 +288,7 @@
     "owner": [
       "src/main/notebook/windows-runtime-components.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
+      "src/main/notebook/windows-runtime-probe.test.ts",
       "src/main/notebook/windows-runtime-probe.windows.test.ts",
       "src/main/notebook/configured-shell-runtime.test.ts",
       "src/main/notebook/dependency-analysis.python-data-science.test.ts",
