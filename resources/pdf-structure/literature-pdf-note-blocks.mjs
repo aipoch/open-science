@@ -3,6 +3,137 @@ import { groupPageLines, captionKind, joinCaptionLines } from './literature-pdf-
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { lineRect, union } from './literature-pdf-page-geometry.mjs'
 
+// Consecutive raised markers can start midway through the preceding note's
+// last physical line. The original small-type paragraph, rather than one
+// marker's x coordinate, owns its wrapped continuation.
+export function recoverNativeNumberedDefinitionFooter(page, tables) {
+  return tables.map(({ rect }, index) => {
+    const firsts = page.lines.filter(
+      (l) =>
+        l.text === '1' &&
+        l.fontSize > 0 &&
+        l.y >= rect[3] &&
+        l.y - rect[3] < l.fontSize * 3 &&
+        l.x >= rect[0] &&
+        l.x + l.width <= rect[2]
+    )
+    if (firsts.length !== 1) return
+    const first = firsts[0],
+      initial = page.lines.filter(
+        (l) =>
+          l !== first &&
+          l.x >= first.x + first.width &&
+          l.x - first.x - first.width < first.fontSize &&
+          l.y + l.fontSize - first.y - first.fontSize > first.fontSize * 0.2 &&
+          l.y - first.y < first.fontSize &&
+          l.fontSize >= first.fontSize * 1.2 &&
+          /^[\p{L}][^:]{2,60}:\s*\p{L}/u.test(l.text)
+      )
+    if (initial.length !== 1) return
+    const lead = initial[0],
+      em = lead.fontSize,
+      left = first.x - em * 0.1,
+      right = rect[2]
+    const heads = page.lines
+      .filter(
+        (l) =>
+          l.text.trim() &&
+          Math.abs(l.fontSize - em) < 0.5 &&
+          l.y >= lead.y &&
+          l.y < lead.y + em * 30 &&
+          l.x >= left &&
+          l.x + l.width <= right + 0.1
+      )
+      .sort((a, b) => a.y - b.y || a.x - b.x)
+    const rows = []
+    for (const l of heads) {
+      const row = rows.at(-1)
+      if (row && Math.abs(row.y - l.y) < em * 0.15) row.parts.push(l)
+      else {
+        if (row && l.y - row.y > em * 1.5) break
+        rows.push({ y: l.y, parts: [l] })
+      }
+    }
+    if (rows.length < 3 || !/[.!?]$/.test(rows.at(-1).parts.at(-1).text.trim())) return
+    const bottom = rows.at(-1).y + em
+    if (
+      tables.some(
+        (t, i) =>
+          i !== index &&
+          t.rect[1] < bottom &&
+          t.rect[3] > lead.y &&
+          t.rect[0] < right &&
+          t.rect[2] > left
+      )
+    )
+      return
+    const scope = page.lines.filter(
+      (l) =>
+        l.text.trim() &&
+        l.y >= first.y - em * 0.1 &&
+        l.y + l.height <= bottom + em * 0.1 &&
+        l.x >= left &&
+        l.x + l.width <= right + 0.1
+    )
+    if (scope.some((l) => ![l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite))) return
+    const markers = scope
+      .filter((l) => /^\d{1,2}$/.test(l.text) && l.fontSize >= em * 0.5 && l.fontSize <= em * 0.8)
+      .sort((a, b) => a.y - b.y || a.x - b.x)
+    if (
+      markers.length < 3 ||
+      markers.length > 12 ||
+      markers.some((m, i) => Number(m.text) !== i + 1)
+    )
+      return
+    for (const marker of markers) {
+      const owner = rows.filter((r) => r.y - marker.y > 0 && r.y - marker.y < em * 0.5)
+      if (
+        owner.length !== 1 ||
+        !owner[0].parts.some(
+          (l) => l.x >= marker.x + marker.width && l.x - marker.x - marker.width < em * 0.8
+        )
+      )
+        return
+      owner[0].parts.push(marker)
+    }
+    const assigned = new Set(rows.flatMap((r) => r.parts))
+    if (scope.some((l) => !assigned.has(l))) return
+    const chunks = []
+    for (const row of rows)
+      for (const l of row.parts.sort((a, b) => a.x - b.x)) {
+        if (markers.includes(l)) chunks.push([l])
+        else {
+          if (!chunks.length) return
+          chunks.at(-1).push(l)
+        }
+      }
+    const notes = chunks.map((parts) => ({
+      text: joinCaptionLines(parts.map((l) => l.text)),
+      rect: union(parts.map(lineRect))
+    }))
+    const words = new Set(
+      page.lines
+        .filter(
+          (l) =>
+            l.y >= rect[1] &&
+            l.y + l.height <= rect[3] &&
+            l.x >= rect[0] &&
+            l.x + l.width <= rect[2]
+        )
+        .flatMap((l) => l.text.match(/\p{L}+/gu) ?? [])
+        .map((s) => s.toLowerCase())
+    )
+    if (
+      notes.slice(0, 3).some((n) => {
+        const label = /^\d+\s+([^:]{2,80}):/.exec(n.text)?.[1]
+        return !label || !(label.match(/\p{L}+/gu) ?? []).some((s) => words.has(s.toLowerCase()))
+      })
+    )
+      return
+    return { notes, rect: union(scope.map(lineRect)) }
+  })
+}
+
 // A source-cited definition may start a new paragraph inside a labeled note.
 // Learn its rhythm from that already-owned note, then require two matching
 // paragraph indents, complete literal ownership and cited definition subjects.

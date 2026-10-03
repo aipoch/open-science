@@ -54,6 +54,42 @@ export function hasNativeNonTableLayout(table, items, rules) {
     bottom: chain[0].rect[3],
     em: chain[0].height
   }))
+  // Page ordinals in a section directory are navigation targets, not measured
+  // records. Require the native title and independently printed section/title/
+  // page lanes before the scalar-record escape below; ruled tables declined above.
+  const contentsTitle = source.filter((i) => /^Contents$/i.test(i.text.trim()))
+  if (contentsTitle.length === 1) {
+    const entries = rows.flatMap((row) => {
+      const ordered = [...row].sort((a, b) => a.rect[0] - b.rect[0]),
+        ordinal = ordered[0],
+        target = ordered.at(-1),
+        middle = ordered.slice(1, -1)
+      if (
+        !ordinal ||
+        !target ||
+        !middle.length ||
+        !/^\d+\.$/.test(ordinal.text.trim()) ||
+        !/^\d+$/.test(target.text.trim()) ||
+        ordinal.baseline <= contentsTitle[0].baseline ||
+        target.rect[0] < left + width * 0.8 ||
+        target.rect[0] - middle.at(-1).rect[2] < target.height ||
+        !middle.some((i) => /\p{L}{2}/u.test(i.text))
+      )
+        return []
+      return [{ ordinal: Number(ordinal.text.slice(0, -1)), page: Number(target.text), target }]
+    })
+    if (
+      entries.length >= 4 &&
+      entries.every(
+        (entry, n) =>
+          !n ||
+          (entry.ordinal === entries[n - 1].ordinal + 1 &&
+            entry.page >= entries[n - 1].page &&
+            Math.abs(entry.target.rect[2] - entries[0].target.rect[2]) < entry.target.height)
+      )
+    )
+      return true
+  }
   const independentScalars = (table.cells ?? []).filter(
     (cell) =>
       /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(cell.text.trim()) &&

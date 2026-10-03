@@ -513,8 +513,18 @@ export function nativeTopParagraphTail(line, bounds, lines) {
     owned.push(current)
   }
   return (
-    owned.length >= 3 &&
-    owned.filter((l) => l.text.length >= 60).length >= 2 &&
-    current.y < bounds[1] - 24
+    (owned.length >= 3 &&
+      owned.filter((l) => l.text.length >= 60).length >= 2 &&
+      current.y < bounds[1] - 24) ||
+    (owned.length >= 2 &&
+      /[.!?]$/.test(line.text.trim()) &&
+      lines.some(
+        (l) =>
+          l.y >= bounds[1] &&
+          l.y + l.height <= bounds[3] &&
+          l.fontSize > 0 &&
+          l.fontSize < line.fontSize * 0.8
+      ) &&
+      (owned.some((l) => l.text.length >= 60) || owned.every((l) => /^[•●]\s/.test(l.text.trim()))))
   )
 }

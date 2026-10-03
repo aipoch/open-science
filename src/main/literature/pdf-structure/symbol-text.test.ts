@@ -8,6 +8,41 @@ const { repairPdfSymbolText, splitPdfNumericRuns, removeBackgroundNumericPadding
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-symbol-text.mjs')).href
 )
 
+it.each([
+  'native',
+  'native-small',
+  'wrong-font',
+  'wrong-type',
+  'wrong-width',
+  'wrong-slot',
+  'mapped-name',
+  'wrong-encoding'
+])('recovers the embedded large radical with %s evidence', async (variant) => {
+  const font = {
+    name: 'ABCDEF+CMEX10',
+    type: 'Type1',
+    differences: [] as string[],
+    defaultEncoding: Object.assign([] as string[], { 112: 'p' })
+  }
+  const glyph = { originalCharCode: 112, unicode: 'p', width: 1000 }
+  if (variant === 'native-small') {
+    font.name = 'ABCDEF+CMEX9'
+    glyph.width = 1027.8
+  }
+  if (variant === 'wrong-font') font.name = 'ABCDEF+Times-Roman'
+  if (variant === 'wrong-type') font.type = 'TrueType'
+  if (variant === 'wrong-width') glyph.width = 999
+  if (variant === 'wrong-slot') glyph.originalCharCode = 113
+  if (variant === 'mapped-name') font.differences[112] = 'p'
+  if (variant === 'wrong-encoding') font.defaultEncoding[112] = 'question'
+  const content = { items: [{ str: 'p', fontName: 'native' }] }
+  const operators = { fnArray: [OPS.setFont, OPS.showText], argsArray: [['native', 10], [[glyph]]] }
+  const original = structuredClone({ font, content, operators })
+  const result = await repairPdfSymbolText({ commonObjs: { get: () => font } }, content, operators)
+  expect(result.items[0].str).toBe(['native', 'native-small'].includes(variant) ? '√' : 'p')
+  expect({ font, content, operators }).toEqual(original)
+})
+
 it('repairs legacy ligatures inside table labels', async () => {
   const content = {
     items: [{ str: 'Modi¢ed mastectomy; Sleep e⁄ciency; Hot £ashes', fontName: 'source' }]

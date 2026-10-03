@@ -114,6 +114,19 @@ it('rejects a paragraph split into columns even when the detector adds an empty 
   expect(hasTableEvidence(refine(x), null, x.tokens)).toBe(false)
   expect(hasTableEvidence(refine(x), { lines: ['Table 1. Narrative data'] }, x.tokens)).toBe(true)
 })
+it('rejects damaged OCR inside an uncaptioned image as a table', () => {
+  const table = {
+    cropRect: [0, 0, 300, 180],
+    grid: Array.from({ length: 6 }, () => ['\u0010', 'text']),
+    cells: [],
+    unassigned: ['tail', 'fragment'],
+    clipped: ['edge'],
+    issues: []
+  }
+  expect(hasTableEvidence(table, null, [], [], [{ kind: 'image', rect: [0, 0, 300, 180] }])).toBe(
+    false
+  )
+})
 it('recovers an outlined table image with detection evidence without fabricating a text grid', () => {
   const { page, input } = load('outlined-table-page'),
     caps = findCaptionCandidates([page])
@@ -128,6 +141,15 @@ it('recovers an outlined table image with detection evidence without fabricating
   expect(matches[0].caption.lines[0]).toMatch(/^Table 3\./)
   expect(matches[0].rect[3]).toBeGreaterThan(420)
   expect(matches[0].rect[3]).toBeLessThan(460)
+})
+it('routes a graphic to its figure when a figure caption separates it from table prose', () => {
+  const f = load('double-spaced-paired-panel-caption-with-measurement-tail')
+  f.candidates.splice(1, 0, {
+    page: 1,
+    lines: ['Figure 9. Paired curves.'],
+    rect: [70, 240, 771, 255]
+  })
+  expect(associateGraphicalTables(f.graphicPage, f.candidates)).toEqual([])
 })
 it('collects the complete double-spaced title bounded by the statistical table', () => {
   const { page, input } = load('double-spaced-caption-page')

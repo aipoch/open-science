@@ -939,6 +939,16 @@ const reviewedSubsetSymbols = (font, name) => {
   }
   if (name === 'AdvMacms' && matches(3, [[2, 'C3']])) return new Map([[2, ['\u0002', '*', 500]]])
   if (font.differences.length) return undefined
+  // The embedded CMEX9/CMEX10 Type1 Encoding names slot 112 /radicalbig, but a
+  // conflicting ToUnicode map can expose that large radical as Latin `p`.
+  // Require its original slot, exact native advance and unmodified encoding;
+  // another font, explicitly remapped slot or genuine Latin glyph stays intact.
+  const radicalAdvance = new Map([
+    ['CMEX9', 1027.8],
+    ['CMEX10', 1000]
+  ]).get(name)
+  if (radicalAdvance !== undefined && font.defaultEncoding?.[112] === 'p')
+    return new Map([[112, ['p', '√', radicalAdvance]]])
   const punctuation = new Map([
     ['AdvPS44A44B', [36, '$', '·', 447, 'dollar']],
     ['AdvP3F4C13', [104, 'h', 'η', 635, 'h']],

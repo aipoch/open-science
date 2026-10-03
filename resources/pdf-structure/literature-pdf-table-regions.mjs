@@ -1,11 +1,60 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { area, intersection as intersect } from './literature-pdf-page-geometry.mjs'
-import { inside } from './literature-pdf-table-geometry.mjs'
+import { inside, rebaseTableCrop } from './literature-pdf-table-geometry.mjs'
+
+// A detector can start a lower table above its title when an upper table ends
+// close to the next caption.  Keep the lower region bounded by its explicit
+// caption, but only when the source below that caption still proves a real
+// table body.  The helper runs before refinement, so model boxes must be
+// rebased together with the crop.
+function trimEmbeddedTableCaption(table, items, captions) {
+  const crop = table.cropRect
+  const candidates = captions
+    .filter(
+      (caption) =>
+        captionKind(caption.lines?.[0]) === 'table' &&
+        /^Table\s+\d+[A-Z]?\s*[:.]/i.test(caption.lines?.[0] ?? '') &&
+        caption.rect[1] >= crop[1] - 2 &&
+        caption.rect[3] < crop[3] - 4 &&
+        caption.rect[2] > crop[0] &&
+        caption.rect[0] < crop[2] &&
+        (Math.min(caption.rect[2], crop[2]) - Math.max(caption.rect[0], crop[0])) /
+          Math.min(caption.rect[2] - caption.rect[0], crop[2] - crop[0]) >=
+          0.5
+    )
+    .sort((a, b) => a.rect[1] - b.rect[1])
+  for (const caption of candidates) {
+    const top = caption.rect[3] + 2
+    const source = items
+      .filter(
+        (item) =>
+          item.horizontal &&
+          item.rect[1] >= top &&
+          item.rect[3] <= crop[3] &&
+          item.rect[2] > crop[0] &&
+          item.rect[0] < crop[2] &&
+          item.text.trim()
+      )
+      .sort((a, b) => a.rect[1] - b.rect[1])
+    const baselines = []
+    for (const item of source) {
+      const baseline = Number.isFinite(item.baseline) ? item.baseline : item.rect[3]
+      const previous = baselines.at(-1)
+      if (!previous || baseline - previous > Math.max(2, item.height * 0.7))
+        baselines.push(baseline)
+    }
+    const numeric = source.filter((item) => /\d/.test(item.text)).length
+    if (baselines.length < 3 || numeric < 4) continue
+    return rebaseTableCrop(table, [crop[0], top, crop[2], crop[3]])
+  }
+  return table
+}
 
 // Near-identical detector boxes can compete for the same caption. Collapse them
 // only when they enclose exactly the same native tokens, including edge text.
 export function deduplicateTableRegions(tables, items, captions = []) {
+  tables = tables.map((table) => trimEmbeddedTableCaption(table, items, captions))
   const titles = captions.filter((c) => captionKind(c.lines[0]) === 'table')
   if (titles.length === 1) {
     const caption = titles[0]

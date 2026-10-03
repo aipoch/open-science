@@ -53,7 +53,9 @@ export function recoverNativeStackedUncertainty(items, rules, equalFontStacks) {
     !/^[−-]?\d+\.\d+$/.test(text(main)) ||
     !/^\+\d+\.\d+$/.test(text(upper)) ||
     !/^[−-]\d+\.\d+$/.test(text(lower)) ||
-    (!equalFont && (script < height * 0.55 || script > height * 0.75)) ||
+    // PDF font sizes may round a true three-quarter em just above 0.75.
+    // A thousandth of an em tolerance retains the independent lane proof.
+    (!equalFont && (script < height * 0.55 || script > height * 0.751)) ||
     rows.some((row, n) =>
       row.some(
         (i, k) =>
@@ -76,7 +78,7 @@ export function recoverNativeStackedUncertainty(items, rules, equalFontStacks) {
     gap < -height * 0.03 ||
     gap > height * 0.35 ||
     Math.abs(upperBox[0] - lowerBox[0]) > height * 0.05 ||
-    Math.abs(upperBox[2] - lowerBox[2]) > height * (equalFont ? 1.5 : 0.35) ||
+    Math.abs(upperBox[2] - lowerBox[2]) > height * (equalFont ? 1.5 : 0.75) ||
     upperBox[3] > lowerBox[1] + height * 0.05
   )
     return

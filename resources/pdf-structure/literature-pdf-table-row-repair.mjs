@@ -541,6 +541,54 @@ export function repairWrappedTableRows({
       0.35
     ) ?? []
   const sourceCuts = [columnRects[0]?.[0], ...columnRects.map((r) => r[2])]
+  const inFullRow = (r, i) =>
+    inside([columnRects[0][0], r.rect[1], columnRects.at(-1)[2], r.rect[3]], i)
+  // A detector can invent a terminal row for the second half of a hyphenated
+  // field. Several simultaneously continued lanes and one literal hyphen
+  // witness the preceding record; an independent stub remains a new record.
+  if (captioned && columnRects.length >= 3 && rows.length >= 3) {
+    const tail = rows.at(-1),
+      head = rows.at(-2),
+      a = items.filter((i) => inFullRow(head, i)),
+      b = items.filter((i) => inFullRow(tail, i)),
+      h = Math.max(...b.map((i) => i.height)),
+      cols = [...new Set(b.map(columnOf))]
+    if (
+      b.length &&
+      cols.length >= 2 &&
+      !cols.includes(0) &&
+      cols.every((c) => c > 0) &&
+      a.some((i) => columnOf(i) === 0 && /\p{L}/u.test(i.text)) &&
+      !a.some((i) => b.includes(i)) &&
+      b.every((i) => i.horizontal && /^[a-z]/.test(i.text) && Math.abs(i.height - h) < h * 0.1) &&
+      cols.every((c) => {
+        const before = a
+            .filter((i) => columnOf(i) === c)
+            .sort((x, y) => x.baseline - y.baseline || x.rect[0] - y.rect[0]),
+          after = b.filter((i) => columnOf(i) === c),
+          last = before.at(-1)
+        return (
+          last &&
+          Math.abs(union(after)[0] - Math.min(...before.map((i) => i.rect[0]))) < h * 0.3 &&
+          after[0].baseline - last.baseline >= h * 0.9 &&
+          after[0].baseline - last.baseline <= h * 1.6
+        )
+      }) &&
+      cols.some((c) =>
+        a
+          .filter((i) => columnOf(i) === c)
+          .sort((x, y) => x.baseline - y.baseline || x.rect[0] - y.rect[0])
+          .at(-1)
+          ?.text.endsWith('-')
+      ) &&
+      !hasHorizontalTableRuleBetween(rules, union(a)[3], union(b)[1]) &&
+      !items.some((i) => inside(union([head, tail]), i) && !a.includes(i) && !b.includes(i))
+    ) {
+      head.rect = union([head, tail])
+      rows.pop()
+      repairs.push('recovered-row-continuation-included')
+    }
+  }
   repairCountedIntervalTails({ rows, items, columnRects, rules, repairs, sourceRows })
   // A single wrapped measurement can split the cohort values from its
   // probability. Require complementary numeric columns and an unfinished

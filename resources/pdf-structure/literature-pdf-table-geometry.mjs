@@ -645,10 +645,10 @@ export function isAdjacentTableScript(item, anchor) {
     item.baseline < anchor.baseline &&
     Math.abs(gap) <= anchor.height * 0.05
   const parenthesizedMarker =
-    /^[a-z]\)$/.test(item.text) &&
+    /^(?:[a-z]\)|\(\d{1,3}\))$/.test(item.text) &&
     item.height < anchor.height * 0.8 &&
     item.baseline < anchor.baseline &&
-    Math.abs(gap) <= anchor.height * 0.05
+    Math.abs(gap) <= anchor.height * (/^\(/.test(item.text) ? 0.15 : 0.05)
   return (
     item.horizontal &&
     anchor.horizontal &&

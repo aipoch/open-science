@@ -1,10 +1,295 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { captionKind } from './literature-pdf-caption-group.mjs'
-import { readSourceRow, hasUniqueRecordTokens } from './literature-pdf-source-records.mjs'
+import {
+  readSourceRow,
+  hasUniqueRecordTokens,
+  groupSourceRowsWithScripts
+} from './literature-pdf-source-records.mjs'
 import { recoverNativeStackedUncertainty } from './literature-pdf-native-stacked-uncertainty.mjs'
+import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+import { nativeMeasuredWordTokens } from './literature-pdf-native-scalar-record-grid.mjs'
+
+// Measured native word gaps may separate several indicator headings emitted
+// in one PDF text operation. A closed frame and repeated label/check records
+// establish the leaves without trusting a detector's wide header span.
+export function recoverNativeIndicatorRecordPlan(table, items, captions, rules, observations) {
+  const crop = table.cropRect,
+    near = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.text.trim() &&
+        i.rect[0] < crop[2] &&
+        i.rect[2] > crop[0] &&
+        i.baseline > crop[1] &&
+        i.baseline < crop[3]
+    ),
+    h = median(near.map((i) => i.height))
+  if (!(h > 0)) return
+  const full = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= crop[1] - h &&
+        r[1] <= crop[3] + h &&
+        Math.abs(r[0] - crop[0]) < h &&
+        Math.abs(r[2] - crop[2]) < h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    full.length !== 3 ||
+    full.some((r) => Math.abs(r[0] - full[0][0]) > 0.02 || Math.abs(r[2] - full[0][2]) > 0.02)
+  )
+    return
+  const [opening, divider, closing] = full,
+    original = items.filter(
+      (i) =>
+        i.text.trim() &&
+        i.rect[0] < opening[2] &&
+        i.rect[2] > opening[0] &&
+        i.rect[3] > opening[1] &&
+        i.rect[1] < closing[1]
+    )
+  if (
+    original.some(
+      (i) =>
+        !i.horizontal ||
+        Math.abs(i.height - h) > h * 0.05 ||
+        i.rect[0] < opening[0] - 0.02 ||
+        i.rect[2] > opening[2] + 0.02 ||
+        i.rect[1] < opening[1] ||
+        i.rect[3] > closing[1]
+    )
+  )
+    return
+  if (
+    captions.filter(
+      (c) =>
+        captionKind(c.lines[0]) === 'table' &&
+        c.rect[0] < opening[2] &&
+        c.rect[2] > opening[0] &&
+        ((c.rect[3] < opening[1] && opening[1] - c.rect[3] < h * 8) ||
+          (c.rect[1] > closing[1] && c.rect[1] - closing[1] < h * 8))
+    ).length !== 1
+  )
+    return
+  const replacement = new Map(
+      original.map((i) => [
+        i,
+        i.baseline < divider[1] ? nativeMeasuredWordTokens(i, observations ?? [], h) : [i]
+      ])
+    ),
+    source = original.flatMap((i) => replacement.get(i)),
+    header = source.filter((i) => i.baseline < divider[1]),
+    body = source.filter((i) => i.baseline > divider[1]),
+    projections = []
+  for (const i of [...header].sort((a, b) => a.rect[0] - b.rect[0])) {
+    const last = projections.at(-1)
+    if (last && i.rect[0] - last[1] < h * 0.3) last[1] = Math.max(last[1], i.rect[2])
+    else projections.push([i.rect[0], i.rect[2]])
+  }
+  if (projections.length < 4 || projections.length > 12) return
+  const cuts = [
+    Math.min(opening[0], ...source.map((i) => i.rect[0])),
+    ...projections.slice(1).map((r, n) => (projections[n][1] + r[0]) / 2),
+    Math.max(opening[2], ...source.map((i) => i.rect[2]))
+  ]
+  // A long label can approach the first heading. The complete native source
+  // gutter still has to remain positive before its neighboring check lane.
+  const stubs = body.filter((i) => /\p{L}/u.test(i.text)),
+    checks = body.filter((i) => /^[✓✗]$/.test(i.text.trim()))
+  if (!stubs.length || checks.length < 4 || stubs.length + checks.length !== body.length) return
+  const a = Math.max(projections[0][1], ...stubs.map((i) => i.rect[2])),
+    b = Math.min(projections[1][0], ...checks.map((i) => i.rect[0]))
+  if (b - a < h * 0.3) return
+  cuts[1] = (a + b) / 2
+  const records = []
+  for (const g of groupSourceRowsWithScripts(
+    [...body].sort((a, b) => a.baseline - b.baseline),
+    h,
+    0.1
+  ) ?? []) {
+    const v = readSourceRow(g, cuts)
+    if (!v) return
+    if (v[0] && v.slice(1).some(Boolean)) {
+      if (v.slice(1).some((s) => s && !/^[✓✗]$/.test(s))) return
+      records.push([...g])
+    } else if (v[0] && v.slice(1).every((s) => !s) && records.length) {
+      if (g[0].baseline - records.at(-1).at(-1).baseline > h * 1.6) return
+      records.at(-1).push(...g)
+    } else return
+  }
+  if (
+    records.length < 4 ||
+    !hasUniqueRecordTokens(source, [header, ...records]) ||
+    !readSourceRow(header, cuts, { multiline: true })?.every((v) => /\p{L}/u.test(v))
+  )
+    return
+  const bounds = records.map((r) => [
+    Math.min(...r.map((i) => i.rect[1])),
+    Math.max(...r.map((i) => i.rect[3]))
+  ])
+  if (bounds.some((r, n) => n && r[0] <= bounds[n - 1][1])) return
+  const ys = [
+      opening[1],
+      divider[1],
+      ...bounds.slice(1).map((r, n) => (bounds[n][1] + r[0]) / 2),
+      closing[1]
+    ],
+    grid = {
+      cropRect: [cuts[0], opening[1], cuts.at(-1), closing[1]],
+      rows: ys.slice(1).map((y, n) => [cuts[0], ys[n], cuts.at(-1), y]),
+      columns: cuts.slice(1).map((x, n) => [cuts[n], opening[1], x, closing[1]]),
+      spans: [],
+      headerRows: [0],
+      completeSpans: true,
+      preservePhysicalRows: true,
+      ownedTokens: new Set(source),
+      repair: 'native-body-records-recovered'
+    }
+  return { grid, pageItems: items.flatMap((i) => replacement.get(i) ?? [i]) }
+}
 
 const centerY = (i) => (i.rect[1] + i.rect[3]) / 2
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
+
+// A complete ruled header and complete native numerical records prove the
+// leaf lanes independently of model cuts. In particular, an interval remains
+// one field and a model row cannot absorb the preceding header/first record.
+export function recoverCompleteNativeLeafRecords(table, items, captions, rules) {
+  const crop = table.cropRect,
+    near = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.text.trim() &&
+        i.rect[0] < crop[2] &&
+        i.rect[2] > crop[0] &&
+        i.baseline > crop[1] &&
+        i.baseline < crop[3]
+    ),
+    em = median(near.map((i) => i.height))
+  if (!(em > 0)) return
+  const full = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= crop[1] - em &&
+        r[1] <= crop[3] + em &&
+        Math.abs(r[0] - crop[0]) < em &&
+        Math.abs(r[2] - crop[2]) < em
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    full.length !== 3 ||
+    full.some((r) => Math.abs(r[0] - full[0][0]) > 0.05 || Math.abs(r[2] - full[0][2]) > 0.05)
+  )
+    return
+  const [opening, divider, closing] = full,
+    source = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.text.trim() &&
+        i.rect[0] < opening[2] &&
+        i.rect[2] > opening[0] &&
+        i.rect[3] > opening[1] &&
+        i.rect[1] < closing[1]
+    )
+  if (
+    source.some(
+      (i) =>
+        i.rect[0] < opening[0] ||
+        i.rect[2] > opening[2] ||
+        i.rect[1] < opening[1] ||
+        i.rect[3] > closing[1]
+    )
+  )
+    return
+  if (
+    captions.filter(
+      (c) =>
+        captionKind(c.lines[0]) === 'table' &&
+        c.rect[0] < opening[2] &&
+        c.rect[2] > opening[0] &&
+        ((c.rect[3] < opening[1] && opening[1] - c.rect[3] < em * 8) ||
+          (c.rect[1] > closing[1] && c.rect[1] - closing[1] < em * 3))
+    ).length !== 1
+  )
+    return
+  const header = source.filter((i) => i.baseline < divider[1]),
+    body = source.filter((i) => i.baseline > divider[1]),
+    headerRows = groupSourceRowsWithScripts(
+      [...header].sort((a, b) => a.baseline - b.baseline),
+      em,
+      0.15
+    ),
+    records = groupSourceRowsWithScripts(
+      [...body].sort((a, b) => a.baseline - b.baseline),
+      em,
+      0.15
+    )
+  if (
+    headerRows?.length !== 1 ||
+    !records ||
+    records.length < 2 ||
+    !hasUniqueRecordTokens(source, [header, ...records])
+  )
+    return
+  // Literal numerical separators can delimit several leaves below a parent.
+  // Their repeated native proof owns that topology; proximity alone does not.
+  if (body.some((i) => i.text.trim() === '|')) return
+  const lanes = (row) => {
+    const groups = []
+    for (const i of [...row].sort((a, b) => a.rect[0] - b.rect[0])) {
+      const last = groups.at(-1)
+      if (last && i.rect[0] - Math.max(...last.map((j) => j.rect[2])) < em * 0.65) last.push(i)
+      else groups.push([i])
+    }
+    return groups
+  }
+  const groups = [lanes(header), ...records.map(lanes)],
+    count = groups[0].length
+  if (
+    count < 3 ||
+    count > 10 ||
+    groups.some((g) => g.length !== count) ||
+    groups[0].some((g) => !g.some((i) => /\p{L}/u.test(i.text))) ||
+    groups
+      .slice(1)
+      .some(
+        (g) =>
+          !g[0].some((i) => /[\p{L}\p{N}]/u.test(i.text)) ||
+          g.slice(1).some((lane) => !lane.some((i) => /\d/.test(i.text)))
+      )
+  )
+    return
+  const cuts = [opening[0]]
+  for (let c = 1; c < count; c++) {
+    const a = Math.max(...groups.flatMap((g) => g[c - 1].map((i) => i.rect[2]))),
+      b = Math.min(...groups.flatMap((g) => g[c].map((i) => i.rect[0])))
+    if (b - a < em * 0.3) return
+    cuts.push((a + b) / 2)
+  }
+  cuts.push(opening[2])
+  if ([header, ...records].some((r) => !readSourceRow(r, cuts))) return
+  const bounds = records.map((r) => [
+    Math.min(...r.map((i) => i.rect[1])),
+    Math.max(...r.map((i) => i.rect[3]))
+  ])
+  if (bounds.some((r, n) => n && r[0] <= bounds[n - 1][1])) return
+  const edges = [
+    opening[1],
+    divider[1],
+    ...bounds.slice(1).map((r, n) => (bounds[n][1] + r[0]) / 2),
+    closing[1]
+  ]
+  return {
+    cropRect: [opening[0], opening[1], opening[2], closing[1]],
+    rows: edges.slice(1).map((y, n) => [opening[0], edges[n], opening[2], y]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], opening[1], x, closing[1]]),
+    spans: [],
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    repair: 'native-body-records-recovered'
+  }
+}
 function frame(table, items, captions, rules, count) {
   const crop = table.cropRect,
     columns = table.structure.objects

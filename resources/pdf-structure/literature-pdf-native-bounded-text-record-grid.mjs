@@ -14,6 +14,401 @@ const finiteItem = (i) =>
   i.rect[3] > i.rect[1]
 const pageNumber = (table) => Number(/^page-(\d+)-/.exec(table.id ?? '')?.[1])
 const eq = (a, b) => Math.abs(a - b) < 0.05
+
+// Three closed native lanes and repeated, separated middle-column paragraphs
+// bound prose records. Full source ink proves the gutters independently of
+// model columns; no paragraph can be cut into another model row.
+export function recoverNativeProseLaneRecords(table, items, captions, rules) {
+  const crop = table.cropRect,
+    near = items.filter(
+      (i) =>
+        finiteItem(i) &&
+        i.text.trim() &&
+        i.rect[0] < crop[2] &&
+        i.rect[2] > crop[0] &&
+        i.baseline > crop[1] &&
+        i.baseline < crop[3]
+    ),
+    heights = near.map((i) => i.height).sort((a, b) => a - b),
+    em = heights[heights.length >> 1]
+  if (!(em > 0)) return
+  const full = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= crop[1] - em &&
+        r[1] <= crop[3] + em &&
+        Math.abs(r[0] - crop[0]) < em &&
+        Math.abs(r[2] - crop[2]) < em
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (full.length !== 3 || full.some((r) => !eq(r[0], full[0][0]) || !eq(r[2], full[0][2]))) return
+  const [opening, divider, closing] = full,
+    source = items.filter(
+      (i) =>
+        i.text.trim() &&
+        i.rect[0] < opening[2] &&
+        i.rect[2] > opening[0] &&
+        i.rect[3] > opening[1] &&
+        i.rect[1] < closing[1]
+    )
+  if (
+    source.some(
+      (i) =>
+        !finiteItem(i) ||
+        Math.abs(i.height - em) > em * 0.05 ||
+        i.rect[0] < opening[0] - 0.02 ||
+        i.rect[2] > opening[2] + 0.02 ||
+        i.rect[1] < opening[1] ||
+        i.rect[3] > closing[1]
+    )
+  )
+    return
+  if (
+    captions.filter(
+      (c) =>
+        captionKind(c.lines[0]) === 'table' &&
+        c.rect[0] < opening[2] &&
+        c.rect[2] > opening[0] &&
+        ((c.rect[3] <= opening[1] && opening[1] - c.rect[3] < em * 8) ||
+          (c.rect[1] >= closing[1] && c.rect[1] - closing[1] < em * 8))
+    ).length !== 1
+  )
+    return
+  const projections = []
+  for (const i of [...source].sort((a, b) => a.rect[0] - b.rect[0])) {
+    const last = projections.at(-1)
+    if (last && i.rect[0] - last[1] < em * 0.4) last[1] = Math.max(last[1], i.rect[2])
+    else projections.push([i.rect[0], i.rect[2]])
+  }
+  if (projections.length !== 3) return
+  const cuts = [
+      Math.min(opening[0], projections[0][0]),
+      ...projections.slice(1).map((r, n) => (projections[n][1] + r[0]) / 2),
+      Math.max(opening[2], projections.at(-1)[1])
+    ],
+    header = source.filter((i) => i.baseline < divider[1]),
+    body = source.filter((i) => i.baseline > divider[1])
+  if (!readSourceRow(header, cuts, { multiline: true })?.every((v) => /\p{L}/u.test(v))) return
+  const physical = []
+  for (const i of [...body].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const last = physical.at(-1)
+    if (last && Math.abs(last[0].baseline - i.baseline) < em * 0.05) last.push(i)
+    else physical.push([i])
+  }
+  const values = physical.map((r) => readSourceRow(r, cuts)),
+    starts = values.flatMap((v, n) => (v?.[1] && (!n || !values[n - 1]?.[1]) ? [n] : []))
+  if (starts.length < 3 || starts[0] !== 0 || values.some((v) => !v)) return
+  const records = starts.map((n, k) => physical.slice(n, starts[k + 1] ?? physical.length).flat())
+  if (
+    records.some((r, k) => {
+      const v = readSourceRow(r, cuts, { multiline: true }),
+        first = values[starts[k]]
+      return (
+        !v?.every((s) => /\p{L}/u.test(s)) ||
+        !first.every(Boolean) ||
+        cuts
+          .slice(1)
+          .some(
+            (x, c) =>
+              new Set(
+                r
+                  .filter((i) => i.rect[0] >= cuts[c] && i.rect[2] <= x)
+                  .map((i) => Math.round(i.baseline / (em * 0.05)))
+              ).size < 2
+          )
+      )
+    }) ||
+    !hasUniqueRecordTokens(source, [header, ...records])
+  )
+    return
+  const bounds = records.map((r) => [
+    Math.min(...r.map((i) => i.rect[1])),
+    Math.max(...r.map((i) => i.rect[3]))
+  ])
+  if (bounds.some((r, n) => n && r[0] <= bounds[n - 1][1])) return
+  const edges = [
+    opening[1],
+    divider[1],
+    ...bounds.slice(1).map((r, n) => (bounds[n][1] + r[0]) / 2),
+    closing[1]
+  ]
+  return {
+    cropRect: [cuts[0], opening[1], cuts.at(-1), closing[1]],
+    rows: edges.slice(1).map((y, n) => [cuts[0], edges[n], cuts.at(-1), y]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], opening[1], x, closing[1]]),
+    spans: [],
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    preservePhysicalRows: true,
+    repair: 'native-body-records-recovered'
+  }
+}
+
+// A measured scalar and its native type token can prove a record start even
+// when a reason field wraps once below that start.  The model can place the
+// continuation into the following row when the two starts are close; move only
+// that one continuation across the already observed row boundary.  This is a
+// deliberately narrow repair: it never invents spans, columns, or text.
+export function recoverNativeScalarTypeReasonTail({ rows, items, columnRects, rules, repairs }) {
+  if (!Array.isArray(rows) || !Array.isArray(items) || columnRects?.length !== 7) return
+  const finite = (item) =>
+    item?.horizontal !== false &&
+    Number.isFinite(item.baseline) &&
+    Number.isFinite(item.height) &&
+    item.height > 0 &&
+    item.rect?.length === 4 &&
+    item.rect.every(Number.isFinite) &&
+    item.rect[2] > item.rect[0] &&
+    item.rect[3] > item.rect[1]
+  const source = items.filter((item) => finite(item) && item.text?.trim())
+  const heights = source.map((item) => item.height).sort((a, b) => a - b),
+    em = heights[Math.floor(heights.length / 2)]
+  if (!(em > 0)) return
+  const column = (item) => {
+    const center = (item.rect[0] + item.rect[2]) / 2
+    return columnRects.findIndex(([left, top, right, bottom]) => {
+      void top
+      void bottom
+      return center >= left && center <= right
+    })
+  }
+  const scalar = source.filter((item) => column(item) === 3 && /^\d\.\d{4}$/.test(item.text.trim()))
+  if (scalar.length < 4) return
+  const anchors = scalar
+    .map((number) => {
+      const type = source.filter(
+        (item) =>
+          column(item) === 5 &&
+          /^(?:E[12]|M1)$/.test(item.text.trim()) &&
+          Math.abs(item.baseline - number.baseline) < em * 0.08
+      )
+      return type.length === 1 ? { number, type: type[0] } : undefined
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.number.baseline - b.number.baseline)
+  if (anchors.length < 4 || new Set(anchors.map((a) => a.number)).size !== anchors.length) return
+  const horizontalRuleBetween = (a, b) =>
+    rules.some(
+      (rule) =>
+        rule[1] === rule[3] &&
+        rule[1] > a &&
+        rule[1] < b &&
+        rule[2] - rule[0] > columnRects[0][1] - columnRects[0][0]
+    )
+  for (let n = 0; n < anchors.length - 1; n++) {
+    const current = anchors[n],
+      next = anchors[n + 1],
+      currentRowIndex = rows.findIndex(
+        (row) => current.number.rect[1] >= row.rect[1] && current.number.rect[3] <= row.rect[3]
+      ),
+      nextRowIndex = rows.findIndex(
+        (row) => next.number.rect[1] >= row.rect[1] && next.number.rect[3] <= row.rect[3]
+      )
+    if (currentRowIndex < 1 || nextRowIndex !== currentRowIndex + 1) continue
+    const currentRow = rows[currentRowIndex],
+      nextRow = rows[nextRowIndex],
+      reason = source.filter(
+        (item) =>
+          column(item) === 6 &&
+          item.baseline >= current.number.baseline - em * 0.08 &&
+          item.baseline <= current.number.baseline + em * 0.08
+      ),
+      candidate = source.filter(
+        (item) =>
+          column(item) === 6 &&
+          item.baseline > current.number.baseline + em * 0.8 &&
+          item.baseline < next.number.baseline - em * 0.2
+      )
+    if (!reason.length || !candidate.length) continue
+    const baselines = [...new Set(candidate.map((item) => Math.round(item.baseline / (em * 0.08))))]
+    if (baselines.length !== 1 || candidate.some((item) => !/\p{L}/u.test(item.text))) continue
+    const tailBottom = Math.max(...candidate.map((item) => item.rect[3])),
+      tailTop = Math.min(...candidate.map((item) => item.rect[1])),
+      nextInkTop = Math.min(
+        ...source
+          .filter(
+            (item) =>
+              item.rect[1] > tailBottom &&
+              item.baseline >= next.number.baseline - em * 0.08 &&
+              item.baseline <= next.number.baseline + em * 0.5
+          )
+          .map((item) => item.rect[1])
+      )
+    if (
+      !Number.isFinite(nextInkTop) ||
+      tailBottom <= currentRow.rect[3] ||
+      tailTop >= nextRow.rect[3] ||
+      nextInkTop - tailBottom < em * 0.2 ||
+      tailTop - reason[0].rect[3] > em * 1.5 ||
+      horizontalRuleBetween(currentRow.rect[3], tailBottom) ||
+      candidate.some((item) => item.rect[0] < columnRects[6][0] || item.rect[2] > columnRects[6][2])
+    )
+      continue
+    currentRow.rect[3] = tailBottom + em * 0.02
+    nextRow.rect[1] = currentRow.rect[3]
+    repairs.push('native-scalar-type-reason-tail-recovered')
+    return true
+  }
+  return
+}
+
+// An indexed directory has independently printed record starts. Its long
+// source field may wrap far beyond the model row, without starting a new row.
+// This refines existing candidates only; it does not discover captionless lists.
+export function recoverNativeIndexedDirectoryGrid(table, items, rules) {
+  const crop = table.cropRect,
+    near = items.filter(
+      (i) =>
+        finiteItem(i) &&
+        i.text.trim() &&
+        i.rect[0] < crop[2] &&
+        i.rect[2] > crop[0] &&
+        i.baseline > crop[1] &&
+        i.baseline < crop[3]
+    ),
+    heights = near.map((i) => i.height).sort((a, b) => a - b),
+    em = heights[Math.floor(heights.length / 2)]
+  if (!(em > 0)) return
+  const full = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= crop[1] - em &&
+        r[1] <= crop[3] + em &&
+        Math.abs(r[0] - crop[0]) < em &&
+        Math.abs(r[2] - crop[2]) < em
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    ![2, 3].includes(full.length) ||
+    full.some((r) => !eq(r[0], full[0][0]) || !eq(r[2], full[0][2]))
+  )
+    return
+  const [opening, divider, closing] = full
+  if (divider[1] - opening[1] < em * 0.6 || divider[1] - opening[1] > em * 2.5) return
+  let end = closing?.[1] ?? crop[3]
+  let source = items.filter(
+    (i) =>
+      i.text.trim() &&
+      i.rect[0] < opening[2] &&
+      i.rect[2] > opening[0] &&
+      i.rect[3] > opening[1] &&
+      i.rect[1] < end
+  )
+  if (!closing) {
+    const p = pageNumber(table),
+      footer = items.filter(
+        (i) =>
+          i.text.trim() === String(p) &&
+          i.rect[1] > divider[1] &&
+          Math.abs((i.rect[0] + i.rect[2]) / 2 - (opening[0] + opening[2]) / 2) < em * 0.5
+      )
+    if (
+      footer.length !== 1 ||
+      source.some((i) => i !== footer[0] && i.rect[3] > footer[0].rect[1] - em * 3)
+    )
+      return
+    source = source.filter((i) => i !== footer[0])
+    end = Math.max(...source.map((i) => i.rect[3])) + em * 0.1
+    if (
+      items.some(
+        (i) =>
+          i.text.trim() &&
+          i !== footer[0] &&
+          i.rect[0] < opening[2] &&
+          i.rect[2] > opening[0] &&
+          i.rect[3] > end
+      )
+    )
+      return
+  }
+  if (
+    source.some(
+      (i) =>
+        !finiteItem(i) ||
+        i.rect[0] < opening[0] ||
+        i.rect[2] > opening[2] ||
+        i.rect[1] < opening[1] ||
+        i.rect[3] > end
+    )
+  )
+    return
+  const header = source
+      .filter((i) => i.baseline < divider[1])
+      .sort((a, b) => a.rect[0] - b.rect[0]),
+    body = source.filter((i) => i.baseline > divider[1])
+  if (
+    header.length !== 3 ||
+    header.some(
+      (i) => !/\p{L}/u.test(i.text) || Math.abs(i.baseline - header[0].baseline) > em * 0.05
+    )
+  )
+    return
+  const rough = [opening[0], ...header.slice(1).map((i) => i.rect[0] - em * 0.01), opening[2]],
+    cuts = [opening[0]]
+  for (let n = 1; n < 3; n++) {
+    const left = source.filter(
+        (i) => (i.rect[0] + i.rect[2]) / 2 >= rough[n - 1] && (i.rect[0] + i.rect[2]) / 2 < rough[n]
+      ),
+      right = source.filter(
+        (i) => (i.rect[0] + i.rect[2]) / 2 >= rough[n] && (i.rect[0] + i.rect[2]) / 2 < rough[n + 1]
+      ),
+      a = Math.max(...left.map((i) => i.rect[2])),
+      b = Math.min(...right.map((i) => i.rect[0]))
+    if (b - a < em * 0.15) return
+    cuts.push((a + b) / 2)
+  }
+  cuts.push(opening[2])
+  const anchors = body.filter((i) => i.rect[2] < cuts[1]).sort((a, b) => a.baseline - b.baseline),
+    parsed = anchors.map((i) => /^([A-Za-z]{1,3})(\d{1,4})$/.exec(i.text.trim()))
+  if (
+    anchors.length < 2 ||
+    parsed.some(
+      (m, n) =>
+        !m || (n && (m[1] !== parsed[0][1] || Number(m[2]) !== Number(parsed[n - 1][2]) + 1))
+    )
+  )
+    return
+  const records = anchors.map((a, n) =>
+    body.filter(
+      (i) =>
+        i.baseline >= a.baseline - em * 0.05 &&
+        (!anchors[n + 1] || i.baseline < anchors[n + 1].baseline - em * 0.05)
+    )
+  )
+  if (
+    !hasUniqueRecordTokens(source, [header, ...records]) ||
+    records.some(
+      (r, n) =>
+        !readSourceRow(r, cuts, { multiline: true })?.every((s) => s.trim()) ||
+        r.filter((i) => i.rect[2] < cuts[1]).length !== 1 ||
+        r.some((i) => i.rect[0] >= cuts[1] && i.baseline < anchors[n].baseline - em * 0.05)
+    )
+  )
+    return
+  const bounds = records.map((r) => [
+    Math.min(...r.map((i) => i.rect[1])),
+    Math.max(...r.map((i) => i.rect[3]))
+  ])
+  if (bounds.some((r, n) => n && r[0] - bounds[n - 1][1] < em * 0.04)) return
+  const edges = [
+    opening[1],
+    divider[1],
+    ...bounds.slice(1).map((r, n) => (bounds[n][1] + r[0]) / 2),
+    end
+  ]
+  return {
+    cropRect: [opening[0], opening[1], opening[2], end],
+    rows: edges.slice(1).map((y, n) => [opening[0], edges[n], opening[2], y]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], opening[1], x, end]),
+    spans: [],
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    preservePhysicalRows: true,
+    repair: 'native-body-records-recovered'
+  }
+}
 const terminalInk = (f, items, p, height) =>
   items
     .filter(

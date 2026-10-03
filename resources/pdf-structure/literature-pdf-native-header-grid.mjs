@@ -16,6 +16,111 @@ import {
   recoverSharedSampleCountHeaderBands
 } from './literature-pdf-source-records.mjs'
 
+// Keep an unnumbered title whole in an already detected comparison table
+// when the model clips through it. Three matching native rules, two
+// complete header lanes, and several complete pairs prove the body frame.
+export function recoverClippedUnnumberedTitleCrop(table, items, rules) {
+  const c = table.cropRect,
+    near = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.text.trim() &&
+        i.rect[0] < c[2] &&
+        i.rect[2] > c[0] &&
+        i.baseline > c[1] &&
+        i.baseline < c[3]
+    ),
+    hs = near.map((i) => i.height).sort((a, b) => a - b),
+    h = hs[hs.length >> 1]
+  if (!(h > 0) || table.structure.objects.filter((o) => o.label === 'table column').length !== 2)
+    return
+  const full = joinHorizontalTableRules(rules)
+    .filter(
+      (r) => r[1] > c[1] && r[1] < c[3] && Math.abs(r[0] - c[0]) < h && Math.abs(r[2] - c[2]) < h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    full.length !== 3 ||
+    full.some((r) => Math.abs(r[0] - full[0][0]) > 0.02 || Math.abs(r[2] - full[0][2]) > 0.02)
+  )
+    return
+  const [opening, divider, closing] = full,
+    title = items.filter(
+      (i) =>
+        i.horizontal &&
+        /\p{L}/u.test(i.text) &&
+        i.rect[1] < c[1] &&
+        i.rect[3] > c[1] &&
+        i.rect[3] < opening[1] &&
+        opening[1] - i.rect[3] < h &&
+        i.rect[0] > opening[0] &&
+        i.rect[2] < opening[2] &&
+        i.rect[2] - i.rect[0] > (opening[2] - opening[0]) * 0.4 &&
+        Math.abs((i.rect[0] + i.rect[2] - opening[0] - opening[2]) / 2) < h
+    )
+  if (title.length !== 1) return
+  const header = items
+    .filter(
+      (i) =>
+        i.horizontal &&
+        i.baseline > opening[1] &&
+        i.baseline < divider[1] &&
+        i.rect[0] >= opening[0] &&
+        i.rect[2] <= opening[2]
+    )
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    header.length !== 2 ||
+    Math.abs(header[0].baseline - header[1].baseline) > h * 0.05 ||
+    header.some((i) => i.rect[1] < title[0].rect[3] || !/\p{L}/u.test(i.text))
+  )
+    return
+  const body = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.baseline > divider[1] &&
+        i.baseline < closing[1] &&
+        i.rect[0] >= opening[0] &&
+        i.rect[2] <= opening[2]
+    ),
+    left = Math.max(
+      header[0].rect[2],
+      ...body.filter((i) => i.rect[0] < header[1].rect[0] - 0.1).map((i) => i.rect[2])
+    ),
+    right = Math.min(
+      header[1].rect[0],
+      ...body.filter((i) => i.rect[0] >= header[1].rect[0] - 0.1).map((i) => i.rect[0])
+    ),
+    cut = (left + right) / 2,
+    groups = groupSourceRowsWithScripts(
+      [...body].sort((a, b) => a.baseline - b.baseline),
+      h,
+      0.1
+    )
+  if (right - left < h * 0.2) return
+  const pairs = groups?.map((g) => readSourceRow(g, [opening[0], cut, opening[2]]))
+  if (
+    !pairs ||
+    pairs.filter((v) => v?.every((s) => /\p{L}/u.test(s))).length < 4 ||
+    pairs.some((v) => !v || !v.some(Boolean))
+  )
+    return
+  const top = title[0].rect[1] - 0.1
+  if (
+    items.some(
+      (i) =>
+        i.text.trim() &&
+        i !== title[0] &&
+        i.rect[0] < c[2] &&
+        i.rect[2] > c[0] &&
+        i.rect[3] > top &&
+        i.rect[1] < Math.min(...header.map((i) => i.rect[1]))
+    )
+  )
+    return
+  return [c[0], top, c[2], c[3]]
+}
+
 // Matching native column-width top and bottom strokes enclose one header band.
 // Its only continuations are standalone sample qualifications in the two
 // cohort columns; ordinary statistical leaves or parent headings decline.

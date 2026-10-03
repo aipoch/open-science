@@ -13,7 +13,8 @@ import {
   recoverRuledFooterNotes,
   recoverRuledReferenceNotes,
   recoverExplicitDefinitionParagraphs,
-  recoverCenteredRuledGlossaries
+  recoverCenteredRuledGlossaries,
+  recoverNativeNumberedDefinitionFooter
 } from './literature-pdf-note-blocks.mjs'
 
 // Text-only classifiers are shared across pages; source ownership and
@@ -109,6 +110,8 @@ const abbreviationPrefix = (text) =>
   /^[A-Z]{2,8}\s+indicates\s+\p{L}/u.test(text)
 const abbreviationLabel = (text) =>
   /^(?:Ab?breviations?|Abbr(?:ev)?\.?)\s*[:：]/i.test(text.trim()) ||
+  (/^Abbreviations\s+[^:：]{3,100}[:：]/i.test(text.trim()) &&
+    (text.match(/(?:[:：;]\s*)[A-Z][A-Za-z.]{1,12}[—–]\s*\p{L}/gu) ?? []).length >= 2) ||
   // A transposed source label is still a glossary only when its content
   // independently supplies multiple explicit acronym/definition pairs.
   (/^Abbreviaitons?\s*[:：]/i.test(text.trim()) &&
@@ -139,7 +142,10 @@ const colonDefinitions = (text) => {
   const pairs = [...text.trim().matchAll(/(?:^|[;,.]\s+)([A-Za-z][A-Za-z0-9.+-]{0,7}):\s*\p{L}/gu)]
   return pairs.length >= 3 && pairs.filter((p) => /^[A-Z]{2,8}$/.test(p[1])).length >= 2
 }
+const dottedDefinitions = (text) =>
+  [...text.trim().matchAll(/(?:^|;\s*)([A-Z][A-Za-z]{1,11})\.\s*=\s*\p{L}/gu)].map((m) => m[1])
 const definitionList = (text) =>
+  dottedDefinitions(text).length >= 3 ||
   expandedDefinitions(text) ||
   // A publisher may omit both the glossary label and key punctuation.
   // Require at least three complete uppercase-key/lowercase-expansion pairs.
@@ -938,6 +944,45 @@ export function associateTableNotes(page, tables, rules = []) {
     lines.splice(lines.indexOf(next), 1)
   }
   const used = new Set()
+  const numberedFooters = recoverNativeNumberedDefinitionFooter(page, tables)
+  for (const [index, block] of numberedFooters.entries())
+    if (block) {
+      notes[index].push(...block.notes)
+      for (const line of lines)
+        if (
+          line.x >= block.rect[0] - 0.1 &&
+          line.right <= block.rect[2] + 0.1 &&
+          line.y >= block.rect[1] - 0.1 &&
+          line.bottom <= block.rect[3] + 0.1
+        )
+          used.add(line)
+    }
+  const ruledDefinitionKeys = (line, rect) => {
+    const keys = dottedDefinitions(line.text)
+    if (keys.length < 3) return false
+    const words = new Set(
+      page.lines
+        .filter(
+          (l) =>
+            l.y >= rect[1] &&
+            l.y + l.height <= rect[3] &&
+            l.x >= rect[0] - 1 &&
+            l.x + l.width <= rect[2] + 1
+        )
+        .flatMap((l) => l.text.match(/\p{L}+/gu) ?? [])
+    )
+    return (
+      keys.every((k) => words.has(k)) &&
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] <= line.y &&
+          line.y - r[1] < line.fontSize &&
+          Math.abs(r[1] - rect[3]) < line.fontSize * 2 &&
+          Math.min(r[2], rect[2]) - Math.max(r[0], rect[0]) > (rect[2] - rect[0]) * 0.85
+      )
+    )
+  }
   const ruledGlossary = (start, rect) =>
     /^(?=[A-Za-z]*[A-Z][A-Za-z]*[A-Z])[A-Za-z]{2,8}[, ]\s*\p{Ll}/u.test(start.text) &&
     start.y >= rect[3] &&
@@ -1234,6 +1279,20 @@ export function associateTableNotes(page, tables, rules = []) {
     return next
   }
   const touchesRuledBottom = (line, rect) => {
+    if (ruledDefinitionKeys(line, rect)) return true
+    if (
+      abbreviationLabel(line.text) &&
+      line.y <= rect[3] &&
+      rect[3] - line.y < line.fontSize &&
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] <= line.y &&
+          line.y - r[1] < line.fontSize &&
+          Math.min(r[2], rect[2]) - Math.max(r[0], rect[0]) > (rect[2] - rect[0]) * 0.85
+      )
+    )
+      return true
     // The model can include a footer note in its last row. A full-width
     // native closing rule and an explicit statistic definition delimit it.
     if (
@@ -1551,6 +1610,41 @@ export function associateTableNotes(page, tables, rules = []) {
   }
   for (const start of lines) {
     if (used.has(start)) continue
+    // A numerator split from its surrounding body sentence is not a numbered
+    // footnote. Require the actual short fraction stroke and smaller ink below
+    // it; ordinary raised note markers have neither witness.
+    const fractionNumerators = page.lines.filter(
+      (l) =>
+        /^\d{1,2}$/.test(l.text) &&
+        Math.abs(l.x - start.x) < 0.1 &&
+        Math.abs(l.y - start.y) < 0.1 &&
+        l.fontSize <= start.fontSize * 0.8
+    )
+    if (
+      fractionNumerators.some((marker) =>
+        rules.some(
+          (r) =>
+            r[1] === r[3] &&
+            r[2] - r[0] > 0 &&
+            r[2] - r[0] < marker.fontSize * 3 &&
+            r[0] <= marker.x + 0.1 &&
+            r[2] >= marker.x + marker.width - 0.1 &&
+            r[1] - marker.y > marker.fontSize * 0.7 &&
+            r[1] - marker.y < marker.fontSize * 1.5 &&
+            page.lines.some(
+              (l) =>
+                l !== marker &&
+                /^\d{1,2}$/.test(l.text) &&
+                Math.abs(l.fontSize - marker.fontSize) < 0.1 &&
+                l.x >= r[0] &&
+                l.x + l.width <= r[2] + 0.1 &&
+                l.y > marker.y + marker.fontSize * 0.7 &&
+                Math.abs(l.y - r[1]) < marker.fontSize * 0.5
+            )
+        )
+      )
+    )
+      continue
     // A next-column cue is source metadata below the final record. Its centered
     // placement, enclosing bottom rule and neighboring table establish one
     // owner without treating ordinary in-table continuation labels as notes.
@@ -1580,6 +1674,11 @@ export function associateTableNotes(page, tables, rules = []) {
       continue
     }
     const explicitNote = startsNote(start.text)
+    if (
+      dottedDefinitions(start.text).length >= 3 &&
+      !tables.some(({ rect }) => ruledDefinitionKeys(start, rect))
+    )
+      continue
     // An unmarked definition may follow a block of significance notes. Require
     // its complete subject to name a source row and remain in that note block.
     const definitionSubject = /^(.{4,80}?) (?:includes?|refers? to|denotes?|represents?)\b/i.exec(

@@ -1,6 +1,7 @@
 import {
   nativeCaptionRaisedIndexLines,
-  nativeCaptionLiteralFragments
+  nativeCaptionLiteralFragments,
+  nativeCaptionOwnedInlineFragments
 } from './literature-pdf-native-caption-script-order.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Offline geometry heuristic; a caption candidate is not a semantic classification.
@@ -269,7 +270,7 @@ export function captionKind(text) {
     const tail = appendix[2]
     if (
       /^\)/.test(tail) ||
-      /^\s+(?:and\s+(?:Table|Tab\.?|Fig\.?|Figure|Chart)\s+[A-Z]\.\d+(?:\.\d+)*\s+)?(?:reports?|reported|shows?|shown|presents?|presented|illustrat(?:es?|ed)|depict(?:s|ed)?|represents?|contains?|lists?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|in\s+(?:the\s+)?(?:Appendix|Supplement(?:ary)?|Section|ESM))\b/i.test(
+      /^\s+(?:and\s+(?:Table|Tab\.?|Fig\.?|Figure|Chart)\s+[A-Z]\.\d+(?:\.\d+)*\s+)?(?:reports?|reported|shows?|shown|presents?|presented|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|plots?|gives?|follows?|ablates?|sweeps?|tests?|evaluates?|compares?|depict(?:s|ed)?|represents?|contains?|lists?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|in\s+(?:the\s+)?(?:Appendix|Supplement(?:ary)?|Section|ESM))\b/i.test(
         tail
       ) ||
       /^[.:]\s+(?:It|This|These|Those)\s+(?:should|is|are|was|were|has|have|had|contains?|includes?)\b/i.test(
@@ -313,7 +314,7 @@ export function captionKind(text) {
   )
     return undefined
   if (
-    /^(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|compares?|compared(?=\s+(?:the|these|those|this|that|our)\b)|illustrat(?:es?|ed)|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?)\b/i.test(
+    /^(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|compares?|compared(?=\s+(?:the|these|those|this|that|our)\b)|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|plots?|gives?|follows?|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?)\b/i.test(
       text ?? ''
     )
   )
@@ -575,6 +576,164 @@ export function recoverAuxiliaryTableCaptions(pages, candidates, requestedPages)
 // A double-spaced caption may be centered or hang after its label. Require
 // a native graphic/border and repeated physical paragraph geometry before
 // bypassing the ordinary line-leading gate. The final line closes the block.
+function findNativeMathCaptionParagraph(start, runs, page, rules) {
+  if (captionKind(start.text) !== 'figure' || start.text.length < 35) return
+  const em = start.fontSize,
+    edge = Math.max(
+      start.right,
+      ...runs
+        .filter(
+          (l) =>
+            Math.abs(l.x - start.x) < em * 0.3 &&
+            Math.abs(l.fontSize - em) < 0.1 &&
+            l.y >= start.y &&
+            l.y - start.y < em * 20
+        )
+        .map((l) => l.right)
+    )
+  const source = page.lines
+    .filter(
+      (l) =>
+        l.text.trim() &&
+        Math.abs(l.fontSize - em) < 0.1 &&
+        l.y >= start.y - em * 0.15 &&
+        l.y - start.y < em * 30 &&
+        l.x >= start.x - em * 0.3 &&
+        l.x + l.width <= edge + em * 0.1
+    )
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+  const rows = []
+  for (const part of source) {
+    const row = rows.at(-1)
+    if (row && Math.abs(row.y - part.y) < em * 0.1) row.parts.push(part)
+    else rows.push({ y: part.y, parts: [part] })
+  }
+  const owned = []
+  for (const row of rows) {
+    const parts = row.parts.sort((a, b) => a.x - b.x),
+      text = parts.map((l) => l.text).join(' '),
+      previous = owned.at(-1)
+    if (
+      parts.every((l) => l.text.trim().length <= 2) &&
+      row.y - (previous?.y ?? start.y) < em * 0.9
+    )
+      continue
+    if (
+      parts.every((l) => l.text.trim().length <= 2) &&
+      parts[0].x > start.x + em * 0.5 &&
+      rows.some(
+        (r) =>
+          r.y > row.y &&
+          r.y - row.y < em &&
+          r.parts.some((p) => p.text.length > 2 && Math.abs(p.x - start.x) < em * 0.3)
+      )
+    )
+      continue
+    const prefix = page.lines.some(
+      (l) =>
+        l.text.trim() &&
+        l.x >= start.x - em * 0.3 &&
+        l.x <= start.x + em * 0.3 &&
+        l.x + l.width <= parts[0].x + em * 0.1 &&
+        Math.abs(l.y - row.y) < em &&
+        ((l.fontSize <= em * 0.8 &&
+          rules.some(
+            (r) =>
+              r[1] === r[3] &&
+              r[2] - r[0] < em * 2 &&
+              r[0] <= l.x + em * 0.1 &&
+              r[2] >= l.x + l.width - em * 0.1 &&
+              Math.abs(r[1] - row.y) < em
+          )) ||
+          (l.text.trim().length === 1 &&
+            Math.abs(l.fontSize - em) < 0.1 &&
+            Math.abs(l.x + l.width - parts[0].x) < em * 0.05 &&
+            l.y + l.height > row.y))
+    )
+    if (!previous) {
+      if (Math.abs(row.y - start.y) > em * 0.15 || Math.abs(parts[0].x - start.x) > em * 0.3) return
+    } else if (
+      row.y - previous.y < em * 0.85 ||
+      row.y - previous.y > em * 1.8 ||
+      (captionKind(text) && !/^(?:Table|Fig\.?|Figure)\s+\d+\.?$/i.test(text.trim())) ||
+      /^Notes?\s*[:.]/i.test(text) ||
+      (Math.abs(parts[0].x - start.x) > em * 0.3 && !(prefix && parts[0].x - start.x < em * 2))
+    )
+      break
+    const bridged = parts.every((part, i) => {
+      if (!i) return true
+      const before = parts[i - 1],
+        left = before.x + before.width
+      if (part.x - left <= em * 0.8) return true
+      const pieces = page.lines
+        .filter(
+          (l) =>
+            l.text.trim() &&
+            l.x >= left - em * 0.1 &&
+            l.x + l.width <= part.x + em * 0.1 &&
+            l.y + l.height > row.y &&
+            l.y < row.y + em &&
+            ((l.fontSize >= em * 0.5 && l.fontSize <= em * 0.8) ||
+              (l.text.trim().length === 1 &&
+                Math.abs(l.fontSize - em) < 0.1 &&
+                Math.abs(l.x + l.width - part.x) < em * 0.05))
+        )
+        .sort((a, b) => a.x - b.x)
+      if (
+        !pieces.length ||
+        pieces.some(
+          (p, n) =>
+            n && Math.abs(p.x - pieces[n - 1].x) < 0.01 && Math.abs(p.y - pieces[n - 1].y) < 0.01
+        )
+      )
+        return false
+      let end = left
+      for (const p of pieces) {
+        if (p.x - end > em * 0.8) return false
+        end = Math.max(end, p.x + p.width)
+      }
+      return part.x - end <= em * 0.8
+    })
+    if (!bridged) return
+    const captured = runs
+      .filter(
+        (l) =>
+          Math.abs(l.y - row.y) < em * 0.3 &&
+          Math.abs(l.fontSize - em) < 0.1 &&
+          l.x <= parts[0].x + 0.1 &&
+          l.right >= parts[0].x + parts[0].width - 0.1
+      )
+      .sort((a, b) => b.right - b.x - a.right + a.x)[0]
+    const retained = captured
+      ? captured.text +
+        ' ' +
+        parts
+          .filter((l) => l.x >= captured.right - 0.1 && !captured.text.includes(l.text.trim()))
+          .map((l) => l.text)
+          .join(' ')
+      : text
+    owned.push({
+      text: retained.trim(),
+      x: Math.min(start.x, parts[0].x),
+      y: row.y,
+      right: Math.max(...parts.map((l) => l.x + l.width)),
+      bottom: Math.max(...parts.map((l) => l.y + l.height)),
+      fontSize: em
+    })
+  }
+  if (owned.length < 3 || !/[.!?]$/.test(owned.at(-1).text.trim())) return
+  const math = page.lines.filter(
+    (l) =>
+      l.y >= start.y &&
+      l.y <= owned.at(-1).bottom &&
+      l.x >= start.x - em * 0.3 &&
+      l.x + l.width <= edge + em * 0.1 &&
+      l.fontSize <= em * 0.8
+  )
+  if (math.length < 2 || !provesFragmentedCaptionGraphic(start, runs, page, owned.at(-1))) return
+  return owned.slice(1)
+}
+
 function findNativeCaptionParagraph(start, runs, page, rules) {
   if (start.text.length < 35) return
   const em = start.fontSize
@@ -860,6 +1019,40 @@ function findNativeMixedLegend(start, page) {
   return selected.slice(1)
 }
 
+// Mutate the canonical caption only after a unique same-source match. Table
+// matching retains the established exact-title/accent proof; figure formulas
+// may change the title text but cannot change its formal ordinal or position.
+export function applyRuledCaptionRecovery(captions, ruledCaptions, page, rules) {
+  const ordinal = (text) =>
+    /^(?:Legend to\s+)?(?:Fig(?:ure)?\.?|Chart)\s+([AS]?\d+(?:[.-]\d+)*|[A-Z]\.\d+(?:\.\d+)*)(?=[.:\s]|$)/i.exec(
+      text
+    )?.[1]
+  for (const candidate of captions.filter((c) => c.page === page.pageNumber)) {
+    const kind = captionKind(candidate.lines[0])
+    if (!['table', 'figure'].includes(kind)) continue
+    const matches = ruledCaptions.filter((c) => {
+      if (c.page !== candidate.page || captionKind(c.lines[0]) !== kind) return false
+      if (kind === 'table')
+        return (
+          (c.lines[0] === candidate.lines[0] ||
+            (c.lines[0].replaceAll('ˆ', '') === candidate.lines[0].replaceAll('ˆ', '') &&
+              recoverNativeRaisedCaptionFragments(page, c, rules))) &&
+          c.rect[1] === candidate.rect[1] &&
+          (Math.abs(c.rect[0] - candidate.rect[0]) < 0.01 ||
+            (c.rect[0] <= candidate.rect[0] + 0.01 && c.rect[2] >= candidate.rect[2] - 0.01))
+        )
+      const key = ordinal(candidate.lines[0])
+      return (
+        key &&
+        ordinal(c.lines[0]) === key &&
+        Math.abs(c.rect[0] - candidate.rect[0]) < 0.1 &&
+        Math.abs(c.rect[1] - candidate.rect[1]) < 0.1
+      )
+    })
+    if (matches.length === 1) Object.assign(candidate, matches[0])
+  }
+}
+
 export function findCaptionCandidates(pages, rulesByPage = new Map()) {
   // Table borders are often painted one segment per column. Treat subpixel
   // joints as one separator without connecting unrelated rules across gutters.
@@ -987,9 +1180,54 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       )
         continue
       const nativeParagraph =
+        findNativeMathCaptionParagraph(start, runs, page, separators.get(page.pageNumber) ?? []) ??
         findNativeCaptionParagraph(start, runs, page, separators.get(page.pageNumber) ?? []) ??
         findNativeMixedLegend(start, page)
       const lines = [start, ...(nativeParagraph ?? [])]
+      // A measured table edge also owns a hanging terminal caption below the
+      // table. The short tail must close before a distinct body paragraph.
+      if (captionKind(start.text) === 'table' && lines.length === 1 && start.text.length >= 35) {
+        const edges = (separators.get(page.pageNumber) ?? []).filter(
+          (r) =>
+            r[2] - r[0] >= (start.right - start.x) * 0.35 &&
+            Math.abs(r[0] + r[2] - start.x - start.right) <= start.fontSize * 4 &&
+            ((r[1] <= start.y && start.y - r[1] <= start.fontSize * 2) ||
+              (r[1] > start.bottom && r[1] - start.bottom <= start.fontSize * 8))
+        )
+        if (edges.length) {
+          const tail = runs.filter(
+            (l) =>
+              l.y > start.y + 2 &&
+              l.y - start.y <= start.fontSize * 5 &&
+              l.x >= start.x - start.fontSize * 0.3 &&
+              l.x <= start.x + start.fontSize * 5 &&
+              l.right <= Math.max(start.right, ...edges.map((r) => r[2])) + 1 &&
+              Math.abs(l.fontSize - start.fontSize) < 0.1 &&
+              !captionKind(l.text)
+          )
+          const parts = []
+          for (const next of tail.sort((a, b) => a.y - b.y)) {
+            const previous = parts.at(-1) ?? start
+            if (
+              next.y - previous.y > start.fontSize * 1.6 ||
+              (parts.length && Math.abs(next.x - parts[0].x) > start.fontSize * 0.1)
+            )
+              break
+            parts.push(next)
+            if (/[.!?]$/.test(next.text.trim())) break
+          }
+          if (
+            parts.length &&
+            /[.!?]$/.test(parts.at(-1).text.trim()) &&
+            edges.some(
+              (r) =>
+                (r[1] <= start.y && parts[0].x >= start.x + start.fontSize * 2) ||
+                r[1] >= parts.at(-1).bottom
+            )
+          )
+            lines.push(...parts)
+        }
+      }
       // A small-caps number can precede a centered two-line description. Use
       // the joined native opening to bound both lines; a centered column label
       // below that border, a gutter or a competing font cannot extend the title.
@@ -1419,6 +1657,21 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
                   )))
           )
           .sort((a, b) => a.y - b.y)[0]
+        const terminalReference =
+          next &&
+          captionKind(start.text) === 'figure' &&
+          /\b(?:in|see|of|with|to)$/i.test(previous.text.trim()) &&
+          /^(?:Table|Tab\.?|Figure|Fig\.?)\s+(?:[A-Z]\.)?\d+(?:\.\d+)*\.?$/i.test(
+            next.text.trim()
+          ) &&
+          Math.abs(next.x - start.x) <= 2 &&
+          Math.abs(next.fontSize - start.fontSize) <= 0.1 &&
+          next.y - previous.y <= start.fontSize * 1.6
+        if (terminalReference) {
+          lines.push(next)
+          ownedRuns.add(next)
+          break
+        }
         const boundedTableTail =
           next &&
           /^Table\s+\d+\s*[.:]\s*\S.{15}/i.test(start.text) &&
@@ -1719,6 +1972,13 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       if (scriptLines) candidate.lines = scriptLines
       const literalFragments = nativeCaptionLiteralFragments(page, candidate)
       if (literalFragments) Object.assign(candidate, literalFragments)
+      const inlineFragments = nativeCaptionOwnedInlineFragments(
+        page,
+        candidate,
+        lines,
+        separators.get(page.pageNumber) ?? []
+      )
+      if (inlineFragments) Object.assign(candidate, inlineFragments)
       if (nativeParagraph) for (const line of lines) ownedRuns.add(line)
       candidates.push(candidate)
     }

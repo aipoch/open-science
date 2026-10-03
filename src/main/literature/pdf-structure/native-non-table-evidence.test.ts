@@ -57,6 +57,26 @@ it('rejects a centered display equation and its right-hand equation ordinal', ()
   expect(hasTableEvidence(t, undefined, tokens)).toBe(false)
   expect(hasTableEvidence(t, { lines: ['Table 4. Native formulas.'] }, tokens)).toBe(true)
 })
+
+it('rejects an uncaptained multi-row equation system split into detector columns', () => {
+  const t = table([
+    ['u(x) >= psi(x)', 'x in Omega', ''],
+    ['-nabla dot A(u) + 1 = 0', 'x in Omega', '(38)'],
+    ['u(x) - psi(x) = 0', 'x in boundary', ''],
+    ['u(x) >= psi(x)', 'x in Omega', '']
+  ])
+  expect(hasTableEvidence(t, undefined, [])).toBe(false)
+  expect(hasTableEvidence(t, { lines: ['Table 1. Equations'] }, [])).toBe(true)
+})
+
+it('rejects equation systems whose ordinal is attached to a condition cell', () => {
+  const t = table([
+    ['domain x = y', '0 < x < 1. (41)'],
+    ['du/dt - laplace u = 0', 'x in Omega(t), t in (0, 1],'],
+    ['u(s) = 0', '0 < x < 1, (42)']
+  ])
+  expect(hasTableEvidence(t, undefined, [])).toBe(false)
+})
 it('rejects continuous source prose fragmented across model columns', () => {
   const t = table([
     ['This native paragraph', 'continues across the predicted cut.'],

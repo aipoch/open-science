@@ -37,6 +37,32 @@ it('preserves every source fragment and character without mutating native input'
     emitted = p.runs.flatMap((r: { text: string }) => [...r.text]).sort()
   expect(emitted).toEqual(native)
 })
+it('allows native font rounding at the three-quarter script size boundary', () => {
+  const x = fixture()
+  for (const item of x.items.filter((i: { baseline: number }) => i.baseline === 50)) {
+    item.height = 13.3332
+    item.rect[1] = item.baseline - item.height
+  }
+  const p = recoverNativeStackedUncertainty(x.items, x.rules)
+  expect(p?.runs).toEqual([
+    { text: '6.84', position: 'normal' },
+    { text: '+0.27', position: 'superscript' },
+    { text: '−0.39', position: 'subscript' }
+  ])
+})
+it('keeps a signed script lane with one additional decimal digit intact', () => {
+  const x = fixture(),
+    tail = x.items.at(-1)
+  x.items.push({
+    ...tail,
+    text: '5',
+    rect: [tail.rect[2], tail.rect[1], tail.rect[2] + 6, tail.rect[3]]
+  })
+  expect(recoverNativeStackedUncertainty(x.items, x.rules)?.runs.at(-1)).toEqual({
+    text: '−0.395',
+    position: 'subscript'
+  })
+})
 it.each([
   'one-sided',
   'same-sized scripts',

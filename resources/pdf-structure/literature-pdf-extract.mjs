@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { getDocument, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import {
   captionKind,
+  applyRuledCaptionRecovery,
   excludePdfLineNumbers,
   findCaptionCandidates,
   recoverAuxiliaryTableCaptions,
@@ -52,10 +53,7 @@ import {
 } from './literature-pdf-ruled-narrative-grid.mjs'
 import { isFigureRiskTable } from './literature-pdf-table-evidence.mjs'
 import { recoverNativeMixedSectionParts } from './literature-pdf-native-mixed-section-parts.mjs'
-import {
-  proveNativeCaptionRaisedGlyphOwnership,
-  recoverNativeRaisedCaptionFragments
-} from './literature-pdf-native-caption-raised-glyphs.mjs'
+import { proveNativeCaptionRaisedGlyphOwnership } from './literature-pdf-native-caption-raised-glyphs.mjs'
 import { recoverNativeCaptionOverlayAccentLines } from './literature-pdf-native-caption-overlay-accents.mjs'
 import {
   recoverOwnedTableCrop,
@@ -85,6 +83,7 @@ import {
 } from './literature-pdf-long-question-record-grid.mjs'
 import { recoverNativeQuestionContinuationCaption } from './literature-pdf-native-question-continuation.mjs'
 import { renderPdfCrop, recoverScannedFigures } from './literature-pdf-crop.mjs'
+import { nativeProseInkTopLimit } from './literature-pdf-figure-crop-geometry.mjs'
 import {
   collectTableRules,
   collectClosedFigureFrames,
@@ -101,6 +100,7 @@ import {
   recoverNativeScientificLeafRecordGrid
 } from './literature-pdf-native-scientific-leaf-gutters.mjs'
 import { recoverNativeMeanDeviationRecords } from './literature-pdf-native-mean-deviation-records.mjs'
+import { isNativeFrontMatterRegion } from './literature-pdf-front-matter.mjs'
 import {
   isUprightText,
   originalRect,
@@ -208,7 +208,7 @@ const task = getDocument({
   cMapPacked: true
 })
 const normalize = (rect, width, height) => rect.map((v, i) => v / (i % 2 ? height : width))
-const nativeTextTokens = (content, viewport, rotation) =>
+const nativeTextTokens = (content, viewport, rotation, includeFontMetrics = false) =>
   content.items
     .filter((i) => 'str' in i && i.str.trim())
     .map((i) => {
@@ -216,6 +216,7 @@ const nativeTextTokens = (content, viewport, rotation) =>
       const horizontal = isUprightText(i, rotation)
       return {
         text: i.str,
+        ...(includeFontMetrics ? { fontDescent: content.styles[i.fontName]?.descent } : {}),
         inlineSymbol: i.inlineSymbol === true,
         baseline,
         height: i.height * 1.5,
@@ -351,7 +352,7 @@ try {
       // replace or suppress an item while reconstructing table/formula text;
       // its original measured label bounds still belong to the rendered figure.
       const sourceFigureTokens = excludeRemovedMarginTokens(
-        nativeTextTokens(sourceContent, viewport, pageGeometry.renderRotation),
+        nativeTextTokens(sourceContent, viewport, pageGeometry.renderRotation, true),
         originalPages.get(pageNumber),
         pageGeometry,
         1.5
@@ -377,30 +378,18 @@ try {
         operators,
         page.getViewport({ scale: 1, rotation: pageGeometry.renderRotation })
       )
-      // Native table rules disambiguate headers styled like the caption above.
-      // Refine only existing table candidates; figure associations keep their input.
+      // Native rules establish caption paragraph bounds and retain inline math
+      // fragments. Update only uniquely matching existing caption identities.
       const ruledCaptions = findCaptionCandidates(
         [pageGeometry],
         new Map([[pageNumber, rules.map((rect) => rect.map((v) => v / 1.5))]])
       )
-      for (const candidate of captions.filter(
-        (c) => c.page === pageNumber && captionKind(c.lines[0]) === 'table'
-      )) {
-        const bounded = ruledCaptions.find(
-          (c) =>
-            (c.lines[0] === candidate.lines[0] ||
-              (c.lines[0].replaceAll('ˆ', '') === candidate.lines[0].replaceAll('ˆ', '') &&
-                recoverNativeRaisedCaptionFragments(
-                  pageGeometry,
-                  c,
-                  rules.map((rect) => rect.map((v) => v / 1.5))
-                ))) &&
-            c.rect[1] === candidate.rect[1] &&
-            (Math.abs(c.rect[0] - candidate.rect[0]) < 0.01 ||
-              (c.rect[0] <= candidate.rect[0] + 0.01 && c.rect[2] >= candidate.rect[2] - 0.01))
-        )
-        if (bounded) Object.assign(candidate, bounded)
-      }
+      applyRuledCaptionRecovery(
+        captions,
+        ruledCaptions,
+        pageGeometry,
+        rules.map((rect) => rect.map((v) => v / 1.5))
+      )
       // Use original native single-glyph items after ruled caption recovery.
       // Preserve the canonical caption object; serialization joins its new lines.
       for (const caption of captions.filter((c) => c.page === pageNumber)) {
@@ -931,6 +920,31 @@ try {
         )
         return enclosed ? { ...owned, caption: enclosed } : owned
       })
+      // A lower stacked table can begin immediately after its descriptive
+      // caption while a neighboring detector box still owns the preceding
+      // table. Recover only a unique, tight above-table caption; this avoids
+      // letting a distant title jump across columns or table bodies.
+      for (const [index, association] of associations.entries()) {
+        if (association.caption) continue
+        const rect = contentRects[index]
+        const candidates = captions.filter((caption) => {
+          const overlap = Math.min(caption.rect[2], rect[2]) - Math.max(caption.rect[0], rect[0])
+          return (
+            caption.page === pageNumber &&
+            captionKind(caption.lines[0]) === 'table' &&
+            ((caption.rect[3] <= rect[1] && rect[1] - caption.rect[3] <= 20) ||
+              (caption.rect[1] >= rect[1] - 20 && caption.rect[1] <= rect[1] + 40)) &&
+            overlap / Math.min(caption.rect[2] - caption.rect[0], rect[2] - rect[0]) >= 0.5
+          )
+        })
+        if (
+          candidates.length === 1 &&
+          !associations.some(
+            (other, otherIndex) => otherIndex !== index && other.caption === candidates[0]
+          )
+        )
+          association.caption = candidates[0]
+      }
       const notes = associateTableNotes(
         pageGeometry,
         contentRects.map((rect, index) => ({
@@ -1005,6 +1019,13 @@ try {
             associations[index].caption,
             rules
           ) &&
+          !isNativeFrontMatterRegion(
+            table,
+            tokens,
+            pageNumber,
+            associations[index].caption,
+            rules
+          ) &&
           (!legendPage || Boolean(associations[index].caption)) &&
           (Boolean(associations[index].caption) ||
             !isFigureRiskTable(table, captionedFigureRegions, pageGeometry)) &&
@@ -1047,7 +1068,19 @@ try {
               )
             })) &&
           (nativeDefinitionTails.has(table.id) ||
-            hasTableEvidence(table, associations[index].caption, tokens, rules))
+            hasTableEvidence(
+              table,
+              associations[index].caption,
+              tokens,
+              rules,
+              pageGeometry.graphicsBounds.map((graphic) => ({
+                kind: graphic.kind,
+                rect: graphic.normalizedRect.map(
+                  (value, axis) =>
+                    value * (axis % 2 ? pageGeometry.height : pageGeometry.width) * 1.5
+                )
+              }))
+            ))
       )
       const recognizedTableRects = refined
         .filter((_, index) => acceptedTables[index])
@@ -1060,6 +1093,34 @@ try {
           .filter((t) => !t.grid.flat().some((s) => s.trim()))
           .map((t) => t.cropRect.map((v) => v / 1.5))
       )
+      // A noisy caption can produce both a graphical-table fallback and a
+      // detector fragment for the same source region. Keep the source-backed
+      // candidate when their captions agree and their regions materially
+      // overlap; an outlined table without a detector region is unaffected.
+      const captionKey = (caption) =>
+        String(caption?.text ?? caption?.lines?.join(' ') ?? '')
+          .toLowerCase()
+          .replace(/\s+/g, ' ')
+          .trim()
+      for (let index = graphicalTables.length - 1; index >= 0; index--) {
+        const graphical = graphicalTables[index]
+        const key = captionKey(graphical.caption)
+        if (!key) continue
+        const duplicate = refined.some((table, refinedIndex) => {
+          if (!acceptedTables[refinedIndex] || !captionKey(associations[refinedIndex].caption))
+            return false
+          if (captionKey(associations[refinedIndex].caption) !== key || !table.cropRect)
+            return false
+          const rect = table.cropRect.map((value) => value / 1.5)
+          const horizontalOverlap =
+            Math.max(
+              0,
+              Math.min(rect[2], graphical.rect[2]) - Math.max(rect[0], graphical.rect[0])
+            ) / Math.max(1, Math.min(rect[2] - rect[0], graphical.rect[2] - graphical.rect[0]))
+          return horizontalOverlap > 0.5 && table.grid?.flat().some((text) => text.trim())
+        })
+        if (duplicate) graphicalTables.splice(index, 1)
+      }
       // Complete native matrix panels prove the table image even when their
       // overprinted headers cannot prove a cell grid. Preserve that existing
       // image-only table surface, with its explicit no-source-cell-grid issue.
@@ -1285,6 +1346,7 @@ try {
           Math.max(
             0,
             candidate.rect[1] - 2 / scale,
+            nativeProseInkTopLimit(candidate, nativeFigureTokens),
             candidate.caption?.page === pageNumber && candidate.caption.rect[3] <= candidate.rect[1]
               ? candidate.caption.rect[3] + 0.5
               : 0

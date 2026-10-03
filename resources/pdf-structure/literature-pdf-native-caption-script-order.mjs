@@ -1,6 +1,211 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { area, intersection, lineRect } from './literature-pdf-page-geometry.mjs'
 
+// The caller has already established caption paragraph ownership. Rejoin only
+// original same-baseline fragments and uniquely attached small scripts inside
+// that paragraph; preserve unknown font glyphs literally.
+export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rules = []) {
+  if (ownedLines.length < 2 || !caption.rect.every(Number.isFinite)) return
+  if (caption.lines.some((text) => text.includes('ˆ'))) return
+  const em = ownedLines[0].fontSize
+  if (
+    !(em > 0) ||
+    page.lines.some((l) => ![l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite))
+  )
+    return
+  let changed = false
+  const covered = new Set(),
+    result = []
+  for (const row of ownedLines) {
+    const bases = page.lines
+      .filter(
+        (l) =>
+          l.text.trim() &&
+          l.fontSize >= em * 0.85 &&
+          Math.abs(l.fontSize - em) < 0.1 &&
+          Math.abs(l.y - row.y) <= Math.max(2, em * 0.15) &&
+          l.x >= caption.rect[0] - 0.1 &&
+          l.x + l.width <= caption.rect[2] + 0.1
+      )
+      .sort((a, b) => a.x - b.x)
+    if (!bases.length) {
+      result.push(row.text)
+      continue
+    }
+    const scripts = page.lines
+      .filter(
+        (l) =>
+          l.text.trim() &&
+          l.fontSize >= em * 0.5 &&
+          l.fontSize <= em * 0.8 &&
+          l.x >= caption.rect[0] &&
+          l.x + l.width <= caption.rect[2] &&
+          Math.abs(l.y + l.height - row.y - row.fontSize) < em
+      )
+      .sort((a, b) => a.y - b.y || a.x - b.x)
+    const fractions = new Set()
+    for (const rule of rules.filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[2] - r[0] > 0 &&
+        r[2] - r[0] < em * 8 &&
+        r[0] >= caption.rect[0] &&
+        r[2] <= caption.rect[2]
+    )) {
+      const pair = page.lines
+        .filter(
+          (s) =>
+            s.fontSize >= em * 0.5 &&
+            s.fontSize <= em * 0.8 &&
+            s.x >= rule[0] - em * 0.1 &&
+            s.x + s.width <= rule[2] + em * 0.1 &&
+            Math.abs(s.y - rule[1]) < em * 1.5 &&
+            /^[\p{L}\p{N}√+−\-/()[\]., ]{1,40}$/u.test(s.text.trim())
+        )
+        .sort((a, b) => a.y - b.y)
+      const above = pair.filter((s) => s.y + s.height / 2 < rule[1]),
+        below = pair.filter((s) => s.y + s.height / 2 > rule[1])
+      if (
+        !above.length ||
+        !below.length ||
+        pair.some((s) => covered.has(s)) ||
+        Math.min(...below.map((s) => s.y)) - Math.min(...above.map((s) => s.y)) < em * 0.5 ||
+        Math.min(...below.map((s) => s.y)) - Math.min(...above.map((s) => s.y)) > em * 1.3 ||
+        Math.abs(
+          (Math.min(...below.map((s) => s.x)) + Math.max(...below.map((s) => s.x + s.width))) / 2 -
+            (rule[0] + rule[2]) / 2
+        ) >
+          em * 0.2
+      )
+        continue
+      const distance = (r) => Math.abs(rule[1] - r.y - r.fontSize / 2)
+      if (distance(row) > em * 0.85) continue
+      if (ownedLines.some((r) => r !== row && distance(r) <= distance(row) + em * 0.1)) continue
+      bases.push({
+        ...pair[0],
+        text: [above, below]
+          .map((parts) =>
+            parts
+              .sort((a, b) => a.x - b.x)
+              .map((s) => s.text.trim())
+              .join(' ')
+          )
+          .join(' '),
+        x: rule[0],
+        width: rule[2] - rule[0],
+        y: row.y,
+        fontSize: em,
+        height: em
+      })
+      for (const s of pair) {
+        covered.add(s)
+        fractions.add(s)
+      }
+    }
+    const chains = []
+    for (const s of scripts.filter((s) => !fractions.has(s))) {
+      const last = chains.at(-1)
+      if (last && Math.abs(last.y - s.y) < 0.1 && Math.abs(last.x + last.width - s.x) < em * 0.1)
+        Object.assign(last, {
+          text: last.text + s.text,
+          width: s.x + s.width - last.x,
+          members: [...last.members, s]
+        })
+      else chains.push({ ...s, members: [s] })
+    }
+    const attached = new Map()
+    for (const s of chains) {
+      const parents = bases.filter(
+        (b) =>
+          (Math.abs(s.x - b.x - b.width) < em * 0.1 ||
+            (/^\p{L}$/u.test(s.text) &&
+              s.x >= b.x + b.width - em &&
+              s.x + s.width <= b.x + b.width + em * 0.1 &&
+              s.y + s.fontSize > b.y + b.fontSize + em * 0.15)) &&
+          Math.abs(b.y + b.fontSize - s.y - s.fontSize) > em * 0.15 &&
+          Math.abs(b.y + b.fontSize - s.y - s.fontSize) < em
+      )
+      if (parents.length !== 1 || s.members.some((m) => covered.has(m))) continue
+      const distances = ownedLines
+        .map((r) => Math.abs(s.y + s.height / 2 - r.y - r.fontSize / 2))
+        .sort((a, b) => a - b)
+      if (distances.length > 1 && distances[1] - distances[0] < em * 0.1) continue
+      const parent = parents[0]
+      if (!attached.has(parent)) attached.set(parent, [])
+      attached.get(parent).push(s)
+      for (const member of s.members) covered.add(member)
+    }
+    // A raised literal operator may sit above its own physical prose row.
+    // A unique exact next edge supplies ownership without interpreting its font.
+    for (const overlay of page.lines.filter(
+      (l) =>
+        l.text.trim().length === 1 &&
+        Math.abs(l.fontSize - em) < 0.1 &&
+        l.y < row.y - em * 0.2 &&
+        row.y - l.y < em &&
+        l.x >= caption.rect[0] &&
+        l.x + l.width <= caption.rect[2] &&
+        !covered.has(l)
+    )) {
+      const next = bases.filter(
+        (b) =>
+          Math.abs(b.x - overlay.x - overlay.width) < em * 0.05 &&
+          overlay.y + overlay.height > row.y
+      )
+      const competing = page.lines.filter(
+        (l) =>
+          l !== overlay &&
+          Math.abs(l.x - overlay.x) < em * 0.05 &&
+          Math.abs(l.y - overlay.y) < em * 0.1 &&
+          Math.abs(l.width - overlay.width) < em * 0.05
+      )
+      if (next.length === 1 && !competing.length) {
+        bases.push(overlay)
+        covered.add(overlay)
+      }
+    }
+    bases.sort((a, b) => a.x - b.x)
+    if (
+      bases.some(
+        (b, i) =>
+          i &&
+          b.x -
+            Math.max(
+              bases[i - 1].x + bases[i - 1].width,
+              ...(attached.get(bases[i - 1]) ?? []).map((s) => s.x + s.width)
+            ) >
+            em * 0.8
+      )
+    ) {
+      result.push(row.text)
+      continue
+    }
+    const text = bases
+      .map((b) => {
+        let value = b.text.trim()
+        for (const s of attached.get(b) ?? []) {
+          const rise = b.y + b.height - s.y - s.height
+          value +=
+            /^[−-]?\d+$/.test(s.text) && rise >= em * 0.2 && rise <= em * 0.8
+              ? s.text.replace(/[−-]/g, '⁻').replace(/\d/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(d)])
+              : ' ' + s.text
+        }
+        return value
+      })
+      .join(' ')
+    const unresolved = scripts.some(
+      (s) => !covered.has(s) && s.y >= row.y - em * 0.2 && s.y < row.y + em * 0.8
+    )
+    if (unresolved) {
+      result.push(row.text)
+      continue
+    }
+    if (text !== row.text && (bases.length > 1 || attached.size)) changed = true
+    result.push(text)
+  }
+  return changed ? { lines: result } : undefined
+}
+
 // Work only inside an existing multiline numbered caption. Native left-edge
 // prose baselines delimit physical rows; every short script needs one exact
 // source edge owner. Letters and unknown glyphs stay literal; proven numeric

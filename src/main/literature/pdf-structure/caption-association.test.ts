@@ -814,6 +814,74 @@ it('prefers a nearby aligned caption over an equally close caption in the other 
   expect(matches[1].rect).toBeUndefined()
 })
 
+it('recovers a conservative crop when paired graphics leave caption direction ambiguous', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [
+      { kind: 'image', normalizedRect: [0.1, 0.1, 0.3, 0.3] },
+      { kind: 'image', normalizedRect: [0.7, 0.1, 0.9, 0.3] },
+      { kind: 'image', normalizedRect: [0.1, 0.7, 0.3, 0.9] },
+      { kind: 'image', normalizedRect: [0.7, 0.7, 0.9, 0.9] }
+    ]
+  }
+  const [figure] = associateFigures(page, [
+    {
+      page: 1,
+      lines: ['Figure 1. A paired multi-panel result with an intentionally ambiguous layout.'],
+      rect: [90, 370, 510, 390]
+    }
+  ])
+  expect(figure.rect).toBeDefined()
+  expect(figure.rect).toEqual([58, 78, 542, 242])
+})
+
+it('rejects a graphics-count-only listing block as a figure', () => {
+  const lines = Array.from({ length: 60 }, (_, index) => ({
+    text: `Listing instruction line ${index} with enough words to resemble prose rather than a plot label.`,
+    x: 60,
+    y: 80 + index * 10,
+    width: 480,
+    height: 8,
+    fontSize: 8
+  }))
+  const graphicsBounds = [
+    ...Array.from({ length: 24 }, (_, index) => ({
+      kind: 'path',
+      normalizedRect: [0.1 + index * 0.03, 0.1, 0.105 + index * 0.03, 0.24]
+    })),
+    ...Array.from({ length: 24 }, (_, index) => ({
+      kind: 'path',
+      normalizedRect: [0.1, 0.1 + index * 0.025, 0.88, 0.105 + index * 0.025]
+    })),
+    ...Array.from({ length: 72 }, (_, index) => ({
+      kind: 'path',
+      normalizedRect: [
+        0.1 + (index % 24) * 0.03,
+        0.12 + Math.floor(index / 24) * 0.04,
+        0.12 + (index % 24) * 0.03,
+        0.14 + Math.floor(index / 24) * 0.04
+      ]
+    }))
+  ]
+  const [figure] = associateFigures(
+    {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      lines,
+      graphicsBounds
+    },
+    [{ page: 1, lines: ['Figure 2. Listing block.'], rect: [60, 700, 540, 715] }]
+  )
+  expect(figure.rect).toBeUndefined()
+  expect(figure.issue).toBe('text-dominant-graphics')
+})
+
 it('does not extend a figure into nearby column prose but retains its axis labels', () => {
   const sample = {
     ...page,
@@ -1498,7 +1566,11 @@ it('rejects running-text references while retaining numbered caption titles', ()
   for (const text of [
     'Table 1 shows the outcomes.',
     'Fig. 2 presents the study flow.',
-    'Figure 3 illustrates the changes.'
+    'Figure 3 illustrates the changes.',
+    'Fig. 4 visualizes the measured trends.',
+    'Figure 5 plots the response curves.',
+    'Figure 6 gives the ablation results.',
+    'Figure 7 follows the calibration path.'
   ])
     expect(captionKind(text)).toBeUndefined()
   expect(captionKind('Table 1. Shows and recordings')).toBe('table')

@@ -56,6 +56,60 @@ it('associates both complete ruled tables with unique upper captions despite a n
     )
   ).toEqual(f.captions.slice(0, 2))
 })
+it('keeps upper captions when native header boxes slightly overhang their opening rules', () => {
+  const f = input()
+  f.tables[0].rect[1] = 238.5
+  f.tables[0].rect[0] = 55
+  f.tables[0].rect[2] = 295
+  for (const r of f.rules.slice(0, 2)) {
+    r[0] = 55
+    r[2] = 295
+  }
+  f.captions[0].rect[3] = 227.5
+  f.captions[0].rect[1] = 207.5
+  f.tables[1].rect[1] = 349.8
+  expect(
+    associateTableCaptions(f.page, f.tables, f.captions, f.rules).map(
+      (r: ReturnType<typeof JSON.parse>) => r.caption
+    )
+  ).toEqual(f.captions.slice(0, 2))
+})
+const omittedUpperHeaders = (): ReturnType<typeof JSON.parse> => {
+  const f = input()
+  f.tables[0].rect = [55, 250, 295, 303]
+  f.rules[0] = [55, 238.9, 295, 238.9]
+  f.rules[1] = [55, 306.8, 295, 306.8]
+  f.page.lines.push(
+    { text: 'Success rate', x: 95, y: 240, width: 50, height: 5, fontSize: 5 },
+    { text: 'Response latency', x: 160, y: 240.2, width: 65, height: 5, fontSize: 5 }
+  )
+  return f
+}
+it('keeps the upper title when two separate native header labels prove the omitted header band', () => {
+  const f = omittedUpperHeaders()
+  expect(
+    associateTableCaptions(f.page, f.tables, f.captions, f.rules).map(
+      (r: ReturnType<typeof JSON.parse>) => r.caption
+    )
+  ).toEqual(f.captions.slice(0, 2))
+})
+it.each(['missing-labels', 'one-label', 'crosses-row', 'prose-font', 'overlapping-labels'])(
+  'does not widen the opening gap for omitted headers without %s proof',
+  (reason) => {
+    const f = omittedUpperHeaders()
+    if (reason === 'missing-labels') f.page.lines.splice(-2)
+    if (reason === 'one-label') f.page.lines.pop()
+    if (reason === 'crosses-row') f.page.lines.at(-1).y = 247
+    if (reason === 'prose-font')
+      f.page.lines.slice(-2).forEach((l: ReturnType<typeof JSON.parse>) => (l.fontSize = 8))
+    if (reason === 'overlapping-labels') f.page.lines.at(-1).x = 110
+    expect(
+      associateTableCaptions(f.page, f.tables, f.captions, f.rules).every(
+        (r: ReturnType<typeof JSON.parse>) => r.caption
+      )
+    ).toBe(false)
+  }
+)
 it.each(['missing-closing', 'competing-opening', 'non-numeric-body', 'non-caption-title'])(
   'does not override competing caption distances without %s proof',
   (reason) => {

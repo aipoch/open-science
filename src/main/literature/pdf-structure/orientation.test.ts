@@ -236,6 +236,43 @@ it('excludes a two-part running header that only grazes a continuation crop', ()
   expect(result.clipped).toEqual([])
   expect(result.repairs).toContain('top-running-header-excluded')
 })
+
+it('assigns a vertical SNR stub label to the table while leaving ordinary vertical furniture unowned', () => {
+  const table = {
+    id: 'rotated-snr-stub',
+    readingRotation: 90,
+    cropRect: [0, 0, 300, 100],
+    structure: {
+      objects: [
+        { label: 'table row', rect: [0, 0, 300, 100], score: 1 },
+        { label: 'table column', rect: [0, 0, 80, 100], score: 1 },
+        { label: 'table column', rect: [80, 0, 180, 100], score: 1 },
+        { label: 'table column', rect: [180, 0, 300, 100], score: 1 }
+      ]
+    }
+  }
+  const vertical = (text: string) => ({
+    text,
+    rect: [20, 20, 32, 90],
+    height: 12,
+    baseline: 90,
+    horizontal: false
+  })
+  const values = [
+    { text: '10', rect: [100, 20, 115, 32], height: 12, baseline: 32, horizontal: true },
+    { text: '20', rect: [200, 20, 215, 32], height: 12, baseline: 32, horizontal: true }
+  ]
+
+  const accepted = refineTable(table, [vertical('SNR 15'), ...values])
+  expect(accepted.grid[0]).toEqual(['SNR 15', '10', '20'])
+  expect(accepted.issues).not.toContain('unsupported-text-orientation')
+  expect(accepted.unassigned).toEqual([])
+
+  const furniture = refineTable(table, [vertical('Volume'), ...values])
+  expect(furniture.grid[0][0]).toBe('')
+  expect(furniture.issues).toContain('unsupported-text-orientation')
+  expect(furniture.unassigned).toEqual(['Volume'])
+})
 it('keeps a real clipped body line when a running header shares the crop edge', () => {
   const table = {
     id: 'running-header-with-clipped-body',

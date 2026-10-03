@@ -4,7 +4,7 @@ import { groupPageLines } from './literature-pdf-caption-group.mjs'
 // Complete labelled native rules own the pseudocode; keep its original image.
 export function findAlgorithmCandidates(page) {
   const lines = groupPageLines(page)
-  const titles = lines.filter((line) => /^Algorithm\s+\d+\b/i.test(line.text))
+  const titles = lines.filter((line) => /^Algorithm\s+(?:[A-Z]\.)?\d+\b/i.test(line.text))
   const rules = (page.graphicsBounds ?? [])
     .filter((graphic) => graphic.kind === 'path')
     .map((graphic) => graphic.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)))
@@ -85,7 +85,15 @@ export function findAlgorithmCandidates(page) {
           Math.abs(line.x - steps[0].x) <= line.fontSize * 0.2
       ) &&
       content.some((line) => /^(?:Initialization\s*:|Stop if\b|Otherwise\b)/i.test(line.text))
-    if (!(io && ordinals.length >= 2) && !loops && !headed) return []
+    // A formally labelled routine can declare its parameters in a function
+    // signature instead of Require/Input. Prove an ordered numbered body and
+    // its terminating return; a boxed paragraph or a bare title is insufficient.
+    const routine =
+      ordinals.length >= 3 &&
+      ordinals.every((line, index) => Number(line.text.match(/^(\d+)\s*:/)[1]) === index + 1) &&
+      ordinals.some((line) => /^\d+\s*:\s*function\b/i.test(line.text)) &&
+      ordinals.some((line) => /^\d+\s*:\s*return\b/i.test(line.text))
+    if (!(io && ordinals.length >= 2) && !loops && !headed && !routine) return []
     const titleTails = content.filter(
       (l) =>
         /[-–]$/.test(title.text) &&

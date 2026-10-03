@@ -26,6 +26,11 @@ import { nativeRasterCaptionColumn } from './literature-pdf-native-raster-column
 import { nativeOpenAxisArray } from './literature-pdf-native-open-axis-array.mjs'
 import { nativeCompleteAxisFigure } from './literature-pdf-figure-complete-axis-ownership.mjs'
 import { nativeConnectedKeyedLegend } from './literature-pdf-figure-connected-keyed-legend.mjs'
+import { nativeAttachedPlotLabels } from './literature-pdf-figure-native-plot-labels.mjs'
+import {
+  nativeCaptionedTextIllustration,
+  nativeLetteredRasterArray
+} from './literature-pdf-figure-native-captioned-illustration.mjs'
 import {
   nativeCaptionedPlotBand,
   nativeDisjointPlotColumn,
@@ -582,6 +587,177 @@ function associateFlowchart(page, captions, tableRects) {
 }
 
 export function associateFigures(
+  page,
+  candidates,
+  tableRects = [],
+  rules = [],
+  closedFrames = [],
+  nativeTokens = []
+) {
+  return associateFigureFaces(page, candidates, tableRects, rules, closedFrames, nativeTokens).map(
+    (figure) => {
+      const attached = nativeAttachedPlotLabels(
+        page,
+        figure,
+        candidates,
+        tableRects,
+        rules,
+        nativeTokens
+      )
+      // A long listing can contain hundreds of stroked glyphs. It looks like a
+      // large connected drawing to the geometry pass, but it is not a figure
+      // and must not be published as one. Require a substantial image/path
+      // plate before accepting a text-dominant result.
+      if (attached.rect && isTextDominantFigure(page, attached, candidates))
+        return { ...attached, rect: undefined, issue: 'text-dominant-graphics' }
+      if (!attached.rect && isTextDominantPage(page, candidates))
+        return { ...attached, issue: 'text-dominant-graphics' }
+      if (attached.rect) return attached
+      const recovered = recoverConservativeFigureRect(page, attached, tableRects, candidates)
+      return recovered ? { ...attached, rect: recovered, issue: undefined } : attached
+    }
+  )
+}
+
+function figureGraphicRect(page, graphic) {
+  if (!graphic?.normalizedRect?.every(Number.isFinite)) return undefined
+  return graphic.normalizedRect.map(
+    (value, index) => value * (index % 2 ? page.height : page.width)
+  )
+}
+
+function figureGraphicArea(page, graphic) {
+  const rect = figureGraphicRect(page, graphic)
+  return rect ? area(rect) / (page.width * page.height) : 0
+}
+
+function isTextDominantFigure(page, figure, candidates) {
+  if (!figure.rect || !figure.graphicsCount || figure.graphicsCount < 100) return false
+  const rect = figure.rect
+  const graphics = (page.graphicsBounds ?? []).map((graphic) => ({
+    graphic,
+    rect: figureGraphicRect(page, graphic)
+  }))
+  const inside = graphics.filter(
+    (item) => item.rect && intersection(item.rect, rect) / area(item.rect) > 0.8
+  )
+  if (!inside.length || inside.some((item) => item.graphic.kind === 'image')) return false
+  const maxArea = Math.max(...inside.map((item) => figureGraphicArea(page, item.graphic)))
+  if (maxArea >= 0.02) return false
+  // A vector plate can be composed of many small paths. Keep those when a
+  // few paths still occupy a material area; listing-like blocks tend to have
+  // only hairline fragments despite their high graphics count.
+  if (inside.filter((item) => figureGraphicArea(page, item.graphic) >= 0.005).length >= 3)
+    return false
+  const lines = page.lines.filter(
+    (line) =>
+      line.text?.trim() &&
+      !candidates.some(
+        (candidate) =>
+          candidate.page === page.pageNumber && intersection(lineRect(line), candidate.rect) > 0
+      ) &&
+      intersection(lineRect(line), rect) / area(lineRect(line)) > 0.75
+  )
+  return lines.length >= 40 && area(rect) / (page.width * page.height) >= 0.35
+}
+
+function isTextDominantPage(page, candidates) {
+  const graphics = page.graphicsBounds ?? []
+  if (graphics.length < 100 || graphics.some((graphic) => graphic.kind === 'image')) return false
+  const maxArea = Math.max(...graphics.map((graphic) => figureGraphicArea(page, graphic)))
+  if (maxArea >= 0.02) return false
+  if (graphics.filter((graphic) => figureGraphicArea(page, graphic) >= 0.005).length >= 3)
+    return false
+  const lines = page.lines.filter(
+    (line) =>
+      line.text?.trim() &&
+      !candidates.some(
+        (candidate) =>
+          candidate.page === page.pageNumber && intersection(lineRect(line), candidate.rect) > 0
+      )
+  )
+  return lines.length >= 40
+}
+
+function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
+  if (!figure?.caption || !page.graphicsBounds?.length) return undefined
+  const caption = figure.caption
+  const pageCaptions = candidates.filter((candidate) => candidate.page === page.pageNumber)
+  const otherCaptions = pageCaptions.filter((candidate) => candidate !== caption)
+  const edgeTolerance = page.height / 256 + 1
+  const maximumCaptionGap = 240
+  const graphics = page.graphicsBounds
+    .map((graphic) => ({ graphic, rect: figureGraphicRect(page, graphic) }))
+    .filter(({ rect }) => rect && area(rect) > 0)
+    .filter(
+      ({ rect }) =>
+        !tableRects.some((table) => intersection(table, rect) / area(rect) > 0.8) &&
+        !otherCaptions.some((candidate) => intersection(candidate.rect, rect) / area(rect) > 0.6) &&
+        intersection(caption.rect, rect) / area(rect) < 0.25
+    )
+  const directions = [
+    graphics.filter(
+      ({ rect }) =>
+        rect[3] <= caption.rect[1] + edgeTolerance && caption.rect[1] - rect[3] <= maximumCaptionGap
+    ),
+    graphics.filter(
+      ({ rect }) =>
+        rect[1] >= caption.rect[3] - edgeTolerance && rect[1] - caption.rect[3] <= maximumCaptionGap
+    ),
+    graphics.filter(
+      ({ rect }) =>
+        rect[2] <= caption.rect[0] + edgeTolerance &&
+        caption.rect[0] - rect[2] <= maximumCaptionGap &&
+        Math.min(rect[3], caption.rect[3]) - Math.max(rect[1], caption.rect[1]) >=
+          Math.min(rect[3] - rect[1], caption.rect[3] - caption.rect[1]) * 0.35
+    ),
+    graphics.filter(
+      ({ rect }) =>
+        rect[0] >= caption.rect[2] - edgeTolerance &&
+        rect[0] - caption.rect[2] <= maximumCaptionGap &&
+        Math.min(rect[3], caption.rect[3]) - Math.max(rect[1], caption.rect[1]) >=
+          Math.min(rect[3] - rect[1], caption.rect[3] - caption.rect[1]) * 0.35
+    )
+  ]
+  const ranked = directions
+    .map((items) => {
+      if (!items.length) return undefined
+      const bounds = union(items.map((item) => item.rect))
+      const imageCount = items.filter((item) => item.graphic.kind === 'image').length
+      const maxArea = Math.max(...items.map((item) => figureGraphicArea(page, item.graphic)))
+      // Raster-strip recovery is only safe when the strips form one continuous
+      // plate. Sparse strips are commonly unrelated image fragments or a
+      // neighboring column; do not bridge their gaps into a fabricated crop.
+      if (imageCount >= 3 && items.every((item) => item.graphic.kind === 'image')) {
+        const strips = [...items].sort((a, b) => a.rect[1] - b.rect[1])
+        if (
+          strips.some(
+            (strip, index) => index > 0 && strip.rect[1] - strips[index - 1].rect[3] > edgeTolerance
+          )
+        )
+          return undefined
+      }
+      // A lone raster can be a decorative panel or a neighboring column image.
+      // Require either a raster pair (the common multi-panel case) or a
+      // substantial vector plate before claiming an unresolved caption.
+      if (imageCount < 2 && (imageCount > 0 || maxArea < 0.02)) return undefined
+      const pathCount = items.filter((item) => item.graphic.kind === 'path').length
+      if (imageCount === 0 && pathCount < 3) return undefined
+      return { bounds, score: area(bounds) + maxArea * page.width * page.height }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score)
+  if (!ranked.length) return undefined
+  const rect = ranked[0].bounds
+  return [
+    Math.max(0, rect[0] - 2),
+    Math.max(0, rect[1] - 2),
+    Math.min(page.width, rect[2] + 2),
+    Math.min(page.height, rect[3] + 2)
+  ]
+}
+
+function associateFigureFaces(
   page,
   candidates,
   tableRects = [],
@@ -2152,6 +2328,21 @@ export function associateFigures(
     }
   }
   return captions.map((caption, index) => {
+    const textIllustration = nativeCaptionedTextIllustration(
+      page,
+      caption,
+      pageCaptions,
+      tableRects
+    )
+    if (textIllustration) return textIllustration
+    const rasterArray = nativeLetteredRasterArray(
+      page,
+      caption,
+      pageCaptions,
+      tableRects,
+      nativeTokens
+    )
+    if (rasterArray) return rasterArray
     const closedPlots = nativeCaptionedPlotBand(page, caption, pageCaptions, tableRects, rules)
     const assignedBounds = assigned[index].length
       ? union(assigned[index].map((item) => item.rect))
@@ -3578,10 +3769,15 @@ export function associateFigures(
       categories.length ? union([rect, ...categories]) : rect
     )
     if (connectedLegend) return connectedLegend
+    const excludedProseLines = [...excludedProse].filter(
+      (line) =>
+        line.y + line.height <= rect[1] && rect[1] - line.y - line.height <= line.fontSize * 2
+    )
     return {
       caption,
       rect: categories.length ? union([rect, ...categories]) : rect,
-      graphicsCount: graphics.length
+      graphicsCount: graphics.length,
+      ...(excludedProseLines.length ? { excludedProseLines } : {})
     }
   })
 }
@@ -3641,6 +3837,61 @@ export function associateGraphicalTables(page, candidates, tableRects = [], empt
       )
     )
       return []
+    // A figure caption between the graphic and a long table-reference
+    // paragraph proves that the graphic belongs to the figure, even when the
+    // paragraph is classified as a table caption by a noisy PDF stream.
+    // Without this guard the graphical-table fallback reserves the graphic
+    // first and the normal figure association can no longer crop it.
+    const hasInterveningFigureCaption = candidates.some((candidate) => {
+      if (candidate === caption || captionKind(candidate.lines?.[0]) !== 'figure') return false
+      const overlap =
+        Math.min(candidate.rect[2], caption.rect[2]) - Math.max(candidate.rect[0], caption.rect[0])
+      return (
+        overlap >
+          Math.min(candidate.rect[2] - candidate.rect[0], caption.rect[2] - caption.rect[0]) *
+            0.35 &&
+        candidate.rect[1] >= match.rect[3] - 12 &&
+        candidate.rect[3] <= caption.rect[1] + 12
+      )
+    })
+    const hasLineFigureCaption = page.lines.some(
+      (line) =>
+        /^(?:Fig\.?|Figure)\s+[AS]?\d+[.:]/i.test(line.text.trim()) &&
+        line.y >= match.rect[3] - 12 &&
+        line.y + line.height <= caption.rect[1] + 12 &&
+        line.x + line.width > match.rect[0] &&
+        line.x < match.rect[2]
+    )
+    if (hasInterveningFigureCaption || hasLineFigureCaption) return []
+    // Axis plots can be mistaken for image-only tables when a table-reference
+    // paragraph follows the plot. Require several numeric tick labels, an
+    // axis/legend cue, and a dense vector plate. Outlined table controls have
+    // detector evidence directly below the caption and therefore bypass this
+    // veto.
+    if (!below.length) {
+      const numericTicks = page.lines.filter(
+        (line) =>
+          intersection(lineRect(line), match.rect) / area(lineRect(line)) > 0.5 &&
+          (/^(?:[-+]?\d+(?:\.\d+)?\s+){2,}[-+]?\d+(?:\.\d+)?$/.test(line.text.trim()) ||
+            /^[-+]?\d+(?:\.\d+)?$/.test(line.text.trim()))
+      ).length
+      const axisCues = page.lines.filter(
+        (line) =>
+          intersection(lineRect(line), match.rect) / area(lineRect(line)) > 0.25 &&
+          /\b(?:axis|angle|guidance|steps|legend|curve|plot|density|distribution|sampling|gFID|FDr|SNR)\b/i.test(
+            line.text
+          )
+      ).length
+      const vectorPlate = (page.graphicsBounds ?? []).filter(
+        (graphic) =>
+          graphic.kind === 'path' &&
+          (() => {
+            const rect = figureGraphicRect(page, graphic)
+            return rect && intersection(rect, match.rect) / area(rect) > 0.25
+          })()
+      ).length
+      if (numericTicks >= 4 && axisCues >= 1 && vectorPlate >= 8) return []
+    }
     return [{ ...match, caption: recoverSpacedCaptionContinuations(page, caption, match.rect) }]
   })
 }
@@ -4546,15 +4797,66 @@ export function associateTableCaptions(page, tables, candidates, rules = [], pag
               Math.abs(r[0] - rect[0]) <= titleRulePadding &&
               Math.abs(r[2] - rect[2]) <= titleRulePadding
           )
-        const gap = paddedTitle
-          ? 0
-          : sideCaption
-            ? sideGap
-            : c[3] <= rect[1]
-              ? rect[1] - c[3]
-              : c[1] >= rect[3]
-                ? c[1] - rect[3]
-                : -1
+        const paddedFooter = (() => {
+          // Native column segments can end just below the final text record.
+          // Require their matching terminal edge and an intact numeric row
+          // before treating a tiny title overlap as row-box padding.
+          if (
+            tables.length !== 1 ||
+            captions.length !== 1 ||
+            c[1] >= rect[3] ||
+            c[3] <= rect[3] ||
+            !/^Table\s+\d+[.:]\s.{20,}/i.test(caption.lines.join(' '))
+          )
+            return false
+          const em = Math.max(
+            ...page.lines
+              .filter((l) => intersection(lineRect(l), c) > 0)
+              .map((l) => l.fontSize)
+              .filter((h) => h > 0)
+          )
+          if (!Number.isFinite(em) || rect[3] - c[1] > em * 0.15) return false
+          const terminal = rules.filter(
+            (r) =>
+              r[0] === r[2] &&
+              r[0] > rect[0] &&
+              r[0] < rect[2] &&
+              Math.abs(r[3] - rect[3]) <= 0.1 &&
+              r[3] > r[1] &&
+              r[3] - r[1] <= em * 2
+          )
+          if (
+            new Set(terminal.map((r) => r[0])).size < 3 ||
+            Math.max(...terminal.map((r) => r[0])) - Math.min(...terminal.map((r) => r[0])) <
+              (rect[2] - rect[0]) * 0.4 ||
+            Math.max(...terminal.map((r) => r[1])) - Math.min(...terminal.map((r) => r[1])) > 0.1
+          )
+            return false
+          const start = terminal[0][1]
+          return (
+            page.lines.some(
+              (l) =>
+                l.y >= start - em * 0.3 &&
+                l.y + l.height <= c[1] &&
+                l.x >= rect[0] &&
+                l.x + l.width <= rect[2] &&
+                (l.text.match(/\d+(?:\.\d+)?/g) ?? []).length >= 3
+            ) &&
+            page.lines
+              .filter((l) => intersection(lineRect(l), [rect[0], c[1], rect[2], rect[3]]) > 0)
+              .every((l) => intersection(lineRect(l), c) / area(lineRect(l)) > 0.98)
+          )
+        })()
+        const gap =
+          paddedTitle || paddedFooter
+            ? 0
+            : sideCaption
+              ? sideGap
+              : c[3] <= rect[1]
+                ? rect[1] - c[3]
+                : c[1] >= rect[3]
+                  ? c[1] - rect[3]
+                  : -1
         const overlap = sideCaption
           ? Math.min(c[2] - c[0], rect[2] - rect[0])
           : Math.min(c[2], rect[2]) - Math.max(c[0], rect[0])
@@ -4683,13 +4985,42 @@ export function associateTableCaptions(page, tables, candidates, rules = [], pag
         )
       if (!Number.isFinite(em) || !/^Table\s+\d+[.:]\s/i.test(caption.lines[0])) return false
       const edgeTolerance = (rect[2] - rect[0]) * 0.08
+      const hasOmittedHeaderLabels = (rule) => {
+        // Predicted rows may start below a parent header. Two smaller native
+        // labels on the same baseline, separated horizontally and wholly
+        // inside that band, prove its ownership without widening prose gaps.
+        if (rect[1] - rule[1] > em * 2) return false
+        const labels = page.lines.filter(
+          (l) =>
+            l.y >= rule[1] &&
+            l.y + l.height <= rect[1] &&
+            l.x >= rule[0] &&
+            l.x + l.width <= rule[2] &&
+            l.width <= (rule[2] - rule[0]) * 0.7 &&
+            l.fontSize > 0 &&
+            l.fontSize <= em * 0.8 &&
+            /[A-Za-z]/.test(l.text) &&
+            !/\d|[.!?;]\s*$/.test(l.text)
+        )
+        return labels.some((a, n) =>
+          labels.slice(n + 1).some((b) => {
+            const font = Math.max(a.fontSize, b.fontSize)
+            return (
+              Math.abs(a.y + a.height - b.y - b.height) <= font * 0.2 &&
+              Math.max(b.x - a.x - a.width, a.x - b.x - b.width) >= font * 0.5
+            )
+          })
+        )
+      }
       const opening = rules.filter(
         (r) =>
           r[1] === r[3] &&
           r[1] >= caption.rect[3] &&
-          r[1] <= rect[1] &&
-          r[1] - caption.rect[3] <= em * 1.2 &&
-          rect[1] - r[1] <= em &&
+          // Native glyph boxes can overhang their opening rule by a fraction
+          // of an em. The complete unique frame still proves upper ownership.
+          r[1] <= rect[1] + em * 0.1 &&
+          r[1] - caption.rect[3] <= em * 1.5 &&
+          (rect[1] - r[1] <= em || hasOmittedHeaderLabels(r)) &&
           Math.abs(r[0] - rect[0]) <= edgeTolerance &&
           Math.abs(r[2] - rect[2]) <= edgeTolerance &&
           Math.abs((r[0] + r[2] - caption.rect[0] - caption.rect[2]) / 2) <= em
@@ -4726,7 +5057,9 @@ export function associateTableCaptions(page, tables, candidates, rules = [], pag
     (captions.length === tables.length || completeNativeStack) &&
     above.every((matches) => matches.length === 1) &&
     new Set(above.map((matches) => matches[0].caption)).size === tables.length &&
-    !choices.some((matches) => matches.some((m) => m.ruledFooter)) &&
+    // A unique complete stack proves that the nearby below-footer title owns
+    // the next table; footer proximity alone cannot override both opening rules.
+    (completeNativeStack || !choices.some((matches) => matches.some((m) => m.ruledFooter))) &&
     tables.every(
       ({ rect }) =>
         (Math.min(rect[2], tables[0].rect[2]) - Math.max(rect[0], tables[0].rect[0])) /

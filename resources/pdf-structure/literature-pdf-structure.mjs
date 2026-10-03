@@ -21,6 +21,7 @@ import { recordPaintedOperationBounds } from './literature-pdf-render-bounds.mjs
 import { getDocument, OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
 import { readingRotation } from './literature-pdf-orientation.mjs'
+import { normalizePageLineOrder } from './literature-pdf-reading-order.mjs'
 
 const [inputPath, outputDirectory, renderPageList, adjacent, mode] = process.argv.slice(2)
 assert(inputPath && outputDirectory, 'Supply a local PDF and an output directory.')
@@ -144,9 +145,13 @@ try {
         if (item.hasEOL) flush()
       }
       flush()
+      // PDF text streams may paint the right column before the left column.
+      // Normalize only pages with clear two-column evidence; ambiguous pages
+      // retain their source order for downstream spatial ownership checks.
+      const orderedLines = normalizePageLineOrder({ width: viewport.width, lines })
       // Deliberately expose false positives instead of claiming caption association.
-      const captionStarts = lines.filter(({ text }) => captionKind(text))
-      const headingCandidates = lines.filter(
+      const captionStarts = orderedLines.filter(({ text }) => captionKind(text))
+      const headingCandidates = orderedLines.filter(
         ({ text, fontSize }) =>
           text.length < 110 &&
           fontSize >= 10 &&
@@ -169,7 +174,7 @@ try {
         graphicsOperators: counts,
         captionStarts,
         headingCandidates,
-        lines
+        lines: orderedLines
       })
       if (
         geometryPages ? geometryPages.includes(pageNumber) : captionStarts.length && rendered < 2

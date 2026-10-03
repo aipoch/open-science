@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { inside } from './literature-pdf-table-geometry.mjs'
+import { area, intersection } from './literature-pdf-page-geometry.mjs'
 import { hasNativeNonTableLayout } from './literature-pdf-native-non-table-layout.mjs'
 
 // Native paragraph ink crosses a detector's artificial column cuts. Require
@@ -98,6 +99,118 @@ function isNumberedNativeDisplay(table, items) {
       )
     )
   })
+}
+
+// A displayed system of equations can be split into detector columns and look
+// like a small table.  Without a caption, repeated mathematical rows and an
+// equation ordinal are stronger evidence of native prose than tabular data.
+function isNativeFormulaSystem(table, caption) {
+  if (caption || !table.cropRect || table.grid.length < 3) return false
+  const cells = table.grid
+    .flat()
+    .map((text) => text.trim())
+    .filter(Boolean)
+  if (cells.length < 5) return false
+  const measuredRows = table.grid.filter(
+    (row) =>
+      row.filter((text) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(text.trim())).length >= 2
+  )
+  if (measuredRows.length) return false
+  const formulaRows = table.grid.filter(
+    (row) =>
+      row.some((text) => /[=∈≤≥⪰∥∇]/u.test(text)) && row.some((text) => /[\p{L}α-ω]/u.test(text))
+  )
+  const ordinals = cells.filter((text) =>
+    /(?:^|\s)\((?:[A-Z]\.)?\d+(?:\.\d+)*\)(?:$|[,.])/u.test(text)
+  )
+  const symbolic = cells.filter((text) => /[=∈≤≥⪰∥∇]/u.test(text)).length
+  const prose = cells.filter(
+    (text) => text.split(/\s+/).length >= 8 && !/[=∈≤≥⪰∥∇]/u.test(text)
+  ).length
+  return formulaRows.length >= 3 && ordinals.length >= 1 && symbolic >= 3 && prose <= 1
+}
+
+// Some appendix equations have enough aligned glyphs to be emitted as a
+// detector table, but they do not contain a tabular record.  Captionless
+// displays are already covered by isNativeFormulaSystem; this conservative
+// companion also handles damaged math glyphs (for example boxed operators or
+// replacement characters) when the crop carries a large amount of unowned
+// text.  A complete two-column parameter table remains eligible because it has
+// no crop-boundary/unassigned evidence.
+function isDamagedNativeFormulaLayout(table, caption) {
+  if (caption) return false
+  if (!table.cropRect || table.grid.length < 3) return false
+  const populated = table.grid
+    .flat()
+    .map((text) => text.trim())
+    .filter(Boolean)
+  if (populated.length < 4) return false
+  const math = /[=∈≤≥⪰∥∇∑√∞∫⋆ℓβγθνξ∆⊕⊗∀∃�−+*\/^]/u
+  const formulaRows = table.grid.filter((row) => {
+    const text = row.filter(Boolean).join(' ')
+    return math.test(text) && /[\p{L}α-ω]/u.test(text)
+  })
+  const measuredRows = table.grid.filter(
+    (row) =>
+      row.filter((text) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(text.trim())).length >= 2
+  )
+  const controlGlyphs = populated.join(' ').match(/[\u0000-\u001f�]/gu)?.length ?? 0
+  if (
+    table.grid.length <= 4 &&
+    controlGlyphs >= Math.max(2, Math.ceil(populated.length * 0.2)) &&
+    (table.unassigned?.length ?? 0) + (table.clipped?.length ?? 0) >= 2
+  )
+    return true
+  if (measuredRows.length || formulaRows.length < 2) return false
+  const damage =
+    (table.unassigned?.length ?? 0) + (table.clipped?.length ?? 0) >=
+    Math.max(4, populated.length * 0.45)
+  const ordinal = populated.some((text) =>
+    /(?:^|\s)\((?:[A-Z]\.)?\d+(?:\.\d+)*\)(?:$|[,.])/u.test(text)
+  )
+  return damage && (ordinal || formulaRows.length >= 3 || table.grid.length <= 4)
+}
+
+function isImageBackedNonTable(table, caption, sourceGraphics = []) {
+  if (caption || !table.cropRect || !sourceGraphics.length) return false
+  const image = sourceGraphics.find(
+    (graphic) =>
+      graphic.kind === 'image' &&
+      intersection(graphic.rect, table.cropRect) / area(table.cropRect) > 0.8 &&
+      intersection(graphic.rect, table.cropRect) / area(graphic.rect) > 0.6
+  )
+  if (!image) return false
+  const values = [...(table.grid ?? []).flat(), ...(table.unassigned ?? [])]
+  const controlGlyphs = values.join(' ').match(/[\u0000-\u001f�]/gu)?.length ?? 0
+  const measurements = values.filter((text) =>
+    /^[-+−]?\d+(?:\.\d+)?(?:\s*[%±].*)?$/.test(text.trim())
+  )
+  const cleanWords = values.filter(
+    (text) => /\p{L}{2,}/u.test(text) && !/[\u0000-\u001f�]/u.test(text)
+  )
+  return (
+    measurements.length === 0 &&
+    controlGlyphs >= Math.max(2, Math.ceil(values.length * 0.2)) &&
+    (cleanWords.length < 3 || (table.unassigned?.length ?? 0) >= 2)
+  )
+}
+
+function isCaptionedNarrativeCard(table, caption) {
+  if (!caption?.rect || !table.grid.length || !table.unassigned?.length) return false
+  const text = table.grid.flat().join(' ')
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0
+  const measurements = table.grid
+    .flat()
+    .filter((cell) => /^[-+−]?\d+(?:\.\d+)?(?:\s*[%±].*)?$/.test(cell.trim()))
+  const width = Math.max(...table.grid.map((row) => row.length))
+  return (
+    measurements.length === 0 &&
+    words >= 100 &&
+    table.unassigned.length >= (width <= 1 ? 8 : 7) &&
+    (table.issues?.includes('text-crosses-crop-boundary') ||
+      table.issues?.includes('overlapping-predicted-columns')) &&
+    table.grid.length <= 5
+  )
 }
 
 function isNativeSingleColumnDerivation(table, caption, items, rules) {
@@ -203,7 +316,7 @@ export function isFigureRiskTable(table, figures, page, scale = 1.5) {
 // content-supported row/column refinement, require evidence from source text.
 // ponytail: uncaptioned single-column or single-row tables remain ambiguous with lists;
 // retain them only with a reliable table caption until richer layout evidence is available.
-export function hasTableEvidence(table, caption, pageItems = [], sourceRules) {
+export function hasTableEvidence(table, caption, pageItems = [], sourceRules, sourceGraphics = []) {
   const populatedRows = table.grid.map((row) => row.filter((text) => text.trim()).length)
   if (!populatedRows.some((count) => count > 0)) return false
   // A supplementary-materials directory names several external tables. Its
@@ -224,6 +337,10 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules) {
   )
     return false
   if (isNativeSingleColumnDerivation(table, caption, pageItems, sourceRules)) return false
+  if (isNativeFormulaSystem(table, caption)) return false
+  if (isDamagedNativeFormulaLayout(table, caption)) return false
+  if (isCaptionedNarrativeCard(table, caption)) return false
+  if (isImageBackedNonTable(table, caption, sourceGraphics)) return false
   if (caption) return true
   if (hasNativeNonTableLayout(table, pageItems, sourceRules)) return false
   if (

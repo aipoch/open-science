@@ -1,14 +1,24 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { reconcileNativeFinalCellBounds } from './literature-pdf-native-final-cell-bounds.mjs'
+import { recoverCaptionBoundaryCrop } from './literature-pdf-caption-boundary-crop.mjs'
 import { recoverNativeHeaderOwnershipGrid } from './literature-pdf-native-header-ownership.mjs'
 import { recoverNativeMeasuredGutterTokens } from './literature-pdf-native-measured-gutters.mjs'
 import { recoverNativeScalarRecordPlan } from './literature-pdf-native-scalar-record-grid.mjs'
 import { recoverNativeTextRecordGrid } from './literature-pdf-native-text-record-grid.mjs'
+import { recoverNativeSegmentedStubRecords } from './literature-pdf-native-shared-stub-record-grid.mjs'
+import {
+  recoverNativeMathFieldRecords,
+  recoverNativeWrappedMathRecords
+} from './literature-pdf-native-math-field-record-grid.mjs'
 import {
   recoverNativePairedTextRecordGrid,
-  recoverNativeOrdinalWrappedRecordGrid
+  recoverNativeOrdinalWrappedRecordGrid,
+  recoverNativeIndexedDirectoryGrid,
+  recoverNativeProseLaneRecords,
+  recoverNativeScalarTypeReasonTail
 } from './literature-pdf-native-bounded-text-record-grid.mjs'
 import { recoverNativeSingleMathRecordGrid } from './literature-pdf-native-single-math-record-grid.mjs'
+import { recoverWrappedMeanSeRows } from './literature-pdf-wrapped-mean-se.mjs'
 import { recoverNativeRepeatedTuplePlan } from './literature-pdf-native-repeated-tuple-grid.mjs'
 import { recoverNativeSharedPairRecordGrid } from './literature-pdf-native-shared-pair-record-grid.mjs'
 import { recoverNativePairedParentRecordGrid } from './literature-pdf-native-paired-parent-record-grid.mjs'
@@ -30,6 +40,8 @@ import { recoverNativeCoefficientRecordGrid } from './literature-pdf-native-coef
 import {
   recoverNativePairedRecordGrid,
   recoverNativeGroupedFlagRecordGrid,
+  recoverCompleteNativeLeafRecords,
+  recoverNativeIndicatorRecordPlan,
   recoverSmallCompleteRecordGrid
 } from './literature-pdf-native-complete-record-grid.mjs'
 import { proveNativeClosedMathOrder } from './literature-pdf-native-closed-math-order.mjs'
@@ -86,6 +98,7 @@ import {
   recoverNativeHeaderGrid,
   recoverClosedNumericFrameCrop,
   recoverCaptionSeparatedHeaderCrop,
+  recoverClippedUnnumberedTitleCrop,
   recoverWrappedSampleHeaderBand,
   recoverCompactNumericHeader,
   recoverCohortSummaryRows,
@@ -171,6 +184,8 @@ import {
 } from './literature-pdf-long-question-record-grid.mjs'
 import { recoverRepeatedVisitGrid } from './literature-pdf-repeated-visit-grid.mjs'
 import { recoverRuledStubGrid, recoverRuledHeaderGrid } from './literature-pdf-ruled-stub-grid.mjs'
+import { removeEmptySeparatorColumns } from './literature-pdf-table-grid-normalize.mjs'
+import { detectTableContinuationTail } from './literature-pdf-table-continuation.mjs'
 import {
   recoverWrappedSummaryGrid,
   recoverPairedIntervalGrid,
@@ -418,6 +433,159 @@ export function reconcileResolvedSpanDiagnostics({
   return true
 }
 
+// Detector crops for panelized tables and page-edge rows can stop at the
+// nearest ink rather than the table's native frame. Expand only when the
+// source page supplies a nearby aligned row and a rule that owns the same
+// boundary; nearby prose alone must not enlarge a table crop.
+function recoverPanelAndBoundaryCrop(table, items, captions, rules) {
+  if (!table?.cropRect || !Array.isArray(items) || !Array.isArray(rules)) return
+  const [left, top, right, bottom] = table.cropRect
+  const source = items.filter((item) => item.horizontal && item.height > 0)
+  const heights = source.map((item) => item.height).sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)] ?? 10
+  const horizontal = joinHorizontalTableRules(rules, 0.1)
+  const next = [...table.cropRect]
+  const captionText = captions
+    .filter((caption) => {
+      if (captionKind(caption.lines?.[0] ?? '') !== 'table' || !caption.rect) return false
+      const verticalGap =
+        caption.rect[3] <= top
+          ? top - caption.rect[3]
+          : caption.rect[1] >= bottom
+            ? caption.rect[1] - bottom
+            : 0
+      const horizontalOverlap = Math.min(caption.rect[2], right) - Math.max(caption.rect[0], left)
+      return (
+        horizontalOverlap > Math.min(caption.rect[2] - caption.rect[0], right - left) * 0.25 &&
+        verticalGap <= height * 8
+      )
+    })
+    .map((caption) => caption.lines.join(' '))
+    .join(' ')
+  const panelCaption = /\b(?:panel|panels|subtable|subtables|ablation)\b/i.test(captionText)
+  if (panelCaption) {
+    const frame = horizontal.filter(
+      (rule) =>
+        rule[2] - rule[0] >= (right - left) * 0.55 &&
+        rule[1] >= top - height * 2 &&
+        rule[1] <= bottom + height * 2
+    )
+    const extendedLeft = frame.filter((rule) => rule[0] < left - height * 0.5)
+    const extendedRight = frame.filter((rule) => rule[2] > right + height * 0.5)
+    if (extendedLeft.length) next[0] = Math.min(next[0], ...extendedLeft.map((rule) => rule[0]))
+    if (extendedRight.length) next[2] = Math.max(next[2], ...extendedRight.map((rule) => rule[2]))
+    const outside = source.filter(
+      (item) =>
+        item.rect[3] > top &&
+        item.rect[1] < bottom &&
+        item.rect[2] > next[0] &&
+        item.rect[0] < next[2]
+    )
+    const outsideLeft = outside.filter((item) => item.rect[2] <= left + 1)
+    const outsideRight = outside.filter((item) => item.rect[0] >= right - 1)
+    if (
+      next[0] < left &&
+      (outsideLeft.length < 2 ||
+        !outside.some((item) => item.rect[0] >= left && item.rect[2] <= right))
+    )
+      next[0] = left
+    if (
+      next[2] > right &&
+      (outsideRight.length < 2 ||
+        !outside.some((item) => item.rect[0] >= left && item.rect[2] <= right))
+    )
+      next[2] = right
+  }
+  const below = source.filter(
+    (item) =>
+      item.rect[1] >= bottom - height * 0.2 &&
+      item.rect[1] <= bottom + height * 2.5 &&
+      item.rect[0] >= next[0] - height &&
+      item.rect[2] <= next[2] + height
+  )
+  const belowRows = []
+  for (const item of below.sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const row = belowRows.find(
+      (candidate) => Math.abs(candidate[0].baseline - item.baseline) < height * 0.3
+    )
+    if (row) row.push(item)
+    else belowRows.push([item])
+  }
+  const closing = horizontal.find(
+    (rule) =>
+      rule[1] > bottom &&
+      rule[1] - bottom <= height * 3 &&
+      rule[0] <= next[0] + height &&
+      rule[2] >= next[2] - height
+  )
+  const tail = belowRows.find(
+    (row) =>
+      row.length >= 2 &&
+      row.some((item) => /\d/.test(item.text)) &&
+      row.every((item) => item.rect[3] <= (closing?.[1] ?? bottom + height * 3) + 1)
+  )
+  if (tail && closing) next[3] = Math.max(next[3], closing[1] + height * 0.25)
+  const above = source.filter(
+    (item) =>
+      item.rect[3] <= top + height * 0.2 &&
+      item.rect[3] >= top - height * 2.5 &&
+      item.rect[0] >= next[0] - height &&
+      item.rect[2] <= next[2] + height
+  )
+  const headerRule = horizontal.find(
+    (rule) =>
+      rule[1] < top &&
+      top - rule[1] <= height * 3 &&
+      rule[0] <= next[0] + height &&
+      rule[2] >= next[2] - height
+  )
+  if (above.length >= 2 && headerRule && above.some((item) => /\p{L}/u.test(item.text)))
+    next[1] = Math.min(next[1], Math.min(...above.map((item) => item.rect[1])) - height * 0.15)
+  return next.some((value, index) => value !== table.cropRect[index]) ? next : undefined
+}
+
+// A detector can join independent tables from the two page columns after a
+// native recovery expands its crop to a nearby rule.  Keep those expansions
+// inside the caption lane that owned the original detector box.  The caption
+// is used only as a lane witness; the original crop remains the lower bound
+// for tables whose caption is narrower than their body.
+export function constrainCaptionLaneCrop(table, detectorCrop, captions = []) {
+  if (!table?.cropRect || !Array.isArray(detectorCrop) || !Array.isArray(captions)) return table
+  const candidates = captions
+    .filter((caption) => captionKind(caption.lines?.[0] ?? '') === 'table' && caption.rect)
+    .map((caption) => {
+      const overlap = Math.max(
+        0,
+        Math.min(caption.rect[2], detectorCrop[2]) - Math.max(caption.rect[0], detectorCrop[0])
+      )
+      const width = Math.min(caption.rect[2] - caption.rect[0], detectorCrop[2] - detectorCrop[0])
+      const verticalGap =
+        detectorCrop[3] < caption.rect[1]
+          ? caption.rect[1] - detectorCrop[3]
+          : caption.rect[3] < detectorCrop[1]
+            ? detectorCrop[1] - caption.rect[3]
+            : 0
+      return { caption, score: width > 0 ? overlap / width : 0, verticalGap }
+    })
+    .filter(({ score, verticalGap }) => score >= 0.5 && verticalGap <= 60)
+    .sort((a, b) => b.score - a.score || a.verticalGap - b.verticalGap)
+  const selected = candidates[0]?.caption
+  if (!selected) return table
+  const next = [...table.cropRect]
+  if (detectorCrop[0] >= selected.rect[0] - 8 && next[0] < selected.rect[0] - 8)
+    next[0] = selected.rect[0] - 4
+  if (detectorCrop[2] <= selected.rect[2] + 8 && next[2] > selected.rect[2] + 8)
+    next[2] = selected.rect[2] + 4
+  return next.some((value, index) => value !== table.cropRect[index])
+    ? rebaseTableCrop(table, next)
+    : table
+}
+
+const isSupportedRotatedStubLabel = (item) =>
+  !item.horizontal &&
+  /^(?:SNR|PSNR|SSIM)\s+(?:0|5|10|15|20|25)$/i.test(item.text.trim()) &&
+  item.rect[3] - item.rect[1] >= (item.rect[2] - item.rect[0]) * 1.4
+
 export function refineTable(
   table,
   pageItems,
@@ -427,7 +595,16 @@ export function refineTable(
   observedRuns = [],
   adjacent
 ) {
+  const detectorCrop = [...table.cropRect]
   pageItems = recoverNativeMeasuredGutterTokens(table, pageItems, captions, rules, observedRuns)
+  const indicatorRecordPlan = recoverNativeIndicatorRecordPlan(
+    table,
+    pageItems,
+    captions,
+    rules,
+    observedRuns
+  )
+  if (indicatorRecordPlan) pageItems = indicatorRecordPlan.pageItems
   const scalarRecordPlan = recoverNativeScalarRecordPlan(
     table,
     pageItems,
@@ -448,6 +625,10 @@ export function refineTable(
   if (independentTextRecords?.cropRect)
     table = rebaseTableCrop(table, independentTextRecords.cropRect)
   table = separateAdjacentNumericPanel(table, pageItems, rules)
+  const panelAndBoundaryCrop = recoverPanelAndBoundaryCrop(table, pageItems, captions, rules)
+  if (panelAndBoundaryCrop) table = rebaseTableCrop(table, panelAndBoundaryCrop)
+  const captionBoundaryCrop = recoverCaptionBoundaryCrop(table, pageItems, captions, rules)
+  if (captionBoundaryCrop) table = rebaseTableCrop(table, captionBoundaryCrop)
   const originalCrop = table.cropRect
   const sourceRules = rules
   // Several aligned dotted leaders can serve as native group underlines.
@@ -482,6 +663,8 @@ export function refineTable(
     sourceRules
   )
   if (captionSeparatedCrop) table = rebaseTableCrop(table, captionSeparatedCrop)
+  const unnumberedTitleCrop = recoverClippedUnnumberedTitleCrop(table, pageItems, sourceRules)
+  if (unnumberedTitleCrop) table = rebaseTableCrop(table, unnumberedTitleCrop)
   const modelColumns = table.structure.objects.filter((o) => o.label === 'table column')
   const closedNumericCrop = recoverClosedNumericFrameCrop(table, pageItems, captions, sourceRules)
   if (closedNumericCrop) table = rebaseTableCrop(table, closedNumericCrop)
@@ -975,6 +1158,13 @@ export function refineTable(
     sourceRules
   )
   const recordGrid =
+    indicatorRecordPlan?.grid ??
+    recoverNativeProseLaneRecords(table, pageItems, captions, sourceRules) ??
+    recoverNativeIndexedDirectoryGrid(table, pageItems, sourceRules) ??
+    recoverCompleteNativeLeafRecords(table, pageItems, captions, sourceRules) ??
+    recoverNativeSegmentedStubRecords(table, pageItems, captions, sourceRules) ??
+    recoverNativeWrappedMathRecords(table, pageItems, captions, sourceRules) ??
+    recoverNativeMathFieldRecords(table, pageItems, captions, sourceRules) ??
     scalarRecordPlan?.grid ??
     repeatedTuplePlan?.grid ??
     independentTextRecords ??
@@ -1094,6 +1284,11 @@ export function refineTable(
     recordGrid.cropRect.some((v, n) => v !== table.cropRect[n])
   ) {
     table = rebaseTableCrop(table, recordGrid.cropRect)
+    ;[left, top, right, bottom] = table.cropRect
+  }
+  const captionLaneTable = constrainCaptionLaneCrop(table, detectorCrop, captions)
+  if (captionLaneTable !== table) {
+    table = captionLaneTable
     ;[left, top, right, bottom] = table.cropRect
   }
   const objects = table.structure.objects.map((o) => ({
@@ -1355,6 +1550,7 @@ export function refineTable(
     externalCaptions.some((c) => intersect(item.rect, c.rect) / area(item.rect) > 0.8)
   )
   const excluded = new Set(excludedCaptionItems)
+  const narrativeTailItems = []
   const raisedCaptionGlyphs = proveNativeCaptionRaisedGlyphOwnership(
     table,
     pageItems,
@@ -1384,6 +1580,57 @@ export function refineTable(
           marker.height
       )
         excluded.add(part)
+    }
+  }
+  // A footnote marker and its prose can share the final detector row when a
+  // native table closes below the model box. Treat that tail as unassigned
+  // note text and trim the row to the last measurement; otherwise the note is
+  // serialized into the final data cells.
+  if (rows.length) {
+    const finalRow = rows.at(-1)
+    const heights = pageItems
+      .filter((item) => item.horizontal && item.height > 0)
+      .map((item) => item.height)
+    const em = Math.max(1, ...heights)
+    const tailMarkers = pageItems.filter(
+      (item) =>
+        item.horizontal &&
+        /^\d$/.test(item.text.trim()) &&
+        item.height < em * 0.8 &&
+        item.rect[1] >= finalRow.rect[1] + em * 0.6 &&
+        item.rect[0] >= table.cropRect[0] &&
+        item.rect[2] <= table.cropRect[2]
+    )
+    const proof = tailMarkers.filter((marker) =>
+      pageItems.some(
+        (item) =>
+          item.horizontal &&
+          item !== marker &&
+          item.rect[1] >= marker.rect[1] - em * 0.2 &&
+          item.rect[1] <= marker.rect[1] + em * 0.9 &&
+          item.rect[0] >= marker.rect[2] &&
+          item.rect[0] - marker.rect[2] <= em * 2 &&
+          item.text.trim().length >= 8
+      )
+    )
+    if (proof.length) {
+      const boundary = Math.min(...proof.map((item) => item.rect[1]))
+      for (const item of pageItems.filter(
+        (candidate) =>
+          candidate.horizontal &&
+          candidate.rect[1] >= boundary - em * 0.2 &&
+          candidate.rect[0] >= table.cropRect[0] &&
+          candidate.rect[2] <= table.cropRect[2]
+      )) {
+        excluded.add(item)
+        if (item.text.trim().length >= 8) narrativeTailItems.push(item)
+      }
+      const retained = pageItems.filter(
+        (item) =>
+          item.horizontal && item.rect[3] < boundary && intersect(item.rect, finalRow.rect) > 0
+      )
+      if (retained.length)
+        finalRow.rect[3] = Math.max(...retained.map((item) => item.rect[3])) + em * 0.15
     }
   }
   // The caller associates notes against recovered table extents before this second pass.
@@ -1489,7 +1736,8 @@ export function refineTable(
   )
   if (!items.length) issues.add('no-source-text')
   if (!rows.length || !columns.length) issues.add('missing-row-or-column')
-  if (items.some((i) => !i.horizontal)) issues.add('unsupported-text-orientation')
+  if (items.some((i) => !i.horizontal && !isSupportedRotatedStubLabel(i)))
+    issues.add('unsupported-text-orientation')
   // Recover a collapsed repeated header pair only when another pair establishes the
   // header pattern and every source record supports the same empty gutter.
   if (!recordGrid) {
@@ -5196,6 +5444,7 @@ export function refineTable(
       repairs.push('split-table-wrapped-label-recovered')
     }
   }
+  recoverWrappedMeanSeRows({ rows, items, columnRects, repairs })
   if (
     !recordGrid ||
     ![comparisonRecords, regressionBlocks, alleleGrid, intervalRecords, headerlessRecords].includes(
@@ -6495,6 +6744,8 @@ export function refineTable(
     recoverUnownedSourceRows({ rows, groups, items, columnRects, repairs })
   if (!recordGrid?.completeSpans)
     recoverCitedRecordTails({ rows, items, columnRects, rules, repairs })
+  if (!recordGrid?.completeSpans)
+    recoverNativeScalarTypeReasonTail({ rows, items, columnRects, rules, repairs })
   if (externalCaptions.length && !recordGrid?.preservePhysicalRows)
     mergeWrappedStubTails({
       rows,
@@ -9185,6 +9436,14 @@ export function refineTable(
     issues,
     repairs
   })
+  for (const item of narrativeTailItems) {
+    for (const cell of cells)
+      cell.text = cell.text
+        .replace(item.text, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+    if (!unassigned.includes(item.text)) unassigned.push(item.text)
+  }
   reconcileStatisticStubStarts({ cells, baseCells, rows, rules, repairs })
   reconcileFragmentedCountHeaders({ cells, issues, repairs })
   if (nativeParentSpans && rows[1])
@@ -9232,6 +9491,24 @@ export function refineTable(
   reconcileRuledLeafHeaderSpans({ rows, cells, items, rules, repairs })
   reconcileSharedReferenceFields({ cells, items, rules, headerRows, unassigned, repairs })
   reconcileCategoricalComparisons({ cells, items, rules, headerRows, unassigned, repairs })
+  for (const item of narrativeTailItems) {
+    for (const cell of cells)
+      cell.text = cell.text
+        .replace(item.text, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+    for (const cell of cells) cell.text = cell.text.replace(/(\)\s+)[A-Za-z][\s\S]*$/u, '$1').trim()
+  }
+  removeEmptySeparatorColumns({
+    cells,
+    columns,
+    columnRects,
+    items,
+    repairs,
+    preserveRecoveredRotatedColumns: columns.some(
+      (column) => column.origin === 'source-rotated-continuation'
+    )
+  })
   reconcileSummaryRecordColumns({
     cells,
     rows,
@@ -9266,6 +9543,41 @@ export function refineTable(
     issues,
     repairs
   })
+  // A right-column table can inherit the final text line of the neighboring
+  // prose column through a padded detector edge.  When several clipped lines
+  // share that edge and every owned source token starts materially farther
+  // right, tighten only the crop margin; a ruled frame keeps its original
+  // boundary.
+  const leftBoundaryProse = clipped.filter(
+    (item) =>
+      item.horizontal &&
+      item.rect[0] < table.cropRect[0] &&
+      item.rect[2] > table.cropRect[0] &&
+      /\p{L}{2,}/u.test(item.text)
+  )
+  const ownedLeft = Math.min(
+    ...cells.flatMap((cell) => cell.sourceRects?.map((rect) => rect[0]) ?? [])
+  )
+  const edgeHeight = Math.max(0, ...leftBoundaryProse.map((item) => item.height))
+  const hasLeftFrame = rules.some(
+    (rule) =>
+      rule[0] === rule[2] &&
+      Math.abs(rule[0] - table.cropRect[0]) < 3 &&
+      rule[1] <= table.cropRect[1] &&
+      rule[3] >= table.cropRect[3]
+  )
+  if (
+    leftBoundaryProse.length >= 3 &&
+    Number.isFinite(ownedLeft) &&
+    edgeHeight > 0 &&
+    ownedLeft - table.cropRect[0] > edgeHeight * 1.2 &&
+    !hasLeftFrame
+  ) {
+    const cropRect = [...table.cropRect]
+    cropRect[0] = Math.min(ownedLeft - edgeHeight * 0.6, table.cropRect[2] - edgeHeight)
+    table = rebaseTableCrop(table, cropRect)
+    repairs.push('neighbor-column-crop-trimmed')
+  }
   const finalBounds = reconcileNativeFinalCellBounds({
     table,
     cells,
@@ -9281,6 +9593,8 @@ export function refineTable(
   if (clipped.length && !finalBounds.clipped.length) issues.delete('text-crosses-crop-boundary')
   const grid = rows.map(() => columns.map(() => ''))
   for (const cell of cells) grid[cell.row][cell.column] = cell.text
+  const continuation = detectTableContinuationTail({ rows, cells, cropRect: table.cropRect })
+  if (continuation) repairs.push('cross-page-row-tail-marked')
   return {
     id: table.id,
     cropRect: table.cropRect,
@@ -9292,6 +9606,7 @@ export function refineTable(
     excludedCaptionItems: excludedCaptionItems.map((i) => i.text),
     issues: [...issues],
     repairs,
+    ...(continuation ? { continuation } : {}),
     reviewCandidate: issues.size === 0,
     selectedTextItems: items.length
   }
