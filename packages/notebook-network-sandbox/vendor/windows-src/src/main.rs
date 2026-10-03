@@ -185,6 +185,7 @@ fn valid_lease_id(lease_id: &str) -> bool {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum AclGrant {
+    ReadOnlyDirectory,
     ReadOnlyTree,
     ModifyTree,
 }
@@ -206,8 +207,26 @@ fn paths_equal(left: &str, right: &Path) -> bool {
     path_is_within(left, right) && path_is_within(&right.to_string_lossy(), Path::new(left))
 }
 
+fn parent_acl_grant_is_denied(path: &str, denied_read_roots: &[String]) -> bool {
+    denied_read_roots
+        .iter()
+        .any(|denied| path_is_within(path, Path::new(denied)))
+}
+
+fn merge_acl_grant(grants: &mut BTreeMap<String, AclGrant>, path: String, access: AclGrant) {
+    if access == AclGrant::ReadOnlyDirectory
+        && matches!(
+            grants.get(&path),
+            Some(AclGrant::ReadOnlyTree | AclGrant::ModifyTree)
+        )
+    {
+        return;
+    }
+    grants.insert(path, access);
+}
+
 fn plan_writable_acl_grants(spec: &LaunchSpec) -> Result<BTreeMap<String, AclGrant>> {
-    let mut grants = BTreeMap::new();
+    let mut grants = plan_required_path_acl_grants(spec)?;
     for root in &spec.read_write_roots {
         let protected = spec
             .denied_write_roots
@@ -233,6 +252,39 @@ fn plan_writable_acl_grants(spec: &LaunchSpec) -> Result<BTreeMap<String, AclGra
         grants.insert(root.clone(), AclGrant::ModifyTree);
         for path in protected {
             grants.insert(path, AclGrant::ReadOnlyTree);
+        }
+    }
+    Ok(grants)
+}
+
+/// Required roots may be files or directories below a user-managed path whose ancestors do not
+/// grant AppContainer traversal. A non-inheriting LIST_DIRECTORY ACE on each existing ancestor is
+/// enough to reach the requested root without exposing the ancestor's descendants.
+fn plan_required_path_acl_grants(spec: &LaunchSpec) -> Result<BTreeMap<String, AclGrant>> {
+    let mut grants = BTreeMap::new();
+    for root in spec
+        .read_only_roots
+        .iter()
+        .chain(spec.read_write_roots.iter())
+    {
+        let mut parent = Path::new(root).parent();
+        while let Some(path) = parent {
+            // The volume root is already traversable by the AppContainer token. Never mutate its
+            // ACL; only add list-only grants to user-managed ancestors below it.
+            let explicit_read_only_root = spec.read_only_roots.iter().any(|root| {
+                paths_equal(&path.to_string_lossy(), Path::new(root))
+            });
+            if path.parent().is_some_and(|ancestor| ancestor != path)
+                && path.is_dir()
+                && !explicit_read_only_root
+            {
+                merge_acl_grant(
+                    &mut grants,
+                    path.to_string_lossy().into_owned(),
+                    AclGrant::ReadOnlyDirectory,
+                );
+            }
+            parent = path.parent();
         }
     }
     Ok(grants)
@@ -286,11 +338,14 @@ mod windows_host {
     };
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_SHARE_DELETE,
-        FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, MOVEFILE_REPLACE_EXISTING,
-        MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, MOVEFILE_REPLACE_EXISTING,
+        MOVEFILE_WRITE_THROUGH, MoveFileExW, SYNCHRONIZE,
         OPEN_EXISTING, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_OUTBOUND, ReadFile, WRITE_DAC,
     };
+    #[cfg(test)]
+    use windows::Win32::Storage::FileSystem::FILE_LIST_DIRECTORY;
     use windows::Win32::System::Com::{CoCreateGuid, CoTaskMemFree};
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
@@ -320,17 +375,20 @@ mod windows_host {
     use windows::core::{BOOL, PCWSTR, PWSTR};
 
     use super::{
-        AclGrant, LaunchSpec, command_capability_name, command_line, path_is_within, paths_equal,
-        plan_writable_acl_grants, strip_utf8_bom, valid_lease_id, wfp,
+        AclGrant, LaunchSpec, command_capability_name, command_line, parent_acl_grant_is_denied,
+        path_is_within, paths_equal, plan_writable_acl_grants, strip_utf8_bom, valid_lease_id, wfp,
     };
 
     const PROFILE_PREFIX: &str = "Aipoch.OpenScience.Notebook";
     const PROCESS_SYNCHRONIZE: PROCESS_ACCESS_RIGHTS = PROCESS_ACCESS_RIGHTS(0x0010_0000);
     const RECEIPT_SCHEMA: u32 = 5;
     const VERIFIED_JOURNAL_SCHEMA: u32 = 6;
-    const ACL_LEASE_SCHEMA: u32 = 2;
+    const LEGACY_ACL_LEASE_SCHEMA: u32 = 2;
+    const ACL_LEASE_SCHEMA: u32 = 3;
     const ACL_STATE_SCHEMA: u32 = 1;
     const OPERATION_MUTEX: &str = "Local\\Aipoch.OpenScience.Notebook.Resources";
+    const DIRECTORY_TRAVERSAL_ACCESS: u32 =
+        FILE_TRAVERSE.0 | FILE_READ_ATTRIBUTES.0 | SYNCHRONIZE.0;
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -2387,6 +2445,7 @@ mod windows_host {
         }
         let is_directory = Path::new(path).is_dir();
         let (mask, flags) = match grant {
+            Some(AclGrant::ReadOnlyDirectory) => (DIRECTORY_TRAVERSAL_ACCESS, 0),
             Some(AclGrant::ReadOnlyTree) => (
                 // Runtime trees contain executable images, DLLs and command shims. Preserve
                 // icacls RX semantics: read-only forbids writes, not execution/traversal.
@@ -2472,7 +2531,7 @@ mod windows_host {
     fn validate_acl_record_data(record: &AclLeaseRecord, installation_id: &str) -> Result<()> {
         let expected_name = command_capability_name(installation_id, &record.lease_id);
         let mut paths = BTreeSet::new();
-        if record.schema_version != ACL_LEASE_SCHEMA
+        if ![LEGACY_ACL_LEASE_SCHEMA, ACL_LEASE_SCHEMA].contains(&record.schema_version)
             || record.installation_id != installation_id
             || !valid_lease_id(&record.lease_id)
             || record.owner_process_id == 0
@@ -2602,7 +2661,9 @@ mod windows_host {
         identity: &str,
         granted: bool,
     ) -> Result<String> {
-        const LIST_DIRECTORY: u32 = 0x0012_0089;
+        // Runtime profile permissions predate command parent traversal and intentionally retain
+        // the legacy directory-listing mask for receipt and snapshot compatibility.
+        const RUNTIME_DIRECTORY_ACCESS: u32 = 0x0012_0089;
         let mut descriptor = PSECURITY_DESCRIPTOR::default();
         let encoded = wide(&snapshot.dacl_sddl);
         unsafe {
@@ -2662,7 +2723,7 @@ mod windows_host {
                     if found
                         || header.AceType != 0
                         || header.AceFlags != 0
-                        || entry.Mask != LIST_DIRECTORY
+                        || entry.Mask != RUNTIME_DIRECTORY_ACCESS
                     {
                         bail!(
                             "Unowned runtime permissions in ACL snapshot; preserving {}",
@@ -2679,7 +2740,7 @@ mod windows_host {
                         target,
                         ACL_REVISION_DS,
                         Default::default(),
-                        LIST_DIRECTORY,
+                        RUNTIME_DIRECTORY_ACCESS,
                         sid,
                     )
                 }?;
@@ -2701,7 +2762,7 @@ mod windows_host {
                     target,
                     ACL_REVISION_DS,
                     Default::default(),
-                    LIST_DIRECTORY,
+                    RUNTIME_DIRECTORY_ACCESS,
                     sid,
                 )
             }?;
@@ -2884,7 +2945,14 @@ mod windows_host {
                     grants.insert(path.clone(), AclGrant::ReadOnlyTree);
                 }
             }
-            grants.extend(plan_writable_acl_grants(spec)?);
+            for (path, access) in plan_writable_acl_grants(spec)? {
+                super::merge_acl_grant(&mut grants, path, access);
+            }
+            grants.retain(|path, access| {
+                *access != AclGrant::ReadOnlyDirectory
+                    || (!appcontainer_reads_without_capability(path)
+                        && !parent_acl_grant_is_denied(path, &spec.denied_read_roots))
+            });
             let mut grants = grants.into_iter().collect::<Vec<_>>();
             grants.sort_by_key(|(path, _)| Path::new(path).components().count());
             let path = acl_directory(ownership_root).join(format!("{lease_id}.json"));
@@ -4957,6 +5025,97 @@ mod windows_host {
         }
 
         #[test]
+        fn native_traversal_grant_excludes_directory_listing() {
+            let root = unique_test_root("runtime-traversal");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&path).unwrap();
+            let capability = CommandCapability::new(format!(
+                "open-science.test.{}",
+                new_resource_key().unwrap()
+            ))
+            .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            apply_acl_grant(&path, &identity, AclGrant::ReadOnlyDirectory).unwrap();
+
+            let name = wide(&path);
+            let mut descriptor = PSECURITY_DESCRIPTOR::default();
+            let mut dacl = std::ptr::null_mut();
+            unsafe {
+                GetNamedSecurityInfoW(
+                    PCWSTR(name.as_ptr()),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    None,
+                    None,
+                    Some(&mut dacl),
+                    None,
+                    &mut descriptor,
+                )
+            }
+            .ok()
+            .unwrap();
+            let _descriptor = LocalAllocation(descriptor.0);
+            let mut info = ACL_SIZE_INFORMATION::default();
+            unsafe {
+                GetAclInformation(
+                    dacl,
+                    (&mut info as *mut ACL_SIZE_INFORMATION).cast(),
+                    size_of::<ACL_SIZE_INFORMATION>() as u32,
+                    AclSizeInformation,
+                )
+            }
+            .unwrap();
+            let mut masks = Vec::new();
+            let capability_sid = capability.sid();
+            for index in 0..info.AceCount {
+                let mut ace = std::ptr::null_mut();
+                unsafe { GetAce(dacl, index, &mut ace) }.unwrap();
+                let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+                if header.AceType == 0
+                    && (header.AceSize as usize) >= size_of::<ACCESS_ALLOWED_ACE>()
+                {
+                    let entry = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+                    let entry_sid = PSID((&entry.SidStart as *const u32).cast_mut().cast());
+                    if unsafe { EqualSid(capability_sid, entry_sid) }.is_ok()
+                        && header.AceFlags == 0
+                    {
+                        masks.push(entry.Mask);
+                    }
+                }
+            }
+            restore_acl_snapshot(&original).unwrap();
+            fs::remove_dir_all(&root).unwrap();
+
+            assert_eq!(masks, vec![DIRECTORY_TRAVERSAL_ACCESS]);
+            assert_eq!(masks[0] & FILE_LIST_DIRECTORY.0, 0);
+            assert_ne!(masks[0] & FILE_TRAVERSE.0, 0);
+        }
+
+        #[test]
+        fn runtime_snapshot_accepts_legacy_profile_directory_mask() {
+            let root = unique_test_root("runtime-legacy-mask");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&path).unwrap();
+            let capability = CommandCapability::new(format!(
+                "open-science.test.{}",
+                new_resource_key().unwrap()
+            ))
+            .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            super::super::directory_access::update(&path, &identity, true, false).unwrap();
+            let snapshot = capture_acl_snapshot(&path).unwrap();
+
+            let result = runtime_snapshot_dacl(&snapshot, &identity, true);
+
+            super::super::directory_access::update(&path, &identity, false, true).unwrap();
+            restore_acl_snapshot(&original).unwrap();
+            fs::remove_dir_all(&root).unwrap();
+            assert!(result.is_ok(), "legacy runtime directory ACL must remain recognized");
+        }
+
+        #[test]
         fn native_acl_grant_error_keeps_action_context_and_stable_marker() {
             let path = unique_test_root("missing-grant-target");
             let error = apply_acl_grant(
@@ -5300,6 +5459,131 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_parent_acl_grant_survives_denied_sibling() {
+        let root = std::env::temp_dir().join(format!(
+            "open-science-acl-shared-parent-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let allowed = root.join("allowed").join("resources");
+        let denied = root.join("allowed").join("private");
+        std::fs::create_dir_all(&allowed).unwrap();
+        std::fs::create_dir_all(&denied).unwrap();
+        let required_file = allowed.join("loop.R");
+        std::fs::write(&required_file, b"# fixture\n").unwrap();
+        let spec = LaunchSpec {
+            executable: "Rscript.exe".into(),
+            arguments: Vec::new(),
+            verbatim_arguments: false,
+            cwd: root.to_string_lossy().into_owned(),
+            read_only_roots: vec![required_file.to_string_lossy().into_owned()],
+            optional_read_only_roots: Vec::new(),
+            read_write_roots: Vec::new(),
+            denied_read_roots: vec![denied.to_string_lossy().into_owned()],
+            denied_write_roots: Vec::new(),
+            termination_proof_path: None,
+            termination_proof_token: None,
+            termination_request_path: None,
+            shell_control_pipe: None,
+        };
+
+        let grants = plan_writable_acl_grants(&spec).unwrap();
+        assert_eq!(
+            grants.get(&root.join("allowed").to_string_lossy().into_owned()),
+            Some(&AclGrant::ReadOnlyDirectory)
+        );
+        assert!(!parent_acl_grant_is_denied(
+            &root.join("allowed").to_string_lossy(),
+            &spec.denied_read_roots
+        ));
+        assert!(parent_acl_grant_is_denied(
+            &denied.to_string_lossy(),
+            &spec.denied_read_roots
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn explicit_read_only_root_is_not_replaced_by_nested_write_traversal() {
+        let root = std::env::temp_dir().join(format!(
+            "open-science-acl-nested-write-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let read_only = root.join("shared");
+        let read_write = read_only.join("output");
+        std::fs::create_dir_all(&read_write).unwrap();
+        let spec = LaunchSpec {
+            executable: "Rscript.exe".into(),
+            arguments: Vec::new(),
+            verbatim_arguments: false,
+            cwd: root.to_string_lossy().into_owned(),
+            read_only_roots: vec![read_only.to_string_lossy().into_owned()],
+            optional_read_only_roots: Vec::new(),
+            read_write_roots: vec![read_write.to_string_lossy().into_owned()],
+            denied_read_roots: Vec::new(),
+            denied_write_roots: Vec::new(),
+            termination_proof_path: None,
+            termination_proof_token: None,
+            termination_request_path: None,
+            shell_control_pipe: None,
+        };
+
+        let grants = plan_writable_acl_grants(&spec).unwrap();
+
+        assert!(!grants.contains_key(&read_only.to_string_lossy().into_owned()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn optional_read_only_tree_survives_required_parent_traversal() {
+        let root = std::env::temp_dir().join(format!(
+            "open-science-acl-optional-parent-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let optional = root.join("runtime");
+        let required = optional.join("bin").join("Rscript.exe");
+        std::fs::create_dir_all(required.parent().unwrap()).unwrap();
+        std::fs::write(&required, b"fixture").unwrap();
+        let spec = LaunchSpec {
+            executable: "Rscript.exe".into(),
+            arguments: Vec::new(),
+            verbatim_arguments: false,
+            cwd: root.to_string_lossy().into_owned(),
+            read_only_roots: vec![required.to_string_lossy().into_owned()],
+            optional_read_only_roots: vec![optional.to_string_lossy().into_owned()],
+            read_write_roots: Vec::new(),
+            denied_read_roots: Vec::new(),
+            denied_write_roots: Vec::new(),
+            termination_proof_path: None,
+            termination_proof_token: None,
+            termination_request_path: None,
+            shell_control_pipe: None,
+        };
+
+        let mut grants = BTreeMap::from([(optional.to_string_lossy().into_owned(), AclGrant::ReadOnlyTree)]);
+        for (path, access) in plan_writable_acl_grants(&spec).unwrap() {
+            merge_acl_grant(&mut grants, path, access);
+        }
+
+        assert_eq!(
+            grants.get(&optional.to_string_lossy().into_owned()),
+            Some(&AclGrant::ReadOnlyTree)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn windows_command_line_preserves_spaces_quotes_and_trailing_slashes() {
