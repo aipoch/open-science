@@ -122,8 +122,20 @@ jobs:
           if ($unsupported.Count -gt 0) {
             throw "Runtime contains PE files with unsupported extensions: $($unsupported.Name -join ', ')"
           }
+          $catalogPath = Join-Path $env:GITHUB_WORKSPACE 'runtime-signing-files.txt'
+          $catalogEntries = @(
+            $peFiles | ForEach-Object {
+              $relative = $_.FullName.Substring($env:GITHUB_WORKSPACE.Length + 1).Replace('\', '/')
+              "./$relative"
+            }
+          )
+          [IO.File]::WriteAllLines($catalogPath, $catalogEntries, [Text.UTF8Encoding]::new($false))
+          if (!(Test-Path -LiteralPath $catalogPath -PathType Leaf) -or $catalogEntries.Count -ne $peFiles.Count) {
+            throw 'Runtime signing catalog does not match the PE inventory.'
+          }
           "RUNTIME_PE_COUNT=$($peFiles.Count)" >> $env:GITHUB_ENV
           Write-Host "PE files selected for signing: $($peFiles.Count)"
+          Write-Host "Runtime signing catalog: $catalogPath"
 
       - name: Sign in to Azure Artifact Signing
         shell: pwsh
@@ -164,7 +176,7 @@ jobs:
           signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
           files-folder: ${{ github.workspace }}\runtime-to-sign
-          files-folder-filter: exe,dll,node
+          files-catalog: ${{ github.workspace }}\runtime-signing-files.txt
           files-folder-recurse: true
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
