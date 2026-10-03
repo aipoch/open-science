@@ -78,6 +78,12 @@ node scripts/stage-windows-notebook-components.mjs <signed-runtime-root> <output
 node scripts/windows-runtime-cdn.mjs verify <output>
 ```
 
+To create the signed input without signing an application installer, dispatch
+**Sign Windows Notebook runtime** with the successful `Prepare Windows Notebook runtime` run and
+its exact artifact ID. It uses the protected Windows signing environment, verifies every runtime PE
+file and timestamp, and uploads a short-lived signed runtime artifact. It never writes to the CDN;
+pass that artifact to **Stage Windows Notebook CDN components** with `dry_run=true` first.
+
 Use the existing repository `CDN_BASE_URL` and `S3_PREFIX` values. The runtime
 namespace uses the application root (the first segment of `S3_PREFIX`), matching
 the Python/R runtime publisher. CDN workflows pass these values explicitly;

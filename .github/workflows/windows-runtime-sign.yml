@@ -1,0 +1,218 @@
+name: Sign Windows Notebook runtime
+
+# Sign the source-built Node and PowerShell runtime independently from application packaging.
+# This workflow never publishes a GitHub Release or writes to the runtime CDN. Its output is the
+# exact signed runtime artifact consumed by windows-runtime-cdn.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: Successful Prepare Windows Notebook runtime run on main
+        type: string
+        required: true
+      artifact_id:
+        description: Exact unsigned Windows runtime artifact ID from source_run
+        type: string
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: windows-notebook-runtime-signing
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: Sign Windows Notebook runtime
+    runs-on: windows-2022
+    timeout-minutes: 30
+    environment: windows-signing
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Verify source run and artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.source_run }}
+          ARTIFACT_ID: ${{ inputs.artifact_id }}
+        run: |
+          if ($env:SOURCE_RUN -notmatch '^\d+$' -or $env:ARTIFACT_ID -notmatch '^\d+$') {
+            throw 'Numeric source run and artifact IDs are required.'
+          }
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN" | ConvertFrom-Json
+          if (
+            $LASTEXITCODE -ne 0 -or
+            $run.name -ne 'Prepare Windows Notebook runtime' -or
+            $run.conclusion -ne 'success' -or
+            $run.head_branch -ne 'main'
+          ) {
+            throw 'Source run must be a successful Prepare Windows Notebook runtime run on main.'
+          }
+          $artifact = gh api "repos/$env:GITHUB_REPOSITORY/actions/artifacts/$env:ARTIFACT_ID" | ConvertFrom-Json
+          if (
+            $LASTEXITCODE -ne 0 -or
+            $artifact.workflow_run.id -ne [long]$env:SOURCE_RUN -or
+            $artifact.expired -or
+            $artifact.name -notlike 'windows-notebook-runtime-*'
+          ) {
+            throw 'Artifact does not belong to the successful source run or is not a runtime artifact.'
+          }
+
+      - name: Download unsigned runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ inputs.artifact_id }}
+          run-id: ${{ inputs.source_run }}
+          github-token: ${{ github.token }}
+          path: unsigned-runtime
+          merge-multiple: true
+
+      - name: Validate runtime layout and PE inventory
+        id: inventory
+        shell: pwsh
+        run: |
+          $downloadRoot = Join-Path $PWD 'unsigned-runtime'
+          $sourceRoot = $downloadRoot
+          if (!(Test-Path -LiteralPath (Join-Path $sourceRoot 'build.json'))) {
+            $nested = @(Get-ChildItem -LiteralPath $sourceRoot -Directory | Where-Object {
+              Test-Path -LiteralPath (Join-Path $_.FullName 'build.json')
+            })
+            if ($nested.Count -ne 1) { throw 'Runtime artifact must contain exactly one build.json root.' }
+            $sourceRoot = $nested[0].FullName
+          }
+          $root = Join-Path $PWD 'runtime-to-sign'
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          Get-ChildItem -LiteralPath $sourceRoot -Force | Copy-Item -Destination $root -Recurse -Force
+          if (!(Test-Path -LiteralPath (Join-Path $root 'build.json'))) {
+            throw 'Normalized runtime root is missing build.json.'
+          }
+          foreach ($relative in @('build.json', 'node/node.exe', 'powershell/pwsh.exe')) {
+            if (!(Test-Path -LiteralPath (Join-Path $root $relative) -PathType Leaf)) {
+              throw "Runtime artifact is missing $relative."
+            }
+          }
+          $peFiles = @(
+            Get-ChildItem -LiteralPath $root -File -Recurse | Where-Object {
+              $stream = [IO.File]::OpenRead($_.FullName)
+              try {
+                if ($stream.Length -lt 64) { return $false }
+                $reader = [IO.BinaryReader]::new($stream)
+                if ($reader.ReadUInt16() -ne 0x5a4d) { return $false }
+                $stream.Position = 0x3c
+                $offset = $reader.ReadUInt32()
+                if ($offset -gt $stream.Length - 4) { return $false }
+                $stream.Position = $offset
+                return $reader.ReadUInt32() -eq 0x4550
+              } finally { $stream.Dispose() }
+            }
+          )
+          if ($peFiles.Count -eq 0) { throw 'Runtime artifact contains no PE files.' }
+          $unsupported = @($peFiles | Where-Object { $_.Extension.ToLowerInvariant() -notin @('.exe', '.dll', '.node') })
+          if ($unsupported.Count -gt 0) {
+            throw "Runtime contains PE files with unsupported extensions: $($unsupported.Name -join ', ')"
+          }
+          "RUNTIME_PE_COUNT=$($peFiles.Count)" >> $env:GITHUB_ENV
+          Write-Host "PE files selected for signing: $($peFiles.Count)"
+
+      - name: Sign in to Azure Artifact Signing
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+        run: |
+          foreach ($name in @(
+            'AZURE_CLIENT_ID',
+            'AZURE_TENANT_ID',
+            'AZURE_SUBSCRIPTION_ID',
+            'AZURE_SIGNING_ENDPOINT',
+            'AZURE_SIGNING_ACCOUNT',
+            'AZURE_SIGNING_PROFILE',
+            'AZURE_SIGNING_PUBLISHER'
+          )) {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) {
+              throw "Missing windows-signing variable: $name"
+            }
+          }
+
+      - name: Azure login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign runtime PE files
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\runtime-to-sign
+          files-folder-filter: exe,dll,node
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          timeout: 900
+
+      - name: Verify runtime signatures
+        shell: pwsh
+        env:
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+        run: |
+          $files = @(Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'runtime-to-sign') -File -Recurse | Where-Object {
+            $stream = [IO.File]::OpenRead($_.FullName)
+            try {
+              if ($stream.Length -lt 64) { return $false }
+              $reader = [IO.BinaryReader]::new($stream)
+              if ($reader.ReadUInt16() -ne 0x5a4d) { return $false }
+              $stream.Position = 0x3c
+              $offset = $reader.ReadUInt32()
+              if ($offset -gt $stream.Length - 4) { return $false }
+              $stream.Position = $offset
+              return $reader.ReadUInt32() -eq 0x4550
+            } finally { $stream.Dispose() }
+          })
+          if ($files.Count -ne [int]$env:RUNTIME_PE_COUNT) {
+            throw "PE inventory changed during signing: expected $env:RUNTIME_PE_COUNT, found $($files.Count)."
+          }
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            if ($signature.Status -ne 'Valid' -or $null -eq $signature.TimeStamperCertificate) {
+              throw "Invalid or untimestamped runtime signature: $($file.FullName) ($($signature.Status))."
+            }
+            if ($file.Extension -ieq '.exe') {
+              $publisher = $signature.SignerCertificate.GetNameInfo(
+                [Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+                $false
+              )
+              if ($publisher -ne $env:AZURE_SIGNING_PUBLISHER) {
+                throw "Unexpected runtime publisher for $($file.Name): $publisher"
+              }
+            }
+          }
+          Write-Host "Verified signed and timestamped runtime PE files: $($files.Count)"
+
+      - name: Upload signed runtime artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-notebook-runtime-signed-${{ github.run_id }}-${{ github.run_attempt }}
+          path: runtime-to-sign
+          retention-days: 7
+          if-no-files-found: error
