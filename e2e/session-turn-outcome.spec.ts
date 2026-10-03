@@ -671,7 +671,10 @@ for (const recovery of ['global Retry', 'Fork'] as const)
     try {
       await page.getByRole('button', { name: 'Cancel run', exact: true }).click()
       await expect(page.getByText(SAVE_WARNING, { exact: true })).toBeVisible()
-      await expect.poll(fault.hits).toBe(3)
+      // Terminal retries are bounded by both attempts and wall time. A slow physical
+      // write can consume the retry budget before the third attempt; exhaustion is
+      // established by the authoritative failure registry below.
+      await expect.poll(fault.hits).toBeGreaterThan(0)
       await expect
         .poll(() => page.evaluate(() => window.api.sessions.listRuntimeTerminalFailures()))
         .toEqual([
@@ -697,6 +700,7 @@ for (const recovery of ['global Retry', 'Fork'] as const)
       await assertNoAttention(page, live.id)
       await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
       await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
+      const exhaustedHits = await fault.hits()
       await page.getByRole('textbox', { name: 'Ask anything' }).fill('Draft after storage failure')
       await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
       await evidence(page, testInfo, 'terminal-commit-exhausted-live-overlay', live)
@@ -710,7 +714,7 @@ for (const recovery of ['global Retry', 'Fork'] as const)
         .getByRole('dialog')
         .filter({ hasText: 'Synthetic terminal write failure.' })
       await expect(operationError).toBeVisible()
-      await expect.poll(fault.hits).toBeGreaterThan(3)
+      await expect.poll(fault.hits).toBeGreaterThan(exhaustedHits)
       expect((await readRawOutcomeSession(app, identity)).activeRun).toEqual(activeRun)
       expect(
         await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions.length)

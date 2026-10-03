@@ -340,11 +340,20 @@ test('loads managed image previews from Project files', async ({ app }) => {
   await expect(page.getByRole('button', { name: `Remove attachment ${IMAGE_NAME}` })).toBeVisible()
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Use the attached image.')
   await page.getByRole('button', { name: 'Send message' }).click()
-  // File previews depend on the committed upload, not on the agent finishing its reply.
-  await expect(
-    page.getByRole('button', { name: `Preview uploaded attachment ${IMAGE_NAME}`, exact: true })
-  ).toBeVisible()
-
+  // The attachment chip is optimistic. Wait for Main to commit the upload before
+  // navigating away from the new Session and asking the Project index for its files.
+  await expect
+    .poll(() =>
+      page.evaluate(async (name) => {
+        const { sessions } = await window.api.sessions.loadAll()
+        return sessions.some((session) =>
+          session.messages.some((message) =>
+            message.uploads?.some((upload) => upload.name === name && Boolean(upload.versionId))
+          )
+        )
+      }, IMAGE_NAME)
+    )
+    .toBe(true)
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   const image = page.getByRole('img', { name: `Preview of ${IMAGE_NAME}` })
   await expect(image).toBeVisible()

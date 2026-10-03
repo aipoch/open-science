@@ -376,6 +376,8 @@ describe('post-merge Windows validation', () => {
       'src/main/managed-file-versions/version-file-operator.test.ts'
     )
     expect(scheduledFixes.run).toContain('src/main/settings/service.test.ts')
+    expect(scheduledFixes.run).toContain('src/main/notebook/runtime-service.rpc-retirement.test.ts')
+    expect(scheduledFixes.run).toContain('src/main/notebook/shell-npm-environment.test.ts')
     expect(scheduledFixes.run).not.toContain('--shard')
     expect(sandbox).toMatchObject({
       needs: 'plan',

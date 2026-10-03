@@ -1,6 +1,5 @@
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
-import type { PersistedChatSession } from '../src/shared/session-persistence'
 import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 import { setTheme } from './fixtures/settings-preferences'
@@ -100,83 +99,40 @@ const expectStableScreenshot = async (
   })
 }
 
-const seedHomeActivitySessions = async (page: Page, cwd: string): Promise<void> => {
-  await page.evaluate(
-    async ({ sessionCwd }) => {
-      const bridge = globalThis as unknown as {
-        api: {
-          projects: {
-            create: (request: { name: string; description: string }) => Promise<{ id: string }>
-          }
-          sessions: {
-            saveSession: (session: PersistedChatSession) => Promise<unknown>
-          }
-        }
-      }
-      const project = await bridge.api.projects.create({
-        name: 'Mobile activity project',
-        description: 'Responsive activity-card fixture.'
-      })
-      const now = Date.now()
-      const sessions: PersistedChatSession[] = [
-        {
-          id: 'mobile-needs-you-session',
-          projectId: project.id,
-          title: 'Review a long session result on iPhone',
-          cwd: sessionCwd,
-          status: 'waiting-for-user',
-          messages: [],
-          activities: [
-            {
-              id: 'mobile-needs-you-activity',
-              kind: 'tool',
-              title: 'Waiting for an answer',
-              status: 'in_progress',
-              sortIndex: 1,
-              eventIds: [],
-              elicitation: {
-                message: 'Choose one',
-                fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
-                state: 'pending',
-                durable: {
-                  kind: 'agent-user-choice',
-                  requestId: 'mobile-needs-you-choice'
-                }
-              },
-              createdAt: now - 2_000,
-              updatedAt: now - 1_000
-            }
-          ],
-          createdAt: now - 2_000,
-          updatedAt: now - 1_000
-        },
-        {
-          id: 'mobile-running-session',
-          projectId: project.id,
-          title: 'Run a long analysis on iPhone',
-          cwd: sessionCwd,
-          status: 'running',
-          messages: [],
-          createdAt: now - 1_000,
-          updatedAt: now
-        },
-        {
-          id: 'mobile-running-secondary-session',
-          projectId: project.id,
-          title: 'Run another active analysis on iPhone',
-          cwd: sessionCwd,
-          status: 'running',
-          messages: [],
-          createdAt: now,
-          updatedAt: now + 1_000
-        }
-      ]
-
-      for (const session of sessions) await bridge.api.sessions.saveSession(session)
-    },
-    { sessionCwd: cwd }
+const seedHomeActivitySessions = async (page: Page): Promise<void> => {
+  await page.evaluate(() =>
+    window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
   )
-
+  await createProject(page, 'Mobile activity project')
+  // Main owns Session state. Create live turns through admission rather than trying to
+  // establish running/waiting state with a renderer whole-Session save.
+  const prompts = [
+    'Review a long session result on iPhone. Ask a restart verification question.',
+    'Run a long analysis on iPhone. Hold the turn outcome fixture.',
+    'Run another active analysis on iPhone. Hold the turn outcome fixture.'
+  ]
+  for (const [index, prompt] of prompts.entries()) {
+    if (index > 0) await page.getByRole('button', { name: 'New', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
+    await page.getByRole('button', { name: 'Send message', exact: true }).click()
+    await expect(
+      page
+        .getByText(
+          index === 0 ? 'Restart verification dataset?' : 'Turn outcome cancellation checkpoint.',
+          { exact: true }
+        )
+        .first()
+    ).toBeVisible()
+  }
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const { sessions } = await window.api.sessions.loadAll()
+        return sessions.map(({ status }) => status).sort()
+      })
+    )
+    .toEqual(['running', 'running', 'waiting-for-user'])
+  await page.getByRole('button', { name: 'All projects', exact: true }).click()
   await expect(
     page.getByRole('region', { name: 'Session updates' }).getByRole('button')
   ).toHaveCount(3)
@@ -231,9 +187,10 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
 })
 
 test('keeps home actions and content inside compact viewports', async ({ app }) => {
-  const page = await app.completeOnboarding()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await seedHomeActivitySessions(page, await app.createTestDirectory('mobile-activity-project'))
+  await seedHomeActivitySessions(page)
 
   for (const width of [320, 375, 390, 414, 768]) {
     await page.setViewportSize({ width, height: 800 })

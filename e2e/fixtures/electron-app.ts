@@ -1138,16 +1138,34 @@ class ElectronAppHarness implements ElectronApp {
   async captureFindOverlay(): Promise<Buffer> {
     // Capture the child WebContentsView with Electron's native API. The CDP screenshot
     // path can fail for this independently composited view on macOS runners.
-    const png = await this.runningApplication.evaluate(async ({ webContents }) => {
-      const overlay = webContents
-        .getAllWebContents()
-        .find((contents) => !contents.isDestroyed() && contents.getURL().includes('/find-overlay/'))
-      if (!overlay) throw new Error('Find overlay was not found.')
-      const image = await overlay.capturePage(undefined, { stayHidden: true, stayAwake: true })
-      if (image.isEmpty()) throw new Error('Find overlay capture was empty.')
-      return image.toPNG().toString('base64')
-    })
-    return Buffer.from(png, 'base64')
+    const capture = (): Promise<string> =>
+      this.runningApplication.evaluate(async ({ webContents }) => {
+        const overlay = webContents
+          .getAllWebContents()
+          .find(
+            (contents) => !contents.isDestroyed() && contents.getURL().includes('/find-overlay/')
+          )
+        if (!overlay) throw new Error('Find overlay was not found.')
+        const image = await overlay.capturePage(undefined, { stayHidden: true, stayAwake: true })
+        if (image.isEmpty()) throw new Error('Find overlay capture was empty.')
+        return image.toPNG().toString('base64')
+      })
+    // Viz may reject a copy during a compositor update even after the DOM is ready.
+    // Retry only that native capture error; persistent or unrelated failures still fail.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return Buffer.from(await capture(), 'base64')
+      } catch (error) {
+        if (
+          attempt >= 2 ||
+          !(error instanceof Error) ||
+          !error.message.includes('UnknownVizError')
+        ) {
+          throw error
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    }
   }
 
   async showMainWindow(): Promise<void> {

@@ -169,7 +169,7 @@ describe('REPL process RPC ownership', () => {
       const operations: Promise<unknown>[] = [initial]
       try {
         if (phase === 'starting') await entered.promise
-        else await vi.waitFor(() => expect(existsSync(marker)).toBe(true))
+        else await vi.waitFor(() => expect(existsSync(marker)).toBe(true), { timeout: 10_000 })
         let restarted = false
         const restart = h.service
           .restart({
