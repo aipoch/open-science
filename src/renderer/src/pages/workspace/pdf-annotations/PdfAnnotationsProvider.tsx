@@ -184,9 +184,21 @@ const PdfAnnotationsProvider = ({
         if (overlay) loaded.set(id, overlay)
         else loaded.delete(id)
       }
+      const previousGroups = runtime.current.sourceGroups
       runtime.current.sourceGroups = sourceGroups ?? []
       // A refreshed external edit invalidates this document's local inverse commands.
       const changedSources = new Set<string>()
+      const groupKey = (group: readonly PdfAnnotationSource[]): string =>
+        JSON.stringify(group.map(sourceKey))
+      // Topology changes invalidate deletion undo too, even when both notebooks are empty.
+      for (const group of [...previousGroups, ...(sourceGroups ?? [])]) {
+        if (
+          previousGroups.some((old) => groupKey(old) === groupKey(group)) &&
+          (sourceGroups ?? []).some((next) => groupKey(next) === groupKey(group))
+        )
+          continue
+        for (const source of group) changedSources.add(historyKey(runtime.current, source))
+      }
       let annotationsChanged = false
       for (const id of new Set([...runtime.current.items.keys(), ...loaded.keys()])) {
         const previous = runtime.current.items.get(id)

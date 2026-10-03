@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { beforeEach, afterEach, expect, it } from 'vitest'
+import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase } from '../database/migration-service'
@@ -260,4 +260,17 @@ it('navigates via a live source when the creating Literature reference is trashe
   await client.literatureItem.update({ where: { id: 'item' }, data: { deletedAt: new Date() } })
   expect((await repository.get('library-created'))?.target.source.projectId).toBe('p')
   expect((await repository.list({ projectId: 'p' })).items).toHaveLength(1)
+})
+
+it('rejects an old ID reconciled between the recovery read and create transaction', async () => {
+  await repository.create(note('anchor'))
+  const binding = await client.pdfAnnotationSourceBinding.findFirstOrThrow()
+  vi.spyOn(repository, 'recoverCreate').mockImplementationOnce(async () => {
+    await client.pdfAnnotationAlias.create({
+      data: { id: 'stale-undo', documentId: binding.documentId, annotationId: null }
+    })
+    return undefined
+  })
+  await expect(repository.create(note('stale-undo'))).rejects.toThrow('reconciled')
+  expect(await client.pdfAnnotation.count()).toBe(1)
 })

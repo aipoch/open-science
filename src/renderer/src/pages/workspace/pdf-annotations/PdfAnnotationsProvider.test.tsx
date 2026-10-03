@@ -791,3 +791,28 @@ it('shares undo history across linked source indexes', async () => {
   expect(port.forSource(annotation.target.source).map((row) => row.note)).toEqual(['Saved'])
   expect(port.history(other).canRedo).toBe(true)
 })
+
+it('invalidates deletion undo when empty notebooks become linked', async () => {
+  installStore([annotation])
+  await mount()
+  await act(async () => {
+    await port.remove(annotation.id)
+  })
+  expect(port.history(annotation.target.source).canUndo).toBe(true)
+  vi.mocked(window.api.pdfAnnotations.list).mockResolvedValue({
+    items: [],
+    total: 0,
+    sourceGroups: [
+      [
+        annotation.target.source,
+        { ...annotation.target.source, projectId: undefined, versionId: 'library' }
+      ]
+    ]
+  })
+  const notify = vi.mocked(window.api.pdfAnnotations.onChanged).mock.calls[0][0]
+  await act(async () => {
+    notify({ scope: { projectId: 'p1' } })
+  })
+  expect(port.history(annotation.target.source).canUndo).toBe(false)
+  expect(port.total).toBe(0)
+})

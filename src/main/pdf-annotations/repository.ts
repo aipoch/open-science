@@ -488,6 +488,9 @@ class PdfAnnotationRepository {
     if (existing) return existing
     try {
       const created = await client.$transaction(async (transaction) => {
+        // Reconciliation may commit after the optimistic idempotency lookup.
+        if (await transaction.pdfAnnotationAlias.findUnique({ where: { id: request.id } }))
+          throw new Error('PDF annotation was reconciled. Reload annotations and try again.')
         await requireDocumentOwner(transaction, {
           projectId: request.projectId ?? null,
           sourceKind: source.kind,
