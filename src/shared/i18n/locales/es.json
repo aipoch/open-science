@@ -6159,6 +6159,8 @@
     "Edit bookmark note": "Editar la nota del marcador",
     "Selection destination": "Destino de la selección",
     "Bookmark could not be saved. Try again.": "No se pudo guardar el marcador. Inténtelo de nuevo.",
+    "This file version is still being published. Try again in a moment.": "Esta versión del archivo aún se está publicando. Inténtelo de nuevo en un momento.",
+    "This file version is no longer available. Reopen the file and try again.": "Esta versión del archivo ya no está disponible. Vuelva a abrir el archivo e inténtelo de nuevo.",
     "Add a private note": "Añadir una nota personal",
     "No bookmarks yet.": "Todavía no hay marcadores.",
     "Bookmark note": "Nota del marcador",

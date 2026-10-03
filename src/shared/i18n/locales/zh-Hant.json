@@ -5842,6 +5842,8 @@
     "Edit bookmark note": "編輯書籤備註",
     "Selection destination": "選取範圍用途",
     "Bookmark could not be saved. Try again.": "無法儲存書籤。請重試。",
+    "This file version is still being published. Try again in a moment.": "此檔案版本仍在發佈中，請稍後再試。",
+    "This file version is no longer available. Reopen the file and try again.": "此檔案版本已無法使用，請重新開啟檔案後再試。",
     "Add a private note": "新增私人備註",
     "No bookmarks yet.": "尚無書籤。",
     "Bookmark note": "書籤備註",

@@ -5842,6 +5842,8 @@
     "Edit bookmark note": "ブックマークのメモを編集",
     "Selection destination": "選択範囲の用途",
     "Bookmark could not be saved. Try again.": "ブックマークを保存できませんでした。もう一度お試しください。",
+    "This file version is still being published. Try again in a moment.": "このファイルバージョンはまだ公開中です。しばらくしてからもう一度お試しください。",
+    "This file version is no longer available. Reopen the file and try again.": "このファイルバージョンは利用できなくなりました。ファイルを開き直してもう一度お試しください。",
     "Add a private note": "個人用のメモを追加",
     "No bookmarks yet.": "ブックマークはまだありません。",
     "Bookmark note": "ブックマークのメモ",

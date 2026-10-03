@@ -37,6 +37,7 @@ type BookmarkSaveInput = Readonly<{
 
 type BookmarkDraftAction = Readonly<{
   available: boolean
+  unavailableReason?: 'version-pending' | 'version-unresolved'
   onSave: (input: BookmarkSaveInput) => Promise<void>
 }>
 
@@ -555,9 +556,15 @@ const AnnotationDraftEditor = ({
               ) : null}
               {!bookmark.available ? (
                 <p role="status" className="text-xs text-muted-foreground">
-                  {bookmarkOnly
-                    ? t('Annotations are available after this conversation is saved.')
-                    : t('Bookmarks are available after this conversation is saved.')}
+                  {bookmark.unavailableReason === 'version-pending'
+                    ? t('This file version is still being published. Try again in a moment.')
+                    : bookmark.unavailableReason === 'version-unresolved'
+                      ? t(
+                          'This file version is no longer available. Reopen the file and try again.'
+                        )
+                      : bookmarkOnly
+                        ? t('Annotations are available after this conversation is saved.')
+                        : t('Bookmarks are available after this conversation is saved.')}
                 </p>
               ) : null}
               {bookmarkError ? (

@@ -617,6 +617,48 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(ranges()).toHaveLength(0)
   })
 
+  it('disables bookmarking with a reason when the preview session does not own the file', async () => {
+    const create = vi.fn()
+    // Well-formed source (managed + versioned) so the editor opens, but bound to
+    // another session: main-process validation would reject it, so the surface
+    // disables the save upfront instead of failing generically afterwards.
+    const previewItem = item({ managedFileId: 'artifact-1', sessionId: 'other-session' })
+    await renderSurface({
+      bookmarkApi: {
+        list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        create
+      } as unknown as Window['api']['bookmarks'],
+      previewItem
+    })
+    await selectQuote()
+    fireEvent.click(screen.getByRole('button', { name: 'Annotate' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'For me' }))
+    const button = screen.getByRole('button', { name: 'Bookmark' }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(
+      screen.getByText('This file version is no longer available. Reopen the file and try again.')
+    ).not.toBeNull()
+    await act(async () => fireEvent.click(button))
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('reports a session mismatch instead of building a doomed agent annotation', async () => {
+    const onAddAnnotation = vi.fn(() => undefined)
+    const onAnnotationError = vi.fn()
+    await renderSurface({
+      onAddAnnotation,
+      onAnnotationError,
+      bookmarkApi: {
+        list: vi.fn().mockResolvedValue({ items: [], total: 0 })
+      } as unknown as Window['api']['bookmarks'],
+      previewItem: item({ managedFileId: 'artifact-1', sessionId: 'other-session' })
+    })
+    await selectQuote()
+    await confirmAnnotation()
+    expect(onAnnotationError).toHaveBeenCalledWith('version-unresolved')
+    expect(onAddAnnotation).not.toHaveBeenCalled()
+  })
+
   it('reveals an exact project-file bookmark and reports a missing quote', async () => {
     await renderSurface({
       bookmarkApi: {

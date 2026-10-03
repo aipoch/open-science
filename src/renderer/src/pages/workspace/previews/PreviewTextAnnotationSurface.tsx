@@ -14,15 +14,14 @@ import {
 } from 'lucide-react'
 
 import { ErrorNotice } from '@/components/error-notice'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { AnnotationPreviewItem } from './preview-source-status'
+import { projectFileSourceStatus, projectFileVersionId } from './preview-source-status'
 import {
   resolveManagedProjectFileAnnotationIdentity,
   type Annotation,
   type PdfAnnotation,
   type TextAnnotation
 } from '../../../../../shared/annotations'
-import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
-import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileRendererProps } from './preview-types'
 import type { TextBookmarkTarget } from '../../../../../shared/bookmarks'
 import { type PdfMarkColor, type PdfMarkKind } from '../../../../../shared/pdf-bookmarks'
@@ -193,56 +192,6 @@ const pdfClipboardContent = (
         return escaped
       })
       .join('')}</span>`
-  }
-}
-
-// These values, rather than the surrounding preview projection's object identity, own
-// annotation matching, reveal subscriptions and observer callbacks.
-type AnnotationPreviewItem = Pick<
-  PreviewFileItem,
-  | 'id'
-  | 'projectId'
-  | 'path'
-  | 'name'
-  | 'source'
-  | 'managedFileId'
-  | 'selectedVersionId'
-  | 'sessionId'
->
-
-const projectFileVersionId = (
-  item: AnnotationPreviewItem,
-  annotationVersionId?: string
-): string | undefined =>
-  annotationVersionId ??
-  item.selectedVersionId ??
-  (item.source === 'upload'
-    ? parseUploadVersionReference(item.path)?.versionId
-    : parseArtifactVersionLocator(item.path)?.versionId)
-
-const projectFileSource = (
-  item: AnnotationPreviewItem,
-  pageNumber?: number,
-  annotationVersionId?: string,
-  annotationVersionPending = false
-): TextAnnotation['source'] | undefined => {
-  if (!item.projectId || pageNumber !== undefined) return undefined
-  const versionId = projectFileVersionId(item, annotationVersionId)
-  // Managed annotations stay unavailable until inspection confirms the exact visible Version.
-  if (item.managedFileId && (annotationVersionPending || !versionId)) return undefined
-  return {
-    kind: 'project-file',
-    projectId: item.projectId,
-    path: item.path,
-    name: item.name,
-    ...(item.managedFileId
-      ? {
-          fileSource: item.source === 'upload' ? ('upload' as const) : ('artifact' as const),
-          sourceFileId: item.managedFileId
-        }
-      : {}),
-    ...(versionId ? { versionId } : {}),
-    ...(item.sessionId ? { sessionId: item.sessionId } : {})
   }
 }
 
@@ -457,12 +406,19 @@ export const PreviewTextAnnotationSurface = ({
     }),
     [id, projectId, path, name, fileSource, managedFileId, selectedVersionId, sessionId]
   )
-  const source = projectFileSource(
+  const sourceStatus = projectFileSourceStatus(
     annotationItem,
     sourcePageNumber,
     annotationVersionId,
-    annotationVersionPending
+    annotationVersionPending,
+    bookmarks.sessionId
   )
+  const source = sourceStatus.source
+  // The pdf lane carries its own evidence source and never uses the project-file
+  // source: only gate the text lane, otherwise every pdf page (pageNumber set)
+  // would look "unresolved".
+  const sourceBlockedReason =
+    pdfBookmarkSource || pdfEvidenceSource || sourceStatus.ok ? undefined : sourceStatus.reason
   const matchingAnnotations = useMemo(
     () =>
       activeAnnotations.filter(
@@ -914,9 +870,15 @@ export const PreviewTextAnnotationSurface = ({
       annotationVersionPending ||
       annotationBlockedByHistoricalVersion ||
       !selection ||
-      (!source && !pdfEvidenceSource) ||
       !onAddAnnotation
     ) {
+      return
+    }
+    if (!pdfEvidenceSource && (!source || sourceBlockedReason)) {
+      // A managed source that cannot be verified (pending/stale version or a
+      // session mismatch) used to fail silently here and then generically in
+      // validation: explain it instead of building a doomed annotation.
+      if (sourceBlockedReason) onAnnotationError?.(sourceBlockedReason)
       return
     }
     const pdfSelector =
@@ -1202,7 +1164,11 @@ export const PreviewTextAnnotationSurface = ({
           triggerActions={triggerActions}
           initialDestination={pdfBookmarkSource ? 'bookmark' : editorDestination}
           bookmarkOnly={Boolean(pdfBookmarkSource)}
-          bookmark={{ available: canSavePrivate, onSave: saveBookmark }}
+          bookmark={{
+            available: canSavePrivate && !sourceBlockedReason,
+            unavailableReason: sourceBlockedReason,
+            onSave: saveBookmark
+          }}
         />
       ) : null}
     </div>

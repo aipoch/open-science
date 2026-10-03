@@ -6292,6 +6292,8 @@
     "Edit bookmark note": "Изменить заметку к закладке",
     "Selection destination": "Назначение выделения",
     "Bookmark could not be saved. Try again.": "Не удалось сохранить закладку. Повторите попытку.",
+    "This file version is still being published. Try again in a moment.": "Эта версия файла ещё публикуется. Повторите попытку через некоторое время.",
+    "This file version is no longer available. Reopen the file and try again.": "Эта версия файла больше недоступна. Откройте файл заново и повторите попытку.",
     "Add a private note": "Добавить личную заметку",
     "Bookmarks ({{count}})_few": "Закладки ({{count}})",
     "No bookmarks yet.": "Закладок пока нет.",

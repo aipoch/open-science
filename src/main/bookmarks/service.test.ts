@@ -4,6 +4,12 @@ import type { CreateBookmarkRequest } from '../../shared/bookmarks'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { BookmarkService } from './service'
 
+const { warn } = vi.hoisted(() => ({ warn: vi.fn() }))
+vi.mock('../logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../logger')>()),
+  createLogger: () => ({ warn })
+}))
+
 const request = (): CreateBookmarkRequest => ({
   id: 'bookmark-1',
   projectId: 'project-1',
@@ -100,6 +106,52 @@ describe('BookmarkService', () => {
     expect(loadSessionWithDiagnostics).not.toHaveBeenCalled()
     expect(repository.create).not.toHaveBeenCalled()
     expect(runWithSessionAuthority).toHaveBeenCalledOnce()
+  })
+
+  it('records the failing create stage without leaking source details', async () => {
+    warn.mockReset()
+    const secret = Object.assign(new Error('SECRET /private/path'), { code: 'EACCES' })
+    const repository = {
+      recoverCreate: vi.fn(async () => undefined),
+      create: vi.fn(async () => {
+        throw secret
+      }),
+      list: vi.fn(),
+      updateNote: vi.fn(),
+      delete: vi.fn(),
+      deleteSession: vi.fn(),
+      deleteProject: vi.fn()
+    }
+    const service = new BookmarkService({
+      repository,
+      sessions: {
+        loadSessionWithDiagnostics: vi.fn(async () => ({
+          status: 'found' as const,
+          session: {
+            ...session(),
+            messages: [
+              {
+                id: 'message-1',
+                role: 'agent' as const,
+                content: 'Agent text',
+                status: 'complete' as const,
+                eventIds: [],
+                createdAt: 1,
+                updatedAt: 1
+              }
+            ]
+          }
+        }))
+      },
+      runWithSessionAuthority: (_projectId, _sessionId, operation) => operation()
+    })
+
+    await expect(service.create(request())).rejects.toBe(secret)
+    expect(warn).toHaveBeenCalledExactlyOnceWith('Bookmark creation failed', {
+      stage: 'persist',
+      errorCategory: 'permission'
+    })
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/SECRET|private|project|sessionId/u)
   })
 
   it('edits and deletes a saved Bookmark without revalidating a vanished source', async () => {

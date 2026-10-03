@@ -5842,6 +5842,8 @@
     "Edit bookmark note": "编辑书签备注",
     "Selection destination": "选区用途",
     "Bookmark could not be saved. Try again.": "无法保存书签。请重试。",
+    "This file version is still being published. Try again in a moment.": "该文件版本仍在发布中，请稍后再试。",
+    "This file version is no longer available. Reopen the file and try again.": "该文件版本已不可用，请重新打开文件后再试。",
     "Add a private note": "添加私人备注",
     "No bookmarks yet.": "暂无书签。",
     "Bookmark note": "书签备注",
