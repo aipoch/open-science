@@ -12,13 +12,12 @@ describe('Windows development runtime setup', () => {
     }
   })
 
-  it('uses a metadata-only AppContainer package-scope probe', () => {
+  it('keeps the AppContainer package-scope probe within traversal grants', () => {
     const patch = readFileSync(
       'packages/notebook-network-sandbox/vendor/windows-runtime/node-package-scope.patch',
       'utf8'
     )
-    expect(patch).toContain('+  HANDLE handle = CreateFileW(directory.c_str(),')
-    expect(patch).toContain('+                              0,')
+    expect(patch).toContain('+                              FILE_READ_ATTRIBUTES,')
     expect(patch).not.toContain('+                              FILE_LIST_DIRECTORY,')
   })
 
