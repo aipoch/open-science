@@ -137,8 +137,7 @@ function isNativeFormulaSystem(table, caption) {
 // replacement characters) when the crop carries a large amount of unowned
 // text.  A complete two-column parameter table remains eligible because it has
 // no crop-boundary/unassigned evidence.
-function isDamagedNativeFormulaLayout(table, caption) {
-  if (caption) return false
+function isDamagedNativeFormulaLayout(table) {
   if (!table.cropRect || table.grid.length < 3) return false
   const populated = table.grid
     .flat()
@@ -338,7 +337,7 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules, so
     return false
   if (isNativeSingleColumnDerivation(table, caption, pageItems, sourceRules)) return false
   if (isNativeFormulaSystem(table, caption)) return false
-  if (isDamagedNativeFormulaLayout(table, caption)) return false
+  if (isDamagedNativeFormulaLayout(table)) return false
   if (isCaptionedNarrativeCard(table, caption)) return false
   if (isImageBackedNonTable(table, caption, sourceGraphics)) return false
   if (caption) return true
