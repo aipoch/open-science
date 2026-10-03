@@ -512,6 +512,11 @@ describe('post-merge Windows validation', () => {
     const names = job.steps?.map(({ name }) => name) ?? []
     const prepareMacSigning = findStep(job, 'Prepare macOS signing keychain')
     const azureLogin = findStep(job, 'Sign in to Azure for Windows code signing')
+    const preinstallTrustedSigning = findStep(job, 'Pre-install Azure Trusted Signing module')
+    const verifyTrustedSigning = findStep(
+      job,
+      'Verify Azure Trusted Signing module in packaging environment'
+    )
     const packageStep = findStep(job, 'Build & package')
     const verifyWindows = findStep(job, 'Verify signed Windows package')
     const cleanupMacSigning = findStep(job, 'Clean up macOS signing keychain')
@@ -529,6 +534,22 @@ describe('post-merge Windows validation', () => {
         'subscription-id': '${{ vars.AZURE_SUBSCRIPTION_ID }}'
       }
     })
+    expect(preinstallTrustedSigning).toMatchObject({
+      if: "${{ matrix.platform == 'win' && inputs.sign_windows }}",
+      shell: 'pwsh'
+    })
+    expect(preinstallTrustedSigning.run).toContain(
+      '"PSModulePath=$env:PSModulePath" >> $env:GITHUB_ENV'
+    )
+    expect(preinstallTrustedSigning.run).toContain("$pathEntries = @($env:PSModulePath -split ';'")
+    expect(preinstallTrustedSigning.run).not.toContain('[Environment]::SetEnvironmentVariable')
+    expect(verifyTrustedSigning).toMatchObject({
+      if: "${{ matrix.platform == 'win' && inputs.sign_windows }}",
+      shell: 'bash'
+    })
+    expect(verifyTrustedSigning.run).toContain(
+      "pwsh -NoProfile -NonInteractive -Command 'Get-Command Invoke-TrustedSigning"
+    )
     expect(prepareMacSigning).toMatchObject({
       id: 'mac_signing',
       if: "${{ matrix.platform == 'mac' && !inputs.nightly }}"

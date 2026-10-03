@@ -488,48 +488,54 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # electron-builder installs this module itself during packaging, but on a cold runner the
-      # CurrentUser install can land somewhere later -NoProfile pwsh processes do not scan, and the
-      # failure only surfaces as an opaque "signing failed" deep inside the build. Install (or
-      # reuse) and verify discoverability up front so the job fails here, with a real diagnostic.
+      # Prepare the module before packaging, and export its search path to later steps. Verify
+      # autoloading from a separate Bash step, matching electron-builder's parent shell.
       - name: Pre-install Azure Trusted Signing module
         if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
         shell: pwsh
         run: |
-          if (-not (Get-Module -ListAvailable -Name TrustedSigning)) {
+          $requiredVersion = [Version]'0.5.0'
+          $availableModule = Get-Module -ListAvailable -Name TrustedSigning |
+            Where-Object { $_.Version -ge $requiredVersion } |
+            Sort-Object Version -Descending |
+            Select-Object -First 1
+          if (-not $availableModule) {
             Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
             Install-Module -Name TrustedSigning -MinimumVersion 0.5.0 -Force -Repository PSGallery -Scope CurrentUser
           }
-          if (Get-Command Invoke-TrustedSigning -ErrorAction SilentlyContinue) {
-            Write-Host "Invoke-TrustedSigning available: $((Get-Command Invoke-TrustedSigning).Source)"
-            exit 0
-          }
+          $command = Get-Command Invoke-TrustedSigning -ErrorAction SilentlyContinue
           # CurrentUser installs land under the Documents folder; folder redirection can leave that
-          # directory off PSModulePath for later -NoProfile pwsh processes. Publish the real
-          # location as a user-level PSModulePath entry so the signing processes electron-builder
-          # spawns can autoload the module.
+          # directory off PSModulePath. Export the full effective path through GITHUB_ENV so the
+          # later packaging step and its signing subprocesses inherit it without registry edits.
+          $documents = [Environment]::GetFolderPath('MyDocuments')
           $candidates = @(
+            if ($documents) {
+              Join-Path $documents 'PowerShell\Modules'
+              Join-Path $documents 'WindowsPowerShell\Modules'
+            }
             "$env:USERPROFILE\Documents\PowerShell\Modules",
             "$env:USERPROFILE\OneDrive\Documents\PowerShell\Modules",
             "$env:USERPROFILE\Documents\WindowsPowerShell\Modules",
             "$env:USERPROFILE\OneDrive\Documents\WindowsPowerShell\Modules"
           )
           $moduleRoot = $candidates | Where-Object { Test-Path (Join-Path $_ 'TrustedSigning') } | Select-Object -First 1
-          if (-not $moduleRoot) {
+          if (-not $moduleRoot -and -not $command) {
             Write-Host "PSModulePath: $env:PSModulePath"
             throw 'TrustedSigning module installed but its directory could not be located.'
           }
-          $userPath = [Environment]::GetEnvironmentVariable('PSModulePath', 'User')
-          if (-not $userPath) { $userPath = '' }
-          if (($userPath -split ';') -notcontains $moduleRoot) {
-            $joined = @(($userPath -split ';' | Where-Object { $_ }), $moduleRoot) -join ';'
-            [Environment]::SetEnvironmentVariable('PSModulePath', $joined, 'User')
+          $pathEntries = @($env:PSModulePath -split ';' | Where-Object { $_ })
+          if ($moduleRoot -and $pathEntries -notcontains $moduleRoot) {
+            $pathEntries += $moduleRoot
           }
-          $env:PSModulePath = "$env:PSModulePath;$moduleRoot"
-          if (-not (Get-Command Invoke-TrustedSigning -ErrorAction SilentlyContinue)) {
-            throw 'Invoke-TrustedSigning is still not discoverable after PSModulePath repair.'
-          }
-          Write-Host "Invoke-TrustedSigning available after PSModulePath repair: $((Get-Command Invoke-TrustedSigning).Source)"
+          $env:PSModulePath = ($pathEntries | Select-Object -Unique) -join ';'
+          "PSModulePath=$env:PSModulePath" >> $env:GITHUB_ENV
+          Write-Host "PSModulePath for signing: $env:PSModulePath"
+
+      - name: Verify Azure Trusted Signing module in packaging environment
+        if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
+        shell: bash
+        run: |
+          pwsh -NoProfile -NonInteractive -Command 'Get-Command Invoke-TrustedSigning -ErrorAction Stop | Format-List Name, Source, Version'
 
       # Build the renderer + main and Web bundles, then package with electron-builder. The verify
       # job already typechecks this exact checkout once, so the four platform jobs must not repeat it.
