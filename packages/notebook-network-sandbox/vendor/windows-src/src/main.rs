@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use base64::Engine;
@@ -213,6 +213,41 @@ fn parent_acl_grant_is_denied(path: &str, denied_read_roots: &[String]) -> bool 
         .any(|denied| path_is_within(path, Path::new(denied)))
 }
 
+fn parent_acl_grant_is_system_boundary(path: &str) -> bool {
+    let mut roots = Vec::new();
+    for name in [
+        "WINDIR",
+        "ProgramData",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+    ] {
+        if let Some(root) = std::env::var_os(name) {
+            roots.push(PathBuf::from(root));
+        }
+    }
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        if let Some(root) = PathBuf::from(profile).parent() {
+            roots.push(root.to_owned());
+        }
+    }
+    roots
+        .iter()
+        .any(|root| paths_equal(path, root.as_path()))
+}
+
+fn parent_acl_grant_is_allowed(
+    path: &str,
+    denied_read_roots: &[String],
+    appcontainer_reads_without_capability: bool,
+    can_write_acl: bool,
+) -> bool {
+    !appcontainer_reads_without_capability
+        && !parent_acl_grant_is_denied(path, denied_read_roots)
+        && !parent_acl_grant_is_system_boundary(path)
+        && can_write_acl
+}
+
 fn merge_acl_grant(grants: &mut BTreeMap<String, AclGrant>, path: String, access: AclGrant) {
     if access == AclGrant::ReadOnlyDirectory
         && matches!(
@@ -375,8 +410,9 @@ mod windows_host {
     use windows::core::{BOOL, PCWSTR, PWSTR};
 
     use super::{
-        AclGrant, LaunchSpec, command_capability_name, command_line, parent_acl_grant_is_denied,
-        path_is_within, paths_equal, plan_writable_acl_grants, strip_utf8_bom, valid_lease_id, wfp,
+        AclGrant, LaunchSpec, command_capability_name, command_line, parent_acl_grant_is_allowed,
+        parent_acl_grant_is_system_boundary, path_is_within, paths_equal, plan_writable_acl_grants,
+        strip_utf8_bom, valid_lease_id, wfp,
     };
 
     const PROFILE_PREFIX: &str = "Aipoch.OpenScience.Notebook";
@@ -2949,9 +2985,20 @@ mod windows_host {
                 super::merge_acl_grant(&mut grants, path, access);
             }
             grants.retain(|path, access| {
-                *access != AclGrant::ReadOnlyDirectory
-                    || (!appcontainer_reads_without_capability(path)
-                        && !parent_acl_grant_is_denied(path, &spec.denied_read_roots))
+                if *access != AclGrant::ReadOnlyDirectory {
+                    return true;
+                }
+                // Do not even probe or mutate system-managed ancestors such as C:\Users. Parent
+                // traversal is allowed only inside the managed path below that boundary.
+                if parent_acl_grant_is_system_boundary(path) {
+                    return false;
+                }
+                parent_acl_grant_is_allowed(
+                    path,
+                    &spec.denied_read_roots,
+                    appcontainer_reads_without_capability(path),
+                    can_grant_optional_read_root(path),
+                )
             });
             let mut grants = grants.into_iter().collect::<Vec<_>>();
             grants.sort_by_key(|(path, _)| Path::new(path).components().count());
@@ -5090,6 +5137,35 @@ mod windows_host {
             assert_eq!(masks, vec![DIRECTORY_TRAVERSAL_ACCESS]);
             assert_eq!(masks[0] & FILE_LIST_DIRECTORY.0, 0);
             assert_ne!(masks[0] & FILE_TRAVERSE.0, 0);
+        }
+
+        #[test]
+        fn parent_traversal_skips_system_boundaries_and_unwritable_ancestors() {
+            let denied = vec![r"C:\Users\owner\private".to_owned()];
+            assert!(!parent_acl_grant_is_allowed(
+                r"C:\Users",
+                &denied,
+                false,
+                true
+            ));
+            assert!(parent_acl_grant_is_allowed(
+                r"C:\Users\owner",
+                &denied,
+                false,
+                true
+            ));
+            assert!(!parent_acl_grant_is_allowed(
+                r"C:\Users\owner\private",
+                &denied,
+                false,
+                true
+            ));
+            assert!(!parent_acl_grant_is_allowed(
+                r"C:\Program Files",
+                &denied,
+                true,
+                true
+            ));
         }
 
         #[test]
