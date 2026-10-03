@@ -6795,6 +6795,99 @@ describe('Settings Compute completion navigation', () => {
 })
 
 describe('Network editor leave protection', () => {
+  it.each(['keep editing', 'discard before success', 'discard before failure'])(
+    'handles closing Settings during a pending DNS review: %s',
+    async (choice) => {
+      const rule = {
+        hostname: 'lab.internal.example',
+        port: 8443,
+        approvedAddresses: ['10.32.0.7']
+      }
+      let resolve!: (value: { ok: true; destination: typeof rule }) => void
+      let reject!: (reason: Error) => void
+      window.api.settings.reviewNotebookPrivateDestination = vi.fn(
+        () =>
+          new Promise<{ ok: true; destination: typeof rule }>((done, fail) => {
+            resolve = done
+            reject = fail
+          })
+      )
+      const onClose = vi.fn()
+      const save = vi.fn()
+      useSettingsStore.setState({
+        pendingSettingsIntent: {
+          requestId: 44,
+          route: { panel: 'network', view: { kind: 'domains' } }
+        },
+        setNotebookNetwork: save
+      })
+      const click = async (label: string): Promise<void> => {
+        await act(async () => {
+          ;[...document.body.querySelectorAll<HTMLButtonElement>('button')]
+            .find((item) => item.textContent?.trim() === label)!
+            .click()
+        })
+      }
+      await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+      await click('Add service')
+      act(() => {
+        fireEvent.change(document.querySelector('#private-hostname')!, {
+          target: { value: rule.hostname }
+        })
+        fireEvent.change(document.querySelector('#private-port')!, { target: { value: '8443' } })
+      })
+      await click('Review service')
+      await act(async () =>
+        document.querySelector<HTMLButtonElement>('[aria-label="Close settings"]')!.click()
+      )
+      expect(document.body.textContent).toContain('Your network rules have not been saved.')
+      expect(onClose).not.toHaveBeenCalled()
+      const discard = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent?.trim() === 'Discard changes'
+      )!
+      expect(discard.disabled).toBe(false)
+
+      if (choice === 'keep editing') {
+        await click('Keep editing')
+        expect(document.querySelector<HTMLInputElement>('#private-hostname')!.value).toBe(
+          rule.hostname
+        )
+        expect(document.querySelector<HTMLInputElement>('#private-port')!.value).toBe('8443')
+        expect(document.body.textContent).not.toContain('Your network rules have not been saved.')
+        await act(async () => resolve({ ok: true, destination: rule }))
+        expect(document.body.textContent).toContain('10.32.0.7')
+        expect(document.body.textContent).toContain('Add to trusted services')
+        expect(onClose).not.toHaveBeenCalled()
+      } else {
+        await click('Discard changes')
+        expect(onClose).toHaveBeenCalledOnce()
+        // Apply the controlled open prop as the application does after accepting onClose.
+        await act(async () => root.render(<SettingsPage open={false} onClose={onClose} />))
+        expect(document.querySelector('#private-hostname')).toBeNull()
+        await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+        await click('Add service')
+        act(() =>
+          fireEvent.change(document.querySelector('#private-hostname')!, {
+            target: { value: 'new.internal.example' }
+          })
+        )
+        await act(async () => {
+          if (choice === 'discard before failure') reject(new Error('DNS failed after closing'))
+          else resolve({ ok: true, destination: rule })
+        })
+        expect(document.querySelector<HTMLInputElement>('#private-hostname')!.value).toBe(
+          'new.internal.example'
+        )
+        expect(document.body.textContent).not.toContain('10.32.0.7')
+        expect(document.body.textContent).not.toContain('Add to trusted services')
+        expect(document.body.textContent).not.toContain('Could not review the service. Try again.')
+      }
+      expect(save).not.toHaveBeenCalled()
+      expect(useSettingsStore.getState().notebookNetwork.trustedPrivateDestinations ?? []).toEqual(
+        []
+      )
+    }
+  )
   it.each(['breadcrumb', 'panel', 'Close settings'])(
     'keeps the network draft until discard through %s',
     async (route) => {

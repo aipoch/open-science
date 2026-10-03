@@ -189,6 +189,46 @@ describe('NotebookNetworkSettingsOwner', () => {
     expect(state.read()).toEqual(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
     expect(state.apply).toHaveBeenLastCalledWith(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
   })
+  it('preserves sibling ports and concurrent public grants while rejecting stale private removals', async () => {
+    const otherPort = { ...privateRule, port: 443 }
+    const baseline = [otherPort, privateRule]
+    const state = harness({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      trustedPrivateDestinations: baseline
+    })
+    const replacement = { ...privateRule, approvedAddresses: ['10.32.0.8'] }
+    lookup.mockResolvedValue([{ address: '10.32.0.8', family: 4 }])
+    await state.owner.allowDomain('concurrent.example.org')
+    const updated = await state.owner.set({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      trustedPrivateDestinations: [otherPort, replacement],
+      baseAllowedDomains: [],
+      baseTrustedPrivateDestinations: baseline
+    })
+    expect(updated.trustedPrivateDestinations).toEqual([otherPort, replacement])
+    expect(updated.allowedDomains).toEqual(['concurrent.example.org'])
+    const writes = state.repository.setNotebookNetwork.mock.calls.length
+    await expect(
+      state.owner.set({
+        ...updated,
+        trustedPrivateDestinations: [otherPort],
+        baseTrustedPrivateDestinations: baseline
+      })
+    ).rejects.toThrow('Private services changed')
+    expect(state.repository.setNotebookNetwork).toHaveBeenCalledTimes(writes)
+    expect(state.read()).toEqual(updated)
+    lookup.mockClear().mockRejectedValue(new Error('offline'))
+    const removed = await state.owner.set({
+      ...updated,
+      trustedPrivateDestinations: [otherPort],
+      baseAllowedDomains: updated.allowedDomains,
+      baseTrustedPrivateDestinations: updated.trustedPrivateDestinations
+    })
+    expect(removed.trustedPrivateDestinations).toEqual([otherPort])
+    expect(removed.allowedDomains).toEqual(['concurrent.example.org'])
+    expect(lookup).not.toHaveBeenCalled()
+    expect(state.apply).toHaveBeenLastCalledWith(removed)
+  })
   it('rejects malformed input instead of silently storing a broader or empty rule', async () => {
     const state = harness()
     await expect(

@@ -484,6 +484,78 @@ describe('private service draft review', () => {
     expect(container.textContent).not.toContain('10.32.0.7')
     expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
   })
+  it('replaces only the reviewed port and advances the save baseline before removing it', async () => {
+    const otherPort = { ...rule, port: 443 }
+    const original = {
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      trustedPrivateDestinations: [otherPort, rule]
+    }
+    const updatedRule = { ...rule, approvedAddresses: ['10.32.0.8'] }
+    const saved = {
+      ...original,
+      allowedDomains: ['concurrent.example.org'],
+      trustedPrivateDestinations: [otherPort, updatedRule]
+    }
+    const save = vi
+      .fn()
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce({
+        ...saved,
+        trustedPrivateDestinations: [otherPort]
+      })
+    useSettingsStore.setState({ notebookNetwork: original, setNotebookNetwork: save })
+    window.api.settings.reviewNotebookPrivateDestination = vi
+      .fn()
+      .mockResolvedValue({ ok: true, destination: updatedRule })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    const row = [...container.querySelectorAll('li')].find((item) =>
+      item.textContent?.includes(`${rule.hostname}:${rule.port}`)
+    )!
+    await act(async () => row.querySelector<HTMLButtonElement>('button')!.click())
+    expect(container.querySelector<HTMLInputElement>('#private-hostname')!.value).toBe(
+      rule.hostname
+    )
+    expect(container.querySelector<HTMLInputElement>('#private-port')!.value).toBe('8443')
+    await act(async () =>
+      [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((item) => !item.disabled && item.textContent?.trim() === 'Review service')!
+        .click()
+    )
+    expect(window.api.settings.reviewNotebookPrivateDestination).toHaveBeenCalledExactlyOnceWith({
+      hostname: rule.hostname,
+      port: rule.port
+    })
+    expect(save).not.toHaveBeenCalled()
+    await act(async () => button('Add to trusted services').click())
+    // A concurrent public-domain grant must not replace the editor's original baseline.
+    act(() =>
+      useSettingsStore.setState({
+        notebookNetwork: { ...original, allowedDomains: saved.allowedDomains }
+      })
+    )
+    await act(async () => button('Save changes').click())
+    expect(save).toHaveBeenNthCalledWith(
+      1,
+      { ...original, trustedPrivateDestinations: [otherPort, updatedRule] },
+      original.allowedDomains,
+      original.trustedPrivateDestinations
+    )
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(`[aria-label="Remove ${rule.hostname}:${rule.port}"]`)!
+        .click()
+    )
+    await act(async () => button('Save changes').click())
+    expect(save).toHaveBeenNthCalledWith(
+      2,
+      { ...saved, trustedPrivateDestinations: [otherPort] },
+      saved.allowedDomains,
+      saved.trustedPrivateDestinations
+    )
+    expect(container.textContent).toContain(`${otherPort.hostname}:${otherPort.port}`)
+    expect(container.textContent).not.toContain(`${rule.hostname}:${rule.port}`)
+    expect(container.textContent).toContain('No unsaved changes')
+  })
   it('enrolls pending text, private reviews and saves in the shared leave guard', async () => {
     const change = vi.fn()
     await act(async () => root.render(<NotebookNetworkDomainsForm onLeaveStateChange={change} />))
