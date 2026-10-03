@@ -209,6 +209,8 @@ test('reviews classified papers in the library table using a local fixture servi
     const address = service.address() as { port: number }
     const page = await app.completeOnboarding()
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    // Keep the decision rail scrollable on developer screens as well as Mac CI.
+    await page.setViewportSize({ width: 1100, height: 720 })
     const papers = [
       'Randomized trial of rehabilitation after stroke',
       'Blood pressure treatment in adults: a randomized trial',
@@ -343,19 +345,23 @@ test('reviews classified papers in the library table using a local fixture servi
     await expect(page.getByRole('tab', { name: 'Excluded 1', exact: true })).toBeVisible()
     await expect(page.getByRole('tab', { name: 'Not evaluated 0', exact: true })).toBeVisible()
     const includedTab = page.getByRole('tab', { name: 'Included 2', exact: true })
-    const decisionTabs = page.getByRole('tablist', { name: 'Filter decisions' }).getByRole('tab')
+    const decisionTablist = page.getByRole('tablist', { name: 'Filter decisions' })
+    const decisionTabs = decisionTablist.getByRole('tab')
     const tabGeometry = (): Promise<{ x: number; y: number; width: number; height: number }[]> =>
-      decisionTabs.evaluateAll((tabs) =>
-        tabs.map((tab) => {
+      decisionTablist.evaluate((list) =>
+        Array.from(list.querySelectorAll('[role="tab"]'), (tab) => {
           const { x, y, width, height } = tab.getBoundingClientRect()
-          return { x, y, width, height }
+          // Revealing a clipped tab scrolls the rail without changing its layout.
+          return { x: x + list.scrollLeft, y, width, height }
         })
       )
     const initialGeometry = await tabGeometry()
     for (let index = 0; index < 4; index++) {
       await decisionTabs.nth(index).click()
+      await expect(decisionTabs.nth(index)).toHaveAttribute('aria-selected', 'true')
       expect(await tabGeometry()).toEqual(initialGeometry)
     }
+    expect(await decisionTablist.evaluate((list) => list.scrollLeft)).toBeGreaterThan(0)
     await includedTab.click()
     await includedTab.focus()
     await page.keyboard.press('ArrowRight')
