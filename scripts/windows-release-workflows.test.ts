@@ -404,12 +404,52 @@ describe('post-merge Windows validation', () => {
   it('hard-gates every packaged Windows build on a fresh install/start/uninstall smoke', () => {
     const job = readWorkflow('package-smoke.yml').jobs.smoke
     const smoke = findStep(job, 'Smoke test Windows installer')
+    const install = findStep(job, 'Install Windows package for AppContainer certification')
 
     expect(job['continue-on-error']).toBeUndefined()
     expect(smoke.if).toBe("${{ !inputs.install_only && matrix.platform == 'win' }}")
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(smoke['timeout-minutes']).toBe(20)
+    expect(install.run).toContain(
+      '$installerProcess = Start-Process -FilePath $installer -ArgumentList @'
+    )
+    expect(install.run).toContain('-Wait -PassThru')
+    expect(install.run).toContain('$installerProcess.ExitCode')
+    expect(install.run).not.toContain('$LASTEXITCODE')
   })
+
+  it.skipIf(process.platform !== 'win32')(
+    'captures the GUI installer exit code after waiting for completion',
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), 'installer-exit-code-'))
+      const fixture = join(directory, 'fixture.vbs')
+      const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
+      writeFileSync(fixture, 'WScript.Quit 0')
+      const invoke = (command: string): ReturnType<typeof spawnSync> =>
+        spawnSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 15_000
+        })
+
+      try {
+        const legacy = invoke(
+          `$LASTEXITCODE = $null; & "$env:WINDIR\\System32\\wscript.exe" //nologo ${quote(fixture)}; if ($LASTEXITCODE -ne 0) { exit 1 }`
+        )
+        expect(legacy.error, legacy.stderr).toBeUndefined()
+        expect(legacy.status, legacy.stdout + legacy.stderr).toBe(1)
+
+        const fixed = invoke(
+          `$process = Start-Process -FilePath "$env:WINDIR\\System32\\wscript.exe" -ArgumentList @('//nologo', ${quote(fixture)}) -Wait -PassThru; if ($process.ExitCode -ne 0) { exit 1 }`
+        )
+        expect(fixed.error, fixed.stderr).toBeUndefined()
+        expect(fixed.status, fixed.stdout + fixed.stderr).toBe(0)
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+    20_000
+  )
 
   it('installs Electron from GitHub mirrors and exposes an install-only dry-run', () => {
     const smokeWorkflow = readWorkflow('package-smoke.yml')

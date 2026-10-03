@@ -132,8 +132,8 @@ jobs:
           if (-not $installer) { throw 'Windows setup installer was not found for AppContainer certification.' }
           $installDir = Join-Path $env:OPEN_SCIENCE_CERT_INSTALL_ROOT 'installed app 程序'
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-          & $installer '/S' "/D=$installDir"
-          if ($LASTEXITCODE -ne 0) { throw "Windows installer exited with $LASTEXITCODE." }
+          $installerProcess = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
+          if ($installerProcess.ExitCode -ne 0) { throw "Windows installer exited with $($installerProcess.ExitCode)." }
           $executable = Join-Path $installDir 'open-science.exe'
           if (-not (Test-Path -LiteralPath $executable)) { throw "Installed executable not found at $executable." }
           "OPEN_SCIENCE_E2E_EXECUTABLE=$executable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
