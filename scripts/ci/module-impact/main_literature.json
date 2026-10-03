@@ -1661,6 +1661,11 @@
     "src/main/literature/pdf-structure/reading-order.test.ts",
     "src/main/literature/pdf-structure/table-batch06-normalization.test.ts",
     "src/main/literature/pdf-structure/fixtures/reading-order-two-columns.jsonl",
+    "resources/pdf-structure/literature-pdf-caption-boundary-crop.mjs",
+    "resources/pdf-structure/literature-pdf-front-matter.mjs",
+    "resources/pdf-structure/literature-pdf-table-continuation.mjs",
+    "resources/pdf-structure/literature-pdf-table-grid-normalize.mjs",
+    "resources/pdf-structure/literature-pdf-wrapped-mean-se.mjs",
     "src/main/literature/pdf-structure/caption-boundary-crop.test.ts",
     "src/main/literature/pdf-structure/native-front-matter.test.ts",
     "src/main/literature/pdf-structure/wrapped-mean-se.test.ts"
