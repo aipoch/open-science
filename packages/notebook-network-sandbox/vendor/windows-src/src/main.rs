@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use base64::Engine;
@@ -213,27 +213,16 @@ fn parent_acl_grant_is_denied(path: &str, denied_read_roots: &[String]) -> bool 
         .any(|denied| path_is_within(path, Path::new(denied)))
 }
 
+#[cfg(windows)]
 fn parent_acl_grant_is_system_boundary(path: &str) -> bool {
-    let mut roots = Vec::new();
-    for name in [
-        "WINDIR",
-        "ProgramData",
-        "ProgramFiles",
-        "ProgramFiles(x86)",
-        "ProgramW6432",
-    ] {
-        if let Some(root) = std::env::var_os(name) {
-            roots.push(PathBuf::from(root));
-        }
-    }
-    if let Some(profile) = std::env::var_os("USERPROFILE") {
-        if let Some(root) = PathBuf::from(profile).parent() {
-            roots.push(root.to_owned());
-        }
-    }
-    roots
+    windows_host::system_boundary_roots()
         .iter()
         .any(|root| paths_equal(path, root.as_path()))
+}
+
+#[cfg(not(windows))]
+fn parent_acl_grant_is_system_boundary(_path: &str) -> bool {
+    false
 }
 
 fn parent_acl_grant_is_allowed(
@@ -407,6 +396,10 @@ mod windows_host {
         PROCESS_TERMINATE, ReleaseMutex, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW,
         STARTUPINFOW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
     };
+    use windows::Win32::UI::Shell::{
+        FOLDERID_Profile, FOLDERID_ProgramData, FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86,
+        FOLDERID_Windows, KNOWN_FOLDER_FLAG, SHGetKnownFolderPath,
+    };
     use windows::core::{BOOL, PCWSTR, PWSTR};
 
     use super::{
@@ -425,6 +418,31 @@ mod windows_host {
     const OPERATION_MUTEX: &str = "Local\\Aipoch.OpenScience.Notebook.Resources";
     const DIRECTORY_TRAVERSAL_ACCESS: u32 =
         FILE_TRAVERSE.0 | FILE_READ_ATTRIBUTES.0 | SYNCHRONIZE.0;
+
+    fn known_folder_path(folder_id: &windows::core::GUID) -> Option<PathBuf> {
+        let path = unsafe { SHGetKnownFolderPath(folder_id, KNOWN_FOLDER_FLAG(0), None).ok()? };
+        let value = unsafe { path.to_string().ok() };
+        unsafe { CoTaskMemFree(Some(path.0.cast())) };
+        value.map(PathBuf::from)
+    }
+
+    pub(super) fn system_boundary_roots() -> Vec<PathBuf> {
+        let mut roots = [
+            &FOLDERID_Windows,
+            &FOLDERID_ProgramData,
+            &FOLDERID_ProgramFiles,
+            &FOLDERID_ProgramFilesX86,
+        ]
+        .into_iter()
+        .filter_map(|folder_id| known_folder_path(folder_id))
+        .collect::<Vec<_>>();
+        if let Some(profile) = known_folder_path(&FOLDERID_Profile) {
+            if let Some(parent) = profile.parent() {
+                roots.push(parent.to_owned());
+            }
+        }
+        roots
+    }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -5141,29 +5159,38 @@ mod windows_host {
 
         #[test]
         fn parent_traversal_skips_system_boundaries_and_unwritable_ancestors() {
-            let denied = vec![r"C:\Users\owner\private".to_owned()];
+            let profile_parent = known_folder_path(&FOLDERID_Profile)
+                .and_then(|profile| profile.parent().map(Path::to_owned))
+                .expect("Windows profile parent should resolve");
+            let denied = vec![profile_parent
+                .join("owner")
+                .join("private")
+                .to_string_lossy()
+                .into_owned()];
             assert!(!parent_acl_grant_is_allowed(
-                r"C:\Users",
+                &profile_parent.to_string_lossy(),
                 &denied,
                 false,
                 true
             ));
             assert!(parent_acl_grant_is_allowed(
-                r"C:\Users\owner",
+                &profile_parent.join("owner").to_string_lossy(),
                 &denied,
                 false,
                 true
             ));
             assert!(!parent_acl_grant_is_allowed(
-                r"C:\Users\owner\private",
+                &profile_parent.join("owner").join("private").to_string_lossy(),
                 &denied,
                 false,
                 true
             ));
+            let program_files = known_folder_path(&FOLDERID_ProgramFiles)
+                .expect("Windows Program Files should resolve");
             assert!(!parent_acl_grant_is_allowed(
-                r"C:\Program Files",
-                &denied,
-                true,
+                &program_files.to_string_lossy(),
+                &[],
+                false,
                 true
             ));
         }
