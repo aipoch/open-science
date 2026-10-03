@@ -500,8 +500,30 @@ jobs:
             Sort-Object Version -Descending |
             Select-Object -First 1
           if (-not $availableModule) {
-            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
-            Install-Module -Name TrustedSigning -MinimumVersion 0.5.0 -Force -Repository PSGallery -Scope CurrentUser
+            # Best effort: hosted runners already carry the NuGet provider, and the gallery fetch
+            # behind this bootstrap intermittently fails — it must not block the module install
+            # (electron-builder wraps this same call for the same reason).
+            try {
+              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
+            } catch {
+              Write-Host "NuGet provider bootstrap skipped: $($_.Exception.Message)"
+            }
+            if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+              Register-PSRepository -Default
+            }
+            $installed = $false
+            for ($attempt = 1; $attempt -le 3 -and -not $installed; $attempt++) {
+              try {
+                Install-Module -Name TrustedSigning -MinimumVersion 0.5.0 -Force -Repository PSGallery -Scope CurrentUser
+                $installed = $true
+              } catch {
+                Write-Host "Install-Module attempt $attempt failed: $($_.Exception.Message)"
+                if ($attempt -lt 3) { Start-Sleep -Seconds 15 }
+              }
+            }
+            if (-not $installed) {
+              throw 'TrustedSigning module could not be installed from PSGallery after 3 attempts.'
+            }
           }
           $command = Get-Command Invoke-TrustedSigning -ErrorAction SilentlyContinue
           # CurrentUser installs land under the Documents folder; folder redirection can leave that
