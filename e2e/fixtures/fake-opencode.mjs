@@ -644,8 +644,13 @@ const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
 
 const verifyWindowsReplLifecycle = async (sessionId) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    // Hosted runners need 30-80s per AppContainer launch; the MCP SDK's default per-request
+    // timeout (-32001) is far below the certification's per-cell budget.
     const call = async (name, arguments_ = {}) =>
-      toolResult(name, await client.callTool({ name, arguments: arguments_ }))
+      toolResult(
+        name,
+        await client.callTool({ name, arguments: arguments_ }, undefined, { timeout: 240_000 })
+      )
     const execute = async (code) =>
       controlResultValue(await call('repl_execute', { code, timeoutMs: 180_000 }))
     const first = await execute(`
