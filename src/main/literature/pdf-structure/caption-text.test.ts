@@ -20,6 +20,11 @@ it('recognizes manuscript legend headings without treating past-tense references
   expect(captionKind('Figure 4 depicted the change over time.')).toBeUndefined()
 })
 
+it('keeps noun-phrase figure titles distinct from finite-verb references', () => {
+  expect(captionKind('Figure 1 Plot of the results.')).toBe('figure')
+  expect(captionKind('Figure 1 plots the results.')).toBeUndefined()
+})
+
 it('rejects supplementary panel references closed inside a prose parenthesis', () => {
   for (const reference of [
     'Supplementary Figure S5 A + B',

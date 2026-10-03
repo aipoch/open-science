@@ -9686,6 +9686,9 @@ export function refineTable(
   for (const cell of cells) grid[cell.row][cell.column] = cell.text
   const continuation = detectTableContinuationTail({ rows, cells, cropRect: table.cropRect })
   if (continuation) repairs.push('cross-page-row-tail-marked')
+  // Keep the continuation evidence in the repair audit until the worker/result
+  // contract has an explicit cross-page join consumer; do not emit an
+  // unconsumed field that would be stripped by the worker schema.
   return {
     id: table.id,
     cropRect: table.cropRect,
@@ -9697,7 +9700,6 @@ export function refineTable(
     excludedCaptionItems: excludedCaptionItems.map((i) => i.text),
     issues: [...issues],
     repairs,
-    ...(continuation ? { continuation } : {}),
     reviewCandidate: issues.size === 0,
     selectedTextItems: items.length
   }
