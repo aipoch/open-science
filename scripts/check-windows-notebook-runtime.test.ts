@@ -17,7 +17,9 @@ describe('Windows development runtime setup', () => {
       'packages/notebook-network-sandbox/vendor/windows-runtime/node-package-scope.patch',
       'utf8'
     )
-    expect(patch).toContain('+                              FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,')
+    expect(patch).toContain(
+      '+                              FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,'
+    )
   })
 
   it('rejects missing, incomplete and outdated Windows assets with setup instructions', async () => {
