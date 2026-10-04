@@ -59,6 +59,54 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
   })
 
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'projects new gateway models without replacing saved selections for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const framework = getAgentFramework(frameworkId)
+      for (const vendorId of ['openrouter', 'requesty'] as const) {
+        const provider: StoredProvider = {
+          id: vendorId,
+          type: 'official',
+          vendorId,
+          name: vendorId
+        }
+        const before = structuredClone(provider)
+        const model = 'openai/gpt-6.1-sol'
+        expect(owner.toProviderView(provider).models).toContain(model)
+        expect(
+          owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+        ).toMatchObject({
+          effectiveModel: model,
+          apiEndpoints: ['anthropic', 'openai'],
+          frameworkCompatible: true,
+          reasoningEffortProfile: {
+            supported: true,
+            slots:
+              vendorId === 'openrouter'
+                ? ['low', 'medium', 'high', 'xhigh', 'max']
+                : ['low', 'medium', 'high', 'xhigh', 'xhigh']
+          },
+          provider: { model, contextWindow: 1_050_000, supportsImageInput: true }
+        })
+        expect(
+          owner.resolveRuntimeTarget(
+            provider,
+            {
+              kind: 'configured',
+              requestedModel: 'openai/gpt-5.5'
+            },
+            framework
+          ).effectiveModel
+        ).toBe('openai/gpt-5.5')
+        expect(
+          owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework).effectiveModel
+        ).toBe(vendorId === 'openrouter' ? 'anthropic/claude-opus-5' : 'anthropic/claude-sonnet-5')
+        expect(provider).toEqual(before)
+      }
+    }
+  )
+
   it('exposes current OpenAI models to API and Codex subscription providers', () => {
     const owner = new ProviderRuntimeProjectionOwner()
 
