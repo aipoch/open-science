@@ -78,9 +78,6 @@ jobs:
               'scripts/windows-runtime-cdn.mjs'
               '.github/actions/windows-notebook-runtime/action.yml'
               '.github/workflows/windows-notebook-runtime.yml'
-              '.github/workflows/windows-runtime-sign.yml'
-              '.github/workflows/windows-runtime-cdn.yml'
-              '.github/workflows/stage-runtime-bundle.yml'
             )
             source_changed=false
             catalog_changed=false
@@ -105,7 +102,7 @@ jobs:
         env:
           CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}
-        run: node scripts/windows-runtime-cdn.mjs check
+        run: node scripts/windows-runtime-cdn.mjs check --verify-bytes
 
   # Build the platform matrix (macOS arm64/x64 + Linux + Windows x64) via the reusable workflow.
   # secrets: inherit forwards the optional signing/notarization secrets. macOS is signed but NOT

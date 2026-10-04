@@ -1087,13 +1087,10 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(runtimeChange.run).toContain('src/main/notebook/windows-runtime-catalog.json')
     expect(runtimeChange.run).toContain('Runtime source changed without a catalog update')
     expect(runtimeChange.run).toContain("'.github/workflows/windows-notebook-runtime.yml'")
-    expect(runtimeChange.run).toContain("'.github/workflows/windows-runtime-sign.yml'")
-    expect(runtimeChange.run).toContain("'.github/workflows/windows-runtime-cdn.yml'")
-    expect(runtimeChange.run).toContain("'.github/workflows/stage-runtime-bundle.yml'")
     const verifyRuntime = findStep(preflight, 'Verify reviewed Windows runtime CDN objects')
     expect(verifyRuntime).toMatchObject({
       if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')",
-      run: 'node scripts/windows-runtime-cdn.mjs check',
+      run: 'node scripts/windows-runtime-cdn.mjs check --verify-bytes',
       env: {
         CDN_BASE_URL: '${{ vars.CDN_BASE_URL }}',
         S3_PREFIX: '${{ vars.S3_PREFIX }}'

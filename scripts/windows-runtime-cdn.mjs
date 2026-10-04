@@ -68,18 +68,27 @@ export async function verifyRuntimeArchives(directory, catalog) {
   }
 }
 
-export async function checkRuntimeCdn(catalog, fetchImpl = fetch) {
-  for (const { component, archive } of catalog.releases) {
-    const response = await fetchImpl(archive.url, {
-      method: 'HEAD',
-      redirect: 'error',
-      signal: AbortSignal.timeout(30_000)
+export async function checkRuntimeCdn(catalog, fetchImpl = fetch, { verifyBytes = false } = {}) {
+  await Promise.all(
+    catalog.releases.map(async ({ component, archive }) => {
+      const response = await fetchImpl(archive.url, {
+        method: verifyBytes ? 'GET' : 'HEAD',
+        redirect: 'error',
+        signal: AbortSignal.timeout(30_000)
+      })
+      if (!response.ok || Number(response.headers.get('content-length')) !== archive.size)
+        throw new Error(
+          `CDN runtime is unavailable or has the wrong size: ${component} (${response.status})`
+        )
+      if (verifyBytes) {
+        if (!response.body) throw new Error(`CDN runtime has no readable body: ${component}`)
+        const hash = createHash('sha256')
+        for await (const chunk of response.body) hash.update(chunk)
+        if (hash.digest('hex') !== archive.sha256)
+          throw new Error(`CDN runtime has the wrong SHA-256: ${component}`)
+      }
     })
-    if (!response.ok || Number(response.headers.get('content-length')) !== archive.size)
-      throw new Error(
-        `CDN runtime is unavailable or has the wrong size: ${component} (${response.status})`
-      )
-  }
+  )
 }
 
 export async function publishRuntimeArchives(
@@ -167,9 +176,11 @@ export async function publishRuntimeArchives(
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [mode, directory] = process.argv.slice(2)
+  const args = process.argv.slice(2)
+  const [mode, directory] = args
   const catalog = await readRuntimeCatalog()
-  if (mode === 'check') await checkRuntimeCdn(catalog)
+  if (mode === 'check')
+    await checkRuntimeCdn(catalog, fetch, { verifyBytes: args.includes('--verify-bytes') })
   else if (mode === 'verify' && directory) await verifyRuntimeArchives(resolve(directory), catalog)
   else if (mode === 'publish' && directory) {
     await publishRuntimeArchives(resolve(directory), catalog)

@@ -117,6 +117,23 @@ it('rejects missing or wrong-sized CDN objects before application packaging', as
   expect(request.mock.calls[0]?.[1]).toMatchObject({ method: 'HEAD', redirect: 'error' })
 })
 
+it('downloads and hashes CDN objects when release preflight requests byte verification', async () => {
+  const matching = vi.fn(
+    async () => new Response(content, { headers: { 'content-length': String(content.length) } })
+  )
+  await checkRuntimeCdn(catalog, matching, { verifyBytes: true })
+  expect(matching.mock.calls[0]?.[1]).toMatchObject({ method: 'GET', redirect: 'error' })
+
+  await expect(
+    checkRuntimeCdn(
+      catalog,
+      async () =>
+        new Response('tampered', { headers: { 'content-length': String(content.length) } }),
+      { verifyBytes: true }
+    )
+  ).rejects.toThrow('wrong SHA-256')
+})
+
 it('publishes only verified archives with S3 create-only and checksum conditions', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'cdn-publish-'))
   try {
