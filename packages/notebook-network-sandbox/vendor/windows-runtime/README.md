@@ -79,10 +79,14 @@ node scripts/windows-runtime-cdn.mjs verify <output>
 ```
 
 To create the signed input without signing an application installer, dispatch
-**Sign Windows Notebook runtime** with the successful `Prepare Windows Notebook runtime` run and
-its exact artifact ID. It uses the protected Windows signing environment, verifies every runtime PE
-file and timestamp, and uploads a short-lived signed runtime artifact. It never writes to the CDN;
-pass that artifact to **Stage Windows Notebook CDN components** with `dry_run=true` first.
+**Sign Windows Notebook runtime** from `main` with the successful `Prepare Windows Notebook runtime`
+run and its exact artifact ID. The runtime path uses the separate protected
+`windows-runtime-signing` environment, verifies every runtime PE file and timestamp, and uploads a
+short-lived signed runtime artifact. It never writes to the CDN; pass that artifact to
+**Stage Windows Notebook CDN components** with `dry_run=true` first. Keep the application
+`windows-signing` environment restricted to version-tag releases. The runtime environment must have
+the same Azure signing variables and a federated credential allowing the `main` workflow subject; it
+is a GitHub/Azure environment configuration requirement, not a runtime catalog or data migration.
 
 Use the existing repository `CDN_BASE_URL` and `S3_PREFIX` values. The runtime
 namespace uses the application root (the first segment of `S3_PREFIX`), matching

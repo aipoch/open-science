@@ -34,9 +34,9 @@ on:
         type: string
         required: true
       source_kind:
-        description: Use prepare for a main runtime run; release is reserved for tagged releases
+        description: Use prepare for a main runtime run
         type: choice
-        options: [prepare, release]
+        options: [prepare]
         default: prepare
 
 permissions:
@@ -53,7 +53,9 @@ jobs:
     name: Sign Windows Notebook runtime
     runs-on: windows-2022
     timeout-minutes: 30
-    environment: windows-signing
+    # Runtime preparation is signed from main under its own protected environment. The application
+    # release environment remains tag-only and is used by build.yml for installer signing.
+    environment: ${{ inputs.source_kind == 'prepare' && 'windows-runtime-signing' || 'windows-signing' }}
     permissions:
       actions: read
       contents: read
@@ -85,7 +87,11 @@ jobs:
             throw 'Source run must have succeeded.'
           }
           if ($env:SOURCE_KIND -eq 'prepare') {
-            if ($run.name -ne 'Prepare Windows Notebook runtime' -or $run.head_branch -ne 'main') {
+            if (
+              $run.name -ne 'Prepare Windows Notebook runtime' -or
+              $run.head_branch -ne 'main' -or
+              $env:GITHUB_REF -ne 'refs/heads/main'
+            ) {
               throw 'Prepare source run must be a successful runtime run on main.'
             }
           } else {

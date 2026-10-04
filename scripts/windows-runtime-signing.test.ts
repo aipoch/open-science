@@ -46,7 +46,7 @@ it('signs a verified runtime artifact without granting CDN publication access', 
   expect(workflow.on.workflow_dispatch.inputs).toMatchObject({
     source_run: { required: true, type: 'string' },
     artifact_id: { required: true, type: 'string' },
-    source_kind: { default: 'prepare', type: 'choice', options: ['prepare', 'release'] }
+    source_kind: { default: 'prepare', type: 'choice', options: ['prepare'] }
   })
   expect(workflow.on.workflow_call).toMatchObject({
     inputs: {
@@ -58,12 +58,16 @@ it('signs a verified runtime artifact without granting CDN publication access', 
   })
   expect(workflow.permissions).toEqual({ actions: 'read', contents: 'read', 'id-token': 'write' })
   expect(sign).toMatchObject({
-    environment: 'windows-signing',
+    environment:
+      "${{ inputs.source_kind == 'prepare' && 'windows-runtime-signing' || 'windows-signing' }}",
     permissions: { actions: 'read', contents: 'read', 'id-token': 'write' }
   })
   expect(sign.outputs).toEqual({ artifact_id: '${{ steps.upload.outputs.artifact-id }}' })
   expect(findStep(steps, 'Verify source run and artifact').run).toContain(
     "SOURCE_KIND -notin @('prepare', 'release')"
+  )
+  expect(findStep(steps, 'Verify source run and artifact').run).toContain(
+    "$env:GITHUB_REF -ne 'refs/heads/main'"
   )
   expect(findStep(steps, 'Verify source run and artifact').run).toContain("run.name -ne 'Release'")
   expect(findStep(steps, 'Download unsigned runtime').with).toMatchObject({
