@@ -3251,6 +3251,57 @@ describe('SessionPersistenceCoordinator', () => {
     ).resolves.toMatchObject({ archivedAt: expect.any(Number) })
   })
 
+  it.each(['running', 'question'] as const)(
+    'archives imported %s evidence while retaining runtime and revision guards',
+    async (kind) => {
+      const historical =
+        kind === 'running'
+          ? createIdleSessionWithRunningChild()
+          : createIdleSessionWithPendingDelegatedQuestion()
+      const imported: PersistedChatSession = {
+        ...historical,
+        status: 'waiting-for-user',
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      }
+      const repository = createSessionRepository({
+        loadProjectWithDiagnostics: vi
+          .fn()
+          .mockResolvedValue({ sessions: [imported], isComplete: true }),
+        loadSessionWithDiagnostics: vi
+          .fn()
+          .mockResolvedValue({ status: 'found', session: imported })
+      })
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      expect(hasAnswerableDelegatedQuestion(imported)).toBe(false)
+      const request = {
+        projectId: imported.projectId,
+        sessionId: imported.id,
+        archived: true,
+        expectedRevision: 0
+      }
+      await expect(
+        coordinator.assertProjectArchivable(imported.projectId, () => true)
+      ).rejects.toThrow('Finish or stop')
+      await expect(coordinator.updateArchive(request, () => true)).rejects.toThrow('Finish or stop')
+      await expect(
+        coordinator.updateArchive({ ...request, expectedRevision: 99 })
+      ).rejects.toThrow()
+      await expect(coordinator.assertProjectArchivable(imported.projectId)).resolves.toEqual([
+        imported.id
+      ])
+      const archived = await coordinator.updateArchive(request)
+      expect(archived.archivedAt).toEqual(expect.any(Number))
+      expect(archived.runtimeContext).toEqual(imported.runtimeContext)
+      expect(archived.packageOrigin).toEqual(imported.packageOrigin)
+    }
+  )
+
   it('rejects archive while an idle Session has an answerable delegated question', async () => {
     const delegated = createIdleSessionWithPendingDelegatedQuestion()
     const root = await mkdtemp(join(tmpdir(), 'open-science-pending-question-archive-'))

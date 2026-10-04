@@ -14,6 +14,7 @@ vi.mock('./workspace-elicitation-runtime', async (importOriginal) => ({
 
 import {
   createWorkspaceElicitationRuntime,
+  pendingWorkspaceElicitations,
   useWorkspaceElicitation
 } from './useWorkspaceElicitation'
 
@@ -89,4 +90,49 @@ describe('createWorkspaceElicitationRuntime', () => {
 
     expect(onSessionSizeLimit).toHaveBeenCalledWith('session-1')
   })
+})
+
+it('keeps imported pending questions as recorded evidence without reconstructing requests', () => {
+  const session = {
+    id: 'imported-session',
+    projectId: 'project',
+    title: 'Imported',
+    cwd: '',
+    status: 'idle' as const,
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    activities: [
+      {
+        id: 'choice-tool',
+        kind: 'tool' as const,
+        title: 'Choose',
+        status: 'failed' as const,
+        eventIds: [],
+        sortIndex: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        elicitation: {
+          message: 'Choose an approach',
+          fields: [],
+          state: 'pending' as const,
+          durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+        }
+      }
+    ]
+  }
+  expect(pendingWorkspaceElicitations(session)).toHaveLength(1)
+  expect(
+    pendingWorkspaceElicitations({
+      ...session,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+  ).toEqual([])
+  expect(session.activities[0].elicitation.state).toBe('pending')
 })

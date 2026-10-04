@@ -142,3 +142,20 @@ describe('active Message Branch Plan selection', () => {
     ).toBeUndefined()
   })
 })
+
+it('keeps an imported Plan as history instead of active branch authority', () => {
+  const historicalPlan = projection('imported-plan', 'prompt')
+  const imported = {
+    ...session(['prompt'], historicalPlan),
+    packageOrigin: {
+      importId: 'import-1',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+  }
+  expect(selectActiveBranchPlan(imported)).toBeUndefined()
+  expect(imported.activePlanProjection).toBe(historicalPlan)
+  expect(selectActiveBranchPlan({ ...imported, packageOrigin: undefined })).toBe(historicalPlan)
+})

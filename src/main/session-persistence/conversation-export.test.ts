@@ -105,6 +105,39 @@ describe('conversation export service', () => {
     } as Parameters<typeof createConversationExportService>[0])
 
   it.each(['markdown', 'pdf'] as const)(
+    'exports imported %s history but still rejects live runtime activity',
+    async (format) => {
+      const imported: PersistedChatSession = {
+        ...session,
+        status: 'waiting-for-user',
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      }
+      loadSession.mockResolvedValue(imported)
+      await expect(
+        createService().exportConversation({
+          projectId: session.projectId,
+          sessionId: session.id,
+          format
+        })
+      ).resolves.toMatchObject({ saved: true })
+      isSessionActive.mockReturnValue(true)
+      await expect(
+        createService().exportConversation({
+          projectId: session.projectId,
+          sessionId: session.id,
+          format
+        })
+      ).rejects.toThrow('Wait for the conversation')
+    }
+  )
+
+  it.each(['markdown', 'pdf'] as const)(
     'requires durable terminal preflight before %s reads or publishes',
     async (format) => {
       const reserveExport = vi.fn(async () => {

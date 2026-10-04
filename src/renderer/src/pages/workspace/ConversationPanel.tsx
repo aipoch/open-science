@@ -780,6 +780,7 @@ const ConversationPanel = ({
     activeSession !== undefined &&
     (backgroundTasks.summary.activeCount > 0 || backgroundTasks.summary.totalTasks > 0)
   const [backgroundTasksExpanded, setBackgroundTasksExpanded] = useState(false)
+  const isImported = Boolean(activeSession?.packageOrigin)
   const activeBranchPlan = selectActiveBranchPlan(activeSession)
   const subagentSummary = projectSessionSubagents(activeSession, pendingPermissions)
   const hasSubagents = subagentSummary.children.length > 0
@@ -956,11 +957,12 @@ const ConversationPanel = ({
         ? []
         : undefined
 
-  const sessionActivities = activeSession?.activities ?? []
-  const sessionPendingElicitations = activeSession
-    ? pendingElicitations.filter((request) => request.sessionId === activeSession.id)
-    : []
-  const pendingCredentialRequest = permissions.credentialRequests[0]
+  const sessionActivities = isImported ? [] : (activeSession?.activities ?? [])
+  const sessionPendingElicitations =
+    activeSession && !isImported
+      ? pendingElicitations.filter((request) => request.sessionId === activeSession.id)
+      : []
+  const pendingCredentialRequest = isImported ? undefined : permissions.credentialRequests[0]
   // Runtime requests and activity events can reach the renderer in either order. Whichever arrives
   // first must reserve the single bottom interaction lane so the ordinary composer never competes
   // with a question that is waiting for an answer. A projection without a live request is
@@ -1003,7 +1005,9 @@ const ConversationPanel = ({
             state: 'pending'
           }
         : undefined
-  const rootPermissionRequests = pendingPermissions.filter((request) => !request.delegated)
+  const rootPermissionRequests = isImported
+    ? []
+    : pendingPermissions.filter((request) => !request.delegated)
   const rootPermissionPending =
     rootPermissionRequests.length > 0 ? true : pendingPermissions.length > 0 ? false : undefined
   const actionability = activeSession
@@ -1118,7 +1122,7 @@ const ConversationPanel = ({
   })
   const isTurnOutcomeDisabled = isStopping || rootTurnBusy
   const artifactRetryingPromptMessageId = workflows.artifactFinalization.retryingPromptMessageId
-  const artifactRetryDisabled = workflows.artifactFinalization.running
+  const artifactRetryDisabled = isImported || workflows.artifactFinalization.running
   const settingsAction = useCallback(
     (error: string | undefined): { label: string; onClick: () => void } | undefined => {
       const vision = visionRunFailureMessage(error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
@@ -1505,7 +1509,7 @@ const ConversationPanel = ({
                 ) : null
               }
               credentialPending={pendingCredentialRequest !== undefined}
-              visiblePermissionPending={pendingPermissions.length > 0}
+              visiblePermissionPending={!isImported && pendingPermissions.length > 0}
               optimisticMessage={optimisticMessage}
               isResumingSession={isResuming}
               notebookReference={notebookReference}
@@ -1655,7 +1659,7 @@ const ConversationPanel = ({
 
                 {/* Delegated permission cards stay in the transcript; the root card owns the
                     resizable composer surface below. Side chat hides both main interaction lanes. */}
-                {pendingPermissions.some((request) => request.delegated) ? (
+                {!isImported && pendingPermissions.some((request) => request.delegated) ? (
                   <PermissionApprovalControls
                     requests={pendingPermissions.filter((request) => request.delegated)}
                     onRespond={onRespondToPermission}

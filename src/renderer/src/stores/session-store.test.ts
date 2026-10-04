@@ -155,6 +155,28 @@ describe('session store', () => {
       if (action !== 'archive') expect(value.allowed, action).toBe(false)
     }
   })
+  it.each(['running', 'waiting-permission', 'waiting-for-user', 'waiting-plan-approval'] as const)(
+    'presents imported %s history without live attention or archive blocking',
+    (status) => {
+      const session = {
+        status,
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      }
+      const projection = projectSessionActionability(session)
+      expect(projection.activity).toBe('inactive')
+      expect(projection.waitReason).toBeUndefined()
+      expect(projection.blockingInteraction).toBeUndefined()
+      expect(projection.attentionOwner).toBe('none')
+      expect(projection.actions.archive.allowed).toBe(true)
+      expect(projection.actions.startTurn.allowed).toBe(false)
+    }
+  )
   // Reset time and state so each store assertion starts from the same baseline.
   beforeEach(() => {
     vi.useFakeTimers()

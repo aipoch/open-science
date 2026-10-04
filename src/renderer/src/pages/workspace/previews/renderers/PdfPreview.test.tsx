@@ -1325,47 +1325,74 @@ describe('PdfPreviewContent', () => {
     }
   )
 
-  it('resolves an exact bookmark source without a PDF Agent-context binding', async () => {
-    const resolvePdfSource = vi.fn().mockResolvedValue({ ok: false, reason: 'source-unavailable' })
-    window.api = {
-      ...window.api,
-      bookmarks: { resolvePdfSource }
-    } as unknown as Window['api']
-    useSessionStore.setState({
-      selectedSessionId: 'session-owner',
-      sessions: [{ id: 'session-owner', projectId: 'project-1' }]
-    } as never)
-
-    await act(async () => {
-      root.render(
-        <PdfPreviewRenderer
-          item={{
-            id: 'artifact-1',
+  it.each([false, true])(
+    'keeps unavailable annotations quiet only for imported history (imported: %s)',
+    async (imported) => {
+      const resolvePdfSource = vi
+        .fn()
+        .mockResolvedValue({ ok: false, reason: 'source-unavailable' })
+      window.api = {
+        ...window.api,
+        bookmarks: { resolvePdfSource }
+      } as unknown as Window['api']
+      useSessionStore.setState({
+        selectedSessionId: 'session-owner',
+        sessions: [
+          {
+            id: 'session-owner',
             projectId: 'project-1',
-            sessionId: 'source-session',
-            title: 'report.pdf',
-            type: 'file',
-            source: 'artifact',
-            path: 'artifact-version:stale-projection',
-            name: 'report.pdf',
-            format: 'pdf',
-            managedFileId: 'artifact-1',
-            selectedVersionId: 'artifact-v2'
-          }}
-        />
-      )
-    })
+            ...(imported
+              ? {
+                  packageOrigin: {
+                    importId: 'import-1',
+                    sourceProjectId: 'source-project',
+                    sourceSessionId: 'source-session',
+                    importedAt: 1,
+                    manifestChecksum: 'a'.repeat(64)
+                  }
+                }
+              : {})
+          }
+        ]
+      } as never)
 
-    await vi.waitFor(() =>
-      expect(resolvePdfSource).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        sessionId: 'session-owner',
-        sourceKind: 'artifact-version',
-        sourceFileId: 'artifact-1',
-        versionId: 'artifact-v2'
+      await act(async () => {
+        root.render(
+          <PdfPreviewRenderer
+            item={{
+              id: 'artifact-1',
+              projectId: 'project-1',
+              sessionId: 'source-session',
+              title: 'report.pdf',
+              type: 'file',
+              source: 'artifact',
+              path: 'artifact-version:stale-projection',
+              name: 'report.pdf',
+              format: 'pdf',
+              managedFileId: 'artifact-1',
+              selectedVersionId: 'artifact-v2'
+            }}
+          />
+        )
       })
-    )
-  })
+
+      await vi.waitFor(() =>
+        expect(resolvePdfSource).toHaveBeenCalledWith({
+          projectId: 'project-1',
+          sessionId: 'session-owner',
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          versionId: 'artifact-v2'
+        })
+      )
+      await vi.waitFor(() =>
+        expect(
+          container.textContent?.includes('PDF annotations are unavailable for this source.')
+        ).toBe(!imported)
+      )
+      expect(container.querySelector('[aria-label="report.pdf scrollable preview"]')).not.toBeNull()
+    }
+  )
 
   it.each(['upload', 'artifact'] as const)(
     'opens Figures & Tables for a finalized %s without Agent context',

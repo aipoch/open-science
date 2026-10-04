@@ -74,3 +74,40 @@ it.each([
     expect(exportPackage).toHaveBeenCalledTimes(allowed ? 1 : 0)
   }
 )
+
+it('forwards imported history with a pending Plan without enabling live execution', async () => {
+  usePackageOperationStore.setState({ operation: null })
+  const exportPackage = vi.fn(async () => ({ saved: false }))
+  vi.stubGlobal('api', { sessions: { exportPackage } })
+  const session: ChatSession = {
+    id: 'session',
+    projectId: 'project',
+    title: 'Imported',
+    cwd: '',
+    status: 'waiting-plan-approval',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    packageOrigin: {
+      importId: 'import-1',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    },
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      plan: {
+        artifactId: 'plan',
+        artifactVersionId: 'version',
+        artifactChecksum: 'a'.repeat(64),
+        approval: 'pending',
+        stepStatuses: {}
+      }
+    }
+  }
+  await exportSessionPackage(session)
+  expect(exportPackage).toHaveBeenCalledOnce()
+  expect(session.runtimeContext?.plan?.approval).toBe('pending')
+})

@@ -2100,3 +2100,100 @@ it('does not overlap a hanging Plan read or apply its result after leaving the S
     vi.useRealTimers()
   }
 })
+
+it.each(['idle', 'waiting-plan-approval'] as const)(
+  'does not recover a runtime Plan or show its blocking notice for %s imported research',
+  async (status) => {
+    vi.useFakeTimers()
+    const activeSession = session({
+      status,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      },
+      runtimeContext: {
+        version: 1,
+        revision: 12,
+        plan: {
+          artifactId: 'artifact-1',
+          artifactVersionId: 'version-1',
+          artifactChecksum: 'a'.repeat(64),
+          originatingPromptMessageId: 'message-user-a',
+          approval: 'approved',
+          stepStatuses: {}
+        }
+      }
+    })
+    const ports = {
+      getProjection: vi.fn().mockRejectedValue(new Error('Imported Session is read-only')),
+      getSession: () => activeSession,
+      setProjection: vi.fn(),
+      finishRun: vi.fn()
+    }
+    const hook = renderController(options({ activeSession, planProjectionRecovery: ports }))
+    try {
+      await act(async () => vi.advanceTimersByTimeAsync(60_000))
+      expect(hook.result.current.planProjectionRecoveryError).toBe(false)
+      expect(hook.result.current.availability.planResponse).toBe(false)
+      expect(ports.getProjection).not.toHaveBeenCalled()
+      expect(ports.setProjection).not.toHaveBeenCalled()
+      expect(ports.finishRun).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      hook.unmount()
+      vi.useRealTimers()
+    }
+  }
+)
+
+it.each(['retrying', 'pending'] as const)(
+  'cancels %s Plan recovery when the same Session becomes imported',
+  async (phase) => {
+    vi.useFakeTimers()
+    let reject!: (error: Error) => void
+    let activeSession = session({ status: 'waiting-plan-approval' })
+    const ports = {
+      getProjection: vi.fn(
+        () =>
+          new Promise<null>((_resolve, fail) => {
+            reject = fail
+          })
+      ),
+      getSession: () => activeSession,
+      setProjection: vi.fn(),
+      finishRun: vi.fn()
+    }
+    const hook = renderController(options({ activeSession, planProjectionRecovery: ports }))
+    try {
+      if (phase === 'retrying') {
+        await act(async () => reject(new Error('Unavailable Plan')))
+        expect(hook.result.current.planProjectionRecoveryError).toBe(true)
+        expect(vi.getTimerCount()).toBe(1)
+      }
+      activeSession = {
+        ...activeSession,
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      }
+      hook.rerender(options({ activeSession, planProjectionRecovery: ports }))
+      if (phase === 'pending') await act(async () => reject(new Error('Late failure')))
+      await act(async () => vi.advanceTimersByTimeAsync(60_000))
+      expect(hook.result.current.planProjectionRecoveryError).toBe(false)
+      expect(ports.getProjection).toHaveBeenCalledTimes(1)
+      expect(ports.setProjection).not.toHaveBeenCalled()
+      expect(ports.finishRun).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      hook.unmount()
+      vi.useRealTimers()
+    }
+  }
+)

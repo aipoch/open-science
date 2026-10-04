@@ -137,6 +137,33 @@ const removeStorageRoot = async (root: string): Promise<void> => {
   }
 }
 
+it.each(['running', 'waiting-permission', 'waiting-for-user', 'waiting-plan-approval'] as const)(
+  'presents imported %s history without scheduling startup recovery',
+  (status) => {
+    const historical: PersistedChatSession = {
+      ...session('imported'),
+      status,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      },
+      activeRun: { promptMessageId: 'imported-run', startedAt: 1 }
+    }
+    historical.artifacts![0].path = '.pending/result.md'
+    const before = structuredClone(historical)
+    expect(buildSessionProjection(historical).summary).toMatchObject({
+      status,
+      presentedStatus: 'idle',
+      needsStartupRecovery: false,
+      presentedActivityAt: historical.updatedAt
+    })
+    expect(historical).toEqual(before)
+  }
+)
+
 describe('Session projection', () => {
   let client: PrismaClient | undefined
   let storageRoot: string | undefined
@@ -1756,6 +1783,49 @@ describe('Session projection', () => {
     await expect(
       client.sessionNumberSequence.findUnique({ where: { id: 'global' } })
     ).resolves.toMatchObject({ nextNumber: 3 })
+  })
+
+  it('rebuilds version 6 imported summaries without rewriting source history', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'imported-summary-rebuild-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const imported: PersistedChatSession = {
+      ...session('imported'),
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    }
+    const saved = await repository.saveSession(imported)
+    await projection.replaceAll([saved])
+    await client.session.update({
+      where: { id: saved.id },
+      data: { presentedStatus: 'running', needsStartupRecovery: true }
+    })
+    await client.sessionProjectionState.update({
+      where: { id: 'session-projection' },
+      data: { projectionVersion: 6 }
+    })
+    const sourcePath = join(storageRoot, 'sessions', 'project-1', 'imported.json')
+    const before = await readFile(sourcePath)
+    const files = new SessionRepository(storageRoot)
+    const rebuilt = await repository.ensureSessionProjection(() => files.loadAll())
+    expect(rebuilt.sessions).toEqual([
+      expect.objectContaining({
+        id: saved.id,
+        presentedStatus: 'idle',
+        needsStartupRecovery: false
+      })
+    ])
+    expect(await readFile(sourcePath)).toEqual(before)
+    expect(await projection.isReady()).toBe(true)
   })
 
   it('rejects an invalid backfill before clearing the existing projection', async () => {

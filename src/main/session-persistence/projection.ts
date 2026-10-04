@@ -25,7 +25,7 @@ const runProjectionTransaction = <Result>(
 ): Promise<Result> => client.$transaction(operation, { maxWait: 30_000 })
 
 const PROJECTION_STATE_ID = 'session-projection'
-const PROJECTION_VERSION = 6
+const PROJECTION_VERSION = 7
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
@@ -257,6 +257,7 @@ const chunksOf = <Value>(values: readonly Value[], size: number): Value[][] => {
 }
 
 const presentedStatus = (session: PersistedChatSession): PersistedSessionStatus => {
+  if (session.packageOrigin) return deriveSessionAttention(session) ? 'error' : 'idle'
   if (
     session.runtimeContext?.permission?.state === 'pending' ||
     session.status === 'waiting-permission'
@@ -440,10 +441,11 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
       updatedAt: finiteNonNegativeInteger(session.updatedAt),
       presentedActivityAt: finiteNonNegativeInteger(presentedActivityAt),
       needsStartupRecovery:
-        session.activeRun !== undefined ||
-        session.status === 'running' ||
-        hasCurrentRunningDelegatedAttempt(session) ||
-        hasPendingArtifact(session)
+        !session.packageOrigin &&
+        (session.activeRun !== undefined ||
+          session.status === 'running' ||
+          hasCurrentRunningDelegatedAttempt(session) ||
+          hasPendingArtifact(session))
     },
     turnUsage,
     modelCalls,

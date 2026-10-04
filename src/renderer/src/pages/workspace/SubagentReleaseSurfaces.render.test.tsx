@@ -295,6 +295,23 @@ describe('release-gate Subagent surfaces', () => {
     expect(screen.getByTestId('subagents-bar')).toBeTruthy()
   })
 
+  it('keeps imported child history readable without counting it as current running work', () => {
+    const session = createSession()
+    session.packageOrigin = {
+      importId: 'import-1',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+    renderSurface(<SubagentsBar session={session} permissions={[]} />)
+    fireEvent.click(screen.getByRole('button', { name: '2 subagents' }))
+    expect(screen.getByRole('button', { name: 'Evidence landscape, running' })).toBeTruthy()
+    expect(session.conversationGraph?.frames.find(({ id }) => id === 'child-a')?.status).toBe(
+      'running'
+    )
+  })
+
   it('marks imported Subagent history when its origin Message is unavailable', () => {
     const session = createSession()
     const importedFrame = session.conversationGraph?.frames.find(({ id }) => id === 'child-a')

@@ -759,6 +759,79 @@ it.each([1, 12, 'unavailable'] as const)(
   }
 )
 
+it('forwards imported historical Plan state while retaining runtime admission and source validation', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(source.storageRoot)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'History',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: []
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const archive = join(source.storageRoot, 'source.science')
+  await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+  initDataRoot(target.storageRoot)
+  const isSessionActive = vi.fn(() => false)
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client,
+    isSessionActive
+  })
+  const imported = await importer.importFrom(archive)
+  const repository = new SessionRepository(target.storageRoot)
+  const historical = await repository.loadSession(imported.projectId, imported.sessionId)
+  if (!historical) throw new Error('Missing imported Session')
+  historical.runtimeContext = {
+    version: 1,
+    revision: 1,
+    plan: {
+      artifactId: 'historical-plan',
+      artifactVersionId: 'historical-version',
+      artifactChecksum: 'a'.repeat(64),
+      approval: 'pending',
+      stepStatuses: {}
+    }
+  }
+  // Seed retained historical state directly; ordinary imported saves must remain read-only.
+  const historicalPath = join(
+    target.storageRoot,
+    'sessions',
+    imported.projectId,
+    `${imported.sessionId}.json`
+  )
+  const envelope = JSON.parse(await readFile(historicalPath, 'utf8'))
+  envelope.session.runtimeContext = historical.runtimeContext
+  await writeFile(historicalPath, JSON.stringify(envelope))
+  const forwarded = join(target.storageRoot, 'forwarded.science')
+  isSessionActive.mockReturnValue(true)
+  await expect(importer.assertExportIdle(imported)).rejects.toThrow('active')
+  await expect(importer.exportTo(imported, forwarded)).rejects.toThrow('active')
+  isSessionActive.mockReturnValue(false)
+  await expect(importer.assertExportIdle(imported)).resolves.toBeUndefined()
+  await importer.exportTo(imported, forwarded)
+  expect(
+    (await repository.loadSession(imported.projectId, imported.sessionId))?.runtimeContext?.plan
+      ?.approval
+  ).toBe('pending')
+  const unpacked = join(target.storageRoot, 'forwarded-unpacked')
+  await readPackageArchive(forwarded, unpacked, new AbortController().signal)
+  expect(await readFile(join(unpacked, 'session.json'), 'utf8')).not.toContain('historical-plan')
+  await expect(importer.inspect(forwarded)).resolves.toMatchObject({ title: 'History' })
+  await exporter.close()
+  await importer.close()
+})
+
 it.each(['export', 'validation', 'compression', 'import', 'config'] as const)(
   'rejects insufficient %s capacity before publishing and checks fresh space after user input',
   async (boundary) => {

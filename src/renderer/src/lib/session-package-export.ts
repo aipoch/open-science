@@ -15,9 +15,10 @@ export const exportSessionPackage = async (session: ChatSession): Promise<void> 
     projectSessionActionability(session, {
       hasRunningWork: hasCurrentRunningDelegatedAttempt(session)
     }).activity !== 'inactive' ||
-    session.compacting ||
-    session.runtimeContext?.permission?.state === 'pending' ||
-    session.runtimeContext?.plan?.approval === 'pending' ||
+    (!session.packageOrigin &&
+      (session.compacting ||
+        session.runtimeContext?.permission?.state === 'pending' ||
+        session.runtimeContext?.plan?.approval === 'pending')) ||
     packageOperationActive(usePackageOperationStore.getState().operation)
   )
     return

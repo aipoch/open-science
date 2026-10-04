@@ -160,6 +160,7 @@ export const projectSessionActionability = (
   session: SessionInteractionSource,
   facts: SessionActionabilityFacts = {}
 ): SessionActionabilityProjection => {
+  const isImported = Boolean(session.packageOrigin)
   const interactionState = inferSessionInteractionState(session)
   const status = resolveSessionInteractionStatus(session, interactionState)
   const waitReason = isSessionWaitReason(status) ? status : facts.presentedWaitReason
@@ -235,14 +236,18 @@ export const projectSessionActionability = (
     session.packageOrigin ? { allowed: false } : actionAvailability(reason)
 
   return {
-    presentedStatus:
-      waitReason ??
-      (running ? 'running' : attention ? 'error' : !session.messages ? status : 'idle'),
+    presentedStatus: isImported
+      ? attention
+        ? 'error'
+        : 'idle'
+      : (waitReason ??
+        (running ? 'running' : attention ? 'error' : !session.messages ? status : 'idle')),
     attention,
-    activity,
-    attentionOwner: waitReason ? 'user' : running ? 'agent' : 'none',
-    waitReason,
-    blockingInteraction,
+    // Package runtime fields describe recorded work and never own current UI interaction.
+    activity: isImported ? 'inactive' : activity,
+    attentionOwner: isImported ? 'none' : waitReason ? 'user' : running ? 'agent' : 'none',
+    waitReason: isImported ? undefined : waitReason,
+    blockingInteraction: isImported ? undefined : blockingInteraction,
     actions: {
       startTurn: executionAvailability(turnDisabledReason),
       revise: executionAvailability(revisionDisabledReason),
@@ -261,7 +266,9 @@ export const projectSessionActionability = (
       changeAutoReview: executionAvailability(replayIndependentChangeDisabledReason),
       changeSpecialist: executionAvailability(replayIndependentChangeDisabledReason),
       changeMemory: executionAvailability(replayIndependentChangeDisabledReason),
-      archive: actionAvailability(running ? 'session-running' : attentionDisabledReason)
+      archive: actionAvailability(
+        isImported ? undefined : running ? 'session-running' : attentionDisabledReason
+      )
     }
   }
 }
