@@ -551,9 +551,7 @@ test.describe('Workspace dividers', () => {
     )
   })
 
-  test('keeps Session actions clear of the collapsed preview toggle @pr-mainline-conversation', async ({
-    app
-  }, testInfo) => {
+  test('keeps Session actions clear of the collapsed preview toggle', async ({ app }, testInfo) => {
     const page = app.page
     await sendPrompt(page, 'Check the session header layout.', 'Deterministic reply:')
     const previewToggle = page.getByTestId('workspace-preview-toggle')
