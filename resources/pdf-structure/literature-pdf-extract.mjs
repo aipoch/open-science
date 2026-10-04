@@ -1344,6 +1344,15 @@ try {
       }
       for (const [index, candidate] of pageFigures.entries()) {
         const id = `p${pageNumber}-figure-${index + 1}`
+        const resolvedCaption = resolveFigureCaption(candidate.caption, captions, geometry.pages)
+        const serializedCaption = candidate.captionLines
+          ? {
+              ...(resolvedCaption ?? candidate.caption),
+              lines: candidate.captionLines,
+              rect: candidate.captionRect ?? candidate.caption?.rect
+            }
+          : resolvedCaption
+        const captionRect = serializedCaption?.rect ?? candidate.caption?.rect
         // Advance boxes can miss glyph ink at an edge. Match the earlier diagnostic's 2px guard,
         // bounded by the page and the caption; publish the same expanded region used by the crop.
         const rect = candidate.rect && [
@@ -1352,15 +1361,15 @@ try {
             0,
             candidate.rect[1] - 2 / scale,
             nativeProseInkTopLimit(candidate, nativeFigureTokens),
-            candidate.caption?.page === pageNumber && candidate.caption.rect[3] <= candidate.rect[1]
-              ? candidate.caption.rect[3] + 0.5
+            serializedCaption?.page === pageNumber && captionRect?.[3] <= candidate.rect[1]
+              ? captionRect[3] + 0.5
               : 0
           ),
           Math.min(pageGeometry.width, candidate.rect[2] + 2 / scale),
           Math.min(
             pageGeometry.height,
-            candidate.caption?.page === pageNumber && candidate.caption.rect[1] >= candidate.rect[3]
-              ? candidate.caption.rect[1] - 0.5
+            serializedCaption?.page === pageNumber && captionRect?.[1] >= candidate.rect[3]
+              ? captionRect[1] - 0.5
               : pageGeometry.height,
             candidate.rect[3] + 2 / scale
           )
@@ -1368,7 +1377,7 @@ try {
         figures.push({
           id,
           page: pageNumber,
-          caption: captionValue(resolveFigureCaption(candidate.caption, captions, geometry.pages)),
+          caption: captionValue(serializedCaption),
           region: rect ? normalize(rect, pageGeometry.width, pageGeometry.height) : undefined,
           thumbnail: rect ? await crop(rect, id) : undefined,
           issue: candidate.issue ?? candidate.reason,
