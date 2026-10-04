@@ -677,11 +677,14 @@ function recoverIsolatedAdjacentFigure(
 ) {
   const caption = figure?.caption
   if (!caption || !page.graphicsBounds?.length) return undefined
-  const others = candidates.filter((candidate) => candidate !== caption)
+  // Candidate captions are document-wide. Only captions on this page can
+  // witness a competing graphic or overlap the recovered image pair.
+  const others = candidates.filter(
+    (candidate) => candidate !== caption && candidate.page === caption.page
+  )
   if (
     others.some(
       (other) =>
-        other.page === caption.page &&
         other.rect[1] > caption.rect[3] &&
         Math.max(
           0,

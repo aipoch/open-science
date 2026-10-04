@@ -4049,11 +4049,11 @@ export function recoverClippedColumnHeader(table, items, rules, captions = []) {
   // per model lane and a native separator before extending the crop; this
   // keeps nearby prose from becoming a synthetic header.
   if (leadingColumns.length >= 2 && leadingColumns.length <= 4) {
-    const height =
-      items
-        .map((item) => item.height)
-        .filter((value) => Number.isFinite(value) && value > 0)
-        .sort((a, b) => a - b)[Math.floor(items.length / 2)] ?? 0
+    const heights = items
+      .map((item) => item.height)
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => a - b)
+    const height = heights[Math.floor(heights.length / 2)] ?? 0
     const firstRowTop = Math.min(
       ...table.structure.objects
         .filter((o) => o.label === 'table row')

@@ -162,6 +162,23 @@ it('does not extend a crop for an unruled or misaligned leading text band', asyn
   ).toBeUndefined()
 })
 
+it('uses only valid token heights when recovering a clipped header', async () => {
+  const { recoverClippedColumnHeader } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-native-header-grid.mjs')).href
+  )
+  const f = fixture('clipped-resource-header')
+  const invalid = Array.from({ length: f.tokens.length + 4 }, (_, index) => ({
+    ...f.tokens[0],
+    text: `invalid-${index}`,
+    rect: [900 + index, 900, 901 + index, 901],
+    baseline: 901,
+    height: index % 2 ? Number.NaN : 0
+  }))
+  expect(
+    recoverClippedColumnHeader(f.table, [...f.tokens, ...invalid], [[79.7, 257.03, 797, 257.03]])
+  ).toBeDefined()
+})
+
 it('recovers a borderless two-column header clipped above the detector crop', () => {
   const raw = {
     cropRect: [0, 20, 200, 100],
