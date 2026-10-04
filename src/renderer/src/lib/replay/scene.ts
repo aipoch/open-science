@@ -37,8 +37,10 @@ export const projectReplayScene = (
   const step = branch.steps[stepIndex]
   const visibleSteps = branch.steps.slice(0, stepIndex + 1)
   const stepProgress = step ? clamp(position - step.startMs, step.durationMs) / step.durationMs : 0
+  // Standalone files and reviews are recorded outcomes, with no input or execution to animate.
+  // Expose their references immediately so seeking to a step also makes it discussable.
   const phase: ReplayPhase =
-    step?.kind === 'message'
+    step?.kind === 'message' || step?.kind === 'artifact' || step?.kind === 'review'
       ? 'result'
       : stepProgress < 0.2
         ? 'input'

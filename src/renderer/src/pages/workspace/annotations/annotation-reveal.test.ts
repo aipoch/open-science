@@ -21,6 +21,7 @@ import { validateAnnotations, type PdfAnnotation } from '../../../../../shared/a
 import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature'
 import type { Annotation } from '../../../../../shared/annotations'
 import { createUploadVersionReference } from '../../../../../shared/uploads'
+import { replayAnnotationId } from '../../../../../shared/replay-reference'
 import { createManagedPreviewRequest } from '../previews/preview-file-reader'
 import type { Bookmark } from '../../../../../shared/bookmarks'
 import type { PdfAnnotation as SavedPdfAnnotation } from '../../../../../shared/pdf-annotations'
@@ -64,6 +65,90 @@ describe('annotation reveal', () => {
     target: 'agent',
     quote: 'quoted evidence',
     source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }
+  })
+
+  it.each(['artifact', 'upload'] as const)(
+    'routes a saved %s replay reference to snapshot navigation without opening a file tab',
+    (fileSource) => {
+      const annotation: Annotation = {
+        id: replayAnnotationId(
+          {
+            projectId: 'project-1',
+            sourceSessionId: 'archive-session',
+            branchId: 'recorded-branch',
+            stepId: 'recorded-file-step',
+            stepOffsetMs: 0
+          },
+          'saved-selection'
+        ),
+        kind: 'text',
+        target: 'agent',
+        quote: 'Session: Archived study\n[3] observations.csv',
+        source: {
+          kind: 'project-file',
+          projectId: 'project-1',
+          sessionId: 'archive-session',
+          fileSource,
+          sourceFileId: 'file-1',
+          versionId: 'version-1',
+          path:
+            fileSource === 'artifact'
+              ? 'artifact-version:project-1/archive-session/file-1/version-1'
+              : createUploadVersionReference('version-1')
+        }
+      }
+      subscribeAnnotationReveal(() => true)()
+      const order: string[] = []
+      const prepare = vi.fn()
+      const offPrepare = subscribeAnnotationRevealPreparation((prepared) => {
+        prepare(prepared, usePreviewWorkbenchStore.getState().items)
+        order.push('prepare')
+      })
+      const reveal = vi.fn()
+      const offReveal = subscribeAnnotationReveal((id) => {
+        reveal(id)
+        order.push('reveal')
+        return true
+      })
+      try {
+        requestAnnotationReveal(annotation)
+        expect(order).toEqual(['prepare', 'reveal'])
+        expect(prepare).toHaveBeenCalledExactlyOnceWith(annotation, [])
+        expect(reveal).toHaveBeenCalledExactlyOnceWith(annotation.id)
+        expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+      } finally {
+        offPrepare()
+        offReveal()
+      }
+    }
+  )
+
+  it('keeps native file navigation when the replay locator does not match the annotation source', () => {
+    requestAnnotationReveal({
+      id: replayAnnotationId({
+        projectId: 'project-1',
+        sourceSessionId: 'another-session',
+        branchId: 'branch',
+        stepId: 'step'
+      }),
+      kind: 'text',
+      target: 'agent',
+      quote: 'File content',
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: 'artifact-version:project-1/session-1/file-1/version-1',
+        fileSource: 'artifact',
+        sourceFileId: 'file-1',
+        versionId: 'version-1'
+      }
+    })
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'file-1',
+      items: [expect.objectContaining({ type: 'file', sessionId: 'session-1' })]
+    })
+    subscribeAnnotationReveal(() => true)()
   })
 
   it('reveals inside a modal without opening workspace tabs and cancels delivery when closed', async () => {

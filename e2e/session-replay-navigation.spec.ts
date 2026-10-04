@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
+import type { SessionDiscussionSnapshot } from '../src/shared/session-replay'
 import { createProject } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 
@@ -51,6 +52,169 @@ const sessionRow = (page: Page, title: string): Locator =>
 
 const replayTab = (page: Page, sourceId: string): Locator =>
   page.locator(`[id="preview-tab-${encodeURIComponent(`tool:${sourceId}:replay`)}"]`)
+
+test('asks immediately after seeking recorded artifact and upload steps without sending or replacing the draft', async ({
+  app
+}) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  const projectName = 'Recorded file step questions'
+  const projectId = await createProject(page, projectName)
+  const uploadName = 'recorded-observations.csv'
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: uploadName,
+    mimeType: 'text/csv',
+    buffer: Buffer.from('sample,value\nA,42\n')
+  })
+  await expect(
+    page.getByRole('button', { name: `Remove attachment ${uploadName}`, exact: true })
+  ).toBeVisible()
+  await page
+    .getByRole('textbox', { name: 'Ask anything', exact: true })
+    .fill('Create preview context menu artifacts.')
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(
+    page.getByText('Preview context menu artifacts created.', { exact: true })
+  ).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  const recorded = await page.evaluate(async (projectId) => {
+    const session = (await window.api.sessions.loadAll()).sessions.find(
+      (session) => session.projectId === projectId
+    )!
+    return (await window.api.sessions.loadOne({ projectId, sessionId: session.id }))!
+  }, projectId)
+  const artifact = recorded.artifacts!.find((item) => item.name === 'context-menu.html')!
+  const upload = recorded.messages.flatMap((message) => message.uploads ?? [])[0]
+  expect(artifact.versionId).toBeTruthy()
+  expect(upload.versionId).toBeTruthy()
+  // Retain the native file/Version storage while restoring an imported, read-only source.
+  // A separate writable conversation receives its snapshots through the existing chooser.
+  const source: PersistedChatSession = {
+    ...recorded,
+    title: 'Imported recorded file evidence',
+    packageOrigin: sourceFixture(projectId, 'a').packageOrigin
+  }
+  const target: PersistedChatSession = {
+    ...sourceFixture(projectId, 'b'),
+    id: 'recorded-file-question-target',
+    title: 'File question discussion',
+    packageOrigin: undefined,
+    messages: []
+  }
+  await app.restartWithSessionFixture(target)
+  page = await app.restartWithSessionFixture(source)
+  await page
+    .getByRole('region', { name: 'Projects', exact: true })
+    .getByRole('button', { name: projectName, exact: true })
+    .click()
+  await sessionRow(page, source.title).click()
+  await page
+    .getByRole('region', { name: 'Imported research history', exact: true })
+    .getByRole('button', { name: 'View replay', exact: true })
+    .click()
+  await sessionRow(page, target.title).click()
+  const replay = page.getByTestId('replay-panel')
+  const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
+  const draft = 'Which recorded file supports this conclusion?'
+  await expect(replay).toBeVisible()
+  await editor.fill(draft)
+  const prompts = await app.readFakeAgentPrompts()
+  const before = await page.evaluate((request) => window.api.sessions.loadOne(request), {
+    projectId,
+    sessionId: source.id
+  })
+  const snapshots = (): Promise<SessionDiscussionSnapshot[]> =>
+    page.evaluate((request) => window.api.sessionReplay.listSelectionSnapshots(request), {
+      projectId,
+      sourceSessionId: source.id
+    })
+  const captured: SessionDiscussionSnapshot[] = []
+
+  for (const file of [
+    { name: artifact.name!, kind: 'artifact-version', versionId: artifact.versionId! },
+    { name: uploadName, kind: 'upload-version', versionId: upload.versionId! }
+  ]) {
+    const previousIds = (await snapshots()).map((snapshot) => snapshot.id)
+    await replay.getByRole('button', { name: 'Browse steps', exact: true }).click()
+    const directory = page.getByRole('dialog', { name: 'Browse steps', exact: true })
+    await directory
+      .getByRole('button', { name: /^Go to step \d+:/ })
+      .filter({ hasText: file.name })
+      .click()
+    // Seek lands at offset zero and pauses. Asking immediately must use the recorded Version,
+    // without playing through a fabricated input/activity phase to make that evidence available.
+    await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
+    const chooser = page.getByRole('dialog', { name: 'Ask in a conversation', exact: true })
+    await chooser.getByRole('combobox').fill(target.title)
+    await chooser.getByRole('option').filter({ hasText: target.title }).click()
+    await expect
+      .poll(async () =>
+        (await snapshots()).filter((snapshot) => !previousIds.includes(snapshot.id))
+      )
+      .toHaveLength(1)
+    const snapshot = (await snapshots()).find((snapshot) => !previousIds.includes(snapshot.id))!
+    expect(snapshot.scope ?? 'step').toBe('step')
+    expect(snapshot).toMatchObject({
+      sourceSessionId: source.id,
+      stepTitle: file.name,
+      stepOffsetMs: 0,
+      phase: 'result',
+      evidence: [
+        expect.objectContaining({
+          kind: file.kind,
+          projectId,
+          sessionId: source.id,
+          versionId: file.versionId,
+          part: 'record'
+        })
+      ]
+    })
+    captured.push(snapshot)
+    await expect(editor).toContainText(draft)
+    await expect(editor).toBeFocused()
+    await expect(page.getByTestId('session-discussion-draft')).toContainText(source.title)
+    await expect(page.getByTestId('session-discussion-draft')).not.toContainText('Entire research')
+    await expect(
+      page.getByText('The recorded evidence is unavailable.', { exact: true })
+    ).toHaveCount(0)
+    await expect(replay.getByRole('button', { name: 'Play replay', exact: true })).toBeVisible()
+    const progress = replay.getByRole('slider', { name: 'Replay progress', exact: true })
+    const position = await progress.getAttribute('aria-valuenow')
+    const previewTabs = page.locator('[role="tab"][id^="preview-tab-"]')
+    const tabCount = await previewTabs.count()
+    await page
+      .getByTestId('session-discussion-draft')
+      .locator('[data-session-discussion-source]')
+      .getByRole('button')
+      .first()
+      .click()
+    await expect(replayTab(page, source.id)).toHaveAttribute('aria-selected', 'true')
+    await expect(progress).toHaveAttribute('aria-valuenow', position!)
+    await expect(previewTabs).toHaveCount(tabCount)
+    await expect(editor).toContainText(draft)
+  }
+
+  expect(await app.readFakeAgentPrompts()).toEqual(prompts)
+  expect(
+    await page.evaluate(
+      async (projectId) =>
+        (await window.api.sessions.loadAll()).sessions
+          .filter((session) => session.projectId === projectId)
+          .map((session) => session.id)
+          .sort(),
+      projectId
+    )
+  ).toEqual([source.id, target.id].sort())
+  expect(
+    await page.evaluate((request) => window.api.sessions.loadOne(request), {
+      projectId,
+      sessionId: source.id
+    })
+  ).toEqual(before)
+  // Selecting a second file adds a separate immutable capture; it does not rewrite the first.
+  expect(await snapshots()).toEqual(expect.arrayContaining(captured))
+})
 
 test('replaces the discussion Session without replacing the draft or changing source records', async ({
   app

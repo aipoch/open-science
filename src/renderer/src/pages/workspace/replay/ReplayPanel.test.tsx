@@ -537,12 +537,11 @@ describe('research replay interaction', () => {
       content: `Recorded ${resource.versionId}`
     }))
     render(<ReplayPanel document={document} {...props} readResource={readResource} />)
-    seekProgress(1100)
+    seekProgress(1000)
     expect(
       (screen.getByRole('button', { name: 'Preview generated file v1.txt' }) as HTMLButtonElement)
         .disabled
-    ).toBe(true)
-    seekProgress(3000)
+    ).toBe(false)
     const original = screen.getByRole('button', { name: 'Preview generated file v1.txt' })
     original.focus()
     fireEvent.click(original)
@@ -1394,6 +1393,9 @@ it('groups adjacent generated files in one gallery without changing timeline ste
   expect(cards).toHaveLength(2)
   expect(cards[0].parentElement).toBe(cards[1].parentElement)
   expect(source.branches[0].steps).toHaveLength(3)
+  seekProgress(1000)
+  expect(screen.getByRole('button', { name: 'Preview generated file v1.txt' })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Preview generated file v2.txt' })).toBeNull()
   seekProgress(2000)
   expect(screen.getAllByText('GENERATED · 2')).toHaveLength(1)
   expect(
@@ -1401,7 +1403,7 @@ it('groups adjacent generated files in one gallery without changing timeline ste
   ).toBe(false)
   expect(
     screen.getByRole('button', { name: 'Preview generated file v2.txt' }).hasAttribute('disabled')
-  ).toBe(true)
+  ).toBe(false)
   seekProgress(0)
   expect(screen.queryByRole('button', { name: /Preview generated file/ })).toBeNull()
   await act(async () => {})
