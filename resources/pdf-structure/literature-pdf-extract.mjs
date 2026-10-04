@@ -46,7 +46,10 @@ import {
   splitCaptionedTableRegions,
   recoverCaptionedRuledTables
 } from './literature-pdf-table-refine.mjs'
-import { deduplicateTableRegions } from './literature-pdf-table-regions.mjs'
+import {
+  deduplicateTableRegions,
+  narrativeDuplicateTableIndices
+} from './literature-pdf-table-regions.mjs'
 import {
   splitRuledComparisonSections,
   groupRuledComparisonSections
@@ -1009,8 +1012,10 @@ try {
           nativeFigureTokens
         )
       ].filter((f) => f.rect)
+      const narrativeDuplicates = narrativeDuplicateTableIndices(refined)
       const acceptedTables = refined.map(
         (table, index) =>
+          !narrativeDuplicates.has(index) &&
           !isExternalAttachmentTableRegion(table, tokens, rules, associations[index].caption) &&
           !isNativeAuthorAffiliationRegion(
             table,

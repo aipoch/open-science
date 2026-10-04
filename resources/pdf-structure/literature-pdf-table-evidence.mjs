@@ -314,6 +314,67 @@ export function isFigureRiskTable(table, figures, page, scale = 1.5) {
   )
 }
 
+// A lettered appendix contents directory can look like a two-column table: each
+// row has a one-letter section marker, a dotted leader, and a page number. Keep
+// this proof deliberately narrow. A real data table may use letter categories,
+// but it should not also have a page-level CONTENTS heading and dotted leaders.
+function isLetteredContentsDirectory(table, pageItems) {
+  if (table.grid.length < 3 || table.grid.some((row) => row.length !== 2)) return false
+  if (
+    !table.grid.every((row) => {
+      const marker = row[0]?.trim() ?? ''
+      const entry = row[1]?.trim() ?? ''
+      return (
+        /^[A-Z]$/.test(marker) &&
+        /(?:\s*\.){3,}\s*\d{1,4}\s*$/.test(entry) &&
+        /\p{L}{2}/u.test(entry)
+      )
+    })
+  )
+    return false
+
+  const heading = pageItems.some((item) => /^contents$/i.test(item?.text?.trim() ?? ''))
+  if (heading) return true
+
+  const horizontal = pageItems
+    .filter((item) => item?.horizontal !== false && item?.text?.trim() && Array.isArray(item.rect))
+    .sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0])
+  const lines = []
+  for (const item of horizontal) {
+    const itemHeight = Number.isFinite(item.height) ? item.height : item.rect[3] - item.rect[1]
+    const line = lines.find(
+      (candidate) =>
+        Math.abs(candidate[0].rect[1] - item.rect[1]) <
+          Math.min(
+            Number.isFinite(candidate[0].height)
+              ? candidate[0].height
+              : candidate[0].rect[3] - candidate[0].rect[1],
+            itemHeight
+          ) *
+            0.3 ||
+        Math.abs(candidate[0].rect[3] - item.rect[3]) <
+          Math.min(
+            Number.isFinite(candidate[0].height)
+              ? candidate[0].height
+              : candidate[0].rect[3] - candidate[0].rect[1],
+            itemHeight
+          ) *
+            0.3
+    )
+    if (line) line.push(item)
+    else lines.push([item])
+  }
+  return lines.some(
+    (line) =>
+      line
+        .sort((a, b) => a.rect[0] - b.rect[0])
+        .map((item) => item.text.trim())
+        .join('')
+        .replace(/\s+/g, '')
+        .toLowerCase() === 'contents'
+  )
+}
+
 // Detection confidence alone also accepts affiliations and prose. Like the upstream
 // content-supported row/column refinement, require evidence from source text.
 // ponytail: uncaptioned single-column or single-row tables remain ambiguous with lists;
@@ -321,6 +382,7 @@ export function isFigureRiskTable(table, figures, page, scale = 1.5) {
 export function hasTableEvidence(table, caption, pageItems = [], sourceRules, sourceGraphics = []) {
   const populatedRows = table.grid.map((row) => row.filter((text) => text.trim()).length)
   if (!populatedRows.some((count) => count > 0)) return false
+  if (!caption && isLetteredContentsDirectory(table, pageItems)) return false
   // A supplementary-materials directory names several external tables. Its
   // neighboring entry is not a caption for the directory or nearby references.
   if (
