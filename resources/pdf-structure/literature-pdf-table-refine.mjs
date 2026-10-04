@@ -929,6 +929,21 @@ export function recoverClippedLeftLabelCrop(table, pageItems) {
   const aligned = clipped.filter((item) => rowOf(item) >= 0)
   const rowSet = new Set(aligned.map(rowOf))
   if (aligned.length < 2 || rowSet.size < 2) return
+  const numericRows = new Set(
+    pageItems
+      .filter(
+        (item) =>
+          item.horizontal &&
+          item.rect[0] >= crop[0] &&
+          item.rect[2] <= crop[2] &&
+          rowOf(item) >= 0 &&
+          /^[<>≤≥−+-]?\d[\d.,%()±–—+/<>=-]*$/u.test(item.text.trim())
+      )
+      .map(rowOf)
+  )
+  // The clipped run must share rows with owned table values. Two short prose
+  // lines at the crop edge can otherwise look like a truncated stub lane.
+  if ([...rowSet].some((row) => !numericRows.has(row))) return
   // A neighboring prose line can cross the crop edge, but it will not form
   // a compact left-stub run across several predicted rows.
   if (rowSet.size < Math.min(3, rows.length - 1)) return

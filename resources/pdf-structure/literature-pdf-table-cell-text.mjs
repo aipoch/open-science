@@ -163,6 +163,7 @@ export function recoverUnassignedDenseRows({
       (item) => /\p{L}/u.test(item.text) && !/^[✓✗×xX]$/u.test(item.text.trim())
     )
     if (indicators.length < Math.max(3, rowCells.length - 2) || labels.length !== 1) continue
+    if (rowCells.some((cell) => cell.rowSpan !== 1 || cell.colSpan !== 1)) continue
     const label = labels[0]
     const nearest = (item) =>
       rowCells
@@ -177,6 +178,8 @@ export function recoverUnassignedDenseRows({
       ...indicators.map((item) => ({ item, cell: nearest(item) }))
     ]
     if (placements.some(({ cell }) => !cell)) continue
+    const placementCells = placements.map(({ cell }) => cell)
+    if (new Set(placementCells).size !== placementCells.length) continue
     for (const { item, cell } of placements) {
       assignments.set(item, cell)
       ambiguousAssignments.delete(item)

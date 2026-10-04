@@ -156,6 +156,37 @@ describe('external wide table geometry repairs', () => {
     expect(repairs).toContain('unassigned-dense-row-recovered')
   })
 
+  it('rejects dense indicators that collapse onto one cell', () => {
+    const rows = [{ rect: [0, 0, 300, 20] }, { rect: [0, 20, 300, 40] }]
+    const cells = Array.from({ length: 4 }, (_, column) => ({
+      row: 1,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [column * 75, 20, (column + 1) * 75, 40]
+    }))
+    const items = [
+      { text: 'Method', rect: [4, 20, 55, 30], horizontal: true },
+      { text: '✓', rect: [90, 20, 102, 30], horizontal: true },
+      { text: '✗', rect: [92, 20, 104, 30], horizontal: true },
+      { text: '✓', rect: [94, 20, 106, 30], horizontal: true }
+    ]
+    const assignments = new Map()
+    const repairs: string[] = []
+    expect(
+      recoverUnassignedDenseRows({
+        items,
+        cells,
+        rows,
+        headerRows: [0],
+        assignments,
+        ambiguousAssignments: new Set(),
+        repairs
+      })
+    ).toBe(0)
+    expect(assignments.size).toBe(0)
+  })
+
   it('does not rewrite an unassigned second header row', () => {
     const rows = [0, 20, 40].map((top) => ({ rect: [0, top, 300, top + 20] }))
     const cells = rows.flatMap((row, rowIndex) =>
