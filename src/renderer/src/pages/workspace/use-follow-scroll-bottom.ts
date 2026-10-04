@@ -2,14 +2,25 @@ import { useLayoutEffect, useRef, type RefObject } from 'react'
 
 import { followScrollBottomTop, isAtFollowScrollBottom } from './follow-notebook-scroll'
 
+type FollowScrollOptions = {
+  onFollowingChange?: (following: boolean) => void
+  // Explicit navigation can resume following without replacing the viewport or its observer.
+  resetKey?: string | number
+}
+
 // Keeps a scroller pinned to the latest content while the caller allows follow. User movement
-// away from the bottom pauses; returning to the bottom resumes. There is no jump control.
-export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElement | null> => {
+// away from the bottom pauses; returning to the bottom resumes.
+export const useFollowScrollBottom = (
+  enabled: boolean,
+  options: FollowScrollOptions = {}
+): RefObject<HTMLDivElement | null> => {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const followingRef = useRef(true)
   const autoscrollingRef = useRef(false)
   const enabledRef = useRef(enabled)
   const autoscrollFrameRef = useRef<number | undefined>(undefined)
+  const followingChangeRef = useRef(options.onFollowingChange)
+  const resetKeyRef = useRef(options.resetKey)
 
   const bindingRef = useRef<
     | {
@@ -22,6 +33,15 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
   >(undefined)
 
   useLayoutEffect(() => {
+    followingChangeRef.current = options.onFollowingChange
+    const updateFollowing = (following: boolean): void => {
+      if (followingRef.current === following) return
+      followingRef.current = following
+      followingChangeRef.current?.(following)
+    }
+    const resetRequested = resetKeyRef.current !== options.resetKey
+    resetKeyRef.current = options.resetKey
+    if (resetRequested) updateFollowing(true)
     const wasEnabled = enabledRef.current
     const hasResizeObserver = typeof ResizeObserver !== 'undefined'
     enabledRef.current = enabled
@@ -29,7 +49,11 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
     const content = viewport?.firstElementChild ?? null
     const previous = bindingRef.current
     if (previous && previous.viewport === viewport && previous.content === content) {
-      if (enabled && followingRef.current && (!wasEnabled || !hasResizeObserver)) {
+      if (
+        enabled &&
+        followingRef.current &&
+        (resetRequested || !wasEnabled || !hasResizeObserver)
+      ) {
         previous.scrollToEnd()
       }
       return
@@ -48,7 +72,12 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
 
     const scrollToEnd = (): void => {
       const nextTop = followScrollBottomTop(viewport)
-      if (Math.abs(viewport.scrollTop - nextTop) <= 0.5) return
+      if (Math.abs(viewport.scrollTop - nextTop) <= 0.5) {
+        // Layout can clamp the viewport to a shorter bottom without a programmatic write.
+        // Record that offset before its delayed scroll event meets the next content resize.
+        lastScrollTop = viewport.scrollTop
+        return
+      }
       autoscrollingRef.current = true
       viewport.scrollTop = nextTop
       lastScrollTop = viewport.scrollTop
@@ -70,7 +99,7 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
       // A user move ends the pending programmatic-scroll guard immediately.
       clearAutoscroll()
       autoscrollingRef.current = false
-      followingRef.current = atBottom || (followingRef.current && !movedUp)
+      updateFollowing(atBottom || (followingRef.current && !movedUp))
     }
 
     const handleContentResize = (): void => {

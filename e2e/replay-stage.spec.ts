@@ -1399,6 +1399,140 @@ test('interactive history reaches the first message and preserves conversation a
   await expect.poll(async () => (await runAnchor.boundingBox())!.y).toBeCloseTo(runTop, 0)
 })
 
+test('conversation follows uninterrupted replay and resumes after manual reading, play and seek', async ({
+  page
+}) => {
+  await page.goto(`${url}?panel=1&history=1`)
+  const panel = page.getByTestId('replay-panel')
+  const conversation = panel.getByRole('region', { name: 'Historical conversation' })
+  const progress = panel.getByRole('slider', { name: 'Replay progress' })
+  const returnToCurrent = conversation.getByRole('button', { name: 'Return to current step' })
+  const bottomGap = (): Promise<number> =>
+    conversation.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop)
+  const expectFollowing = async (): Promise<void> => {
+    await expect(returnToCurrent).toHaveCount(0)
+    await expect.poll(bottomGap).toBeLessThanOrEqual(8)
+  }
+  const readEarlier = async (): Promise<void> => {
+    await conversation.hover()
+    await page.mouse.wheel(0, -240)
+    await expect(returnToCurrent).toBeVisible()
+    await expect.poll(bottomGap).toBeGreaterThan(100)
+    await expect(panel.getByRole('button', { name: 'Play replay', exact: true })).toBeVisible()
+  }
+
+  await panel.getByRole('button', { name: 'Enter full screen', exact: true }).click()
+  await panel.getByRole('button', { name: 'Play replay', exact: true }).click()
+  // Native scroll and ResizeObserver callbacks can straddle growing text commits. Sample
+  // every painted frame, including eviction of older rows after the twelve-step window fills.
+  const playback = await conversation.evaluate(async (node) => {
+    const started = performance.now()
+    let samples = 0
+    let maximumRows = 0
+    let falseReturn:
+      | {
+          position: number
+          top: number
+          gap: number
+          step: string | undefined
+          preceding: unknown[]
+        }
+      | undefined
+    const preceding: unknown[] = []
+    const record = (event: string): void => {
+      preceding.push({
+        event,
+        position: document
+          .querySelector('[data-testid="replay-stage"]')
+          ?.getAttribute('data-replay-position'),
+        top: node.scrollTop,
+        height: node.scrollHeight,
+        viewport: node.clientHeight,
+        first: node.querySelector<HTMLElement>('[data-replay-step]')?.dataset.replayStep,
+        rows: node.querySelectorAll('[data-replay-step]').length
+      })
+      if (preceding.length > 4) preceding.shift()
+    }
+    const onScroll = (): void => record('scroll')
+    node.addEventListener('scroll', onScroll, { passive: true })
+    while (performance.now() - started < 20000) {
+      await new Promise(requestAnimationFrame)
+      samples++
+      maximumRows = Math.max(maximumRows, node.querySelectorAll('[data-replay-step]').length)
+      const position = Number(
+        document.querySelector('[data-testid="replay-stage"]')?.getAttribute('data-replay-position')
+      )
+      if (
+        !falseReturn &&
+        Array.from(node.querySelectorAll('button')).some(
+          (button) => button.textContent?.trim() === 'Return to current step'
+        )
+      ) {
+        falseReturn = {
+          position,
+          top: node.scrollTop,
+          gap: node.scrollHeight - node.clientHeight - node.scrollTop,
+          step: node.querySelector<HTMLElement>('[data-replay-active]')?.dataset.replayStep,
+          preceding: [...preceding]
+        }
+      }
+      record('frame')
+      if (position >= 16000) {
+        node.removeEventListener('scroll', onScroll)
+        return { samples, maximumRows, falseReturn, position }
+      }
+    }
+    throw new Error('Replay did not advance past the bounded conversation history window')
+  })
+  await panel.getByRole('button', { name: 'Pause replay', exact: true }).click()
+  expect(playback.samples).toBeGreaterThan(20)
+  expect(playback.maximumRows).toBe(12)
+  expect(playback.falseReturn).toBeUndefined()
+  await expectFollowing()
+
+  await readEarlier()
+  const pausedTime = await progress.getAttribute('aria-valuenow')
+  const readingTop = await conversation.evaluate((node) => node.scrollTop)
+  const originalHeight = (await conversation.boundingBox())!.height
+  // A native viewport resize while reading must not pull the reader back to the latest text.
+  await panel.evaluate((node) => {
+    const container = node.closest('[data-replay-container]') as HTMLElement
+    container.style.bottom = '10vh'
+  })
+  await expect
+    .poll(async () => (await conversation.boundingBox())!.height)
+    .toBeLessThan(originalHeight)
+  await expect.poll(() => conversation.evaluate((node) => node.scrollTop)).toBe(readingTop)
+  await expect(progress).toHaveAttribute('aria-valuenow', pausedTime!)
+  await conversation.hover()
+  await page.mouse.wheel(0, 100000)
+  await expectFollowing()
+  // Returning to the bottom itself resumes follow, without a Play/seek reset masking it.
+  await panel.evaluate((node) => {
+    const container = node.closest('[data-replay-container]') as HTMLElement
+    container.style.bottom = '15vh'
+  })
+  await expectFollowing()
+  await expect(progress).toHaveAttribute('aria-valuenow', pausedTime!)
+
+  await readEarlier()
+  await returnToCurrent.click()
+  await expectFollowing()
+  await expect(progress).toHaveAttribute('aria-valuenow', pausedTime!)
+
+  await readEarlier()
+  await panel.getByRole('button', { name: 'Play replay', exact: true }).click()
+  await expectFollowing()
+  await expect
+    .poll(async () => Number(await progress.getAttribute('aria-valuenow')))
+    .toBeGreaterThan(Number(pausedTime) + 250)
+  await readEarlier()
+  const beforeSeek = Number(await progress.getAttribute('aria-valuenow'))
+  await panel.getByRole('button', { name: 'Next step', exact: true }).click()
+  await expectFollowing()
+  expect(Number(await progress.getAttribute('aria-valuenow'))).toBeGreaterThan(beforeSeek)
+})
+
 test('keeps one generated gallery through reveal phases and delayed thumbnails without horizontal overflow', async ({
   page
 }) => {

@@ -1553,3 +1553,65 @@ it('keeps standalone capture bounded when the interactive history is expanded', 
   expect(container.querySelectorAll('[data-replay-step]')).toHaveLength(12)
   expect(screen.queryByRole('button', { name: 'Load earlier messages' })).toBeNull()
 })
+
+it('keeps replay following delayed automatic scroll and resumes after manual browsing', () => {
+  const resizeCallbacks: ResizeObserverCallback[] = []
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+  )
+  const resize = (): void => {
+    act(() => resizeCallbacks.forEach((callback) => callback([], {} as ResizeObserver)))
+  }
+  const source = makeDocument()
+  const scene = projectReplayScene(source, 'main', 1500)
+  const mounted = render(<ReplayStage fitContainer document={source} scene={scene} />)
+  const conversation = screen.getByRole('region', { name: 'Historical conversation' })
+  const returnButton = (): HTMLElement | null =>
+    within(conversation).queryByRole('button', { name: 'Return to current step' })
+  Object.defineProperties(conversation, {
+    clientHeight: { configurable: true, value: 400 },
+    scrollHeight: { configurable: true, writable: true, value: 1000 },
+    scrollTop: { configurable: true, writable: true, value: 0 }
+  })
+  resize()
+  expect(conversation.scrollTop).toBe(600)
+  // The prior automatic scroll event arrives after the next text chunk grew the transcript.
+  Object.defineProperty(conversation, 'scrollHeight', { value: 1400 })
+  fireEvent.scroll(conversation)
+  expect(returnButton()).toBeNull()
+  resize()
+  expect(conversation.scrollTop).toBe(1000)
+
+  conversation.scrollTop = 200
+  fireEvent.scroll(conversation)
+  expect(returnButton()).toBeTruthy()
+  Object.defineProperty(conversation, 'scrollHeight', { value: 1800 })
+  resize()
+  expect(conversation.scrollTop).toBe(200)
+  conversation.scrollTop = 1400
+  fireEvent.scroll(conversation)
+  expect(returnButton()).toBeNull()
+  Object.defineProperty(conversation, 'scrollHeight', { value: 2200 })
+  resize()
+  expect(conversation.scrollTop).toBe(1800)
+
+  conversation.scrollTop = 200
+  fireEvent.scroll(conversation)
+  fireEvent.click(returnButton()!)
+  expect(returnButton()).toBeNull()
+  expect(conversation.scrollTop).toBe(1800)
+  conversation.scrollTop = 200
+  fireEvent.scroll(conversation)
+  mounted.rerender(
+    <ReplayStage fitContainer document={source} scene={scene} conversationFocusRequest={1} />
+  )
+  expect(returnButton()).toBeNull()
+  expect(conversation.scrollTop).toBe(1800)
+})
