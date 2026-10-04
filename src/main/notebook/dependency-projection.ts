@@ -1976,6 +1976,7 @@ const projectNotebookFileDependencies = (
   analyzedRuns: readonly AnalyzedNotebookRun[]
 ): Record<string, NotebookFileDependency[]> => {
   const producers = new Map<string, { runId: string; generationId?: string; checksum?: string }>()
+  const producerPaths = new Map<string, string>()
   const ambiguousPaths = new Set<string>()
   const dependenciesByRunId: Record<string, NotebookFileDependency[]> = {}
   const registerProducer = (
@@ -1991,18 +1992,44 @@ const projectNotebookFileDependencies = (
     for (const path of [sourcePath, generation.path]) {
       const key = lineagePathKey(run, path)
       producers.set(key, producer)
+      producerPaths.set(key, generation.path)
       ambiguousPaths.delete(key)
     }
   }
   const markAmbiguous = (run: NotebookRunRecord, generation: NotebookWorkingFile): void => {
     const key = lineagePathKey(run, generation.path)
     producers.delete(key)
+    producerPaths.delete(key)
     ambiguousPaths.add(key)
   }
   const markPathAmbiguous = (run: NotebookRunRecord, path: string): void => {
     const key = lineagePathKey(run, path)
     producers.delete(key)
+    producerPaths.delete(key)
     ambiguousPaths.add(key)
+  }
+  const scopeCandidatePath = (run: NotebookRunRecord, path: string): string => {
+    const workingDirectory = run.cwdAfter ?? run.cwdBefore ?? run.frozenShellContext?.cwd
+    return workingDirectory === undefined
+      ? portablePath(path)
+      : portablePath(relative(workingDirectory, path))
+  }
+  const markScopeAmbiguous = (
+    run: NotebookRunRecord,
+    scope: NotebookSourceFileWriteScope
+  ): void => {
+    for (const [key, producerPath] of producerPaths) {
+      const candidatePath = scopeCandidatePath(run, producerPath)
+      if (
+        candidatePath === '..' ||
+        candidatePath.startsWith('../') ||
+        !matchesWriteScope(scope, candidatePath)
+      )
+        continue
+      producers.delete(key)
+      producerPaths.delete(key)
+      ambiguousPaths.add(key)
+    }
   }
   for (const { run, fileAccess } of analyzedRuns) {
     if (run.status === 'completed' && fileAccess?.readState === 'complete') {
@@ -2049,10 +2076,12 @@ const projectNotebookFileDependencies = (
           }
         }
         for (const scope of fileAccess.writeScopes ?? []) {
-          for (const generation of observedScopedGenerations(run, [scope])) {
+          const scopedGenerations = observedScopedGenerations(run, [scope])
+          for (const generation of scopedGenerations) {
             registerProducer(run, scope.path, generation)
             matchedGenerations.add(generation)
           }
+          if (!scopedGenerations.length) markScopeAmbiguous(run, scope)
         }
         for (const generation of observedChanges) {
           if (!matchedGenerations.has(generation)) markAmbiguous(run, generation)

@@ -880,6 +880,21 @@ describe('real-agent science lineage fixtures', () => {
       { run: consumer, facts, fileAccess: consumerAccess }
     ] satisfies readonly AnalyzedNotebookRun[])
     expect(withheld['scoped-consumer']).toBeUndefined()
+
+    const unobservedScopedWriter: NotebookRunRecord = {
+      ...producer,
+      runId: 'scoped-unobserved-writer',
+      cellId: 'scoped-unobserved-writer',
+      startedAt: 1,
+      endedAt: 2,
+      workingFiles: []
+    }
+    const scopeWithheld = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess },
+      { run: unobservedScopedWriter, facts, fileAccess },
+      { run: consumer, facts, fileAccess: consumerAccess }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(scopeWithheld['scoped-consumer']).toBeUndefined()
   })
 })
 
