@@ -26,7 +26,7 @@ it('backfills collection revisions without changing existing values or hierarchy
   const before = await client.$queryRawUnsafe(sql)
   await client.$executeRawUnsafe('ALTER TABLE "LiteratureCollection" DROP COLUMN "revision"')
   await client.$executeRawUnsafe(
-    "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay')"
+    "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing')"
   )
   await expect(
     migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
@@ -39,7 +39,8 @@ it('backfills collection revisions without changing existing values or hierarchy
       '0044_literature_smart_collections',
       '0045_literature_smart_pause_run',
       '0046_journal_attributes',
-      '0047_session_replay'
+      '0047_session_replay',
+      '0048_pdf_annotation_sharing'
     ]
   })
   expect(await client.$queryRawUnsafe(sql)).toEqual(before)

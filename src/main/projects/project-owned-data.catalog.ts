@@ -94,13 +94,36 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'pdf-annotations',
     medium: 'sqlite',
-    resources: ['PdfAnnotation', 'PdfAnnotationImport'],
+    resources: [
+      'PdfAnnotationSourceBinding',
+      'PdfAnnotation',
+      'PdfAnnotationImport',
+      'PdfAnnotationDocument',
+      'PdfAnnotationAlias'
+    ],
     prismaModels: [
+      {
+        name: 'PdfAnnotationSourceBinding',
+        ownerFields: [optionalOwner('projectId'), optionalOwner('sourceSessionId')],
+        relationContracts: [
+          {
+            field: 'document',
+            target: 'PdfAnnotationDocument',
+            fromFields: ['documentId'],
+            onDelete: 'Cascade'
+          }
+        ]
+      },
       {
         name: 'PdfAnnotationImport',
         ownerFields: [optionalOwner('projectId'), optionalOwner('sessionId')],
         relationContracts: [
-          { field: 'project', target: 'Project', fromFields: ['projectId'], onDelete: 'Cascade' }
+          {
+            field: 'document',
+            target: 'PdfAnnotationDocument',
+            fromFields: ['documentId'],
+            onDelete: 'Cascade'
+          }
         ]
       },
       {
@@ -111,7 +134,12 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
           optionalOwner('sourceSessionId')
         ],
         relationContracts: [
-          { field: 'project', target: 'Project', fromFields: ['projectId'], onDelete: 'Cascade' }
+          {
+            field: 'document',
+            target: 'PdfAnnotationDocument',
+            fromFields: ['documentId'],
+            onDelete: 'Cascade'
+          }
         ]
       }
     ],
@@ -120,7 +148,7 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       effect: 'hard-delete',
       path: 'project-metadata-soft-delete',
       operation: 'ProjectRepository.delete',
-      note: 'Private PDF annotations are removed before the Project metadata row is retained as history.'
+      note: 'Project deletion removes its source bindings. Annotations, import receipts, aliases and Tags survive while another source references the document; the final source removal collects the document. Original Project fields are provenance, not cascade ownership.'
     }
   },
   {

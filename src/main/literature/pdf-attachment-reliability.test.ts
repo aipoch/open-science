@@ -1,3 +1,5 @@
+import { PdfAnnotationRepository } from '../pdf-annotations/repository'
+import type { PdfAnnotationSource } from '../../shared/pdf-annotations'
 import { initDataRoot } from '../storage-root'
 import { createHash } from 'node:crypto'
 import { parseLiteratureDeletionError } from '../../shared/literature-deletion'
@@ -63,6 +65,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 vi.mock('../uploads/atomic-no-replace-publisher', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../uploads/atomic-no-replace-publisher')>()
   return { ...actual, removeAnchoredFile: vi.fn(actual.removeAnchoredFile) }
+})
+
+vi.mock('../pdf-annotations/native-import', async () => {
+  const core = await import('../pdf-annotations/native-import-core')
+  return { ...core, parseNativePdfAnnotations: core.parseNativePdfAnnotationsOnCurrentThread }
 })
 
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
@@ -151,6 +158,101 @@ describe('Literature PDF attachment reliability', () => {
       authority: new LiteratureAttachmentAuthority({ getClient: async () => client!, content })
     }
   }
+
+  it('shares a verified Workspace PDF atomically and reuses the attachment on reopening', async () => {
+    const { request, path, content, catalog, authority } = await setup()
+    await client!.project.create({ data: { id: 'workspace', name: 'Workspace' } })
+    const annotations = new PdfAnnotationRepository(async () => client!)
+    const bytes = await readFile(path)
+    const source: PdfAnnotationSource = {
+      kind: 'upload-version',
+      projectId: 'workspace',
+      sessionId: 'session',
+      sourceFileId: 'upload',
+      versionId: 'workspace-version',
+      checksum: createHash('sha256').update(bytes).digest('hex'),
+      name: 'paper.pdf',
+      path: 'upload-version:workspace-version'
+    }
+    await annotations.create({
+      id: 'workspace-note',
+      projectId: source.projectId!,
+      sessionId: source.sessionId,
+      kind: 'document-note',
+      note: 'Keep my work',
+      tagIds: [],
+      target: { source, selector: { kind: 'document-note', coordinateVersion: 1 } }
+    })
+    let rejectFinalVerification = false
+    const importer = new LiteraturePdfImporter({
+      catalog,
+      content,
+      uploads: { resolveManagedUploadPath: async () => path, deleteUpload: async () => undefined },
+      workspace: {
+        annotations,
+        sources: {
+          async withVerifiedSource(selected, operation) {
+            if (selected.kind === 'literature-attachment-version') {
+              const lease = await authority.openContent(selected.versionId)
+              try {
+                await lease.verifyUnchanged()
+                return await operation(
+                  {
+                    ...lease,
+                    verifyUnchanged: async () => {
+                      if (rejectFinalVerification) throw new Error('Target bytes changed')
+                      await lease.verifyUnchanged()
+                    }
+                  },
+                  selected
+                )
+              } finally {
+                await lease.close()
+              }
+            }
+            const verifyUnchanged = async (): Promise<void> => {
+              expect(
+                createHash('sha256')
+                  .update(await readFile(path))
+                  .digest('hex')
+              ).toBe(selected.checksum)
+            }
+            await verifyUnchanged()
+            if (rejectFinalVerification) throw new Error('Source bytes changed')
+            await annotations.registerVerifiedSource(selected, bytes.length)
+            return operation({ path, size: bytes.length, verifyUnchanged }, selected)
+          }
+        }
+      }
+    })
+    const input = { source, itemId: request.itemId, operationId: crypto.randomUUID() }
+    const attach = catalog.attachContent.bind(catalog)
+    vi.spyOn(catalog, 'attachContent').mockImplementationOnce((input, onAttached, newItem) =>
+      attach(
+        input,
+        async (tx, result) => {
+          await onAttached?.(tx, result)
+          throw new Error('Injected failure after attaching')
+        },
+        newItem
+      )
+    )
+    await expect(importer.addToLiterature(input)).rejects.toThrow('Injected failure')
+    expect((await catalog.get(request.itemId))!.attachments).toHaveLength(0)
+    const committed = await importer.addToLiterature(input)
+    expect(committed.item.attachments[0].versions[0].pageCount).toBe(1)
+    const versionId = committed.item.attachments[0].versions[0].id
+    const library = await annotations.list({ literatureVersionId: versionId })
+    expect(library.items.map((note) => note.id)).toEqual(['workspace-note'])
+    await importer.addToLiterature(input)
+    rejectFinalVerification = true
+    await expect(importer.addToLiterature(input)).rejects.toThrow('Source bytes changed')
+    expect((await catalog.get(request.itemId))!.attachments).toHaveLength(1)
+    expect(await client!.pdfAnnotation.count()).toBe(1)
+    rejectFinalVerification = false
+    await importer.addToLiterature(input)
+    expect((await catalog.get(request.itemId))!.attachments[0].versions).toHaveLength(1)
+  })
 
   it.each(['unlink', 'sweep'] as const)(
     'reports pending cleanup when permanent deletion commits before a %s failure',

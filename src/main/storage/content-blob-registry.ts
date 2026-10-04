@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client'
+import { registerPublishedPdfContent } from '../pdf-documents/identity'
 
 type ContentBlobRegistration = {
   id: string
@@ -54,6 +55,8 @@ const registerContentBlob = async (
     if (existing.state === 'quarantined') {
       throw new Error(`Quarantined content blob cannot acquire a new owner: ${existing.id}`)
     }
+    if (existing.state === 'available' && existing.verifiedAt)
+      await registerPublishedPdfContent(transaction, existing)
     return
   }
   await transaction.contentBlob.create({
@@ -68,6 +71,8 @@ const registerContentBlob = async (
       verifiedAt: input.verifiedAt
     }
   })
+  if (input.state === 'available' && input.verifiedAt)
+    await registerPublishedPdfContent(transaction, input)
 }
 
 const markContentBlobAvailable = async (
@@ -85,6 +90,7 @@ const markContentBlobAvailable = async (
     where: { id: input.id },
     data: { state: 'available', verifiedAt }
   })
+  await registerPublishedPdfContent(transaction, existing)
 }
 
 const deleteStagingContentBlob = async (

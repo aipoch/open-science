@@ -70,6 +70,7 @@ beforeEach(() => {
     pendingArtifactMention: undefined,
     pendingLiteratureItemId: undefined,
     pendingLiteratureAnnotation: undefined,
+    pendingLiteraturePdfImport: undefined,
     pendingLiteratureLibrarySection: undefined,
     pendingLiteratureProjectId: undefined,
     pendingLiteratureCollectionId: undefined,
@@ -582,6 +583,36 @@ describe('navigation store', () => {
     })
     expect(useNavigationStore.getState().consumeLiteratureProject()).toBe('project-a')
     expect(useNavigationStore.getState().consumeLiteratureProject()).toBeUndefined()
+  })
+
+  it('carries a verified Workspace PDF to its Project import exactly once and clears superseded imports', () => {
+    const source = {
+      kind: 'upload-version' as const,
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      sourceFileId: 'file-1',
+      versionId: 'version-1',
+      checksum: 'a'.repeat(64),
+      name: 'paper.pdf',
+      path: 'upload-version:version-1'
+    }
+    const navigation = useNavigationStore.getState()
+    expect(navigation.openProjectLiterature('project-b', 'user', { pdf: source })).toBe(false)
+    expect(navigation.openProjectLiterature('project-a', 'user', { pdf: source })).toBe(true)
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'library',
+      pendingLiteratureProjectId: 'project-a',
+      pendingLiteraturePdfImport: source
+    })
+    expect(navigation.consumeLiteraturePdfImport({ ...source })).toBeUndefined()
+    expect(navigation.consumeLiteraturePdfImport(source)).toBe(source)
+    expect(navigation.consumeLiteraturePdfImport(source)).toBeUndefined()
+    navigation.openProjectLiterature('project-a', 'user', { pdf: source })
+    navigation.openLibrary('user', { section: 'library' })
+    expect(navigation.consumeLiteraturePdfImport(source)).toBeUndefined()
+    navigation.openProjectLiterature('project-a', 'user', { pdf: source })
+    navigation.goHome('user')
+    expect(navigation.consumeLiteraturePdfImport(source)).toBeUndefined()
   })
 
   it('routes a Collection Literature view through a one-shot explicit scope', () => {

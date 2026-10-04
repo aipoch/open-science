@@ -1,3 +1,5 @@
+import type { PdfAnnotationSource } from '../../../../../shared/pdf-annotations'
+import type { ManagedPreviewResource } from '../../../../../shared/preview-resources'
 import type { TFunction } from 'i18next'
 import {
   createLiteratureIdentifierUrl,
@@ -294,110 +296,130 @@ const parseLiteraturePdfMetadata = (
 }
 
 const extractLiteraturePdfDraft = async (
-  file: File,
+  file: File | PdfAnnotationSource,
   fallback: LiteratureItemInput,
   onNotice?: Notice
 ): Promise<LiteratureItemInput> => {
-  if (file.size > MAX_LOCAL_PDF_METADATA_BYTES) {
-    onNotice?.({ textUnavailable: true })
-    return fallback
-  }
-
-  const { pdfjsLib } = await import('../../workspace/previews/pdfjs')
-  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) })
-  let document: Awaited<typeof loadingTask.promise>
+  let resource: ManagedPreviewResource | undefined
   try {
-    document = await loadingTask.promise
-  } catch (error) {
-    await loadingTask.destroy()
-    onNotice?.({ textUnavailable: true })
-    throw error
-  }
-  try {
-    let info: Record<string, unknown> = {}
-    try {
-      const metadata = await document.getMetadata()
-      info = { ...(metadata.info as Record<string, unknown>) }
-      const xmp = metadata.metadata
-      const xmpText = (key: string): string => {
-        const value = xmp?.get(key)
-        return Array.isArray(value)
-          ? value.filter((entry) => typeof entry === 'string').join('; ')
-          : typeof value === 'string'
-            ? value
-            : ''
-      }
-      if (!meaningfulTitle(pdfInfoValue(info, 'Title'))) info.Title = xmpText('dc:title')
-      if (!pdfInfoValue(info, 'Author')) info.Author = xmpText('dc:creator')
-      info.Abstract = pdfInfoValue(info, 'Abstract') || xmpText('prism:abstract')
-      info.PublicationDate =
-        pdfInfoValue(info, 'PublicationDate') || xmpText('prism:publicationdate')
-      info.Journal = pdfInfoValue(info, 'Journal') || xmpText('prism:publicationname')
-      info.DOI = pdfInfoValue(info, 'DOI') || xmpText('prism:doi')
-    } catch {
-      onNotice?.({ textUnavailable: true })
+    if ('kind' in file) {
+      if (!file.projectId || !file.sourceFileId || file.kind === 'literature-attachment-version')
+        throw new Error('Workspace PDF source is unavailable.')
+      resource = await window.api.previewResources.acquire({
+        source: file.kind === 'upload-version' ? 'upload' : 'artifact',
+        projectId: file.projectId,
+        fileId: file.sourceFileId,
+        versionId: file.versionId
+      })
     }
-    const pageTexts: string[] = []
-    let firstPageTitle = ''
-    for (let pageNumber = 1; pageNumber <= Math.min(2, document.numPages); pageNumber += 1) {
+    const size = resource?.size ?? ('size' in file ? file.size : 0)
+    if (size > MAX_LOCAL_PDF_METADATA_BYTES) {
+      onNotice?.({ textUnavailable: true })
+      return fallback
+    }
+    const loadingTask = resource
+      ? (await import('../../workspace/previews/managed-pdf-document')).createManagedPdfLoadingTask(
+          resource
+        )
+      : (await import('../../workspace/previews/pdfjs')).pdfjsLib.getDocument({
+          data: new Uint8Array(await (file as File).arrayBuffer())
+        })
+    let document: Awaited<typeof loadingTask.promise>
+    try {
+      document = await loadingTask.promise
+    } catch (error) {
+      await loadingTask.destroy()
+      onNotice?.({ textUnavailable: true })
+      throw error
+    }
+    try {
+      let info: Record<string, unknown> = {}
       try {
-        const page = await document.getPage(pageNumber)
-        try {
-          const content = await page.getTextContent()
-          const items = content.items.map((item) => ('str' in item ? item : {}))
-          if (pageNumber === 1) firstPageTitle = prominentPdfTitle(items)
-          pageTexts.push(pageText(items))
-        } finally {
-          page.cleanup()
+        const metadata = await document.getMetadata()
+        info = { ...(metadata.info as Record<string, unknown>) }
+        const xmp = metadata.metadata
+        const xmpText = (key: string): string => {
+          const value = xmp?.get(key)
+          return Array.isArray(value)
+            ? value.filter((entry) => typeof entry === 'string').join('; ')
+            : typeof value === 'string'
+              ? value
+              : ''
         }
+        if (!meaningfulTitle(pdfInfoValue(info, 'Title'))) info.Title = xmpText('dc:title')
+        if (!pdfInfoValue(info, 'Author')) info.Author = xmpText('dc:creator')
+        info.Abstract = pdfInfoValue(info, 'Abstract') || xmpText('prism:abstract')
+        info.PublicationDate =
+          pdfInfoValue(info, 'PublicationDate') || xmpText('prism:publicationdate')
+        info.Journal = pdfInfoValue(info, 'Journal') || xmpText('prism:publicationname')
+        info.DOI = pdfInfoValue(info, 'DOI') || xmpText('prism:doi')
       } catch {
         onNotice?.({ textUnavailable: true })
       }
-    }
-    if (!pageTexts.some((text) => text.trim())) onNotice?.({ textUnavailable: true })
-    const extracted = parseLiteraturePdfMetadata(
-      info as Record<string, unknown>,
-      pageTexts.join('\n').slice(0, 30_000)
-    )
-    const draft = { ...fallback, ...extracted }
-    if (!extracted.title && firstPageTitle) draft.title = firstPageTitle
-    if (firstPageTitle) draftTitles.set(draft, firstPageTitle)
-    if (!draft.identifiers.some(({ scheme }) => scheme === 'doi') && document.numPages > 2) {
-      try {
-        const page = await document.getPage(document.numPages)
-        let text: string
+      const pageTexts: string[] = []
+      let firstPageTitle = ''
+      for (let pageNumber = 1; pageNumber <= Math.min(2, document.numPages); pageNumber += 1) {
         try {
-          const content = await page.getTextContent()
-          text = joinPdfTextItems(content.items.map((item) => ('str' in item ? item : {}))).slice(
-            -4_000
-          )
-        } finally {
-          page.cleanup()
+          const page = await document.getPage(pageNumber)
+          try {
+            const content = await page.getTextContent()
+            const items = content.items.map((item) => ('str' in item ? item : {}))
+            if (pageNumber === 1) firstPageTitle = prominentPdfTitle(items)
+            pageTexts.push(pageText(items))
+          } finally {
+            page.cleanup()
+          }
+        } catch {
+          onNotice?.({ textUnavailable: true })
         }
-        const doi = PUBLICATION_DOI_PATTERN.exec(text)?.[1]
-        if (doi && firstPageTitle.length >= 20) {
-          const normalized = normalizeLiteratureIdentifierValue('doi', doi)
-          const resolved = await lookupPdfDoi(normalized)
-          // A valid DOI may belong to a cited paper. Require the complete prominent title,
-          // not the embedded Title, a substring in the abstract, or a fuzzy title match.
-          if (comparableTitle(resolved.title) === comparableTitle(firstPageTitle)) {
-            return {
-              ...draft,
-              url: createLiteratureIdentifierUrl('doi', normalized) ?? '',
-              identifiers: [
-                { scheme: 'doi', value: normalized, isPrimary: true },
-                ...draft.identifiers.map((identifier) => ({ ...identifier, isPrimary: false }))
-              ]
+      }
+      if (!pageTexts.some((text) => text.trim())) onNotice?.({ textUnavailable: true })
+      const extracted = parseLiteraturePdfMetadata(
+        info as Record<string, unknown>,
+        pageTexts.join('\n').slice(0, 30_000)
+      )
+      const draft = { ...fallback, ...extracted }
+      if (!extracted.title && firstPageTitle) draft.title = firstPageTitle
+      if (firstPageTitle) draftTitles.set(draft, firstPageTitle)
+      if (!draft.identifiers.some(({ scheme }) => scheme === 'doi') && document.numPages > 2) {
+        try {
+          const page = await document.getPage(document.numPages)
+          let text: string
+          try {
+            const content = await page.getTextContent()
+            text = joinPdfTextItems(content.items.map((item) => ('str' in item ? item : {}))).slice(
+              -4_000
+            )
+          } finally {
+            page.cleanup()
+          }
+          const doi = PUBLICATION_DOI_PATTERN.exec(text)?.[1]
+          if (doi && firstPageTitle.length >= 20) {
+            const normalized = normalizeLiteratureIdentifierValue('doi', doi)
+            const resolved = await lookupPdfDoi(normalized)
+            // A valid DOI may belong to a cited paper. Require the complete prominent title,
+            // not the embedded Title, a substring in the abstract, or a fuzzy title match.
+            if (comparableTitle(resolved.title) === comparableTitle(firstPageTitle)) {
+              return {
+                ...draft,
+                url: createLiteratureIdentifierUrl('doi', normalized) ?? '',
+                identifiers: [
+                  { scheme: 'doi', value: normalized, isPrimary: true },
+                  ...draft.identifiers.map((identifier) => ({ ...identifier, isPrimary: false }))
+                ]
+              }
             }
           }
+        } catch {
+          // Optional tail parsing or lookup must not discard the local metadata already read.
         }
-      } catch {
-        // Optional tail parsing or lookup must not discard the local metadata already read.
       }
+      return draft
+    } finally {
+      await document.destroy()
     }
-    return draft
   } finally {
-    await document.destroy()
+    if (resource) await window.api.previewResources.release({ resourceId: resource.id })
   }
 }
 

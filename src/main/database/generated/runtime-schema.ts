@@ -34,7 +34,42 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "bookmarks_json_check" CHECK (json_valid("sourceJson") AND json_type("sourceJson") = 'object' AND json_valid("selectorJson") AND json_type("selectorJson") = 'object' AND length("sourceJson") <= 65536 AND length("selectorJson") <= 65536),
     CONSTRAINT "bookmarks_content_check" CHECK (length("note") <= 2000 AND ("quote" IS NULL OR length("quote") BETWEEN 1 AND 4000) AND ("kind" != 'text' OR "quote" IS NOT NULL))
 );`,
+  `CREATE TABLE IF NOT EXISTS "pdf_documents" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "checksum" TEXT NOT NULL,
+    "sizeBytes" BIGINT NOT NULL
+);`,
+  `CREATE TABLE IF NOT EXISTS "pdf_annotation_documents" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "pdfDocumentId" TEXT,
+    "checksum" TEXT NOT NULL,
+    "sizeBytes" BIGINT,
+    "revision" INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT "pdf_annotation_documents_pdfDocumentId_fkey" FOREIGN KEY ("pdfDocumentId") REFERENCES "pdf_documents" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "pdf_annotation_sources" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "documentId" TEXT NOT NULL,
+    "projectId" TEXT,
+    "sourceSessionId" TEXT,
+    "sourceKind" TEXT NOT NULL,
+    "sourceFileId" TEXT NOT NULL,
+    "versionId" TEXT NOT NULL,
+    "checksum" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "path" TEXT NOT NULL,
+    CONSTRAINT "pdf_annotation_sources_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES "pdf_annotation_documents" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "pdf_annotation_aliases" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "documentId" TEXT NOT NULL,
+    "annotationId" TEXT,
+    CONSTRAINT "pdf_annotation_aliases_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES "pdf_annotation_documents" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
   `CREATE TABLE IF NOT EXISTS "pdf_annotations" (
+    "documentId" TEXT NOT NULL,
+    "nativeKey" TEXT,
+    "nativeBaselineJson" TEXT,
     "id" TEXT NOT NULL PRIMARY KEY,
     "projectId" TEXT,
     "sessionId" TEXT,
@@ -53,7 +88,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "note" TEXT NOT NULL DEFAULT '',
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "pdf_annotations_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "pdf_annotations_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES "pdf_annotation_documents" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "PdfAnnotation_identity_check" CHECK (length(trim("id")) > 0 AND length(trim("projectId")) > 0 AND length(trim("sourceFileId")) > 0 AND length(trim("versionId")) > 0 AND length(trim("name")) > 0 AND length(trim("path")) > 0 AND length(trim("sessionId")) > 0),
     CONSTRAINT "PdfAnnotation_source_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version', 'literature-attachment-version') AND length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*'),
     CONSTRAINT "PdfAnnotation_kind_check" CHECK ("kind" IN ('highlight', 'underline', 'squiggly', 'strikethrough', 'area', 'page-note', 'document-note') AND ("color" IS NULL OR "color" IN ('yellow', 'blue', 'green', 'pink', 'purple'))),
@@ -63,6 +98,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "PdfAnnotation_scope_check" CHECK (("projectId" IS NOT NULL AND "sourceKind" <> 'literature-attachment-version') OR ("projectId" IS NULL AND "sessionId" IS NULL AND "sourceKind" = 'literature-attachment-version' AND "sourceSessionId" IS NULL))
 );`,
   `CREATE TABLE IF NOT EXISTS "pdf_annotation_imports" (
+    "documentId" TEXT NOT NULL,
     "id" TEXT NOT NULL PRIMARY KEY,
     "projectId" TEXT,
     "sessionId" TEXT,
@@ -71,7 +107,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "versionId" TEXT NOT NULL,
     "checksum" TEXT NOT NULL,
     "resultJson" TEXT NOT NULL,
-    CONSTRAINT "pdf_annotation_imports_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "pdf_annotation_imports_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES "pdf_annotation_documents" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "PdfAnnotationImport_json_check" CHECK (json_valid("resultJson"))
 );`,
   `CREATE TABLE IF NOT EXISTS "SessionNumberSequence" (
@@ -400,6 +436,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 );`,
   `CREATE TABLE IF NOT EXISTS "ContentBlob" (
     "id" TEXT NOT NULL PRIMARY KEY,
+    "pdfDocumentId" TEXT,
     "checksum" TEXT NOT NULL,
     "storageKey" TEXT NOT NULL,
     "sizeBytes" BIGINT NOT NULL,
@@ -409,6 +446,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "verifiedAt" DATETIME,
     "lastVerificationFailure" TEXT,
     "lastVerificationAttemptAt" DATETIME,
+    CONSTRAINT "ContentBlob_pdfDocumentId_fkey" FOREIGN KEY ("pdfDocumentId") REFERENCES "pdf_documents" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "ContentBlob_state_check" CHECK ("state" IN ('staging', 'available', 'quarantined')),
     CONSTRAINT "ContentBlob_sizeBytes_check" CHECK ("sizeBytes" >= 0)
 );`,
@@ -1204,10 +1242,18 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "bookmarks_projectId_sessionId_createdAt_id_idx" ON "bookmarks"("projectId", "sessionId", "createdAt", "id");`,
   `CREATE INDEX IF NOT EXISTS "bookmarks_projectId_sessionId_sourceKind_sourceId_idx" ON "bookmarks"("projectId", "sessionId", "sourceKind", "sourceId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "pdf_documents_checksum_sizeBytes_key" ON "pdf_documents"("checksum", "sizeBytes");`,
+  `CREATE INDEX IF NOT EXISTS "pdf_annotation_documents_pdfDocumentId_idx" ON "pdf_annotation_documents"("pdfDocumentId");`,
+  `CREATE INDEX IF NOT EXISTS "pdf_annotation_sources_projectId_sourceFileId_versionId_idx" ON "pdf_annotation_sources"("projectId", "sourceFileId", "versionId");`,
+  `CREATE INDEX IF NOT EXISTS "pdf_annotation_sources_documentId_idx" ON "pdf_annotation_sources"("documentId");`,
+  `CREATE INDEX IF NOT EXISTS "pdf_annotation_aliases_annotationId_idx" ON "pdf_annotation_aliases"("annotationId");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotations_projectId_createdAt_id_idx" ON "pdf_annotations"("projectId", "createdAt", "id");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotations_projectId_sourceFileId_versionId_createdAt_id_idx" ON "pdf_annotations"("projectId", "sourceFileId", "versionId", "createdAt", "id");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotations_projectId_sourceKind_sourceFileId_versionId_createdAt_id_idx" ON "pdf_annotations"("projectId", "sourceKind", "sourceFileId", "versionId", "createdAt", "id");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotations_sourceKind_sourceFileId_versionId_createdAt_id_idx" ON "pdf_annotations"("sourceKind", "sourceFileId", "versionId", "createdAt", "id");`,
+  `CREATE INDEX IF NOT EXISTS "pdf_annotations_documentId_createdAt_id_idx" ON "pdf_annotations"("documentId", "createdAt", "id");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "pdf_annotations_documentId_nativeKey_key" ON "pdf_annotations"("documentId", "nativeKey");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "pdf_annotation_imports_documentId_key" ON "pdf_annotation_imports"("documentId");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotation_imports_projectId_sessionId_idx" ON "pdf_annotation_imports"("projectId", "sessionId");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotation_imports_sourceKind_sourceFileId_versionId_idx" ON "pdf_annotation_imports"("sourceKind", "sourceFileId", "versionId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "Session_number_key" ON "Session"("number");`,
@@ -1250,6 +1296,7 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "UploadFile_id_currentVersionId_key" ON "UploadFile"("id", "currentVersionId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "ContentBlob_storageKey_key" ON "ContentBlob"("storageKey");`,
   `CREATE INDEX IF NOT EXISTS "ContentBlob_checksum_sizeBytes_idx" ON "ContentBlob"("checksum", "sizeBytes");`,
+  `CREATE INDEX IF NOT EXISTS "ContentBlob_pdfDocumentId_idx" ON "ContentBlob"("pdfDocumentId");`,
   `CREATE INDEX IF NOT EXISTS "ContentBlob_state_createdAt_idx" ON "ContentBlob"("state", "createdAt");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureItem_deletedAt_updatedAt_idx" ON "LiteratureItem"("deletedAt", "updatedAt");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureItem_mergedIntoItemId_idx" ON "LiteratureItem"("mergedIntoItemId");`,
@@ -1369,6 +1416,10 @@ const RUNTIME_SCHEMA_TARGET_SQL = [
 const RUNTIME_SCHEMA_TABLES = [
   'Project',
   'bookmarks',
+  'pdf_documents',
+  'pdf_annotation_documents',
+  'pdf_annotation_sources',
+  'pdf_annotation_aliases',
   'pdf_annotations',
   'pdf_annotation_imports',
   'SessionNumberSequence',

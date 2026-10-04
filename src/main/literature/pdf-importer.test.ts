@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { PENDING_UPLOAD_SESSION_ID, type UploadedAttachment } from '../../shared/uploads'
 import type { LiteratureItemView } from '../../shared/literature'
+import type { PdfAnnotationSource } from '../../shared/pdf-annotations'
 import { LiteraturePdfImporter, type LiteraturePdfImporterOptions } from './pdf-importer'
 
 const attachment = (path: string): UploadedAttachment => ({
@@ -94,6 +95,7 @@ describe('LiteraturePdfImporter', () => {
         )
       },
       catalog: {
+        findItemByPdf: vi.fn().mockResolvedValue(undefined),
         attachContent: vi.fn(async () => ({
           attachmentId: 'attachment-1',
           versionId: 'version-1'
@@ -174,6 +176,43 @@ describe('LiteraturePdfImporter', () => {
     ).rejects.toThrow('Selected file is not a PDF.')
     expect(options.content.withPublishedContent).not.toHaveBeenCalled()
     expect(options.uploads.deleteUpload).toHaveBeenCalledWith({ path })
+  })
+
+  it.each([
+    ['not a PDF', 'Selected file is not a PDF.'],
+    ['%PDF-1.7\nmalformed PDF', '[pdf-invalid]']
+  ])('rejects invalid Workspace bytes before publishing: %s', async (contents, error) => {
+    const bytes = Buffer.from(contents)
+    const { importer, options, path } = await setup(bytes)
+    const source: PdfAnnotationSource = {
+      kind: 'upload-version',
+      projectId: 'project',
+      sessionId: 'session',
+      sourceFileId: 'upload',
+      versionId: 'version',
+      checksum: 'a'.repeat(64),
+      name: 'paper.pdf',
+      path: 'upload-version:version'
+    }
+    const workspace: NonNullable<LiteraturePdfImporterOptions['workspace']> = {
+      annotations: { notifySharing: vi.fn(async () => undefined) },
+      sources: {
+        withVerifiedSource: async (selected, operation) =>
+          operation(
+            { path, size: bytes.length, verifyUnchanged: vi.fn(async () => undefined) },
+            selected
+          )
+      }
+    }
+    Object.assign(options, { workspace })
+
+    await expect(
+      importer.addToLiterature({ source, title: 'Paper', operationId: crypto.randomUUID() })
+    ).rejects.toThrow(error)
+    expect(options.content.withPublishedContent).not.toHaveBeenCalled()
+    expect(options.catalog.attachContent).not.toHaveBeenCalled()
+    expect(workspace.annotations.notifySharing).not.toHaveBeenCalled()
+    expect(options.uploads.deleteUpload).not.toHaveBeenCalled()
   })
   it('reports the actual persisted native annotation count and provenance', async () => {
     const { importer, options, path } = await setup()

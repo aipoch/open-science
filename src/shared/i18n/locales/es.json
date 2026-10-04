@@ -141,9 +141,7 @@
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Identidad, origen, enfermedades, registros de calidad y correspondencias en bases de datos de líneas celulares de Cellosaurus.",
     "Search cell lines by name or synonym.": "Buscar líneas celulares por nombre o sinónimo.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "Obtener la identidad, el origen, los registros de calidad y las correspondencias en bases de datos de una línea celular mediante CVCL o RRID.",
-
     "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "Buscar estructuras experimentales de PDB por secuencia de proteína, identidad de secuencia y cobertura de la secuencia de consulta; obtener entidades, cadenas y detalles del alineamiento.",
-
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Asociaciones de enfermedades y genes con fenotipos y fuentes de evidencia mediante Monarch Initiative.",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "Obtener asociaciones enfermedad–fenotipo con fuentes de evidencia y tipos de relación.",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "Obtener asociaciones gen–fenotipo con fuentes de evidencia y tipos de relación.",
@@ -7187,12 +7185,31 @@
     "Unsaved changes": "Cambios sin guardar",
     "Your network rules have not been saved. Discard them and leave?": "No se han guardado las reglas de red. ¿Descartar los cambios y salir?",
     "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "Esto permite que el código de Notebook lea datos de {{domain}} y envíe datos a ese dominio. Permita solo dominios de confianza. Puede revocar el acceso guardado en cualquier momento en Configuración > Red > Acceso de red de Notebook.",
+    "Choose what to keep": "Elegir qué conservar",
+    "Deleted or not imported": "Eliminado o sin importar",
+    "Keep both as separate notes": "Conservar ambas como notas independientes",
+    "Keep deleted": "Mantener eliminado",
+    "No comment": "Sin comentario",
+    "Notes are shared with linked sources. Edits and deletions apply everywhere.": "Las notas se comparten con las fuentes vinculadas. Las ediciones y eliminaciones se aplican en todas ellas.",
+    "Resolve annotation conflict": "Resolver el conflicto de anotaciones",
+    "These notes have conflicting edits or deletions. Choose what to keep.": "Estas notas presentan conflictos de edición o eliminación. Elija qué conservar.",
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "No se puede verificar la identidad original de esta anotación antigua. Elija cómo conservarla.",
     "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "Epítopos inmunitarios, ensayos de células T/B y MHC, antígenos y evidencia bibliográfica de IEDB.",
     "Search immune epitopes by sequence, host, antigen and MHC.": "Buscar epítopos inmunitarios por secuencia, hospedador, antígeno y MHC.",
     "Search epitope source antigens and UniProt references.": "Buscar antígenos de origen de epítopos y referencias de UniProt.",
     "Retrieve T cell experiments, measurements and literature evidence.": "Obtener experimentos de células T, mediciones y evidencia bibliográfica.",
     "Retrieve B cell experiments, measurements and literature evidence.": "Obtener experimentos de células B, mediciones y evidencia bibliográfica.",
     "Retrieve MHC binding and ligand elution experiments with methods and units.": "Obtener experimentos de unión al MHC y elución de ligandos con métodos y unidades.",
-    "Find IEDB references and PubMed identifiers for experimental evidence.": "Buscar referencias de IEDB e identificadores de PubMed para la evidencia experimental."
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "Buscar referencias de IEDB e identificadores de PubMed para la evidencia experimental.",
+    "Add to Literature": "Añadir a la biblioteca",
+    "Notes changed or the source is unavailable. Review the current notes before retrying.": "Las notas han cambiado o la fuente no está disponible. Revise las notas actuales antes de volver a intentarlo.",
+    "Resolve historical note conflicts": "Resolver conflictos de notas anteriores",
+    "Apply choices": "Aplicar las selecciones",
+    "Existing notes": "Notas existentes",
+    "Historical notes": "Notas anteriores",
+    "Keep existing note": "Conservar la nota existente",
+    "Keep historical note": "Conservar la nota anterior",
+    "Include shared PDF notes and annotations from all projects as a read-only snapshot": "Incluir notas y anotaciones compartidas del PDF de todos los proyectos como una instantánea de solo lectura",
+    "Read-only snapshot": "Instantánea de solo lectura"
   }
 }

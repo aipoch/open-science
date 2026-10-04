@@ -71,7 +71,11 @@ import {
   useManagedFileDownload,
   type ManagedFileDownloadController
 } from './use-managed-file-download'
-import { usePdfContextAction, type PdfContextAction } from './use-pdf-context-action'
+import {
+  resolvePdfContextTarget,
+  usePdfContextAction,
+  type PdfContextAction
+} from './use-pdf-context-action'
 import {
   createProjectFileResolveRequest,
   createPreviewFileItemForArtifactVersion,
@@ -1420,6 +1424,41 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const managedDownloadUnavailable =
       (resolvedPreviewItem.source === 'artifact' || resolvedPreviewItem.source === 'upload') &&
       (!resolvedPreviewItem.projectId || !resolvedPreviewItem.managedFileId)
+    const addPdfTarget = resolvePdfContextTarget(resolvedPreviewItem)
+    const addPdfSessionId = managedNavigationInspect?.sessionId ?? resolvedPreviewItem.sessionId
+    const addPdfReadOnly = useSessionStore((state) =>
+      Boolean(state.sessions.find((session) => session.id === addPdfSessionId)?.packageOrigin)
+    )
+    const addPdfBinding =
+      addPdfTarget &&
+      addPdfTarget.sourceKind !== 'literature-attachment-version' &&
+      addPdfTarget.sourceFileId &&
+      projectId &&
+      addPdfSessionId &&
+      !addPdfReadOnly &&
+      !annotationVersionPending
+        ? {
+            'pdf-add-to-literature': {
+              execute: async () => {
+                const navigationRevision = useNavigationStore.getState().userNavigationRevision
+                const result = await window.api.bookmarks.resolvePdfSource({
+                  projectId,
+                  sessionId: addPdfSessionId,
+                  sourceKind: addPdfTarget.sourceKind as 'upload-version' | 'artifact-version',
+                  sourceFileId: addPdfTarget.sourceFileId!,
+                  versionId: addPdfTarget.sourceVersionId
+                })
+                if (!result.ok)
+                  throw new Error(t('PDF annotations are unavailable for this source.'))
+                if (useNavigationStore.getState().userNavigationRevision !== navigationRevision)
+                  return
+                useNavigationStore.getState().openProjectLiterature(projectId, 'user', {
+                  pdf: result.source
+                })
+              }
+            }
+          }
+        : {}
     const previewActionBindings: PreviewActionBindings =
       resolvedPreviewItem.source === 'local'
         ? {
@@ -1438,6 +1477,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
             close: { execute: closePreview }
           }
         : {
+            ...addPdfBinding,
             ...(visiblePdfContextAction
               ? {
                   'pdf-context': {

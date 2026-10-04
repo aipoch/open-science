@@ -272,6 +272,7 @@ describe('LiteratureLibraryPage', () => {
       activeProjectId: undefined,
       pendingLiteratureItemId: undefined,
       pendingLiteratureAnnotation: undefined,
+      pendingLiteraturePdfImport: undefined,
       pendingLiteratureLibrarySection: undefined,
       pendingLiteratureProjectId: undefined,
       pendingLiteratureCollectionId: undefined,
@@ -454,6 +455,7 @@ describe('LiteratureLibraryPage', () => {
           formatDocument: vi.fn(),
           formatReferences,
           importPdf,
+          addPdf: vi.fn(),
           cancelPdfImport: vi.fn().mockResolvedValue({ cancelled: true }),
           importRecords
         },
@@ -569,6 +571,58 @@ describe('LiteratureLibraryPage', () => {
       expect(search).toHaveBeenCalledWith(expect.objectContaining({ scope: 'library' }))
     )
     expect(useNavigationStore.getState().pendingLiteratureLibrarySection).toBeUndefined()
+  })
+
+  it('imports a Workspace PDF through the existing metadata dialog into its Project without re-uploading', async () => {
+    const source = {
+      kind: 'upload-version' as const,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sourceFileId: 'upload-1',
+      versionId: 'version-1',
+      checksum: 'a'.repeat(64),
+      name: 'workspace-paper.pdf',
+      path: 'upload-version:version-1'
+    }
+    useNavigationStore.getState().openProjectLiterature('project-1', 'user', { pdf: source })
+    vi.mocked(window.api.literature.addPdf).mockResolvedValue({ item: libraryItem })
+    render(<LiteratureLibraryPage />)
+    expect(await screen.findByRole('dialog', { name: 'Import PDF' })).not.toBeNull()
+    const title = await screen.findByLabelText('Title')
+    expect((title as HTMLInputElement).value).toBe('workspace paper')
+    expect(extractLiteraturePdfDraft).toHaveBeenCalledWith(
+      source,
+      expect.anything(),
+      expect.any(Function)
+    )
+    expect(window.api.literature.addPdf).not.toHaveBeenCalled()
+    fireEvent.change(title, { target: { value: 'Reviewed Workspace paper' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(window.api.literature.addPdf).toHaveBeenCalledWith({
+        source,
+        itemId: libraryItem.id,
+        operationId: expect.any(String)
+      })
+    )
+    expect(transact).toHaveBeenCalledWith({
+      kind: 'create-item',
+      item: expect.objectContaining({ title: 'Reviewed Workspace paper' })
+    })
+    expect(transact).toHaveBeenCalledWith({
+      kind: 'set-project-item',
+      projectId: 'project-1',
+      itemId: libraryItem.id,
+      included: true,
+      source: 'library'
+    })
+    expect(transact.mock.calls.some(([command]) => command.kind === 'set-collection-item')).toBe(
+      false
+    )
+    expect(stageLocalFile).not.toHaveBeenCalled()
+    expect(importPdf).not.toHaveBeenCalled()
+    expect(deleteUpload).not.toHaveBeenCalled()
+    expect(useNavigationStore.getState().pendingLiteraturePdfImport).toBeUndefined()
   })
 
   it.each(['home', 'deleted', 'archived'] as const)('returns Home for a %s origin', (kind) => {

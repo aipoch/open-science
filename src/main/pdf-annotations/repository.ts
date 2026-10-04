@@ -1,3 +1,18 @@
+import { previewSharing, commitSharing } from './sharing'
+import { registerVerifiedPdfContent } from '../pdf-documents/identity'
+import type { PdfNativeAnnotationDraft } from './native-import-core'
+import type { PdfSharingPreview, PdfSharingDecision } from '../../shared/pdf-annotations'
+import {
+  bindingId,
+  bindingSource,
+  bindingWhere,
+  ensureBinding,
+  projectAnnotation,
+  resolveAnnotationId,
+  touchDocument,
+  removeDocumentSources,
+  type DocumentTransaction
+} from './document-store'
 import { Prisma, type PdfAnnotation as PdfAnnotationRow, type PrismaClient } from '@prisma/client'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
@@ -43,6 +58,13 @@ import {
 type Client = Pick<
   PrismaClient,
   | '$transaction'
+  | 'pdfDocument'
+  | 'contentBlob'
+  | 'uploadVersion'
+  | 'artifactVersion'
+  | 'pdfAnnotationDocument'
+  | 'pdfAnnotationSourceBinding'
+  | 'pdfAnnotationAlias'
   | 'pdfAnnotation'
   | 'pdfAnnotationImport'
   | 'tagAssignment'
@@ -53,6 +75,13 @@ type Client = Pick<
 >
 type Transaction = Pick<
   Prisma.TransactionClient,
+  | 'pdfDocument'
+  | 'contentBlob'
+  | 'uploadVersion'
+  | 'artifactVersion'
+  | 'pdfAnnotationDocument'
+  | 'pdfAnnotationSourceBinding'
+  | 'pdfAnnotationAlias'
   | 'pdfAnnotation'
   | 'pdfAnnotationImport'
   | 'tagAssignment'
@@ -116,8 +145,16 @@ const recover = (existing: PdfAnnotation, request: CreatePdfAnnotationRequest): 
 }
 
 const readAnnotations = async (
-  client: Pick<Transaction, 'tagAssignment'>,
-  rows: PdfAnnotationRow[]
+  client: Pick<
+    Transaction,
+    | 'tagAssignment'
+    | 'pdfAnnotationSourceBinding'
+    | 'project'
+    | 'projectDeletionIntent'
+    | 'literatureAttachmentVersion'
+  >,
+  rows: PdfAnnotationRow[],
+  preferredProjectId?: string
 ): Promise<PdfAnnotation[]> => {
   if (!rows.length) return []
   const assignments = await client.tagAssignment.findMany({
@@ -130,7 +167,50 @@ const readAnnotations = async (
     ids.push(tagId)
     byId.set(resourceId, ids)
   }
-  return rows.map((row) => annotationFromRow(row, byId.get(row.id) ?? []))
+  const sources = await client.pdfAnnotationSourceBinding.findMany({
+    where: { documentId: { in: rows.map((row) => row.documentId) } },
+    orderBy: { id: 'asc' }
+  })
+  const [projects, deletions, versions] = await Promise.all([
+    client.project.findMany({
+      where: {
+        id: { in: sources.flatMap((source) => (source.projectId ? [source.projectId] : [])) },
+        deletedAt: null
+      },
+      select: { id: true }
+    }),
+    client.projectDeletionIntent.findMany({ select: { projectId: true } }),
+    client.literatureAttachmentVersion.findMany({
+      where: {
+        id: { in: sources.filter((source) => !source.projectId).map((source) => source.versionId) },
+        attachment: { item: { deletedAt: null, mergedIntoItemId: null } }
+      },
+      select: { id: true }
+    })
+  ])
+  const activeProjects = new Set(projects.map((project) => project.id))
+  for (const deletion of deletions) activeProjects.delete(deletion.projectId)
+  const activeVersions = new Set(versions.map((version) => version.id))
+  const activeSources = sources.filter((source) =>
+    source.projectId ? activeProjects.has(source.projectId) : activeVersions.has(source.versionId)
+  )
+  return rows.flatMap((row) => {
+    const live = activeSources.filter((source) => source.documentId === row.documentId)
+    // Internal resource snapshots retain Trash records; prefer a live navigation route when one exists.
+    const candidates = live.length
+      ? live
+      : sources.filter((source) => source.documentId === row.documentId)
+    const source =
+      (preferredProjectId
+        ? (candidates.find((source) => source.projectId === preferredProjectId) ??
+          candidates.find((source) => source.projectId === null))
+        : undefined) ??
+      candidates.find(
+        (source) => source.projectId === row.projectId && source.versionId === row.versionId
+      ) ??
+      candidates[0]
+    return source ? [annotationFromRow(projectAnnotation(row, source), byId.get(row.id) ?? [])] : []
+  })
 }
 const replaceTags = async (
   transaction: Transaction,
@@ -158,7 +238,7 @@ const replaceTags = async (
 
 // Call from the resource owner's transaction; polymorphic assignments have no resource FK.
 const deletePdfAnnotations = async (
-  transaction: Pick<Transaction, 'pdfAnnotation' | 'pdfAnnotationImport' | 'tagAssignment'>,
+  transaction: DocumentTransaction,
   where: {
     id?: string | { in: string[] }
     projectId?: string | null
@@ -167,18 +247,12 @@ const deletePdfAnnotations = async (
     sourceFileId?: string | { in: string[] }
     versionId?: string
     updatedAt?: Date
+    document?: Prisma.PdfAnnotationWhereInput['document']
   }
 ): Promise<number> => {
   if (!where.id) {
-    await transaction.pdfAnnotationImport.deleteMany({
-      where: {
-        projectId: where.projectId,
-        sessionId: where.sessionId,
-        sourceKind: where.sourceKind,
-        sourceFileId: where.sourceFileId,
-        versionId: where.versionId
-      }
-    })
+    const { projectId, sourceKind, sourceFileId, versionId } = where
+    return removeDocumentSources(transaction, { projectId, sourceKind, sourceFileId, versionId })
   }
   const rows = await transaction.pdfAnnotation.findMany({ where, select: { id: true } })
   if (!rows.length) return 0
@@ -186,26 +260,28 @@ const deletePdfAnnotations = async (
   await transaction.tagAssignment.deleteMany({
     where: { resourceType: 'pdf.annotation', resourceId: { in: ids } }
   })
+  await transaction.pdfAnnotationAlias.updateMany({
+    where: { annotationId: { in: ids } },
+    data: { annotationId: null }
+  })
   return (await transaction.pdfAnnotation.deleteMany({ where: { id: { in: ids } } })).count
 }
 
-const scopeWhere = (
-  request: ListPdfAnnotationsRequest
-): {
-  projectId: string | null
-  sessionId?: null
-  sourceKind?: string
-  versionId?: string
-} => {
-  if (request.literatureVersionId && !request.projectId && !request.sessionId)
-    return {
-      projectId: null,
-      sessionId: null,
-      sourceKind: 'literature-attachment-version',
-      versionId: request.literatureVersionId
-    }
-  if (!request.literatureVersionId && request.projectId) return { projectId: request.projectId }
-  throw new Error('PDF annotation scope is not available.')
+const scopeWhere = (request: ListPdfAnnotationsRequest): Prisma.PdfAnnotationWhereInput => ({
+  document: { sources: { some: bindingWhere(request) } }
+})
+const scopedRow = async (
+  tx: Transaction,
+  row: PdfAnnotationRow,
+  scope: ListPdfAnnotationsRequest
+): Promise<PdfAnnotationRow> => {
+  const source = await tx.pdfAnnotationSourceBinding.findFirst({
+    where: { ...bindingWhere(scope), documentId: row.documentId },
+    orderBy: { id: 'asc' }
+  })
+  if (!source) throw new Error('PDF annotation source is not available.')
+  await requireDocumentOwner(tx, source)
+  return projectAnnotation(row, source)
 }
 
 const requireProject = async (
@@ -260,19 +336,151 @@ class PdfAnnotationRepository {
     tagsChanged = true
   ): Promise<void> {
     try {
-      await this.onChanged?.(
-        event ? { ...event, scope: pdfAnnotationScope(event.scope) } : undefined,
-        tagsChanged
-      )
+      if (!event) {
+        await this.onChanged?.(undefined, tagsChanged)
+        return
+      }
+      const client = await this.getClient()
+      const documents = await client.pdfAnnotationSourceBinding.findMany({
+        where: bindingWhere(event.scope),
+        select: { documentId: true }
+      })
+      const bindings = await client.pdfAnnotationSourceBinding.findMany({
+        where: { documentId: { in: documents.map((row) => row.documentId) } }
+      })
+      const scopes = new Map<string, PdfAnnotationScope>()
+      scopes.set(JSON.stringify(pdfAnnotationScope(event.scope)), pdfAnnotationScope(event.scope))
+      for (const source of bindings) {
+        const scope = source.projectId
+          ? { projectId: source.projectId }
+          : { literatureVersionId: source.versionId }
+        scopes.set(JSON.stringify(scope), scope)
+      }
+      for (const scope of scopes.values()) await this.onChanged?.({ ...event, scope }, tagsChanged)
     } catch (error) {
       log.warn('Could not publish committed PDF annotation changes', diagnosticErrorFields(error))
     }
   }
 
+  async registerVerifiedSource(source: PdfAnnotationSource, sizeBytes: number): Promise<boolean> {
+    const client = await this.getClient()
+    const result = await client.$transaction(async (tx) => {
+      await requireDocumentOwner(tx, {
+        ...source,
+        sourceKind: source.kind,
+        projectId: source.projectId ?? null
+      })
+      const document = await registerVerifiedPdfContent(tx, {
+        checksum: source.checksum,
+        sizeBytes: BigInt(sizeBytes)
+      })
+      const previous = await tx.pdfAnnotationSourceBinding.findUnique({
+        where: { id: bindingId(source) }
+      })
+      const binding = await ensureBinding(tx, source, document)
+      return {
+        changed: previous?.documentId !== binding.documentId,
+        pending:
+          (await tx.pdfAnnotationDocument.count({ where: { pdfDocumentId: document.id } })) > 1
+      }
+    })
+    if (result.changed) await this.notifySharing(source)
+    return result.pending
+  }
+
+  async reconcileSource(
+    source: PdfAnnotationSource,
+    sizeBytes: number,
+    drafts: readonly PdfNativeAnnotationDraft[],
+    token?: string,
+    decisions: readonly PdfSharingDecision[] = []
+  ): Promise<PdfSharingPreview | null> {
+    const client = await this.getClient()
+    let merged = false
+    const result = await client.$transaction(async (tx) => {
+      await requireDocumentOwner(tx, {
+        ...source,
+        sourceKind: source.kind,
+        projectId: source.projectId ?? null
+      })
+      const binding = await ensureBinding(tx, source)
+      const document = await tx.pdfAnnotationDocument.findUniqueOrThrow({
+        where: { id: binding.documentId }
+      })
+      if (!document.pdfDocumentId || document.sizeBytes !== BigInt(sizeBytes))
+        throw new Error('PDF content identity is not verified.')
+      const groups = await tx.pdfAnnotationDocument.findMany({
+        where: { pdfDocumentId: document.pdfDocumentId, id: { not: document.pdfDocumentId } },
+        orderBy: { id: 'asc' }
+      })
+      for (const group of groups) {
+        const documents = { left: document.pdfDocumentId, right: group.id }
+        const context = `reconcile:${document.pdfDocumentId}`
+        const preview = await previewSharing(tx, source, source, drafts, context, documents)
+        if (preview.conflicts.length && !token) return preview
+        await commitSharing(
+          tx,
+          source,
+          source,
+          sizeBytes,
+          drafts,
+          context,
+          token ?? preview.token,
+          decisions,
+          documents
+        )
+        merged = true
+        // A decision token covers exactly one conflicting group. The next group is reviewed anew.
+        if (token) return { ...preview, committed: true, shared: true }
+      }
+      return null
+    })
+    if (merged) await this.notifySharing(source)
+    return result
+  }
+
+  async previewSharing(
+    source: PdfAnnotationSource,
+    target: PdfAnnotationSource,
+    drafts: readonly PdfNativeAnnotationDraft[],
+    context: string
+  ): Promise<PdfSharingPreview> {
+    const client = await this.getClient()
+    return client.$transaction((tx) => previewSharing(tx, source, target, drafts, context))
+  }
+  async commitSharing(
+    tx: Prisma.TransactionClient,
+    source: PdfAnnotationSource,
+    target: PdfAnnotationSource,
+    sizeBytes: number,
+    drafts: readonly PdfNativeAnnotationDraft[],
+    context: string,
+    token: string,
+    decisions: readonly PdfSharingDecision[]
+  ): Promise<void> {
+    for (const value of [source, target])
+      await requireDocumentOwner(tx, {
+        ...value,
+        sourceKind: value.kind,
+        projectId: value.projectId ?? null
+      })
+    await commitSharing(tx, source, target, sizeBytes, drafts, context, token, decisions)
+  }
+  async notifySharing(source: PdfAnnotationSource): Promise<void> {
+    await this.notifyChanged({
+      scope: source.projectId
+        ? { projectId: source.projectId }
+        : { literatureVersionId: source.versionId }
+    })
+  }
+
   async get(id: string): Promise<PdfAnnotation | undefined> {
     const client = await this.getClient()
     return client.$transaction(async (transaction) => {
-      const row = await transaction.pdfAnnotation.findUnique({ where: { id } })
+      const resolvedId = await resolveAnnotationId(transaction, id)
+      const row = resolvedId
+        ? await transaction.pdfAnnotation.findUnique({ where: { id: resolvedId } })
+        : null
       return row ? (await readAnnotations(transaction, [row]))[0] : undefined
     })
   }
@@ -282,9 +490,7 @@ class PdfAnnotationRepository {
     const limit = request.limit ?? 50
     const scope = {
       ...scopeWhere(request),
-      ...(request.id ? { id: request.id } : {}),
-      ...(request.sourceFileId ? { sourceFileId: request.sourceFileId } : {}),
-      ...(!request.literatureVersionId && request.versionId ? { versionId: request.versionId } : {})
+      ...(request.id ? { id: request.id } : {})
     }
     const after = request.cursor
       ? {
@@ -295,6 +501,11 @@ class PdfAnnotationRepository {
         }
       : {}
     return client.$transaction(async (transaction) => {
+      if (request.id) {
+        const id = await resolveAnnotationId(transaction, request.id)
+        if (!id) return { items: [], total: 0 }
+        scope.id = id
+      }
       if (request.projectId) await requireProject(transaction, request.projectId)
       const rows = await transaction.pdfAnnotation.findMany({
         where: { ...scope, ...after },
@@ -302,22 +513,51 @@ class PdfAnnotationRepository {
         take: limit + 1
       })
       const total = await transaction.pdfAnnotation.count({ where: scope })
-      const page = await readAnnotations(transaction, rows.slice(0, limit))
+      const documents = await transaction.pdfAnnotationDocument.findMany({
+        where: { sources: { some: bindingWhere(request) } },
+        include: { sources: { orderBy: { id: 'asc' } } }
+      })
+      const sourceGroups = documents
+        .filter((document) => document.sources.length > 1)
+        .map((document) => document.sources.map(bindingSource))
+      const pending = await transaction.pdfAnnotationDocument.findMany({
+        where: {
+          pdfDocumentId: {
+            in: documents.flatMap((document) =>
+              document.pdfDocumentId ? [document.pdfDocumentId] : []
+            )
+          }
+        },
+        select: { id: true, pdfDocumentId: true }
+      })
+      const reconciliationSources = documents
+        .filter(
+          (document) =>
+            document.pdfDocumentId &&
+            pending.some(
+              (group) => group.pdfDocumentId === document.pdfDocumentId && group.id !== document.id
+            )
+        )
+        .flatMap((document) => document.sources.map(bindingSource))
+      const projected = await Promise.all(
+        rows.slice(0, limit).map((row) => scopedRow(transaction, row, request))
+      )
+      const page = await readAnnotations(transaction, projected)
       const last = rows.length > limit ? page.at(-1) : undefined
       const receipt =
         !request.cursor &&
         (request.literatureVersionId || (request.sourceFileId && request.versionId))
           ? await transaction.pdfAnnotationImport.findFirst({
               where: {
-                projectId: request.projectId ?? null,
-                versionId: request.literatureVersionId ?? request.versionId,
-                sourceFileId: request.sourceFileId
+                document: { sources: { some: bindingWhere(request) } }
               }
             })
           : null
       return {
         items: page,
         total,
+        ...(sourceGroups.length ? { sourceGroups } : {}),
+        ...(reconciliationSources.length ? { reconciliationSources } : {}),
         ...(receipt
           ? { nativeImport: pdfNativeImportReceiptSchema.parse(JSON.parse(receipt.resultJson)) }
           : {}),
@@ -329,10 +569,17 @@ class PdfAnnotationRepository {
   async recoverCreate(request: CreatePdfAnnotationRequest): Promise<PdfAnnotation | undefined> {
     const client = await this.getClient()
     return client.$transaction(async (transaction) => {
+      if (await transaction.pdfAnnotationAlias.findUnique({ where: { id: request.id } }))
+        throw new Error('PDF annotation was reconciled. Reload annotations and try again.')
       const existing = await transaction.pdfAnnotation.findUnique({ where: { id: request.id } })
-      if (existing) await requireDocumentOwner(transaction, existing)
+      if (existing) await scopedRow(transaction, existing, request)
       return existing
-        ? recover((await readAnnotations(transaction, [existing]))[0], request)
+        ? recover(
+            (
+              await readAnnotations(transaction, [await scopedRow(transaction, existing, request)])
+            )[0],
+            request
+          )
         : undefined
     })
   }
@@ -347,6 +594,9 @@ class PdfAnnotationRepository {
     if (existing) return existing
     try {
       const created = await client.$transaction(async (transaction) => {
+        // Reconciliation may commit after the optimistic idempotency lookup.
+        if (await transaction.pdfAnnotationAlias.findUnique({ where: { id: request.id } }))
+          throw new Error('PDF annotation was reconciled. Reload annotations and try again.')
         await requireDocumentOwner(transaction, {
           projectId: request.projectId ?? null,
           sourceKind: source.kind,
@@ -354,9 +604,11 @@ class PdfAnnotationRepository {
           sourceFileId: source.sourceFileId,
           checksum: source.checksum
         })
+        const binding = await ensureBinding(transaction, source)
         const row = await transaction.pdfAnnotation.create({
           data: {
             id: request.id,
+            documentId: binding.documentId,
             projectId: request.projectId,
             sessionId:
               request.createdInSessionId === undefined
@@ -378,6 +630,7 @@ class PdfAnnotationRepository {
             createdAt: request.createdAt ? new Date(request.createdAt) : undefined
           }
         })
+        await touchDocument(transaction, binding.documentId)
         await replaceTags(transaction, row.id, request.tagIds)
         return (await readAnnotations(transaction, [row]))[0]
       })
@@ -399,12 +652,12 @@ class PdfAnnotationRepository {
   // avoids opening a SQLite transaction for every imported mark while retaining the same source
   // validation and idempotent IDs as create().
   async nativeImportReceipt(
-    scope: PdfAnnotationScope,
+    _scope: PdfAnnotationScope,
     source: PdfAnnotationSource
   ): Promise<PdfNativeImportReceipt | undefined> {
     const client = await this.getClient()
-    const row = await client.pdfAnnotationImport.findUnique({
-      where: { id: importReceiptId(scope, source) }
+    const row = await client.pdfAnnotationImport.findFirst({
+      where: { document: { sources: { some: { id: bindingId(source) } } } }
     })
     return row ? pdfNativeImportReceiptSchema.parse(JSON.parse(row.resultJson)) : undefined
   }
@@ -453,12 +706,19 @@ class PdfAnnotationRepository {
         sourceFileId: source.sourceFileId,
         checksum: source.checksum
       })
+      const binding = await ensureBinding(transaction, source)
       if (receipt) {
         const id = importReceiptId(receipt.scope, source)
-        if (await transaction.pdfAnnotationImport.findUnique({ where: { id } })) return 0
+        if (
+          await transaction.pdfAnnotationImport.findUnique({
+            where: { documentId: binding.documentId }
+          })
+        )
+          return 0
         await transaction.pdfAnnotationImport.create({
           data: {
             id,
+            documentId: binding.documentId,
             projectId: importScope.projectId,
             sessionId: importScope.sessionId,
             sourceKind: source.kind,
@@ -475,11 +735,21 @@ class PdfAnnotationRepository {
       })
       const existingIds = new Set(existing.map(({ id }) => id))
       const pending = uniqueRequests.filter((request) => !existingIds.has(request.id))
+      await touchDocument(transaction, binding.documentId)
       if (pending.length === 0) return 0
       return (
         await transaction.pdfAnnotation.createMany({
           data: pending.map((request) => ({
             id: request.id,
+            documentId: binding.documentId,
+            nativeKey:
+              request.origin === 'imported' && /^native:[a-f0-9]{32}:[a-f0-9]{64}$/.test(request.id)
+                ? request.id.slice(-64)
+                : null,
+            nativeBaselineJson:
+              request.origin === 'imported'
+                ? JSON.stringify({ note: request.note, color: request.color ?? null, tagIds: [] })
+                : null,
             projectId: request.projectId,
             sessionId:
               request.createdInSessionId === undefined
@@ -509,6 +779,8 @@ class PdfAnnotationRepository {
 
   async update(request: UpdatePdfAnnotationRequest): Promise<PdfAnnotation> {
     const client = await this.getClient()
+    if (await client.pdfAnnotationAlias.findUnique({ where: { id: request.id } }))
+      throw new Error('PDF annotation was reconciled. Reload annotations and try again.')
     const scope = {
       id: request.id,
       ...scopeWhere(request),
@@ -518,7 +790,7 @@ class PdfAnnotationRepository {
       const current = await transaction.pdfAnnotation.findFirst({ where: scope })
       if (!current)
         throw new Error('PDF annotation not found or changed. Reload annotations and try again.')
-      await requireDocumentOwner(transaction, current)
+      await scopedRow(transaction, current, request)
       const updated = await transaction.pdfAnnotation.updateMany({
         where: scope,
         data: {
@@ -528,12 +800,13 @@ class PdfAnnotationRepository {
         }
       })
       if (!updated.count) throw new Error('PDF annotation not found.')
+      await touchDocument(transaction, current.documentId)
       if (request.tagIds) await replaceTags(transaction, request.id, request.tagIds)
       const row = await transaction.pdfAnnotation.findFirst({
         where: { id: request.id, ...scopeWhere(request) }
       })
       if (!row) throw new Error('PDF annotation not found.')
-      return (await readAnnotations(transaction, [row]))[0]
+      return (await readAnnotations(transaction, [await scopedRow(transaction, row, request)]))[0]
     })
     await this.notifyChanged(
       { scope: request, id: result.id, updatedAt: result.updatedAt },
@@ -548,9 +821,13 @@ class PdfAnnotationRepository {
     const scope = { id: request.id, ...scopeWhere(request) }
     const count = await client.$transaction(async (transaction) => {
       const existing = await transaction.pdfAnnotation.findFirst({ where: scope })
-      if (existing) await requireDocumentOwner(transaction, existing)
+      if (existing) {
+        await scopedRow(transaction, existing, request)
+        await touchDocument(transaction, existing.documentId)
+      }
       const count = await deletePdfAnnotations(transaction, {
-        ...scope,
+        id: request.id,
+        document: scope.document,
         ...(expectedUpdatedAt ? { updatedAt: new Date(expectedUpdatedAt) } : {})
       })
       if (!count && expectedUpdatedAt)

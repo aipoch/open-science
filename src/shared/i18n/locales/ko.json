@@ -139,9 +139,7 @@
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "Cellosaurus의 세포주 식별 정보, 유래, 질환, 품질 기록 및 데이터베이스 매핑.",
     "Search cell lines by name or synonym.": "이름 또는 동의어로 세포주 검색.",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "CVCL 또는 RRID로 세포주 식별 정보, 유래, 품질 기록 및 데이터베이스 매핑 조회.",
-
     "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "단백질 서열, 서열 동일성 및 쿼리 서열 커버리지로 PDB 실험 구조를 검색하고 엔터티, 사슬 및 정렬 세부 정보를 조회합니다.",
-
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "Monarch Initiative를 통한 질병 및 유전자와 표현형의 연관성과 근거 출처.",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "질병과 표현형의 연관성, 근거 출처 및 관계 유형을 조회합니다.",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "유전자와 표현형의 연관성, 근거 출처 및 관계 유형을 조회합니다.",
@@ -6857,12 +6855,31 @@
     "Unsaved changes": "저장하지 않은 변경 사항",
     "Your network rules have not been saved. Discard them and leave?": "네트워크 규칙을 저장하지 않았습니다. 변경 사항을 버리고 나가시겠습니까?",
     "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "이렇게 하면 Notebook 코드가 {{domain}}에서 데이터를 읽고 해당 도메인으로 데이터를 보낼 수 있습니다. 신뢰하는 도메인만 허용하세요. 저장된 액세스 권한은 언제든지 설정 > 네트워크 > Notebook 네트워크 액세스에서 취소할 수 있습니다.",
+    "Choose what to keep": "유지할 내용 선택",
+    "Deleted or not imported": "삭제되었거나 가져오지 않음",
+    "Keep both as separate notes": "별도 노트로 둘 다 유지",
+    "Keep deleted": "삭제 상태 유지",
+    "No comment": "댓글 없음",
+    "Notes are shared with linked sources. Edits and deletions apply everywhere.": "노트가 연결된 출처와 공유됩니다. 편집과 삭제는 모든 진입점에 적용됩니다.",
+    "Resolve annotation conflict": "주석 충돌 해결",
+    "These notes have conflicting edits or deletions. Choose what to keep.": "이 노트에는 편집 또는 삭제 충돌이 있습니다. 유지할 내용을 선택하세요.",
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "이 이전 주석의 원래 식별 정보를 확인할 수 없습니다. 유지 방법을 선택하세요.",
     "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "IEDB의 면역 에피토프, T/B 세포 및 MHC 실험, 항원 및 문헌 근거입니다.",
     "Search immune epitopes by sequence, host, antigen and MHC.": "서열, 숙주, 항원 및 MHC로 면역 에피토프를 검색합니다.",
     "Search epitope source antigens and UniProt references.": "에피토프 유래 항원과 UniProt 참조를 검색합니다.",
     "Retrieve T cell experiments, measurements and literature evidence.": "T 세포 실험, 측정 결과 및 문헌 근거를 가져옵니다.",
     "Retrieve B cell experiments, measurements and literature evidence.": "B 세포 실험, 측정 결과 및 문헌 근거를 가져옵니다.",
     "Retrieve MHC binding and ligand elution experiments with methods and units.": "방법과 단위를 포함한 MHC 결합 및 리간드 용출 실험을 가져옵니다.",
-    "Find IEDB references and PubMed identifiers for experimental evidence.": "실험 근거에 대한 IEDB 문헌과 PubMed 식별자를 찾습니다."
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "실험 근거에 대한 IEDB 문헌과 PubMed 식별자를 찾습니다.",
+    "Add to Literature": "문헌 라이브러리에 추가",
+    "Notes changed or the source is unavailable. Review the current notes before retrying.": "노트가 변경되었거나 원본을 사용할 수 없습니다. 현재 노트를 확인한 후 다시 시도하세요.",
+    "Resolve historical note conflicts": "이전 노트 충돌 해결",
+    "Apply choices": "선택 적용",
+    "Existing notes": "기존 노트",
+    "Historical notes": "이전 노트",
+    "Keep existing note": "기존 노트 유지",
+    "Keep historical note": "이전 노트 유지",
+    "Include shared PDF notes and annotations from all projects as a read-only snapshot": "모든 프로젝트의 공유 PDF 노트와 주석을 읽기 전용 스냅샷으로 포함",
+    "Read-only snapshot": "읽기 전용 스냅샷"
   }
 }

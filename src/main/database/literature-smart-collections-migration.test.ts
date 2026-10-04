@@ -34,7 +34,7 @@ it('adds empty smart storage while preserving ordinary collections, membership a
     ])
       await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
     await client.$executeRawUnsafe(
-      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay')"
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing')"
     )
     await client.sessionAuxiliaryTurnUsage.create({
       data: {
@@ -55,7 +55,8 @@ it('adds empty smart storage while preserving ordinary collections, membership a
         '0044_literature_smart_collections',
         '0045_literature_smart_pause_run',
         '0046_journal_attributes',
-        '0047_session_replay'
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing'
       ]
     })
     expect(await client.literatureCollection.findMany({ include: { items: true } })).toEqual(before)

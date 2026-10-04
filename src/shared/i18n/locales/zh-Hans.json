@@ -139,9 +139,7 @@
     "Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.": "来自 Cellosaurus 的细胞系身份、来源、疾病、质量记录和数据库映射。",
     "Search cell lines by name or synonym.": "按名称或别名搜索细胞系。",
     "Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.": "通过 CVCL 或 RRID 获取细胞系身份、来源、质量记录和数据库映射。",
-
     "Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.": "根据蛋白质序列、序列一致性和查询序列覆盖率搜索 PDB 实验结构，返回实体、链和比对详情。",
-
     "Disease and gene phenotype associations with evidence sources via Monarch Initiative.": "通过 Monarch Initiative 查询疾病和基因的表型关联及证据来源。",
     "Retrieve disease–phenotype associations with evidence sources and relation types.": "查询疾病—表型关联及其证据来源和关系类型。",
     "Retrieve gene–phenotype associations with evidence sources and relation types.": "查询基因—表型关联及其证据来源和关系类型。",
@@ -6859,12 +6857,31 @@
     "Unsaved changes": "有未保存的更改",
     "Your network rules have not been saved. Discard them and leave?": "网络规则尚未保存。要放弃更改并离开吗？",
     "This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.": "这将允许 Notebook 代码从 {{domain}} 读取数据并向其发送数据。仅允许您信任的域名。您可以随时在“设置 > 网络 > Notebook 网络访问”中撤销已保存的访问权限。",
+    "Choose what to keep": "选择保留内容",
+    "Deleted or not imported": "已删除或未导入",
+    "Keep both as separate notes": "保留为两条独立笔记",
+    "Keep deleted": "保持删除",
+    "No comment": "无评论",
+    "Notes are shared with linked sources. Edits and deletions apply everywhere.": "笔记已与关联来源共享。编辑和删除会在所有入口生效。",
+    "Resolve annotation conflict": "解决批注冲突",
+    "These notes have conflicting edits or deletions. Choose what to keep.": "这些笔记存在编辑或删除冲突。请选择保留内容。",
+    "This historical annotation has no verifiable original identity. Choose how to retain it.": "无法验证此历史批注的原始身份。请选择保留方式。",
     "Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.": "IEDB 的免疫表位、T/B 细胞与 MHC 实验、抗原及文献证据。",
     "Search immune epitopes by sequence, host, antigen and MHC.": "按序列、宿主、抗原和 MHC 搜索免疫表位。",
     "Search epitope source antigens and UniProt references.": "搜索表位来源抗原及 UniProt 引用。",
     "Retrieve T cell experiments, measurements and literature evidence.": "获取 T 细胞实验、测量结果和文献证据。",
     "Retrieve B cell experiments, measurements and literature evidence.": "获取 B 细胞实验、测量结果和文献证据。",
     "Retrieve MHC binding and ligand elution experiments with methods and units.": "获取 MHC 结合与配体洗脱实验，包括方法和单位。",
-    "Find IEDB references and PubMed identifiers for experimental evidence.": "查找实验支持证据的 IEDB 文献记录和 PubMed 标识符。"
+    "Find IEDB references and PubMed identifiers for experimental evidence.": "查找实验支持证据的 IEDB 文献记录和 PubMed 标识符。",
+    "Add to Literature": "添加到文献库",
+    "Notes changed or the source is unavailable. Review the current notes before retrying.": "笔记已更改或来源不可用。请查看当前笔记后重试。",
+    "Resolve historical note conflicts": "解决历史笔记冲突",
+    "Apply choices": "应用选择",
+    "Existing notes": "现有笔记",
+    "Historical notes": "历史笔记",
+    "Keep existing note": "保留现有笔记",
+    "Keep historical note": "保留历史笔记",
+    "Include shared PDF notes and annotations from all projects as a read-only snapshot": "将所有项目共享的 PDF 笔记和批注作为只读快照导出",
+    "Read-only snapshot": "只读快照"
   }
 }

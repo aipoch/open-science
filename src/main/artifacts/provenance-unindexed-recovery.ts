@@ -1,3 +1,4 @@
+import { bindManagedPdfVersion } from '../pdf-annotations/document-store'
 import type { Dirent } from 'node:fs'
 import { mkdir, readFile, readdir, rename } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -479,6 +480,7 @@ class ArtifactProvenanceUnindexedRecovery {
           createdAt: new Date(createdAtValue)
         }
       })
+      await bindManagedPdfVersion(transaction, 'artifact-version', input.versionId)
     })
   }
 

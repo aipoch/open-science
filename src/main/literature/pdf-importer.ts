@@ -1,9 +1,12 @@
+import type { PdfAddToLiteratureRequest, PdfAnnotationSource } from '../../shared/pdf-annotations'
+import { literatureItemInputSchema } from '../../shared/literature'
 import { nativeImportReceipt } from '../pdf-annotations/native-import'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import {
   parseNativePdfAnnotations,
   type NativePdfAnnotationImportResult
 } from '../pdf-annotations/native-import'
+import { createReadStream } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -30,10 +33,34 @@ import type { CreatePdfAnnotationRequest } from '../../shared/pdf-annotations'
 type LiteraturePdfImporterOptions = Readonly<{
   uploads: Pick<UploadRepository, 'deleteUpload' | 'resolveManagedUploadPath'>
   content: Pick<ContentRepository, 'withPublishedContent' | 'verify' | 'sweep'>
-  catalog: Pick<LiteratureCatalog, 'attachContent' | 'get'>
+  catalog: Pick<LiteratureCatalog, 'attachContent' | 'get' | 'findItemByPdf'>
   annotations?: Pick<PdfAnnotationRepository, 'createMany'>
+  workspace?: {
+    annotations: Pick<PdfAnnotationRepository, 'notifySharing'>
+    sources: {
+      withVerifiedSource<T>(
+        source: PdfAnnotationSource,
+        operation: (
+          lease: { path: string; size: number; verifyUnchanged(): Promise<void> },
+          canonical: PdfAnnotationSource
+        ) => Promise<T>
+      ): Promise<T>
+    }
+  }
   onNativeImportProgress?: (progress: PdfNativeAnnotationImportProgress) => void
 }>
+
+// Lease authority checks can query SQLite; inside a catalog transaction only read frozen bytes.
+const verifySharingBytes = async (path: string, checksum: string, size: number): Promise<void> => {
+  const hash = createHash('sha256')
+  let length = 0
+  for await (const chunk of createReadStream(path)) {
+    length += chunk.length
+    hash.update(chunk)
+  }
+  if (length !== size || hash.digest('hex') !== checksum)
+    throw new Error('PDF contents do not match.')
+}
 
 const assertPdfHeader = async (path: string): Promise<void> => {
   const handle = await open(path, 'r')
@@ -69,6 +96,69 @@ class LiteraturePdfImporter {
     if (!controller) return { cancelled: false }
     controller.abort(new Error('PDF annotation import cancelled.'))
     return { cancelled: true }
+  }
+
+  async addToLiterature(
+    request: PdfAddToLiteratureRequest,
+    signal?: AbortSignal
+  ): Promise<LiteraturePdfImportReceipt> {
+    const workspace = this.options.workspace
+    if (!workspace) throw new Error('Workspace PDF import is unavailable.')
+    return workspace.sources.withVerifiedSource(request.source, async (lease, source) => {
+      signal?.throwIfAborted()
+      await assertPdfHeader(lease.path)
+      let pageCount: number | undefined
+      if (lease.size <= MAX_AUTO_EXTRACT_PDF_BYTES) {
+        try {
+          pageCount = await inspectPdfPageCount(lease.path)
+        } catch (error) {
+          throw pdfImportParseError(error)
+        }
+      }
+      await lease.verifyUnchanged()
+      signal?.throwIfAborted()
+      const existing = request.itemId
+        ? await this.options.catalog.get(request.itemId)
+        : await this.options.catalog.findItemByPdf(source.checksum, lease.size)
+      if (request.itemId && (!existing || existing.deletedAt || existing.mergedIntoItemId))
+        throw new Error('Literature Item is unavailable.')
+      const itemId = existing?.id ?? `pdf-import:${request.operationId}`
+      const newItem = existing
+        ? undefined
+        : literatureItemInputSchema.parse({
+            itemType: 'journalArticle',
+            title: request.title
+          })
+      return this.options.content.withPublishedContent(
+        { sourcePath: lease.path, contentType: 'application/pdf' },
+        async (content) => {
+          if (content.checksum !== source.checksum || Number(content.sizeBytes) !== lease.size)
+            throw new Error('PDF contents do not match.')
+          await lease.verifyUnchanged()
+          signal?.throwIfAborted()
+          const attached = await this.options.catalog.attachContent(
+            {
+              itemId,
+              contentBlobId: content.id,
+              filename: source.name,
+              contentType: 'application/pdf',
+              sizeBytes: lease.size,
+              checksum: source.checksum,
+              pageCount
+            },
+            async () => {
+              signal?.throwIfAborted()
+              await verifySharingBytes(lease.path, source.checksum, lease.size)
+            },
+            newItem
+          )
+          await workspace.annotations.notifySharing(source)
+          const item = await this.options.catalog.get(attached.itemId ?? itemId)
+          if (!item) throw new Error('Literature Item is unavailable.')
+          return { item }
+        }
+      )
+    })
   }
 
   async import(

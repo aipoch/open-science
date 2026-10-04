@@ -1,7 +1,9 @@
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { createUploadVersionReference } from '../../shared/uploads'
 import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
 import type { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import type { PdfAnnotationScope, PdfAnnotationSource } from '../../shared/pdf-annotations'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
@@ -25,6 +27,8 @@ import type {
   ListPdfAnnotationsRequest,
   UpdatePdfAnnotationRequest,
   PdfAnnotation,
+  PdfReconcileRequest,
+  PdfSharingPreview,
   PdfAnnotationListResult,
   DeletePdfAnnotationResult,
   PdfNativeAnnotationCancelRequest,
@@ -32,6 +36,12 @@ import type {
   PdfNativeAnnotationImportRequest,
   PdfNativeAnnotationImportResult
 } from '../../shared/pdf-annotations'
+
+const log = createLogger('pdf-annotations')
+
+const isPdfVersion = (version: { filename: string; contentType?: string }): boolean =>
+  version.contentType?.split(';', 1)[0].trim().toLowerCase() === 'application/pdf' ||
+  version.filename.toLowerCase().endsWith('.pdf')
 
 type Options = Readonly<{
   repository: Pick<
@@ -44,8 +54,11 @@ type Options = Readonly<{
     | 'delete'
     | 'createMany'
     | 'nativeImportReceipt'
+    | 'registerVerifiedSource'
+    | 'reconcileSource'
   >
   literature: Pick<LiteratureAttachmentAuthority, 'resolveVersion' | 'openContent'>
+  packageNotes?: (request: ListPdfAnnotationsRequest) => Promise<PdfAnnotationListResult>
   sessions: SessionAuthority
   runWithSessionAuthority: <T>(
     projectId: string,
@@ -101,32 +114,42 @@ class PdfAnnotationService {
     projectId: string,
     sessionId: string,
     writable: boolean
-  ): Promise<void> {
+  ): Promise<PersistedChatSession> {
     const loaded = await this.options.sessions.loadSessionWithDiagnostics(projectId, sessionId)
     if (loaded.status !== 'found' || loaded.session.projectId !== projectId)
       throw new Error('Session not available.')
     if (writable && loaded.session.packageOrigin)
       throw new Error('Imported Sessions are read-only.')
+    return loaded.session
+  }
+
+  private async prepareSource(
+    source: PdfAnnotationSource,
+    lease: { path: string; size: number },
+    signal = this.shutdown.signal
+  ): Promise<void> {
+    if (await this.options.repository.registerVerifiedSource(source, lease.size)) {
+      const parsed = await parseNativePdfAnnotations(lease.path, { signal }).catch((error) => {
+        signal.throwIfAborted()
+        if (error instanceof Error && error.name === 'AbortError') throw error
+        // Keep historical groups pending: a failed parse is not an empty native baseline.
+        log.warn(
+          'Could not prepare native PDF annotation reconciliation',
+          diagnosticErrorFields(error)
+        )
+        return undefined
+      })
+      signal.throwIfAborted()
+      if (!parsed) return
+      await this.options.repository.reconcileSource(source, lease.size, parsed.annotations)
+    }
   }
 
   private async librarySource(versionId: string): Promise<PdfAnnotationSource> {
     const version = await this.options.literature.resolveVersion(versionId)
-    if (
-      !version ||
-      version.versionId !== versionId ||
-      !(
-        version.contentType.split(';', 1)[0].trim().toLowerCase() === 'application/pdf' ||
-        version.filename.toLowerCase().endsWith('.pdf')
-      )
-    )
+    if (!version || version.versionId !== versionId || !isPdfVersion(version))
       throw new Error('PDF annotation source is not available.')
-    const lease = await this.options.literature.openContent(versionId)
-    try {
-      await lease.verifyUnchanged()
-    } finally {
-      await lease.close()
-    }
-    return {
+    const source: PdfAnnotationSource = {
       kind: 'literature-attachment-version',
       sourceFileId: version.attachmentId,
       versionId,
@@ -134,6 +157,14 @@ class PdfAnnotationService {
       name: version.filename,
       path: createLiteratureAttachmentVersionReference(versionId)
     }
+    const lease = await this.options.literature.openContent(versionId)
+    try {
+      await lease.verifyUnchanged()
+      await this.prepareSource(source, lease)
+    } finally {
+      await lease.close()
+    }
+    return source
   }
 
   private withScope<T>(scope: PdfAnnotationScope, operation: () => Promise<T>): Promise<T> {
@@ -151,8 +182,35 @@ class PdfAnnotationService {
       const source = await this.librarySource(request.literatureVersionId)
       return { ...(await this.options.repository.list(request)), source }
     }
-    if (request.sessionId) await this.requireSession(request.projectId!, request.sessionId, false)
-    return this.options.repository.list(request)
+    const session = request.sessionId
+      ? await this.requireSession(request.projectId!, request.sessionId, false)
+      : undefined
+    if (session?.packageOrigin) {
+      const snapshot = (await this.options.packageNotes?.(request)) ?? { items: [], total: 0 }
+      return { ...snapshot, readOnly: true }
+    }
+    const current = await this.options.repository.list(request)
+    if (!session?.forkOrigin || !this.options.packageNotes) return current
+    const snapshot = await this.options.packageNotes(request)
+    const candidates = [...current.items, ...snapshot.items].sort(
+      (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
+    )
+    const items = candidates.slice(0, request.limit ?? 50)
+    const last =
+      candidates.length > items.length || current.nextCursor || snapshot.nextCursor
+        ? items.at(-1)
+        : undefined
+    return {
+      ...current,
+      items,
+      total: current.total + snapshot.total,
+      nativeImport: current.nativeImport ?? snapshot.nativeImport,
+      snapshotTags: snapshot.snapshotTags,
+      readonlyIds: items
+        .filter((note) => snapshot.readonlyIds?.includes(note.id))
+        .map((note) => note.id),
+      nextCursor: last ? { createdAt: last.createdAt, id: last.id } : undefined
+    }
   }
 
   private async resolveDocumentSource(
@@ -169,10 +227,7 @@ class PdfAnnotationService {
     if (
       !resolved?.openContent ||
       resolved.sourceKind !== source.kind ||
-      !(
-        resolved.contentType?.split(';', 1)[0].trim().toLowerCase() === 'application/pdf' ||
-        resolved.filename.toLowerCase().endsWith('.pdf')
-      ) ||
+      !isPdfVersion(resolved) ||
       resolved.sourceFileId !== source.sourceFileId ||
       resolved.sourceVersionId !== source.versionId ||
       resolved.checksum !== source.checksum
@@ -181,10 +236,77 @@ class PdfAnnotationService {
     const lease = await resolved.openContent()
     try {
       await lease.verifyUnchanged()
+      await this.prepareSource(projectDocumentSource(source.projectId, resolved), lease)
     } finally {
       await lease.close()
     }
     return { ok: true, source: projectDocumentSource(source.projectId, resolved) }
+  }
+
+  // Retain the session barrier and verified immutable lease through the consuming operation.
+  async withVerifiedSource<T>(
+    source: PdfAnnotationSource,
+    operation: (
+      lease: { path: string; size: number; verifyUnchanged(): Promise<void> },
+      canonical: PdfAnnotationSource
+    ) => Promise<T>
+  ): Promise<T> {
+    if (source.kind === 'literature-attachment-version') {
+      const canonical = await this.librarySource(source.versionId)
+      if (!isDeepStrictEqual(canonical, source))
+        throw new Error('PDF annotation source is not available.')
+      const lease = await this.options.literature.openContent(source.versionId)
+      try {
+        await lease.verifyUnchanged()
+        return await operation(lease, canonical)
+      } finally {
+        await lease.close()
+      }
+    }
+    if (!source.projectId || !source.sessionId)
+      throw new Error('PDF annotation source is not available.')
+    return this.options.runWithSessionAuthority(source.projectId, source.sessionId, async () => {
+      await this.requireSession(source.projectId!, source.sessionId!, true)
+      const resolved = await this.options.resolveSessionPdfVersion({
+        projectId: source.projectId!,
+        sourceKind: source.kind as 'upload-version' | 'artifact-version',
+        sourceFileId: source.sourceFileId,
+        versionId: source.versionId
+      })
+      if (
+        !resolved?.openContent ||
+        resolved.sourceKind === 'literature-attachment-version' ||
+        !isPdfVersion(resolved) ||
+        resolved.checksum !== source.checksum
+      )
+        throw new Error('PDF annotation source is not available.')
+      const canonical = projectDocumentSource(source.projectId!, resolved)
+      if (!isDeepStrictEqual(canonical, source))
+        throw new Error('PDF annotation source is not available.')
+      const lease = await resolved.openContent()
+      try {
+        await lease.verifyUnchanged()
+        await this.prepareSource(canonical, lease)
+        return await operation(lease, canonical)
+      } finally {
+        await lease.close()
+      }
+    })
+  }
+
+  async reconcile(request: PdfReconcileRequest): Promise<PdfSharingPreview | null> {
+    return this.withVerifiedSource(request.source, async (lease, source) => {
+      await this.options.repository.registerVerifiedSource(source, lease.size)
+      const parsed = await parseNativePdfAnnotations(lease.path)
+      await lease.verifyUnchanged()
+      return this.options.repository.reconcileSource(
+        source,
+        lease.size,
+        parsed.annotations,
+        request.token,
+        request.decisions
+      )
+    })
   }
 
   create(request: CreatePdfAnnotationRequest): Promise<PdfAnnotation> {
@@ -309,6 +431,7 @@ class PdfAnnotationService {
     const resolved = await this.options.resolveSessionPdfVersion(request)
     if (
       !resolved ||
+      !isPdfVersion(resolved) ||
       resolved.sourceKind !== request.sourceKind ||
       resolved.sourceFileId !== request.sourceFileId ||
       resolved.sourceVersionId !== request.versionId ||
@@ -317,6 +440,13 @@ class PdfAnnotationService {
       throw new Error('PDF annotation source is not available.')
     }
     const source = projectDocumentSource(request.projectId, resolved)
+    const identityLease = await resolved.openContent()
+    try {
+      await identityLease.verifyUnchanged()
+      await this.prepareSource(source, identityLease, signal)
+    } finally {
+      await identityLease.close()
+    }
     const receipt = await this.options.repository.nativeImportReceipt(request, source)
     if (receipt)
       return {

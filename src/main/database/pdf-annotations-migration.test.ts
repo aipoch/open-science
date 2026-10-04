@@ -4,6 +4,10 @@ import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase, verifyCurrentApplicationSchema } from './migration-service'
+import { PdfAnnotationRepository } from '../pdf-annotations/repository'
+import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { createUploadVersionReference } from '../../shared/uploads'
+import type { PdfAnnotationSource } from '../../shared/pdf-annotations'
 
 it('upgrades an existing database without copying or changing Bookmarks', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pdf-annotation-migration-'))
@@ -48,7 +52,8 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
         '0044_literature_smart_collections',
         '0045_literature_smart_pause_run',
         '0046_journal_attributes',
-        '0047_session_replay'
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing'
       ]
     })
     expect(await client.bookmark.findMany()).toEqual(before)
@@ -60,7 +65,11 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
     expect(columns.find(({ name }) => name === 'projectId')?.notnull).toBe(0n)
     expect(columns.find(({ name }) => name === 'sessionId')?.notnull).toBe(0n)
     expect(columns.map(({ name }) => name)).not.toContain('tagsJson')
+    await client.pdfAnnotationDocument.create({
+      data: { id: 'fixture-document', checksum: 'a'.repeat(64) }
+    })
     const row = {
+      documentId: 'fixture-document',
       id: 'library-note',
       sourceKind: 'literature-attachment-version',
       sourceFileId: 'file-1',
@@ -107,6 +116,7 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
     await client.pdfAnnotationImport.create({
       data: {
         id: 'receipt-1',
+        documentId: 'fixture-document',
         sourceKind: row.sourceKind,
         sourceFileId: row.sourceFileId,
         versionId: row.versionId,
@@ -128,3 +138,120 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it.each(['upload-version', 'artifact-version'] as const)(
+  'migrates isolated historical sources and deletion-only %s receipts without changing user content',
+  async (kind) => {
+    const { pdfAnnotationsMigration } = await import('./migrations/0043-pdf-annotations')
+    const root = await mkdtemp(join(tmpdir(), 'pdf-sharing-upgrade-'))
+    const client = createProjectDbClient(root)
+    try {
+      await migrateApplicationDatabase(client)
+      await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
+      for (const table of [
+        'pdf_annotations',
+        'pdf_annotation_imports',
+        'pdf_annotation_sources',
+        'pdf_annotation_aliases',
+        'pdf_annotation_documents'
+      ])
+        await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
+      for (const statement of pdfAnnotationsMigration.statements)
+        await client.$executeRawUnsafe(statement)
+      await client.$executeRawUnsafe(
+        "DELETE FROM _open_science_migrations WHERE id = '0048_pdf_annotation_sharing'"
+      )
+      await client.project.createMany({
+        data: [
+          { id: 'legacy-p', name: 'Legacy' },
+          { id: 'independent-p', name: 'Independent' }
+        ]
+      })
+      for (const project of ['legacy-p', 'independent-p'])
+        await client.$executeRaw`
+      INSERT INTO pdf_annotations (id, projectId, sourceKind, sourceFileId, versionId, checksum, name, path, kind, selectorJson, note, updatedAt)
+      VALUES (${project}, ${project}, 'upload-version', 'file', 'v', ${'a'.repeat(64)}, 'paper.pdf', 'upload-version:v', 'document-note', '{"version":1,"selector":{"kind":"document-note","coordinateVersion":1}}', 'Keep my edit', ${new Date('2026-09-01T00:00:00Z')})`
+      const receipt = JSON.stringify({
+        nativeRefs: [{ pageNumber: 1, id: '12R' }],
+        pageCount: 1,
+        unsupportedCount: 0,
+        truncated: false
+      })
+      await client.$executeRaw`INSERT INTO pdf_annotation_imports (id, projectId, sessionId, sourceKind, sourceFileId, versionId, checksum, resultJson) VALUES ('deleted-native', 'legacy-p', 'legacy-session', ${kind}, 'deleted-file', 'deleted-v', ${'a'.repeat(64)}, ${receipt})`
+      await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+      expect(await migrateApplicationDatabase(client)).toMatchObject({
+        applied: ['0048_pdf_annotation_sharing']
+      })
+      const rows = await client.pdfAnnotation.findMany({ orderBy: { id: 'asc' } })
+      expect(rows.map((row) => row.note)).toEqual(['Keep my edit', 'Keep my edit'])
+      expect(new Set(rows.map((row) => row.documentId)).size).toBe(2)
+      expect(rows.every((row) => row.updatedAt.toISOString() === '2026-09-01T00:00:00.000Z')).toBe(
+        true
+      )
+      expect(await client.pdfAnnotationDocument.count()).toBe(3)
+      expect(await client.pdfAnnotationSourceBinding.count()).toBe(3)
+      expect(
+        (await client.pdfAnnotationImport.findUniqueOrThrow({ where: { id: 'deleted-native' } }))
+          .resultJson
+      ).toBe(receipt)
+      await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
+      expect(await migrateApplicationDatabase(client)).toMatchObject({ applied: [] })
+
+      const repository = new PdfAnnotationRepository(async () => client)
+      // Migration placeholders cannot offer reconciliation before source authority verifies them.
+      expect(
+        (await repository.list({ projectId: 'legacy-p' })).reconciliationSources
+      ).toBeUndefined()
+      const restored: PdfAnnotationSource = {
+        kind,
+        projectId: 'legacy-p',
+        sessionId: 'legacy-session',
+        sourceFileId: 'deleted-file',
+        versionId: 'deleted-v',
+        checksum: 'a'.repeat(64),
+        name: 'Restored paper.pdf',
+        path:
+          kind === 'artifact-version'
+            ? createArtifactVersionLocator({
+                projectId: 'legacy-p',
+                appSessionId: 'legacy-session',
+                artifactId: 'deleted-file',
+                versionId: 'deleted-v'
+              })
+            : createUploadVersionReference('deleted-v', {
+                projectId: 'legacy-p',
+                sessionId: 'legacy-session',
+                fileId: 'deleted-file'
+              })
+      }
+      const existing: PdfAnnotationSource = {
+        ...restored,
+        kind: 'upload-version',
+        sourceFileId: 'file',
+        versionId: 'v',
+        path: createUploadVersionReference('v', {
+          projectId: 'legacy-p',
+          sessionId: 'legacy-session',
+          fileId: 'file'
+        })
+      }
+      await repository.registerVerifiedSource(existing, 100)
+      await repository.registerVerifiedSource(restored, 100)
+      const pending = await repository.list({ projectId: 'legacy-p' })
+      expect(pending.reconciliationSources).toEqual(expect.arrayContaining([restored]))
+      expect(
+        pending.reconciliationSources?.find((source) => source.versionId === 'deleted-v')
+      ).toEqual(restored)
+      await expect(repository.reconcileSource(restored, 100, [])).resolves.toBeNull()
+      expect(
+        (await repository.list({ projectId: 'legacy-p' })).reconciliationSources
+      ).toBeUndefined()
+      expect(
+        (await repository.nativeImportReceipt({ projectId: 'legacy-p' }, restored))?.nativeRefs
+      ).toEqual([{ pageNumber: 1, id: '12R' }])
+    } finally {
+      await client.$disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

@@ -122,6 +122,7 @@ it('keeps writes committed during a stale paged load', async () => {
   const load = deferred<PdfAnnotationListResult>()
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn(() => load.promise),
       create: vi.fn().mockResolvedValue(annotation),
       update: vi.fn(),
@@ -144,6 +145,7 @@ it('does not publish a pending write into a different Session', async () => {
   const save = deferred<PdfAnnotation>()
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
       create: vi.fn(() => save.promise),
       update: vi.fn(),
@@ -210,6 +212,7 @@ it('preserves list failures for retry instead of treating them as an empty noteb
     .mockResolvedValue({ items: [annotation], total: 1 })
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list,
       create: vi.fn(),
       update: vi.fn(),
@@ -295,6 +298,7 @@ const installStore = (initial: PdfAnnotation[] = []): Map<string, PdfAnnotation>
   const timestamp = (): string => new Date(Date.UTC(2026, 8, 20, 0, 0, ++tick)).toISOString()
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn(async () => ({ items: [...items.values()], total: items.size })),
       create: vi.fn(async (request) => {
         const { createdAt, ...content } = request
@@ -627,6 +631,7 @@ it('uses the shared Literature version scope for writes and history without a Se
   }
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn().mockResolvedValue({ items: [], total: 0, source: global.target.source }),
       create: vi.fn().mockResolvedValue(global),
       delete: vi.fn().mockResolvedValue({ deleted: true })
@@ -769,4 +774,50 @@ it('projects deleted Tags without reloading notes or applying stale assignment s
   })
   expect(port.annotations[0].tagIds).toEqual([])
   expect(window.api.pdfAnnotations.list).toHaveBeenCalledTimes(1)
+})
+
+it('shares undo history across linked source indexes', async () => {
+  const items = installStore([annotation])
+  const other = { ...annotation.target.source, sourceFileId: 'linked', versionId: 'linked' }
+  vi.mocked(window.api.pdfAnnotations.list).mockImplementation(async () => ({
+    items: [...items.values()],
+    total: items.size,
+    sourceGroups: [[annotation.target.source, other]]
+  }))
+  await mount()
+  await act(async () => {
+    await port.update(annotation.id, { note: 'Shared edit' })
+  })
+  expect(port.forSource(other).map((row) => row.note)).toEqual(['Shared edit'])
+  expect(port.history(other).canUndo).toBe(true)
+  await act(async () => {
+    await port.undo(other)
+  })
+  expect(port.forSource(annotation.target.source).map((row) => row.note)).toEqual(['Saved'])
+  expect(port.history(other).canRedo).toBe(true)
+})
+
+it('invalidates deletion undo when empty notebooks become linked', async () => {
+  installStore([annotation])
+  await mount()
+  await act(async () => {
+    await port.remove(annotation.id)
+  })
+  expect(port.history(annotation.target.source).canUndo).toBe(true)
+  vi.mocked(window.api.pdfAnnotations.list).mockResolvedValue({
+    items: [],
+    total: 0,
+    sourceGroups: [
+      [
+        annotation.target.source,
+        { ...annotation.target.source, projectId: undefined, versionId: 'library' }
+      ]
+    ]
+  })
+  const notify = vi.mocked(window.api.pdfAnnotations.onChanged).mock.calls[0][0]
+  await act(async () => {
+    notify({ scope: { projectId: 'p1' } })
+  })
+  expect(port.history(annotation.target.source).canUndo).toBe(false)
+  expect(port.total).toBe(0)
 })

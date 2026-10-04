@@ -1,3 +1,4 @@
+import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
 import { sessionReplayMigration } from './migrations/0047-session-replay'
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
@@ -896,6 +897,18 @@ const MIGRATION_MANIFEST = [
       sessionReplayMigration.verifiers,
       sessionReplayMigration.operations
     ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...pdfAnnotationSharingMigration,
+    checksum: checksumMigrationPayload(
+      pdfAnnotationSharingMigration.id,
+      pdfAnnotationSharingMigration.statements,
+      pdfAnnotationSharingMigration.verifiers,
+      pdfAnnotationSharingMigration.operations
+    ),
+    foreignKeysDuringApply: 'disabled',
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -1903,6 +1916,19 @@ const applyManifestMigration = async (
           allowedCheckUpgrades,
           new Set(['LiteratureSourceRecord'])
         )
+        return
+      }
+    }
+    if (migration.id === pdfAnnotationsMigration.id) {
+      const columns = await migrationSqlExecutor.query<{ name: string }[]>(
+        targetClient,
+        'PRAGMA table_info("pdf_annotations")'
+      )
+      if (columns.some((column) => column.name === 'documentId')) {
+        await verifyCurrentRuntimeSchemaTables(targetClient, [
+          'pdf_annotations',
+          'pdf_annotation_imports'
+        ])
         return
       }
     }

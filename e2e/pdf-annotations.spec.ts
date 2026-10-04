@@ -1,3 +1,4 @@
+import { createTestPdf } from '../test/fixtures/literature-pdf'
 import { expect } from '@playwright/test'
 import { PDFDocument, PDFDict, PDFName, PDFHexString } from 'pdf-lib'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -416,4 +417,285 @@ test('imports external notes, preserves provenance through undo, and persists an
     total: 0,
     nativeImport: { nativeRefs: [{ pageNumber: 1 }, { pageNumber: 1 }] }
   })
+})
+
+test('shares Workspace notes with Literature across two windows and reopening', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.getByRole('button', { name: 'New project' }).click()
+  const projectDialog = page.getByRole('dialog', { name: 'New project' })
+  await projectDialog.getByLabel('Name').fill('Shared PDF project')
+  await projectDialog.getByRole('button', { name: 'Create project' }).click()
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: 'shared-paper.pdf',
+    mimeType: 'application/pdf',
+    buffer: createTestPdf()
+  })
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Read the attached paper.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(
+    page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Preview uploaded attachment shared-paper.pdf', exact: true })
+    .click()
+  await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await page.getByRole('button', { name: 'Add note', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add document note', exact: true }).click()
+  await page.getByLabel('Document note', { exact: true }).fill('Created in Workspace')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.locator('[data-annotation-id]')).toContainText('Created in Workspace')
+  expect(
+    await page.evaluate(
+      async () =>
+        (
+          await window.api.literature.search({
+            scope: 'library',
+            entryKind: 'paper',
+            limit: 10
+          })
+        ).entries.length
+    )
+  ).toBe(0)
+  await app.setMainWindowSize(1440, 960)
+  await page.getByTestId('preview-file-content-surface').click({ button: 'right' })
+  await expect(page.getByRole('menuitem', { name: 'Add to Literature', exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('add-to-literature-menu.png') })
+  await page.keyboard.press('Escape')
+  await app.setMainWindowZoomFactor(1.25)
+  await page.getByTestId('preview-file-content-surface').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Add to Literature', exact: true }).click()
+  const adding = page.getByRole('dialog', { name: 'Import PDF', exact: true })
+  await app.setMainWindowZoomFactor(1)
+  await expect(adding).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Shared PDF project', exact: true, includeHidden: true })
+  ).toBeVisible()
+  await adding.getByRole('textbox', { name: 'Title', exact: true }).fill('Shared PDF reference')
+  await page.screenshot({ path: testInfo.outputPath('workspace-pdf-import.png') })
+  await adding.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(adding).toBeHidden()
+  const identity = await page.evaluate(async () => {
+    const project = (await window.api.projects.list()).find(
+      (project) => project.name === 'Shared PDF project'
+    )!
+    const note = (await window.api.pdfAnnotations.list({ projectId: project.id })).items[0]
+    const result = await window.api.literature.search({
+      scope: 'library',
+      entryKind: 'paper',
+      query: 'Shared PDF reference',
+      limit: 10
+    })
+    const item = result.entries.find((entry) => 'item' in entry)!
+    if (!('attachments' in item)) throw new Error('Missing reference')
+    if (!item.projectIds.includes(project.id)) throw new Error('Missing Project reference link')
+    return { projectId: project.id, id: note.id, versionId: item.attachments[0].versions[0].id }
+  })
+  await page
+    .getByRole('dialog', { name: 'Shared PDF reference', exact: true })
+    .getByRole('button', { name: 'Close', exact: true })
+    .click()
+  await page.screenshot({ path: testInfo.outputPath('workspace-pdf-imported.png') })
+  await page.getByRole('button', { name: 'Back to Project', exact: true }).click()
+  await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await expect(page.locator('[data-annotation-id]')).toContainText('Created in Workspace')
+  const other = await app.openAdditionalRenderer()
+  await other.getByRole('button', { name: 'Library', exact: true }).click()
+  await other.getByRole('button', { name: 'All references', exact: true }).click()
+  await other.getByText('Shared PDF reference', { exact: true }).click()
+  await other.getByRole('button', { name: 'Preview shared-paper.pdf', exact: true }).click()
+  await other.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  const note = other.locator(`[data-annotation-id="${identity.id}"]`)
+  await expect(note).toContainText('Created in Workspace')
+  await note.getByRole('button', { name: 'Edit annotation note' }).click()
+  await note.getByRole('textbox', { name: 'Annotation note' }).fill('Edited in Literature')
+  await note.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.locator('[data-annotation-id]')).toContainText('Edited in Literature')
+  await other.screenshot({ path: testInfo.outputPath('shared-literature-notes.png') })
+
+  const current = await page.evaluate(
+    async ({ projectId }) => (await window.api.pdfAnnotations.list({ projectId })).items[0],
+    identity
+  )
+  const writes = await Promise.allSettled([
+    page.evaluate(
+      ({ identity, updatedAt }) =>
+        window.api.pdfAnnotations.update({
+          projectId: identity.projectId,
+          id: identity.id,
+          expectedUpdatedAt: updatedAt,
+          note: 'Workspace concurrent edit'
+        }),
+      { identity, updatedAt: current.updatedAt }
+    ),
+    other.evaluate(
+      ({ identity, updatedAt }) =>
+        window.api.pdfAnnotations.update({
+          literatureVersionId: identity.versionId,
+          id: identity.id,
+          expectedUpdatedAt: updatedAt,
+          note: 'Literature concurrent edit'
+        }),
+      { identity, updatedAt: current.updatedAt }
+    )
+  ])
+  expect(writes.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+  expect(writes.filter((result) => result.status === 'rejected')).toHaveLength(1)
+  const winner = writes.find((result) => result.status === 'fulfilled')!
+  if (winner.status !== 'fulfilled') throw new Error('Missing committed edit')
+  await expect(note).toContainText(winner.value.note)
+  await expect(page.locator('[data-annotation-id]')).toContainText(winner.value.note)
+
+  const reopened = await app.restart()
+  const persisted = await reopened.evaluate(
+    async (identity) => ({
+      workspace: await window.api.pdfAnnotations.list({ projectId: identity.projectId }),
+      library: await window.api.pdfAnnotations.list({ literatureVersionId: identity.versionId })
+    }),
+    identity
+  )
+  expect(persisted.workspace.items.map((row) => [row.id, row.note])).toEqual([
+    [identity.id, winner.value.note]
+  ])
+  expect(persisted.library.items.map((row) => [row.id, row.note])).toEqual([
+    [identity.id, winner.value.note]
+  ])
+  await reopened.evaluate(
+    ({ identity, updatedAt }) =>
+      window.api.pdfAnnotations.delete({
+        literatureVersionId: identity.versionId,
+        id: identity.id,
+        expectedUpdatedAt: updatedAt
+      }),
+    { identity, updatedAt: persisted.library.items[0].updatedAt }
+  )
+  expect(
+    await reopened.evaluate(
+      async ({ projectId }) => (await window.api.pdfAnnotations.list({ projectId })).items.length,
+      identity
+    )
+  ).toBe(0)
+})
+
+test('shares independently imported native notes without duplication or resurrection', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(180_000)
+  const pdf = await PDFDocument.create()
+  const sheet = pdf.addPage([300, 400])
+  sheet.drawText('Shared native evidence', { x: 20, y: 300, size: 12 })
+  sheet.node.set(
+    PDFName.of('Annots'),
+    pdf.context.obj([
+      pdf.context.register(
+        pdf.context.obj({
+          Type: 'Annot',
+          Subtype: 'Text',
+          Rect: [20, 200, 40, 220],
+          Contents: PDFHexString.fromText('Original embedded note')
+        })
+      )
+    ])
+  )
+  const bytes = Buffer.from(await pdf.save())
+  const path = join(await app.createTestDirectory('sharing-conflict'), 'native.pdf')
+  await writeFile(path, bytes)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.getByRole('button', { name: 'New project' }).click()
+  const projectDialog = page.getByRole('dialog', { name: 'New project' })
+  await projectDialog.getByLabel('Name').fill('Independent native notes')
+  await projectDialog.getByRole('button', { name: 'Create project' }).click()
+  await page.locator('input[type="file"][multiple]').setInputFiles(path)
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Read this annotated PDF.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(
+    page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Preview uploaded attachment native.pdf', exact: true })
+    .click()
+  await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await expect(page.locator('[data-annotation-id]')).toContainText('Original embedded note')
+  const projectId = await page.evaluate(
+    async () =>
+      (await window.api.projects.list()).find((p) => p.name === 'Independent native notes')!.id
+  )
+  const reference = await page.evaluate(
+    (item) => window.api.literature.transact({ kind: 'create-item', item }),
+    literatureItemInputSchema.parse({
+      itemType: 'journalArticle',
+      title: 'Independent native reference'
+    })
+  )
+  const other = await app.openAdditionalRenderer()
+  await other.getByRole('button', { name: 'Library', exact: true }).click()
+  await other.getByRole('button', { name: 'All references', exact: true }).click()
+  await other.getByText('Independent native reference', { exact: true }).click()
+  await other.locator('input[aria-label="Add PDF"]').setInputFiles(path)
+  await expect(other.getByRole('button', { name: 'Preview native.pdf', exact: true })).toBeEnabled()
+  const versionId = await other.evaluate(
+    async (id) => (await window.api.literature.get(id))!.attachments[0].versions[0].id,
+    reference.id
+  )
+  await expect
+    .poll(() =>
+      other.evaluate(
+        async (literatureVersionId) =>
+          (await window.api.pdfAnnotations.list({ literatureVersionId })).total,
+        versionId
+      )
+    )
+    .toBe(1)
+  const left = await page.evaluate(async (projectId) => {
+    const note = (await window.api.pdfAnnotations.list({ projectId })).items[0]
+    return window.api.pdfAnnotations.update({
+      projectId,
+      id: note.id,
+      note: 'Workspace edit',
+      expectedUpdatedAt: note.updatedAt
+    })
+  }, projectId)
+  await other.evaluate(async (literatureVersionId) => {
+    const note = (await window.api.pdfAnnotations.list({ literatureVersionId })).items[0]
+    return window.api.pdfAnnotations.update({
+      literatureVersionId,
+      id: note.id,
+      note: 'Literature edit',
+      expectedUpdatedAt: note.updatedAt
+    })
+  }, versionId)
+  const library = await other.evaluate(
+    async (literatureVersionId) =>
+      (await window.api.pdfAnnotations.list({ literatureVersionId })).items[0],
+    versionId
+  )
+  expect(library.id).toBe(left.id)
+  await expect(page.locator('[data-annotation-id]')).toHaveCount(1)
+  await expect(page.locator('[data-annotation-id]')).toContainText('Literature edit')
+  await other.getByRole('button', { name: 'Preview native.pdf', exact: true }).click()
+  await other.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await expect(other.locator('[data-annotation-id]')).toContainText('Literature edit')
+  await other.screenshot({ path: testInfo.outputPath('independent-import-shared-notes.png') })
+  await other.evaluate(
+    (note) =>
+      window.api.pdfAnnotations.delete({
+        literatureVersionId: note.literatureVersionId!,
+        id: note.id,
+        expectedUpdatedAt: note.updatedAt
+      }),
+    library
+  )
+  await expect(page.locator('[data-annotation-id]')).toHaveCount(0)
+  const reopened = await app.restart()
+  expect(
+    await reopened.evaluate(
+      async (literatureVersionId) =>
+        (await window.api.pdfAnnotations.list({ literatureVersionId })).total,
+      versionId
+    )
+  ).toBe(0)
 })

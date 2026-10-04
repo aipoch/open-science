@@ -3623,6 +3623,51 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     }
   )
 
+  it.each([false, true])('gates Add to Literature for package PDFs (%s)', async (packageOrigin) => {
+    selectPdfContextSession()
+    installPdfContextApi()
+    vi.mocked(window.api.managedFileVersions.inspect).mockResolvedValue({
+      ok: true,
+      value: {
+        ...managedInspect,
+        displayName: 'paper.pdf',
+        versions: managedInspect.versions.map((version) => ({
+          ...version,
+          displayName: 'paper.pdf',
+          contentType: 'application/pdf'
+        }))
+      }
+    })
+    useSessionStore.setState((state) => ({
+      sessions: [
+        ...state.sessions,
+        {
+          ...state.sessions[0],
+          id: 'session-1',
+          ...(packageOrigin ? { packageOrigin: {} } : {})
+        } as ChatSession
+      ]
+    }))
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...managedUploadItem, name: 'paper.pdf', title: 'paper.pdf', format: 'pdf' }}
+          onClose={vi.fn()}
+        />
+      )
+    })
+    act(() => {
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 }))
+    })
+    await act(async () => Promise.resolve())
+    const menu = document.body.querySelector('[data-testid="preview-content-context-menu"]')
+    expect(menu).not.toBeNull()
+    expect(menu?.textContent?.includes('Add to Literature')).toBe(!packageOrigin)
+    expect(menu?.textContent).toContain('Download')
+  })
+
   it.each([undefined, 1, 2])(
     'gates the PDF content-menu reading entry for %s pages',
     async (pageCount) => {

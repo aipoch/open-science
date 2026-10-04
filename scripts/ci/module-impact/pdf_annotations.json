@@ -34,7 +34,12 @@
     "src/renderer/src/pages/workspace/pdf-annotations/use-native-pdf-visibility.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/use-native-pdf-visibility.test.tsx",
     "src/renderer/src/pages/workspace/pdf-annotations/native-pdf-rendering.test.ts",
-    "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.tsx"
+    "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.tsx",
+    "src/main/pdf-annotations/document-store.ts",
+    "src/main/pdf-annotations/sharing.ts",
+    "src/main/pdf-annotations/sharing.integration.test.ts",
+    "src/renderer/src/pages/workspace/pdf-annotations/PdfReconciliationDialog.tsx",
+    "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx"
   ],
   "interfacePaths": [
     "src/main/pdf-annotations/application-commands.ts",
@@ -67,7 +72,9 @@
       "src/main/pdf-annotations/native-import.test.ts",
       "src/main/pdf-annotations/native-import.benchmark.test.ts",
       "src/renderer/src/pages/workspace/pdf-annotations/use-native-pdf-visibility.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/native-pdf-rendering.test.ts"
+      "src/renderer/src/pages/workspace/pdf-annotations/native-pdf-rendering.test.ts",
+      "src/main/pdf-annotations/sharing.integration.test.ts",
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx"
     ],
     "contract": [
       "src/main/database/pdf-annotations-migration.test.ts",

@@ -35,7 +35,10 @@ const request: CreatePdfAnnotationRequest = {
 }
 const fixture = (): { options: PdfAnnotationServiceOptions; service: PdfAnnotationService } => {
   const options = {
+    packageNotes: vi.fn(),
     repository: {
+      registerVerifiedSource: vi.fn().mockResolvedValue(false),
+      reconcileSource: vi.fn().mockResolvedValue(null),
       get: vi.fn().mockResolvedValue({
         ...request,
         version: 1,
@@ -293,7 +296,7 @@ it('cancels after parsing and closes the lease without writing', async () => {
   expect(options.repository.createMany).not.toHaveBeenCalled()
   const resolved = await options.resolveSessionPdfVersion(importRequest)
   const lease = await resolved!.openContent!()
-  expect(lease.close).toHaveBeenCalledOnce()
+  expect(lease.close).toHaveBeenCalledTimes(2)
   expect(service.cancelImport({ operationId: importRequest.operationId })).toEqual({
     cancelled: false
   })
@@ -403,3 +406,159 @@ it.each([undefined, 'session-1'])(
     expect(options.repository.create).not.toHaveBeenCalled()
   }
 )
+
+it.each(['upload-version', 'artifact-version'] as const)(
+  'rejects non-PDF %s before registering a document or parsing',
+  async (kind) => {
+    const { options, service } = fixture()
+    const resolved = (await options.resolveSessionPdfVersion(importRequest))!
+    vi.mocked(options.resolveSessionPdfVersion).mockResolvedValue({
+      ...resolved,
+      sourceKind: kind,
+      sourceSessionId: 'session-1',
+      filename: 'notes.txt',
+      contentType: 'text/plain'
+    })
+    const operation = vi.fn()
+    await expect(
+      service.withVerifiedSource({ ...request.target.source, kind }, operation)
+    ).rejects.toThrow('source is not available')
+    await expect(service.importNative({ ...importRequest, sourceKind: kind })).rejects.toThrow(
+      'source is not available'
+    )
+    expect(options.repository.registerVerifiedSource).not.toHaveBeenCalled()
+    expect(resolved.openContent).not.toHaveBeenCalled()
+    expect(parseNative).not.toHaveBeenCalled()
+    expect(operation).not.toHaveBeenCalled()
+  }
+)
+
+it('keeps library notes accessible when automatic native reconciliation cannot parse the PDF', async () => {
+  const { options, service } = fixture()
+  vi.mocked(options.repository.registerVerifiedSource).mockResolvedValue(true)
+  const notes = { items: [], total: 0 }
+  vi.mocked(options.repository.list).mockResolvedValue(notes)
+  parseNative.mockRejectedValueOnce(new Error('Password required'))
+  const scope = { literatureVersionId: 'version-1' }
+  expect(await service.list(scope)).toMatchObject(notes)
+  expect(options.repository.registerVerifiedSource).toHaveBeenCalledOnce()
+  expect(options.repository.reconcileSource).not.toHaveBeenCalled()
+  const lease = await options.literature.openContent('version-1')
+  expect(lease.close).toHaveBeenCalledOnce()
+
+  // A later successful parse can still reconcile; the failure did not record an empty baseline.
+  parseNative.mockResolvedValue(parsed)
+  await service.list(scope)
+  expect(options.repository.reconcileSource).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: 'literature-attachment-version' }),
+    lease.size,
+    parsed.annotations
+  )
+})
+
+it('keeps Workspace writes available after optional parsing fails but propagates reconciliation errors', async () => {
+  const { options, service } = fixture()
+  vi.mocked(options.repository.registerVerifiedSource).mockResolvedValue(true)
+  parseNative.mockRejectedValueOnce(new Error('Invalid PDF structure'))
+  await service.create(request)
+  expect(options.repository.create).toHaveBeenCalledOnce()
+  expect(options.repository.reconcileSource).not.toHaveBeenCalled()
+
+  parseNative.mockResolvedValue(parsed)
+  vi.mocked(options.repository.reconcileSource).mockRejectedValue(new Error('Database unavailable'))
+  await expect(service.create(request)).rejects.toThrow('Database unavailable')
+  expect(options.repository.create).toHaveBeenCalledOnce()
+})
+
+it('cancels automatic reconciliation with the native import and releases its lease', async () => {
+  const { options, service } = fixture()
+  vi.mocked(options.repository.registerVerifiedSource).mockResolvedValue(true)
+  parseNative.mockImplementation(async (_path, { signal }) => {
+    service.cancelImport({ operationId: importRequest.operationId })
+    signal.throwIfAborted()
+  })
+  expect(await service.importNative(importRequest)).toMatchObject({ cancelled: true })
+  expect(options.repository.reconcileSource).not.toHaveBeenCalled()
+  expect(options.repository.createMany).not.toHaveBeenCalled()
+  const resolved = (await options.resolveSessionPdfVersion(importRequest))!
+  expect((await resolved.openContent!()).close).toHaveBeenCalledOnce()
+})
+
+it('holds verified sharing leases inside the writable source authority and closes on failure', async () => {
+  const { options, service } = fixture()
+  const source = request.target.source
+  const resolved = (await options.resolveSessionPdfVersion(importRequest))!
+  const lease = await resolved.openContent!()
+  const operation = vi.fn(async () => {
+    throw new Error('Rollback sharing')
+  })
+  await expect(service.withVerifiedSource(source, operation)).rejects.toThrow('Rollback sharing')
+  expect(options.runWithSessionAuthority).toHaveBeenCalledOnce()
+  expect(lease.verifyUnchanged).toHaveBeenCalledOnce()
+  expect(lease.close).toHaveBeenCalledOnce()
+  await expect(
+    service.withVerifiedSource({ ...source, checksum: 'b'.repeat(64) }, operation)
+  ).rejects.toThrow('not available')
+  expect(operation).toHaveBeenCalledOnce()
+})
+
+it('reads imported package notes without querying the personal shared notebook', async () => {
+  const { service, options } = fixture()
+  vi.mocked(options.sessions.loadSessionWithDiagnostics).mockResolvedValue({
+    status: 'found',
+    session: {
+      id: 'session-1',
+      projectId: 'project-1',
+      packageOrigin: { packageId: 'package' }
+    }
+  } as never)
+  vi.mocked(options.packageNotes!).mockResolvedValue({ items: [], total: 0 })
+  expect(await service.list({ projectId: 'project-1', sessionId: 'session-1' })).toEqual({
+    items: [],
+    total: 0,
+    readOnly: true
+  })
+  expect(options.repository.list).not.toHaveBeenCalled()
+})
+
+it('merges fork snapshots with live notes using the common cursor without making snapshots writable', async () => {
+  const { service, options } = fixture()
+  vi.mocked(options.sessions.loadSessionWithDiagnostics).mockResolvedValue({
+    status: 'found',
+    session: {
+      id: 'session-1',
+      projectId: 'project-1',
+      forkOrigin: { packageId: 'package' }
+    }
+  } as never)
+  const base = {
+    ...request,
+    version: 1 as const,
+    createdInSessionId: undefined,
+    origin: 'user' as const,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }
+  vi.mocked(options.packageNotes!).mockResolvedValue({
+    items: [{ ...base, id: 'a' }],
+    total: 1,
+    readonlyIds: ['a'],
+    nativeImport: {
+      nativeRefs: [{ id: '12R', pageNumber: 1 }],
+      pageCount: 1,
+      unsupportedCount: 0,
+      truncated: false
+    },
+    snapshotTags: []
+  })
+  vi.mocked(options.repository.list).mockResolvedValue({ items: [{ ...base, id: 'b' }], total: 1 })
+  expect(
+    await service.list({ projectId: 'project-1', sessionId: 'session-1', limit: 1 })
+  ).toMatchObject({
+    items: [{ id: 'a' }],
+    total: 2,
+    readonlyIds: ['a'],
+    nativeImport: { nativeRefs: [{ id: '12R', pageNumber: 1 }] },
+    nextCursor: { id: 'a', createdAt: base.createdAt }
+  })
+})
