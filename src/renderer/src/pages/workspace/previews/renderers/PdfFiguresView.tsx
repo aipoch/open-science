@@ -402,8 +402,8 @@ const CandidateDetails = ({
     <article className="space-y-3 text-sm">
       <div
         className={cn(
-          'flex-wrap items-center gap-3 border-b border-border-200 pb-2 @min-[640px]:flex',
-          hasTable || showPage ? 'flex' : 'hidden'
+          'flex flex-wrap items-center gap-3 border-b border-border-200 pb-2',
+          !hasTable && !showPage && '@max-[640px]:hidden'
         )}
       >
         <div className={cn('items-center gap-3 @min-[640px]:flex', showPage ? 'flex' : 'hidden')}>
