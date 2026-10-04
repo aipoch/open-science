@@ -7214,6 +7214,21 @@
     "Keep historical note": "Conserver la note antérieure",
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "Inclure les notes et annotations PDF partagées de tous les projets dans un instantané en lecture seule",
     "Read-only snapshot": "Instantané en lecture seule",
-    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "Le chemin actuel des données contient des espaces. Les environnements R ne peuvent pas y fonctionner de manière fiable. Utilisez « Changer d’emplacement » pour déplacer vos données vers un chemin sans espaces. Vous pouvez annuler et conserver l’emplacement actuel ; vos données existantes resteront accessibles."
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "Le chemin actuel des données contient des espaces. Les environnements R ne peuvent pas y fonctionner de manière fiable. Utilisez « Changer d’emplacement » pour déplacer vos données vers un chemin sans espaces. Vous pouvez annuler et conserver l’emplacement actuel ; vos données existantes resteront accessibles.",
+    "What would you like to research?": "Que souhaitez-vous étudier ?",
+    "Previous research ideas": "Idées de recherche précédentes",
+    "Next research ideas": "Autres idées de recherche",
+    "Find literature": "Chercher des publications",
+    "Create charts": "Créer des graphiques",
+    "Explain a paper": "Expliquer un article",
+    "Design an experiment": "Concevoir une expérience",
+    "Write code": "Écrire du code",
+    "Draft a report": "Rédiger un rapport",
+    "Find research papers on my topic and summarize the relevant evidence.": "Trouvez des articles scientifiques sur mon sujet et résumez les éléments probants pertinents.",
+    "Create clear charts from my data and explain what they show.": "Créez des graphiques clairs à partir de mes données et expliquez les résultats.",
+    "Explain this paper’s research question, methods, findings, and limitations.": "Expliquez la question de recherche, les méthodes, les résultats et les limites de cet article.",
+    "Help me design an experiment, including controls, measurements, and analysis.": "Aidez-moi à concevoir une expérience avec des témoins, des mesures et une méthode d’analyse.",
+    "Help me write reproducible code for my analysis and explain each step.": "Aidez-moi à écrire du code reproductible pour mon analyse et expliquez chaque étape.",
+    "Help me draft a research report with methods, results, and limitations.": "Aidez-moi à rédiger un rapport de recherche présentant les méthodes, les résultats et les limites."
   }
 }

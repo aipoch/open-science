@@ -47,6 +47,7 @@ vi.mock('./WorkspaceSidebar', () => ({
 }))
 
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
+import { visibleProjectSessions } from './visible-project-sessions'
 
 const lazySession: ChatSession = {
   id: 'lazy-session',
@@ -85,6 +86,34 @@ beforeEach(() => {
 })
 
 describe('WorkspaceSidebarContainer Session previews', () => {
+  it('hides only explicitly bound seeds and reveals them after release', () => {
+    const pending = {
+      ...lazySession,
+      id: 'pending',
+      isPending: true,
+      pendingBindingSessionId: 'seed'
+    }
+    const seed = { ...lazySession, id: 'seed' }
+    const sameTitle = { ...seed, id: 'independent' }
+    const otherProject = {
+      ...pending,
+      id: 'other-pending',
+      projectId: 'other-project',
+      pendingBindingSessionId: 'independent'
+    }
+    const sessions = [pending, seed, sameTitle, otherProject]
+    expect(visibleProjectSessions(sessions, 'project-1')).toEqual([pending, sameTitle])
+    expect(
+      visibleProjectSessions(
+        [{ ...pending, pendingBindingSessionId: undefined }, seed, sameTitle],
+        'project-1'
+      )
+    ).toHaveLength(3)
+    expect(
+      visibleProjectSessions([{ ...pending, archivedAt: 1 }, seed, sameTitle], 'project-1')
+    ).toEqual([seed, sameTitle])
+  })
+
   it('loads lazy Session details on demand and deduplicates concurrent requests', async () => {
     let resolveLoad: ((value: { id: string; projectId: string }) => void) | undefined
     persistenceMocks.loadPersistedSession.mockReturnValue(

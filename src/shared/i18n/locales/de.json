@@ -7046,6 +7046,21 @@
     "Keep historical note": "Ältere Notiz behalten",
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "Gemeinsame PDF-Notizen und Anmerkungen aus allen Projekten als schreibgeschützten Snapshot einschließen",
     "Read-only snapshot": "Schreibgeschützter Snapshot",
-    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "Der aktuelle Datenpfad enthält Leerzeichen. R-Umgebungen können hier nicht zuverlässig ausgeführt werden. Verschieben Sie Ihre Daten über „Speicherort ändern“ in einen Pfad ohne Leerzeichen. Sie können abbrechen und den aktuellen Speicherort beibehalten; Ihre vorhandenen Daten bleiben zugänglich."
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "Der aktuelle Datenpfad enthält Leerzeichen. R-Umgebungen können hier nicht zuverlässig ausgeführt werden. Verschieben Sie Ihre Daten über „Speicherort ändern“ in einen Pfad ohne Leerzeichen. Sie können abbrechen und den aktuellen Speicherort beibehalten; Ihre vorhandenen Daten bleiben zugänglich.",
+    "What would you like to research?": "Was möchten Sie erforschen?",
+    "Previous research ideas": "Vorherige Forschungsideen",
+    "Next research ideas": "Weitere Forschungsideen",
+    "Find literature": "Literatur suchen",
+    "Create charts": "Diagramme erstellen",
+    "Explain a paper": "Paper erklären",
+    "Design an experiment": "Experiment planen",
+    "Write code": "Code schreiben",
+    "Draft a report": "Bericht entwerfen",
+    "Find research papers on my topic and summarize the relevant evidence.": "Suchen Sie wissenschaftliche Arbeiten zu meinem Thema und fassen Sie die relevanten Belege zusammen.",
+    "Create clear charts from my data and explain what they show.": "Erstellen Sie verständliche Diagramme aus meinen Daten und erläutern Sie die Ergebnisse.",
+    "Explain this paper’s research question, methods, findings, and limitations.": "Erklären Sie die Forschungsfrage, Methoden, Erkenntnisse und Grenzen dieses Papers.",
+    "Help me design an experiment, including controls, measurements, and analysis.": "Helfen Sie mir, ein Experiment mit Kontrollen, Messgrößen und Auswertung zu planen.",
+    "Help me write reproducible code for my analysis and explain each step.": "Helfen Sie mir, reproduzierbaren Code für meine Analyse zu schreiben, und erklären Sie jeden Schritt.",
+    "Help me draft a research report with methods, results, and limitations.": "Helfen Sie mir, einen Forschungsbericht mit Methoden, Ergebnissen und Grenzen zu entwerfen."
   }
 }

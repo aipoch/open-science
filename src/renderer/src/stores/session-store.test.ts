@@ -7661,6 +7661,7 @@ describe('session store public contract', () => {
       sessions: state.sessions.map((session) => ({
         ...session,
         isPending: true,
+        pendingBindingSessionId: 'durable-seed',
         unsavedTitle: true,
         interrupted: true,
         fixLoopActive: true,
@@ -7705,6 +7706,7 @@ describe('session store public contract', () => {
     expect(durable.messages[0]).not.toHaveProperty('sortIndex')
     for (const transientKey of [
       'isPending',
+      'pendingBindingSessionId',
       'unsavedTitle',
       'interrupted',
       'fixLoopActive',

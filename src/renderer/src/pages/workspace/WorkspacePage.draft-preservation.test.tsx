@@ -646,6 +646,53 @@ describe('WorkspacePage draft preservation', () => {
     expect(conversationProps.composer.view.doc).toEqual(textDoc('draft for A'))
   })
 
+  it('preserves the new panel through pending Session binding and resets it on another selection', async () => {
+    await renderPage()
+    await act(async () => sidebarProps.onNewConversation())
+    const panel = container.querySelector('[data-testid="conversation"]')
+    const pending: ChatSession = {
+      id: 'pending-new',
+      projectId: 'proj-1',
+      title: 'First prompt',
+      cwd: '/workspace',
+      status: 'running',
+      isPending: true,
+      messages: [
+        {
+          id: 'new-prompt',
+          role: 'user',
+          content: 'Research this',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    // Use the current Project identity from the live new-conversation props.
+    pending.projectId = useNavigationStore.getState().activeProjectId!
+    await act(async () =>
+      useSessionStore.setState((state) => ({
+        sessions: [...state.sessions, pending],
+        selectedSessionId: pending.id
+      }))
+    )
+    expect(container.querySelector('[data-testid="conversation"]')).toBe(panel)
+    await act(async () =>
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === pending.id ? { ...session, id: 'bound-new', isPending: false } : session
+        ),
+        selectedSessionId: 'bound-new'
+      }))
+    )
+    expect(container.querySelector('[data-testid="conversation"]')).toBe(panel)
+    await openSession('sess-a')
+    expect(container.querySelector('[data-testid="conversation"]')).not.toBe(panel)
+  })
+
   it('keeps pending Stop and Resume guards across a Session round trip', async () => {
     await renderPage()
     let finishStop: (() => void) | undefined

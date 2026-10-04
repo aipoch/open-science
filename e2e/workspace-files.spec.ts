@@ -20,11 +20,15 @@ const SCRIPT_CONTENT = '#!/bin/bash\n# stable\necho "old"\n'
 const SCRIPT_VERSION_TWO_CONTENT = '#!/bin/bash\n# stable\necho "new"\n'
 
 const createTwoPagePdf = (): Buffer => {
+  const content =
+    'BT /F1 20 Tf 54 730 Td (Research methods - sample paper) Tj 0 -40 Td /F1 12 Tf (1. Research question) Tj 0 -24 Td (How does treatment dose affect the measured response?) Tj 0 -40 Td (2. Study design) Tj 0 -24 Td (Compare a control group with three treatment groups.) Tj 0 -24 Td (Record observations, then inspect uncertainty and limitations.) Tj ET'
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>'
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`
   ]
   const offsets: number[] = []
   let body = '%PDF-1.4\n'
@@ -221,6 +225,16 @@ test('links a multi-page PDF upload as Reading context in a new project @pr-main
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const captureChinese = async (name: string): Promise<void> => {
+    await page.keyboard.press('Escape')
+    await page.mouse.move(5, 5)
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans')
+    await page.screenshot({ path: test.info().outputPath(name) })
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+  }
 
   await page.locator('input[type="file"][multiple]').setInputFiles({
     name: 'paper.pdf',
@@ -231,6 +245,9 @@ test('links a multi-page PDF upload as Reading context in a new project @pr-main
     '1 PDF will be linked when sent'
   )
 
+  await expect(page.getByTestId('new-conversation-start')).toBeVisible()
+  await captureChinese('pdf-staged-new-conversation.png')
+  const originalEditor = await page.getByRole('textbox', { name: 'Ask anything' }).elementHandle()
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Summarize the attached paper.')
   await page.getByRole('button', { name: 'Send message' }).click()
 
@@ -265,11 +282,21 @@ test('links a multi-page PDF upload as Reading context in a new project @pr-main
   await expect(page.getByText('Managed file reference requires a logical identity.')).toHaveCount(0)
 
   await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
+  expect(await originalEditor!.evaluate((node) => node.isConnected)).toBe(true)
+  await expect(page.getByTestId('conversation-composer-dock')).toHaveAttribute(
+    'data-placement',
+    'bottom'
+  )
+  await captureChinese('pdf-reading-after-send.png')
   // Both ordinary and Reading conversations share the workspace annotation authority.
   // Starting/binding a Session must not recreate its unrelated open file preview.
   for (const reading of [false, true]) {
     await page.getByRole('button', { name: 'New', exact: true }).click()
-    if (reading) await page.getByRole('button', { name: 'Read with agent', exact: true }).click()
+    if (reading) {
+      await page.getByRole('button', { name: 'Read with agent', exact: true }).click()
+      await expect(page.getByTestId('new-conversation-start')).toBeVisible()
+      await captureChinese('pdf-reading-new-conversation.png')
+    }
     const preview = page.getByTestId('preview-card')
     await preview.getByRole('button', { name: 'Zoom in', exact: true }).click()
     const zoom = reading ? '150%' : '125%'

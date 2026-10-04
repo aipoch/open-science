@@ -381,6 +381,31 @@ const WorkspacePage = ({
         : storedActiveSession,
     [hasPersistedActiveFixLoop, storedActiveSession]
   )
+  // Preserve the new composer through its pending-to-durable Session binding. Other
+  // selections still remount the panel so local dialogs/details cannot cross Sessions.
+  const panelSessionId = activeSession?.id
+  const [panelIdentity, setPanelIdentity] = useState(() => ({
+    projectId: scopedProjectId,
+    sessionId: panelSessionId,
+    pendingMessageId: activeSession?.isPending ? activeSession.messages[0]?.id : undefined,
+    generation: 0
+  }))
+  if (panelIdentity.projectId !== scopedProjectId || panelIdentity.sessionId !== panelSessionId) {
+    const startsPendingConversation = !panelIdentity.sessionId && activeSession?.isPending === true
+    const bindsPendingConversation =
+      panelIdentity.pendingMessageId !== undefined &&
+      activeSession?.messages[0]?.id === panelIdentity.pendingMessageId &&
+      !useSessionStore.getState().sessions.some((session) => session.id === panelIdentity.sessionId)
+    const continuesComposer =
+      panelIdentity.projectId === scopedProjectId &&
+      (startsPendingConversation || bindsPendingConversation)
+    setPanelIdentity({
+      projectId: scopedProjectId,
+      sessionId: panelSessionId,
+      pendingMessageId: activeSession?.isPending ? activeSession.messages[0]?.id : undefined,
+      generation: panelIdentity.generation + (continuesComposer ? 0 : 1)
+    })
+  }
   const isReviewHistoryUnavailable =
     storedActiveSession !== undefined &&
     (persistedReviewSnapshot === undefined || reviewLoadError !== undefined)
@@ -1685,7 +1710,7 @@ const WorkspacePage = ({
               openMobileSidebar
             }) => (
               <ConversationPanel
-                key={JSON.stringify([scopedProjectId, activeSession?.id])}
+                key={JSON.stringify([scopedProjectId, panelIdentity.generation])}
                 submissions={conversationSubmissions}
                 view={{
                   activeSession,

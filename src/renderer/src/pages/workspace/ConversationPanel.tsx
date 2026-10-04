@@ -147,6 +147,8 @@ import { resolveCurrentTurnOutcomeItem } from './workspace-conversation-timeline
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
+import { NewConversationStart, SessionPackageEntryRow } from './EmptyConversationBanner'
+import { sessionPackageImportAvailable } from '@/components/session-package-import-menu-model'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
@@ -720,6 +722,47 @@ const ConversationPanel = ({
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
   const setElicitationEditDraft = useSessionStore((state) => state.setElicitationEditDraft)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
+  const isNewConversation = !activeSession && !optimisticMessage
+  const composerFormRef = useRef<HTMLFormElement>(null)
+  const startComposerTopRef = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    const form = composerFormRef.current
+    if (!form) return
+    if (isNewConversation) {
+      const measure = (): void => {
+        startComposerTopRef.current = form.getBoundingClientRect().top
+      }
+      measure()
+      const observer = new ResizeObserver(measure)
+      observer.observe(form)
+      window.addEventListener('resize', measure)
+      return () => {
+        observer.disconnect()
+        window.removeEventListener('resize', measure)
+      }
+    }
+    const previousTop = startComposerTopRef.current
+    startComposerTopRef.current = null
+    if (previousTop === null || window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+      return
+    const animation = form.animate?.(
+      [
+        { transform: `translateY(${previousTop - form.getBoundingClientRect().top}px)` },
+        { transform: 'translateY(0)' }
+      ],
+      { duration: 200, easing: 'ease-out' }
+    )
+    return () => animation?.cancel()
+  }, [isNewConversation])
+  const insertResearchPrompt = (prompt: string): void => {
+    const hasContent = draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())
+    onValidatedDraftDocChange(
+      hasContent
+        ? { ...draftDoc, nodes: [...draftDoc.nodes, { type: 'text', text: `\n\n${prompt}` }] }
+        : docFromText(prompt)
+    )
+    window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
+  }
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // The workspace retains pending Resume state while this panel remounts for another session.
@@ -1484,7 +1527,7 @@ const ConversationPanel = ({
         </header>
         <PackageOperationIndicator />
 
-        {activeSession?.contentLoaded === false ? (
+        {isNewConversation ? null : activeSession?.contentLoaded === false ? (
           <SessionSwitchSkeleton />
         ) : (
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
@@ -1543,19 +1586,34 @@ const ConversationPanel = ({
           </WorkspaceMessageEditStateProvider>
         )}
 
-        <div className="relative shrink-0">
+        <div
+          data-testid="conversation-composer-dock"
+          data-placement={isNewConversation ? 'start' : 'bottom'}
+          className={cn('relative shrink-0', isNewConversation && 'min-h-0 flex-1 overflow-y-auto')}
+        >
           <div
             aria-hidden="true"
             data-testid="composer-surface-fade"
             className={cn(
               'pointer-events-none absolute inset-x-0 bg-gradient-to-t from-bg-10 to-bg-10/0',
+              isNewConversation && 'hidden',
               hasPendingPermission || pendingElicitation ? '-top-18 h-18' : '-top-12 h-12'
             )}
           />
 
-          <div className="px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] md:px-4 md:pb-[6px]">
+          <div
+            className={cn(
+              'px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] md:px-4 md:pb-[6px]',
+              isNewConversation && 'pt-[max(24px,calc((100dvh-360px)/2))]'
+            )}
+          >
             {/* Runtime and session errors stay near the composer so recovery is visible. */}
-            <div className={composerContentClassName}>
+            <div className={cn(composerContentClassName, isNewConversation && 'max-w-3xl')}>
+              {isNewConversation && (
+                <NewConversationStart
+                  onStartResearch={canEditDraft ? insertResearchPrompt : undefined}
+                />
+              )}
               <div className="px-1 md:px-3">
                 {persistenceBlocked ? (
                   <ErrorNotice
@@ -2051,11 +2109,13 @@ const ConversationPanel = ({
                       </section>
                     ) : (
                       <form
+                        ref={composerFormRef}
                         aria-hidden={ordinaryComposerBlocked || undefined}
                         data-testid="ordinary-composer-form"
                         inert={ordinaryComposerBlocked || undefined}
                         className={cn(
                           'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
+                          isNewConversation && '[&_[contenteditable]]:min-h-20',
                           ordinaryComposerBlocked && 'invisible pointer-events-none'
                         )}
                         data-specialist-color={specialistComposerColor}
@@ -3158,6 +3218,12 @@ const ConversationPanel = ({
                   </TooltipProvider>
                 </div>
               </div>
+              {isNewConversation &&
+              sessionImport?.canImport &&
+              sessionImport.projectId &&
+              sessionPackageImportAvailable() ? (
+                <SessionPackageEntryRow projectId={sessionImport.projectId} compact />
+              ) : null}
             </div>
           </div>
         </div>
