@@ -248,15 +248,19 @@ describe('historical R prefixes containing spaces', () => {
     expect(runArgv).not.toHaveBeenCalled()
   })
 
-  it.each([false, true])(
-    'restores a mixed Python/R environment at a spaced root (materialized: %s)',
-    async (materialized) => {
+  it.each(
+    [DEFAULT_PY_ENV, DEFAULT_R_ENV, 'analysis'].flatMap((name) =>
+      [false, true].map((materialized) => ({ name, materialized }))
+    )
+  )(
+    'restores a mixed Python/R $name at a spaced root (materialized: $materialized)',
+    async ({ name, materialized }) => {
       const root = join(makeRoot(), 'Application Support', 'runtime')
-      const prefix = envPrefix(root, 'analysis', 'darwin')
+      const prefix = envPrefix(root, name, 'darwin')
       mkdirSync(envsLockDir(root), { recursive: true })
       mkdirSync(pkgsCache(root), { recursive: true })
       const packages = ['python-3.12.conda', 'r-base-4.4.conda']
-      const lockPath = join(envsLockDir(root), 'analysis.lock')
+      const lockPath = join(envsLockDir(root), `${name}.lock`)
       for (const archive of packages) {
         writeFileSync(join(pkgsCache(root), archive), RELOCATION_ARCHIVE_CONTENT)
       }
@@ -286,6 +290,9 @@ describe('historical R prefixes containing spaces', () => {
       expect(runArgv).toHaveBeenCalledTimes(materialized ? 0 : 1)
       expect(existsSync(lockPath)).toBe(false)
       expect(readFileSync(pythonBin(prefix, 'darwin'), 'utf8')).toBe('python')
+      // Restoring Python must not certify the R launcher that still cannot run in this path.
+      if (name === DEFAULT_R_ENV) expect(readRReadyMarker(root)).toBeUndefined()
+      if (name === DEFAULT_PY_ENV) expect(readReadyMarker(root)).toBeDefined()
     }
   )
 

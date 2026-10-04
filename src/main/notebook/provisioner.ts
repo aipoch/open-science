@@ -1192,7 +1192,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             now,
             this.markerPrefixDirectory(DEFAULT_PY_ENV)
           )
-        else if (envName === DEFAULT_R_ENV)
+        // A mixed default-r can be restored for Python without certifying its unsupported R launcher.
+        else if (envName === DEFAULT_R_ENV && !this.hasUnsupportedRPath())
           writeRReadyMarker(
             this.deps.root,
             DEFAULT_ENV_VERSION,
@@ -1215,7 +1216,6 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           // until the user chooses a supported location, without blocking Python restoration.
           if (this.hasUnsupportedRPath()) {
             try {
-              if (name === DEFAULT_R_ENV) return
               const lock = readFileSync(join(dir, file), 'utf8')
               // Mixed environments remain useful for Python. Match the Python-first verification
               // below, including prefixes whose interpreters have not yet been reconstructed.
@@ -1224,7 +1224,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
                 /^https?:\/\/[^\r\n]+\/python-/mu.test(lock)
               if (
                 !hasPython &&
-                (existsSync(rBin(prefix, this.platform)) ||
+                (name === DEFAULT_R_ENV ||
+                  existsSync(rBin(prefix, this.platform)) ||
                   /^https?:\/\/[^\r\n]+\/r-base-/mu.test(lock))
               )
                 return
