@@ -1,7 +1,11 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { area, intersection, union, lineRect } from './literature-pdf-page-geometry.mjs'
 
-const contains = (a, b) => b[0] >= a[0] && b[1] >= a[1] && b[2] <= a[2] && b[3] <= a[3]
+const contains = (a, b, tolerance = 0) =>
+  b[0] >= a[0] - tolerance &&
+  b[1] >= a[1] - tolerance &&
+  b[2] <= a[2] + tolerance &&
+  b[3] <= a[3] + tolerance
 const graphics = (page, kind) =>
   page.graphicsBounds
     .filter((g) => g.kind === kind)

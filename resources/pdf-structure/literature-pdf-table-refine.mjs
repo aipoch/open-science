@@ -956,10 +956,10 @@ export function recoverClippedRightLabelCrop(table, pageItems) {
     (item) =>
       /[\p{L}\p{N}]/u.test(item.text.trim()) &&
       (/[\p{L}]/u.test(item.text.trim()) ||
-        /^[<>≤≥−+−]?\d[\d.,%()±–—+/<>=-]*$/u.test(item.text.trim()))
+        /^[<>≤≥−+-]?\d[\d.,%()±–—+/<>=-]*$/u.test(item.text.trim()))
   )
   const numeric = clipped.filter((item) =>
-    /^[<>≤≥−+−]?\d[\d.,%()±–—+/<>=-]*$/u.test(item.text.trim())
+    /^[<>≤≥−+-]?\d[\d.,%()±–—+/<>=-]*$/u.test(item.text.trim())
   )
   if (numericOrHeader.length < 2 || numeric.length < 2) return
   const right = Math.max(...clipped.map((item) => item.rect[2])) + height * 0.2

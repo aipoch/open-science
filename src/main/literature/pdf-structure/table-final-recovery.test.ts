@@ -14,6 +14,9 @@ const {
 } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
 )
+const { rebaseTableCrop } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-geometry.mjs')).href
+)
 const {
   recoverUnassignedStubSpans,
   recoverUnassignedSlashScoreRows,
@@ -68,6 +71,31 @@ it('extends a raw detector crop from a complete terminal source row', () => {
   const crop = recoverCompleteTerminalSourceRowCrop(table, fixture.items)
   expect(crop?.[3]).toBeGreaterThan(96)
   expect(crop?.slice(0, 3)).toEqual([0, 0, 500])
+})
+
+it('extends outer model rows and columns when a crop grows', () => {
+  const table = {
+    cropRect: [0, 0, 200, 100],
+    structure: {
+      objects: [
+        { label: 'table column', rect: [0, 0, 100, 100] },
+        { label: 'table column', rect: [100, 0, 200, 100] },
+        { label: 'table row', rect: [0, 0, 200, 50] },
+        { label: 'table row', rect: [0, 50, 200, 100] }
+      ]
+    }
+  }
+  const rebased = rebaseTableCrop(table, [-20, -10, 230, 130])
+  expect(rebased.structure.objects).toContainEqual({
+    label: 'table column',
+    rect: [0, 10, 120, 110]
+  })
+  expect(rebased.structure.objects).toContainEqual({
+    label: 'table column',
+    rect: [120, 10, 250, 110]
+  })
+  expect(rebased.structure.objects).toContainEqual({ label: 'table row', rect: [20, 0, 220, 60] })
+  expect(rebased.structure.objects).toContainEqual({ label: 'table row', rect: [20, 60, 220, 140] })
 })
 
 it('recovers a clipped repeated group header without adding rows or columns', () => {
@@ -203,6 +231,12 @@ it('does not expand a right edge for an isolated neighboring line', () => {
   const table = model(2, [0, 20, 40, 60])
   table.cropRect = [100, 0, 200, 80]
   expect(recoverClippedRightLabelCrop(table, [item('neighbor', 198, 20, 20)])).toBeUndefined()
+})
+
+it('expands a right edge when terminal values carry an ASCII minus sign', () => {
+  const table = { cropRect: [0, 0, 160, 50] }
+  const items = [10, 25, 40].map((y) => item('-1.2', 150, y, 20))
+  expect(recoverClippedRightLabelCrop(table, items)?.[2]).toBeGreaterThan(160)
 })
 
 it('recovers an omitted first line of a grouped multiline stub', () => {
