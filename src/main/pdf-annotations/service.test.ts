@@ -407,6 +407,32 @@ it.each([undefined, 'session-1'])(
   }
 )
 
+it.each(['upload-version', 'artifact-version'] as const)(
+  'rejects non-PDF %s before registering a document or parsing',
+  async (kind) => {
+    const { options, service } = fixture()
+    const resolved = (await options.resolveSessionPdfVersion(importRequest))!
+    vi.mocked(options.resolveSessionPdfVersion).mockResolvedValue({
+      ...resolved,
+      sourceKind: kind,
+      sourceSessionId: 'session-1',
+      filename: 'notes.txt',
+      contentType: 'text/plain'
+    })
+    const operation = vi.fn()
+    await expect(
+      service.withVerifiedSource({ ...request.target.source, kind }, operation)
+    ).rejects.toThrow('source is not available')
+    await expect(service.importNative({ ...importRequest, sourceKind: kind })).rejects.toThrow(
+      'source is not available'
+    )
+    expect(options.repository.registerVerifiedSource).not.toHaveBeenCalled()
+    expect(resolved.openContent).not.toHaveBeenCalled()
+    expect(parseNative).not.toHaveBeenCalled()
+    expect(operation).not.toHaveBeenCalled()
+  }
+)
+
 it('keeps library notes accessible when automatic native reconciliation cannot parse the PDF', async () => {
   const { options, service } = fixture()
   vi.mocked(options.repository.registerVerifiedSource).mockResolvedValue(true)

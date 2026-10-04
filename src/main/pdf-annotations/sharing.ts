@@ -312,7 +312,7 @@ export const commitSharing = async (
       ],
       pageCount: Math.max(...values.map((v) => v.pageCount)),
       unsupportedCount: Math.max(...values.map((v) => v.unsupportedCount)),
-      truncated: values.every((v) => v.truncated)
+      truncated: values.some((v) => v.truncated)
     }
     pdfNativeImportReceiptSchema.parse(merged)
     await tx.pdfAnnotationImport.delete({ where: { id: receipts[1].id } })

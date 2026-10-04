@@ -39,6 +39,10 @@ import type {
 
 const log = createLogger('pdf-annotations')
 
+const isPdfVersion = (version: { filename: string; contentType?: string }): boolean =>
+  version.contentType?.split(';', 1)[0].trim().toLowerCase() === 'application/pdf' ||
+  version.filename.toLowerCase().endsWith('.pdf')
+
 type Options = Readonly<{
   repository: Pick<
     PdfAnnotationRepository,
@@ -143,14 +147,7 @@ class PdfAnnotationService {
 
   private async librarySource(versionId: string): Promise<PdfAnnotationSource> {
     const version = await this.options.literature.resolveVersion(versionId)
-    if (
-      !version ||
-      version.versionId !== versionId ||
-      !(
-        version.contentType.split(';', 1)[0].trim().toLowerCase() === 'application/pdf' ||
-        version.filename.toLowerCase().endsWith('.pdf')
-      )
-    )
+    if (!version || version.versionId !== versionId || !isPdfVersion(version))
       throw new Error('PDF annotation source is not available.')
     const source: PdfAnnotationSource = {
       kind: 'literature-attachment-version',
@@ -230,10 +227,7 @@ class PdfAnnotationService {
     if (
       !resolved?.openContent ||
       resolved.sourceKind !== source.kind ||
-      !(
-        resolved.contentType?.split(';', 1)[0].trim().toLowerCase() === 'application/pdf' ||
-        resolved.filename.toLowerCase().endsWith('.pdf')
-      ) ||
+      !isPdfVersion(resolved) ||
       resolved.sourceFileId !== source.sourceFileId ||
       resolved.sourceVersionId !== source.versionId ||
       resolved.checksum !== source.checksum
@@ -282,6 +276,7 @@ class PdfAnnotationService {
       if (
         !resolved?.openContent ||
         resolved.sourceKind === 'literature-attachment-version' ||
+        !isPdfVersion(resolved) ||
         resolved.checksum !== source.checksum
       )
         throw new Error('PDF annotation source is not available.')
@@ -436,6 +431,7 @@ class PdfAnnotationService {
     const resolved = await this.options.resolveSessionPdfVersion(request)
     if (
       !resolved ||
+      !isPdfVersion(resolved) ||
       resolved.sourceKind !== request.sourceKind ||
       resolved.sourceFileId !== request.sourceFileId ||
       resolved.sourceVersionId !== request.versionId ||

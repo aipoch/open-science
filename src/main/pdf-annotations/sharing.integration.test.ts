@@ -63,7 +63,11 @@ const draft: PdfNativeAnnotationDraft = {
     coordinateVersion: 1
   }
 }
-const imported = async (input: PdfAnnotationSource, prefix: string): Promise<string> => {
+const imported = async (
+  input: PdfAnnotationSource,
+  prefix: string,
+  truncated = false
+): Promise<string> => {
   const id = `native:${prefix.repeat(32)}:${draft.stableKey}`
   const request = {
     ...note(id, input, draft.note),
@@ -80,7 +84,7 @@ const imported = async (input: PdfAnnotationSource, prefix: string): Promise<str
       nativeRefs: [{ id: draft.nativeId!, pageNumber: 1 }],
       pageCount: 1,
       unsupportedCount: 0,
-      truncated: false
+      truncated
     }
   })
   return id
@@ -218,6 +222,23 @@ it('deduplicates native imports, retains edits and old links, and never resurrec
   expect((await repository.list({ literatureVersionId: target.versionId })).items).toEqual([])
   expect(await repository.get(right)).toBeUndefined()
 })
+it.each([
+  [true, false],
+  [false, true],
+  [false, false]
+])('preserves native import truncation when merging receipts (%s, %s)', async (left, right) => {
+  await imported(source, 'a', left)
+  await imported(target, 'c', right)
+  await merge([draft])
+  const reopened = new PdfAnnotationRepository(async () => client)
+  for (const scope of [
+    { projectId: 'p', sourceFileId: source.sourceFileId, versionId: 'v' },
+    { literatureVersionId: target.versionId }
+  ]) {
+    expect((await reopened.list(scope)).nativeImport?.truncated).toBe(left || right)
+  }
+})
+
 it('requires explicit decisions for conflicting edits and can preserve both without losing user notes', async () => {
   const left = await imported(source, 'a'),
     right = await imported(target, 'c')
