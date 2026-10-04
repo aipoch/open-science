@@ -551,6 +551,60 @@ test.describe('Workspace dividers', () => {
     )
   })
 
+  test('keeps Session actions clear of the collapsed preview toggle @pr-mainline-conversation', async ({
+    app
+  }, testInfo) => {
+    const page = app.page
+    await sendPrompt(page, 'Check the session header layout.', 'Deterministic reply:')
+    const previewToggle = page.getByTestId('workspace-preview-toggle')
+    const actions = page.getByTestId('session-header-menu-trigger')
+    await previewToggle.click()
+    await expect(previewToggle).toHaveAttribute('aria-expanded', 'false')
+
+    for (const [width, zoom] of [
+      [1280, 1],
+      [1100, 1.25],
+      [1100, 0.8]
+    ]) {
+      await app.setMainWindowSize(width, 900)
+      await app.setMainWindowZoomFactor(zoom)
+      await expect(previewToggle).toBeVisible()
+      await expect
+        .poll(() =>
+          page.getByTestId('conversation-header').evaluate((header) => {
+            const toggle = document.querySelector('[data-testid="workspace-preview-toggle"]')!
+            const toggleRect = toggle.getBoundingClientRect()
+            return [...header.querySelectorAll('button')]
+              .filter((button) => button.getBoundingClientRect().width > 0)
+              .every((button) => button.getBoundingClientRect().right <= toggleRect.left - 8)
+          })
+        )
+        .toBe(true)
+      await actions.click()
+      await expect(page.getByTestId('session-header-menu')).toBeVisible()
+      await page.keyboard.press('Escape')
+      await previewToggle.click()
+      await expect(previewToggle).toHaveAttribute('aria-expanded', 'true')
+      await previewToggle.click()
+      await expect(previewToggle).toHaveAttribute('aria-expanded', 'false')
+    }
+    await page.screenshot({ path: testInfo.outputPath('session-header-spacing.png') })
+
+    // Electron's minimum window width is wider than the mobile breakpoint; zoom into it.
+    await app.setMainWindowSize(1100, 900)
+    await app.setMainWindowZoomFactor(1.5)
+    await expect(previewToggle).toHaveCount(0)
+    const mobileToggle = page.getByTestId('conversation-header').getByRole('button', {
+      name: 'Expand preview panel'
+    })
+    await expect(mobileToggle).toBeVisible()
+    const actionsBox = (await actions.boundingBox())!
+    const toggleBox = (await mobileToggle.boundingBox())!
+    expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(toggleBox.x - 8)
+    await mobileToggle.click()
+    await expect(page.getByRole('dialog', { name: 'Preview', exact: true })).toBeVisible()
+  })
+
   test('keeps decoded message images visible when resizing and opening their preview', async ({
     app
   }) => {
