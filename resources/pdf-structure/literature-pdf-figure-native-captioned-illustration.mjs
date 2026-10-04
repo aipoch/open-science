@@ -346,15 +346,60 @@ export function nativeCaptionedVectorHeatmap(page, caption, captions, tables) {
       rect[3] <= caption.rect[1] && rect[0] >= page.width * 0.08 && rect[2] <= page.width * 0.92
   )
   if (paths.length < 24) return undefined
-  const bounds = union(paths)
-  if (caption.rect[1] - bounds[3] > Math.max(28, font * 4)) return undefined
-  if (blocked(bounds, caption, captions, tables)) return undefined
-  if (bounds[2] - bounds[0] < page.width * 0.55 || bounds[3] - bounds[1] < page.height * 0.12)
-    return undefined
-  const rowCenters = [...new Set(paths.map((rect) => Math.round((rect[1] + rect[3]) / 2 / 4)))]
-  const columnCenters = [...new Set(paths.map((rect) => Math.round((rect[0] + rect[2]) / 2 / 8)))]
-  if (rowCenters.length < 4 || columnCenters.length < 4) return undefined
-  return { caption, rect: bounds, graphicsCount: paths.length, reason: 'native-vector-heatmap' }
+
+  const median = (values) => {
+    const sorted = [...values].sort((a, b) => a - b)
+    return sorted[Math.floor(sorted.length / 2)]
+  }
+  const gapX = Math.max(font * 1.5, median(paths.map((rect) => rect[2] - rect[0])) * 0.4)
+  const gapY = Math.max(font * 1.5, median(paths.map((rect) => rect[3] - rect[1])) * 0.4)
+  const touches = (a, b) => {
+    const overlapX = Math.min(a[2], b[2]) - Math.max(a[0], b[0])
+    const overlapY = Math.min(a[3], b[3]) - Math.max(a[1], b[1])
+    const horizontalGap = Math.max(b[0] - a[2], a[0] - b[2], 0)
+    const verticalGap = Math.max(b[1] - a[3], a[1] - b[3], 0)
+    return (overlapX > 0 && verticalGap <= gapY) || (overlapY > 0 && horizontalGap <= gapX)
+  }
+  const components = []
+  const pending = new Set(paths.keys())
+  while (pending.size > 0) {
+    const seed = pending.values().next().value
+    pending.delete(seed)
+    const component = [paths[seed]]
+    const queue = [seed]
+    while (queue.length > 0) {
+      const current = queue.pop()
+      for (const candidate of [...pending]) {
+        if (!touches(paths[current], paths[candidate])) continue
+        pending.delete(candidate)
+        queue.push(candidate)
+        component.push(paths[candidate])
+      }
+    }
+    components.push(component)
+  }
+  const candidates = components
+    .filter((component) => component.length >= 24)
+    .map((component) => {
+      const bounds = union(component)
+      const rowCenters = [
+        ...new Set(component.map((rect) => Math.round((rect[1] + rect[3]) / 2 / 4)))
+      ]
+      const columnCenters = [
+        ...new Set(component.map((rect) => Math.round((rect[0] + rect[2]) / 2 / 8)))
+      ]
+      return { component, bounds, rowCenters, columnCenters }
+    })
+    .filter(({ bounds, rowCenters, columnCenters }) => {
+      if (caption.rect[1] - bounds[3] > Math.max(28, font * 4)) return false
+      if (blocked(bounds, caption, captions, tables)) return false
+      if (bounds[2] - bounds[0] < page.width * 0.55 || bounds[3] - bounds[1] < page.height * 0.12)
+        return false
+      return rowCenters.length >= 4 && columnCenters.length >= 4
+    })
+  if (candidates.length !== 1) return undefined
+  const { component, bounds } = candidates[0]
+  return { caption, rect: bounds, graphicsCount: component.length, reason: 'native-vector-heatmap' }
 }
 
 // Workflow screenshots are a native composite: raster panels are connected

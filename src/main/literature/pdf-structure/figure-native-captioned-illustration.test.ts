@@ -181,6 +181,24 @@ it('recovers a dense native-vector success-rate heatmap under its caption', () =
   ])
 })
 
+it('ignores a disconnected vector grid above the local heatmap band', () => {
+  const fixture = vectorHeatmap()
+  const unrelated = Array.from({ length: 24 }, (_, index) => {
+    const row = Math.floor(index / 6)
+    const column = index % 6
+    const left = 0.1 + column * 0.04
+    const top = 0.005 + row * 0.018
+    return {
+      kind: 'path',
+      normalizedRect: [left, top, left + 0.03, top + 0.012]
+    }
+  })
+  fixture.page.graphicsBounds.push(...unrelated)
+  expect(
+    nativeCaptionedVectorHeatmap(fixture.page, fixture.caption, [fixture.caption], [])?.rect
+  ).toEqual([100, 80, 453, 216])
+})
+
 it('recovers a connected workflow screenshot plate through its spanning path', () => {
   const fixture = workflowScreenshot()
   expect(
