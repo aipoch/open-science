@@ -1,3 +1,4 @@
+import type { PdfReconcileRequest, PdfSharingPreview } from '../pdf-annotations'
 // Ordered fragments keep the public registration order when capabilities interleave.
 import type { PdfAnnotationsChangedEvent } from '../pdf-annotations'
 
@@ -132,6 +133,15 @@ export const sourcePreviewOnNavigationBlockedContracts = {
 } as const
 
 export const pdfAnnotationsListContracts = {
+  'pdfAnnotations.reconcile': callable<
+    (request: PdfReconcileRequest) => Promise<PdfSharingPreview | null>
+  >()('pdf-annotations', [
+    'pdf-annotations:reconcile',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'pdfAnnotations.list': callable<
     (request: ListPdfAnnotationsRequest) => Promise<PdfAnnotationListResult>
   >()('pdf-annotations', ['pdf-annotations:list', WEB, undefined, undefined, RUNTIME_VALIDATED]),

@@ -26,7 +26,9 @@ export const PdfAnnotationMarker = ({
   note: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { available, update, remove } = usePdfAnnotations()
+  const annotations = usePdfAnnotations()
+  const { update, remove } = annotations
+  const available = annotations.available && annotations.canEdit?.(id) !== false
   const [open, setOpen] = useState(false)
   const [hoverOpen, setHoverOpen] = useState(false)
   const [draft, setDraft] = useState(note)

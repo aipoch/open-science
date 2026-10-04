@@ -1,3 +1,4 @@
+import { bindManagedPdfVersion } from '../pdf-annotations/document-store'
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -220,10 +221,12 @@ export class ArtifactProvenanceStagingRecovery {
         where: { id: version.artifactId },
         data: { filename: requestedFilename }
       })
-      return transaction.artifactVersion.update({
+      const updated = await transaction.artifactVersion.update({
         where: { id: version.id },
         data: { state: 'pending', contentBlobId }
       })
+      await bindManagedPdfVersion(transaction, 'artifact-version', version.id)
+      return updated
     })
     return this.options.projectVersionFile(
       requireAgentArtifactVersion(recovered),

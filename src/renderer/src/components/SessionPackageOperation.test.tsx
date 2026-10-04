@@ -165,6 +165,7 @@ it('offers full and compact export without exposing customization and preserves 
   await act(async () => button('Export').click())
   expect(packageOperation).toHaveBeenCalledWith({
     action: 'select',
+    includePdfNotes: false,
     operationId: operation.id,
     excludedStorageKeys: ['artifacts/p/s/large']
   })
@@ -404,6 +405,7 @@ it('starts with a simple export summary and reveals optional controls on request
   await act(async () => button('Export').click())
   expect(request).toHaveBeenLastCalledWith({
     action: 'select',
+    includePdfNotes: false,
     operationId: snapshot.id,
     excludedStorageKeys: snapshot.files!.map((file) => file.storageKey)
   })
@@ -443,6 +445,7 @@ it('allows selecting a 32 GiB file while disabling files over the limit', async 
   await act(async () => button('Export').click())
   expect(request).toHaveBeenLastCalledWith({
     action: 'select',
+    includePdfNotes: false,
     operationId: snapshot.id,
     excludedStorageKeys: ['artifacts/p/s/oversized']
   })
@@ -559,6 +562,7 @@ it('selects file contents with a size filter and keeps selection separate from m
   await act(async () => button('Export').click())
   expect(request).toHaveBeenLastCalledWith({
     action: 'select',
+    includePdfNotes: false,
     operationId: 'operation-1',
     excludedStorageKeys: ['artifacts/p/s/oversized', 'artifacts/p/s/large']
   })
@@ -1490,3 +1494,26 @@ it.each(['import', 'fork'] as const)(
     }
   }
 )
+
+it('requires explicit opt-in before exporting notes shared across projects', async () => {
+  const request = vi.fn(async () => undefined)
+  vi.stubGlobal('api', { sessions: { packageOperation: request } })
+  usePackageOperationStore.setState({
+    operation: {
+      ...snapshot,
+      summary: { retainedFiles: [], metadataBytes: 0, pdfNotesAvailable: true }
+    },
+    open: true
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+  const label = [...document.querySelectorAll('label')].find((node) =>
+    node.textContent?.includes('Include shared PDF notes and annotations from all projects')
+  )!
+  const checkbox = label.querySelector<HTMLInputElement>('input')!
+  expect(checkbox.checked).toBe(false)
+  await act(async () => checkbox.click())
+  await act(async () => button('Export').click())
+  expect(request).toHaveBeenLastCalledWith(
+    expect.objectContaining({ action: 'select', includePdfNotes: true })
+  )
+})

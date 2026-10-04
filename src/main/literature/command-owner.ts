@@ -49,7 +49,7 @@ type LiteratureCommandServices = Readonly<{
     | 'transact'
     | 'contentBlobIdsForItems'
   >
-  literaturePdfImporter: Pick<LiteraturePdfImporter, 'import' | 'cancelImport'>
+  literaturePdfImporter: Pick<LiteraturePdfImporter, 'import' | 'cancelImport' | 'addToLiterature'>
   contentRepository: Pick<ContentRepository, 'sweep'>
 }>
 
@@ -191,6 +191,7 @@ export const createLiteratureCommandOwner = ({
   exportRecord: (request) => literatureCatalog.exportRecord(request),
   get: (itemId) => literatureCatalog.get(itemId),
   sources: (itemId) => literatureCatalog.sources(itemId),
+  addPdf: (request, signal) => literaturePdfImporter.addToLiterature(request, signal),
   importPdf: (request, signal) => literaturePdfImporter.import(request, signal),
   cancelPdfImport: (request) => literaturePdfImporter.cancelImport(request.operationId),
   importRecords: async (request) => {

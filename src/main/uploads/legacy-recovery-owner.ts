@@ -1,3 +1,4 @@
+import { bindManagedPdfVersion } from '../pdf-annotations/document-store'
 import { constants, createReadStream } from 'node:fs'
 import { copyFile, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -538,6 +539,7 @@ class LegacyRecoveryOwner {
               where: { id: current.id },
               data: { state: 'ready', contentBlobId }
             })
+      await bindManagedPdfVersion(tx, 'upload-version', updated.id)
       // Research drafts keep immutable bytes before sending, without publishing them into Files.
       // The existing live-save headless-Version path publishes the same Version when a message
       // actually takes ownership. Startup recovery preserves this private origin boundary.

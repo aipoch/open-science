@@ -33,6 +33,7 @@ export async function composeDocumentReading({
   applicationEvents,
   pdfUploadImporter,
   uploadRepository,
+  sessionPackageService,
   sessionRepository,
   literatureAttachmentAuthority,
   sessionPdfSourceResolver,
@@ -43,6 +44,10 @@ export async function composeDocumentReading({
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
   applicationEvents: ApplicationEvents
   pdfUploadImporter: { current?: PdfAnnotationService }
+  sessionPackageService: Pick<
+    import('../session-package/service').SessionPackageService,
+    'readPdfNotes'
+  >
   uploadRepository: ReturnType<typeof createDefaultUploadRepository>
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
   literatureAttachmentAuthority: LiteratureAttachmentAuthority
@@ -96,6 +101,7 @@ export async function composeDocumentReading({
     }
   )
   const pdfAnnotationService = new PdfAnnotationService({
+    packageNotes: (request) => sessionPackageService.readPdfNotes(request),
     literature: literatureAttachmentAuthority,
     repository: pdfAnnotationRepository,
     sessions: sessionRepository,

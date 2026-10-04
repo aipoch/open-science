@@ -5,6 +5,8 @@ import {
   type DeletePdfAnnotationResult,
   type ListPdfAnnotationsRequest,
   type PdfAnnotation,
+  type PdfReconcileRequest,
+  type PdfSharingPreview,
   type PdfAnnotationListResult,
   type PdfNativeAnnotationCancelRequest,
   type PdfNativeAnnotationImportRequest,
@@ -19,6 +21,7 @@ import {
 } from '../application-command-router'
 
 type PdfAnnotationCommandOwner = Readonly<{
+  reconcile(request: PdfReconcileRequest): Promise<PdfSharingPreview | null>
   list(request: ListPdfAnnotationsRequest): Promise<PdfAnnotationListResult>
   create(request: CreatePdfAnnotationRequest): Promise<PdfAnnotation>
   update(request: UpdatePdfAnnotationRequest): Promise<PdfAnnotation>
@@ -30,6 +33,11 @@ type PdfAnnotationCommandOwner = Readonly<{
   cancelImport(request: PdfNativeAnnotationCancelRequest): { cancelled: boolean }
 }>
 const pdfAnnotationApplicationCommands = Object.freeze({
+  reconcile: defineApplicationCommand<
+    'pdf-annotations:reconcile',
+    readonly [PdfReconcileRequest],
+    PdfSharingPreview | null
+  >('pdf-annotations:reconcile', pdfAnnotationApplicationCommandContracts.reconcile),
   list: defineApplicationCommand<
     'pdf-annotations:list',
     readonly [ListPdfAnnotationsRequest],
@@ -62,6 +70,7 @@ const pdfAnnotationApplicationCommands = Object.freeze({
   >('pdf-annotations:cancel-import', pdfAnnotationApplicationCommandContracts.cancelImport)
 })
 const pdfAnnotationApplicationCommandGroup = defineApplicationCommandGroup('pdf-annotations', [
+  pdfAnnotationApplicationCommands.reconcile,
   pdfAnnotationApplicationCommands.list,
   pdfAnnotationApplicationCommands.create,
   pdfAnnotationApplicationCommands.update,
@@ -76,6 +85,7 @@ const registerPdfAnnotationApplicationCommands = (
   const scope = registrar.createScope()
   try {
     scope.registerGroup(pdfAnnotationApplicationCommandGroup, {
+      'pdf-annotations:reconcile': ({ args }) => owner.reconcile(args[0]),
       'pdf-annotations:list': ({ args }) => owner.list(args[0]),
       'pdf-annotations:create': ({ args }) => owner.create(args[0]),
       'pdf-annotations:update': ({ args }) => owner.update(args[0]),

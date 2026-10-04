@@ -1,3 +1,4 @@
+import type { TagView } from '../../../../../shared/tags'
 import { EMPTY_PDF_ANNOTATIONS } from './pdf-annotation-index'
 import { createContext, useContext } from 'react'
 import type {
@@ -10,6 +11,11 @@ type PdfAnnotationPort = Readonly<{
   document?: Readonly<{ sourceFileId?: string; versionId: string }>
   sessionId?: string
   source?: PdfAnnotationSource
+  canEdit?: (id: string) => boolean
+  snapshotTags?: readonly TagView[]
+  isSnapshot?: (id: string) => boolean
+  needsReconciliation?: (source: PdfAnnotationSource) => boolean
+  shared?: (source: PdfAnnotationSource) => boolean
   scoped: boolean
   available: boolean
   annotations: readonly PdfAnnotation[]

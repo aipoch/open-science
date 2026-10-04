@@ -246,6 +246,7 @@ export const createApplicationModules = async (
     composition
   })
   const documentReading = await composeDocumentReading({
+    sessionPackageService: sessionPackages.sessionPackageService,
     declareElectronAdapter,
     applicationEvents,
     pdfUploadImporter: uploadStorage.pdfUploadImporter,

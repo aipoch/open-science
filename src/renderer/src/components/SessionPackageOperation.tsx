@@ -805,8 +805,13 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                   ) : null
                 }
                 onCancel={() => void respond({ action: 'cancel', operationId: operation.id })}
-                onSelect={(excludedStorageKeys) =>
-                  void respond({ action: 'select', operationId: operation.id, excludedStorageKeys })
+                onSelect={(excludedStorageKeys, includePdfNotes) =>
+                  void respond({
+                    action: 'select',
+                    operationId: operation.id,
+                    excludedStorageKeys,
+                    includePdfNotes
+                  })
                 }
               >
                 {transferSettings}

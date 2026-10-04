@@ -66,3 +66,33 @@ describe('PDF annotation page index', () => {
     ])
   })
 })
+
+it('combines rows created through linked sources without merging an independent equal PDF', () => {
+  const first = annotation('left', 1)
+  const second = {
+    ...annotation('right', 1),
+    target: {
+      ...first.target,
+      source: { ...first.target.source, sourceFileId: 'linked', versionId: 'linked' }
+    }
+  }
+  const independent = {
+    ...annotation('independent', 1),
+    target: { ...first.target, source: { ...first.target.source, projectId: 'other' } }
+  }
+  const index = indexPdfAnnotations(
+    [first, second, independent],
+    [[first.target.source, second.target.source]]
+  )
+  expect(index.get(pdfAnnotationSourceKey(first.target.source))?.annotations).toEqual([
+    first,
+    second
+  ])
+  expect(index.get(pdfAnnotationSourceKey(second.target.source))?.pages.get(1)).toEqual([
+    first,
+    second
+  ])
+  expect(index.get(pdfAnnotationSourceKey(independent.target.source))?.annotations).toEqual([
+    independent
+  ])
+})

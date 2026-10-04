@@ -437,7 +437,8 @@
       "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx",
       "src/renderer/src/pages/workspace/composer/SessionMentionPopup.render.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx"
+      "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx"
     ]
   },
   "capabilityOverlays": [],

@@ -39,7 +39,7 @@ describe('SessionPackageOperation', () => {
         })
       ).toThrow('Invalid package selection')
       owner.respond({ action: 'select', operationId: owner.snapshot!.id, excludedStorageKeys: [] })
-      await expect(run).resolves.toEqual([])
+      await expect(run).resolves.toEqual({ excludedStorageKeys: [], includePdfNotes: false })
     } finally {
       owner.cancel()
       await run.catch(() => undefined)
@@ -67,7 +67,10 @@ describe('SessionPackageOperation', () => {
         operationId: owner.snapshot!.id,
         excludedStorageKeys: ['oversized']
       })
-      await expect(run).resolves.toEqual(['oversized'])
+      await expect(run).resolves.toEqual({
+        excludedStorageKeys: ['oversized'],
+        includePdfNotes: false
+      })
     } finally {
       owner.cancel()
       await run.catch(() => undefined)
@@ -145,7 +148,10 @@ describe('SessionPackageOperation', () => {
       operationId: snapshot.id,
       excludedStorageKeys: [file.storageKey]
     })
-    await expect(run).resolves.toEqual([file.storageKey])
+    await expect(run).resolves.toEqual({
+      excludedStorageKeys: [file.storageKey],
+      includePdfNotes: false
+    })
     expect(owner.snapshot?.state).toBe('succeeded')
     expect(owner.snapshot?.summary).toBeUndefined()
     expect(changed.mock.lastCall?.[0].state).toBe('succeeded')
