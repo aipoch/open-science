@@ -407,3 +407,41 @@ it('retains the shared document until the final managed content and source are r
   expect(await client.pdfDocument.count()).toBe(0)
   expect(await client.pdfAnnotation.count()).toBe(0)
 })
+
+it.each(['matching copy', 'deletion receipt'] as const)(
+  'requires explicit review for legacy native notes without a baseline against a %s',
+  async (scenario) => {
+    const legacy = await imported(source, 'a')
+    const other = await imported(target, 'b')
+    await client.pdfAnnotation.update({
+      where: { id: legacy },
+      data: { nativeBaselineJson: null, nativeKey: null }
+    })
+    if (scenario === 'deletion receipt') {
+      const current = (await repository.list({ literatureVersionId: target.versionId })).items[0]
+      await repository.delete({
+        literatureVersionId: target.versionId,
+        id: other,
+        expectedUpdatedAt: current.updatedAt
+      })
+    }
+    await repository.registerVerifiedSource(source, 100)
+    await repository.registerVerifiedSource(target, 100)
+    const before = await client.pdfAnnotation.findUniqueOrThrow({ where: { id: legacy } })
+    const preview = await repository.reconcileSource(source, 100, [draft])
+    expect(preview?.conflicts).toMatchObject([
+      { key: draft.stableKey, unknown: true, left: { id: legacy, note: draft.note } }
+    ])
+    expect(await client.pdfAnnotation.findUnique({ where: { id: legacy } })).toEqual(before)
+    expect(await client.pdfAnnotationDocument.count()).toBe(2)
+    await repository.reconcileSource(source, 100, [draft], preview!.token, [
+      { key: draft.stableKey, choice: 'left' }
+    ])
+    expect(
+      (await repository.list({ literatureVersionId: target.versionId })).items.map((row) => [
+        row.id,
+        row.note
+      ])
+    ).toEqual([[legacy, draft.note]])
+  }
+)

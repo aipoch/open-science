@@ -97,21 +97,22 @@ const side = (state: Snapshot, draft: PdfNativeAnnotationDraft): Side => {
     !!imported?.nativeRefs.some(
       (ref) => ref.pageNumber === draft.pageNumber && ref.id === draft.nativeId
     )
-  const baseline = row?.nativeBaselineJson
-    ? JSON.parse(row.nativeBaselineJson)
-    : { note: draft.note, color: draft.color ?? null, tagIds: [] }
+  // A current parser draft is not evidence of the state stored by an older importer.
+  // Preserve unknown legacy edits until the user has explicitly reviewed the merge.
+  const baseline = row?.nativeBaselineJson ? JSON.parse(row.nativeBaselineJson) : undefined
   return {
     row,
     deleted,
     modified:
       !!row &&
-      !isDeepStrictEqual(
-        metadata(
-          row,
-          state.tags.filter((tag) => tag.resourceId === row.id).map((tag) => tag.tagId)
-        ),
-        baseline
-      )
+      (!baseline ||
+        !isDeepStrictEqual(
+          metadata(
+            row,
+            state.tags.filter((tag) => tag.resourceId === row.id).map((tag) => tag.tagId)
+          ),
+          baseline
+        ))
   }
 }
 const inspect = async (
@@ -150,6 +151,8 @@ const inspect = async (
             if (isDeepStrictEqual(lm, rm) || !r.modified) choice = 'left'
             else if (!l.modified) choice = 'right'
           }
+          if ((l.row && !l.row.nativeBaselineJson) || (r.row && !r.row.nativeBaselineJson))
+            choice = undefined
           return { key: draft.stableKey, left: l, right: r, choice }
         })
         .filter(
@@ -214,7 +217,10 @@ const inspect = async (
           key: p.key,
           left: view(p.left, left),
           right: view(p.right, right),
-          unknown: p.key.startsWith('unknown:')
+          unknown:
+            p.key.startsWith('unknown:') ||
+            !!(p.left.row && !p.left.row.nativeBaselineJson) ||
+            !!(p.right.row && !p.right.row.nativeBaselineJson)
         }))
     }
   }
