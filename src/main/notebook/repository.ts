@@ -988,7 +988,7 @@ class NotebookRunRepository {
         const sessionRoot = join(projectRoot, session.name)
         if (await this.pathExists(join(sessionRoot, NOTEBOOK_RUN_FILE))) {
           recovered.push(
-            ...(await this.recoverLane(
+            ...(await this.recoverLaneIfReadable(
               project.name,
               session.name,
               createRootNotebookLane(project.name, session.name, `root-frame-${session.name}`)
@@ -1007,7 +1007,7 @@ class NotebookRunRepository {
           if (!frame.isDirectory() || !SAFE_SEGMENT_PATTERN.test(frame.name)) continue
           if (!(await this.pathExists(join(framesRoot, frame.name, NOTEBOOK_RUN_FILE)))) continue
           recovered.push(
-            ...(await this.recoverLane(
+            ...(await this.recoverLaneIfReadable(
               project.name,
               session.name,
               createFrameNotebookLane(project.name, session.name, frame.name)
@@ -1489,6 +1489,27 @@ class NotebookRunRepository {
       }
     }
     return [...recovered.values()].map((run) => ({ projectId, sessionId, run }))
+  }
+
+  private async recoverLaneIfReadable(
+    projectId: string,
+    sessionId: string,
+    lane: NotebookLaneIdentity
+  ): Promise<RecoveredBackgroundRun[]> {
+    try {
+      return await this.recoverLane(projectId, sessionId, lane)
+    } catch (error) {
+      if (!(error instanceof CorruptNotebookDocumentError)) throw error
+
+      log.warn('skipping unreadable Notebook document', {
+        projectId,
+        sessionId,
+        lane: notebookLaneScope(lane).kind,
+        status: 'corrupt',
+        phase: 'startup-recovery'
+      })
+      return []
+    }
   }
 
   private async pathExists(path: string): Promise<boolean> {
