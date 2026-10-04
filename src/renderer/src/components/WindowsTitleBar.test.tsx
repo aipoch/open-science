@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { useState } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -87,6 +89,18 @@ describe('Windows title bar', () => {
       symbolColor: '#0a141e'
     })
     expect(screen.getByRole('textbox')).toBeTruthy()
+  })
+  it('keeps the title bar above modal and markdown overlays', () => {
+    const css = readFileSync(resolve(__dirname, '../assets/main.css'), 'utf8')
+    const titlebarZIndex = css.match(/--z-index-titlebar:\s*(\d+)/)?.[1]
+    const modalZIndex = css.match(/--z-index-modal:\s*(\d+)/)?.[1]
+    const markdownMenuZIndex = css.match(/--z-index-markdown-menu:\s*(\d+)/)?.[1]
+
+    expect(titlebarZIndex).toBeDefined()
+    expect(modalZIndex).toBeDefined()
+    expect(markdownMenuZIndex).toBeDefined()
+    expect(Number(titlebarZIndex)).toBeGreaterThan(Number(modalZIndex))
+    expect(Number(titlebarZIndex)).toBeGreaterThan(Number(markdownMenuZIndex))
   })
   it('starts with application commands disabled before the presentation owner mounts', async () => {
     render(

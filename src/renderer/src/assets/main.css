@@ -23,7 +23,8 @@ html[data-windows-titlebar='fullscreen'] {
   position: fixed;
   inset: 0 0 auto;
   height: var(--windows-titlebar-height);
-  z-index: 40;
+  /* Keep the Windows application menu legible when a renderer overlay covers the app content. */
+  z-index: var(--z-index-titlebar);
   -webkit-app-region: drag;
 }
 
@@ -351,6 +352,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --z-index-modal: 50;
   --z-index-toast: 40;
   --z-index-markdown-menu: 200;
+  --z-index-titlebar: 1000;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
