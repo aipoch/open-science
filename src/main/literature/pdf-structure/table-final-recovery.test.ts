@@ -41,6 +41,16 @@ it('stops a padded crop at an explicit ruled bottom before following prose', () 
   expect(recoverRuledBottomBoundaryCrop(table, items, [[0, 55, 300, 55]])).toEqual([0, 0, 300, 57])
 })
 
+it('keeps an interior rule when a column-aligned data row follows it', () => {
+  const table = model(6, [0, 20, 40, 60, 80])
+  table.cropRect = [0, 0, 600, 70]
+  const items = [
+    ...Array.from({ length: 6 }, (_, column) => item(`Value ${column}`, column * 100 + 5, 16)),
+    ...Array.from({ length: 6 }, (_, column) => item(`Result ${column}`, column * 100 + 5, 60))
+  ]
+  expect(recoverRuledBottomBoundaryCrop(table, items, [[0, 55, 600, 55]])).toBeUndefined()
+})
+
 it('extends a wide table for a complete terminal row below the detector crop', () => {
   const fixture = readPdfFixture(
     resolve(

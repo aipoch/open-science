@@ -675,6 +675,14 @@ export function recoverRuledBottomBoundaryCrop(table, pageItems, rules) {
     .sort((a, b) => a - b)
   const height = heights[Math.floor(heights.length / 2)]
   if (!(height > 0)) return
+  const columnRects = (table.structure?.objects ?? [])
+    .filter((object) => object.label === 'table column' && Array.isArray(object.rect))
+    .map((object) => [
+      object.rect[0] + crop[0],
+      object.rect[1] + crop[1],
+      object.rect[2] + crop[0],
+      object.rect[3] + crop[1]
+    ])
   for (const boundary of horizontal) {
     if (crop[3] - boundary[1] > height * 2.2) continue
     if (
@@ -713,6 +721,23 @@ export function recoverRuledBottomBoundaryCrop(table, pageItems, rules) {
       )
     })
     if (!followingProse) continue
+    const alignedDataRow =
+      columnRects.length >= 3 &&
+      proseLines.some(({ items: line }) => {
+        const occupied = new Set(
+          line
+            .map((item) =>
+              columnRects.findIndex(
+                (column) =>
+                  item.rect[0] >= column[0] - height * 0.25 &&
+                  item.rect[2] <= column[2] + height * 0.25
+              )
+            )
+            .filter((column) => column >= 0)
+        )
+        return occupied.size >= Math.max(2, columnRects.length - 1)
+      })
+    if (alignedDataRow) continue
     const body = pageItems.filter(
       (item) =>
         item.horizontal &&
