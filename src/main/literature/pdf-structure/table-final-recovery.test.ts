@@ -204,7 +204,7 @@ it('does not expand a crop for one neighboring prose line', () => {
 })
 
 it('does not expand a crop for prose lines without owned row values', () => {
-  const table = model(3, [0, 20, 40, 60, 80, 100])
+  const table = model(3, [0, 20, 40, 60])
   table.cropRect = [50, 0, 250, 100]
   const items = [item('Nearby note 0', 42, 3), item('Nearby note 1', 42, 23)]
   expect(recoverClippedLeftLabelCrop(table, items)).toBeUndefined()
