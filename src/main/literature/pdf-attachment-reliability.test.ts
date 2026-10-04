@@ -240,6 +240,7 @@ describe('Literature PDF attachment reliability', () => {
     await expect(importer.addToLiterature(input)).rejects.toThrow('Injected failure')
     expect((await catalog.get(request.itemId))!.attachments).toHaveLength(0)
     const committed = await importer.addToLiterature(input)
+    expect(committed.item.attachments[0].versions[0].pageCount).toBe(1)
     const versionId = committed.item.attachments[0].versions[0].id
     const library = await annotations.list({ literatureVersionId: versionId })
     expect(library.items.map((note) => note.id)).toEqual(['workspace-note'])

@@ -106,6 +106,17 @@ class LiteraturePdfImporter {
     if (!workspace) throw new Error('Workspace PDF import is unavailable.')
     return workspace.sources.withVerifiedSource(request.source, async (lease, source) => {
       signal?.throwIfAborted()
+      await assertPdfHeader(lease.path)
+      let pageCount: number | undefined
+      if (lease.size <= MAX_AUTO_EXTRACT_PDF_BYTES) {
+        try {
+          pageCount = await inspectPdfPageCount(lease.path)
+        } catch (error) {
+          throw pdfImportParseError(error)
+        }
+      }
+      await lease.verifyUnchanged()
+      signal?.throwIfAborted()
       const existing = request.itemId
         ? await this.options.catalog.get(request.itemId)
         : await this.options.catalog.findItemByPdf(source.checksum, lease.size)
@@ -132,7 +143,8 @@ class LiteraturePdfImporter {
               filename: source.name,
               contentType: 'application/pdf',
               sizeBytes: lease.size,
-              checksum: source.checksum
+              checksum: source.checksum,
+              pageCount
             },
             async () => {
               signal?.throwIfAborted()
