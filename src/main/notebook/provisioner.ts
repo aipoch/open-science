@@ -942,6 +942,20 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     return platform === 'win32' ? basename(envPrefix(this.deps.root, name, platform)) : undefined
   }
 
+  private hasUnsupportedRPath(): boolean {
+    return this.platform !== 'win32' && /\s/u.test(this.deps.root)
+  }
+
+  private assertLanguagePath(language: NotebookLanguage): void {
+    if (language === 'r' && this.hasUnsupportedRPath()) {
+      throw new Error(
+        'The data location contains spaces. Managed R environments cannot run reliably here. ' +
+          'Use Settings > Storage > Change location to move data to a path without spaces. ' +
+          'You can cancel and keep the current location; the existing environment is unchanged.'
+      )
+    }
+  }
+
   // Wraps a language run so a QUEUED cancel is consumed (beginLanguageRun throws) BEFORE the run does
   // any work, and the provisioning flag + abort controller cover the whole run. repair uses this too, so
   // a cancel that arrived while the Reset was queued aborts BEFORE the destructive rm — never leaving a
@@ -950,6 +964,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     this.beginLanguageRun(language)
     this.provisioning = true
     try {
+      // Reject before repair preparation can invalidate bindings, stop kernels or delete a prefix.
+      this.assertLanguagePath(language)
       await run()
     } finally {
       this.provisioning = false
@@ -1036,6 +1052,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       // R is upgraded additively only if already materialized (lazy; spec §6.5) AND not recovery-blocked
       // — a blocked R prefix skips its upgrade rather than failing the (already-applied) python upgrade.
       if (
+        !this.hasUnsupportedRPath() &&
         rMaterialized(this.deps.root, this.platform) &&
         !this.deps.isPrefixBlocked?.(envPrefix(this.deps.root, DEFAULT_R_ENV, this.platform))
       ) {
@@ -1194,6 +1211,21 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           // restore path rm -rf's a broken partial and recreates, which must not race an orphan writer.
           // Other envs still restore; a later restart re-checks the pid and unblocks.
           if (this.deps.isPrefixBlocked?.(prefix)) return
+          // Historical spaced roots remain readable. Keep their R prefix and reconstruction lock
+          // until the user chooses a supported location, without blocking Python restoration.
+          if (this.hasUnsupportedRPath()) {
+            try {
+              if (
+                name === DEFAULT_R_ENV ||
+                existsSync(rBin(prefix, this.platform)) ||
+                /^https?:\/\/[^\r\n]+\/r-base-/mu.test(readFileSync(join(dir, file), 'utf8'))
+              )
+                return
+            } catch {
+              // Keep an unreadable lock and its prefix; another environment can still restore.
+              return
+            }
+          }
           // A prior restore may have materialized the interpreter before being interrupted. Verify it
           // before consuming the lock; a broken partial prefix is removed and rebuilt below.
           const existingBin = existsSync(pythonBin(prefix, this.platform))
@@ -1311,6 +1343,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     signal?: AbortSignal
   ): Promise<EnvironmentInfo> {
     signal?.throwIfAborted()
+    this.assertLanguagePath(language)
     const flagLike = packages.find((pkg) => pkg.trim().startsWith('-'))
     if (flagLike) {
       throw new Error(
@@ -1420,6 +1453,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     if (!/^[a-f0-9]{64}$/u.test(lockChecksum)) {
       throw new Error('Imported Environment lock checksum is invalid.')
     }
+    this.assertLanguagePath(language)
     const prefix = envPrefix(this.deps.root, name, this.platform)
     if (
       this.platform === 'win32' &&

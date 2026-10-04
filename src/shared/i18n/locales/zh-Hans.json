@@ -6884,6 +6884,7 @@
     "Keep existing note": "保留现有笔记",
     "Keep historical note": "保留历史笔记",
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "将所有项目共享的 PDF 笔记和批注作为只读快照导出",
-    "Read-only snapshot": "只读快照"
+    "Read-only snapshot": "只读快照",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "当前数据位置包含空格，R 环境无法在此可靠运行。请使用“更改位置”将数据迁移到不含空格的路径。您可以取消并保留当前位置，现有数据仍可访问。"
   }
 }

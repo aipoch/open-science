@@ -7351,6 +7351,7 @@
     "Keep existing note": "Сохранить существующую заметку",
     "Keep historical note": "Сохранить прежнюю заметку",
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "Включить общие заметки и аннотации PDF из всех проектов в снимок только для чтения",
-    "Read-only snapshot": "Снимок только для чтения"
+    "Read-only snapshot": "Снимок только для чтения",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "Текущий путь к данным содержит пробелы. Среды R не могут надёжно работать в этой папке. Используйте «Изменить расположение», чтобы переместить данные по пути без пробелов. Можно отменить перемещение и оставить текущее расположение; существующие данные останутся доступны."
   }
 }

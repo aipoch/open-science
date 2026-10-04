@@ -7044,6 +7044,7 @@
     "Keep existing note": "Vorhandene Notiz behalten",
     "Keep historical note": "Ältere Notiz behalten",
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "Gemeinsame PDF-Notizen und Anmerkungen aus allen Projekten als schreibgeschützten Snapshot einschließen",
-    "Read-only snapshot": "Schreibgeschützter Snapshot"
+    "Read-only snapshot": "Schreibgeschützter Snapshot",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "Der aktuelle Datenpfad enthält Leerzeichen. R-Umgebungen können hier nicht zuverlässig ausgeführt werden. Verschieben Sie Ihre Daten über „Speicherort ändern“ in einen Pfad ohne Leerzeichen. Sie können abbrechen und den aktuellen Speicherort beibehalten; Ihre vorhandenen Daten bleiben zugänglich."
   }
 }

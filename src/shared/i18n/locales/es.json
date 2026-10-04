@@ -7212,6 +7212,7 @@
     "Keep existing note": "Conservar la nota existente",
     "Keep historical note": "Conservar la nota anterior",
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "Incluir notas y anotaciones compartidas del PDF de todos los proyectos como una instantánea de solo lectura",
-    "Read-only snapshot": "Instantánea de solo lectura"
+    "Read-only snapshot": "Instantánea de solo lectura",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "La ruta actual de los datos contiene espacios. Los entornos R no pueden ejecutarse de forma fiable en esta ubicación. Utilice «Cambiar ubicación» para mover los datos a una ruta sin espacios. Puede cancelar y conservar la ubicación actual; los datos existentes seguirán disponibles."
   }
 }
