@@ -1215,10 +1215,17 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           // until the user chooses a supported location, without blocking Python restoration.
           if (this.hasUnsupportedRPath()) {
             try {
+              if (name === DEFAULT_R_ENV) return
+              const lock = readFileSync(join(dir, file), 'utf8')
+              // Mixed environments remain useful for Python. Match the Python-first verification
+              // below, including prefixes whose interpreters have not yet been reconstructed.
+              const hasPython =
+                existsSync(pythonBin(prefix, this.platform)) ||
+                /^https?:\/\/[^\r\n]+\/python-/mu.test(lock)
               if (
-                name === DEFAULT_R_ENV ||
-                existsSync(rBin(prefix, this.platform)) ||
-                /^https?:\/\/[^\r\n]+\/r-base-/mu.test(readFileSync(join(dir, file), 'utf8'))
+                !hasPython &&
+                (existsSync(rBin(prefix, this.platform)) ||
+                  /^https?:\/\/[^\r\n]+\/r-base-/mu.test(lock))
               )
                 return
             } catch {

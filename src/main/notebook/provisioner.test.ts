@@ -248,6 +248,47 @@ describe('historical R prefixes containing spaces', () => {
     expect(runArgv).not.toHaveBeenCalled()
   })
 
+  it.each([false, true])(
+    'restores a mixed Python/R environment at a spaced root (materialized: %s)',
+    async (materialized) => {
+      const root = join(makeRoot(), 'Application Support', 'runtime')
+      const prefix = envPrefix(root, 'analysis', 'darwin')
+      mkdirSync(envsLockDir(root), { recursive: true })
+      mkdirSync(pkgsCache(root), { recursive: true })
+      const packages = ['python-3.12.conda', 'r-base-4.4.conda']
+      const lockPath = join(envsLockDir(root), 'analysis.lock')
+      for (const archive of packages) {
+        writeFileSync(join(pkgsCache(root), archive), RELOCATION_ARCHIVE_CONTENT)
+      }
+      writeFileSync(
+        lockPath,
+        '@EXPLICIT\n' +
+          packages
+            .map(
+              (archive) =>
+                `https://conda.anaconda.org/conda-forge/osx-arm64/${archive}#${RELOCATION_ARCHIVE_MD5}\n`
+            )
+            .join('')
+      )
+      const materialize = (): void => {
+        mkdirSync(join(prefix, 'bin'), { recursive: true })
+        writeFileSync(pythonBin(prefix, 'darwin'), 'python')
+        writeFileSync(rBin(prefix, 'darwin'), 'R')
+      }
+      if (materialized) materialize()
+      const runArgv = vi.fn(async () => materialize())
+      const verify = vi.fn(async () => {})
+      const provisioner = new DefaultRuntimeProvisioner(
+        makeDeps(root, { platform: 'darwin', runArgv, verify })
+      )
+      await provisioner.restoreRelocatedEnvs(() => {})
+      expect(verify).toHaveBeenCalledWith(pythonBin(prefix, 'darwin'), prefix)
+      expect(runArgv).toHaveBeenCalledTimes(materialized ? 0 : 1)
+      expect(existsSync(lockPath)).toBe(false)
+      expect(readFileSync(pythonBin(prefix, 'darwin'), 'utf8')).toBe('python')
+    }
+  )
+
   it('retains relocated R locks and old packages instead of retrying a destructive rebuild', async () => {
     const root = join(makeRoot(), 'Application Support', 'runtime')
     const prefix = envPrefix(root, DEFAULT_R_ENV, 'darwin')
