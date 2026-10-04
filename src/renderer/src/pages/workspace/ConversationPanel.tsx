@@ -1456,6 +1456,7 @@ const ConversationPanel = ({
               session={activeSession}
               bindings={sessionTools.menuBindings}
               createSideChat={sideChatController.createDraft}
+              credentialPending={pendingCredentialRequest !== undefined}
               disabledReason={openSideChatReason}
             />
           )}

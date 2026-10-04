@@ -1112,6 +1112,58 @@ describe('ConversationPanel header spacing', () => {
     expect(getComposerEditor().textContent).toContain('Keep this draft')
   })
 
+  it('passes pending credential state to the header menu availability projection', async () => {
+    const activeSession: ChatSession = {
+      id: 'credential-header',
+      projectId: 'project-a',
+      title: 'Research',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const execute = vi.fn()
+    const disabled = vi.fn(({ presentedStatus }: { presentedStatus: string }) =>
+      presentedStatus.startsWith('waiting-')
+    )
+    renderPanel({
+      view: { activeSession },
+      permissions: {
+        ...createPanelDefaults().permissions,
+        credentialRequests: [
+          {
+            id: 'credential-1',
+            credentialId: 'openalex',
+            connector: 'literature',
+            method: 'openalex_search_works',
+            sessionId: activeSession.id
+          }
+        ]
+      },
+      sessionTools: {
+        menuBindings: {
+          fork: {
+            execute,
+            disabled
+          }
+        }
+      }
+    })
+    await act(async () =>
+      getConversationHeader()
+        .querySelector<HTMLButtonElement>('[aria-label="Session actions"]')!
+        .click()
+    )
+    const fork = document.querySelector<HTMLButtonElement>('[data-action-id="fork"]')!
+    expect(disabled).toHaveBeenLastCalledWith(
+      expect.objectContaining({ presentedStatus: 'waiting-for-user' })
+    )
+    expect(fork.disabled).toBe(true)
+    await act(async () => fork.click())
+    expect(execute).not.toHaveBeenCalled()
+  })
+
   it('opens Session information and routes editing through the owner', () => {
     const session: ChatSession = {
       id: 'info-session',

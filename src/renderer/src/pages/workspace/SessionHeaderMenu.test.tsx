@@ -151,6 +151,32 @@ describe('SessionHeaderMenu', () => {
     expect(fork).not.toHaveBeenCalled()
   })
 
+  it('blocks Fork and transfer exports while credentials are pending, then restores availability', async () => {
+    const onFork = vi.fn(async () => {})
+    const bindings = createSessionActionBindings({
+      canMutateConversations: true,
+      canDeleteConversations: false,
+      canDownloadArtifacts: false,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onForkSession: onFork,
+      onExportSession: vi.fn(),
+      onExportPackage: vi.fn(async () => {})
+    })
+    const ready = { ...session, activeMessageCount: 1 }
+    await render({ session: ready, bindings, credentialPending: true })
+    await openMenu()
+    const fork = document.querySelector<HTMLElement>('[data-action-id="fork"]')!
+    const exports = document.querySelector<HTMLElement>('[data-slot="dropdown-menu-sub-trigger"]')!
+    expect(fork.getAttribute('aria-disabled')).toBe('true')
+    expect(exports.getAttribute('aria-disabled')).toBe('true')
+    await act(async () => fork.click())
+    expect(onFork).not.toHaveBeenCalled()
+    await render({ session: ready, bindings, credentialPending: false })
+    expect(fork.getAttribute('aria-disabled')).not.toBe('true')
+    expect(exports.getAttribute('aria-disabled')).not.toBe('true')
+  })
+
   it('restores trigger focus when the keyboard dismisses the menu', async () => {
     await render({ session, createSideChat: () => 'draft' })
     trigger().focus()
