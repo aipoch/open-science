@@ -386,3 +386,93 @@ it.each([undefined, false] as const)(
     expect(onExportDiagnostics).toHaveBeenCalledWith(context.session)
   }
 )
+
+it.each([
+  { status: 'running', activeRun: { promptMessageId: 'message-1', startedAt: 1 } },
+  { status: 'waiting-permission' },
+  { status: 'waiting-for-user' },
+  {
+    status: 'waiting-plan-approval',
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      plan: {
+        artifactId: 'plan',
+        artifactVersionId: 'version',
+        artifactChecksum: 'a'.repeat(64),
+        approval: 'pending',
+        stepStatuses: {}
+      }
+    }
+  }
+] satisfies Partial<ChatSession>[])(
+  'offers imported exports without weakening fork or live-transfer admission: %j',
+  async (history) => {
+    const imported = createSession({
+      ...history,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    const options = {
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      canDownloadArtifacts: true,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onExportSession: vi.fn(),
+      onExportPackage: vi.fn(async () => undefined),
+      onForkSession: vi.fn(async () => undefined)
+    }
+    const entriesFor = (
+      session: ChatSession,
+      overrides: Partial<typeof options> & { packageBusy?: boolean } = {}
+    ): ReturnType<typeof resolveActionMenuEntries> =>
+      resolveActionMenuEntries(
+        {
+          identityKey: session.id,
+          catalog: SESSION_ACTION_CATALOG,
+          recipe: [
+            { kind: 'action', action: 'export' },
+            { kind: 'action', action: 'export-package' },
+            { kind: 'action', action: 'fork' }
+          ],
+          bindings: createSessionActionBindings({ ...options, ...overrides })
+        },
+        invocation(session)
+      )
+    expect(entriesFor(imported)).toMatchObject([
+      { disabled: false },
+      { disabled: false },
+      { disabled: true }
+    ])
+    const bindings = createSessionActionBindings(options)
+    await bindings.export.execute(invocation(imported))
+    await bindings['export-package'].execute(invocation(imported))
+    expect(options.onExportSession).toHaveBeenCalledWith(imported)
+    expect(options.onExportPackage).toHaveBeenCalledWith(imported)
+    expect(entriesFor({ ...imported, packageOrigin: undefined })).toMatchObject([
+      { disabled: true },
+      { disabled: true },
+      { disabled: true }
+    ])
+    for (const live of [{ agentPromptInFlight: true }, { compacting: true }])
+      expect(entriesFor({ ...imported, ...live })).toMatchObject([
+        { disabled: true },
+        { disabled: true },
+        { disabled: true }
+      ])
+    expect(entriesFor(imported, { packageBusy: true })[1]).toMatchObject({ disabled: true })
+    expect(entriesFor(imported, { canMutateConversations: false })[1]).toMatchObject({
+      disabled: true
+    })
+    expect(entriesFor({ ...imported, messages: [] })[0]).toMatchObject({ disabled: true })
+  }
+)
