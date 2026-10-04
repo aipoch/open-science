@@ -436,7 +436,9 @@ it('recovers a unique 2x2 raster plate when its Fig.2 prefix is split from the c
   const f = fragmentedPlate()
   const match = nativeCaptionedRasterArrayFragment(f.page, f.caption, [f.caption], [])
   expect(match?.rect).toEqual([60, 40, 480, 400])
-  expect(match?.caption.lines[0]).toMatch(/^Fig\.2\./)
+  expect(match?.caption).toBe(f.caption)
+  expect(match?.captionLines?.[0]).toMatch(/^Fig\.2\./)
+  expect(match?.captionRect).toEqual(expect.arrayContaining([f.caption.rect[0], f.caption.rect[1]]))
   expect(associateFigures(f.page, [f.caption], [], [], [], [])[0].rect).toEqual([60, 40, 480, 400])
 })
 it('does not apply fragmented raster recovery to an open vector plot', () => {

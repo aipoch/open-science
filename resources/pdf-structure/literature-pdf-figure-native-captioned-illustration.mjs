@@ -872,12 +872,12 @@ export function nativeCaptionedRasterArrayFragment(page, caption, captions, tabl
   if (columns.length !== 2 || columns[1] - columns[0] < width * 0.5) return
   const rect = union(images)
   if (blocked(rect, caption, captions, tables)) return
+  const captionLines = bandLines.map((line) => line.text)
+  const captionRect = union([caption.rect, lineRect(prefix)])
   return {
-    caption: {
-      ...caption,
-      lines: bandLines.map((line) => line.text),
-      rect: union([caption.rect, lineRect(prefix)])
-    },
+    caption,
+    captionLines,
+    captionRect,
     rect,
     graphicsCount: images.length
   }
