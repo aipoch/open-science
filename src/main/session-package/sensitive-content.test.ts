@@ -7,6 +7,63 @@ import {
   PackageTextScanner
 } from './sensitive-content'
 
+describe('quoted punctuation in parser diagnostics', () => {
+  const diagnostic = "SyntaxError: Unexpected token ':' while parsing 'LDHA'"
+
+  it.each([
+    diagnostic,
+    "SyntaxError: Unexpected token '=' while parsing 'LDHA'",
+    'SyntaxError: Unexpected token ":" while parsing "LDHA"',
+    ...Array.from({ length: 4 }, (_, depth) => {
+      let text = JSON.stringify([
+        "SyntaxError: Unexpected token ':'",
+        "Let's inspect protein_annotation",
+        'const r = await host.mcp("protein_annotation", "hpa_tissue_expression_summary", { gene: "LDHA" });'
+      ])
+      for (let layer = 0; layer < depth; layer++) text = JSON.stringify({ result: text })
+      return text
+    })
+  ])('does not interpret a quoted colon as an assignment: %s', (text) => {
+    expect(findSensitivePackageText(text)).toBeUndefined()
+    for (let split = 0; split <= text.length; split++) {
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, split))
+      scanner.write(text.slice(split))
+      expect(scanner.finish(), `split ${split}`).toBeUndefined()
+    }
+  })
+
+  it.each([
+    "'token': 'synthetic-private-value'",
+    '"token": "synthetic-private-value"',
+    "token: ':'",
+    "token':synthetic-private-value",
+    `${diagnostic}\ntoken=synthetic-private-value`,
+    `${diagnostic}\n'password': 'synthetic-private-value'`
+  ])('continues scanning actual assignments: %s', (text) => {
+    expect(findSensitivePackageText(text)).toBeDefined()
+    for (let split = 0; split <= text.length; split++) {
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, split))
+      scanner.write(text.slice(split))
+      expect(scanner.finish(), `split ${split}`).toBeDefined()
+    }
+  })
+
+  it('preserves diagnostic handling at every retained-overlap alignment', () => {
+    for (let shift = -5; shift <= 1; shift++) {
+      const text =
+        ' '.repeat(65536 - 8192 - diagnostic.indexOf('token') + shift) +
+        diagnostic +
+        ' '.repeat(8192)
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, 65536))
+      scanner.write(text.slice(65536))
+      expect(scanner.finish(), `overlap shift ${shift}`).toBeUndefined()
+    }
+  })
+})
+
 describe('package text policy', () => {
   it.each([
     'noCredentials',

@@ -284,6 +284,14 @@ const findPackageTextMatch = (
     if (booleanField(match.index)) continue
     const start = match.index + match[0].length
     const rest = text.slice(start)
+    // In diagnostics such as `Unexpected token ':'`, the quotes enclose the
+    // separator, not a key/value pair. A genuinely quoted key has an opening
+    // quote before its name; retain that character across streaming overlaps.
+    const separatorQuote = /^\s*(["'])/.exec(match[2])?.[1]
+    const preceding = match.index === 0 ? beforeText : text[match.index - 1]
+    const partialKey = match.index === 0 && /^[a-z0-9_-]$/i.test(preceding)
+    if (separatorQuote && rest[0] === separatorQuote && preceding !== separatorQuote && !partialKey)
+      continue
     // Serialized context/model usage counts are numbers, not credentials. Keep this exception
     // limited to the exact JSON metric keys and integer values, never quoted secrets.
     if (
