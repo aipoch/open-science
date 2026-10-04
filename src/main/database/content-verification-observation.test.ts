@@ -21,6 +21,8 @@ it('adds unknown verification observations without changing historical content o
     'ALTER TABLE "ContentBlob" DROP COLUMN "lastVerificationAttemptAt"'
   )
   await client.$executeRawUnsafe('DROP TABLE "LiteratureMetadataCommitReceipt"')
+  await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
+  await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
   await client.$executeRawUnsafe(
     `DELETE FROM "_open_science_migrations" WHERE "id" >= '0036_content_verification_observation'`
   )
@@ -42,7 +44,8 @@ it('adds unknown verification observations without changing historical content o
       '0045_literature_smart_pause_run',
       '0046_journal_attributes',
       '0047_session_replay',
-      '0048_pdf_annotation_sharing'
+      '0048_pdf_annotation_sharing',
+      '0049_session_research_membership'
     ]
   })
   expect(await client.contentBlob.findUnique({ where: { id: 'old' } })).toMatchObject({

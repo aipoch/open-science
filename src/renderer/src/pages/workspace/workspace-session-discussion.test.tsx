@@ -1,3 +1,4 @@
+import { researchDraftKey } from './research-draft-identity'
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -87,6 +88,97 @@ afterEach(() => {
 })
 
 describe('durable step-scoped Ask snapshots', () => {
+  it('delivers a pending Ask only to its matching research draft while keeping ordinary drafts untouched', async () => {
+    const source = {
+      sourceProjectId: 'target-project',
+      sourceSessionId: 'source',
+      sourceImportId: 'import',
+      sourceTitle: 'Study'
+    }
+    const draftKey = researchDraftKey(source)
+    useSessionStore.getState().clearSelection()
+    const saveSelectionSnapshot = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
+    const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+    const { rerender } = renderHook(
+      ({ key }) =>
+        useWorkspaceSessionDiscussion({
+          draftKey: key,
+          editable: true,
+          composer: { view: { doc: doc('Question'), annotations: [] }, actions }
+        }),
+      { initialProps: { key: 'new:target-project' } }
+    )
+    act(() =>
+      useSessionReplayStore
+        .getState()
+        .ask(context, { projectId: 'target-project', draftKey, navigationRevision: 1 })
+    )
+    expect(saveSelectionSnapshot).not.toHaveBeenCalled()
+    rerender({ key: draftKey })
+    await waitFor(() => expect(actions.addAnnotation).toHaveBeenCalledOnce())
+    expect(saveSelectionSnapshot).toHaveBeenCalledOnce()
+  })
+
+  it('reentering an unsent research draft preserves the chosen step instead of replacing it with whole-source scope', () => {
+    useSessionStore.getState().clearSelection()
+    const saveSelectionSnapshot = vi.fn()
+    vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
+    const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+    const existing = createSessionDiscussionAnnotation(context, 'frozen-step')!
+    const draftKey = 'new-research:source'
+    renderHook(() =>
+      useWorkspaceSessionDiscussion({
+        draftKey,
+        editable: true,
+        composer: {
+          view: { doc: doc('Explain this exact step'), annotations: [existing] },
+          actions
+        }
+      })
+    )
+    act(() =>
+      useSessionReplayStore
+        .getState()
+        .ask(
+          { ...context, scope: 'session' },
+          { projectId: 'target-project', draftKey, onlyIfUnlinked: true, navigationRevision: 1 }
+        )
+    )
+    expect(saveSelectionSnapshot).not.toHaveBeenCalled()
+    expect(actions.addAnnotation).not.toHaveBeenCalled()
+    expect(useSessionReplayStore.getState().pendingDiscussion).toBeUndefined()
+  })
+
+  it('does not append a delayed research reference after switching between two unsent research drafts', async () => {
+    useSessionStore.getState().clearSelection()
+    const gate = deferred<void>()
+    const saveSelectionSnapshot = vi.fn(() => gate.promise)
+    vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
+    const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+    const { rerender } = renderHook(
+      ({ key }) =>
+        useWorkspaceSessionDiscussion({
+          draftKey: key,
+          editable: true,
+          composer: { view: { doc: doc('Question'), annotations: [] }, actions }
+        }),
+      { initialProps: { key: 'research-a' } }
+    )
+    act(() =>
+      useSessionReplayStore.getState().ask(context, {
+        projectId: 'target-project',
+        draftKey: 'research-a',
+        navigationRevision: 1
+      })
+    )
+    await waitFor(() => expect(saveSelectionSnapshot).toHaveBeenCalledOnce())
+    rerender({ key: 'research-b' })
+    await act(async () => gate.resolve())
+    expect(actions.addAnnotation).not.toHaveBeenCalled()
+    expect(actions.changeDoc).not.toHaveBeenCalled()
+  })
+
   it('saves every visible reference before adding an annotation and retains typing during storage', async () => {
     const gate = deferred<void>()
     const saveSelectionSnapshot = vi.fn().mockReturnValue(gate.promise)

@@ -225,7 +225,7 @@ describe('research replay interaction', () => {
   it('starts a whole-research discussion without selecting the current playback step', () => {
     const props = callbacks()
     render(<ReplayPanel document={makeDocument()} {...props} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Ask about this research' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Discuss the entire research' }))
     expect(props.onAskStep).toHaveBeenCalledWith(
       expect.objectContaining({
         scope: 'session',

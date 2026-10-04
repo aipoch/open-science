@@ -483,7 +483,9 @@
       "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx",
       "src/renderer/src/components/WindowsTitleBar.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx"
     ]
   },
   "capabilityOverlays": [],

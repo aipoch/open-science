@@ -1,3 +1,4 @@
+import { useResearchWorkspaceStore } from './research-workspace-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -46,6 +47,7 @@ const createProject = (id: string): Project => ({
 })
 
 beforeEach(() => {
+  useResearchWorkspaceStore.setState({ draftResearchByProject: {}, lastDiscussionByResearch: {} })
   previewLeaveGuards.clear()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   useProjectStore.setState({
@@ -80,6 +82,44 @@ beforeEach(() => {
 })
 
 describe('navigation store', () => {
+  it.each(['customize', 'wsl'] as const)(
+    'leaves research draft mode only after %s navigation is admitted',
+    (kind) => {
+      const source = {
+        sourceProjectId: 'project-a',
+        sourceSessionId: 'source',
+        sourceImportId: 'import',
+        sourceTitle: 'Study'
+      }
+      useResearchWorkspaceStore.getState().openDraft(source)
+      useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-b' })
+      usePreviewWorkbenchStore.setState({ activeProjectId: 'project-b', activeItemId: 'file-1' })
+      let resumeNavigation: (() => boolean | void) | undefined
+      previewLeaveGuards.register(workbenchPreviewGuardScope('project-b', 'file-1')!, (action) => {
+        resumeNavigation = action
+        return false
+      })
+      if (kind === 'customize')
+        useNavigationStore.getState().startCustomizeConversation('project-a')
+      else
+        useNavigationStore.getState().startWslSupportConversation(
+          'project-a',
+          {
+            nodes: [{ type: 'text', text: 'Help configure WSL' }]
+          },
+          'test-setup-token'
+        )
+      expect(useResearchWorkspaceStore.getState().draftResearchByProject['project-a']).toEqual(
+        source
+      )
+      resumeNavigation?.()
+      expect(
+        useResearchWorkspaceStore.getState().draftResearchByProject['project-a']
+      ).toBeUndefined()
+      expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    }
+  )
+
   it.each(['library', 'project', 'collection', 'item'] as const)(
     'returns from %s to the selected older conversation instead of the latest one',
     (entry) => {

@@ -1,3 +1,6 @@
+import { useSessionReplayStore } from '@/stores/session-replay-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { researchDraftKey } from './research-draft-identity'
 // @vitest-environment jsdom
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -222,6 +225,7 @@ const renderController = (initial: WorkspaceConversationControllerOptions): Hook
 const mounted: Hook[] = []
 
 afterEach(() => {
+  useSessionReplayStore.setState({ pendingDiscussion: undefined, discussionDestination: undefined })
   for (const hook of mounted.splice(0)) hook.unmount()
   vi.restoreAllMocks()
 })
@@ -395,6 +399,139 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() =>
       expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('new:project-a', 3)
     )
+  })
+
+  it('waits for an admitted research reference to finish saving, without blocking a different draft', () => {
+    const source = {
+      sourceProjectId: 'project-a',
+      sourceSessionId: 'source-a',
+      sourceImportId: 'import-a',
+      sourceTitle: 'Study A'
+    }
+    const input = options({ activeSession: undefined, currentDraftKey: researchDraftKey(source) })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      useSessionReplayStore.getState().ask(
+        {
+          projectId: 'project-a',
+          sourceSessionId: 'source-a',
+          sourceTitle: 'Study A',
+          fingerprint: 'hash',
+          branchId: 'main',
+          stepId: 'step-2',
+          stepOffsetMs: 0,
+          evidence: [],
+          excerpt: ''
+        },
+        {
+          projectId: 'project-a',
+          draftKey: researchDraftKey(source),
+          navigationRevision: useNavigationStore.getState().explicitNavigationRevision
+        }
+      )
+    )
+    expect(hook.result.current.availability.submit).toBe(false)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    const second = options({
+      activeSession: undefined,
+      currentDraftKey: researchDraftKey({ ...source, sourceSessionId: 'source-b' })
+    })
+    hook.rerender(second)
+    expect(hook.result.current.availability.submit).toBe(true)
+    hook.rerender(input)
+    act(() => useSessionReplayStore.getState().ask(undefined))
+    expect(hook.result.current.availability.submit).toBe(true)
+  })
+
+  it('does not reset another research draft settings when an earlier send succeeds', async () => {
+    const input = options({ activeSession: undefined, currentDraftKey: 'new-research:A' })
+    input.composer.lifecycle.captureSend = vi.fn(() => ({
+      draftKey: 'new-research:A',
+      version: 1,
+      doc: textDoc('Question A'),
+      annotations: [],
+      attachments: []
+    }))
+    let finish!: (result: { sessionId: string; messageId: string }) => void
+    input.runtime.sendMessage = vi.fn(
+      () =>
+        new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+          finish = resolve
+        })
+    )
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    hook.rerender(options({ activeSession: undefined, currentDraftKey: 'new-research:B' }))
+    await act(async () => finish({ sessionId: 'created-for-A', messageId: 'message-A' }))
+    expect(input.resetNewConversationSettings).not.toHaveBeenCalled()
+    expect(input.session.actions.resetNewConversationSpecialist).not.toHaveBeenCalled()
+  })
+
+  it('captures research ownership and stops a delayed first send from selecting over another research draft', async () => {
+    const membership = {
+      sourceProjectId: 'project-a',
+      sourceSessionId: 'source-a',
+      sourceImportId: 'import-a',
+      sourceTitle: 'Study A'
+    }
+    const input = options({
+      activeSession: undefined,
+      currentDraftKey: researchDraftKey(membership)
+    })
+    input.composer.lifecycle.captureSend = vi.fn(() => ({
+      draftKey: researchDraftKey(membership),
+      version: 1,
+      doc: textDoc('Question A'),
+      annotations: [],
+      attachments: [],
+      researchMembership: membership
+    }))
+    let fail!: (reason: Error) => void
+    input.runtime.sendMessage = vi.fn(
+      () =>
+        new Promise<{ sessionId: string; messageId: string } | undefined>((_resolve, reject) => {
+          fail = reject
+        })
+    )
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    const request = vi.mocked(input.runtime.sendMessage).mock.calls[0][0]
+    expect(request.researchMembership).toEqual(membership)
+    expect(request.isOriginCurrent?.()).toBe(true)
+    const second = options({
+      activeSession: undefined,
+      currentDraftKey: researchDraftKey({ ...membership, sourceSessionId: 'source-b' })
+    })
+    hook.rerender(second)
+    expect(request.isOriginCurrent?.()).toBe(false)
+    await act(async () => fail(new Error('Study A failed')))
+    expect(second.composer.actions.setError).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        researchMembership: membership,
+        draftKey: researchDraftKey(membership)
+      })
+    )
+  })
+
+  it('invalidates delayed navigation even if the user returns to the same draft', () => {
+    const input = options()
+    input.runtime.sendMessage = vi.fn(
+      () => new Promise<{ sessionId: string; messageId: string } | undefined>(() => undefined)
+    )
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    const request = vi.mocked(input.runtime.sendMessage).mock.calls[0][0]
+    expect(request.isOriginCurrent?.()).toBe(true)
+    useNavigationStore.setState((state) => ({
+      explicitNavigationRevision: state.explicitNavigationRevision + 1
+    }))
+    expect(request.isOriginCurrent?.()).toBe(false)
   })
 
   it.each(['success', 'undefined', 'rejection'])(

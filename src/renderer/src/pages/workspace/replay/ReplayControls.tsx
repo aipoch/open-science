@@ -67,6 +67,7 @@ export type ReplayControlsProps = {
   onSeek: (positionMs: number) => void
   onSpeed: (speed: ReplaySpeed) => void
   onAsk: () => void
+  discussionPending?: boolean
 }
 
 const PAGE_SIZE = 40
@@ -263,7 +264,7 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
                     type="button"
                     className={controlClass}
                     onClick={props.onAsk}
-                    disabled={empty}
+                    disabled={empty || props.discussionPending}
                     aria-label={t('Ask about this step')}
                   >
                     <MessageSquare size={14} />

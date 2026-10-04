@@ -39,6 +39,22 @@ export const useWorkspaceSessionDiscussion = ({
   editable: boolean
 }): void => {
   const { t } = useTranslation()
+  const draftSource = composer.view.annotations.map(replayAnnotationTarget).filter(Boolean).at(-1)
+  const draftProjectId = draftSource?.projectId
+  const draftSourceId = draftSource?.sourceSessionId
+  useEffect(() => {
+    if (!editable || !draftProjectId || !draftSourceId) return
+    const draftDiscussion = {
+      projectId: draftProjectId,
+      sourceSessionId: draftSourceId,
+      draftKey
+    }
+    useSessionReplayStore.setState({ draftDiscussion })
+    return () => {
+      if (useSessionReplayStore.getState().draftDiscussion === draftDiscussion)
+        useSessionReplayStore.setState({ draftDiscussion: undefined })
+    }
+  }, [editable, draftKey, draftProjectId, draftSourceId])
   const pending = useSessionReplayStore((state) => state.pendingDiscussion)
   const destination = useSessionReplayStore((state) => state.discussionDestination)
   const targetSession = useSessionStore((state) =>
@@ -67,7 +83,8 @@ export const useWorkspaceSessionDiscussion = ({
       targetSession?.contentLoaded === false
     )
       return
-    const targetKey = destination.sessionId ?? `new:${destination.projectId}`
+    const targetKey =
+      destination.sessionId ?? destination.draftKey ?? `new:${destination.projectId}`
     if (draftKey !== targetKey) return
     const selectedFrame = (): string => {
       const graph = useSessionStore
@@ -99,6 +116,19 @@ export const useWorkspaceSessionDiscussion = ({
       )
     }
     if (!destinationCurrent()) {
+      useSessionReplayStore.getState().ask(undefined)
+      return
+    }
+    if (
+      destination.onlyIfUnlinked &&
+      composer.view.annotations.some((annotation) => {
+        const source = replayAnnotationTarget(annotation)
+        return (
+          source?.projectId === pending.projectId &&
+          source.sourceSessionId === pending.sourceSessionId
+        )
+      })
+    ) {
       useSessionReplayStore.getState().ask(undefined)
       return
     }
@@ -155,6 +185,7 @@ export const useWorkspaceSessionDiscussion = ({
       })
   }, [
     composer.actions,
+    composer.view.annotations,
     composer.view.doc,
     draftKey,
     editable,

@@ -33,8 +33,10 @@ it('adds empty smart storage while preserving ordinary collections, membership a
       'LiteratureSmartCollection'
     ])
       await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
+    await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
+    await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
     await client.$executeRawUnsafe(
-      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing')"
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0049_session_research_membership')"
     )
     await client.sessionAuxiliaryTurnUsage.create({
       data: {
@@ -56,7 +58,8 @@ it('adds empty smart storage while preserving ordinary collections, membership a
         '0045_literature_smart_pause_run',
         '0046_journal_attributes',
         '0047_session_replay',
-        '0048_pdf_annotation_sharing'
+        '0048_pdf_annotation_sharing',
+        '0049_session_research_membership'
       ]
     })
     expect(await client.literatureCollection.findMany({ include: { items: true } })).toEqual(before)
@@ -228,6 +231,8 @@ it('leaves pre-0045 automatic pause ownership unknown', async () => {
         usageIncomplete: false
       }
     })
+    await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
+    await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
     await client.$executeRawUnsafe(
       `DELETE FROM "_open_science_migrations" WHERE id >= '0045_literature_smart_pause_run'`
     )

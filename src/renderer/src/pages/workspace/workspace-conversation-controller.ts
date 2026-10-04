@@ -1,3 +1,5 @@
+import { useSessionReplayStore } from '@/stores/session-replay-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { i18next } from '@/i18n'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
@@ -259,6 +261,20 @@ const hasRuntimeInteraction = (options: WorkspaceConversationControllerOptions):
   )
 }
 
+const isDiscussionStaging = (options: WorkspaceConversationControllerOptions): boolean => {
+  const { pendingDiscussion, discussionDestination } = useSessionReplayStore.getState()
+  return Boolean(
+    pendingDiscussion &&
+    discussionDestination &&
+    discussionDestination.projectId === options.projectId &&
+    (discussionDestination.sessionId ??
+      discussionDestination.draftKey ??
+      `new:${discussionDestination.projectId}`) === options.currentDraftKey &&
+    discussionDestination.navigationRevision ===
+      useNavigationStore.getState().explicitNavigationRevision
+  )
+}
+
 const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): boolean => {
   const { activeSession, composer, session } = options
   return (
@@ -266,6 +282,7 @@ const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): 
     options.agentConfigurationReady &&
     composer.view.transfers.length === 0 &&
     !composer.view.readingContext.isPending &&
+    !isDiscussionStaging(options) &&
     (!docIsEmpty(composer.view.doc) ||
       composer.view.attachments.length > 0 ||
       composer.view.annotations.length > 0) &&
@@ -303,6 +320,7 @@ const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean
     projectSessionActionability(activeSession).activity === 'running' &&
     composer.view.transfers.length === 0 &&
     !composer.view.readingContext.isPending &&
+    !isDiscussionStaging(options) &&
     (!docIsEmpty(composer.view.doc) ||
       composer.view.attachments.length > 0 ||
       composer.view.annotations.length > 0) &&
@@ -387,6 +405,9 @@ const canStartSideChat = (options: WorkspaceConversationControllerOptions): bool
 const useWorkspaceConversationController = (
   options: WorkspaceConversationControllerOptions
 ): WorkspaceConversationController => {
+  // Keep button availability in sync with reference persistence, while action admission rechecks
+  // the destination identity. A's pending snapshot must never block an unrelated B draft.
+  useSessionReplayStore((state) => state.pendingDiscussion)
   const optionsRef = useRef(options)
   useLayoutEffect(() => {
     optionsRef.current = options
@@ -486,6 +507,26 @@ const useWorkspaceConversationController = (
       }
 
       const snapshot = composer.lifecycle.captureSend(!branchInNewSession)
+      const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
+      const originFrame = activeSession?.conversationGraph?.activeFrameId
+      const originBranch = activeSession?.conversationGraph?.frames.find(
+        (frame) => frame.id === originFrame
+      )?.activeBranchId
+      const isOriginCurrent = (): boolean => {
+        const latest = optionsRef.current
+        const frame = latest.activeSession?.conversationGraph?.activeFrameId
+        const branch = latest.activeSession?.conversationGraph?.frames.find(
+          (row) => row.id === frame
+        )?.activeBranchId
+        return (
+          latest.currentDraftKey === snapshot.draftKey &&
+          latest.projectId === current.projectId &&
+          latest.activeSession?.id === activeSession?.id &&
+          frame === originFrame &&
+          branch === originBranch &&
+          useNavigationStore.getState().explicitNavigationRevision === navigationRevision
+        )
+      }
       const retryOwner = snapshot.retrySessionOwner
         ? current.getSession(snapshot.retrySessionOwner.sessionId)
         : undefined
@@ -562,6 +603,7 @@ const useWorkspaceConversationController = (
         void runtime
           .sendMessage({
             sessionId,
+            isOriginCurrent,
             onMessageAppended: clearOptimisticMessage,
             onPreparationRejected: (message, rejectedSessionId, finalizedAttachments) => {
               preparationRejected = true
@@ -606,6 +648,9 @@ const useWorkspaceConversationController = (
             attachments: snapshot.attachments,
             annotations: snapshot.annotations,
             discussionFocus: snapshot.discussionFocus,
+            ...(wasNewConversation && !branchInNewSession && snapshot.researchMembership
+              ? { researchMembership: snapshot.researchMembership }
+              : {}),
             referencedArtifacts: docToArtifactRefs(snapshot.doc),
             parts: docToMessageParts(snapshot.doc),
             pdfContext: snapshot.pdfContext,
@@ -638,7 +683,8 @@ const useWorkspaceConversationController = (
               : {})
           })
           .catch((error: unknown) => {
-            composer.actions.setError(errorMessage(error))
+            if (optionsRef.current.currentDraftKey === snapshot.draftKey)
+              optionsRef.current.composer.actions.setError(errorMessage(error))
             return undefined
           })
           .then((result) => {
@@ -649,8 +695,15 @@ const useWorkspaceConversationController = (
             if (snapshot.annotations.length > 0) {
               composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
             }
-            current.resetNewConversationSettings()
-            session.actions.resetNewConversationSpecialist()
+            const latest = optionsRef.current
+            const promotedOrigin =
+              latest.projectId === current.projectId &&
+              latest.activeSession?.id === result.sessionId &&
+              useNavigationStore.getState().explicitNavigationRevision === navigationRevision
+            if (isOriginCurrent() || promotedOrigin) {
+              current.resetNewConversationSettings()
+              session.actions.resetNewConversationSpecialist()
+            }
           })
           .finally(() => {
             inFlightDraftKeysRef.current.delete(submissionKey)

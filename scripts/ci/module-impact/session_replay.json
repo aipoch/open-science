@@ -51,7 +51,15 @@
     "src/renderer/src/pages/workspace/SessionDiscussionButton.tsx",
     "src/renderer/src/pages/workspace/discussion-send-context.ts",
     "src/renderer/src/pages/workspace/discussion-send-context.test.ts",
-    "src/renderer/src/pages/workspace/replay/ReplayFilePreview.tsx"
+    "src/renderer/src/pages/workspace/replay/ReplayFilePreview.tsx",
+    "src/renderer/src/pages/workspace/workspace-discussion-navigation.ts",
+    "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+    "src/renderer/src/stores/research-workspace-store.ts",
+    "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.tsx",
+    "src/renderer/src/pages/workspace/ResearchMaterialsPanel.tsx",
+    "src/renderer/src/pages/workspace/research-draft-identity.ts",
+    "src/renderer/src/pages/workspace/research-draft-identity.test.ts",
+    "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/replay/index.ts",
@@ -81,7 +89,12 @@
     "src/renderer/src/pages/workspace/workspace-session-discussion.ts",
     "src/renderer/src/pages/workspace/workspace-session-actions.ts",
     "src/renderer/src/stores/session-replay-store.ts",
-    "src/renderer/src/pages/workspace/discussion-send-context.ts"
+    "src/renderer/src/pages/workspace/discussion-send-context.ts",
+    "src/renderer/src/pages/workspace/workspace-discussion-navigation.ts",
+    "src/renderer/src/stores/research-workspace-store.ts",
+    "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.tsx",
+    "src/renderer/src/pages/workspace/ResearchMaterialsPanel.tsx",
+    "src/renderer/src/pages/workspace/research-draft-identity.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -104,7 +117,10 @@
       "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
       "src/renderer/src/stores/session-replay-store.test.ts",
       "src/renderer/src/pages/workspace/replay/replay-navigation.test.ts",
-      "src/renderer/src/pages/workspace/discussion-send-context.test.ts"
+      "src/renderer/src/pages/workspace/discussion-send-context.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/research-draft-identity.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -338,7 +354,9 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
-      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],

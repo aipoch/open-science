@@ -315,7 +315,9 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
-      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [],

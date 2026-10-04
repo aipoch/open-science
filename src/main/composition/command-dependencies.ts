@@ -131,7 +131,12 @@ export function composeCommandDependencies({
         sessionFoundation.sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
           mode: 'read-only',
           preserveRuntimeState: true
-        })
+        }),
+      list: () => sessionFoundation.sessionRepository.loadSessionSummaries(),
+      setResearchMembership: (request) =>
+        sessionAuthority.sessionPersistenceCoordinator.setResearchMembership(request),
+      readCurrent: (projectId, sessionId) =>
+        sessionAuthority.sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId)
     },
     withDataRootWrite,
     new SessionReadingOwner(

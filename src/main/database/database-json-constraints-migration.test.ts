@@ -187,10 +187,11 @@ describe('database JSON constraints migration', () => {
           '0045_literature_smart_pause_run',
           '0046_journal_attributes',
           '0047_session_replay',
-          '0048_pdf_annotation_sharing'
+          '0048_pdf_annotation_sharing',
+          '0049_session_research_membership'
         ],
         from: '0007_notification_attention_metadata',
-        to: '0048_pdf_annotation_sharing'
+        to: '0049_session_research_membership'
       })
       await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
       await expect(

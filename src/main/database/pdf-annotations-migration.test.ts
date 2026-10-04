@@ -43,6 +43,8 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
     }
     await client.$executeRawUnsafe('DROP TABLE "pdf_annotations"')
     await client.$executeRawUnsafe('DROP TABLE "pdf_annotation_imports"')
+    await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
+    await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
     await client.$executeRawUnsafe(
       'DELETE FROM "_open_science_migrations" WHERE id >= \'0043_pdf_annotations\''
     )
@@ -53,7 +55,8 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
         '0045_literature_smart_pause_run',
         '0046_journal_attributes',
         '0047_session_replay',
-        '0048_pdf_annotation_sharing'
+        '0048_pdf_annotation_sharing',
+        '0049_session_research_membership'
       ]
     })
     expect(await client.bookmark.findMany()).toEqual(before)
@@ -158,8 +161,10 @@ it.each(['upload-version', 'artifact-version'] as const)(
         await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
       for (const statement of pdfAnnotationsMigration.statements)
         await client.$executeRawUnsafe(statement)
+      await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
+      await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
       await client.$executeRawUnsafe(
-        "DELETE FROM _open_science_migrations WHERE id = '0048_pdf_annotation_sharing'"
+        "DELETE FROM _open_science_migrations WHERE id >= '0048_pdf_annotation_sharing'"
       )
       await client.project.createMany({
         data: [
@@ -180,7 +185,7 @@ it.each(['upload-version', 'artifact-version'] as const)(
       await client.$executeRaw`INSERT INTO pdf_annotation_imports (id, projectId, sessionId, sourceKind, sourceFileId, versionId, checksum, resultJson) VALUES ('deleted-native', 'legacy-p', 'legacy-session', ${kind}, 'deleted-file', 'deleted-v', ${'a'.repeat(64)}, ${receipt})`
       await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
       expect(await migrateApplicationDatabase(client)).toMatchObject({
-        applied: ['0048_pdf_annotation_sharing']
+        applied: ['0048_pdf_annotation_sharing', '0049_session_research_membership']
       })
       const rows = await client.pdfAnnotation.findMany({ orderBy: { id: 'asc' } })
       expect(rows.map((row) => row.note)).toEqual(['Keep my edit', 'Keep my edit'])

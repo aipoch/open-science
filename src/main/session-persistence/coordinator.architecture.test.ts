@@ -487,6 +487,7 @@ describe('Session persistence coordinator architecture', () => {
         'saveSideChatProjection',
         'sessionMetadataSnapshot',
         'sessionProjectId',
+        'setResearchMembership',
         'setSessionComputeConcurrencyLimit',
         'setSessionDelegationPolicy',
         'setSessionDeletionHandlers',
@@ -743,6 +744,7 @@ describe('Session persistence coordinator architecture', () => {
         'saveSession',
         'saveSessionSpecialistBinding',
         'saveSideChatProjection',
+        'setResearchMembership',
         'setSessionComputeConcurrencyLimit',
         'settleTaskCompletion',
         'bindTaskSession',
@@ -870,7 +872,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(50)
+    expect(expectedSchedulerRoute.size).toBe(51)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -1026,6 +1028,7 @@ describe('Session persistence coordinator architecture', () => {
         'setComputeConcurrencyLimit',
         'setDelegationPolicy',
         'setEnabledComputeHosts',
+        'setResearchMembership',
         'settleTaskCompletion',
         'bindTaskSession',
         'prepareRuntimeResume',
@@ -1137,6 +1140,7 @@ describe('Session persistence coordinator architecture', () => {
       saveSideChatProjection: ['sideChatOwner.saveProjection'],
       sessionMetadataSnapshot: ['stateOwner.metadataSnapshot'],
       sessionProjectId: ['stateOwner.sessionProjectId'],
+      setResearchMembership: ['stateOwner.setResearchMembership'],
       setSessionComputeConcurrencyLimit: ['stateOwner.setComputeConcurrencyLimit'],
       setSessionDelegationPolicy: ['stateOwner.setDelegationPolicy'],
       setSessionEnabledComputeHosts: ['stateOwner.setEnabledComputeHosts'],
@@ -1295,7 +1299,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
       'src/main/session-persistence/record-facts.ts',
       'src/main/session-persistence/attention-projection.test.ts',
-      'src/main/session-persistence/turn-outcome-authority.test.ts'
+      'src/main/session-persistence/turn-outcome-authority.test.ts',
+      'src/main/session-persistence/research-membership.ts'
     ])
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts',
@@ -1322,7 +1327,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/state-owner.ts',
       'src/main/session-persistence/task-admission.ts',
       'src/main/session-persistence/runtime-session-owner.ts',
-      'src/main/session-persistence/runtime-writer.ts'
+      'src/main/session-persistence/runtime-writer.ts',
+      'src/main/session-persistence/research-membership.ts'
     ])
     expect(sessionPersistence.consumerModules).toEqual(['project_lifecycle'])
     expect(sessionPersistence.testFiles.owner).toEqual([

@@ -1,3 +1,4 @@
+import type { SetResearchMembershipRequest } from '../../shared/session-replay'
 import { assertLiteratureAttachmentsUnreferenced } from './literature-attachment-removal'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
@@ -1006,6 +1007,13 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     return this.operationScheduler.runSessionIdentity(sessionId, async () =>
       this.stateOwner.sessionProjectId(sessionId)
     )
+  }
+
+  setResearchMembership(request: SetResearchMembershipRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(request.projectId, request.sessionId, async () => {
+      await this.repository.assertSessionIdentityOwnership(request.sessionId, request.projectId)
+      return this.stateOwner.setResearchMembership(request)
+    })
   }
 
   // Dedicated main-owned archive mutation. Unlike full renderer saves it preserves updatedAt and

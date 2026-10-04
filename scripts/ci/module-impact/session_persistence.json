@@ -89,7 +89,8 @@
     "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
     "src/main/session-persistence/record-facts.ts",
     "src/main/session-persistence/attention-projection.test.ts",
-    "src/main/session-persistence/turn-outcome-authority.test.ts"
+    "src/main/session-persistence/turn-outcome-authority.test.ts",
+    "src/main/session-persistence/research-membership.ts"
   ],
   "interfacePaths": [
     "src/main/session-persistence/coordinator.ts",
@@ -116,7 +117,8 @@
     "src/main/session-persistence/state-owner.ts",
     "src/main/session-persistence/task-admission.ts",
     "src/main/session-persistence/runtime-session-owner.ts",
-    "src/main/session-persistence/runtime-writer.ts"
+    "src/main/session-persistence/runtime-writer.ts",
+    "src/main/session-persistence/research-membership.ts"
   ],
   "consumerModules": ["project_lifecycle"],
   "testFiles": {

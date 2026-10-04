@@ -1,3 +1,4 @@
+import { sessionResearchMembershipMigration } from './migrations/0049-session-research-membership'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
 import { sessionReplayMigration } from './migrations/0047-session-replay'
@@ -909,6 +910,17 @@ const MIGRATION_MANIFEST = [
       pdfAnnotationSharingMigration.operations
     ),
     foreignKeysDuringApply: 'disabled',
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionResearchMembershipMigration,
+    checksum: checksumMigrationPayload(
+      sessionResearchMembershipMigration.id,
+      sessionResearchMembershipMigration.statements,
+      sessionResearchMembershipMigration.verifiers,
+      sessionResearchMembershipMigration.operations
+    ),
     backupOnApply: 'required',
     backupRetention: 'retain'
   }

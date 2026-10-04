@@ -38,7 +38,7 @@ export const SessionDiscussionBar = ({
   if (!latest) return null
   const selectionLabel =
     scope === 'session'
-      ? undefined
+      ? t('Entire research')
       : steps.length > 1
         ? t('{{count}} steps', { count: steps.length })
         : latest.stepNumber
@@ -66,7 +66,7 @@ export const SessionDiscussionBar = ({
                 disabled={disabled}
               >
                 <MessageSquare className="size-4 text-primary" aria-hidden="true" />
-                {t('Discuss')}
+                {t('Question scope')}
                 <ChevronDown className="size-3 text-muted-foreground" aria-hidden="true" />
               </Button>
             </PopoverTrigger>

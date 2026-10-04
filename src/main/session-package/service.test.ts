@@ -1874,7 +1874,13 @@ it('transfers conversation branches and delivered Side Chat relays without auxil
   const retainedSessionPath = join(retainedSource, 'session.json')
   const retainedEnvelope = JSON.parse(await readFile(retainedSessionPath, 'utf8')) as {
     version: number
-    session: { runtimeContext?: Record<string, unknown> }
+    session: { runtimeContext?: Record<string, unknown>; researchMembership?: unknown }
+  }
+  retainedEnvelope.session.researchMembership = {
+    sourceProjectId: 'local',
+    sourceSessionId: 'local-session',
+    sourceImportId: 'local-import',
+    sourceTitle: 'Local group'
   }
   retainedEnvelope.session.runtimeContext = {
     ...(retainedEnvelope.session.runtimeContext ?? { version: 1, revision: 1 }),
@@ -1929,6 +1935,9 @@ it('transfers conversation branches and delivered Side Chat relays without auxil
       conversationGraph?: { messages: Array<Record<string, unknown>> }
     }
   }
+  expect(
+    (forwardedEnvelope.session as { researchMembership?: unknown }).researchMembership
+  ).toBeUndefined()
   expect(forwardedEnvelope.session.runtimeContext?.sideChat).toBeUndefined()
   expect(forwardedEnvelope.session.conversationGraph?.messages).toContainEqual(
     expect.objectContaining({
@@ -4397,6 +4406,12 @@ it('round-trips portable history without local Session selection links', async (
         updatedAt: 1
       }
     ],
+    researchMembership: {
+      sourceProjectId: 'project-1',
+      sourceSessionId: 'local-source',
+      sourceImportId: 'local-import',
+      sourceTitle: 'Local-only organization'
+    },
     runtimeContext: {
       version: 1,
       revision: 1,
@@ -4429,6 +4444,10 @@ it('round-trips portable history without local Session selection links', async (
     imported.projectId,
     imported.sessionId
   )
+  expect(restored?.researchMembership).toBeUndefined()
+  expect(
+    (await repository.loadSession('project-1', 'session-1'))?.researchMembership?.sourceImportId
+  ).toBe('local-import')
   expect(restored?.runtimeContext?.sessionContext).toBeUndefined()
   expect(restored?.messages[0].content).toContain('Saved selection label')
   expect(restored?.messages[0].parts?.at(-1)).toEqual({

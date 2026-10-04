@@ -95,10 +95,11 @@ describe('Compute Job sensitive data encryption migration', () => {
         '0045_literature_smart_pause_run',
         '0046_journal_attributes',
         '0047_session_replay',
-        '0048_pdf_annotation_sharing'
+        '0048_pdf_annotation_sharing',
+        '0049_session_research_membership'
       ],
       from: '0015_session_model_call_usage',
-      to: '0048_pdf_annotation_sharing'
+      to: '0049_session_research_membership'
     })
     await expect(
       access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)

@@ -8,12 +8,16 @@ export const sessionReplayKey = (projectId: string, sourceSessionId: string): st
 export type SessionDiscussionDestination = {
   projectId: string
   sessionId?: string
+  draftKey?: string
+  onlyIfUnlinked?: boolean
   frameId?: string
   branchId?: string
   navigationRevision: number
 }
 
 type SessionReplayStore = {
+  // Projection of the currently editable draft, cleared when its composer leaves or unlinks.
+  draftDiscussion?: { projectId: string; sourceSessionId: string; draftKey: string }
   playhead?: {
     projectId: string
     sourceSessionId: string

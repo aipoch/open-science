@@ -53,16 +53,36 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { createSessionReplayItem } from '@/pages/workspace/workspace-session-actions'
+import {
+  openResearchWorkspace,
+  researchSourceFromSession
+} from '@/pages/workspace/workspace-discussion-navigation'
 import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { forkSession } from '@/lib/session-fork'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 
-const openPackageSession = (operation: PackageOperationSnapshot): boolean => {
+const openPackageSession = async (operation: PackageOperationSnapshot): Promise<boolean> => {
   const identity = operation.result?.imported
   if (!identity) return false
   const { projectId, sessionId } = identity
   if (operation.kind !== 'import')
     return useNavigationStore.getState().openSession(projectId, sessionId, 'user')
+  const revision = useNavigationStore.getState().explicitNavigationRevision
+  let importedSession = useSessionStore
+    .getState()
+    .sessions.find((item) => item.id === sessionId && item.projectId === projectId)
+  if (!researchSourceFromSession(importedSession) && window.api.sessions.loadOne) {
+    const persisted = await window.api.sessions.loadOne({ projectId, sessionId })
+    if (revision !== useNavigationStore.getState().explicitNavigationRevision) return false
+    if (persisted) {
+      useSessionStore.getState().upsertPersistedSession(persisted)
+      importedSession = useSessionStore
+        .getState()
+        .sessions.find((item) => item.id === sessionId && item.projectId === projectId)
+    }
+  }
+  const source = researchSourceFromSession(importedSession)
+  if (source) return openResearchWorkspace(source)
   return useNavigationStore.getState().openSession(projectId, sessionId, 'user', () => {
     const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
     usePreviewWorkbenchStore
@@ -397,7 +417,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       .loadProjects()
       .then(() => {
         if (revision !== useNavigationStore.getState().explicitNavigationRevision) return
-        openPackageSession(operation)
+        return openPackageSession(operation)
       })
       .catch(() => undefined)
   }, [operation, isWeb])
@@ -563,7 +583,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const openImported = async (): Promise<void> => {
     try {
       await useProjectStore.getState().loadProjects()
-      if (openPackageSession(operation)) dismiss()
+      if (await openPackageSession(operation)) dismiss()
     } catch (caught) {
       setError({
         id: operation.id,

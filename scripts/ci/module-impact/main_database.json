@@ -88,7 +88,9 @@
     "src/main/database/startup-diagnostics.test.ts",
     "src/main/database/startup-diagnostics.ts",
     "src/main/database/tag-ordering-migration.test.ts",
-    "src/main/database/migrations/0048-pdf-annotation-sharing.ts"
+    "src/main/database/migrations/0048-pdf-annotation-sharing.ts",
+    "src/main/database/migrations/0049-session-research-membership.ts",
+    "src/main/database/session-research-membership-migration.test.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -97,7 +99,8 @@
     "src/main/database/migration-service.ts",
     "src/main/database/migration-sql-executor.ts",
     "src/main/database/startup-diagnostics.ts",
-    "src/main/database/migrations/0047-session-replay.ts"
+    "src/main/database/migrations/0047-session-replay.ts",
+    "src/main/database/migrations/0049-session-research-membership.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -132,7 +135,8 @@
       "src/main/database/tag-ordering-migration.test.ts",
       "src/main/database/classification-usage.test.ts",
       "src/main/database/pdf-annotations-migration.test.ts",
-      "src/main/database/literature-smart-collections-migration.test.ts"
+      "src/main/database/literature-smart-collections-migration.test.ts",
+      "src/main/database/session-research-membership-migration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

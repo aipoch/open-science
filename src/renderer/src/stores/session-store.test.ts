@@ -137,6 +137,139 @@ const createCompletedPlanProjection = (
 })
 
 describe('session store', () => {
+  it('keeps research ownership across startup, stale hydration and metadata receipts', () => {
+    useSessionStore.setState(createInitialSessionState())
+    const membership = {
+      sourceProjectId: 'project-1',
+      sourceSessionId: 'source-1',
+      sourceImportId: 'import-1',
+      sourceTitle: 'Study'
+    }
+    const persisted: PersistedChatSession = {
+      id: 'discussion',
+      projectId: 'project-1',
+      title: 'Question',
+      cwd: '',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+      revision: 3,
+      researchMembership: membership
+    }
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: persisted.id,
+          projectId: persisted.projectId,
+          title: persisted.title,
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 3,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          needsStartupRecovery: false,
+          researchMembership: membership
+        }
+      ],
+      undefined
+    )
+    expect(useSessionStore.getState().sessions[0].contentLoaded).toBe(false)
+    expect(useSessionStore.getState().sessions[0].researchMembership).toEqual(membership)
+    useSessionStore
+      .getState()
+      .upsertPersistedSession({ ...persisted, revision: 2, researchMembership: undefined })
+    expect(useSessionStore.getState().sessions[0].researchMembership).toEqual(membership)
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...persisted, revision: 4, researchMembership: undefined },
+      mode: 'runtime-context-authority'
+    })
+    expect(useSessionStore.getState().sessions[0].researchMembership).toBeUndefined()
+    useSessionStore.getState().upsertPersistedSession(persisted)
+    expect(useSessionStore.getState().sessions[0].researchMembership).toBeUndefined()
+  })
+
+  it('projects import identity before content loading without persisting the summary marker', () => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: 'source',
+          projectId: 'project',
+          title: 'Study',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          needsStartupRecovery: false,
+          importedResearch: { importId: 'import-1' }
+        }
+      ],
+      undefined
+    )
+    expect(useSessionStore.getState().sessions[0].importedResearch).toEqual({
+      importId: 'import-1'
+    })
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'source',
+      projectId: 'project',
+      title: 'Study',
+      cwd: '',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+      revision: 1,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'original-project',
+        sourceSessionId: 'original-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    const loaded = useSessionStore.getState().sessions[0]
+    expect(loaded.importedResearch).toEqual({ importId: 'import-1' })
+    expect(toPersistedSession(loaded)).not.toHaveProperty('importedResearch')
+  })
+
+  it('attaches captured research ownership only to the first new message', () => {
+    useSessionStore.setState(createInitialSessionState())
+    const researchMembership = {
+      sourceProjectId: 'project',
+      sourceSessionId: 'source',
+      sourceImportId: 'import',
+      sourceTitle: 'Study'
+    }
+    const pending = useSessionStore.getState().appendPendingUserMessage({
+      projectId: 'project',
+      content: 'Question',
+      researchMembership,
+      preserveSelection: true
+    })!
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].researchMembership).toEqual(researchMembership)
+    useSessionStore.getState().appendUserMessage({
+      sessionId: pending.sessionId,
+      content: 'Reference another study',
+      researchMembership: { ...researchMembership, sourceSessionId: 'other' }
+    })
+    expect(useSessionStore.getState().sessions[0].researchMembership).toEqual(researchMembership)
+  })
+
   it('keeps imported research browsable and archivable without enabling execution or edits', () => {
     const session = {
       status: 'idle' as const,
@@ -7505,6 +7638,8 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
+      'src/renderer/src/pages/workspace/ResearchMembershipDialog.tsx',
+      'src/renderer/src/pages/workspace/ResearchWorkspaceHeader.tsx',
       'src/renderer/src/pages/workspace/SessionDiscussionDialog.tsx',
       'src/renderer/src/pages/workspace/SessionDiscussionSource.tsx',
       'src/renderer/src/pages/workspace/SessionInfoPopover.preview.tsx',
@@ -7546,6 +7681,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
       'src/renderer/src/pages/workspace/replay/ReplayToolRecord.tsx',
+      'src/renderer/src/pages/workspace/research-navigation-model.ts',
       'src/renderer/src/pages/workspace/session-action-menu.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
@@ -7566,6 +7702,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-conversation-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-items.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-timeline.ts',
+      'src/renderer/src/pages/workspace/workspace-discussion-navigation.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-admission.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-owner.ts',

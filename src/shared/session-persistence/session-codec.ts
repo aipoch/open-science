@@ -1,3 +1,4 @@
+import { researchMembershipSchema } from './session'
 import { sanitizePromptPreparation, resolvePreparationNoticeBaseline } from './prompt-preparation'
 import {
   type PersistedSessionStatus,
@@ -334,6 +335,12 @@ export const sanitizeSession = (
   }
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
   if (branchSource) sanitized.branchSource = branchSource
+  if (session.researchMembership !== undefined) {
+    const membership = researchMembershipSchema.safeParse(session.researchMembership)
+    // An invalid local grouping must not silently move a discussion into the ordinary list.
+    if (!membership.success) return undefined
+    sanitized.researchMembership = membership.data
+  }
   if (session.packageOrigin !== undefined) {
     const origin = packageOriginSchema.safeParse(session.packageOrigin)
     if (!origin.success) return undefined

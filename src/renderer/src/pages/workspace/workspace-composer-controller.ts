@@ -1,4 +1,3 @@
-import { captureDiscussionSendContext } from './discussion-send-context'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 import type { SessionReadingContext } from '../../../../shared/session-reading'
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
@@ -31,6 +30,7 @@ import {
   isSessionSizeLimitError,
   MAX_SESSION_PDF_CONTEXTS,
   type LiteratureReference,
+  type ResearchMembership,
   type MessagePdfContextSnapshot,
   type PdfReadingPosition,
   type SessionPdfBinding,
@@ -112,6 +112,7 @@ export type ComposerSendSnapshot = {
   doc: ComposerDoc
   annotations: Annotation[]
   discussionFocus?: SessionDiscussionCapture
+  researchMembership?: ResearchMembership
   attachments: UploadedAttachment[]
   automaticReadingEnabled?: boolean
   pdfContext?: MessagePdfContextSnapshot
@@ -127,6 +128,7 @@ export type ComposerSendSnapshot = {
 
 type WorkspaceComposerControllerInput = {
   currentDraftKey: string
+  researchMembership?: ResearchMembership
   newConversationDraftKey: string
   activeProjectId: string | undefined
   pendingCustomizePrefill: CustomizePrefillIntent | undefined
@@ -248,6 +250,7 @@ const blank = (): ComposerDraft => ({
 
 const useWorkspaceComposerController = ({
   currentDraftKey,
+  researchMembership,
   newConversationDraftKey,
   activeProjectId,
   pendingCustomizePrefill,
@@ -1227,17 +1230,11 @@ const useWorkspaceComposerController = ({
       return {
         retrySessionOwner: retrySessionOwnerRef.current,
         setupSessionToken: setupSessionTokenRef.current,
+        ...(researchMembership ? { researchMembership: { ...researchMembership } } : {}),
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
         doc: docRef.current,
         annotations: [...annotationsRef.current],
-        discussionFocus: captureDiscussionSendContext(
-          annotationsRef.current,
-          includeReadingContext
-            ? activeSession?.runtimeContext?.sessionContext?.bindings.at(-1)
-            : undefined,
-          activeSession?.id
-        ),
         attachments,
         queuedEdit: queuedEditRef.current,
         automaticReadingEnabled: automaticReadingEnabledRef.current,
@@ -1278,7 +1275,7 @@ const useWorkspaceComposerController = ({
     },
     [
       attachments,
-      activeSession,
+      researchMembership,
       activeReadingBinding,
       activePendingReading,
       automaticStagedReadingContexts,

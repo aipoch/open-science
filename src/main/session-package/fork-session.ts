@@ -88,6 +88,7 @@ export const createForkSession = (
   }
   return {
     ...copied,
+    researchMembership: undefined,
     packageOrigin: undefined,
     forkOrigin: copied.packageOrigin,
     forkHeadMessageId:
