@@ -75,7 +75,6 @@ jobs:
               'packages/notebook-network-sandbox/vendor/windows-runtime/npm/**'
               'scripts/check-windows-notebook-runtime.mjs'
               'scripts/stage-windows-notebook-components.mjs'
-              'scripts/windows-runtime-cdn.mjs'
               '.github/actions/windows-notebook-runtime/action.yml'
               '.github/workflows/windows-notebook-runtime.yml'
             )
