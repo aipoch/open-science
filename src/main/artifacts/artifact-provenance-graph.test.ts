@@ -186,6 +186,50 @@ const recipeRun = (
 })
 
 describe('artifact provenance graph', () => {
+  it('retains advisory cross-language file dependencies from notebook projection', () => {
+    const graph = sealArtifactProvenanceGraph({
+      target: target(),
+      notebookActivities: [
+        notebookActivity('run-1', 1, []),
+        notebookActivity('run-2', 2, [
+          {
+            relation: 'created',
+            relativePath: 'result.csv',
+            pathPortability: 'relative',
+            authority: 'advisory',
+            generation: generation('g-target', 'result.csv', checksum('b'))
+          }
+        ])
+      ],
+      computeActivities: [],
+      notebookDependencies: {
+        stalenessByRunId: {
+          'run-1': { state: 'clear' },
+          'run-2': { state: 'clear' }
+        },
+        invalidatedByRunId: {},
+        dependenciesByRunId: { 'run-1': [], 'run-2': [] },
+        fileDependenciesByRunId: {
+          'run-2': [
+            {
+              producerRunId: 'run-1',
+              path: 'outputs/intermediate.csv',
+              checksum: checksum('a'),
+              confidence: 'verified'
+            }
+          ]
+        }
+      }
+    })
+    expect(graph.edges).toContainEqual({
+      kind: 'depends-on',
+      activityId: 'run-2',
+      dependencyActivityId: 'run-1',
+      authority: 'advisory',
+      evidenceSource: 'dependency-analysis'
+    })
+  })
+
   it.each(['proportional_venn_5sets.png', 'proportional_venn_5sets_hires.png'])(
     'reconstructs %s without discarded font probes and failed theme setup',
     async (filename) => {

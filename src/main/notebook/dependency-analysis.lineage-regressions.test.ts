@@ -1,10 +1,18 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, normalize } from 'node:path'
 import { gzipSync } from 'node:zlib'
-import { expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookDependencyAnalyzer } from './dependency-analysis'
+import type {
+  AnalyzedNotebookRun,
+  NotebookRunDependencyFacts,
+  NotebookSourceFileAccessAnalysis
+} from './dependency-analysis-types'
+import { projectNotebookFileDependencies } from './dependency-projection'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -637,3 +645,341 @@ it.skipIf(!process.env.OPEN_SCIENCE_TEST_PYTHON || !process.env.OPEN_SCIENCE_TES
   },
   60000
 )
+
+type FixtureCell = {
+  stage: number
+  language: 'r' | 'python'
+  code: string
+  reads: string[]
+  writes: string[]
+  execution?: 'exhausted'
+  failure?: string
+}
+type ScienceFixture = {
+  scenario: string
+  languages: Array<'r' | 'python'>
+  status: string
+  evidence: { realAgent: boolean; responses: number; physicalRuns: number; retries: number }
+  observedHashes: Record<string, string>
+  cells: FixtureCell[]
+  lineage: { status: 'verified' | 'withheld'; edges?: string[][]; failure?: string }
+}
+
+const fixturePath = join(__dirname, 'fixtures/science/cross-language-lineage.fixture.jsonl')
+const fixturePortable = (value: string): string => normalize(value).replaceAll('\\', '/')
+const fixtures = readFileSync(fixturePath, 'utf8')
+  .trim()
+  .split(/\r?\n/u)
+  .map((line) => JSON.parse(line) as ScienceFixture)
+
+describe('real-agent science lineage fixtures', () => {
+  it('keeps only the complete Iris lineage and the Faithful2 contract boundary', () => {
+    expect(fixtures.map(({ scenario }) => scenario)).toEqual([
+      'iris-cross-language',
+      'faithful2-cross-language-next'
+    ])
+    expect(fixtures.every(({ evidence }) => evidence.realAgent)).toBe(true)
+    for (const fixture of fixtures)
+      for (const hash of Object.values(fixture.observedHashes))
+        expect(hash).toMatch(/^[a-f0-9]{64}$/u)
+    expect(fixtures[0]?.lineage.status).toBe('verified')
+    expect(fixtures[0]?.lineage.edges).toHaveLength(7)
+    expect(fixtures[1]?.lineage.status).toBe('withheld')
+    expect(fixtures[1]?.cells.at(-1)?.execution).toBe('exhausted')
+    expect(fixtures[1]?.lineage.failure).toContain('semantic node IDs')
+  })
+
+  it.each(fixtures)('$scenario preserves multi-cell file dependencies', async (fixture) => {
+    expect(fixture.cells).toHaveLength(4)
+    expect(fixture.cells.map(({ language }) => language)).toEqual(fixture.languages)
+    for (const cell of fixture.cells) {
+      const access = await analyzeNotebookSourceFileAccess(cell.language, cell.code)
+      expect(
+        access.reads.map(fixturePortable).every((path) => cell.reads.map(fixturePortable).includes(path)),
+        `${fixture.scenario} stage ${cell.stage} reads remain within the agent declaration`
+      ).toBe(true)
+      expect(
+        access.writes
+          .map(fixturePortable)
+          .every((path) => cell.writes.map(fixturePortable).includes(path)),
+        `${fixture.scenario} stage ${cell.stage} writes remain within the agent declaration`
+      ).toBe(true)
+    }
+  })
+
+  it.each(fixtures)(
+    '$scenario projects cross-language file lineage from observed generations',
+    async (fixture) => {
+      const root = await mkdtemp(join(tmpdir(), 'science-file-lineage-'))
+      const dataRoot = join(root, 'data')
+      const runs: NotebookRunRecord[] = fixture.cells.map((cell, index) => {
+        const runId = `${fixture.scenario}-${index}`
+        return {
+          runId,
+          cellId: runId,
+          script: cell.code,
+          source: 'agent',
+          kernelKind: cell.language,
+          kernelEpochId: `${cell.language}-epoch`,
+          environment: cell.language,
+          status: 'completed',
+          kernelDispatched: true,
+          startedAt: index,
+          endedAt: index + 1,
+          cwdBefore: dataRoot,
+          cwdAfter: dataRoot,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          workingFiles: cell.writes.map((relativePath) => ({
+            path: join(dataRoot, relativePath),
+            relativePath: join('data', relativePath),
+            kind: 'other' as const,
+            createdByRunId: runId,
+            change: 'created' as const,
+            checksum: createHash('sha256').update(`${runId}:${relativePath}`).digest('hex')
+          }))
+        }
+      })
+      try {
+        const facts: NotebookRunDependencyFacts = {
+          state: 'available',
+          definedNames: [],
+          usedNames: [],
+          mutatedNames: [],
+          priorUsedNames: [],
+          memberWrites: []
+        }
+        const fileAccess = (cell: FixtureCell): NotebookSourceFileAccessAnalysis => ({
+          readState: 'complete',
+          writeState: 'complete',
+          externalState: 'complete',
+          reads: cell.reads,
+          writes: cell.writes,
+          reasonCodes: []
+        })
+        const projection = projectNotebookFileDependencies(
+          runs.map((run, index) => ({ run, facts, fileAccess: fileAccess(fixture.cells[index]!) }))
+        )
+        const dependencies = projection
+        expect(dependencies[`${fixture.scenario}-1`]?.map(({ path }) => path).sort()).toEqual(
+          [fixture.cells[0]!.writes[0]].sort()
+        )
+        expect(dependencies[`${fixture.scenario}-2`]?.map(({ path }) => path).sort()).toEqual(
+          fixture.cells[2]!.reads.map((path) => normalize(path).replaceAll('\\', '/'))
+            .filter((path) => fixture.cells.slice(0, 2).some((cell) => cell.writes.includes(path)))
+            .sort()
+        )
+        expect(dependencies[`${fixture.scenario}-3`]?.length).toBeGreaterThanOrEqual(2)
+        expect(
+          dependencies[`${fixture.scenario}-3`]?.every(
+            ({ confidence }) => confidence === 'verified'
+          )
+        ).toBe(true)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('links scoped companion generations across the data-root namespace', () => {
+    const root = join(tmpdir(), 'science-scoped-lineage')
+    const dataRoot = join(root, 'data')
+    const facts: NotebookRunDependencyFacts = {
+      state: 'available',
+      definedNames: [],
+      usedNames: [],
+      mutatedNames: [],
+      priorUsedNames: [],
+      memberWrites: []
+    }
+    const producer: NotebookRunRecord = {
+      runId: 'scoped-producer',
+      cellId: 'scoped-producer',
+      script: '',
+      source: 'agent',
+      kernelKind: 'r',
+      kernelEpochId: 'r-epoch',
+      environment: 'r',
+      status: 'completed',
+      kernelDispatched: true,
+      startedAt: 0,
+      endedAt: 1,
+      cwdBefore: dataRoot,
+      workingFiles: [
+        {
+          path: join(dataRoot, 'outputs/map.dbf'),
+          relativePath: 'data/outputs/map.dbf',
+          kind: 'other',
+          createdByRunId: 'scoped-producer',
+          change: 'created',
+          checksum: 'a'.repeat(64)
+        }
+      ],
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: []
+    }
+    const consumer: NotebookRunRecord = {
+      ...producer,
+      runId: 'scoped-consumer',
+      cellId: 'scoped-consumer',
+      startedAt: 1,
+      endedAt: 2,
+      workingFiles: []
+    }
+    const fileAccess = {
+      readState: 'complete' as const,
+      writeState: 'complete' as const,
+      externalState: 'complete' as const,
+      reads: [],
+      writes: [],
+      writeScopes: [{ kind: 'shapefile' as const, path: 'outputs/map.shp' }],
+      reasonCodes: []
+    }
+    const consumerAccess = { ...fileAccess, writeScopes: undefined, reads: ['outputs/map.dbf'] }
+    const projection = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess },
+      { run: consumer, facts, fileAccess: consumerAccess }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection['scoped-consumer']).toEqual([
+      expect.objectContaining({
+        producerRunId: 'scoped-producer',
+        path: 'outputs/map.dbf',
+        checksum: 'a'.repeat(64),
+        confidence: 'verified'
+      })
+    ])
+    const partialWriter: NotebookRunRecord = {
+      ...producer,
+      runId: 'scoped-partial-writer',
+      cellId: 'scoped-partial-writer',
+      startedAt: 1,
+      endedAt: 2,
+      workingFiles: [
+        {
+          ...producer.workingFiles[0]!,
+          createdByRunId: 'scoped-partial-writer',
+          change: 'modified',
+          checksum: 'b'.repeat(64)
+        }
+      ]
+    }
+    const withheld = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess },
+      {
+        run: partialWriter,
+        facts,
+        fileAccess: {
+          ...consumerAccess,
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial',
+          writes: ['outputs/map.dbf'],
+          reasonCodes: ['dynamic-path-unresolved']
+        }
+      },
+      { run: consumer, facts, fileAccess: consumerAccess }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(withheld['scoped-consumer']).toBeUndefined()
+  })
+})
+
+
+describe('file lineage identity and completeness guards', () => {
+  const facts: NotebookRunDependencyFacts = {
+    state: 'available',
+    definedNames: [],
+    usedNames: [],
+    mutatedNames: [],
+    priorUsedNames: [],
+    memberWrites: []
+  }
+  const run = (runId: string, cwd: string, workingFiles: NotebookRunRecord['workingFiles'] = []): NotebookRunRecord => ({
+    runId,
+    cellId: runId,
+    script: '',
+    source: 'agent',
+    kernelKind: 'python',
+    kernelEpochId: 'epoch',
+    environment: 'python',
+    status: 'completed',
+    kernelDispatched: true,
+    startedAt: 0,
+    endedAt: 1,
+    cwdBefore: cwd,
+    cwdAfter: cwd,
+    workingFiles,
+    text: { stdout: '', stderr: '', traceback: '', plain: [] },
+    outputs: []
+  })
+  const access = (
+    reads: string[],
+    writes: string[]
+  ): NotebookSourceFileAccessAnalysis => ({
+    readState: 'complete' as const,
+    writeState: 'complete' as const,
+    externalState: 'complete' as const,
+    reads,
+    writes,
+    reasonCodes: [] as []
+  })
+
+  it('does not alias a data-prefixed read to a different root file', () => {
+    const root = join(tmpdir(), 'lineage-path-identity')
+    const producer = run('producer', root, [{
+      path: join(root, 'foo.txt'),
+      relativePath: 'foo.txt',
+      kind: 'other',
+      createdByRunId: 'producer',
+      change: 'created',
+      checksum: 'a'.repeat(64)
+    }])
+    const consumer = run('consumer', root)
+    const projection = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['foo.txt']) },
+      { run: consumer, facts, fileAccess: access(['data/foo.txt'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toBeUndefined()
+  })
+
+  it('matches relative and absolute spellings of the same recorded path', () => {
+    const root = join(tmpdir(), 'lineage-path-absolute')
+    const output = join(root, 'data/result.json')
+    const producer = run('producer', root, [{
+      path: output,
+      relativePath: 'data/result.json',
+      kind: 'other',
+      createdByRunId: 'producer',
+      change: 'created',
+      checksum: 'b'.repeat(64)
+    }])
+    const consumer = run('consumer', root)
+    const projection = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['data/result.json']) },
+      { run: consumer, facts, fileAccess: access([output], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toEqual([
+      expect.objectContaining({ producerRunId: 'producer', confidence: 'verified' })
+    ])
+  })
+
+  it('withholds an older producer when a complete write has no observed generation', () => {
+    const root = join(tmpdir(), 'lineage-missing-generation')
+    const output = join(root, 'result.json')
+    const producer = run('producer', root, [{
+      path: output,
+      relativePath: 'result.json',
+      kind: 'other',
+      createdByRunId: 'producer',
+      change: 'created',
+      checksum: 'c'.repeat(64)
+    }])
+    const overwrite = run('overwrite', root)
+    const consumer = run('consumer', root)
+    const projection = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      { run: overwrite, facts, fileAccess: access([], ['result.json']) },
+      { run: consumer, facts, fileAccess: access(['result.json'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toBeUndefined()
+  })
+})

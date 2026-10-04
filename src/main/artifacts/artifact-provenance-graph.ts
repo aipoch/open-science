@@ -820,6 +820,30 @@ const sealArtifactProvenanceGraph = (
         })
       }
     }
+    for (const [activityId, dependencies] of Object.entries(
+      input.notebookDependencies.fileDependenciesByRunId ?? {}
+    )) {
+      const candidate = notebookCandidateById.get(activityId)
+      if (!candidate) continue
+      for (const dependency of dependencies) {
+        const dependencyCandidate = notebookCandidateById.get(dependency.producerRunId)
+        if (
+          !dependencyCandidate ||
+          dependencyCandidate.activity.sequence >= candidate.activity.sequence
+        )
+          continue
+        // Static source analysis plus an observed generation identifies the producer, but does
+        // not prove that the runtime opened this exact path. Keep the edge advisory so replay
+        // barriers remain conservative when runtime file evidence is incomplete.
+        mergeEdge(edges, {
+          kind: 'depends-on',
+          activityId,
+          dependencyActivityId: dependency.producerRunId,
+          authority: 'advisory',
+          evidenceSource: 'dependency-analysis'
+        })
+      }
+    }
   }
   const priorOutputByPath = new Map<
     string,
