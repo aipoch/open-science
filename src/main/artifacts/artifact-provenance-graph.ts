@@ -788,7 +788,7 @@ const sealArtifactProvenanceGraph = (
     )
   )
   const completeKernelDependencyActivityIds = new Set<string>()
-  const missingKernelDependencyActivityIds = new Set<string>()
+  const missingDependencyActivityIds = new Set<string>()
   if (input.notebookDependencies) {
     for (const [activityId, candidate] of notebookCandidateById) {
       const dependencies = input.notebookDependencies.dependenciesByRunId?.[activityId]
@@ -807,7 +807,7 @@ const sealArtifactProvenanceGraph = (
           candidate.notebookRun.kernelEpochId !== dependency.notebookRun?.kernelEpochId ||
           dependency.activity.sequence >= candidate.activity.sequence
         ) {
-          missingKernelDependencyActivityIds.add(activityId)
+          missingDependencyActivityIds.add(activityId)
           completeKernelDependencyActivityIds.delete(activityId)
           continue
         }
@@ -830,8 +830,10 @@ const sealArtifactProvenanceGraph = (
         if (
           !dependencyCandidate ||
           dependencyCandidate.activity.sequence >= candidate.activity.sequence
-        )
+        ) {
+          missingDependencyActivityIds.add(activityId)
           continue
+        }
         // Static source analysis plus an observed generation identifies the producer, but does
         // not prove that the runtime opened this exact path. Keep the edge advisory so replay
         // barriers remain conservative when runtime file evidence is incomplete.
@@ -1132,11 +1134,14 @@ const sealArtifactProvenanceGraph = (
     const kernelDependenciesComplete = input.notebookDependencies
       ? completeKernelDependencyActivityIds.has(activityId)
       : fileReadsComplete
-    if (kernelDependenciesComplete) continue
-    if (missingKernelDependencyActivityIds.has(activityId)) reasons.add('history-truncated')
+    const missingDependency = missingDependencyActivityIds.has(activityId)
+    if (missingDependency) reasons.add('history-truncated')
+    if (kernelDependenciesComplete && !missingDependency) continue
     if (!fileReadsComplete) reasons.add('file-reads-unavailable')
-    if (!candidate.notebookRun.kernelEpochId) reasons.add('kernel-epoch-unknown')
-    reasons.add('kernel-dependencies-unavailable')
+    if (!kernelDependenciesComplete) {
+      if (!candidate.notebookRun.kernelEpochId) reasons.add('kernel-epoch-unknown')
+      reasons.add('kernel-dependencies-unavailable')
+    }
   }
 
   for (const activityId of selectedActivityIds) {

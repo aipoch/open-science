@@ -230,6 +230,48 @@ describe('artifact provenance graph', () => {
     })
   })
 
+  it('marks a missing file producer as truncated provenance history', () => {
+    const graph = sealArtifactProvenanceGraph({
+      target: target(),
+      notebookActivities: [
+        notebookActivity('run-2', 2, [
+          {
+            relation: 'created',
+            relativePath: 'result.csv',
+            pathPortability: 'relative',
+            authority: 'advisory',
+            generation: generation('g-target', 'result.csv', checksum('b'))
+          }
+        ])
+      ],
+      computeActivities: [],
+      notebookDependencies: {
+        stalenessByRunId: { 'run-2': { state: 'clear' } },
+        invalidatedByRunId: {},
+        dependenciesByRunId: { 'run-2': [] },
+        fileDependenciesByRunId: {
+          'run-2': [
+            {
+              producerRunId: 'run-missing',
+              path: 'outputs/intermediate.csv',
+              checksum: checksum('a'),
+              confidence: 'verified'
+            }
+          ]
+        }
+      }
+    })
+    expect(graph.completeness).toBe('incomplete')
+    expect(graph.reasonCodes).toContain('history-truncated')
+    expect(graph.edges).not.toContainEqual(
+      expect.objectContaining({
+        kind: 'depends-on',
+        activityId: 'run-2',
+        dependencyActivityId: 'run-missing'
+      })
+    )
+  })
+
   it.each(['proportional_venn_5sets.png', 'proportional_venn_5sets_hires.png'])(
     'reconstructs %s without discarded font probes and failed theme setup',
     async (filename) => {

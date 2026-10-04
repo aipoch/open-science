@@ -115,9 +115,9 @@ const lineagePathKey = (run: NotebookRunRecord, value: string): string => {
   if (isAbsolute(value)) return `absolute:${lineagePathCase(portablePath(normalize(value)))}`
   if (workingDirectory !== undefined)
     return `absolute:${lineagePathCase(portablePath(normalize(resolve(workingDirectory, value))))}`
-  // Runs recorded before cwd evidence existed remain matchable only by their exact
-  // portable spelling. Do not infer that a `data/` prefix is an alias for another file.
-  return `relative:${portable}`
+  // Without cwd/session identity, a relative spelling is local to this run. Keep
+  // same-run generation matching, but never alias it across independent runs.
+  return `relative:${run.runId}:${portable}`
 }
 
 const observedFileGeneration = (
@@ -2051,9 +2051,9 @@ const projectNotebookFileDependencies = (
           path,
           ...(producer.generationId ? { generationId: producer.generationId } : {}),
           ...(producer.checksum ? { checksum: producer.checksum } : {}),
-          confidence: (producer.checksum ? 'verified' : 'advisory') as NotebookFileDependency[
-            'confidence'
-          ]
+          confidence: (producer.checksum
+            ? 'verified'
+            : 'advisory') as NotebookFileDependency['confidence']
         })
       }
       if (dependencies.length) dependenciesByRunId[run.runId] = dependencies

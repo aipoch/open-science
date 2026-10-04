@@ -956,6 +956,33 @@ describe('file lineage identity and completeness guards', () => {
     expect(projection.consumer).toBeUndefined()
   })
 
+  it('withholds relative matching when runs have no shared cwd evidence', () => {
+    const root = join(tmpdir(), 'lineage-unknown-cwd')
+    const producer = { ...run('producer', root, []), cwdBefore: undefined, cwdAfter: undefined }
+    const consumer = { ...run('consumer', root, []), cwdBefore: undefined, cwdAfter: undefined }
+    const projection = projectNotebookFileDependencies([
+      {
+        run: {
+          ...producer,
+          workingFiles: [
+            {
+              path: join(root, 'result.json'),
+              relativePath: 'result.json',
+              kind: 'other',
+              createdByRunId: 'producer',
+              change: 'created',
+              checksum: 'i'.repeat(64)
+            }
+          ]
+        },
+        facts,
+        fileAccess: access([], ['result.json'])
+      },
+      { run: consumer, facts, fileAccess: access(['result.json'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toBeUndefined()
+  })
+
   it('matches relative and absolute spellings of the same recorded path', () => {
     const root = join(tmpdir(), 'lineage-path-absolute')
     const output = join(root, 'data/result.json')
